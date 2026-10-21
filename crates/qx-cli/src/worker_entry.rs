@@ -4,12 +4,16 @@
 //! 新增角色只需要在本处登记一次，避免出现两套角色语义。
 
 use std::path::{Path, PathBuf};
-use std::thread;
 
 use qx_adapter::{CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
-use qx_core::VenueFamily;
-use qx_orchestrator::supervise_workers;
-use qx_runtime::{RuntimeConfig, WorkerConfig, WorkerRole};
+use qx_orchestrator::SuperviseFailure;
+#[cfg(test)]
+use qx_runtime::RuntimeConfig;
+use qx_runtime::WorkerConfig;
+
+pub(crate) use qx_service::worker_config::{
+    configured_reconcile_worker_id, recovery_worker_venue_id, venue_worker, VenueEntry,
+};
 
 use crate::worker_runtime::{run_binance_worker_inner, run_ccxt_worker_inner};
 use crate::{
@@ -17,134 +21,9 @@ use crate::{
     ccxt_error_is_optional_derivatives_capability, load_binance_worker_auth, new_binance_venue,
     pending_spread_recovery_groups, python_interpreter, read_runtime_config,
     recover_spread_groups_for_venue, recovery_order_validator, required_account_event_log,
-    runtime_timestamp_ms, spread_recovery_poll_delay, PipelineMetricsReporter, PipelineStorage,
-    SpreadRecoveryContext,
+    runtime_timestamp_ms, spread_recovery_poll_delay, validate_configured_market_specs,
+    PipelineMetricsReporter, PipelineStorage, SpreadRecoveryContext,
 };
-
-/// 多腿恢复 worker 的 venue_id 必须显式配置。
-///
-/// 恢复扫描按 venue 过滤敞口腿（`spread.rs` 的 `pending_spread_recovery_groups`），
-/// 空值在该函数里是**有意的通配符**；先前这里的默认值产出的是非空字符串，等于把
-/// 通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue
-/// 的裸腿。宁可当场拒启动，也不要让敞口静默挂着。
-pub(crate) fn recovery_worker_venue_id(worker: &WorkerConfig) -> Result<String, String> {
-    worker.venue_id.clone().ok_or_else(|| {
-        format!(
-            "worker {}（{}）必须配置 venue_id：恢复扫描按此过滤敞口腿，缺省会静默收窄扫描范围、漏掉其他 venue 的裸腿",
-            worker.id,
-            worker_role_label(worker.role)
-        )
-    })
-}
-
-/// 角色的稳定名称，用于错误信息与运维输出。
-const fn worker_role_label(role: WorkerRole) -> &'static str {
-    match role {
-        WorkerRole::Api => "api",
-        WorkerRole::MarketData => "market-data",
-        WorkerRole::UserStream => "user-stream",
-        WorkerRole::Execution => "execution",
-        WorkerRole::SpreadRecovery => "spread-recovery",
-        WorkerRole::Scheduler => "scheduler",
-        WorkerRole::Reconciler => "reconciler",
-        WorkerRole::Strategy => "strategy",
-        WorkerRole::OutboxRelay => "outbox-relay",
-        WorkerRole::EventConsumer => "event-consumer",
-    }
-}
-
-/// 一个 `*-worker` 命令入口的登记表。
-pub(crate) struct VenueEntry {
-    /// 命令入口展示名。
-    name: &'static str,
-    /// Venue 绑定判定。
-    is_bound: fn(&WorkerConfig) -> bool,
-    /// 绑定失败时的说明。
-    venue_hint: &'static str,
-}
-
-impl VenueEntry {
-    pub(crate) const CCXT: VenueEntry = VenueEntry {
-        name: "CCXT",
-        is_bound: |worker| {
-            VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
-        },
-        venue_hint: "必须绑定非 paper 的 CCXT venue",
-    };
-    pub(crate) const BINANCE: VenueEntry = VenueEntry {
-        name: "Binance",
-        is_bound: |worker| {
-            VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Binance)
-        },
-        venue_hint: "必须绑定 Binance Venue",
-    };
-}
-
-/// 按登记表加载并校验 worker：存在性 → 启用 → 角色白名单 → Venue 绑定。
-pub(crate) fn venue_worker(
-    config: &RuntimeConfig,
-    worker_id: &str,
-    entry: &VenueEntry,
-) -> Result<WorkerConfig, String> {
-    let worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == worker_id)
-        .cloned()
-        .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
-    if !worker.enabled {
-        return Err(format!("worker {worker_id} 未启用"));
-    }
-    if !worker.role.is_venue_role() {
-        let roles = qx_runtime::ALL_WORKER_ROLES
-            .iter()
-            .filter(|role| role.is_venue_role())
-            .map(|role| worker_role_label(*role))
-            .collect::<Vec<_>>()
-            .join("/");
-        return Err(format!(
-            "worker {worker_id} 不是 {} 支持的 {roles} 角色",
-            entry.name
-        ));
-    }
-    if !(entry.is_bound)(&worker) {
-        return Err(format!("worker {worker_id} {}", entry.venue_hint));
-    }
-    Ok(worker)
-}
-
-/// `reconcile` 省略 worker-id 时该起哪一个 reconciler：按 **role + Venue 绑定**解析
-/// （V11 S12，与 S1 同一个判据）。字面量 `reconciler-main` 在两个方向上都会撒谎——
-/// 名字合法改动的拓扑上报"找不到 worker: reconciler-main"，把"没解析"说成"不存在"；
-/// 而恰好有个叫这名字、角色却是 execution 的 worker 时会真的跑一次下单执行。
-/// 零个或多个候选都必须报错并让人点名，不能挑第一个。
-pub(crate) fn configured_reconcile_worker_id(
-    config: &RuntimeConfig,
-    entry: &VenueEntry,
-) -> Result<String, String> {
-    let candidates = config
-        .workers
-        .iter()
-        .filter(|worker| {
-            worker.enabled && worker.role == WorkerRole::Reconciler && (entry.is_bound)(worker)
-        })
-        .map(|worker| worker.id.clone())
-        .collect::<Vec<_>>();
-    match candidates.as_slice() {
-        [only] => Ok(only.clone()),
-        [] => Err(format!(
-            "运行时配置没有可解析的 reconciler worker（要求：启用且{}），请用 \
-             reconcile <runtime.json> <worker-id> 显式点名",
-            entry.venue_hint
-        )),
-        many => Err(format!(
-            "运行时配置有 {} 个候选 reconciler worker（{}），请用 \
-             reconcile <runtime.json> <worker-id> 显式点名",
-            many.len(),
-            many.join(", ")
-        )),
-    }
-}
 
 /// `reconcile` 入口：点名时与 `binance-worker` 走完全相同的四段校验，省略时按上表解析。
 pub(crate) fn run_binance_reconcile_once(
@@ -177,7 +56,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
     )?;
     metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut recovery_stalls = 0_u32;
-    while !context.should_stop() {
+    qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
         let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
         if pending_before > 0 {
@@ -226,11 +105,8 @@ pub(crate) fn run_binance_spread_recovery_worker(
         }
         context.heartbeat(now)?;
         metrics.publish_if_due(true, now);
-        if once {
-            break;
-        }
-        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
-    }
+        Ok(spread_recovery_poll_delay(recovery_stalls).as_millis() as u64)
+    })?;
     metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
@@ -255,18 +131,23 @@ pub(crate) fn managed_worker_args(
     )
 }
 
-/// 跨平台进程托管入口。它只做拓扑校验、日志隔离和 fail-fast 生命周期管理，
-/// 不替代 worker 的租约、幂等和 EventLog 恢复语义；任一子进程异常退出时会
-/// 停止其余进程，避免 API/策略仍运行而执行器已经消失。
+/// CLI 配置加载与命令错误适配；服务宿主负责跨平台进程托管。
 pub(crate) fn run_process_supervisor(
     path: &Path,
     allow_unmanaged_roles: bool,
-) -> Result<(), qx_orchestrator::SuperviseFailure> {
+) -> Result<(), SuperviseFailure> {
     let config = read_runtime_config(path)?;
+    validate_configured_market_specs(path, &config)?;
     let executable =
         std::env::current_exe().map_err(|error| format!("解析 qx-cli 可执行文件失败: {error}"))?;
     let work_dir = std::env::current_dir().map_err(|error| format!("读取工作目录失败: {error}"))?;
-    supervise_workers(&config, path, &executable, &work_dir, allow_unmanaged_roles)
+    qx_service::worker_host::supervise_processes(
+        &config,
+        path,
+        &executable,
+        &work_dir,
+        allow_unmanaged_roles,
+    )
 }
 
 pub(crate) fn run_ccxt_worker(
@@ -301,7 +182,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
     )?;
     metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut recovery_stalls = 0_u32;
-    while !context.should_stop() {
+    qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
         let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
         if pending_before > 0 {
@@ -348,11 +229,8 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         }
         context.heartbeat(now)?;
         metrics.publish_if_due(true, now);
-        if once {
-            break;
-        }
-        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
-    }
+        Ok(spread_recovery_poll_delay(recovery_stalls).as_millis() as u64)
+    })?;
     metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }

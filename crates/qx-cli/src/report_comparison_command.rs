@@ -6,14 +6,18 @@ use std::path::{Path, PathBuf};
 pub(crate) fn run_comparison_report(
     base_path: &Path,
     against: &[PathBuf],
-    as_json: bool,
-    html: bool,
-    output: Option<&Path>,
-    xlsx: Option<&Path>,
-    benchmark_bars: Option<&Path>,
-    benchmark_calendar: Option<&Path>,
-    benchmark_csv: Option<&Path>,
+    options: crate::report_command::ReportOptions<'_>,
 ) -> Result<(), String> {
+    let crate::report_command::ReportOptions {
+        as_json,
+        html,
+        output,
+        xlsx,
+        benchmark_bars,
+        benchmark_calendar,
+        benchmark_csv,
+        ..
+    } = options;
     let base_summary_path = resolve_backtest_summary_path(base_path)?;
     let mut paths = vec![base_summary_path.clone()];
     for path in against {
@@ -43,12 +47,12 @@ pub(crate) fn run_comparison_report(
         if !seen_paths.insert(canonical_path) {
             return Err(format!("横向对照不能重复传入同一摘要: {}", path.display()));
         }
-        let payload = std::fs::read_to_string(&path)
+        let payload = std::fs::read_to_string(path)
             .map_err(|error| format!("读取对照摘要失败 {}: {error}", path.display()))?;
         let current_summary: serde_json::Value = serde_json::from_str(&payload)
             .map_err(|error| format!("对照摘要 JSON 无效 {}: {error}", path.display()))?;
         require_current_summary_schema(&current_summary)?;
-        let input = recompute_declared_backtest_input(&current_summary)?
+        let input = qx_app::artifact_store::recompute_declared_backtest_input(&current_summary)?
             .ok_or_else(|| format!("对照摘要缺少可复核的输入身份: {}", path.display()))?;
         let instrument = summary_text(&current_summary, "/instrument")
             .ok_or_else(|| format!("对照摘要缺少 instrument: {}", path.display()))?;
@@ -58,7 +62,7 @@ pub(crate) fn run_comparison_report(
             &input,
         )?;
         identity.get_or_insert(current);
-        let entry = comparison_entry(&path, &current_summary)?;
+        let entry = comparison_entry(path, &current_summary)?;
         if !seen_run_ids.insert(entry.run_id.clone()) {
             return Err(format!(
                 "横向对照 RunManifest.run_id 重复: {}",
@@ -182,8 +186,8 @@ pub(crate) fn run_comparison_report(
             report["generated_artifacts"]["benchmark_csv"] =
                 serde_json::Value::String(path.display().to_string());
         }
-        print!(
-            "{}\n",
+        println!(
+            "{}",
             serde_json::to_string_pretty(&report)
                 .map_err(|error| format!("编码横向对照 JSON 失败: {error}"))?
         );

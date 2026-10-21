@@ -123,6 +123,9 @@ fn artifact_input<'a>(
         // 信号口径同理是占位：这里没有内置策略上场，写 None 摘要就不落这个键（V12 R4-j）。
         signal: None,
         dataset_quality: None,
+        account_id: None,
+        portfolio: None,
+        summary_extra: None,
     }
 }
 

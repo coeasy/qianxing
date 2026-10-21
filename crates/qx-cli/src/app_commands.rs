@@ -191,19 +191,23 @@ fn provider_backtest(runtime_path: &Path, spec_path: &Path) -> Result<String, Ap
             )
         })?;
     spec.validate()?;
-    let registry = crate::api_service::configured_provider_registry(&runtime, runtime_path)
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("装配 ProviderRegistry 失败: {error}"),
-            )
-        })?
-        .ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::DataUnavailable,
-                "运行时配置没有 api.data_providers，无法执行 Provider 回测",
-            )
-        })?;
+    let registry = qx_service::provider_registry::from_runtime_config(
+        &runtime,
+        runtime_path,
+        &crate::python_interpreter(),
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("装配 ProviderRegistry 失败: {error}"),
+        )
+    })?
+    .ok_or_else(|| {
+        AppError::new(
+            AppErrorCategory::DataUnavailable,
+            "运行时配置没有 api.data_providers，无法执行 Provider 回测",
+        )
+    })?;
     let outcome =
         run_provider_backtest_with_manifest(&registry, &spec, &context(&spec.backtest.run_id))?;
     serde_json::to_string(&outcome).map_err(|error| {
@@ -229,19 +233,23 @@ fn provider_depth_backtest(runtime_path: &Path, spec_path: &Path) -> Result<Stri
             )
         })?;
     spec.validate()?;
-    let registry = crate::api_service::configured_provider_registry(&runtime, runtime_path)
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("装配 ProviderRegistry 失败: {error}"),
-            )
-        })?
-        .ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::DataUnavailable,
-                "运行时配置没有 api.data_providers，无法执行 Provider 深度回测",
-            )
-        })?;
+    let registry = qx_service::provider_registry::from_runtime_config(
+        &runtime,
+        runtime_path,
+        &crate::python_interpreter(),
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("装配 ProviderRegistry 失败: {error}"),
+        )
+    })?
+    .ok_or_else(|| {
+        AppError::new(
+            AppErrorCategory::DataUnavailable,
+            "运行时配置没有 api.data_providers，无法执行 Provider 深度回测",
+        )
+    })?;
     let outcome = run_provider_depth_backtest(&registry, &spec, &context(&spec.backtest.run_id))?;
     serde_json::to_string(&outcome).map_err(|error| {
         AppError::new(

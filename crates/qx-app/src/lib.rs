@@ -42,16 +42,21 @@
 pub mod artifact_store;
 pub mod ashare_readout;
 pub mod ashare_screen;
+pub mod backtest_input_identity;
+mod bar_fill_model;
 pub mod cases;
+pub mod ccxt_backtest_snapshot;
 pub mod context;
 pub mod dataset_bundle;
 pub mod error;
 pub mod execution_cost;
+pub mod fast_backtest;
 pub mod multi_leg;
 pub mod report_analysis;
 mod run_handle;
 pub mod spec;
 pub mod strategy_backtest_identity;
+mod strategy_backtest_workflow;
 pub mod strategy_catalog;
 mod strategy_engine;
 pub mod strategy_order;
@@ -62,27 +67,31 @@ mod tests;
 
 pub use ashare_readout::ashare_analysis_json;
 pub use ashare_screen::screen_bar_frames;
+pub use bar_fill_model::{
+    bar_fill_model, fill_model_failure, fill_model_problem, BarFillModelBinding,
+};
+pub use cases::kernels::{BAR_MATCHING_KERNEL, ORDER_BOOK_MATCHING_KERNEL, TICK_MATCHING_KERNEL};
 pub use cases::{
     bind_ashare_backtest_rules, compare_runs, paper_available_margin_raw, plan_algo_execution,
     plan_capital_allocation, plan_risk_parity, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
-    run_multi_builtin_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_backtest,
-    run_multi_market_depth_experiment, run_multi_market_experiment,
-    run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    run_multi_builtin_backtest, run_multi_builtin_backtest_with_inputs, run_multi_leg_backtest,
+    run_multi_leg_backtest_with_strategy, run_multi_leg_experiment, run_multi_market_backtest,
+    run_multi_market_depth_backtest, run_multi_market_depth_experiment,
+    run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
     start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
-    validate_dataset_manifest, validate_depth_dataset_manifest, validate_trade_control,
-    verify_depth_run, verify_run, AshareBacktestBinding, CompareRunsResult, CompareRunsSpec,
-    ComparedRun, ComparedRunResult, DatasetManifestValidationResult,
+    validate_dataset_manifest, validate_depth_dataset_manifest, validate_multi_builtin_frames,
+    validate_trade_control, verify_depth_run, verify_run, AshareBacktestBinding, CompareRunsResult,
+    CompareRunsSpec, ComparedRun, ComparedRunResult, DatasetManifestValidationResult,
     DepthDatasetManifestValidationResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
-    ExperimentCandidateResult, ExperimentParameterSpace, MultiLegExperimentCandidate,
-    MultiLegExperimentRankedCandidate, MultiMarketDepthExperimentCandidate,
-    MultiMarketDepthExperimentRankedCandidate, MultiMarketExperimentCandidate,
-    MultiMarketExperimentRankedCandidate, ProviderBacktestOutcome, ProviderBacktestSpec,
-    ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentResult,
+    ExperimentCandidateResult, ExperimentParameterSpace, MultiBuiltinBacktestInputs,
+    MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
+    MultiMarketDepthExperimentCandidate, MultiMarketDepthExperimentRankedCandidate,
+    MultiMarketExperimentCandidate, MultiMarketExperimentRankedCandidate, ProviderBacktestOutcome,
+    ProviderBacktestSpec, ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec,
+    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
+    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentResult,
     RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentResult,
     RunMultiMarketExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
     EXPERIMENT_BASELINE_NAMES, FUNDING_RATE_JSON_CONTENT_TYPE, MAX_EXPERIMENT_CANDIDATES,
@@ -104,8 +113,8 @@ pub use multi_leg::{
     multi_leg_apply_funding, multi_leg_bar_close_raw, multi_leg_combined_equity_metrics,
     multi_leg_combined_return_bps, multi_leg_cost_bps, multi_leg_group_attributions,
     multi_leg_group_totals, multi_leg_integrity_json, multi_leg_integrity_summary,
-    multi_leg_leg_buckets, multi_leg_leg_integrity, multi_leg_leg_margin,
-    multi_leg_pending_reconcile_json, multi_leg_quality_fingerprint,
+    multi_leg_leg_buckets, multi_leg_leg_cash_reserve, multi_leg_leg_integrity,
+    multi_leg_leg_margin, multi_leg_pending_reconcile_json, multi_leg_quality_fingerprint,
     multi_leg_realized_standing_at, MultiBuiltinCompositionSummary, MultiLegAttribution,
     MultiLegCombinedEquity, MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile,
     MultiLegSignalBucket, MULTI_LEG_FUNDING_INTERVAL_MS,
@@ -115,8 +124,9 @@ pub use run_handle::{
     RunEvent, RunEventKind, RunHandle, RunObservation, RunStatus, DEFAULT_WAIT_TIMEOUT,
 };
 pub use spec::market_spec::{
-    backtest_margin_model_from_market, market_spec_from_value, market_spec_source_label,
-    CCXT_MARKET_SPEC_VERSION, PRODUCT_MARKET_SPEC_VERSION,
+    backtest_margin_model_from_market, backtest_market_spec_binding, market_spec_from_value,
+    market_spec_source_label, BacktestMarketSpecBinding, CCXT_MARKET_SPEC_VERSION,
+    DEFAULT_INSTRUMENT_SPEC_VERSION, PRODUCT_MARKET_SPEC_VERSION,
 };
 pub use spec::multi_market::{
     MultiMarketBacktestMarket, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
@@ -137,8 +147,9 @@ pub use spec::{
     MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
     MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
     PortfolioBacktestConfig, PortfolioStrategySpec, ProtectiveExitSpec, RiskParityAssetSpec,
-    RiskParityResult, RiskParitySpec, VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION,
+    RiskParityResult, RiskParitySpec, VerificationResult, ALGO_EXECUTION_PLAN_SCHEMA_VERSION,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
+    CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION, DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION,
     DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
     DEPTH_DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION, MAX_MULTI_ACCOUNT_RUNS,
     MAX_MULTI_MARKET_DEPTH_MARKETS, MIN_BACKTEST_BARS, MIN_MULTI_MARKET_DEPTH_MARKETS,
@@ -149,6 +160,10 @@ pub use spec::{
 pub use strategy_backtest_identity::{
     build_backtest_run_manifest, build_strategy_backtest_run_manifest, strategy_backtest_run_id,
     BacktestRunManifestInput, StrategyBacktestRunIdentityInput, StrategyBacktestRunManifestInput,
+};
+pub use strategy_backtest_workflow::{
+    run_and_persist_strategy_backtest, StrategyBacktestExecution, StrategyBacktestWorkflowInput,
+    StrategyBacktestWorkflowResult,
 };
 pub use strategy_catalog::{builtin_strategy_catalog, BuiltinStrategyInfo};
 pub use strategy_engine::{

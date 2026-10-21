@@ -240,7 +240,7 @@ impl SegmentedEventLogStore {
         manifest_path: PathBuf,
     ) -> Result<PathBuf, StorageError> {
         let sealed_segment_count = existing_event_count / self.max_events_per_segment;
-        let active_tail_index = (existing_event_count % self.max_events_per_segment != 0)
+        let active_tail_index = (!existing_event_count.is_multiple_of(self.max_events_per_segment))
             .then_some(sealed_segment_count);
 
         let segment_count = log.len().div_ceil(self.max_events_per_segment);

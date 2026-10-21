@@ -6,10 +6,7 @@
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
 //! `pub(crate) use ecosystem_smoke::*;` 再导出。
 
-use crate::{
-    bar_fill_model, default_execution_cost_binding, run_builtin_strategy_on_bars,
-    BarBacktestAssembly,
-};
+use crate::default_execution_cost_binding;
 use qx_core::{
     InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side, DEFAULT_SETTLEMENT_CURRENCY,
 };
@@ -17,12 +14,9 @@ use qx_guanxing::{Bar, DataSourceId, QuoteTick};
 use qx_provider::{
     DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass, ProviderResult,
 };
-use qx_strategy::{
-    BuiltinStrategyConfig, BuiltinStrategyKind, StrategyContext as NativeStrategyContext,
-};
+use qx_strategy::{BuiltinStrategyConfig, BuiltinStrategyKind};
 use qx_xingban::DeterministicRng;
 use qx_zhenlu::{PaperVenue, Venue, VenueEvent};
-use std::collections::BTreeMap;
 
 mod chain;
 mod provider_capability;
@@ -162,9 +156,8 @@ pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> O
 
 /// 合成行情 + **真实撮合内核**的双均线回测产物。
 ///
-/// 引擎与 `backtest builtin` 同源：装配走 `BarBacktestAssembly`（含 next-open 成交与
-/// maker/taker 2/5bp 费率），策略走内置 `sma_cross`。本文件不再自带第二套撮合循环
-/// （V10 §4.3 第 3 项）；只有输入序列是合成的。
+/// 引擎与 `backtest builtin` 同源：执行委托 qx-app 内置策略用例，配置 next-open 成交与
+/// maker/taker 2/5bp 费率，策略使用内置 `sma_cross`。本文件只生成合成输入。
 pub(crate) fn run_backtest(
     bars: &[Bar],
     seed: u64,
@@ -184,42 +177,51 @@ pub(crate) fn run_backtest(
         )
         .map_err(|error| format!("内置双均线参数无效: {error}"))?
     };
-    let context = NativeStrategyContext {
-        strategy_id: "cli-selfcheck-sma".into(),
-        strategy_version: format!("builtin-{}-v1", BuiltinStrategyKind::SmaCross.name()),
-        account_id: "main".into(),
-        venue_id: instrument.venue.to_string(),
-        data_fingerprint: format!("synthetic:{}", bars.len()),
-        as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
-        positions: BTreeMap::new(),
-        cash: BTreeMap::from([(
-            DEFAULT_SETTLEMENT_CURRENCY.into(),
-            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),
-        )]),
-        available_margin_raw: Some(
-            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),
-        ),
-        risk_state: "selfcheck".into(),
-    };
-    let report = run_builtin_strategy_on_bars(
-        // 自检不读运行时配置：它证明的是接线，口径固定为内核默认。
-        BarBacktestAssembly::new(
-            &instrument,
-            "main",
-            // 自检的账户尺度固定为回测的默认本金，与它不读运行时配置是同一条理由。
-            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH),
+    let initial_cash = Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH);
+    let costs = default_execution_cost_binding();
+    let strategy_spec = qx_app::BuiltinStrategySpec::from_strategy_config(&strategy_config)
+        .map_err(|error| format!("自检内置策略规格无效: {error}"))?;
+    let spec = qx_app::assemble_strategy_backtest_spec(
+        qx_app::BacktestDatasetInput {
+            run_id: "ecosystem-smoke".into(),
+            instrument: instrument.to_string(),
+            bars_path: "synthetic:ecosystem-smoke".into(),
+        },
+        strategy_spec,
+        qx_app::StrategyBacktestBindings {
+            settlement_currency: DEFAULT_SETTLEMENT_CURRENCY.into(),
+            initial_cash_raw: initial_cash.raw(),
             seed,
-            &default_execution_cost_binding(),
-            // 同上：撮合口径固定为内核默认，自检不替使用者选一个更乐观的成交价。
-            bar_fill_model(None, None)
-                .map_err(|error| format!("构造默认 Bar 撮合模型失败: {error}"))?,
-        )?
-        .into_config(),
-        strategy_config,
-        context,
+            output_dir: ".".into(),
+            account_id: "main".into(),
+            market_spec: None,
+            margin_model: None,
+            execution_cost_rules: Some(costs.rules.clone()),
+            ashare_rules: None,
+            risk_rules: None,
+            allow_short: false,
+            fill_model: qx_app::BacktestFillModel::NextBarOpen,
+            max_bar_volume_participation_bps: None,
+        },
+    );
+    let context = qx_app::RunContext::new(qx_app::CallerCapability::Research, "ecosystem-smoke")
+        .with_code_commit(crate::build_identity::BUILD_REVISION);
+    let outcome = qx_app::run_native_builtin_strategy_backtest_with_outcome(
+        &spec,
         bars,
+        strategy_config,
+        qx_app::NativeStrategyBacktestContextBindings {
+            account_id: "main".into(),
+            venue_id: instrument.venue.to_string(),
+            data_fingerprint: format!("synthetic:{}", bars.len()),
+            as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
+            settlement_currency: DEFAULT_SETTLEMENT_CURRENCY.into(),
+            initial_cash_raw: initial_cash.raw(),
+        },
+        &context,
     )
     .map_err(|error| format!("合成输入的真实内核回测失败: {error}"))?;
+    let report = outcome.report;
     Ok(Outcome {
         hash: report.result_hash(),
         n_fills: report.fills.len(),

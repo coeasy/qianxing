@@ -3,10 +3,20 @@
 use super::sink;
 use crate::artifact_store::persist_verified_run_record;
 use qx_core::{InstrumentId, Money};
+use qx_strategy::builtin_signal::BuiltinSignalProvenance;
+use qx_strategy::BuiltinStrategyConfig;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 7;
+
+#[derive(Clone, Debug)]
+pub struct PersistedBacktestArtifacts {
+    pub summary_path: PathBuf,
+    pub equity_path: PathBuf,
+    pub fills_path: PathBuf,
+    pub summary: serde_json::Value,
+}
 
 #[derive(Clone, Debug)]
 pub struct BacktestInputProvenance {
@@ -35,6 +45,37 @@ fn input_provenance_json(input: &BacktestInputProvenance) -> serde_json::Value {
 pub struct BacktestAccountBase {
     pub cash: Money,
     pub source: &'static str,
+}
+
+/// 本金来源标签的登记处（V11 Q72）："没配" 与 "配了同一个数" 必须分得开。
+///
+/// 自 WP-2 起定义在应用层：`account_base.source` 是 `&'static str`，而门面解析出的是
+/// 字符串——两条链各自写一份字面量，就会出现"同一份配置在 book 上标 X、在 builtin 上标 Y"。
+pub const BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE: &str = "builtin-default";
+pub const BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE: &str = "strategy-initial-cash";
+pub const BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE: &str = "account-registry";
+/// 第四格：回测侧那格声明同时被 paper 侧的 `worker.paper_initial_cash_raw` 确认过（V12 R3）。
+/// 它必须与"只有回测侧声明"分得开，否则读者看不出这份 runtime 的账户本金是被两处共用的。
+pub const BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE: &str =
+    "strategy-initial-cash+paper-worker-cash";
+/// 多腿链不用前四格：两条腿的本金各按本腿行情由 `multi_leg_leg_cash` 定资。
+pub const BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE: &str = "multi-leg-funding-rule";
+
+/// 把门面解析出的来源字符串折回登记过的静态标签；未登记的值一律回落 `builtin-default`。
+///
+/// 宁可在产物里少说一句，也不把没登记过的标签写进去——标签是给人读的闭集，不是自由文本。
+pub fn account_base_source_label(source: Option<&str>) -> &'static str {
+    match source {
+        Some(BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE) => BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE,
+        Some(BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE) => BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE,
+        Some(BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE) => {
+            BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE
+        }
+        Some(BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE) => {
+            BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE
+        }
+        _ => BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,6 +110,88 @@ pub struct BacktestSignalParams {
     /// 下单数量（定点 raw）：内置策略每条信号都下这个量，它是结果的一部分，不是配置的附属。
     /// stdout 那行印的是命令行上的人数（`quantity=100`），这里存的是同一数的 raw。
     pub quantity_raw: i128,
+}
+
+impl BacktestSignalParams {
+    /// Project one resolved native built-in configuration into its persisted signal contract.
+    pub fn from_builtin_config(
+        config: &BuiltinStrategyConfig,
+        provenance: &BuiltinSignalProvenance,
+    ) -> Self {
+        Self {
+            kind: config.kind.name(),
+            source: provenance.source,
+            knobs: provenance.knobs.clone(),
+            declared_unused: provenance.declared_unused.clone(),
+            fast_window: config.fast_window,
+            slow_window: config.slow_window,
+            period: config.period,
+            threshold_bps: config.threshold_bps,
+            quantity_raw: config.quantity.raw(),
+        }
+    }
+
+    /// Render the shared one-line signal provenance used by CLI entrypoints.
+    pub fn display_note(&self) -> String {
+        format!(
+            "source={} fast_window={} slow_window={} period={} threshold_bps={} \\
+             knobs={} declared_unused={}",
+            self.source,
+            self.fast_window,
+            self.slow_window,
+            self.period,
+            self.threshold_bps,
+            self.knobs,
+            self.declared_unused,
+        )
+    }
+}
+
+#[cfg(test)]
+mod signal_params_tests {
+    use super::BacktestSignalParams;
+    use qx_core::{InstrumentId, Quantity};
+    use qx_strategy::builtin_signal::{BuiltinSignalKnob, BuiltinSignalProvenance};
+    use qx_strategy::{BuiltinStrategyConfig, BuiltinStrategyKind};
+
+    #[test]
+    fn signal_params_keep_resolved_knobs_provenance_and_raw_quantity() {
+        let mut config = BuiltinStrategyConfig::new(
+            BuiltinStrategyKind::SmaCross,
+            "signal-params-test",
+            InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument"),
+            Quantity::from_i64(3),
+        )
+        .expect("valid strategy config");
+        config.fast_window = 7;
+        config.slow_window = 18;
+        let provenance =
+            BuiltinSignalProvenance::from_declared(config.kind, [BuiltinSignalKnob::FastWindow]);
+
+        let params = BacktestSignalParams::from_builtin_config(&config, &provenance);
+
+        assert_eq!(params.kind, "sma_cross");
+        assert_eq!(params.source, "config");
+        assert_eq!(params.knobs, "fast_window,slow_window");
+        assert_eq!(params.declared_unused, "none");
+        assert_eq!((params.fast_window, params.slow_window), (7, 18));
+        assert_eq!(params.quantity_raw, Quantity::from_i64(3).raw());
+        assert_eq!(
+            params.display_note(),
+            "source=config fast_window=7 slow_window=18 period=14 threshold_bps=100 \\
+             knobs=fast_window,slow_window declared_unused=none"
+        );
+    }
+}
+
+/// 同账户策略组合的成交归属：哪些策略占过槽、各自成交几笔。
+///
+/// 它只对组合链有意义，所以是可选块：非组合链不写这两个键（"没有的东西不占键"，
+/// 与 `fill_model` 同一条理由）。
+#[derive(Clone, Debug)]
+pub struct PortfolioFillAttribution {
+    pub strategy_ids: Vec<String>,
+    pub strategy_fills: std::collections::BTreeMap<String, u64>,
 }
 
 pub struct BacktestArtifacts<'a> {
@@ -140,6 +263,13 @@ pub struct BacktestArtifacts<'a> {
     pub signal: Option<BacktestSignalParams>,
     /// 已与本轮 BarFrame 身份、规范化内容摘要和样本范围核对的数据质量读面。
     pub dataset_quality: Option<&'a serde_json::Value>,
+    /// 本轮账簿的账户归属；`None` 表示该链沿用缺省账户，摘要不写这一格。
+    pub account_id: Option<&'a str>,
+    /// 同账户策略组合的成交归属；`None` 表示这不是组合链。
+    pub portfolio: Option<&'a PortfolioFillAttribution>,
+    /// 链级旧字段（深度链的既有消费方按顶层旧键读摘要）。已存在的统一字段优先，
+    /// 这里只补缺——统一字段与旧字段冲突时，统一口径赢，不让一份摘要同时说两种话。
+    pub summary_extra: Option<&'a serde_json::Value>,
 }
 
 fn compute_risk_ratios(
@@ -177,6 +307,18 @@ pub fn persist_backtest_artifacts(
     manifest_path: &Path,
     input: &BacktestArtifacts<'_>,
 ) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let persisted = persist_backtest_artifacts_with_summary(manifest_path, input)?;
+    Ok((
+        persisted.summary_path,
+        persisted.equity_path,
+        persisted.fills_path,
+    ))
+}
+
+pub fn persist_backtest_artifacts_with_summary(
+    manifest_path: &Path,
+    input: &BacktestArtifacts<'_>,
+) -> Result<PersistedBacktestArtifacts, String> {
     let manifest_stem = manifest_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -285,6 +427,13 @@ pub fn persist_backtest_artifacts(
     if let Some(dataset_quality) = input.dataset_quality {
         summary["dataset_quality"] = dataset_quality.clone();
     }
+    if let Some(account_id) = input.account_id {
+        summary["account_id"] = serde_json::json!(account_id);
+    }
+    if let Some(portfolio) = input.portfolio {
+        summary["strategy_ids"] = serde_json::json!(portfolio.strategy_ids);
+        summary["strategy_fills"] = serde_json::json!(portfolio.strategy_fills);
+    }
     if let Some(path) = input.runtime_config_path {
         summary["runtime_config"] = serde_json::json!(path.to_string_lossy());
     }
@@ -327,6 +476,19 @@ pub fn persist_backtest_artifacts(
             "threshold_bps": signal.threshold_bps.to_string(),
             "quantity_raw": signal.quantity_raw.to_string(),
         });
+    }
+    // 链级旧字段的落点：统一摘要之外的消费方按顶层旧键读同一份摘要（深度链的
+    // `run_id` / `tier` / `equity_points` / `ledger_entries` 等）。它们在这里并入，而不是事后回写——
+    // `RunRecord` 按当时落盘的字节给摘要算摘要，先写后补等于让 record 记住一份从未存在的摘要，
+    // 报告侧回读就成了自证失败的假阴性。已存在的键一律让位给上面的统一字段。
+    if let Some(extra) = input.summary_extra.as_ref() {
+        if let (Some(object), Some(fields)) = (summary.as_object_mut(), extra.as_object()) {
+            for (key, value) in fields {
+                if !object.contains_key(key) {
+                    object.insert(key.clone(), value.clone());
+                }
+            }
+        }
     }
     let summary_payload = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("编码回测摘要失败: {error}"))?;
@@ -372,5 +534,10 @@ pub fn persist_backtest_artifacts(
     }
     write_backtest_artifact(&fills_path, &fills_payload, "成交明细")?;
     persist_verified_run_record(manifest_path, &summary_path, &equity_path, &fills_path)?;
-    Ok((summary_path, equity_path, fills_path))
+    Ok(PersistedBacktestArtifacts {
+        summary_path,
+        equity_path,
+        fills_path,
+        summary,
+    })
 }

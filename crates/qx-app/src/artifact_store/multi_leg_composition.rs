@@ -32,7 +32,7 @@ pub struct MultiLegCompositionArtifactInput<'a> {
 /// Bind two replay-verified leg results and persist their composition summary and CSV projections.
 pub fn persist_multi_leg_composition_artifacts(
     input: MultiLegCompositionArtifactInput<'_>,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, serde_json::Value), String> {
     let MultiLegCompositionArtifactInput {
         root,
         config_fingerprint,
@@ -246,6 +246,8 @@ pub fn persist_multi_leg_composition_artifacts(
     });
     let summary_payload = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("编码组合级回测摘要失败: {error}"))?;
+    let persisted_summary: serde_json::Value = serde_json::from_str(&summary_payload)
+        .map_err(|error| format!("组合级回测摘要序列化后读回失败: {error}"))?;
     write_backtest_artifact(&summary_path, &summary_payload, "组合级回测摘要")?;
 
     let mut equity_payload = String::from("index,ts,primary_equity_raw,reference_equity_raw\n");
@@ -290,5 +292,5 @@ pub fn persist_multi_leg_composition_artifacts(
     }
     write_backtest_artifact(&fills_path, &fills_payload, "组合级成交明细")?;
     persist_verified_run_record(&manifest_path, &summary_path, &equity_path, &fills_path)?;
-    Ok(summary_path)
+    Ok((summary_path, persisted_summary))
 }

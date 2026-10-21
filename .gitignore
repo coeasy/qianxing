@@ -15,6 +15,17 @@ __pycache__/
 python/build/
 python/qianxing_bridge/_qianxing_native*
 python/**/*.egg-info/
+# maturin develop 的本地临时目录与 uv 缓存：构建副产物，不是仓库资产
+python/.tmp/
+python/.uv-cache/
+# 仓库内隔离的 Cargo TEMP/TMP 和验收运行临时输出；保留本机文件，不作为仓库内容
+/.tmp-test/
+# deploy runtime store 的新生成回测与行情快照；已有跟踪的基线工件不受影响
+/deploy/data/*/runs/
+/deploy/data/*/runtime-snapshots/
+# CLI 默认 runtime store 中新生成的回测结果与 Paper 队列；既有跟踪的基线工件继续保留
+/crates/qx-cli/data/*/runs/
+/crates/qx-cli/data/qianxing-paper/job-queue/
 
 # 本机测试期副产物：某依赖把 Windows Shell 缓存目录按未展开的 %SystemDrive% 当作相对路径创建
 '%SystemDrive%/'

@@ -594,13 +594,23 @@ def build_dataset_bundle_manifest(
             "end_timestamp": _manifest_timestamp_ms(calendar.trading_days[-1]),
             "row_count": len(calendar.trading_days),
         }
-    return {
-        "bundle_id": bundle_id,
-        "version": version,
-        "source": source,
-        "schema_version": ASHARE_SCHEMA_VERSION,
-        "components": components,
-    }
+    return json.loads(
+        native.app_assemble_dataset_bundle(
+            json.dumps(
+                {
+                    "bundle_id": bundle_id,
+                    "version": version,
+                    "source": source,
+                    "components": [
+                        {"kind": kind, **component}
+                        for kind, component in components.items()
+                    ],
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    )
 
 
 @dataclass(frozen=True)

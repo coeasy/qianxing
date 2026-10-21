@@ -7,7 +7,7 @@ use qx_core::{
     Event, EventKind, EventLog, Fnv1a, Ledger, OrderStatus, Price, Priority, ReplayVerifier,
     TradingInstrumentSpec, ValuationContext,
 };
-use qx_risk::OrderRiskPosition;
+use qx_risk::{OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
 
 use crate::orderbook_strategies::OrderBookStrategy;
@@ -52,6 +52,18 @@ fn book_notional(
     match spec {
         Some(spec) => spec.notional(qty, price),
         None => Ok(qx_core::fee::notional(qty, price)),
+    }
+}
+
+fn reference_price(snapshot: &OrderBookSnapshot) -> Option<Price> {
+    match (
+        snapshot.bids.first().map(|level| level.price),
+        snapshot.asks.first().map(|level| level.price),
+    ) {
+        (Some(bid), Some(ask)) => Some(Price::from_raw(bid.raw().saturating_add(ask.raw()) / 2)),
+        (Some(bid), None) => Some(bid),
+        (None, Some(ask)) => Some(ask),
+        (None, None) => None,
     }
 }
 
@@ -310,13 +322,16 @@ impl OrderBookBacktestEngine {
                     );
                 }
                 let cash = ledger.cash_balances_for_ref(&account_id);
-                let margin = margin::settled_cash_margin(
-                    instrument_spec
-                        .as_ref()
-                        .is_some_and(|spec| spec.product.supports_leverage()),
+                let margin = margin::strategy_available_margin_raw(
+                    instrument_spec.as_ref(),
+                    reference_price(snapshot),
                     ledger.cash_for(&account_id, &currency),
-                );
-                strategy.update_account_state(&cash, margin);
+                    fee_bps,
+                    &ledger,
+                    &account_id,
+                    &oms.all_orders(),
+                )?;
+                strategy.update_account_state(cash, margin);
                 strategy.on_fill(&order, &fill)?;
                 fills.push(fill);
             }
@@ -332,25 +347,19 @@ impl OrderBookBacktestEngine {
             }
 
             let position = ledger.position_for(&account_id, &instrument).quantity.raw();
-            let available_margin_raw = margin::settled_cash_margin(
-                instrument_spec
-                    .as_ref()
-                    .is_some_and(|spec| spec.product.supports_leverage()),
+            let current_reference_price = reference_price(snapshot);
+            let available_margin_raw = margin::strategy_available_margin_raw(
+                instrument_spec.as_ref(),
+                current_reference_price,
                 ledger.cash_for(&account_id, &currency),
-            );
+                fee_bps,
+                &ledger,
+                &account_id,
+                &oms.all_orders(),
+            )?;
             let cash = ledger.cash_balances_for_ref(&account_id);
             strategy.update_account_state(cash, available_margin_raw);
-            let reference_price = match (
-                snapshot.bids.first().map(|level| level.price),
-                snapshot.asks.first().map(|level| level.price),
-            ) {
-                (Some(bid), Some(ask)) => {
-                    Some(Price::from_raw(bid.raw().saturating_add(ask.raw()) / 2))
-                }
-                (Some(bid), None) => Some(bid),
-                (None, Some(ask)) => Some(ask),
-                (None, None) => None,
-            };
+            let reference_price = current_reference_price;
             let open_order_ids = oms.active_order_ids();
             let open_order_set = open_order_ids
                 .iter()
@@ -440,23 +449,6 @@ impl OrderBookBacktestEngine {
                         reference_price,
                     },
                 )?;
-                if let Err(error) = risk.check_with_spec(
-                    &order,
-                    &position_snapshot,
-                    reference_price,
-                    instrument_spec.as_ref(),
-                ) {
-                    append_event(
-                        &mut log,
-                        snapshot.ts,
-                        Priority::COMMAND,
-                        EventKind::Rejected {
-                            client_order_id: order.client_id,
-                            reason: error.to_string(),
-                        },
-                    );
-                    continue;
-                }
                 let accepted_reservation = match funding::preflight_order(
                     &order,
                     policy,
@@ -490,6 +482,87 @@ impl OrderBookBacktestEngine {
                         continue;
                     }
                 };
+                let (projected_initial_margin_raw, projected_fee_reserve_raw) =
+                    match (instrument_spec.as_ref(), reference_price) {
+                        (Some(spec), Some(price)) if spec.product.supports_leverage() => {
+                            let (margin, fees) = funding::projected_margin_and_fees_raw(
+                                &order,
+                                policy,
+                                spec,
+                                price,
+                                fee_bps,
+                                &ledger,
+                                &account_id,
+                                &oms.all_orders(),
+                            )?;
+                            (Some(margin), fees)
+                        }
+                        (Some(spec), None) if spec.product.supports_leverage() => {
+                            append_event(
+                                &mut log,
+                                snapshot.ts,
+                                Priority::COMMAND,
+                                EventKind::Rejected {
+                                    client_order_id: order.client_id,
+                                    reason: "衍生品组合保证金计算缺少参考价".into(),
+                                },
+                            );
+                            continue;
+                        }
+                        _ => (None, 0),
+                    };
+                let available_margin_raw = if instrument_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.product.supports_leverage())
+                {
+                    let Some(price) = reference_price else {
+                        append_event(
+                            &mut log,
+                            snapshot.ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: order.client_id,
+                                reason: "衍生品组合保证金计算缺少参考价".into(),
+                            },
+                        );
+                        continue;
+                    };
+                    let marks = BTreeMap::from([(instrument.clone(), price)]);
+                    let valuation = ValuationContext::spot(&account_id, &marks, &currency)
+                        .with_spec(instrument_spec.as_ref());
+                    Some(
+                        ledger
+                            .valuate(&valuation)?
+                            .equity
+                            .raw()
+                            .checked_sub(projected_fee_reserve_raw)
+                            .ok_or_else(|| {
+                                qx_core::QxError::Invariant("订单簿投影费用超过标记权益".into())
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                let risk_context = OrderRiskContext {
+                    available_margin_raw,
+                    projected_initial_margin_raw,
+                    reference_price,
+                    instrument_spec: instrument_spec.clone(),
+                    position: position_snapshot,
+                    ..OrderRiskContext::default()
+                };
+                if let Err(error) = risk.check_with_context(&order, &risk_context) {
+                    append_event(
+                        &mut log,
+                        snapshot.ts,
+                        Priority::COMMAND,
+                        EventKind::Rejected {
+                            client_order_id: order.client_id,
+                            reason: error.to_string(),
+                        },
+                    );
+                    continue;
+                }
                 let budget_price = order.limit.or(reference_price);
                 if let Some(price) = budget_price {
                     if let Err(error) =

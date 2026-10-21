@@ -74,6 +74,72 @@ struct FakeRpc {
     calls: Vec<Value>,
 }
 
+struct CancelledRpc;
+
+impl CcxtRpc for CancelledRpc {
+    fn call(&mut self, _: Value) -> Result<Value, String> {
+        panic!("cancelled RPC must not fall back to a blocking call")
+    }
+
+    fn call_cancellable(
+        &mut self,
+        _: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        assert!(should_cancel());
+        Ok(CcxtCallOutcome::Cancelled)
+    }
+}
+
+#[test]
+fn ccxt_venue_propagates_cancellation_without_reconcile_or_retry() {
+    let mut venue = CcxtProcessVenue::new("okx", Box::new(CancelledRpc));
+    let mut cancel = || true;
+    let result = venue
+        .stream_call_cancellable(json!({"op": "watch_orders"}), &mut cancel)
+        .expect("cancellation is a graceful stream outcome");
+    assert_eq!(result, CcxtCallOutcome::Cancelled);
+}
+
+#[test]
+fn ccxt_process_client_cancels_a_child_waiting_for_an_rpc_response() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let child = Command::new(python)
+        .args([
+            "-u",
+            "-c",
+            "import sys,time; sys.stdin.readline(); time.sleep(60)",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Python is required by the workspace test environment");
+    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-cancel-fixture")
+        .expect("piped child attaches to the bounded RPC bridge");
+    let started = Instant::now();
+    let outcome = client
+        .call_cancellable(json!({"op": "wait"}), || {
+            started.elapsed() >= Duration::from_millis(100)
+        })
+        .expect("shutdown cancellation is not an RPC error");
+    assert_eq!(outcome, CcxtCallOutcome::Cancelled);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "shutdown must interrupt a response wait instead of waiting for timeout: {:?}",
+        started.elapsed()
+    );
+}
+
 impl CcxtRpc for FakeRpc {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         self.calls.push(request.clone());

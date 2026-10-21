@@ -1,4 +1,4 @@
-//! `data-validate` 的参数契约，与顶层命令表分开以遵守 cli_args.rs 行数棘轮。
+//! `data-validate` 的参数契约，与顶层命令表分开组织。
 
 use clap::Args;
 use std::path::PathBuf;

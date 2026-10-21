@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-qx-core = { path = "../qx-core" }
-qx-runtime = { path = "../qx-runtime" }
-qx-strategy = { path = "../qx-strategy" }
-qx-process-io = { path = "../qx-process-io" }
+qx-core = { version = "0.2.0", path = "../qx-core" }
+qx-runtime = { version = "0.2.0", path = "../qx-runtime" }
+qx-strategy = { version = "0.2.0", path = "../qx-strategy" }
+qx-process-io = { version = "0.2.0", path = "../qx-process-io" }

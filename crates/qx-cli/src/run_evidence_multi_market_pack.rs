@@ -392,7 +392,7 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
             .and_then(|name| name.strip_suffix(".multi-market.json"))
             .ok_or_else(|| format!("多市场产物文件名无效: {}", artifact_path.display()))?
     ));
-    crate::backtests::write_backtest_artifact(&output_path, &payload, "EvidenceBundle")?;
+    qx_app::artifact_store::write_backtest_artifact(&output_path, &payload, "EvidenceBundle")?;
     Ok(output_path)
 }
 

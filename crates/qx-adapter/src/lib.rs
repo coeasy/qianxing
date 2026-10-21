@@ -27,7 +27,8 @@ pub use binance::{
     BinanceStreamRunReport, BinanceUserStreamRunConfig, BinanceUserStreamSession,
 };
 pub use ccxt::{
-    ccxt_idle_window_ms, CcxtBarDataProvider, CcxtProcessClient, CcxtProcessVenue, CcxtRpc,
+    ccxt_idle_window_ms, CcxtBarDataProvider, CcxtCallOutcome, CcxtProcessClient, CcxtProcessVenue,
+    CcxtRpc,
 };
 pub use io_budget::write_all_within;
 #[derive(Clone, PartialEq, Eq, Debug)]

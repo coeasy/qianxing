@@ -56,6 +56,7 @@ fn scoped_service() -> ApiService {
             ts: id * 10,
             multiplier: 1,
             position_side: None,
+            leverage: None,
         }
     };
     let report = |worker_id: &str, account_id: &str, venue_id: &str| ReconcileReportSnapshot {

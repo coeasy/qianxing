@@ -397,6 +397,102 @@ fn ledger_valuate_uses_the_contract_spec_ruler_without_fx() {
     assert_eq!(ledger.valuate(&context).unwrap().equity.raw(), expected);
 }
 
+#[test]
+fn paper_valuation_uses_persisted_blended_position_leverage_and_fails_closed_when_unknown() {
+    let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
+    let spec = perpetual_spec(&instrument);
+    let specs = BTreeMap::from([(instrument.clone(), spec.clone())]);
+    let marks = BTreeMap::from([(instrument.clone(), Price::from_i64(100))]);
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_i64(1000), 1)
+        .unwrap();
+
+    for (client_id, leverage) in [(1, 10), (2, 20)] {
+        let order = Order {
+            client_id,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::Accepted,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                margin_mode: MarginMode::Cross,
+                position_mode: PositionMode::OneWay,
+                position_side: PositionSide::Net,
+                leverage,
+                ..OrderPolicy::default()
+            }),
+        };
+        ledger
+            .apply_fill_with_spec(
+                &order,
+                &Fill {
+                    order_id: client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ts: client_id,
+                    ..Fill::default()
+                },
+                "USDT",
+                &spec,
+            )
+            .unwrap();
+    }
+
+    let fx_rates = BTreeMap::new();
+    let paper = PaperValuationContext::new("main", &marks, "USDT", &specs, &fx_rates);
+    let result = ledger.valuate_paper(&paper).unwrap();
+    assert_eq!(result.initial_margin.raw(), Money::from_i64(15).raw());
+    assert_eq!(result.available.raw(), Money::from_i64(985).raw());
+
+    let mut replayed = Ledger::new();
+    for entry in ledger.entries().iter().cloned() {
+        replayed.apply_entry(entry).unwrap();
+    }
+    assert_eq!(
+        replayed.position_for("main", &instrument),
+        ledger.position_for("main", &instrument)
+    );
+    assert_eq!(replayed.valuate_paper(&paper).unwrap(), result);
+
+    let legacy_order = Order {
+        client_id: 3,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_i64(1),
+        limit: None,
+        status: OrderStatus::Accepted,
+        filled: Quantity::ZERO,
+        account_id: "legacy".into(),
+        trace: None,
+        policy: None,
+    };
+    let mut legacy = Ledger::new();
+    legacy
+        .apply_fill(
+            &legacy_order,
+            &Fill {
+                order_id: 3,
+                qty: Quantity::from_i64(1),
+                price: Price::from_i64(100),
+                ts: 3,
+                ..Fill::default()
+            },
+            "USDT",
+        )
+        .unwrap();
+    let legacy_paper = PaperValuationContext::new("legacy", &marks, "USDT", &specs, &fx_rates);
+    assert!(legacy
+        .valuate_paper(&legacy_paper)
+        .unwrap_err()
+        .to_string()
+        .contains("缺少可回放的开仓杠杆"));
+}
+
 /// 有杠杆规格 + 有汇率：必须切到跨币种尺子，而不是继续用合约规格尺子。
 #[test]
 fn ledger_valuate_switches_to_the_fx_ruler_only_when_rates_are_given() {

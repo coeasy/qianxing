@@ -11,8 +11,7 @@ use crate::cli_args::{BacktestCommand, Command};
 
 /// 每条命令输出前的统一横幅。
 ///
-/// V12 R4-e 从 `cli.rs` 搬进来：派发模块的行数预算是硬顶，而横幅与帮助同属"打印给人
-/// 看的入口口径"，放在这里比在 cli.rs 里挤一行更名副其实。
+/// V12 R4-e 从 `cli.rs` 搬进来：横幅与帮助同属"打印给人看的入口口径"，放在这里更名副其实。
 pub(crate) fn print_banner() {
     println!("牵星 Qianxing — 分级校准，量天定位\n");
 }

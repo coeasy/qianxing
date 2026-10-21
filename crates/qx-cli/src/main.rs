@@ -6,15 +6,17 @@
 //! 3. 决策只用 as_of(ts) 之前的数据（无前视偏差）
 
 use qx_adapter::{
-    AdapterReconcileIssue, BinanceQuotePoll, BinanceSpotAuth, BinanceSpotCredentials,
-    BinanceSpotMarketData, BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
-    BinanceUserStreamRunConfig, CcxtBarDataProvider, CcxtProcessClient, CcxtProcessVenue, CcxtRpc,
+    BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotVenue,
     HttpTransport, TlsHttpTransport,
 };
+#[cfg(test)]
 use qx_api::ReconcileReportSnapshot;
-use qx_control::{order_from_submit_command, CommandKind, ControlCommand, Permission};
+#[cfg(test)]
+use qx_control::CommandKind;
+use qx_control::{order_from_submit_command, ControlCommand, Permission};
 #[allow(unused_imports)]
 use qx_core::AccountPositionSnapshot;
+#[allow(unused_imports)]
 use qx_core::{
     AccountBalance, AccountCashflow, CashflowKind, EventKind, InstrumentId, Ledger, Money, Order,
     Price, Quantity, RunManifest, TradingInstrumentSpec, TradingProduct, VenueFamily,
@@ -22,33 +24,40 @@ use qx_core::{
 };
 use qx_data::JsonDatasetRegistry;
 use qx_datastruct::BarFrame;
-use qx_execution::{
-    execute_paper_submit_effect, ingest_venue_events, ingest_venue_events_with_spec,
-    submit_order_with_risk as execute_submit_order_with_risk, EventLogReconcilePort,
-    RiskExecutionContext, VenuePortAdapter,
-};
+#[cfg(test)]
+use qx_execution::execute_paper_submit_effect;
 use qx_guanxing::{Bar, QuoteTick};
-use qx_provider::{DataKind, DataProvider, ProviderCapability, ProviderRegistry};
+#[cfg(test)]
 use qx_risk::OrderRiskPosition;
+#[cfg(test)]
+use qx_runtime::RuntimeBalanceDiscrepancy;
+#[cfg(test)]
+use qx_runtime::RuntimeSupervisor;
+#[cfg(test)]
+use qx_runtime::{LiveEventPipeline, RuntimeExternalEvent};
 use qx_runtime::{
-    ApiDataProviderAdapterConfig, ApiDataProviderRuntimeConfig, LiveEventPipeline, OutboxRecovery,
-    RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent,
-    RuntimeSupervisor, StrategyContractIntent, StrategyContractOutput, WorkerConfig, WorkerRole,
+    OutboxRecovery, RuntimeConfig, RuntimeEventEnvelope, StrategyContractIntent,
+    StrategyContractOutput, WorkerConfig, WorkerRole,
 };
 use qx_scheduler::{claimable_by, utc_schedule_tick};
-use qx_storage::{ControlCommandQueue, ControlCommandQueueBackend, JsonStateStore, StorageError};
-use qx_strategy::{
-    BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind,
-    StrategyContext as NativeStrategyContext,
-};
-use qx_xingban::{
-    BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, LatencyModel, MarginRule,
-    NativeBarStrategy, NoMargin, RunManifestIdentity, VirtualTradingConfig,
-};
-use qx_zhenlu::{
-    FileSpreadOrderGroupStore, PaperVenue, RiskContext, RiskGate, SpreadOrderGroupStore, Venue,
-    VenueEvent,
-};
+#[cfg(test)]
+use qx_storage::JsonStateStore;
+#[cfg(test)]
+use qx_storage::StorageError;
+use qx_storage::{ControlCommandQueue, ControlCommandQueueBackend};
+#[cfg(test)]
+use qx_strategy::BuiltinStrategyConfig;
+use qx_strategy::BuiltinStrategyKind;
+#[cfg(test)]
+use qx_xingban::{MarginRule, NoMargin};
+#[cfg(test)]
+use qx_zhenlu::FileSpreadOrderGroupStore;
+#[cfg(test)]
+use qx_zhenlu::RiskContext;
+#[cfg(test)]
+use qx_zhenlu::RiskGate;
+#[cfg(test)]
+use qx_zhenlu::SpreadOrderGroupStore;
 mod api_algo_execution;
 mod api_service;
 mod app_args;
@@ -85,7 +94,6 @@ mod multi_leg;
 mod native_trust;
 mod panic_boundary;
 mod path_resolution;
-mod pipeline_metrics_report;
 mod plan_args;
 mod plan_commands;
 mod project_manifest;
@@ -156,12 +164,18 @@ pub(crate) use market_spec::*;
 pub(crate) use multi_leg::*;
 pub(crate) use panic_boundary::*;
 pub(crate) use path_resolution::*;
-pub(crate) use pipeline_metrics_report::*;
 pub(crate) use plan_commands::*;
 #[cfg(test)]
 pub(crate) use qx_runtime::{
     read_capped_worker_line, record_stderr_tail, stderr_tail_note, STDERR_TAIL_LINES,
     STDERR_TAIL_MAX_CHARS,
+};
+pub(crate) use qx_service::pipeline_metrics_report::PipelineMetricsReporter;
+#[cfg(test)]
+pub(crate) use qx_service::risk_host::LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS;
+pub(crate) use qx_service::worker_market_spec::{
+    load_worker_market_spec_for_instrument, validate_configured_market_specs,
+    validate_worker_market_specs, worker_market_spec_failures,
 };
 pub(crate) use readiness::*;
 pub(crate) use report_command::*;
@@ -187,16 +201,17 @@ pub(crate) use venue_runtime::*;
 pub(crate) use worker_entry::*;
 #[allow(unused_imports)]
 pub(crate) use worker_runtime::*;
+#[allow(unused_imports)] // 默认特性下 join 只由 NATS event pipeline 使用
 pub(crate) use worker_shutdown::*;
 
 use data_validate::{validate_dataset, validate_depth_dataset};
-use dataset_commands::{
-    run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,
-    verify_dataset_bundle_component_bindings,
-};
-use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use dataset_commands::verify_dataset_bundle_binding;
+use dataset_commands::{run_dataset_bundle, run_dataset_ingest};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
 use std::thread;
 use std::time::Duration;
 use workers::{run_scheduler_worker, run_strategy_worker};

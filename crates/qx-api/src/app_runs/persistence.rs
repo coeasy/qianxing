@@ -271,10 +271,14 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "qx-api-run-registry-{label}-{}-{nonce}",
-            std::process::id()
-        ))
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("target/qx-api-test-tmp")
+            .join(format!(
+                "qx-api-run-registry-{label}-{}-{nonce}",
+                std::process::id()
+            ))
     }
 
     #[test]

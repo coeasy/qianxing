@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/dataset-spec-v1.json",
+  "title": "Qianxing DatasetSpec v1",
+  "description": "qx-app validate_dataset 的严格输入契约。字段和 wire 名称与 Rust DatasetSpec、Python SDK DatasetSpec 对齐。",
+  "type": "object",
+  "required": ["schema_version", "dataset_id", "bars_path"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "bars_path": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"}
+  },
+  "additionalProperties": false
+}

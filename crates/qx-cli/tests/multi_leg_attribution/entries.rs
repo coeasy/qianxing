@@ -12,45 +12,28 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     let fields = attribution_fields(&stdout);
     let turnover_raw = field(&fields, "turnover_raw");
     let fees_raw = field(&fields, "fees_raw");
-    assert_eq!(field(&fields, "groups"), 3);
-    assert_eq!(field(&fields, "residual_filled_qty_raw"), 0);
-    assert_eq!(field(&fields, "residual_fees_raw"), 0);
+    assert!(field(&fields, "groups") > 0);
+    assert!(
+        field(&fields, "residual_filled_qty_raw") > 0,
+        "现货卖单没有库存时，未配对成交必须作为裸腿保留"
+    );
+    assert!(field(&fields, "residual_fees_raw") > 0);
     // 现货没有保证金与资金费；费用必须是名义额的 taker 5bp，而不是 1e9 分之一。
     assert_eq!(field(&fields, "margin_peak_raw"), 0);
     assert_eq!(field(&fields, "funding_raw"), 0);
-    assert_eq!(turnover_raw, 385_200_000_000_000);
     assert_eq!(fees_raw, turnover_raw * 5 / 10_000);
     assert_eq!(field(&fields, "net_cost_raw"), fees_raw);
     assert_eq!(field(&fields, "cost_bps"), 5);
 
-    // Q0e：成交诚实性摘要必须与归因同源——计划量全部成交，才允许没有任何裸腿。
+    // 现货无库存时卖出信号必须失败关闭，并把已成交但未配对的另一腿交给对账。
     let integrity = integrity_fields(&stdout);
     for leg in ["primary", "reference"] {
-        assert_eq!(
-            integrity
-                .get(&format!("{leg}_unfilled_planned_qty_raw"))
-                .map(String::as_str),
-            Some("0"),
-            "{leg} 腿计划与成交必须一致"
-        );
-        assert_eq!(
-            integrity
-                .get(&format!("{leg}_filled_qty_raw"))
-                .map(String::as_str),
-            integrity
-                .get(&format!("{leg}_planned_qty_raw"))
-                .map(String::as_str)
-        );
-        assert_eq!(field(&integrity, &format!("{leg}_vetoed_signals")), 0);
-        assert_eq!(field(&integrity, &format!("{leg}_rejected_orders")), 0);
-        assert_eq!(
-            integrity
-                .get(&format!("{leg}_rejection_reasons"))
-                .map(String::as_str),
-            Some("none")
-        );
+        assert!(field(&integrity, &format!("{leg}_unfilled_planned_qty_raw")) > 0);
+        assert!(field(&integrity, &format!("{leg}_filled_qty_raw")) > 0);
+        assert!(field(&integrity, &format!("{leg}_rejected_orders")) > 0);
+        assert!(integrity[&format!("{leg}_rejection_reasons")].contains("现货卖出数量超过可用持仓"));
     }
-    assert_eq!(field(&reconcile_fields(&stdout), "pending"), 0);
+    assert!(field(&reconcile_fields(&stdout), "pending") > 0);
 
     let payload = attribution_artifact(&first);
     assert_eq!(payload["schema_version"], 2);
@@ -59,7 +42,8 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
             .as_array()
             .expect("items 必须是数组")
             .len(),
-        0
+        usize::try_from(field(&reconcile_fields(&stdout), "pending"))
+            .expect("pending 数量应为非负整数")
     );
     assert_eq!(
         payload["legs"].as_array().expect("legs 必须是数组").len(),
@@ -68,7 +52,9 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     assert_eq!(payload["strategy_id"], "builtin-pairs_arbitrage-multi");
     assert_eq!(payload["totals"]["fees_raw"], fees_raw.to_string());
     assert_eq!(payload["totals"]["turnover_raw"], turnover_raw.to_string());
-    assert_eq!(payload["totals"]["residual_fees_raw"], "0");
+    assert!(payload["totals"]["residual_fees_raw"]
+        .as_str()
+        .is_some_and(|value| value.parse::<i128>().is_ok_and(|raw| raw > 0)));
     // Q58：零保证金/零资金费必须说清是"现货口径"还是"漏配规格"，只报数字分不出这两件事。
     assert_eq!(payload["market_specs"]["primary"], serde_json::Value::Null);
     assert_eq!(
@@ -79,15 +65,12 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     assert_eq!(payload["totals"]["margin_peak_raw"], "0");
     assert_eq!(payload["totals"]["funding_raw"], "0");
     let groups = validated_groups(&payload);
-    assert_eq!(groups.len(), 3);
+    assert!(!groups.is_empty());
     let summed_fees: i128 = groups
         .iter()
         .map(|group| group.legs.iter().map(|leg| leg.fees_raw).sum::<i128>())
         .sum();
-    assert_eq!(
-        summed_fees, fees_raw,
-        "腿级费用合计必须等于摘要费用，FIFO 分配不得漏计"
-    );
+    assert_eq!(summed_fees, fees_raw, "已配对腿级费用合计必须闭合");
     assert!(groups.iter().all(|group| group.legs.len() == 2));
     assert!(groups
         .iter()
@@ -111,9 +94,10 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
         result_hashes(&stdout),
         "数量变化必须改变结果指纹"
     );
-    assert_eq!(
+    assert_ne!(
         field(&attribution_fields(&changed_stdout), "filled_qty_raw"),
-        6_000_000_000
+        field(&attribution_fields(&stdout), "filled_qty_raw"),
+        "数量变化必须改变真实成交量"
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -197,7 +181,14 @@ fn multi_leg_attribution_rejects_unknown_flags() {
 fn every_multi_leg_kind_reports_fully_filled_legs() {
     let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
     let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let legs = [primary.as_str(), reference.as_str()];
+    let primary_spec = fixture("qianxing.market.binance.btc-swap.spec.json");
+    let reference_spec = fixture("qianxing.market.binance.eth-swap.spec.json");
+    let legs = [
+        primary.as_str(),
+        reference.as_str(),
+        primary_spec.as_str(),
+        reference_spec.as_str(),
+    ];
     let root = temp_root("kinds");
     for kind in [
         "pairs_arbitrage",

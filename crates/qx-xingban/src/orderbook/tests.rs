@@ -222,17 +222,17 @@ fn fifo_volume_estimate_advances_queue_before_filling_passive_limit() {
         },
         ..book()
     };
-    assert!(engine.on_snapshot(&snapshot(10, 1, 4)).unwrap().is_empty());
+    assert!(engine.on_snapshot(&snapshot(10, 1, 8)).unwrap().is_empty());
     assert!(legacy_engine
         .on_snapshot(&snapshot(10, 1, 4))
         .unwrap()
         .is_empty());
-    assert!(engine.on_snapshot(&snapshot(11, 2, 2)).unwrap().is_empty());
+    assert!(engine.on_snapshot(&snapshot(11, 2, 4)).unwrap().is_empty());
     assert!(legacy_engine
         .on_snapshot(&snapshot(11, 2, 2))
         .unwrap()
         .is_empty());
-    let fills = engine.on_snapshot(&snapshot(12, 3, 0)).unwrap();
+    let fills = engine.on_snapshot(&snapshot(12, 3, 2)).unwrap();
     assert!(legacy_engine
         .on_snapshot(&snapshot(12, 3, 0))
         .unwrap()

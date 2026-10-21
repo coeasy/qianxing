@@ -1,6 +1,5 @@
 // qx-cli 的行为用例按主题分文件放在这里（Phase 4o 从单文件 `tests_main.rs` 拆出）。
-// 与 `venue_runtime/`、`ledger/` 同一先例：目录模块让每个文件留在 500 行门槛内，
-// 于是不必为测试代码单独登记行数预算。共享夹具集中在本文件，主题文件只写用例。
+// 与 `venue_runtime/`、`ledger/` 同一先例：按主题组织测试；共享夹具集中在本文件。
 use super::*;
 mod imports;
 pub(crate) use imports::*;
@@ -436,6 +435,7 @@ mod event_log_face_wiring;
 mod execution_and_multi_leg;
 mod grafana_dashboard_metrics;
 mod lease_clock_domain;
+mod live_pending_order_reservation;
 mod live_submit_fail_closed;
 mod market_spec_single_source;
 mod multi_builtin_parity;
@@ -461,6 +461,7 @@ mod risk_port_channel;
 mod run_entry_argument_honesty;
 mod run_evidence;
 mod runtime_api_worker_identity;
+mod runtime_market_spec_preflight;
 mod scheduler_dispatch_support;
 mod scheduler_owner_routing;
 mod settlement_currency_caliper;

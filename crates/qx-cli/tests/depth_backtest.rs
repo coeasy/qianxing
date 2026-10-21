@@ -106,8 +106,8 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         "被风控挡下的卖空没有记进诚实性行: {integrity}"
     );
     assert!(
-        integrity.contains("1x") && integrity.contains("NoShort"),
-        "诚实性行缺少拒单原因: {integrity}"
+        integrity.contains("1x现货卖出数量超过扣除待成交卖单后的可用持仓"),
+        "诚实性行缺少现货可用持仓拒单原因: {integrity}"
     );
     let first_hash = result_hash(&stdout);
 
@@ -145,10 +145,8 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     assert_eq!(
         rejections
             .iter()
-            .filter(|entry| entry["reason"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("NoShort"))
+            .filter(|entry| entry["reason"].as_str().unwrap_or_default()
+                == "现货卖出数量超过扣除待成交卖单后的可用持仓")
             .count(),
         1,
         "摘要里的拒单原因与诚实性行不一致: {rejections:?}"

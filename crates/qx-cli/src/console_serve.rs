@@ -11,15 +11,10 @@
 //! 因此它只服务本机回环控制台，不能替代运维显式配置的长期秘密。
 
 use crate::{
-    build_configured_api_service, catch_panic, configured_api_worker_id, join_worker_handle,
-    read_runtime_config, runtime_timestamp_ms, spawn_api_projection_bridge,
-    stop_api_projection_bridge, ConsoleArgs,
+    build_configured_api_service, catch_panic, read_runtime_config, runtime_timestamp_ms,
+    ConsoleArgs,
 };
-use qx_runtime::RuntimeSupervisor;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 /// `--init` 写出的运行时模板：与 `deploy/qianxing.runtime.console.example.json` **同形**
 /// （回环 bind、令牌只给环境变量名、正文无令牌字面量字段、写明 static_dir 与 operator）。
@@ -81,8 +76,6 @@ fn serve_console_inner(args: &ConsoleArgs) -> Result<(), String> {
             args.path.display()
         )
     })?;
-    // 地址先过 `qx-api` 的判据再绑：等绑上才发现不是回环，控制面已经挂在那张网卡上了。
-    qx_api::console_bind_is_loopback(&console.bind)?;
     // 引导令牌：运维显式配的照用；缺失时临时生成一枚并当场说清它是临时的、随进程生灭。
     let (token, generated) = match std::env::var(&console.bootstrap_token_env) {
         Ok(value) if !value.trim().is_empty() => (value, false),
@@ -94,57 +87,26 @@ fn serve_console_inner(args: &ConsoleArgs) -> Result<(), String> {
             console.bootstrap_token_env
         );
     }
-    // 缺省值只有 `qx-api` 那一处定义；配置侧写 None 就是"用它的默认"。
-    let ttl_seconds = console
-        .session_ttl_seconds
-        .unwrap_or(qx_api::DEFAULT_CONSOLE_SESSION_TTL_SECONDS);
     let static_dir = resolve_console_static_dir(&console.static_dir, &args.path)?;
-    let supervisor = RuntimeSupervisor::new(config.clone())?;
-    let api_worker_id = configured_api_worker_id(supervisor.config())?;
-    let service = build_configured_api_service(supervisor.config(), &args.path)?;
-    let front = qx_api::ConsoleFront::new(
-        service.clone(),
-        qx_api::ConsoleConfig::new(
-            static_dir.clone(),
-            console.operator.clone(),
-            token.clone(),
-            ttl_seconds,
-        )?,
-    )?;
-    let listener = TcpListener::bind(&console.bind)
-        .map_err(|error| format!("绑定控制台地址失败 {}: {error}", console.bind))?;
-    println!(
-        "[控制台 · Console] bind={} operator={} 静态目录={} 会话 TTL={ttl_seconds}s，按 Ctrl+C 停止",
-        console.bind,
-        console.operator,
-        static_dir.display()
-    );
-    // 只印一次入口 URL：令牌在 URL 里，运维点一次就换到了 HttpOnly 会话 cookie，
-    // 之后地址栏里不再有凭据。令牌原文不重复打印，免得它落在终端的滚动缓冲里。
-    println!(
-        "[控制台 · Console] 浏览器打开 http://{}/?{}={}",
-        console.bind,
-        qx_api::CONSOLE_TOKEN_QUERY,
-        token
-    );
-    let projection_stop = Arc::new(AtomicBool::new(false));
-    let mut projection_thread =
-        spawn_api_projection_bridge(&config, service, Arc::clone(&projection_stop));
-    let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
-        context.heartbeat(runtime_timestamp_ms())?;
-        front
-            .serve(listener, runtime_timestamp_ms, || context.should_stop())
-            .map_err(|error| format!("控制台服务停止: {error}"))
-    }) {
-        Ok(worker) => worker,
-        Err(error) => {
-            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            return Err(error);
-        }
-    };
-    let result = join_worker_handle(&supervisor, worker, "Console", &api_worker_id);
-    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-    result
+    let service = build_configured_api_service(&config, &args.path)?;
+    qx_service::http_host::serve_console(
+        config,
+        service,
+        static_dir,
+        token,
+        runtime_timestamp_ms,
+        |bind, operator, static_dir, ttl_seconds, token| {
+            println!(
+                "[控制台 · Console] bind={bind} operator={operator} 静态目录={} 会话 TTL={ttl_seconds}s，按 Ctrl+C 停止",
+                static_dir.display()
+            );
+            // 入口只打印一次；令牌验证成功后会由 HttpOnly 会话替代地址栏凭据。
+            println!(
+                "[控制台 · Console] 浏览器打开 http://{bind}/?{}={token}",
+                qx_api::CONSOLE_TOKEN_QUERY
+            );
+        },
+    )
 }
 
 /// 生成一枚一次性引导令牌（96 个十六进制字符，远超 16 字符的下限）。

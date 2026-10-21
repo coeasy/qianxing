@@ -9,6 +9,19 @@
 
 use crate::*;
 
+type RunReportArguments = (
+    PathBuf,
+    bool,
+    bool,
+    bool,
+    Option<PathBuf>,
+    Vec<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+);
+
 /// 读一条单配置文件入口的参数：`(配置文件路径, 是否要机器可读输出)`。
 ///
 /// `json_output` 是逐入口的能力位，不是调用方的偏好：外层不给它生成 JSON 时，
@@ -45,21 +58,7 @@ pub(crate) fn run_entry_arguments(
 pub(crate) fn run_report_entry_arguments(
     arguments: &[String],
     default: impl FnOnce() -> PathBuf,
-) -> Result<
-    (
-        PathBuf,
-        bool,
-        bool,
-        bool,
-        Option<PathBuf>,
-        Vec<PathBuf>,
-        Option<PathBuf>,
-        Option<PathBuf>,
-        Option<PathBuf>,
-        Option<PathBuf>,
-    ),
-    String,
-> {
+) -> Result<RunReportArguments, String> {
     let mut path: Option<&str> = None;
     let mut output = None;
     let mut json = false;

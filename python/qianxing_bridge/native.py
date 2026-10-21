@@ -253,6 +253,11 @@ def app_validate_dataset(spec_json: str) -> str:
     return str(_extension().app_validate_dataset(spec_json))
 
 
+def app_assemble_dataset_bundle(payload: str) -> str:
+    """Assemble and validate DatasetBundleManifest in the shared Rust app layer."""
+    return str(_extension().app_assemble_dataset_bundle(payload))
+
+
 def app_run_backtest(spec_json: str) -> str:
     """应用层用例 ``RunBacktest``：传 ``BacktestSpec`` JSON，换回 ``BacktestOutcome`` JSON。
 

@@ -379,7 +379,7 @@ fn depth_chain_applies_the_declared_signal() {
         field(&loose, "[Depth · Backtest]", "result_hash")
     );
     assert!(
-        line_with(&loose, "[Depth · Signal]").contains("source=config"),
+        line_with(&loose, "[Depth · Signal]").contains("source=\"config\""),
         "深度链要印出生效的信号口径: {}",
         line_with(&loose, "[Depth · Signal]")
     );

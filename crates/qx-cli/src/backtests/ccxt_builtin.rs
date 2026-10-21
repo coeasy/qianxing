@@ -1,11 +1,12 @@
 //! CCXT OHLCV acquisition followed by the shared builtin Bar backtest.
 
+use super::BuiltinStrategyKind;
 use crate::{
-    python_interpreter, read_runtime_config, run_builtin_backtest_via_app,
-    unified_default_runtime_path, write_backtest_artifact,
+    python_interpreter, read_runtime_config, run_builtin_backtest_with_runtime_snapshot,
+    unified_default_runtime_path,
 };
 use qx_adapter::{CcxtProcessClient, CcxtRpc};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub(crate) struct CcxtBuiltinBacktestInput<'a> {
     pub(crate) ccxt_config_path: &'a Path,
@@ -34,6 +35,24 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
     if end_ms < start_ms {
         return Err("CCXT 内置策略回测 end_ms 不能早于 start_ms".into());
     }
+    if quantity <= 0 {
+        return Err("内置策略 quantity 必须为正整数".into());
+    }
+    let kind = BuiltinStrategyKind::parse(strategy_name)?;
+    if timeframe.ends_with('M') {
+        return Err(
+            "CCXT 月线 timeframe 没有固定 interval_ms，当前 DatasetManifestV2 缺口复核不支持月线；请使用固定长度周期"
+                .into(),
+        );
+    }
+    let interval_ms = crate::timeframe_to_ms(timeframe)?;
+    // Decode and freeze runtime settings before starting the external CCXT worker. A malformed
+    // runtime must fail closed without network/process side effects, and data/run identity use the
+    // same immutable configuration snapshot even if an operator edits the source file meanwhile.
+    let runtime_path = runtime_config_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(unified_default_runtime_path);
+    let runtime = read_runtime_config(&runtime_path)?;
     let python = python_interpreter();
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)
         .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
@@ -68,13 +87,6 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
             normalized.ts.last().copied().unwrap_or_default(),
         ));
     }
-    if timeframe.ends_with('M') {
-        return Err(
-            "CCXT 月线 timeframe 没有固定 interval_ms，当前 DatasetManifestV2 缺口复核不支持月线；请使用固定长度周期"
-                .into(),
-        );
-    }
-    let interval_ms = crate::timeframe_to_ms(timeframe)?;
     if normalized
         .ts
         .windows(2)
@@ -90,42 +102,19 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
     );
     // 复用 BarFrame 唯一的数据集身份版本；供应源、交易对、周期和请求窗口写入清单 lineage，
     // 精确内容 hash 与 canonical fingerprint 则区分交易所后续修订的历史数据。
-    let manifest = qx_data::manifest_from_bar_frame(
+    let snapshot = qx_app::ccxt_backtest_snapshot::persist_ccxt_backtest_snapshot(
         &normalized,
-        &format!("strategy-bars:{}", normalized.instrument),
-        qx_data::BARFRAME_DATASET_VERSION,
         interval_ms,
-        "UTC",
-        qx_data::BARFRAME_DATASET_VERSION,
         &query_source,
+        Path::new(&runtime.storage.data_dir),
     )?;
-    let manifest_payload = manifest.to_json()?;
-    let cache_key = qx_data::sha256_hex_bytes(manifest_payload.as_bytes());
-    let runtime_path = runtime_config_path
-        .map(Path::to_path_buf)
-        .unwrap_or_else(unified_default_runtime_path);
-    let runtime = read_runtime_config(&runtime_path)?;
-    let data_root = PathBuf::from(&runtime.storage.data_dir);
-    let data_root = if data_root.is_absolute() {
-        data_root
-    } else {
-        std::env::current_dir()
-            .map_err(|error| format!("读取当前目录失败: {error}"))?
-            .join(data_root)
-    };
-    let dataset_root = data_root.join("datasets").join("ccxt").join(cache_key);
-    std::fs::create_dir_all(&dataset_root)
-        .map_err(|error| format!("创建 CCXT 不可变数据快照目录失败: {error}"))?;
-    let frame_path = dataset_root.join("bars.json");
-    let manifest_path = dataset_root.join("manifest.v2.json");
-    write_backtest_artifact(&frame_path, &normalized.to_json(), "CCXT BarFrame 快照")?;
-    write_backtest_artifact(&manifest_path, &manifest_payload, "CCXT DatasetManifestV2")?;
-    run_builtin_backtest_via_app(
-        strategy_name,
-        &frame_path,
+    run_builtin_backtest_with_runtime_snapshot(
+        &snapshot.bars_path,
         spec_path,
         quantity,
-        runtime_config_path,
-        Some(&manifest_path),
+        Some(&snapshot.manifest_path),
+        &runtime_path,
+        kind,
+        runtime,
     )
 }

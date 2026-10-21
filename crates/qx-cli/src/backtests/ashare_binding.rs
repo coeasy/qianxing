@@ -1,6 +1,7 @@
 //! `--config` 的 A 股段在 Bar 回测链上的唯一读法：一条链接管、两条链明确拒绝（V11 Q61）。
 
-use crate::{first_strategy_block_declaring, read_example_json};
+use crate::read_example_json;
+use qx_runtime::first_strategy_block_declaring_in_config;
 use std::path::Path;
 
 pub(crate) use qx_app::AshareBacktestBinding;
@@ -42,11 +43,19 @@ pub(crate) fn reject_ashare_rules_config(
     let Some(path) = config_path else {
         return Ok(());
     };
-    if let Some(label) = first_strategy_block_declaring(path, |strategy| {
+    reject_ashare_rules_in_runtime_config(&crate::read_runtime_config(path)?, entry, reason)
+}
+
+pub(crate) fn reject_ashare_rules_in_runtime_config(
+    config: &qx_runtime::RuntimeConfig,
+    entry: &str,
+    reason: &str,
+) -> Result<(), String> {
+    if let Some(label) = first_strategy_block_declaring_in_config(config, |strategy| {
         strategy.ashare_rules_path.is_some()
             || strategy.ashare_actions_path.is_some()
             || strategy.ashare_calendar_path.is_some()
-    })? {
+    }) {
         return Err(format!(
             "{entry} 不接受 {label}.ashare_rules_path（含 ashare_actions_path / ashare_calendar_path）：\
              {reason}。需要 A 股规则口径请改用 strategy backtest 或 backtest builtin"

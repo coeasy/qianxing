@@ -1,5 +1,6 @@
 use super::{BacktestOutcome, BacktestSpec, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
+use qx_core::TradingProduct;
 use qx_xingban::BacktestReport;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,8 @@ pub struct MultiBuiltinBacktestSpec {
     pub reference: BacktestSpec,
     #[serde(default)]
     pub funding_bps: i64,
+    #[serde(default)]
+    pub declared_product: Option<TradingProduct>,
 }
 
 impl MultiBuiltinBacktestSpec {
@@ -59,6 +62,46 @@ impl MultiBuiltinBacktestSpec {
         if !(-10_000..=10_000).contains(&self.funding_bps) {
             return Err(invalid("多腿内置回测 funding_bps 必须在 -10000..=10000"));
         }
+        if let Some(product) = self
+            .declared_product
+            .filter(|product| product.is_derivative())
+            .filter(|_| self.primary.market_spec.is_none())
+        {
+            return Err(invalid(format!(
+                "主腿衍生品（strategy.product={:?}）多腿回测必须提供 primary 腿的 market spec：缺它时名义额按现货乘数 1 记账，保证金与资金费也无从计提",
+                product
+            )));
+        }
+        if self.funding_bps != 0 {
+            for (label, leg) in [("primary", &self.primary), ("reference", &self.reference)] {
+                if leg.market_spec.is_none() {
+                    return Err(invalid(format!(
+                        "资金费只能按该腿 market spec 的名义额计提：{label} 腿没有 market spec，既算不出金额，也判不出它是现货还是衍生品。请补该腿的 spec 文件，或把 --funding-bps 设为 0"
+                    )));
+                }
+            }
+            if [&self.primary, &self.reference].iter().all(|leg| {
+                !leg.market_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.product.is_derivative())
+            }) {
+                let products = [&self.primary, &self.reference]
+                    .iter()
+                    .zip(["primary", "reference"])
+                    .map(|(leg, label)| {
+                        format!(
+                            "{label}={:?}",
+                            leg.market_spec.as_ref().map(|spec| spec.product)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                return Err(invalid(format!(
+                    "没有一条腿是衍生品（{products}），--funding-bps={} 无处计提：资金费只向持仓衍生品合约的一方收取，把这条声明落到现货腿上等于造一笔不存在的成本",
+                    self.funding_bps
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -71,6 +114,7 @@ pub struct MultiBuiltinLegRun {
     pub account_id: String,
     pub outcome: BacktestOutcome,
     pub report: BacktestReport,
+    pub risk_rule_set_version: String,
     pub targets: std::collections::BTreeMap<u64, i128>,
 }
 

@@ -36,7 +36,7 @@ cargo run --release -p qx-cli -- binance-public-probe testnet BTCUSDT.BINANCE
 cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.production.example.json binance-execution-main
 ```
 
-`version` 只印一行构建身份，形状是 `qianxing <semver> (build <sha7>[-dirty], target <triple>, profile <release|debug>)`；`--version` 与 `-V` 是同一条入口的两个别名，三条写法逐字相同、都退 0，且都不带横幅，脚本可以直接取值（release 产物的实测形状：`qianxing 0.1.0 (build ad2908b-dirty, target x86_64-pc-windows-msvc, profile release)`，单行 85 B，见 `logs/s686_pass28_release_surface_probe.txt`）。
+`version` 只印一行构建身份，形状是 `qianxing <semver> (build <sha7>[-dirty], target <triple>, profile <release|debug>)`；`--version` 与 `-V` 是同一条入口的两个别名，三条写法逐字相同、都退 0，且都不带横幅，脚本可以直接取值（前一版 release 产物的实测形状：`qianxing 0.1.0 (build ad2908b-dirty, target x86_64-pc-windows-msvc, profile release)`，单行 85 B，见 `logs/s686_pass28_release_surface_probe.txt`）。
 这一行的唯一来源是 `crates/qx-cli/src/build_identity.rs`：`doctor` 的第一格 `build_identity` 印同一行，`status --json` 与 `report --json` 的 `runtime_version` 也读同一个常量，人工读面与机器读面不会漂成两个版本。
 
 用法错误（未知命令、未知参数、参数形状不对）不再打印整篇入口摘要：回的是 clap 的错误正文（含最接近的入口名）与该入口自己的 `Usage:`，再加「下一步」与「自证构建」两行，退出码仍是 2。实测（`logs/s686_pass28_release_surface_probe.txt`）：`bogus-entry` 回 8 行 / 289 B，`doctor --config x.json` 回 10 行 / 359 B 并印 `Usage: qx-cli.exe doctor [OPTIONS] [PATH]`（argv[0] 原样，这个入口收位置参数）；改前两条甩出的都是整篇摘要：同一份改前二进制上实测 162 行 / 12,319 B（`--version`/`-V`/未知名）与 164 行 / 12,361–12,389 B（`version`/`doctor --config …`），逐字在 `logs/s691_pass28_before_fix_error_wall.txt`。整篇摘要现在只在 `help` 与 `--help`/`-h` 两个出口打印，它自己是 157 行 / 12,347 B（`logs/s686_pass28_release_surface_probe.txt`）。
@@ -701,7 +701,7 @@ tag 时，发布流水线会额外生成 `qianxing-web-console-v<tag>.tar.gz`，
 说的是产品侧现状（前三者为 `true`，由下面那节 `qx-cli console` 提供；桌面 Host 仍为 `false`），
 `sandbox_accepted` / `production_accepted` 两档外部验收仍为 `false`）。
 归档本身进入 Release 的统一 `SHA256SUMS`，并附 build provenance；本地可用
-`python tools/package_web_console.py --version 0.1.0 --commit <40位提交哈希> --output <输出路径>`
+`python tools/package_web_console.py --version 0.2.0 --commit <40位提交哈希> --output <输出路径>`
 重建，并以压缩包内身份文件核对资产摘要。
 
 **安全边界（逐条说清）**：**这个发布包**只是静态 UI，它自己没有浏览器会话、CSRF token 或权限代理层，
@@ -944,6 +944,7 @@ Bundle 的其它组件使用 `strategy.dataset_component_paths` 显式绑定，�
 ```
 
 组件文件必须是数组，或包含 `rows`/`data` 数组；系统会递归规范化 JSON 字段顺序后计算 fingerprint，并校验行数。未显式绑定的组件会在回测启动前拒绝，避免把“Bundle 中声明存在”误当成“策略实际加载成功”。公司行为和交易日历仍兼容 `ashare_actions_path`、`ashare_calendar_path`。
+启用 A 股规则的回测必须绑定有界交易日清单和交易时段（calendar JSON 的 `trading_days` 与 `sessions`），或在规则快照中逐一声明允许的 `trading_timestamps`；缺日历/时段会在回测入口 fail-closed，不再将任意日期或全天当作可交易。
 回测完成后会在 `storage.data_dir`/runs 下原子保存 RunManifest JSON，记录配置指纹、Bundle 聚合指纹、各数据组件指纹、模型、时钟和结果哈希。
 该字段只有**一条**落点口径：相对值按当前进程的工作目录解析，所以 `report`/`status` 读侧、可写运行态（账本/队列/outbox）与事件回测证据闸门
 读的都是同一棵树，从哪个目录启动就读写哪一棵产物树；`qx-cli init` 与 `strategy init` 生成的项目会把绝对落点钉进配置，那一行命令因此换目录也指同一棵树（V13 R2 #255）。
@@ -975,7 +976,7 @@ cargo run --release -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strate
 
 - **帧长要够上窗口**。`qianxing.bar-frame.example.json` / `.okx.example.json` 各 70 根（1000…70000，步长 1000），因为 MACD 的门槛是 35 根可见 Bar（26 根慢 EMA + 9 个 MACD 值 + 上一根交叉判定），默认的 `fast 5 / slow 20` 只需要 21 根。
 - **数量有两个口径，相差 1e9 倍**。运行时配置的 `builtin_quantity` 是定点裸值（`Quantity::from_raw`，1 个单位 = 1e9），命令行位置参数 `[QUANTITY]` 是整数单位（`Quantity::from_i64`）。裸值写 `1` 等于 1e-9 个单位，成交额小到让手续费按整数截断为零——摘要会显示"成交了但没付费"。示例配置一律用 `1000000000`（1 个单位），A 股示例用 `100000000000`（100 股，一手的整数量）。
-- **A 股时间戳要落在录制日历内**。`qianxing.ashare.bar-frame.example.json` 的 6 根 Bar 用的是 2024-06-03/06-04 两个交易日的实际分钟戳，与 `qianxing.ashare.calendar.example.json` 和 `qianxing.ashare.rules.json` 的 `session_windows` 对齐；换成任意的 `1000/2000/…` 会让每根 Bar 都判定为不可交易，回测安静地零成交。
+- **A 股时间戳要落在录制日历内**。`qianxing.ashare.bar-frame.example.json` 的 6 根 Bar 用的是 2024-06-03/06-04 两个交易日的实际分钟戳，与 `qianxing.ashare.calendar.example.json` 和 `qianxing.ashare.rules.json` 的 `session_windows` 对齐；换成任意的 `1000/2000/…` 会让每根 Bar 都判定为不可交易，回测安静地零成交。启用 A 股规则却漏配交易日或 session 时会直接拒绝，不会以空日历回退到全天候。
 
 ### CCXT 实时策略
 
@@ -1026,6 +1027,16 @@ cargo run --release -p qx-cli -- backtest builtin sma-cross bars.json market.jso
 A 股研究数据通过 `python/qianxing_ashare` 统一转换为 BarFrame。AkShare、Baostock 和
 easy_tdx 都是可选依赖，默认不会改变现有 CCXT 运行时。安装一种数据源后即可获取并冻结
 历史数据：
+
+本地固定示例可直接用 Rust 回测内核验证 A 股规则、整手数量和费用。命令中的 `100`
+表示 100 股；A 股 CLI 不传数量时默认 1 股，会被整手规则拒绝。
+
+```powershell
+# 从 deploy/ 目录执行
+cargo run --release --manifest-path ..\Cargo.toml -p qx-cli -- backtest builtin ema_cross qianxing.ashare.bar-frame.example.json qianxing.ashare.spot.spec.json 100 --config qianxing.runtime.ashare.example.json
+```
+
+成功时应生成 schema v7 摘要，包含 AShareFee、至少一笔成交且 `rejected_orders=0`。
 
 ```powershell
 # 装了 wheel 的用户补带数据源的 extra（离线按上文用 --offline）；从源码根目录跑则等价的 `pip install -e "python[a-share-akshare]"`

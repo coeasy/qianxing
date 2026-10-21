@@ -1,8 +1,8 @@
 //! HTTP/WebSocket 传输层：套接字选项、TLS 包装、请求读取、响应写出与握手摘要。
 //!
 //! 这些函数不含任何领域判定——权限、限流、路由与投影都在 `lib.rs` 的 `ApiService` 上。
-//! 外置的理由是行数棘轮：`lib.rs` 已顶到登记值，浏览器准入面（CORS、连接预算、升级
-//! 路径闸、查询串解码）还要在同一个 crate 里落地，与判定无关的字节搬运必须先挪出去。
+//! 独立承载与领域判定无关的字节搬运；浏览器准入面（CORS、连接预算、升级路径闸、查询串解码）
+//! 仍由同 crate 的 API 服务处理。
 
 use crate::ApiResponse;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};

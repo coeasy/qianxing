@@ -1,7 +1,6 @@
 //! 账户投影的身份闸门：放宽只能落在"没有账户域栏位"的那两类事实，成交线必须守住交易所边界。
 //!
-//! 住在 `tests/` 而不是 `src/lib.rs` 的内联用例里，是为了不把常驻反例的压力加到被行数棘轮
-//! 看管的读面上（V11 T1/T3）。
+//! 作为独立集成用例，验证公开 API 的账户身份投影边界。
 
 use qx_api::{ApiService, ApiState};
 use qx_core::{Event, EventKind, EventLog, LedgerEntry, Priority};
@@ -42,6 +41,7 @@ fn account_projection_checks_venue_less_facts_by_account_identity_only() {
             ts: 30,
             multiplier: 1,
             position_side: None,
+            leverage: None,
         }
     }
     fn fill(account_id: &str, venue_id: Option<&str>) -> qx_core::Fill {
@@ -184,6 +184,8 @@ fn unknown_projection_key_is_404_on_every_scoped_read_face() {
                     ts: 30,
                     multiplier: 1,
                     position_side: None,
+
+                    leverage: None,
                 },
             },
         ))

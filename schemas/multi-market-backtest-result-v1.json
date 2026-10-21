@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-market-backtest-result-v1.json",
+  "title": "Qianxing MultiMarketBacktestOutcome v1",
+  "description": "Shared-account multi-market Bar result with stable spec/data/result fingerprints and a verified replay artifact.",
+  "type": "object",
+  "required": ["run_id", "account_id", "spec_fingerprint", "data_fingerprint", "shared_result_hash", "markets_total", "strategies_total", "successful_fills", "equity_points", "final_equity_raw", "return_bps", "max_drawdown_bps", "artifact_path"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "data_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "shared_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "markets_total": {"type": "integer", "minimum": 3, "maximum": 32},
+    "strategies_total": {"type": "integer", "minimum": 3, "maximum": 512},
+    "successful_fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "equity_points": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "final_equity_raw": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+    "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+    "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "artifact_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

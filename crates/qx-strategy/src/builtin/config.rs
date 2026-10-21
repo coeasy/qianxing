@@ -161,6 +161,36 @@ impl BuiltinStrategyConfig {
         instrument: InstrumentId,
         quantity: Quantity,
     ) -> Result<Self, String> {
+        Self::new_with_reference(kind, strategy_id, instrument, quantity, None)
+    }
+
+    /// Construct the canonical configuration for a strategy that requires a reference leg.
+    pub fn new_multi_leg(
+        kind: BuiltinStrategyKind,
+        strategy_id: impl Into<String>,
+        instrument: InstrumentId,
+        reference_instrument: InstrumentId,
+        quantity: Quantity,
+    ) -> Result<Self, String> {
+        if !kind.needs_reference_leg() {
+            return Err(format!("策略 {} 不支持 reference_instrument", kind.name()));
+        }
+        Self::new_with_reference(
+            kind,
+            strategy_id,
+            instrument,
+            quantity,
+            Some(reference_instrument),
+        )
+    }
+
+    fn new_with_reference(
+        kind: BuiltinStrategyKind,
+        strategy_id: impl Into<String>,
+        instrument: InstrumentId,
+        quantity: Quantity,
+        reference_instrument: Option<InstrumentId>,
+    ) -> Result<Self, String> {
         let config = Self {
             kind,
             strategy_id: strategy_id.into(),
@@ -178,7 +208,7 @@ impl BuiltinStrategyConfig {
             slow_window: 20,
             period: 14,
             threshold_bps: 100,
-            reference_instrument: None,
+            reference_instrument,
             primary_policy: None,
             reference_policy: None,
         };

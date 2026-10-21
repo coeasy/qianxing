@@ -4,6 +4,18 @@ use crate::report_output_paths::{report_artifact_paths, same_output_target};
 use crate::*;
 use std::path::PathBuf;
 
+pub(crate) struct ReportOptions<'a> {
+    pub(crate) as_json: bool,
+    pub(crate) html: bool,
+    pub(crate) evidence: bool,
+    pub(crate) output: Option<&'a Path>,
+    pub(crate) against: &'a [PathBuf],
+    pub(crate) benchmark_bars: Option<&'a Path>,
+    pub(crate) benchmark_calendar: Option<&'a Path>,
+    pub(crate) benchmark_csv: Option<&'a Path>,
+    pub(crate) xlsx: Option<&'a Path>,
+}
+
 /// Summaries before v5 lack trustworthy source identity/replay evidence; v6 adds A-share analysis,
 /// and v7 adds per-order execution attempts.
 pub(crate) fn require_current_summary_schema(summary: &serde_json::Value) -> Result<(), String> {
@@ -31,22 +43,36 @@ pub(crate) fn run_report_with_output(
     against: &[PathBuf],
 ) -> Result<(), String> {
     run_report_with_benchmark(
-        path, as_json, html, evidence, output, against, None, None, None, None,
+        path,
+        ReportOptions {
+            as_json,
+            html,
+            evidence,
+            output,
+            against,
+            benchmark_bars: None,
+            benchmark_calendar: None,
+            benchmark_csv: None,
+            xlsx: None,
+        },
     )
 }
 
 pub(crate) fn run_report_with_benchmark(
     path: &Path,
-    as_json: bool,
-    html: bool,
-    evidence: bool,
-    output: Option<&Path>,
-    against: &[PathBuf],
-    benchmark_bars: Option<&Path>,
-    benchmark_calendar: Option<&Path>,
-    benchmark_csv: Option<&Path>,
-    xlsx: Option<&Path>,
+    options: ReportOptions<'_>,
 ) -> Result<(), String> {
+    let ReportOptions {
+        as_json,
+        html,
+        evidence,
+        output,
+        against,
+        benchmark_bars,
+        benchmark_calendar,
+        benchmark_csv,
+        xlsx,
+    } = options;
     if output.is_some() && !html {
         return Err("--output 只能与 --html 一起使用".to_string());
     }
@@ -74,13 +100,17 @@ pub(crate) fn run_report_with_benchmark(
         return crate::report_comparison_command::run_comparison_report(
             path,
             against,
-            as_json,
-            html,
-            output,
-            xlsx,
-            benchmark_bars,
-            benchmark_calendar,
-            benchmark_csv,
+            ReportOptions {
+                as_json,
+                html,
+                evidence,
+                output,
+                against,
+                benchmark_bars,
+                benchmark_calendar,
+                benchmark_csv,
+                xlsx,
+            },
         );
     }
     let summary_path = resolve_backtest_summary_path(path)?;
@@ -132,7 +162,7 @@ pub(crate) fn run_report_with_benchmark(
         .map_err(|error| format!("回测摘要 JSON 无效 {}: {error}", summary_path.display()))?;
     require_current_summary_schema(&summary)?;
     // 摘要声明的输入要重读、重算并对齐；旧 schema 未声明时必须如实显示未经核对（V11 Q66/Q1b）。
-    let declared_input = recompute_declared_backtest_input(&summary)?;
+    let declared_input = qx_app::artifact_store::recompute_declared_backtest_input(&summary)?;
     let benchmark = match benchmark_bars {
         Some(benchmark_path) => {
             let return_bps = i64::try_from(
@@ -260,7 +290,7 @@ pub(crate) fn run_report_with_benchmark(
         None => "not_declared（该摘要没有 input 块，输入身份未经核对）".to_string(),
     };
     for line in report_readout_lines(&summary, &input_verified) {
-        println!("{line}");
+        println!("[Report]{line}");
     }
     if let Some(benchmark) = benchmark {
         let metrics = &benchmark["metrics"];
@@ -308,15 +338,17 @@ pub(crate) fn run_unified_report_entry(
     ) = run_report_entry_arguments(arguments, default)?;
     run_report_with_benchmark(
         &path,
-        json,
-        html,
-        evidence,
-        output.as_deref(),
-        &against,
-        benchmark_bars.as_deref(),
-        benchmark_calendar.as_deref(),
-        benchmark_csv.as_deref(),
-        xlsx.as_deref(),
+        ReportOptions {
+            as_json: json,
+            html,
+            evidence,
+            output: output.as_deref(),
+            against: &against,
+            benchmark_bars: benchmark_bars.as_deref(),
+            benchmark_calendar: benchmark_calendar.as_deref(),
+            benchmark_csv: benchmark_csv.as_deref(),
+            xlsx: xlsx.as_deref(),
+        },
     )
 }
 
@@ -324,15 +356,17 @@ pub(crate) fn dispatch_report(args: super::report_args::ReportArgs) {
     let path = args.path.unwrap_or_else(default_runtime_path);
     if let Err(error) = run_report_with_benchmark(
         &path,
-        args.json,
-        args.html,
-        args.evidence,
-        args.out.as_deref(),
-        &args.against,
-        args.benchmark_bars.as_deref(),
-        args.benchmark_calendar.as_deref(),
-        args.benchmark_csv.as_deref(),
-        args.xlsx.as_deref(),
+        ReportOptions {
+            as_json: args.json,
+            html: args.html,
+            evidence: args.evidence,
+            output: args.out.as_deref(),
+            against: &args.against,
+            benchmark_bars: args.benchmark_bars.as_deref(),
+            benchmark_calendar: args.benchmark_calendar.as_deref(),
+            benchmark_csv: args.benchmark_csv.as_deref(),
+            xlsx: args.xlsx.as_deref(),
+        },
     ) {
         eprintln!("[qx-cli · CLI] 报告查看失败: {error}");
         std::process::exit(2);

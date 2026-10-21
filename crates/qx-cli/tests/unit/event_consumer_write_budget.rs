@@ -10,7 +10,7 @@
 //! payload，足以越过 64KB，所以这不是假设场景。本用例把 wedge 的 handler + 超限 payload
 //! 组在一起，断言调用在预算内以可观测超时失败，而不是永久阻塞。
 
-use super::*;
+use qx_storage::OutboxEvent;
 
 /// 造一份 consumer 事件：payload 远大于 OS 匿名管道缓冲，让不取输入的 handler 必然把写侧打满。
 fn oversized_outbox_event() -> OutboxEvent {
@@ -44,9 +44,11 @@ fn live_but_non_draining_event_consumer_write_is_bounded_not_hanging() {
     };
     #[cfg(unix)]
     let (program, args) = ("/bin/sleep".to_string(), vec!["300".into()]);
-    let handler = EventConsumerHandler::for_test(program, args, TIMEOUT_MS);
+    let handler =
+        qx_service::messaging_host::ProcessEventConsumerHandler::new(program, args, TIMEOUT_MS);
     let started = std::time::Instant::now();
-    let error = invoke_event_consumer_handler(&handler, &oversized_outbox_event())
+    let error = handler
+        .invoke(&oversized_outbox_event())
         .expect_err("handler 存活但不接收输入：写入必须在预算内失败，而不是永久阻塞");
     let elapsed = started.elapsed();
     assert!(

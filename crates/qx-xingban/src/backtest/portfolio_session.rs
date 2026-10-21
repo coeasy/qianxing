@@ -8,72 +8,32 @@ use super::{
     order_admission::{self, OrderAdmissionInput},
     BarStrategy, PortfolioBarSeries, PortfolioBarTimeline, PortfolioBudgetState,
 };
-use crate::{
-    cost::{LatencyModel, MarginRule},
-    fill::FillModel,
-};
+use crate::cost::MarginRule;
 use qx_core::{
-    Event, EventKind, EventLog, FeeModel, Fill, FundingRateEvent, InstrumentId, Ledger, Money,
-    Price, TradingInstrumentSpec, ValuationContext,
+    Event, EventKind, EventLog, FundingRateEvent, InstrumentId, Ledger, Money, Price,
+    TradingInstrumentSpec, ValuationContext,
 };
 use qx_guanxing::Bar;
-use qx_zhenlu::{Oms, RiskGate};
+use qx_zhenlu::Oms;
 use std::collections::BTreeMap;
 
 mod construction;
 mod funding;
 mod margin;
+mod model;
 mod report;
 mod runtime;
 use funding::{apply_settlements, prepare_timeline, PreparedTimeline, SettlementContext};
-use margin::{cached_or_other_market_margin, CachedPortfolioMarginSnapshot};
+use margin::{
+    cached_or_other_market_margin, CachedPortfolioMarginSnapshot, OtherMarketMarginQuery,
+};
+pub use model::{
+    PortfolioBarEngine, PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarSessionReport,
+};
 use runtime::{
     bar_at_or_before, build_runtime, initialize_ledger, invariant, pending_funding_reservation_raw,
     sum_pending_funding_reservations,
 };
-
-pub struct PortfolioBarMarket<'a> {
-    pub instrument: InstrumentId,
-    pub priority: u32,
-    pub bars: &'a [Bar],
-    pub spec: TradingInstrumentSpec,
-    pub fill: Box<dyn FillModel>,
-    pub fee: Box<dyn FeeModel>,
-    pub latency: Box<dyn LatencyModel>,
-    pub margin: Box<dyn MarginRule>,
-    pub seed: u64,
-}
-
-pub struct PortfolioBarSessionConfig {
-    pub account_id: String,
-    pub currency: String,
-    pub initial_cash: Money,
-    pub risk: RiskGate,
-    /// Constant funding rate in basis points per UTC 8-hour settlement, keyed by derivative.
-    pub funding_bps: BTreeMap<InstrumentId, i64>,
-    /// Optional variable historical funding rates at explicit UTC 8-hour settlements.
-    pub funding_events: Vec<FundingRateEvent>,
-}
-
-pub struct PortfolioBarSessionReport {
-    pub fills: Vec<Fill>,
-    pub fills_by_instrument: BTreeMap<InstrumentId, Vec<Fill>>,
-    pub rejections_by_instrument: BTreeMap<InstrumentId, EventLog>,
-    pub equity: Vec<(u64, i128)>,
-    pub ledger: Ledger,
-    pub event_log: EventLog,
-    pub market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
-    pub funding_by_instrument_raw: BTreeMap<InstrumentId, i128>,
-    pub funding_events_by_instrument: BTreeMap<InstrumentId, Vec<(u64, i128)>>,
-    pub clock_start: u64,
-    pub clock_end: u64,
-}
-
-pub struct PortfolioBarEngine<'a> {
-    config: PortfolioBarSessionConfig,
-    markets: Vec<PortfolioBarMarket<'a>>,
-}
-
 struct OwnedTimelineEvent {
     market_index: usize,
     bar_index: usize,
@@ -321,8 +281,9 @@ impl<'a> PortfolioBarEngine<'a> {
             let mut batch_reserved_raw = 0_i128;
             let mut visible_marks_cache: Option<(u64, BTreeMap<InstrumentId, Price>)> = None;
             let mut visible_margin_cache: Option<CachedPortfolioMarginSnapshot> = None;
-            for batch_index in 0..pending_batch_count {
-                let (market_index, visible_ts, orders) = &mut pending_by_market[batch_index];
+            for (market_index, visible_ts, orders) in
+                pending_by_market.iter_mut().take(pending_batch_count)
+            {
                 let market = &runtime.by_index[*market_index];
                 let instrument = &market.instrument;
                 let visible_close = bar_at_or_before(market.bars, *visible_ts)
@@ -371,13 +332,15 @@ impl<'a> PortfolioBarEngine<'a> {
                 .saturating_add(batch_reserved_raw);
                 let other_margin = cached_or_other_market_margin(
                     &mut visible_margin_cache,
-                    *visible_ts,
-                    &ledger,
-                    &config.account_id,
-                    instrument,
-                    &specs,
-                    visible_marks,
-                    &runtime,
+                    OtherMarketMarginQuery {
+                        visible_ts: *visible_ts,
+                        ledger: &ledger,
+                        account_id: &config.account_id,
+                        target: instrument,
+                        specs: &specs,
+                        marks: visible_marks,
+                        markets: &runtime,
+                    },
                 )?;
                 let derivative_spec = market
                     .spec
@@ -418,7 +381,7 @@ impl<'a> PortfolioBarEngine<'a> {
                     log: &mut log,
                 })?;
                 let projection = rejections_by_instrument
-                    .get_mut(&instrument)
+                    .get_mut(instrument)
                     .ok_or_else(|| invariant("rejection projection missing"))?;
                 for event in log.events()[previous_log_len..].iter() {
                     if matches!(event.kind, EventKind::Rejected { .. }) {

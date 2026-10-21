@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/trade-control-spec-v1.json",
+  "title": "Qianxing TradeControlSpec v1",
+  "description": "Versioned Paper/Live intent. Authentication and granted permission are supplied by the API boundary and cannot be established by this payload.",
+  "type": "object",
+  "required": ["schema_version", "workflow", "command"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "workflow": {"enum": ["paper", "live"]},
+    "command": {"$ref": "#/$defs/ControlCommand"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ControlCommand": {
+      "type": "object",
+      "required": ["command_id", "request_id", "operator_id", "reason", "kind", "target", "payload", "permission", "dry_run"],
+      "properties": {
+        "command_id": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "request_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "operator_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "reason": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "kind": {"enum": ["SubmitOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit", "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue"]},
+        "target": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "payload": {"type": "object", "additionalProperties": {"type": "string"}},
+        "permission": {"enum": ["ReadOnly", "Research", "Trading", "Admin"]},
+        "dry_run": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  }
+}

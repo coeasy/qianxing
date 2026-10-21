@@ -92,7 +92,7 @@ fn a_data_frame_before_close_in_one_read_still_reaches_the_close() {
 fn an_extended_length_frame_is_skipped_whole() {
     // 128-byte payload: the 2-byte extended length form. The payload bytes all
     // match the old close test; the frame must be skipped by length, not scanned.
-    let mut payload = vec![0_u8; 128];
+    let mut payload = [0_u8; 128];
     payload.iter_mut().for_each(|byte| *byte = 0x18);
     // Extended-length frames are validated as client frames too: set the mask
     // flag and reserve the four-byte mask key before the payload.

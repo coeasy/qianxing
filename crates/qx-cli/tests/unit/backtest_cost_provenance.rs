@@ -63,7 +63,7 @@ fn multi_attribution_with_costs(label: &str, rules: &str) -> (serde_json::Value,
 
 /// V11 §3B 末条（E3 的死配置面）的正面用例：`strategy.cost_rules_path` 不是一行死配置。
 ///
-/// 反向验证口径就在断言里——把 `BarBacktestAssembly::new` 的成本入参换回内置默认，
+/// 反向验证口径就在断言里——把应用层回测绑定的成本入参换回内置默认，
 /// "费率 0 的那一轮费用仍为 0、费率 25bp 的那一轮费用变成名义额的 25bp" 立刻不成立。
 #[test]
 fn cost_rules_file_changes_backtest_fees() {
@@ -187,17 +187,18 @@ fn cost_rules_latency_reaches_the_bar_kernel_and_is_refused_by_depth() {
     );
 
     let depth_root = temp_cli_case_dir("q0c-latency-depth");
-    let error = run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        1,
-        None,
-        DepthExecutionModel::default(),
-        &depth_root,
-        Some(&runtime),
-    )
+    let error = run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: 1,
+        fee_bps: None,
+        execution: DepthExecutionModel::default(),
+        root: &depth_root,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .unwrap_err();
     assert!(
         error.contains("深度档回测不接受成本规则里的延迟设置"),
@@ -220,17 +221,18 @@ fn depth_summary_with_costs(
 ) -> (serde_json::Value, PathBuf, PathBuf) {
     let (root, runtime) = runtime_with_cost_rules(deploy, template, label, rules);
     let out = temp_cli_case_dir(label);
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        1,
-        flag,
-        DepthExecutionModel::default(),
-        &out,
-        Some(&runtime),
-    )
+    run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: 1,
+        fee_bps: flag,
+        execution: DepthExecutionModel::default(),
+        root: &out,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .unwrap();
     (read_first_backtest_summary(&out), root, out)
 }

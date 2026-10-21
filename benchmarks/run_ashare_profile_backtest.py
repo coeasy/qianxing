@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure the A-share rules-on CLI Bar backtest path.
 
-This benchmark binds real A-share rules, fee settings, a generated CN trading
-calendar, and a PIT-visible corporate action to qx-cli. Its synthetic prices
+This benchmark binds real A-share rules, fee settings, an exchange-sourced CN
+trading calendar, and a PIT-visible corporate action to qx-cli. Its synthetic prices
 make it a throughput workload, not proof that each individual rule branch is
 correct; profile status therefore remains unmeasured.
 """
@@ -25,6 +25,7 @@ from pathlib import Path
 from hardware import hardware_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
+CALENDAR_PATH = ROOT / "maturity" / "fixtures" / "calendars" / "cn-equity-sse-szse-2024-2025.json"
 SCALE = 1_000_000_000
 INSTRUMENT = "000001.SZSE"
 SIZES = (1_000, 8_000, 64_000)
@@ -34,13 +35,14 @@ STRESS_CASH_DIVIDEND_RAW = SCALE // 10
 
 
 def trading_days(count: int) -> list[date]:
-    result: list[date] = []
-    current = date(2024, 1, 2)
-    while len(result) < count:
-        if current.weekday() < 5:
-            result.append(current)
-        current += timedelta(days=1)
-    return result
+    calendar = json.loads(CALENDAR_PATH.read_text(encoding="utf-8"))
+    result = [date.fromisoformat(value) for value in calendar["trading_days"]]
+    if count > len(result):
+        raise ValueError(
+            f"A-share workload needs {count} trading days, but {calendar['calendar_id']} "
+            f"covers only {len(result)}"
+        )
+    return result[:count]
 
 
 def minute_timestamps(day: date) -> list[int]:
@@ -81,11 +83,8 @@ def generate_workload(
     frame_path.write_text(json.dumps(frame, separators=(",", ":")), encoding="utf-8")
 
     calendar_path = directory / "calendar.json"
-    calendar = {
-        "calendar_id": "cn-synthetic-weekday-benchmark-v1",
-        "trading_days": [day.isoformat() for day in days],
-        "sessions": [["09:30", "11:30"], ["13:00", "15:00"]],
-    }
+    calendar = json.loads(CALENDAR_PATH.read_text(encoding="utf-8"))
+    calendar["trading_days"] = [day.isoformat() for day in days]
     calendar_path.write_text(json.dumps(calendar, separators=(",", ":")), encoding="utf-8")
 
     actions_path = directory / "actions.json"
@@ -205,12 +204,12 @@ def main() -> int:
         "hardware": hardware_fingerprint(),
         "binary": str(binary),
         "binary_sha256": sha256(binary),
-        "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, CN weekday calendar, and PIT-visible corporate action",
+        "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, published SSE/SZSE 2024-2025 calendar, and PIT-visible corporate action",
         "profile_coverage_claim": False,
         "profile_target_status_updated": False,
         "limitations": [
             "synthetic deterministic minute bars; not market-data quality evidence",
-            "weekday-only synthetic trading calendar does not model exchange holidays or ad-hoc closures",
+            "calendar uses published SSE/SZSE annual holiday schedules for 2024-2025; ad-hoc closures outside those notices are not modeled",
             "throughput measurement does not prove every T+1, lot, limit, suspension, or corporate-action behavior branch",
             "does not exercise Paper worker lifecycle or broker integration",
         ],
@@ -281,10 +280,11 @@ def main() -> int:
                     "rejected_orders_last_repeat": int(rejected.group(1)) if rejected else None,
                     "rules_binding_observed": "ashare-rules:" in cost_source,
                     "cost_binding_observed": bool(cost_source),
-                    "calendar_fixture": "synthetic weekday sessions 09:30-11:30 / 13:00-15:00",
+                    "calendar_fixture": "SSE/SZSE published 2024-2025 holiday schedule; sessions 09:30-11:30 / 13:00-15:00",
                     "input_sha256": {
                         "bar_frame": sha256(frame),
-                        "calendar": sha256(config.parent / "calendar.json"),
+                        "calendar_runtime": sha256(config.parent / "calendar.json"),
+                        "calendar_source_fixture": sha256(CALENDAR_PATH),
                         "corporate_actions": sha256(action_path),
                         "runtime_config": sha256(config),
                         "rules": sha256(ROOT / "deploy" / "qianxing.ashare.rules.json"),

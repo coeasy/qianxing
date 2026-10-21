@@ -13,26 +13,10 @@ use qx_runtime::{
     OutboxRecovery, RuntimeConfig, StrategyContext, StrategyContractInput, StrategyContractOutput,
     WorkerConfig,
 };
-pub(crate) use qx_strategy::builtin_signal::BuiltinSignalProvenance;
 use qx_strategy::DynamicCAbiStrategy;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// 这套信号口径从哪来：四项全缺 = 写死默认，任一项给了 = 配置。
-///
-/// 四条链共用这句判词，否则"来源"由各入口各自臆测 —— `[Builtin · Cost] source=` 一族
-/// 撒过谎的地方（Q0b）就是这么来的。判词只回答"配置提过没有"，"提过的项上没上场"由
-/// [`BuiltinSignalProvenance`] 一起给出。
-///
-/// 这份配置声明了哪几项信号旋钮（按 `BuiltinSignalKnob::ALL` 的稳定顺序）。
-///
-/// 声明与生效是两件事：`builtin_fast_window` 对 MACD 而言从没上过场（V12 #102），
-/// 而"配了哪几项"只有配置本身知道。播报把两份都印出来，读者才分得清
-/// "没人提这一项"、"提了但这一轮不上场"与"提了并且改了信号"。
-/// 一次运行的信号声明面：来源判词，加上"这个 kind 上场的清单"与"配置提了却没上场的键"。
-///
-/// 三项一次算清，播报那行与摘要那块才不会各渲染一套（V12 #102）。此前 `source=config`
-/// 只回答"配置提过这一项"，读者据此以为印出来的四项都在改动信号。
 pub(crate) fn validate_ccxt_worker_binding(
     worker: &WorkerConfig,
     ccxt_config_path: &Path,

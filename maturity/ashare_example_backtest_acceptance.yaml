@@ -1,0 +1,28 @@
+# 回测轨验收记录（P0-1）——由 tools/backtest_acceptance.py 生成，请勿手改。
+#
+# 这条轨**不需要任何交易所凭据**：它是本仓主用法（回测 + Paper）的验收边界。
+# `sandbox_tested` / `production_approved` 两档对这条轨**不适用**（不是「待补」）——
+# 那两档只对需要外部 venue 的能力有意义，证据在 maturity/evidence/testnet|production/。
+schema_version: 1
+kind: backtest-acceptance
+scenario: ashare-example
+outcome: passed
+generated_by: tools/backtest_acceptance.py
+generated_at_unix: 1792564852
+binary: qx-cli.exe
+credentials_required: false
+external_venues: none
+network_accessed: false
+orders_sent: false
+same_dir_rerun: byte_identical
+independent_dirs: result_hash_and_artifact_contents_equal
+independent_runs: 2
+result_hash: 6be034a4cb0760fa
+data_fingerprint: dataset-bundle:0796529b56c9ea6b
+config_fingerprint: 8cb64752f7e52549ea893dc075a39ce79c1cf76edd9609427ff22722d1de7069
+replay_verdict: verified
+artifact_contents:
+  equity: 998e821ead1a21bbcef6ba1341582ecd1b252d3deb3bfac1c3675c4962dc974a
+  fills: 409a57018185b0b595127bde93d287bb25821ad6883ad57591710f79b5f72a2e
+  run_manifest: 9b11162332cfc28216b4aa50bbbaa52b48db9d665ee721076ee8d6a7e51ae541
+  summary: 8c8aeff6dcd137e2c80a2cf995ee0d6caa48af06e2b0a1cf3783712323febd82

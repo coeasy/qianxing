@@ -59,16 +59,16 @@ qx-cli version                                      # 一行构建身份：版�
 
 这一格两侧都有常驻判据：链条形状由 `crates/qx-cli/tests/unit/deploy_lookup.rs` 钉，屏幕与退出码由 `crates/qx-cli/tests/default_example_paths.rs` 从**无关启动目录**逐条实跑钉（只读入口四条 + 裸 `backtest` + A 股 `fast-backtest` + 位置参数搬迁 + worker 精确路径）。把整棵工作树复制到仓库外、删掉那份 `deploy/` 再逐条跑通属于**当轮实测**，连同它的三枚 `result_hash` 一起留在 [`README-历史实测快照-2026-10-09.md`](archive/README-历史实测快照-2026-10-09.md)。两条口径要分开：**接了查找面的入口**（只读入口的默认值，加上 `fast-backtest` 的 manifest——它在读取点自己走这条链）里，只要那是"示例配置形状"的路径且当前目录没有这一份，就按上面的顺序搬走，并在 stderr 说一句 `[查找 · Lookup]`，不做静默替换；**没接这条链的入口**（`scheduler-worker` 一类精确路径）按当前目录原样解析，读不到时错误正文点名"这一份示例在别处存在: <路径>"。屏幕上那行 `config_fingerprint=` 描述的是哪一份文件，两种情形下都始终可查。
 
-### B. 装开发 / 发布环境 —— 跑全部九道门禁
+### B. 装开发 / 发布环境 —— 跑发布检查
 
 ```bash
 build.bat          # Windows，cmd.exe 里跑
 bash build.sh      # Linux / macOS
 ```
 
-九步依次是**架构不变量自检**、格式检查、release 构建、Rust 测试、clippy、Python/JSON 边界测试、核心语义
-自校验、CLI 全链路与生态冒烟、运行时拓扑校验；两份脚本被门禁按步骤名与命令多重集逐项断言同序同条。前置是
-Python 3.10+（本轮实测 3.12.13）且能 `import tzdata`。第 `[0/9]` 步自己按 `QX_PYTHON` → 仓库 venv → PATH
+发布检查依次覆盖**架构不变量自检**、格式检查、release 构建、Rust 测试、clippy、Python/JSON 边界测试、CLI 与生态冒烟、运行时拓扑
+校验；两份脚本被门禁按步骤名与命令多重集逐项断言同序同条。前置是 Python 3.10+ 且能 `import tzdata`。
+第 `[0/8]` 步自己按 `QX_PYTHON` → 仓库 venv → PATH
 挑一个**真能打印版本号**的解释器，并把它导出成 `QX_PYTHON` 交给后面由 Rust 起的子进程（V12 §19 #133），所以不需要
 用户预先设环境变量。仓库 venv 离线重建：
 
@@ -76,12 +76,11 @@ Python 3.10+（本轮实测 3.12.13）且能 `import tzdata`。第 `[0/9]` 步�
 cd python && uv venv .venv --python 3.12 && uv pip install tzdata
 ```
 
-第 `[1/9]` 跑的是 `tools/check_architecture.py`，也就是本仓库那五百多条架构不变量。V12 §22 之前它**只在
+第 `[1/8]` 跑的是 `tools/check_architecture.py`，它直接检查当前登记的架构行为与结构不变量。V12 §22 之前它**只在
 CI 跑**：本地把八步走完看到"全部完成"，并不证明这些不变量成立（#139）。它只读源码、不碰编译产物，所以排在
 几分钟的 release 构建之前，红了当场就知道。
 
-实测口径：本轮（V13 R25，2026-10-09）单独重跑的是 `[1/9]` 那条架构门禁与 `[4/9]`/`[6/9]`
-两条测试腿（读数见下面「版本与现状」），**没有**整跑 `build.bat` 九步；九步整跑的当轮读数留在
+实测口径：单独运行的检查和测试以当前工作树为准；历史整跑读数留在
 [`docs/archive/README-历史实测快照-2026-10-09.md`](archive/README-历史实测快照-2026-10-09.md)
 与 CHANGELOG 里。这两件事不该混着报：`build.bat` 与 `build.sh` 的同序同条由
 `build_script_parity_check` 按步骤名与命令多重集逐项核对，脚本没改就不必重装一遍环境来证明它成立；
@@ -104,7 +103,7 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.1.0-cp310-abi3-win_amd64.whl
+uv pip install --offline dist/qianxing-0.2.0-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
 # 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
 uv pip install --offline "qianxing[ccxt]"     # CCXT 行情/交易 worker
@@ -145,8 +144,8 @@ assert verify_run(outcome).verified
 
 | 症状 | 真正的原因 | 修法 |
 |---|---|---|
-| `[0/9]` 报「找不到可用的 Python 3 解释器」，或 `[4/9]` 恰好 2 条 Python 桥用例失败 | Windows 上 PATH 里的 `python` 是 Microsoft Store 占位桩：退出码 0、什么都不打印 | 按 `[0/9]` 印出的两条修法之一：建仓库 venv，或 `set QX_PYTHON=<完整绝对路径>`（必须是文件路径，写成目录会让整树测试以 `TEST_EXIT=101` 崩） |
-| 跑 `.ps1` 入口直接 `SecurityError / UnauthorizedAccess`，一行脚本都没执行 | Windows 客户端默认执行策略是 Restricted，未签名脚本一律拒 | 用上面写着的形式：`-ExecutionPolicy Bypass -File`；README 里每条 PowerShell 入口都由门禁核对带着 Bypass |
-| `[6/9]` 或 A 股相关用例 `AshareProviderError`（报错原文点名 `pip install tzdata`） | Windows 没有系统 IANA 时区库，`tzdata` 是 `python/pyproject.toml` 里声明的平台依赖；`import qianxing_ashare` 本身已不再需要它（V13 #253 把时区取值挪到用时） | `python -m pip install tzdata`（或 `uv pip install tzdata`） |
-| 改了 `build.bat` 之后 `[1/9]` 之前就炸，报 `\'不是内部或外部命令\'` | 用 `sed -i`/MSYS 工具编辑会把 CRLF 抹成 LF，cmd.exe 读不了带中文的 LF 批处理 | 归一化回 CRLF，且按字节做（`raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`）；门禁会数孤立 LF |
+| `[0/8]` 报「找不到可用的 Python 3 解释器」，或 Rust 测试中的 Python 桥用例失败 | Windows 上 PATH 里的 `python` 是 Microsoft Store 占位桩：退出码 0、什么都不打印 | 按解释器探测输出的修法建仓库 venv，或将 `QX_PYTHON` 设为解释器文件的完整路径 |
+| 跑 `.ps1` 入口直接 `SecurityError / UnauthorizedAccess`，一行脚本都没执行 | Windows 客户端默认执行策略是 Restricted，未签名脚本一律拒 | 用上面写着的形式：`-ExecutionPolicy Bypass -File`；仓库 README 中的 PowerShell 入口均带有 Bypass |
+| `[6/8]` 或 A 股相关用例 `AshareProviderError`（报错原文点名 `pip install tzdata`） | Windows 没有系统 IANA 时区库，`tzdata` 是 `python/pyproject.toml` 里声明的平台依赖 | `python -m pip install tzdata`（或 `uv pip install tzdata`） |
+| 改了 `build.bat` 之后 `[1/8]` 之前就炸，报 `\'不是内部或外部命令\'` | 用 `sed -i`/MSYS 工具编辑会把 CRLF 抹成 LF，cmd.exe 读不了带中文的 LF 批处理 | 归一化回 CRLF，且按字节做（`raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`）；架构检查会校验批处理行尾 |
 

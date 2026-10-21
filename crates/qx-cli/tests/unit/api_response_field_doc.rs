@@ -355,7 +355,7 @@ fn metric_name(token: &str) -> Option<String> {
 /// 再把"看起来是样本模板"的源码行扫一遍，不许出现转义写法 `\\n`。
 ///
 /// 第二十遍（#178 接线）之后源码侧只剩一处自己渲染样本的出口：`to_prometheus` 那份第二实现被
-/// 删了，pipeline 计数改由 `pipeline_metrics_report.rs` 按 worker 进程写进 `.prom`。所以这里扫的
+/// 删了，pipeline 计数改由 qx-service 的 `pipeline_metrics_report.rs` 按 worker 进程写进 `.prom`。所以这里扫的
 /// 是"今天所有还在渲染样本的模板"，而不是当初那两处。
 #[test]
 fn prometheus_exposition_is_line_separated_at_both_ends() {

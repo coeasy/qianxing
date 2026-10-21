@@ -4,17 +4,17 @@
 //! Rust Tick, order-book matching, risk, OMS, ledger, and replay implementations
 //! remain the single source of trading semantics.
 
-use super::artifacts::write_text;
 use super::{attach, guard::guard_panics};
 use crate::{
     AppError, AppErrorCategory, CallerCapability, DepthBacktestOutcome, DepthBacktestSpec,
     RunContext,
 };
 use qx_strategy::Strategy;
-use std::path::PathBuf;
 
+mod artifacts;
 mod custom_strategy;
 mod portfolio;
+mod quality;
 use custom_strategy::CallbackStrategy;
 pub(super) use custom_strategy::InjectedDepthStrategy;
 use custom_strategy::{run_custom_strategies, start_custom_strategies};
@@ -113,48 +113,6 @@ impl DepthBacktestSpec {
             })
             .map_err(|error| attach(error, &correlation_id))
         })
-    }
-}
-
-pub(super) fn artifact_paths(spec: &DepthBacktestSpec) -> crate::BacktestArtifacts {
-    let root = PathBuf::from(&spec.output_dir);
-    let named = |suffix: &str| {
-        root.join(format!("{}.{suffix}", spec.run_id))
-            .to_string_lossy()
-            .into_owned()
-    };
-    crate::BacktestArtifacts {
-        run_manifest: named("run.json"),
-        summary: named("summary.json"),
-        equity: named("equity.csv"),
-        fills: named("fills.csv"),
-    }
-}
-
-pub(super) fn publish(path: &str, body: &str) -> Result<(), AppError> {
-    match std::fs::read_to_string(path) {
-        Ok(existing) if existing == body => Ok(()),
-        Ok(_) => Err(AppError::new(
-            AppErrorCategory::Conflict,
-            format!("同一运行产物已存在不同内容: {path}"),
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match write_text(path, body) {
-                Ok(()) => Ok(()),
-                Err(write_error) => match std::fs::read_to_string(path) {
-                    Ok(existing) if existing == body => Ok(()),
-                    Ok(_) => Err(AppError::new(
-                        AppErrorCategory::Conflict,
-                        format!("并发运行已发布不同内容的产物: {path}"),
-                    )),
-                    Err(_) => Err(write_error),
-                },
-            }
-        }
-        Err(error) => Err(AppError::from_io(
-            &format!("读取已有运行产物 {path}"),
-            &error,
-        )),
     }
 }
 

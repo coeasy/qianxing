@@ -8,7 +8,6 @@ use crate::contract_adapters;
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
-use qx_runtime::StrategyRuntimeConfig;
 use std::path::Path;
 
 pub(crate) fn run_dataset_ingest(
@@ -128,6 +127,7 @@ pub(crate) fn verify_dataset_bundle_manifest(
         .map_err(|error| error.message().to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn verify_dataset_bundle_binding(
     bundle_path: &Path,
     bars_manifest: &qx_data::DatasetManifest,
@@ -142,32 +142,6 @@ pub(crate) fn verify_dataset_bundle_binding(
             )
         })?;
     verify_dataset_bundle_manifest(&bundle, bars_manifest, bars_len)
-}
-
-pub(crate) fn verify_dataset_bundle_component_bindings(
-    bundle: &qx_data::DatasetBundleManifest,
-    strategy: &StrategyRuntimeConfig,
-    strategy_id: &str,
-) -> Result<(), String> {
-    qx_app::dataset_bundle::verify_dataset_bundle_components(
-        bundle,
-        &qx_app::dataset_bundle::DatasetBundleComponentBindings {
-            strategy_id,
-            component_paths: &strategy.dataset_component_paths,
-            ashare_actions_path: strategy.ashare_actions_path.as_deref(),
-            ashare_calendar_path: strategy.ashare_calendar_path.as_deref(),
-        },
-        |path, _kind, format| {
-            let label = match format {
-                qx_data::DatasetComponentFormat::Json => " DatasetBundle 组件",
-                qx_data::DatasetComponentFormat::Arrow => " Arrow DatasetBundle 组件 manifest ",
-            };
-            read_example_json(path, label).map_err(|message| {
-                qx_app::AppError::new(qx_app::AppErrorCategory::InvalidInput, message)
-            })
-        },
-    )
-    .map_err(|error| error.message().to_string())
 }
 
 /// Arrow IPC/C Data Interface 的生产者通过一个小型、可审计的 JSON manifest

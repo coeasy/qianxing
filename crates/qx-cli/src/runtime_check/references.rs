@@ -1,7 +1,8 @@
 use crate::{
-    cost_rules_problem, dataset_commands, fill_model_failure, resolve_runtime_relative_path,
-    validate_ccxt_worker_binding,
+    cost_rules_problem, dataset_commands, resolve_runtime_relative_path,
+    validate_ccxt_worker_binding, worker_market_spec_failures,
 };
+use qx_app::fill_model_failure;
 use qx_runtime::{RuntimeConfig, StrategyRuntimeConfig, WorkerRole};
 use qx_xingban::AshareRuleConfig;
 use std::path::Path;
@@ -42,12 +43,8 @@ pub(crate) fn validate_runtime_references(
     };
 
     for worker in config.workers.iter().filter(|worker| worker.enabled) {
-        if let Some(spec) = worker.instrument_spec_path.as_deref() {
-            require_file(
-                &mut failures,
-                format!("worker {} instrument_spec_path", worker.id),
-                spec,
-            );
+        if worker.instrument_spec_path.is_some() {
+            failures.extend(worker_market_spec_failures(runtime_path, worker));
         }
         if let Some(credentials) = worker.credential_files.as_ref() {
             require_file(

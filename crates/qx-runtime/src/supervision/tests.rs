@@ -50,6 +50,32 @@ fn supervisor_registers_only_enabled_workers_and_exposes_shutdown() {
 }
 
 #[test]
+fn worker_context_sleep_is_interrupted_by_shutdown_request() {
+    let supervisor = RuntimeSupervisor::new(config()).unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let worker = supervisor
+        .spawn_worker("market", move |context| {
+            started_tx.send(()).unwrap();
+            context.sleep_ms(5_000);
+            finished_tx.send(context.should_stop()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker entered cancellable wait");
+    // Allow the worker to enter the first 200ms sleep slice before signaling; otherwise a broken
+    // implementation could pass because the stop token was already set before sleeping began.
+    thread::sleep(Duration::from_millis(50));
+    supervisor.request_shutdown();
+    assert!(finished_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("cancellable wait must wake promptly"));
+    assert!(worker.join().unwrap().is_ok());
+}
+
+#[test]
 fn supervisor_runs_worker_and_records_terminal_state() {
     let supervisor = RuntimeSupervisor::new(config()).unwrap();
     let worker = supervisor

@@ -23,7 +23,23 @@ REQUIRED = {
     "steady_state_pipeline_ingest",
 }
 CRITERION_REQUIRED = {
+    *(f"qx_core_append_batch/{size}" for size in (1_000, 8_000, 64_000)),
+    *(f"qx_zhenlu_crypto_paper_lifecycle_v2/{size}" for size in (1, 16, 256)),
+    *(f"qx_core_event_log_digest/{size}" for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_event_log_validate/{mode}/{size}" for mode in ("cached", "duplicate_tree_baseline") for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_event_log_manifest_digest/{mode}/{size}" for mode in ("legacy_full_rehash", "rolling_v2") for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_event_log_prefix_digest/{mode}/{size}" for mode in ("cached_after_append", "prior_two_scans") for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_ledger_entry_lookup/{mode}/{size}" for mode in ("indexed", "linear") for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_ledger_entry_commit/clone_full_ledger_each_entry/{size}" for size in (64, 256, 1_024)),
+    *(f"qx_core_ledger_entry_commit/commit_affected_state/{size}" for size in (64, 256, 1_024, 8_000, 64_000)),
+    *(f"qx_core_ledger_cash_lookup/{mode}/{size}" for mode in ("indexed", "composite_key_prior", "entry_scan") for size in (1_000, 8_000, 64_000)),
+    *(f"qx_core_ledger_cash_balances_snapshot/{mode}/{size}" for mode in ("owned_allocating_snapshot", "borrowed_snapshot") for size in (1, 8, 64)),
     *(f"{name}/{size}" for name in ("append_batch", "event_log_digest", "full_replay", "l2_matching") for size in (1_000, 8_000, 64_000)),
+    *(f"l2_queue_position_depth_lookup/{depth}" for depth in (16, 128, 512)),
+    *(f"l2_queue_price_lookup_algorithm/{side}/{book_side}/{depth}"
+      for depth in (16, 128, 512, 2_048)
+      for side in ("linear", "binary")
+      for book_side in ("Buy", "Sell")),
     *(f"event_log_validate/{mode}/{size}" for mode in ("cached", "duplicate_tree_baseline") for size in (1_000, 8_000, 64_000)),
     *(f"event_log_manifest_digest/{mode}/{size}" for mode in ("legacy_full_rehash", "rolling_v2") for size in (1_000, 8_000, 64_000)),
     *(f"event_log_prefix_digest/{mode}/{size}" for mode in ("cached_after_append", "prior_two_scans") for size in (1_000, 8_000, 64_000)),
@@ -33,26 +49,51 @@ CRITERION_REQUIRED = {
     *(f"ashare_previous_close/{mode}/{size}" for mode in ("pointwise", "precomputed") for size in (1_000, 8_000, 64_000)),
     *(f"ashare_ex_rights_daily_sweep/{mode}/{size}" for mode in ("legacy_daily_scan", "production_adaptive") for size in (1_000, 8_000, 64_000)),
     *(f"backtest_risk_metrics/{mode}/{size}" for mode in ("optimized_single_vector", "legacy_allocating") for size in (1_000, 8_000, 64_000)),
+    *(f"portfolio_bar_timeline_64k_bars/{mode}/{markets}"
+      for mode in ("timeline_constructor", "flatten_then_sort", "preallocated_flatten_then_sort", "preallocated_flatten_sort_with_indexes")
+      for markets in (2, 8, 32, 64, 128)),
+    *(f"portfolio_bar_timeline_aligned_64k_bars/{mode}/{markets}"
+      for mode in ("timeline_constructor", "preallocated_flatten_sort_with_indexes")
+      for markets in (2, 8, 32)),
+    *(f"protective_exit_position_sides_per_64k_bars/{mode}/{sides}"
+      for mode in ("allocate_vec_per_bar", "borrow_keys_per_bar")
+      for sides in (1, 2)),
+    *(f"portfolio_visible_marks_aligned/{mode}/{markets}"
+      for mode in ("rebuild_each_admission_batch", "reuse_same_visible_timestamp")
+      for markets in (2, 8, 32, 64)),
+    *(f"portfolio_funding_reservation_decision_reads/{mode}/{markets}x{pending}"
+      for mode in ("scan_markets_and_orders_per_decision", "read_cached_global_and_market_totals")
+      for markets in (2, 8, 32, 64)
+      for pending in (16, 256)),
+    *(f"portfolio_margin_admission_snapshot/{mode}/{markets}"
+      for mode in ("recalculate_positions_for_each_admission", "reuse_margin_snapshot_for_admissions")
+      for markets in (2, 8, 32, 64)),
+    "scheduler_active_run_selection/clone_and_scan_4097_runs",
+    "scheduler_active_run_selection/indexed_active_ids",
 }
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0
+
+
+def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) -> Path:
+    """Resolve nested ids and Windows-flattened sub-identifiers within a group."""
+    root = criterion_root or ROOT / "target" / "criterion"
+    parts = benchmark.split("/")
+    nested = root.joinpath(*parts, "new", "estimates.json")
+    if nested.is_file():
+        return nested
+    if len(parts) > 1:
+        flattened_id = root / parts[0] / ("_".join(parts[1:]).lower()) / "new" / "estimates.json"
+        if flattened_id.is_file():
+            return flattened_id
+    return nested
 
 
 def criterion_estimates() -> list[dict]:
     records = []
     for benchmark in sorted(CRITERION_REQUIRED):
-        # Cargo runs a package benchmark with the package root as its working directory,
-        # so Criterion stores its estimates under crates/qx-cli/target/criterion even when
-        # Cargo's compiled binaries use the workspace-level target directory.
-        path = (
-            ROOT
-            / "crates"
-            / "qx-cli"
-            / "target"
-            / "criterion"
-            / Path(*benchmark.split("/"))
-            / "new"
-            / "estimates.json"
-        )
+        # Workspace Criterion groups share target/criterion; crate-owned groups use
+        # distinct benchmark ids so one package cannot overwrite another package's sample.
+        path = criterion_estimate_path(benchmark)
         payload = json.loads(path.read_text(encoding="utf-8"))
         records.append(
             {
@@ -139,29 +180,38 @@ def main() -> int:
         "--out", type=Path, default=ROOT / "benchmarks" / "results" / "rust-micro.json"
     )
     parser.add_argument("--cargo", default="cargo")
-    args = parser.parse_args()
-    criterion_command = [
-        args.cargo,
-        "bench",
-        "-p",
-        "qx-cli",
-        "--bench",
-        "criterion_performance",
-        "--",
-        "--noplot",
-    ]
-    criterion_process = subprocess.run(
-        criterion_command,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    parser.add_argument(
+        "--skip-criterion",
+        action="store_true",
+        help="collect existing Criterion estimates without rerunning timed workloads",
     )
-    if criterion_process.returncode:
-        sys.stderr.write(criterion_process.stdout)
-        sys.stderr.write(criterion_process.stderr)
-        return criterion_process.returncode
+    args = parser.parse_args()
+    criterion_commands = [
+        [
+            args.cargo,
+            "bench",
+            "-p",
+            package,
+            "--bench",
+            "criterion_performance",
+            "--",
+            "--noplot",
+        ]
+        for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")
+    ]
+    for criterion_command in (() if args.skip_criterion else criterion_commands):
+        criterion_process = subprocess.run(
+            criterion_command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if criterion_process.returncode:
+            sys.stderr.write(criterion_process.stdout)
+            sys.stderr.write(criterion_process.stderr)
+            return criterion_process.returncode
     try:
         criterion_records = criterion_estimates()
     except (OSError, KeyError, json.JSONDecodeError) as error:
@@ -212,7 +262,7 @@ def main() -> int:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "hardware": hardware_fingerprint(),
         "command": command,
-        "criterion_command": criterion_command,
+        "criterion_commands": criterion_commands,
         "criterion_records": criterion_records,
         "records": records,
         "steady_state_tick_curve": steady_state_tick_curve(records),

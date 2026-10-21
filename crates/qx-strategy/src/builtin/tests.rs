@@ -1,4 +1,7 @@
 use super::*;
+// `ema` 住在兄弟模块 `indicator` 里（`pub(super)`），`use super::*` 不会带过兄弟模块的项，
+// 得单独引 —— 这条 import 丢了会让整个测试目标编不出来（只在 `cargo test` 暴露）。
+use super::indicator::ema;
 use qx_core::InstrumentId;
 
 mod sizing_tests;
@@ -26,6 +29,36 @@ fn registry_contains_seventeen_builtin_strategies() {
         BuiltinStrategyKind::parse("EMA-CROSS").unwrap(),
         BuiltinStrategyKind::EmaCross
     );
+}
+
+#[test]
+fn multi_leg_constructor_owns_pair_defaults_and_rejects_invalid_instruments() {
+    let primary = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid primary");
+    let reference = InstrumentId::parse("ETHUSDT.BINANCE").expect("valid reference");
+    let config = BuiltinStrategyConfig::new_multi_leg(
+        BuiltinStrategyKind::PairsArbitrage,
+        "builtin-pairs_arbitrage-multi",
+        primary.clone(),
+        reference.clone(),
+        qx_core::Quantity::from_i64(3),
+    )
+    .expect("pair config is valid");
+    assert_eq!(config.instrument, primary);
+    assert_eq!(config.reference_instrument, Some(reference));
+    assert_eq!(config.quantity, qx_core::Quantity::from_i64(3));
+    assert_eq!(config.fast_window, 5);
+    assert_eq!(config.slow_window, 20);
+    assert_eq!(config.period, 14);
+    assert_eq!(config.threshold_bps, 100);
+
+    assert!(BuiltinStrategyConfig::new_multi_leg(
+        BuiltinStrategyKind::SmaCross,
+        "not-a-pair",
+        InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument"),
+        InstrumentId::parse("ETHUSDT.BINANCE").expect("valid instrument"),
+        qx_core::Quantity::from_i64(1),
+    )
+    .is_err());
 }
 
 /// `ema` 的直流增益必须是 1，且快线必须落在趋势的同侧：这两条不成立时

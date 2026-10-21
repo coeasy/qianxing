@@ -4,6 +4,7 @@
 //! 拿终值哈希/成交额说话，而每个被拒绝的组合都要说明**为什么**被拒绝。
 
 use super::*;
+use qx_app::{bar_fill_model, fill_model_failure, fill_model_problem};
 
 /// 用给定的 `strategy.fill_model` 跑一遍策略回测并读回摘要。`spec` 是 market spec 路径：
 /// `one_tick_slippage` 的一档只能从它取，所以带该模型的用例必须固定同一份 spec。
@@ -42,7 +43,7 @@ fn metric_i128(summary: &serde_json::Value, key: &str) -> i128 {
 
 /// 三种可达口径各自都要"确实换个结果"，并且把口径写进摘要。
 ///
-/// 反向验证口径：把 `BarBacktestAssembly::into_config` 的 `fill` 换回硬编码的
+/// 反向验证口径：把应用层回测绑定的 `fill` 换回硬编码的
 /// `NextBarOpenFillModel`，`best_price` 与 `one_tick_slippage` 两轮的描述子立刻全部退回
 /// `NextBarOpen@v1`，下面的 `assert!` 当场不成立。
 #[test]
@@ -340,17 +341,18 @@ fn depth_summary_carries_no_fill_model_key() {
         isolated_backtest_runtime(&deploy, &config, "q1a2-depth")
     };
     let out = temp_cli_case_dir("q1a2-depth-out");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        1,
-        None,
-        DepthExecutionModel::default(),
-        &out,
-        Some(&runtime),
-    )
+    run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: 1,
+        fee_bps: None,
+        execution: DepthExecutionModel::default(),
+        root: &out,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .unwrap();
     let summary = read_first_backtest_summary(&out);
     assert!(
@@ -388,17 +390,18 @@ fn depth_chain_refuses_a_configured_fill_model() {
     };
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "r11-depth-fill");
     let out = temp_cli_case_dir("r11-depth-fill-out");
-    let failure = run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        1,
-        None,
-        DepthExecutionModel::default(),
-        &out,
-        Some(&runtime),
-    )
+    let failure = run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: 1,
+        fee_bps: None,
+        execution: DepthExecutionModel::default(),
+        root: &out,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .expect_err("深度链收下 strategy.fill_model 再静默丢掉，等于让配置说假话");
     assert!(
         failure.contains("strategy.fill_model"),

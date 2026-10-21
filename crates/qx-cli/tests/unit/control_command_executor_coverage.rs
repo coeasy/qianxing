@@ -17,13 +17,14 @@
 
 use super::*;
 use qx_control::ControlError;
+use std::sync::OnceLock;
 
-/// 生产派发者名单（Paper worker 已迁入 venue_runtime，CLI workers.rs 不再负责控制命令派发）。
+/// 生产派发者名单按实际命令执行宿主登记，Venue runner 生命周期由 qx-service 持有。
 const EXECUTOR_SOURCES: [&str; 4] = [
-    "crates/qx-cli/src/api_service/api_service_builder.rs",
-    "crates/qx-cli/src/venue_runtime/paper_worker.rs",
-    "crates/qx-cli/src/venue_runtime/binance_submit.rs",
-    "crates/qx-cli/src/venue_runtime/ccxt_execution.rs",
+    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "crates/qx-service/src/paper_execution_host.rs",
+    "crates/qx-service/src/binance_execution_host.rs",
+    "crates/qx-service/src/ccxt_execution_host.rs",
 ];
 
 /// 一份源码里属于生产代码的那一段：切到文件末尾追加的测试模块之前。
@@ -47,20 +48,40 @@ fn production_region(source: &str) -> String {
 }
 
 fn production_text(rel: &str) -> String {
-    production_region(&workspace_source(rel))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(rel);
+    production_sources()
+        .iter()
+        .find(|(source_path, _)| source_path == &path)
+        .map(|(_, source)| production_region(source))
+        .unwrap_or_else(|| panic!("生产源码名单 {rel} 不存在"))
+}
+
+fn production_sources() -> &'static [(PathBuf, String)] {
+    static SOURCES: OnceLock<Vec<(PathBuf, String)>> = OnceLock::new();
+    SOURCES.get_or_init(|| {
+        all_crate_production_sources()
+            .into_iter()
+            .map(|path| {
+                let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                    panic!("生产源码 {} 读取失败: {error}", path.display())
+                });
+                (path, source)
+            })
+            .collect()
+    })
 }
 
 /// 全仓生产源码里以限定形式提到某个命令类型的文件（相对仓库根，便于报错时点名）。
 fn dispatchers_of(kind_name: &str) -> Vec<String> {
     let token = format!("CommandKind::{kind_name}");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    all_crate_production_sources()
+    production_sources()
         .iter()
-        .filter(|path| {
-            let source = std::fs::read_to_string(path).expect("生产源码读取失败");
-            production_region(&source).contains(&token)
-        })
-        .map(|path| {
+        .filter(|(_, source)| production_region(source).contains(&token))
+        .map(|(path, _)| {
             path.strip_prefix(&root)
                 .unwrap_or(path)
                 .to_string_lossy()

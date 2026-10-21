@@ -7,7 +7,9 @@ use qx_core::{
     Event, EventKind, EventLog, InstrumentId, Order, OrderStatus, Price, Priority, Quantity,
     ReplayVerifier, Side,
 };
+#[cfg(feature = "sqlite")]
 use qx_guanxing::QuoteTick;
+#[cfg(feature = "sqlite")]
 use qx_runtime::{LiveEventPipeline, RuntimeEventEnvelope};
 use qx_storage::SegmentedEventLogStore;
 #[cfg(feature = "sqlite")]

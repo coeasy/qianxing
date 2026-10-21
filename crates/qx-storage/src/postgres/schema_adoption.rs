@@ -127,16 +127,14 @@ fn adopt_legacy_postgres_client(client: &mut Client, schema: &str) -> Result<u32
 
     // The verification schema and ledger are in the same transaction. On any failure,
     // dropping the transaction rolls both back, leaving the target untouched.
-    if adoption_version.is_err() {
-        return adoption_version;
-    }
+    let adopted_version = adoption_version?;
     transaction
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS \"{control_schema}\" CASCADE"
         ))
         .map_err(pg_error)?;
     transaction.commit().map_err(pg_error)?;
-    adoption_version
+    Ok(adopted_version)
 }
 
 fn postgres_schema_fingerprint<C: GenericClient>(

@@ -10,11 +10,12 @@ mod ccxt_execution;
 mod ccxt_live_bars;
 mod ccxt_market_worker;
 mod ccxt_reconcile_worker;
+#[cfg(test)]
 mod ccxt_stream_retry;
 mod ccxt_submit;
-mod paper_algo_worker;
 mod paper_submit;
 mod paper_worker;
+#[cfg(test)]
 mod worker_risk;
 mod worker_runtime;
 
@@ -26,10 +27,11 @@ pub(crate) use ccxt_execution::*;
 pub(crate) use ccxt_live_bars::*;
 pub(crate) use ccxt_market_worker::*;
 pub(crate) use ccxt_reconcile_worker::*;
+#[cfg(test)]
 pub(crate) use ccxt_stream_retry::*;
 pub(crate) use ccxt_submit::*;
-pub(crate) use paper_algo_worker::*;
 pub(crate) use paper_submit::*;
 pub(crate) use paper_worker::*;
+#[cfg(test)]
 pub(crate) use worker_risk::*;
 pub(crate) use worker_runtime::*;

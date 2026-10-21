@@ -23,6 +23,7 @@ use qx_sdk::{
     VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "consumer/custom_strategy.rs"]
 mod custom_strategy_consumer;
@@ -51,7 +52,13 @@ fn sample_bars() -> PathBuf {
 
 /// 本用例独享的产物目录（并发跑不互相踩）。
 fn scratch(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("qx-sdk-consumer/{label}-{}", std::process::id()));
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after the Unix epoch")
+        .as_nanos();
+    let root = repo_root()
+        .join(".tmp-test/qx-sdk-consumer")
+        .join(format!("{label}-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&root).expect("建临时目录");
     root
 }

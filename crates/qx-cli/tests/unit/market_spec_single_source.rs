@@ -297,7 +297,7 @@ fn each_market_spec_shape_publishes_its_own_source_label() {
         let expected = match case {
             "product-shape" => PRODUCT_MARKET_SPEC_VERSION,
             "ccxt-shape" => CCXT_MARKET_SPEC_VERSION,
-            _ => DEFAULT_INSTRUMENT_SPEC_VERSION,
+            _ => qx_app::DEFAULT_INSTRUMENT_SPEC_VERSION,
         };
         assert_eq!(
             label, expected,
@@ -337,24 +337,25 @@ fn the_depth_chain_publishes_the_shape_it_actually_read() {
         if let Some(market) = market {
             std::fs::write(&spec, serde_json::to_string_pretty(&market).unwrap()).unwrap();
         }
-        run_depth_backtest(
-            "l1",
-            "sma_cross",
-            &deploy.join("qianxing.depth-frame.l1.example.json"),
-            spec.exists().then_some(&spec),
-            1,
-            None,
-            DepthExecutionModel::default(),
-            &out,
-            Some(&runtime),
-        )
+        run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+            tier: "l1",
+            strategy_name: "sma_cross",
+            frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+            spec_path: spec.exists().then_some(&spec),
+            quantity: 1,
+            fee_bps: None,
+            execution: DepthExecutionModel::default(),
+            root: &out,
+            runtime_config_path: Some(&runtime),
+            quality_manifest_path: None,
+        })
         .unwrap_or_else(|error| panic!("深度链读不懂 {case}，实际: {error}"));
         let summary = read_first_backtest_summary(&out);
         let label = published_spec_source(&summary);
         let expected = match case {
             "product-shape" => PRODUCT_MARKET_SPEC_VERSION,
             "ccxt-shape" => CCXT_MARKET_SPEC_VERSION,
-            _ => DEFAULT_INSTRUMENT_SPEC_VERSION,
+            _ => qx_app::DEFAULT_INSTRUMENT_SPEC_VERSION,
         };
         assert_eq!(
             label, expected,

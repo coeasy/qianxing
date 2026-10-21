@@ -201,3 +201,37 @@ fn zero_interval_fails_before_reading_input() {
     assert_eq!(error.category(), AppErrorCategory::InvalidInput);
     assert!(error.message().contains("interval-ms"));
 }
+
+#[test]
+fn dataset_manifest_validation_spec_matches_the_registered_strict_schema() {
+    let root = case_dir("schema-contract");
+    let input = spec(&root.join("bars.json"), &root.join("manifest.json"));
+    let payload = serde_json::to_value(input).expect("serialize validation spec");
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../schemas/dataset-manifest-validation-spec-v1.json"
+    ))
+    .expect("schema is valid JSON");
+    let payload_keys = payload
+        .as_object()
+        .expect("spec serializes to object")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let schema_keys = schema["properties"]
+        .as_object()
+        .expect("schema properties")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let required_keys = schema["required"]
+        .as_array()
+        .expect("required array")
+        .iter()
+        .map(|value| value.as_str().expect("required name").to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(payload_keys, schema_keys);
+    assert_eq!(required_keys, schema_keys);
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(schema["properties"]["interval_ms"]["minimum"], 1);
+    let _ = std::fs::remove_dir_all(root);
+}

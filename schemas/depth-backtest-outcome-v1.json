@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/depth-backtest-outcome-v1.json",
+  "title": "Qianxing DepthBacktestOutcome v1",
+  "description": "Stable depth backtest identity, L1/L2 result summary, manifest digest and four persisted artifact paths. account_id and manifest_digest may be omitted by serde.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "instrument",
+    "tier",
+    "result_hash",
+    "data_fingerprint",
+    "fills",
+    "equity_points",
+    "snapshots",
+    "return_bps",
+    "max_drawdown_bps",
+    "artifacts"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "l1",
+        "l2"
+      ]
+    },
+    "result_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "data_fingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fills": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "equity_points": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "snapshots": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "return_bps": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "max_drawdown_bps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "artifacts": {
+      "$ref": "#/$defs/BacktestArtifacts"
+    },
+    "manifest_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "account_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "BacktestArtifacts": {
+      "type": "object",
+      "required": [
+        "run_manifest",
+        "summary",
+        "equity",
+        "fills"
+      ],
+      "properties": {
+        "run_manifest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "equity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fills": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

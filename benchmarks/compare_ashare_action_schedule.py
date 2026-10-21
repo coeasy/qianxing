@@ -119,7 +119,7 @@ def main() -> int:
             "result_hash_equal": True,
             "profile_coverage_claim": False,
             "limitations": [
-                "synthetic deterministic minute bars and weekday-only calendar",
+                "synthetic deterministic minute bars and the published SSE/SZSE 2024-2025 holiday calendar; ad-hoc closures outside those schedules are not modeled",
                 "corporate actions are sparse and do not represent exchange-wide production distributions",
                 "timing compares complete CLI invocations, not an isolated kernel microbenchmark",
                 "does not establish ashare-research profile completion",

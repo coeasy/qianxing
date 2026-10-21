@@ -64,8 +64,7 @@ fn every_semantics_row_declares_the_shared_rate_limit_exits() {
 /// `write_http_response` 里 `reason` 那块 match：`(状态码, 短语)` 与 `_` 那格的短语。
 ///
 /// 取数文件是 `crates/qx-api/src/transport.rs`：传输层（套接字选项、TLS 包装、请求读取、
-/// 响应写出与握手摘要）已整体外置到那个模块，为的是把 `lib.rs` 的行数棘轮腾出余量给
-/// 浏览器准入面。判据跟着实现搬，不跟着历史文件路径留。
+/// 响应写出与握手摘要）已整体外置到那个模块，判据跟随实际实现位置。
 fn reason_arms() -> (BTreeMap<u16, String>, String) {
     let api = workspace_source("crates/qx-api/src/transport.rs");
     let head = "let reason = match response.status {";

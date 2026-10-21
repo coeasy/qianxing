@@ -493,7 +493,7 @@ pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathB
         .and_then(|name| name.strip_suffix(".multi-market-depth.json"))
         .ok_or("多市场深度产物文件名无效")?;
     let output = path.with_file_name(format!("{name}.evidence.json"));
-    crate::backtests::write_backtest_artifact(&output, &json, "EvidenceBundle")?;
+    qx_app::artifact_store::write_backtest_artifact(&output, &json, "EvidenceBundle")?;
     Ok(output)
 }
 

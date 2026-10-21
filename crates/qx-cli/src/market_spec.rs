@@ -2,8 +2,6 @@
 
 use qx_core::{InstrumentId, TradingInstrumentSpec};
 
-pub(crate) const DEFAULT_INSTRUMENT_SPEC_VERSION: &str = "default-instrument-spec-v1";
-
 pub(crate) fn market_spec_from_value(
     instrument: &InstrumentId,
     market: &serde_json::Value,

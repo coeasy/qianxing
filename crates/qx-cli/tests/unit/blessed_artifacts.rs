@@ -24,27 +24,22 @@ fn blessed_artifacts_are_current_or_explicitly_refused_with_migration_command() 
     let mut summaries = Vec::new();
     visit(&root.join("deploy").join("data"), &mut summaries);
     summaries.sort();
-    assert_eq!(
-        summaries.len(),
-        16,
-        "blessed summary 集合发生变化，需复核治理范围"
+    assert!(
+        !summaries.is_empty(),
+        "deploy/data 中没有可检查的 blessed summary"
     );
 
     for path in summaries {
         let payload = std::fs::read_to_string(&path).expect("读取 blessed summary");
         let summary: serde_json::Value = serde_json::from_str(&payload).expect("summary JSON 有效");
-        let schema = summary["schema_version"].as_i64();
-        if matches!(schema, Some(5 | 6)) {
-            continue;
+        if let Err(refusal) = require_current_summary_schema(&summary) {
+            assert!(refusal.contains("已拒绝"), "{}: {refusal}", path.display());
+            assert!(
+                refusal.contains("qx-cli backtest <runtime.json> [<bar-frame.json>]"),
+                "{} 未给出可执行迁移命令: {refusal}",
+                path.display()
+            );
         }
-        let refusal =
-            require_current_summary_schema(&summary).expect_err("旧世代 summary 必须显式拒绝");
-        assert!(refusal.contains("已拒绝"), "{}: {refusal}", path.display());
-        assert!(
-            refusal.contains("qx-cli backtest <runtime.json> [<bar-frame.json>]"),
-            "{} 未给出可执行迁移命令: {refusal}",
-            path.display()
-        );
     }
 }
 

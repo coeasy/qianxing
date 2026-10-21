@@ -158,16 +158,29 @@ pub(super) fn other_market_margin(
     Ok(total)
 }
 
+pub(super) struct OtherMarketMarginQuery<'a> {
+    pub(super) visible_ts: u64,
+    pub(super) ledger: &'a Ledger,
+    pub(super) account_id: &'a str,
+    pub(super) target: &'a InstrumentId,
+    pub(super) specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    pub(super) marks: &'a BTreeMap<InstrumentId, Price>,
+    pub(super) markets: &'a RuntimeMarkets<'a>,
+}
+
 pub(super) fn cached_or_other_market_margin(
     cache: &mut Option<CachedPortfolioMarginSnapshot>,
-    visible_ts: u64,
-    ledger: &Ledger,
-    account_id: &str,
-    target: &InstrumentId,
-    specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
-    marks: &BTreeMap<InstrumentId, Price>,
-    markets: &RuntimeMarkets<'_>,
+    query: OtherMarketMarginQuery<'_>,
 ) -> Result<i128, qx_core::QxError> {
+    let OtherMarketMarginQuery {
+        visible_ts,
+        ledger,
+        account_id,
+        target,
+        specs,
+        marks,
+        markets,
+    } = query;
     if cache.as_ref().map(|(cached_ts, _)| *cached_ts) != Some(visible_ts) {
         *cache = Some((
             visible_ts,

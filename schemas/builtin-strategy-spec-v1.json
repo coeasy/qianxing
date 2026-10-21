@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/builtin-strategy-spec-v1.json",
+  "title": "Qianxing BuiltinStrategySpec v1",
+  "description": "qx-app 内置 Bar 策略声明。字段和 wire 值与 Rust BuiltinStrategySpec/BuiltinStrategyKind 及 Python typed SDK 对齐；策略旋钮的条件性业务校验仍由 qx-app 按 kind 执行。",
+  "type": "object",
+  "required": ["kind", "strategy_id", "quantity_raw", "fast_window", "slow_window"],
+  "properties": {
+    "kind": {
+      "enum": [
+        "sma_cross",
+        "ema_cross",
+        "macd",
+        "rsi",
+        "bollinger",
+        "donchian_breakout",
+        "momentum",
+        "mean_reversion",
+        "grid",
+        "atr_trend",
+        "keltner_trend",
+        "vwap_reversion",
+        "volatility_breakout",
+        "pairs_arbitrage",
+        "basis_arbitrage",
+        "cross_venue_arbitrage",
+        "spot_futures_arbitrage"
+      ]
+    },
+    "strategy_id": {"type": "string", "minLength": 1},
+    "quantity_raw": {"type": "integer", "minimum": 1},
+    "target_notional_raw": {"type": ["integer", "null"], "minimum": 1},
+    "target_available_margin_bps": {"type": ["integer", "null"], "minimum": 1, "maximum": 10000},
+    "target_volatility_bps": {"type": ["integer", "null"], "minimum": 1, "maximum": 10000},
+    "target_kelly_fraction_bps": {"type": ["integer", "null"], "minimum": 1, "maximum": 10000},
+    "kelly_lookback_bars": {"type": ["integer", "null"], "minimum": 30, "maximum": 1000},
+    "fast_window": {"type": "integer"},
+    "slow_window": {"type": "integer"},
+    "period": {"type": "integer"},
+    "threshold_bps": {"type": "integer"}
+  },
+  "not": {
+    "anyOf": [
+      {"required": ["target_notional_raw", "target_available_margin_bps"], "properties": {"target_notional_raw": {"type": "integer"}, "target_available_margin_bps": {"type": "integer"}}},
+      {"required": ["target_notional_raw", "target_volatility_bps"], "properties": {"target_notional_raw": {"type": "integer"}, "target_volatility_bps": {"type": "integer"}}},
+      {"required": ["target_notional_raw", "target_kelly_fraction_bps"], "properties": {"target_notional_raw": {"type": "integer"}, "target_kelly_fraction_bps": {"type": "integer"}}},
+      {"required": ["target_available_margin_bps", "target_volatility_bps"], "properties": {"target_available_margin_bps": {"type": "integer"}, "target_volatility_bps": {"type": "integer"}}},
+      {"required": ["target_available_margin_bps", "target_kelly_fraction_bps"], "properties": {"target_available_margin_bps": {"type": "integer"}, "target_kelly_fraction_bps": {"type": "integer"}}},
+      {"required": ["target_volatility_bps", "target_kelly_fraction_bps"], "properties": {"target_volatility_bps": {"type": "integer"}, "target_kelly_fraction_bps": {"type": "integer"}}}
+    ]
+  },
+  "if": {"required": ["kelly_lookback_bars"], "properties": {"kelly_lookback_bars": {"type": "integer"}}},
+  "then": {"required": ["target_kelly_fraction_bps"], "properties": {"target_kelly_fraction_bps": {"type": "integer"}}},
+  "additionalProperties": false
+}

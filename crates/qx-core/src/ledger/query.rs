@@ -458,10 +458,165 @@ impl Ledger {
         &self,
         paper: &crate::valuation::PaperValuationContext<'_>,
     ) -> QxResult<ValuationResult> {
-        self.valuate(
-            &ValuationContext::spot(paper.account_id, paper.marks, paper.reporting_currency)
-                .with_market_specs(paper.market_specs)
-                .with_fx(paper.fx_rates),
+        let equity = self.equity_for_with_market_specs_and_fx(
+            paper.account_id,
+            paper.marks,
+            paper.reporting_currency,
+            paper.market_specs,
+            paper.fx_rates,
+        )?;
+        let initial_margin = self.initial_margin_for_market_specs_and_fx(
+            paper.account_id,
+            paper.marks,
+            paper.reporting_currency,
+            paper.market_specs,
+            paper.fx_rates,
+        )?;
+        ValuationResult::new(
+            Money::from_raw(equity),
+            Money::from_raw(initial_margin),
+            Money::ZERO,
+            paper.reporting_currency,
         )
     }
+
+    fn initial_margin_for_market_specs_and_fx(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, Price>,
+        reporting_currency: &str,
+        specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<i128> {
+        let mut total = 0_i128;
+        for ((account, instrument), position) in self.iter_positions() {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("保证金估值缺少 instrument 规格: {instrument}"))
+            })?;
+            if !spec.product.supports_leverage() {
+                continue;
+            }
+            total = total
+                .checked_add(position_initial_margin_in_reporting_currency(
+                    position,
+                    instrument,
+                    spec,
+                    marks,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("Paper 初始保证金合计溢出".into()))?;
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("保证金估值缺少 instrument 规格: {instrument}"))
+            })?;
+            if !spec.product.supports_leverage() {
+                continue;
+            }
+            total = total
+                .checked_add(position_initial_margin_in_reporting_currency(
+                    position,
+                    instrument,
+                    spec,
+                    marks,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("Paper 初始保证金合计溢出".into()))?;
+        }
+        Ok(total)
+    }
+
+    /// Return the existing one-way and hedge-position initial margin for one instrument.
+    ///
+    /// Each position uses the leverage facts that created it. A non-flat position whose
+    /// historical leverage is unavailable cannot be projected safely and is rejected.
+    pub fn initial_margin_for_instrument(
+        &self,
+        account_id: &str,
+        spec: &TradingInstrumentSpec,
+        mark: Price,
+    ) -> QxResult<i128> {
+        spec.validate()?;
+        if !spec.product.supports_leverage() {
+            return Ok(0);
+        }
+        let mut total = 0_i128;
+        for ((account, instrument), position) in self.iter_positions() {
+            if account == account_id && instrument == &spec.instrument {
+                total = total
+                    .checked_add(position_initial_margin_raw(
+                        position, instrument, spec, mark,
+                    )?)
+                    .ok_or_else(|| QxError::Invariant("标的持仓初始保证金合计溢出".into()))?;
+            }
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account == account_id && instrument == &spec.instrument {
+                total = total
+                    .checked_add(position_initial_margin_raw(
+                        position, instrument, spec, mark,
+                    )?)
+                    .ok_or_else(|| QxError::Invariant("标的持仓初始保证金合计溢出".into()))?;
+            }
+        }
+        Ok(total)
+    }
+}
+
+fn position_initial_margin_raw(
+    position: &PositionState,
+    instrument: &InstrumentId,
+    spec: &TradingInstrumentSpec,
+    mark: Price,
+) -> QxResult<i128> {
+    if position.quantity.is_zero() {
+        return Ok(0);
+    }
+    let margin_ratio = position.margin_ratio_raw.ok_or_else(|| {
+        QxError::ReconcileRequired(format!(
+            "持仓 {instrument} 缺少可回放的开仓杠杆，需从成交事实重建或对账"
+        ))
+    })?;
+    if !(1..=SCALE).contains(&margin_ratio) {
+        return Err(QxError::Invariant(format!(
+            "持仓 {instrument} 的保证金比例非法: {margin_ratio}"
+        )));
+    }
+    let qty = position
+        .quantity
+        .raw()
+        .checked_abs()
+        .ok_or_else(|| QxError::Invariant("保证金持仓绝对值溢出".into()))?;
+    spec.notional(qty, mark.raw())?
+        .checked_mul(margin_ratio)
+        .and_then(|value| value.checked_div(SCALE))
+        .ok_or_else(|| QxError::Invariant("杠杆持仓初始保证金溢出".into()))
+}
+
+fn position_initial_margin_in_reporting_currency(
+    position: &PositionState,
+    instrument: &InstrumentId,
+    spec: &TradingInstrumentSpec,
+    marks: &BTreeMap<InstrumentId, Price>,
+    reporting_currency: &str,
+    fx_rates: &BTreeMap<String, Price>,
+) -> QxResult<i128> {
+    let mark = marks.get(instrument).ok_or_else(|| {
+        QxError::ReconcileRequired(format!("Paper 保证金估值缺少标记价 {instrument}"))
+    })?;
+    let margin = position_initial_margin_raw(position, instrument, spec, *mark)?;
+    Ledger::convert_equity_currency(
+        margin,
+        &spec.settlement_currency,
+        reporting_currency,
+        fx_rates,
+    )
 }

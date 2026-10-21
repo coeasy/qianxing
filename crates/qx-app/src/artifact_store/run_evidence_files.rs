@@ -162,6 +162,59 @@ pub fn run_evidence_report_analysis(
         .transpose()
 }
 
+/// Project one multi-input dataset component after the adapter has decoded its BarFrame.
+pub fn run_evidence_dataset_component(
+    summary: &serde_json::Value,
+    role: &str,
+    row_count: u64,
+    path: String,
+) -> Result<RunEvidenceDatasetComponent, String> {
+    let quality_pointer = format!("/dataset_quality/legs/{role}/manifest_path");
+    let quality_manifest_path = summary
+        .pointer(&quality_pointer)
+        .and_then(serde_json::Value::as_str)
+        .map(|path| canonical_run_evidence_path(path, &format!("{role} 数据质量清单")))
+        .transpose()?;
+    let quality_manifest_sha256 = quality_manifest_path
+        .as_deref()
+        .map(qx_strategy::file_digest::sha256_file_hex)
+        .transpose()?;
+    let quality_pointer = format!("/dataset_quality/legs/{role}/quality_report");
+    let quality_report = summary
+        .pointer(&quality_pointer)
+        .cloned()
+        .map(|mut report| {
+            if let Some(fields) = report.as_object_mut() {
+                fields.remove("row_count");
+            }
+            serde_json::from_value(report)
+        })
+        .transpose()
+        .map_err(|error| format!("回测摘要的 {role} 腿数据质量报告无效: {error}"))?;
+
+    let read_string = |field| {
+        crate::artifact_store::run_evidence_summary_str(summary, &["input", "legs", role, field])
+    };
+    let manifest_fingerprint = summary
+        .pointer(&format!(
+            "/dataset_quality/legs/{role}/manifest_fingerprint"
+        ))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Ok(RunEvidenceDatasetComponent {
+        role: role.to_string(),
+        dataset_id: read_string("dataset_id")?,
+        version: read_string("dataset_version")?,
+        content_fingerprint: read_string("fingerprint")?,
+        row_count,
+        path,
+        manifest_fingerprint,
+        quality_report,
+        quality_manifest_path,
+        quality_manifest_sha256,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::run_evidence_report_analysis;
@@ -256,57 +309,4 @@ mod tests {
         assert_eq!(without_calendar.calendar_input_sha256, None);
         let _ = std::fs::remove_dir_all(root);
     }
-}
-
-/// Project one multi-input dataset component after the adapter has decoded its BarFrame.
-pub fn run_evidence_dataset_component(
-    summary: &serde_json::Value,
-    role: &str,
-    row_count: u64,
-    path: String,
-) -> Result<RunEvidenceDatasetComponent, String> {
-    let quality_pointer = format!("/dataset_quality/legs/{role}/manifest_path");
-    let quality_manifest_path = summary
-        .pointer(&quality_pointer)
-        .and_then(serde_json::Value::as_str)
-        .map(|path| canonical_run_evidence_path(path, &format!("{role} 数据质量清单")))
-        .transpose()?;
-    let quality_manifest_sha256 = quality_manifest_path
-        .as_deref()
-        .map(qx_strategy::file_digest::sha256_file_hex)
-        .transpose()?;
-    let quality_pointer = format!("/dataset_quality/legs/{role}/quality_report");
-    let quality_report = summary
-        .pointer(&quality_pointer)
-        .cloned()
-        .map(|mut report| {
-            if let Some(fields) = report.as_object_mut() {
-                fields.remove("row_count");
-            }
-            serde_json::from_value(report)
-        })
-        .transpose()
-        .map_err(|error| format!("回测摘要的 {role} 腿数据质量报告无效: {error}"))?;
-
-    let read_string = |field| {
-        crate::artifact_store::run_evidence_summary_str(summary, &["input", "legs", role, field])
-    };
-    let manifest_fingerprint = summary
-        .pointer(&format!(
-            "/dataset_quality/legs/{role}/manifest_fingerprint"
-        ))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    Ok(RunEvidenceDatasetComponent {
-        role: role.to_string(),
-        dataset_id: read_string("dataset_id")?,
-        version: read_string("dataset_version")?,
-        content_fingerprint: read_string("fingerprint")?,
-        row_count,
-        path,
-        manifest_fingerprint,
-        quality_report,
-        quality_manifest_path,
-        quality_manifest_sha256,
-    })
 }

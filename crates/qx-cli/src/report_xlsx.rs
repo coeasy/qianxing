@@ -155,7 +155,7 @@ pub(crate) fn write_report_xlsx(
 }
 
 fn optional_text(value: Option<&str>) -> Cell {
-    value.map_or_else(|| t("—"), |value| t(value))
+    value.map_or_else(|| t("—"), t)
 }
 
 fn optional_integer(value: Option<i128>) -> Cell {

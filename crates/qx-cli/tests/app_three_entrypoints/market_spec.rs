@@ -61,6 +61,49 @@ fn frozen_market_spec_is_used_by_cli_http_and_python_bar_runs() {
 }
 
 #[test]
+fn ashare_rule_snapshot_runs_identically_across_cli_http_and_python() {
+    let root = scratch("ashare-rules");
+    let bars_path = repo_root()
+        .join("deploy/qianxing.ashare.bar-frame.example.json")
+        .to_string_lossy()
+        .into_owned();
+    let rules: Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("deploy/qianxing.ashare.rules.json"))
+            .expect("read A-share rule snapshot"),
+    )
+    .expect("A-share rule snapshot is JSON");
+    let mut request: Value = serde_json::from_str(&backtest_spec_json(
+        "g1-ashare-rules",
+        &bars_path,
+        &root.join("out"),
+    ))
+    .expect("backtest spec json");
+    request["instrument"] = json!("000001.SZSE");
+    request["settlement_currency"] = json!("CNY");
+    request["ashare_rules"] = rules;
+    let spec = request.to_string();
+
+    let cli = via_cli(&spec, &root);
+    let (status, http) = via_http("/app/backtest", &spec);
+    assert_eq!(status, 200, "HTTP A-share backtest failed: {http}");
+    assert_eq!(cli["result_hash"], http["result_hash"], "CLI/HTTP");
+    let summary: Value = serde_json::from_slice(
+        &std::fs::read(cli["artifacts"]["summary"].as_str().expect("summary path"))
+            .expect("read A-share summary"),
+    )
+    .expect("A-share summary is JSON");
+    assert!(summary["fee_model"]
+        .as_str()
+        .is_some_and(|model| model.starts_with("AShareFee@v1[")));
+
+    match python_native::via_python(&repo_root(), "run_backtest", &spec) {
+        None => eprintln!("[skip] Python leg: PyO3 extension is not built"),
+        Some(Ok(python)) => assert_eq!(python["result_hash"], cli["result_hash"], "CLI/Python"),
+        Some(Err(payload)) => panic!("Python A-share backtest failed: {payload}"),
+    }
+}
+
+#[test]
 fn backtest_refuses_simulated_fills_outside_the_frozen_market_tick() {
     let root = scratch("market-spec-bad-tick");
     let output_dir = root.join("out");

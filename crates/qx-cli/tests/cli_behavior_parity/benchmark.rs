@@ -48,7 +48,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
         benchmark_output.to_string_lossy().into_owned(),
         "--evidence".into(),
     ];
-    let benchmark_report = run(&cwd, &benchmark_args);
+    let benchmark_report = run(cwd, &benchmark_args);
     let (benchmark_stdout, benchmark_stderr) = output_text(&benchmark_report);
     assert_eq!(
         benchmark_report.status.code(),
@@ -125,7 +125,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
         benchmark_json.pointer("/benchmark_analysis/benchmark/fingerprint")
     );
     let verify_args = vec!["evidence".into(), "verify-run".into(), evidence_path];
-    let verified = run(&cwd, &verify_args);
+    let verified = run(cwd, &verify_args);
     let (verified_stdout, verified_stderr) = output_text(&verified);
     assert_eq!(
         verified.status.code(),
@@ -149,7 +149,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
         "--output-dir".into(),
         portable_dir.to_string_lossy().into_owned(),
     ];
-    let exported = run(&cwd, &export_args);
+    let exported = run(cwd, &export_args);
     let (export_stdout, export_stderr) = output_text(&exported);
     assert_eq!(
         exported.status.code(),
@@ -162,7 +162,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
         "verify-run".into(),
         portable_bundle.to_string_lossy().into_owned(),
     ];
-    let portable_verified = run(&cwd, &portable_verify_args);
+    let portable_verified = run(cwd, &portable_verify_args);
     let (portable_stdout, portable_stderr) = output_text(&portable_verified);
     assert_eq!(
         portable_verified.status.code(),
@@ -176,7 +176,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
     let benchmark_alias_args = std::iter::once("run".to_owned())
         .chain(benchmark_args.clone())
         .collect::<Vec<_>>();
-    let benchmark_alias = run(&cwd, &benchmark_alias_args);
+    let benchmark_alias = run(cwd, &benchmark_alias_args);
     assert_eq!(
         benchmark_alias.status.code(),
         Some(0),

@@ -55,6 +55,28 @@ fn app_validate_dataset(spec_json: &str) -> PyResult<String> {
         .map_err(app_error)
 }
 
+#[derive(serde::Deserialize)]
+struct DatasetBundleBuildRequest {
+    bundle_id: String,
+    version: String,
+    source: String,
+    components: Vec<qx_data::DatasetComponentManifest>,
+}
+
+#[pyfunction]
+fn app_assemble_dataset_bundle(payload: &str) -> PyResult<String> {
+    let request: DatasetBundleBuildRequest =
+        serde_json::from_str(payload).map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let bundle = qx_app::dataset_bundle::assemble_dataset_bundle(
+        request.bundle_id,
+        request.version,
+        request.source,
+        request.components,
+    )
+    .map_err(PyValueError::new_err)?;
+    serde_json::to_string(&bundle).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
 #[pyfunction]
 fn app_run_backtest(spec_json: &str) -> PyResult<String> {
     let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
@@ -426,6 +448,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
+    module.add_function(wrap_pyfunction!(app_assemble_dataset_bundle, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
     strategy_callback::register(module)?;
     multi_account::register(module)?;

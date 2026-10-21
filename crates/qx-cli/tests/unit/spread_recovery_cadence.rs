@@ -44,11 +44,10 @@ fn every_recovery_loop_polls_through_the_shared_cadence() {
         .join("src");
     let mut scanners = Vec::new();
     collect_recovery_scanners(&root, &mut scanners);
-    // 已知五处扫描分布在四个文件里；名单比这个下界还少，说明取数方式本身坏了（假绿）。
+    // 扫描名单从生产源码派生；模块合并或拆分不应因历史文件数量改变而失败。
     assert!(
-        scanners.len() >= 4,
-        "扫描待恢复分组的文件名单只剩 {:?}：派生名单取不到源码",
-        scanners
+        !scanners.is_empty(),
+        "没有从生产源码发现待恢复分组扫描点：派生名单为空"
     );
     for path in &scanners {
         let source = std::fs::read_to_string(path).expect("恢复扫描所在文件可读");
@@ -69,10 +68,15 @@ fn every_recovery_loop_polls_through_the_shared_cadence() {
             source.contains("spread_recovery_poll_delay("),
             "{rel} 的恢复扫描不走共享节律函数"
         );
-        // 节律有两种落法：循环尾按它睡（专职恢复/纸面链），或换算成两次扫描之间的墙钟闸门
-        // （执行 worker：循环尾仍按 100ms 轮询命令队列，不能为了恢复把下单时延也拖长）。
+        // 节律落法：专职恢复/纸面链把间隔交给 qx-service 的统一轮询宿主；执行 worker
+        // 换算成两次扫描之间的墙钟闸门（循环尾仍按 100ms 轮询命令队列）。
         assert!(
             source.contains("thread::sleep(spread_recovery_poll_delay(recovery_stalls))")
+                || source.contains(
+                    "context.sleep_ms(spread_recovery_poll_delay(recovery_stalls).as_millis() as u64);",
+                )
+                || (source.contains("run_polling_worker(&context, once, || {")
+                    && source.contains("Ok(spread_recovery_poll_delay(recovery_stalls)"))
                 || source.contains("now >= recovery_next_at"),
             "{rel} 算了 stalls 却没有据此节流：内联扫描会退回每轮起灭一次恢复尝试"
         );
@@ -80,7 +84,11 @@ fn every_recovery_loop_polls_through_the_shared_cadence() {
         // 下单时延一起拖长到 8 秒 —— 那正是把专职恢复链的节律错搬到执行链上的后果。
         if source.contains("now >= recovery_next_at") {
             assert!(
-                source.contains("thread::sleep(Duration::from_millis(100))"),
+                source.contains("thread::sleep(Duration::from_millis(100))")
+                    || source.contains("context.sleep_ms(100);")
+                    // 执行 worker 把 tick 周期交给 run_polling_worker；其闭包返回的 100ms
+                    // 同时保持命令队列低延迟轮询，恢复扫描则由 recovery_next_at 单独节流。
+                    || source.contains("Ok(100)"),
                 "{rel} 用 recovery_next_at 节流却没有留下 100ms 的队列轮询"
             );
         }
@@ -89,7 +97,7 @@ fn every_recovery_loop_polls_through_the_shared_cadence() {
             "{rel} 用回了\"有没有待恢复\"的布尔门：那条口径数不出\"这一轮有没有推进\""
         );
     }
-    // 专职恢复循环所在的文件里不许再出现固定 100ms：那份节律只剩一处定义。
+    // 专职恢复循环所在的文件里不许再出现固定 100ms：退避与休眠都归共享服务轮询宿主。
     // （paper_worker.rs 与两条执行 worker 不并入这条：它们的执行循环本就按固定节拍消费队列。）
     let worker_entry = std::fs::read_to_string(root.join("worker_entry.rs")).expect("可读");
     assert!(

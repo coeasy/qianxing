@@ -1,5 +1,6 @@
 //! Test-tree dependencies kept out of the production CLI root.
 pub(crate) use qx_api::{ApiPolicy, ApiService, ApiState};
+pub(crate) use qx_app::artifact_store::recompute_declared_backtest_input;
 pub(crate) use qx_app::{
     market_spec_source_label, multi_leg_cost_bps, CCXT_MARKET_SPEC_VERSION,
     PRODUCT_MARKET_SPEC_VERSION,

@@ -483,10 +483,5 @@ pub(crate) fn worker_credentials_ready(
     Ok(env_value("api_key") && env_value("secret") && optional_env_value("password"))
 }
 
-pub(crate) fn prometheus_label(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-}
+#[cfg(test)]
+pub(crate) use qx_service::worker_metrics::prometheus_label;

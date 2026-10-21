@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-builtin-composition-summary-v7.json",
+  "title": "Qianxing MultiBuiltin Composition Summary v7",
+  "description": "Durable, replay-bound composition summary emitted by the independent-account built-in two-leg backtest. Raw i128 values are decimal strings where the producer serializes them as strings.",
+  "type": "object",
+  "required": [
+    "accounts", "assumptions", "bars", "execution_attempt_count", "execution_attempts",
+    "execution_costs", "fill_model", "fills", "funding_bps", "groups", "input",
+    "input_data_hash", "instrument", "leg_summaries", "legs", "margin_model",
+    "market_specs", "metrics", "pending_reconcile", "primary_instrument",
+    "reference_instrument", "replay_contract", "result_hash", "risk_rules",
+    "run_manifest", "run_record", "runtime_config", "schema_version", "strategy",
+    "strategy_id", "totals"
+  ],
+  "properties": {
+    "schema_version": {"const": 7},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy": {
+      "type": "object",
+      "required": ["kind", "quantity"],
+      "properties": {
+        "kind": {"enum": ["pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage"]},
+        "quantity": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "primary_instrument": {"type": "string", "minLength": 1},
+    "reference_instrument": {"type": "string", "minLength": 1},
+    "funding_bps": {"type": "integer", "minimum": -10000, "maximum": 10000},
+    "risk_rules": {
+      "type": "object",
+      "required": ["rule_set_version", "source", "matching_kernel"],
+      "properties": {
+        "rule_set_version": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "matching_kernel": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "execution_costs": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {"source": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "market_specs": {
+      "type": "object",
+      "required": ["primary", "reference"],
+      "properties": {
+        "primary": {"type": ["string", "null"]},
+        "reference": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "margin_model": {"type": "string", "minLength": 1},
+    "fill_model": {
+      "type": "object",
+      "required": ["name", "source"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "accounts": {
+      "type": "object",
+      "required": ["account_base_source", "funding_rule", "primary_initial_cash", "reference_initial_cash", "primary_final_equity_raw", "reference_final_equity_raw"],
+      "properties": {
+        "account_base_source": {"type": "string", "minLength": 1},
+        "funding_rule": {"type": "string", "minLength": 1},
+        "primary_initial_cash": {"$ref": "#/$defs/rawInteger"},
+        "reference_initial_cash": {"$ref": "#/$defs/rawInteger"},
+        "primary_final_equity_raw": {"$ref": "#/$defs/rawInteger"},
+        "reference_final_equity_raw": {"$ref": "#/$defs/rawInteger"}
+      },
+      "additionalProperties": false
+    },
+    "totals": {
+      "type": "object",
+      "required": ["turnover_raw", "fees_raw", "funding_raw", "filled_qty_raw", "margin_peak_raw", "net_cost_raw", "cost_bps", "residual_filled_qty_raw", "residual_fees_raw", "combined_return_bps"],
+      "properties": {
+        "turnover_raw": {"$ref": "#/$defs/rawInteger"},
+        "fees_raw": {"$ref": "#/$defs/rawInteger"},
+        "funding_raw": {"$ref": "#/$defs/rawInteger"},
+        "filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "margin_peak_raw": {"$ref": "#/$defs/rawInteger"},
+        "net_cost_raw": {"$ref": "#/$defs/rawInteger"},
+        "cost_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "residual_filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "residual_fees_raw": {"$ref": "#/$defs/rawInteger"},
+        "combined_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
+      },
+      "additionalProperties": false
+    },
+    "legs": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/legIntegrity"}},
+    "groups": {"type": "array", "items": {"$ref": "#/$defs/groupAttribution"}},
+    "pending_reconcile": {
+      "type": "object",
+      "required": ["policy", "items"],
+      "properties": {
+        "policy": {"const": "mark-pending-reconcile-no-auto-close"},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/pendingReconcile"}}
+      },
+      "additionalProperties": false
+    },
+    "assumptions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "input": {
+      "type": "object",
+      "required": ["kind", "path", "dataset_id", "dataset_version", "fingerprint", "legs"],
+      "properties": {
+        "kind": {"const": "multi-barframe"},
+        "path": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "dataset_version": {"type": "string", "minLength": 1},
+        "fingerprint": {"$ref": "#/$defs/sha256"},
+        "legs": {
+          "type": "object",
+          "required": ["primary", "reference"],
+          "properties": {
+            "primary": {"$ref": "#/$defs/inputLeg"},
+            "reference": {"$ref": "#/$defs/inputLeg"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "dataset_quality": {"$ref": "#/$defs/datasetQuality"},
+    "input_data_hash": {"$ref": "#/$defs/sha256"},
+    "instrument": {"type": "string", "minLength": 1},
+    "leg_summaries": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "minLength": 1}},
+    "metrics": {
+      "type": "object",
+      "required": ["return_bps", "max_drawdown_bps", "fees_raw", "turnover_raw", "final_equity_raw", "win_rate", "profit_factor", "sharpe", "sortino", "calmar"],
+      "properties": {
+        "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "fees_raw": {"$ref": "#/$defs/rawInteger"},
+        "turnover_raw": {"$ref": "#/$defs/rawInteger"},
+        "final_equity_raw": {"$ref": "#/$defs/rawInteger"},
+        "win_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "profit_factor": {"type": ["number", "null"], "minimum": 0},
+        "sharpe": {"type": ["number", "null"]},
+        "sortino": {"type": ["number", "null"]},
+        "calmar": {"type": ["number", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "execution_attempt_count": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "execution_attempts": {"type": "array", "items": {"$ref": "#/$defs/executionAttempt"}},
+    "bars": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "result_hash": {"$ref": "#/$defs/sha256"},
+    "replay_contract": {"const": "both-leg ledgers are replay-verified independently; composition hash binds both result hashes; no synthetic consolidated ledger"},
+    "run_manifest": {"type": "string", "minLength": 1},
+    "run_record": {"type": "string", "minLength": 1},
+    "runtime_config": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "rawInteger": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inputLeg": {
+      "type": "object",
+      "required": ["path", "dataset_id", "dataset_version", "fingerprint"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "dataset_version": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+      },
+      "additionalProperties": false
+    },
+    "legIntegrity": {
+      "type": "object",
+      "required": ["label", "instrument", "planned_qty_raw", "filled_qty_raw", "unfilled_planned_qty_raw", "vetoed_signal_ts", "rejected_orders", "rejection_reasons"],
+      "properties": {
+        "label": {"enum": ["primary", "reference"]},
+        "instrument": {"type": "string", "minLength": 1},
+        "planned_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "unfilled_planned_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "vetoed_signal_ts": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}},
+        "rejected_orders": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "rejection_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["reason", "count"],
+            "properties": {"reason": {"type": "string", "minLength": 1}, "count": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}},
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "pendingReconcile": {
+      "type": "object",
+      "required": ["leg", "counterpart", "ts", "filled_qty_raw", "turnover_raw", "fees_raw", "counterpart_filled_qty_raw"],
+      "properties": {
+        "leg": {"enum": ["primary", "reference"]},
+        "counterpart": {"enum": ["primary", "reference"]},
+        "ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "turnover_raw": {"$ref": "#/$defs/rawInteger"},
+        "fees_raw": {"$ref": "#/$defs/rawInteger"},
+        "counterpart_filled_qty_raw": {"$ref": "#/$defs/rawInteger"}
+      },
+      "additionalProperties": false
+    },
+    "groupAttribution": {
+      "type": "object",
+      "required": ["schema_version", "group_id", "strategy_id", "legs", "total_filled_qty_raw", "total_turnover_raw", "total_fees_raw", "total_margin_raw", "total_funding_raw", "net_cost_raw", "cost_bps"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "group_id": {"type": "string", "minLength": 1},
+        "strategy_id": {"type": "string", "minLength": 1},
+        "legs": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["leg_id", "filled_qty_raw", "turnover_raw", "fees_raw", "margin_raw", "funding_raw"],
+            "properties": {
+              "leg_id": {"type": "string", "minLength": 1},
+              "filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+              "turnover_raw": {"$ref": "#/$defs/rawInteger"},
+              "fees_raw": {"$ref": "#/$defs/rawInteger"},
+              "margin_raw": {"$ref": "#/$defs/rawInteger"},
+              "funding_raw": {"$ref": "#/$defs/rawInteger"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "total_filled_qty_raw": {"$ref": "#/$defs/rawInteger"},
+        "total_turnover_raw": {"$ref": "#/$defs/rawInteger"},
+        "total_fees_raw": {"$ref": "#/$defs/rawInteger"},
+        "total_margin_raw": {"$ref": "#/$defs/rawInteger"},
+        "total_funding_raw": {"$ref": "#/$defs/rawInteger"},
+        "net_cost_raw": {"$ref": "#/$defs/rawInteger"},
+        "cost_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
+      },
+      "additionalProperties": false
+    },
+    "executionAttempt": {
+      "type": "object",
+      "required": ["ts", "order_id", "instrument", "side", "requested_qty_raw", "filled_qty_raw", "remaining_qty_raw", "price_raw", "reason", "displayed_qty_raw", "queue_ahead_before_raw", "queue_ahead_after_raw", "estimated_volume_raw", "displayed_reduction_raw", "queue_consumed_raw"],
+      "properties": {
+        "ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "order_id": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "instrument": {"type": "string", "minLength": 1},
+        "side": {"enum": ["Buy", "Sell"]},
+        "requested_qty_raw": {"type": "integer"},
+        "filled_qty_raw": {"type": "integer"},
+        "remaining_qty_raw": {"type": "integer"},
+        "price_raw": {"type": ["integer", "null"]},
+        "reason": {"enum": ["filled", "partially_filled", "model_partial_fill", "bar_participation_partial", "model_declined", "limit_not_marketable", "probability_miss", "no_capacity", "participation_limit_exhausted", "queue_baseline_unavailable", "queue_ahead_remains", "no_visible_liquidity", "market_halted", "side_blocked", "invalid_model_output"]},
+        "displayed_qty_raw": {"type": ["integer", "null"]},
+        "queue_ahead_before_raw": {"type": ["integer", "null"]},
+        "queue_ahead_after_raw": {"type": ["integer", "null"]},
+        "estimated_volume_raw": {"type": ["integer", "null"]},
+        "displayed_reduction_raw": {"type": ["integer", "null"]},
+        "queue_consumed_raw": {"type": ["integer", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "datasetQuality": {
+      "type": "object",
+      "required": ["manifest_fingerprint", "quality_report", "legs"],
+      "properties": {
+        "manifest_fingerprint": {"$ref": "#/$defs/sha256"},
+        "quality_report": {"type": "object"},
+        "legs": {
+          "type": "object",
+          "required": ["primary", "reference"],
+          "properties": {"primary": {"type": "object"}, "reference": {"type": "object"}},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

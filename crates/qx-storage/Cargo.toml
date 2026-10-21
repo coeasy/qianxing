@@ -12,10 +12,10 @@ postgres = ["dep:postgres", "dep:postgres-native-tls", "dep:native-tls"]
 nats = ["dep:async-nats", "dep:futures-util", "dep:tokio"]
 
 [dependencies]
-qx-core = { path = "../qx-core" }
-qx-control = { path = "../qx-control" }
-qx-scheduler = { path = "../qx-scheduler" }
-qx-protocol = { path = "../qx-protocol" }
+qx-core = { version = "0.2.0", path = "../qx-core" }
+qx-control = { version = "0.2.0", path = "../qx-control" }
+qx-scheduler = { version = "0.2.0", path = "../qx-scheduler" }
+qx-protocol = { version = "0.2.0", path = "../qx-protocol" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rusqlite = { version = "0.32.1", optional = true, features = ["bundled"] }

@@ -47,6 +47,10 @@ pub struct LedgerEntry {
     /// Hedge 模式下记录 Long/Short 分仓；None 表示传统 OneWay 净仓。
     #[serde(default)]
     pub position_side: Option<PositionSide>,
+    /// Leverage used to create a derivative position fill. `None` means that the
+    /// entry predates leverage persistence or is not a leveraged TradePosition.
+    #[serde(default)]
+    pub leverage: Option<u32>,
 }
 
 /// A timestamped funding rate declared by a historical market-data source.
@@ -79,6 +83,11 @@ pub struct PositionState {
     /// `TradingInstrumentSpec` 的现金腿时还会再乘 `contract_size`，所以
     /// `contract_size != SCALE` 的产品这里只是每手口径的统计，账户现金以现金腿为准。
     pub realized_pnl: Money,
+    /// Quantity weighted reciprocal leverage at SCALE precision. This preserves
+    /// the aggregate initial-margin ratio when fills add at different leverages.
+    /// `None` is deliberately unknown and makes leveraged Paper valuation fail closed.
+    #[serde(default)]
+    pub margin_ratio_raw: Option<i128>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -177,6 +186,13 @@ impl Ledger {
         }
         if entry.multiplier <= 0 {
             return Err(QxError::Invariant("账簿 entry 合约乘数必须为正".into()));
+        }
+        if entry.leverage == Some(0)
+            || (entry.leverage.is_some() && !matches!(entry.kind, LedgerEntryKind::TradePosition))
+        {
+            return Err(QxError::Invariant(
+                "杠杆只能是正数并绑定 TradePosition entry".into(),
+            ));
         }
         let mut rights_update = None;
         let mut dividend_update = None;
@@ -309,6 +325,8 @@ impl Ledger {
                     entry.quantity.raw(),
                     price,
                     entry.multiplier,
+                    entry.leverage,
+                    matches!(entry.kind, LedgerEntryKind::CorporateAction),
                 )?;
                 position_update = Some(PositionUpdate::Hedge {
                     account_id: entry.account_id.clone(),
@@ -328,6 +346,8 @@ impl Ledger {
                     entry.quantity.raw(),
                     price,
                     entry.multiplier,
+                    entry.leverage,
+                    matches!(entry.kind, LedgerEntryKind::CorporateAction),
                 )?;
                 position_update = Some(PositionUpdate::OneWay {
                     account_id: entry.account_id.clone(),
@@ -437,6 +457,8 @@ fn apply_position_state_delta(
     delta: i128,
     price: Price,
     multiplier: i128,
+    leverage: Option<u32>,
+    preserve_margin_ratio: bool,
 ) -> QxResult<()> {
     if delta == 0 {
         return Ok(());
@@ -460,6 +482,24 @@ fn apply_position_state_delta(
             .checked_abs()
             .ok_or_else(|| QxError::Invariant("持仓结果绝对值溢出".into()))?;
         state.average_entry = Price::from_raw(weighted / next_abs);
+        if preserve_margin_ratio {
+            // Corporate actions may rescale quantity while preserving economic exposure.
+        } else if current == 0 {
+            state.margin_ratio_raw = margin_ratio_for_leverage(leverage)?;
+        } else {
+            state.margin_ratio_raw = match (state.margin_ratio_raw, leverage) {
+                (Some(existing), Some(leverage)) => {
+                    let add_ratio = margin_ratio_for_leverage(Some(leverage))?
+                        .ok_or_else(|| QxError::Invariant("新开仓杠杆缺失".into()))?;
+                    let weighted_ratio = old_abs
+                        .checked_mul(existing)
+                        .and_then(|value| add_abs.checked_mul(add_ratio)?.checked_add(value))
+                        .ok_or_else(|| QxError::Invariant("持仓保证金比例合计溢出".into()))?;
+                    Some(weighted_ratio / next_abs)
+                }
+                _ => None,
+            };
+        }
     } else {
         let close_qty = current
             .checked_abs()
@@ -491,10 +531,23 @@ fn apply_position_state_delta(
         );
         if next == 0 {
             state.average_entry = Price::ZERO;
+            state.margin_ratio_raw = None;
         } else if current.signum() != next.signum() {
             state.average_entry = price;
+            state.margin_ratio_raw = margin_ratio_for_leverage(leverage)?;
         }
     }
     state.quantity = Quantity::from_raw(next);
     Ok(())
+}
+
+fn margin_ratio_for_leverage(leverage: Option<u32>) -> QxResult<Option<i128>> {
+    leverage
+        .map(|leverage| {
+            if leverage == 0 {
+                return Err(QxError::BusinessViolation("持仓杠杆必须大于 0".into()));
+            }
+            Ok(SCALE / i128::from(leverage))
+        })
+        .transpose()
 }

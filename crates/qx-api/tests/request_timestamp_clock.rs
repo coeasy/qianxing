@@ -19,6 +19,7 @@
 use qx_api::{ApiService, ApiState};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -123,14 +124,18 @@ fn the_request_timestamp_is_read_per_connection_not_per_server() {
 /// 因为第三条断言要求跨过一格之后额度回来。
 #[test]
 fn the_limiter_clock_domain_is_bucket_seconds_and_the_bucket_refills_across_one() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-api-clock-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/qx-api-test-tmp")
+        .join(format!(
+            "qianxing-api-clock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let service = ApiService::new(ApiState::default()).with_shared_file_rate_limit(
         qx_storage::FileTokenBucket::new(&root, "clock-domain", 3, 3).expect("桶要能建"),
     );

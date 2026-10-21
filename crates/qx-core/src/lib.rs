@@ -72,8 +72,8 @@ pub use self::retry::{Backoff, RetryPolicy};
 pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
 pub use self::target::TargetPosition;
 pub use self::trading::{
-    MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
-    TradingProduct,
+    resolve_settlement_currency, MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide,
+    TradingInstrumentSpec, TradingProduct,
 };
 pub use self::trading_policy::{margin_mode_for_product, short_selling_enabled};
 pub use self::valuation::{PaperValuationContext, ValuationContext, ValuationResult};

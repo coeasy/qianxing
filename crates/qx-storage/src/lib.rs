@@ -1290,8 +1290,7 @@ impl AuditFileStore {
         let _lock = acquire_storage_lock(self.root.join("audit.append.lock"))?;
         let existing = self.read()?;
         let records = plane.audit();
-        let common =
-            audit_sync_prefix_len(&existing, &records, "控制面审计与持久化审计前缀不一致")?;
+        let common = audit_sync_prefix_len(&existing, records, "控制面审计与持久化审计前缀不一致")?;
         let mut appended = 0;
         for record in records.iter().skip(common) {
             self.append_unlocked(record.clone())?;
@@ -1434,6 +1433,13 @@ impl FileTokenBucket {
         write_atomic_path(&path, &self.root, &content)?;
         Ok(granted)
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_temp_dir() -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-temp");
+    std::fs::create_dir_all(&path).expect("create isolated qx-storage test directory");
+    path
 }
 
 #[cfg(test)]
@@ -2250,11 +2256,4 @@ mod tests {
         assert!(replenished.try_acquire(11, 1).unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
-}
-
-#[cfg(test)]
-pub(crate) fn test_temp_dir() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-temp");
-    std::fs::create_dir_all(&path).expect("create isolated qx-storage test directory");
-    path
 }

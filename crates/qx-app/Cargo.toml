@@ -4,25 +4,28 @@ description = "牵星应用层：用例、稳定输入/输出类型、授权与�
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/qx-app"
+homepage = "https://github.com/coeasy/qianxing"
 
 [dependencies]
 # 领域/端口侧：应用层可以依赖它们（方案 §15.2 的 `facade → application → domain/ports`）。
 # 这份清单是**精确**的：`qx_app_check` 逐项核对它，多一项少一项都会红——依赖集是应用层
 # "没有偷偷把门面拉进来"这条纪律的载体，含糊的清单守不住它。
-qx-core = { path = "../qx-core" }
-qx-control = { path = "../qx-control" }
-qx-data = { path = "../qx-data" }
-qx-datastruct = { path = "../qx-datastruct" }
-qx-guanxing = { path = "../qx-guanxing" }
-qx-provider = { path = "../qx-provider" }
-qx-risk = { path = "../qx-risk" }
-qx-spec = { path = "../qx-spec" }
-qx-strategy = { path = "../qx-strategy" }
-qx-xingban = { path = "../qx-xingban" }
-qx-zhenlu = { path = "../qx-zhenlu" }
+qx-core = { version = "0.2.0", path = "../qx-core" }
+qx-control = { version = "0.2.0", path = "../qx-control" }
+qx-data = { version = "0.2.0", path = "../qx-data" }
+qx-datastruct = { version = "0.2.0", path = "../qx-datastruct" }
+qx-guanxing = { version = "0.2.0", path = "../qx-guanxing" }
+qx-provider = { version = "0.2.0", path = "../qx-provider" }
+qx-risk = { version = "0.2.0", path = "../qx-risk" }
+qx-spec = { version = "0.2.0", path = "../qx-spec" }
+qx-strategy = { version = "0.2.0", path = "../qx-strategy" }
+qx-xingban = { version = "0.2.0", path = "../qx-xingban" }
+qx-zhenlu = { version = "0.2.0", path = "../qx-zhenlu" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# 门面侧一律**不**依赖：qx-cli / qx-api / qx-python / qx-adapter / qx-execution / qx-runtime /
+# 应用层一律**不**依赖：qx-cli / qx-api / qx-python / qx-service / qx-adapter / qx-execution / qx-runtime /
 # qx-storage。这不是注释，是 `tools/check_architecture.py::layer_dependency_check` 里的禁止边——
-# 加回任何一条当场红。反向则成立且必要：三个门面都依赖本 crate（G1 的三入口同用例）。
+# 加回任何一条当场红。反向则成立且必要：CLI/API/Python 门面与 qx-service 应用宿主依赖本 crate。

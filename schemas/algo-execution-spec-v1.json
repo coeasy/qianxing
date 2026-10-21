@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/algo-execution-spec-v1.json",
+  "title": "Qianxing AlgoExecutionSpec v1",
+  "description": "Bounded TWAP/VWAP child-order planning input. Planning does not submit orders; each child still passes through risk and execution admission.",
+  "type": "object",
+  "required": ["schema_version", "parent_id", "total_quantity_raw", "start_ts", "end_ts", "method"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "parent_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "total_quantity_raw": {"type": "integer", "minimum": 1, "maximum": 170141183460469231731687303715884105727},
+    "start_ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "end_ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "method": {"enum": ["twap", "vwap"]},
+    "child_count": {"type": ["integer", "null"], "minimum": 1, "maximum": 10000},
+    "volume_profile": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/VwapVolumeBucket"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "VwapVolumeBucket": {
+      "type": "object",
+      "required": ["ts", "market_volume_raw"],
+      "properties": {
+        "ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "market_volume_raw": {"type": "integer", "minimum": 1, "maximum": 340282366920938463463374607431768211455}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"method": {"const": "twap"}}, "required": ["method"]},
+      "then": {
+        "required": ["child_count"],
+        "properties": {
+          "child_count": {"type": "integer", "minimum": 1, "maximum": 10000},
+          "volume_profile": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"method": {"const": "vwap"}}, "required": ["method"]},
+      "then": {
+        "properties": {"child_count": {"type": "null"}, "volume_profile": {"minItems": 1}}
+      }
+    }
+  ]
+}

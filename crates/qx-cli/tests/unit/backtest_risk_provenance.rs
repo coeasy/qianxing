@@ -1,4 +1,5 @@
 use super::*;
+use qx_service::backtest_bindings::{app_backtest_risk_rules, backtest_risk_binding_from_config};
 
 /// V10 §4.2 / D2 的收口用例：同一份 `strategy.risk_rules` 必须被四条回测链读成同一个
 /// 规则集版本；产物还要如实写明规则来源与实际撮合内核（深度链不得冒充 Bar 内核）。
@@ -64,33 +65,37 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
 
     // 3) `backtest book`：深度档必须声明自己的撮合内核。
     let depth_root = temp_cli_case_dir("p0b-depth");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        1,
-        Some(5),
-        DepthExecutionModel::default(),
-        &depth_root,
-        Some(&runtime),
-    )
+    run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: 1,
+        fee_bps: Some(5),
+        execution: DepthExecutionModel::default(),
+        root: &depth_root,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .unwrap();
     let depth_summary = read_first_backtest_summary(&depth_root);
     assert_eq!(depth_summary["risk_rules"]["rule_set_version"], expected);
     assert_eq!(depth_summary["risk_rules"]["source"], "runtime-config");
-    assert_eq!(depth_summary["matching_kernel"], TICK_MATCHING_KERNEL);
+    assert_eq!(
+        depth_summary["matching_kernel"],
+        qx_app::TICK_MATCHING_KERNEL
+    );
     assert_ne!(
         depth_summary["matching_kernel"], summary["matching_kernel"],
         "深度链与 Bar 链的内核声明必须可区分"
     );
 
     // 4) `backtest builtin` 没有产物文件，规则绑定必须与上面三条同版本。
-    let binding = backtest_risk_binding(Some(&runtime), true).unwrap();
+    let binding = backtest_risk_binding_from_config(Some(&config), true);
     assert_eq!(binding.gate().rule_set().version(), expected);
     assert_eq!(binding.source(), "runtime-config");
     // 未给 `--config` 时才允许保守默认，且来源标注必须不同。
-    let default_binding = backtest_risk_binding(None, true).unwrap();
+    let default_binding = backtest_risk_binding_from_config(None, true);
     assert_eq!(default_binding.source(), "conservative-default");
     assert!(default_binding
         .gate()
@@ -102,8 +107,8 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
         .rule_set()
         .version()
         .contains("p0b-shared"));
-    // `--config` 悬空引用必须报错，而不是静默退回保守默认。
-    let error = backtest_risk_binding(Some(&runtime.join("missing.json")), false).unwrap_err();
+    // runtime 配置必须在入口读入；路径错误在解析阶段失败，不能静默退回保守默认。
+    let error = read_runtime_config(&runtime.join("missing.json")).unwrap_err();
     assert!(error.contains("读取"), "缺文件要显式失败: {error}");
 
     for path in [strategy_root, multi_root, depth_root] {

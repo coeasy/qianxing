@@ -1,4 +1,5 @@
 use super::*;
+use qx_service::backtest_bindings::strategy_batch::verify_dataset_bundle_component_bindings;
 
 #[test]
 fn paper_market_bridge_filters_symbols_and_accepts_account_wildcard() {

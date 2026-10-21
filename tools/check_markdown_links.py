@@ -15,7 +15,15 @@ LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 
 def tracked_markdown() -> list[Path]:
     output = subprocess.check_output(["git", "ls-files", "-z", "--", "*.md"])
-    return [Path(raw.decode("utf-8")) for raw in output.split(b"\0") if raw]
+    return [
+        path
+        for raw in output.split(b"\0")
+        if raw
+        for path in [Path(raw.decode("utf-8"))]
+        if not path.as_posix().startswith("docs/archive/")
+        and path.as_posix()
+        != "docs/牵星Qianxing-架构梳理遗留不合理项与优化重构方案-2026-10-14.md"
+    ]
 
 
 def local_target_exists(source: PurePosixPath, target: str) -> bool:

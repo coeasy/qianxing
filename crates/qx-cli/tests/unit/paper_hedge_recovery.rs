@@ -3,8 +3,8 @@
 
 use super::*;
 
-/// 共用夹具：spot 腿确认成交、future 腿取消，账户里只有原始腿的事实，
-/// 补偿单尚未登记——恢复扫描要在这份状态上把净敞口对冲掉。
+/// 共用夹具：BINANCE spot 腿确认成交、OKX future 腿取消，账户里只有原始腿的事实，
+/// 补偿单尚未登记——Paper 恢复扫描要跨 Venue 组快照把净敞口对冲掉。
 fn paper_hedge_recovery_fixture(
     tag: &str,
     group_id: &str,
@@ -24,7 +24,7 @@ fn paper_hedge_recovery_fixture(
     first.limit = Some(Price::from_i64(100));
     let mut second = mk_order(
         9202,
-        &InstrumentId::parse("ETHUSDT.BINANCE").unwrap(),
+        &InstrumentId::parse("ETHUSDT.OKX").unwrap(),
         Side::Sell,
         2,
     );
@@ -40,7 +40,7 @@ fn paper_hedge_recovery_fixture(
             },
             SpreadOrderLeg {
                 leg_id: "future".into(),
-                venue_id: "BINANCE".into(),
+                venue_id: "OKX".into(),
                 order: second,
             },
         ],
@@ -156,6 +156,8 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
     );
     let restored = group_store.load("paper-hedge-1").unwrap().unwrap();
     assert_eq!(restored.status, SpreadOrderGroupStatus::Hedged);
+    assert_eq!(restored.leg("spot").unwrap().venue_id, "BINANCE");
+    assert_eq!(restored.leg("future").unwrap().venue_id, "OKX");
     let hedge = pipeline
         .orders()
         .into_iter()
@@ -168,6 +170,7 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
         })
         .unwrap();
     assert_eq!(hedge.status, OrderStatus::Filled);
+    assert_eq!(hedge.instrument.venue.as_str(), "BINANCE");
     assert!(hedge.policy.unwrap().reduce_only);
     let _ = std::fs::remove_dir_all(root);
 }

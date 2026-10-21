@@ -141,7 +141,7 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             tier: "l1".into(),
             settlement_currency: "USDT".into(),
             initial_cash_raw: 10_000 * SCALE,
-            fee_bps: 0,
+            fee_bps: Some(0),
             latency_snapshots: 0,
             queue_position_bps: 0,
             queue_position_model: Default::default(),
@@ -156,6 +156,21 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             market_making: None,
             account_id: None,
             portfolio: None,
+            manifest_run_id: None,
+            execution_cost_rules: None,
+            execution_cost_source: None,
+            risk_rules: None,
+            allow_short: None,
+            declared_ashare_rules: None,
+            declared_fill_model: None,
+            declared_bar_volume_participation_bps: None,
+            quality_manifest_path: None,
+            runtime_config_path: None,
+            market_spec_path: None,
+            market_spec_source: None,
+            account_base_source: None,
+            signal_source: None,
+            signal_declared_unused: None,
         },
     };
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
@@ -325,6 +340,21 @@ fn venue_and_optional_backend_commands_fail_closed_before_external_io() {
     ];
 
     for (args, expected_error) in cases {
+        // These expectations describe a backend that is not compiled into this binary. Feature
+        // matrix builds exercise the enabled path through runtime/config contracts instead.
+        if (args[0] == "storage-adopt-postgres" && cfg!(feature = "postgres"))
+            || (matches!(
+                args[0],
+                "outbox-relay"
+                    | "outbox-relay-worker"
+                    | "event-consumer-worker"
+                    | "consumer-dlq-replay"
+            ) && cfg!(feature = "nats"))
+            || (args[0] == "outbox-relay-postgres"
+                && cfg!(all(feature = "nats", feature = "postgres")))
+        {
+            continue;
+        }
         let run = || {
             Command::new(env!("CARGO_BIN_EXE_qx-cli"))
                 .args(args)

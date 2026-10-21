@@ -284,21 +284,37 @@ pub(super) fn csv_rows(body: &str) -> Vec<&str> {
         .collect()
 }
 
-/// `equity.csv` 末行的第二列。读不出来就是 `None`——调用方据此报"复核不通过"，
-/// **不**拿 0 当兜底。
-pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
-    let last = csv_rows(body).pop()?;
-    last.split(',').nth(1)?.trim().parse::<i128>().ok()
+/// `equity.csv` 的**权益列号**：按表头定位 `equity_raw`。
+///
+/// 两代形状共存——Bar 链是 `ts,equity_raw`，深度链统一摘要后是
+/// `index,ts,equity_raw,position_raw`。硬编码第 1 列会在四列形状上静默读到时间戳，
+/// 于是"权益末值"变成一个 5 位的时间值，复核给出**假阴性**（明明一致却说错）。
+/// 按列名取列；表头里没有这一格（再老的产物）时退回第 1 列，保留旧行为。
+fn equity_column(body: &str) -> usize {
+    let header = body.lines().next().unwrap_or_default();
+    header
+        .split(',')
+        .position(|cell| cell.trim() == "equity_raw")
+        .unwrap_or(1)
 }
 
-/// `equity.csv` 第二列的**整列**（按行序）。任意一行读不出来就是 `None`。
+/// `equity.csv` 末行的权益列。读不出来就是 `None`——调用方据此报"复核不通过"，
+/// **不**拿 0 当兜底。
+pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
+    let column = equity_column(body);
+    let last = csv_rows(body).pop()?;
+    last.split(',').nth(column)?.trim().parse::<i128>().ok()
+}
+
+/// `equity.csv` 权益列的**整列**（按行序）。任意一行读不出来就是 `None`。
 ///
 /// 与 [`last_equity_raw`] 同一把尺：**不**跳过坏行凑一个"看起来完整"的序列——切分评估
 /// 按 Bar 序号对齐，中间少一格会让训练窗与测试窗错位，而错位不会自己出声。
 pub(super) fn equity_series(body: &str) -> Option<Vec<i128>> {
+    let column = equity_column(body);
     csv_rows(body)
         .into_iter()
-        .map(|row| row.split(',').nth(1)?.trim().parse::<i128>().ok())
+        .map(|row| row.split(',').nth(column)?.trim().parse::<i128>().ok())
         .collect()
 }
 

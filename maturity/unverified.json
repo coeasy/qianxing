@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "maturity/capabilities.yaml",
-  "source_updated_at": "2026-10-19",
+  "source_updated_at": "2026-10-21",
   "interpretation": "Statuses and limitations are copied from the register. A false or non-true value is listed as unverified; this report does not infer whether a stage applies.",
   "capabilities": {
     "deterministic_kernel": {
@@ -30,7 +30,6 @@
       "limitations": [
         "external_adapter_fine_grained_source_taxonomy_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "cross_process_schema_registry_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "enum_variant_producer_check_cannot_see_struct_style_variants：门禁 `tools/check_architecture.py` 的变体扫描仍是单行的（一行 `Name,` 才算变体，且遇到枚举体内第一个 `^\\s*}` 就停），全仓按花括号配平可解析 389 颗而门禁只认到 247 颗（后者 = 389 − 142，由打印行推出），**142 颗不在门禁判据里**（`logs/s566_enum_surface_run1.txt` 打印行「枚举=77 变体全量=389 门禁盲点=142 盲且零引用=0」）。第二十三遍只在**仓库侧**补了 `crates/qx-cli/tests/unit/enum_variant_surface.rs` 这把配平的尺子（对那 142 颗逐颗要求生产限定名引用，允许清单为空，另有三块地板防空转），**没有**改门禁脚本本身——门禁口径归协调者，且 #141 的三条缺口（私有枚举/非线格式间接生产者/`use` 单名写法）仍未定。所以「每颗变体都有生产者」今天由仓库侧判据兜住，门禁自身的单行口径仍是那条没修的盲区 (V13 R2 第二十三遍 #243，接 #241/#141) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "snapshot_header_trading_day_is_written_empty_yet_hashed_and_exported：`AccountSnapshot::new`（`crates/qx-protocol/src/lib.rs`）是 `SnapshotHeader` 的唯一生产构造点，它把 `trading_day` 写成空串，全仓没有任何赋值点或判读点把交易日历接到这一格；可它照旧进 `state_hash()`（同一个文件里逐字段 write_text 的第五格）、照旧进稳定 JSON 的 header 键集与 `schemas/account-snapshot-v1.json`。后果是「按交易日定位快照」在读侧只能由 `as_of` 推断，header 那一格是个恒空的定位符——改它的含义等于改哈希（要升 schema 世代），不改它就永远要在文档里解释「快照带交易日」这一格为什么从不带值 (V13 R7 扫描B) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
@@ -67,7 +66,7 @@
         "audit_chain_does_not_enforce_ts_monotonicity：三家的审计追加（`qx-storage/src/lib.rs:1446` 的 `AuditFileStore::append_unlocked`、`sqlite.rs:1344` 的 `SqliteAuditStore::append`、`postgres.rs:1275` 的 `PostgresAuditStore::append`）都是「读尾部 → 判幂等 → 追加」，**没有一个检查 `record.ts >= 上一条 record.ts`**；`validate_audit_chain` 只校 sequence 连续性与 hash 链，`ControlPlane::from_json` 也不校。`ts` 的唯一消费者是 `ControlPlane::retire_overflow_with`（`qx-control/src/lib.rs:342-348`）：它按终态记录的 `(ts, command_id)` 升序排序取前若干名退场，注释写「按终态记录的 ts 升序就是按退场优先级升序」。NTP 回拨（`runtime_timestamp_ms()` 直接吃 `SystemTime::now()`）或两进程时钟漂移会让 `ts` 倒退，于是**退场顺序会偏向较新的命令**——被退场的那条已经终态，账目不会错，但保留窗口里留下的会是「较新的被留、较老的被退」。触发窗口很小（两次 `transact` 之间恰好赶上一次 NTP 修正），且 hash 链与 sequence 都完好，事件不会丢也不会重。收敛方向有两条，各有代价：拒绝式（`ts < last.ts` 报 `Conflict`）会把 NTP 一次回拨变成控制面永久卡死，比今天的偏移严重得多；钳制式（在 `ControlPlane::submit`/`execute` 内把 `ts` 抬到本平面尾部）要在 `audit_entry_hash` 计算之前做，还得说清既有非单调前缀怎么处理。两种都不是改字能收口的。本轮按未排期登记 (V13 R15) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "serde_json_without_arbitrary_precision_loses_i128_precision_above_u64_max：全仓 `Cargo.toml` 的 serde_json 都没开 `arbitrary_precision`，所以每个 `*_raw: i128` 字段（`StrategyContractIntent.qty_raw`、`StrategyRuntimeConfig.initial_cash_raw`、`AccountSnapshot.cash_raw` 等）反序列化 > `u64::MAX`（约 1.8e19）的 JSON 整数时会经 f64 中转，损失约 1e6 量级精度。作者写 `qty_raw: 100000000000000000001`，Rust 读成 `100000000000000000000` 或邻近值——两者都是正数，`validate_order` 的上界检查不存在（只查 `qty <= 0 || qty < min_qty || qty % qty_step != 0`），会继续往下走。为什么不判 A：价格侧经 `Money::from_dec` 限精度≤9 位（< 1e9），qty 1e20 × price 1e9 = notional 1e29，远超任何合理的 `MaxNotionalRule` 上限，风险闸门会拒；Binance 价格/数量全程走 `String` + `Money::from_dec`，CCXT 走 `raw_i128_value` 显式拒绝 f64，两条交易所路径完全绕开 serde_json 的 i128 解析；A 股实际值域（价格 1e7、数量与现金 1e15 上下）远在 u64::MAX 内。所以今天只有「20+ 位整数的 JSON 载荷」能触发，而这类载荷要么被风险闸门拦、要么本来就只出现在 operator 自己写的配置文件里。收敛有两条路，各有代价：`cargo add serde_json --features arbitrary_precision` 会把 `serde_json::Number` 的内部表示从 u64/f64 换成 `Rc<str>` 任意精度字符串，波及所有 `as_u64()`/`as_f64()` 的调用形态与全仓编译，牵连面难以评估；逐字段加 `v.abs() <= u64::MAX as i128` 断言则要改遍几十个 struct 的 validate。本轮按未排期登记 (V13 R16) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "manifest_format_skip_serializing_causes_round_trip_byte_drift：`qx-data/src/catalog.rs` 的 `DatasetComponentManifest.format` 带 `#[serde(default, skip_serializing_if = \"is_json_component_format\")]`：旧 JSON 没有 `format` 键时读入默认成 `Json`，写回时该键被省略（字节与原文一致）；而原文写了 `\"format\":\"json\"` 的会在 round-trip 后被剥掉。值语义不丢（`validate` 仍要求 Arrow 组件必须带 schema），影响的只是血缘/指纹的字节级一致性——同一份 manifest 读一次写一次就变了 sha。收敛是去掉 `skip_serializing_if` 让 `Json` 也显式写出，但那会让所有现存 manifest 文件的字节内容变化，任何按字节比对 manifest 的流程都要重跑基线。本轮按未排期登记 (V13 R16) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "process_diagnostics_have_no_framework_single_source：进程诊断（运行日志）是公共组件面里**唯一一处没有框架级单源**的：全仓 `crates/*/Cargo.toml` 没有任何 `tracing` / `log` / `env_logger` / `slog` / `fern` / `log4rs` 依赖，245 处诊断（`_production_sources()` 口径下的生产文本，剥掉 `#[cfg(test)]` 项与整行注释）直接走 `println!` / `eprintln!`，靠一条**非正式**的 `[组件 · 子域]` 前缀约定让运维能按组件过滤。约定的落地程度并不齐：`qx-api`（8 处）与 `qx-orchestrator`（2 处）已**全量**带标签，`qx-cli` 还有 **55** 处未带（V13 R29 把 `cli.rs` 整段错误/诊断输出收到 `[qx-cli · CLI]` 标签下，上界从 100 降到 55；`main.rs` 的 `rejected`/`acked` 与若干 JSON 直出站点被测试逐字断言，故意留在债里不迁）。与它相对，**报错**这一半已经统一封装（`crates/qx-core/src/error.rs` 的 `ErrorCode` 闭集 + `Retryability` + `ErrorContract` + `QxError::contract()` 唯一映射表，`error_code_contract_check` 八颗钉住），所以这里缺的不是\"公共组件没做\"，而是\"诊断这一格选了一条**约定式**而不是框架式的路\"。V13 R28 把这套选择落成**写下来的决定 + 有上界的欠账**，V13 R29 开始偿还这笔债：`tools/check_architecture.py` 新增 `process_diagnostics_check` 三颗——① 一旦引入诊断框架，未带标签站点必须为 0（半迁移会在既有约定之外多出**第三种**约定，比全不带更糟）；② 未带标签站点数**只降不升**（`UNLABELED_DIAGNOSTIC_CEILING` 棘轮，表外 crate 一律要求 0）；③ 棘轮表是**活名册**（归零的 crate 必须从表里删掉、新增未标签站点的 crate 必须登记）。V13 R28 刻意**不**一次迁移完 100 处：那是一次横跨 45 个 CLI 入口的纯文案改动，收益只有\"过滤一致性\"，而代价是 100 处 diff 与随之而来的用例文案漂移；棘轮先把它变成一条不可回退的欠账。V13 R29 已率先偿还最大一块——`cli.rs` 的 45 处错误/诊断输出——并随之把上界从 100 降到 55，证明棘轮确实只降不升（不是躺着不动的允许清单）。反向变异 4 处（给 `qx-core` 加 `tracing` 依赖 / 给一处 `qx-api` 站点去标签 / 把 `qx-cli` 上界 55 改 56 / 往棘轮表塞一个归零 crate）逐处打红自己点名的那颗判据 (V13 R28；上界 100→55 的基准由 R29 刷新) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
+        "process_diagnostics_have_no_framework_single_source：诊断输出目前使用组件标签约定；若引入统一日志框架，架构门禁要求一次迁移完成，避免框架与旧约定并存。当前不以历史未标记输出数量或 crate 名册作为验收门槛（状态：未收口；日志框架统一迁移未排期）"
       ]
     },
     "canonical_order_risk_decision": {
@@ -81,7 +80,7 @@
       ],
       "limitations": [
         "RiskGate remains a thin facade over RuleSet for legacy call sites （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "legacy_no_spec_notional_fallback_synthesizes_a_spot_spec_instead_of_failing_closed：`MaxNotionalRule::check`（`crates/qx-risk/src/rules.rs`）在 `OrderRiskContext.instrument_spec` 缺席时，调 `legacy_spot_spec` 合成一份「现货 1:1」临时规格（乘数写进 `contract_size`）再走 `TradingInstrumentSpec::notional`，而不是按仓库的 fail-closed 口径拒绝。它服务的是旧 `RiskGate` 无规格回测路径（`crates/qx-risk/src/rules.rs` 的 `evaluate_rules_only` 一族，源码两处 TODO 同源），所以今天只有那条兼容链会走到；带规格的回测、Paper 与实盘都在边界处转换到 `OrderRiskContext` 并传真规格。源码那条 TODO 写明的收敛方向是「回测与 CLI 全部显式接入真实 `TradingInstrumentSpec` 后删除该分支、缺规格直接 fail-closed」——在那之前按 #118 先例登记：合成规格会让一份缺规格的调用拿到 1:1 的名义额判定，而不是被拒 (发布审计 第C轮) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
+        "live_cross_currency_collateral_and_portfolio_valuation_unclosed：Bar、单市场 OrderBook 与多市场 OrderBook 准入现已通过 `RiskGate::check_with_context` 进入统一 `RuleSet::evaluate`，生产调用不再使用 `check_with_spec`；`RuleSet::evaluate_rules_only` 已删除。Bar 使用账户预算模型提供的未预留资金与组合投影初始保证金。OrderBook 衍生品资金预检已移交规范 `OrderRiskContext`：按标记权益扣除未终结订单和候选订单的预计手续费后，校验当前持仓、同标的未终结订单与候选订单的组合初始保证金，避免单笔检查分别放行后合计超限；现货仍由 `funding::preflight_order` 执行现金/库存预留。Ledger 现按衍生成交事实持久化加权开仓杠杆，Paper 保证金估值使用该比例，缺失历史杠杆时拒绝估值；OrderBook 组合保证金现使用 Ledger 持久化的逐仓开仓杠杆，未知杠杆时 fail-closed；`margin::settled_cash_margin` 对杠杆产品仍返回 `None`，因此结果仍不是交易所认证的 free-margin 快照。CLI 策略意图构造阶段只做前置轻量规则检查，最终订单仍由 `worker_risk` 使用执行侧账户余额、规格和价格作权威准入；Paper 最终 worker 风控现按同账户文件锁串行准入，并在锁内刷新 EventLog；它按 OMS 中同账户未终结订单预留衍生品初始保证金与现货买单报价币名义额、从现货可卖库存扣除在途卖单。现货买单购买力只取报价币现金，不把已有现货市值重复当作可用现金；衍生品权益与保证金支持配置的跨币种 FX。Paper 现货新单直接按报价币现金构造购买力，报价币不同于账簿报告币种时仍可准入；候选订单与同币种在途预留均保持报价币计量，并通过已配置的直接/反向 Spot FX 标记价完成跨币种预留换算。Live 现货买单按报价币余额快照资产的 free 减 borrowed 计算购买力；快照后其它报价币现货买单占用独立余额桶，候选单只扣减同报价币现货预留；衍生品遇到异结算币在途单仍 fail-closed，不做跨币种抵押品折算。Live 使用最近交易所余额快照；按余额事件 seq 只预留快照之后提交且仍未终结的同币种订单，账户级文件锁串行并刷新 EventLog；跨市场订单按同账户同 Venue 启用 Execution worker 的唯一冻结规格计算剩余名义额/初始保证金；快照之后若发生成交/现金流、规格缺失/冲突或在途订单资金币种与余额资产不一致，则拒绝新单等待下一份余额快照。已确认 Strategy 命令进入 Binance、CCXT、Paper 的最终提交入口均调用 worker 风控，缺规格/缺余额时 fail-closed。Live 跨币种抵押品及跨市场持仓统一估值仍未关闭 (发布审计风控链复核) （状态：未收口；收口门：Bar、OrderBook、Paper/Live worker 与策略入口对持仓、在途订单、产品规格和账户可用资金使用一致的组合判定，并有跨 worker 行为回归；未排期原因：Live 跨币种抵押品和跨市场持仓统一估值尚未收口）",
         "order_risk_projection_fields_have_no_production_reader：`OrderRiskDecision` 的三格投影 （`projected_position_raw` / `projected_margin_raw` / `reference_price_raw`）每笔订单都算， 但生产消费者只有 `qx-execution` 的两个 `RiskPort` 实现，它们只读 `allowed` / `violations` / `rule_set_version`；三格目前只有 `crates/contract-tests/tests/risk_parity.rs` 与 qx-risk 用例读者， 充当「三条入口判定一致」的对照面，不进任何回测产物、运行清单或 API 读模型， 所以「这一单成交后仓位与保证金会变成多少」今天读不到产物（V13 §9.12 #171） （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "signal_confidence_is_computed_forwarded_then_dropped_at_merge：策略侧真在算这一格——`crates/qx-strategy/src/builtin.rs` 按成交量累加、`crates/qx-strategy/src/lib.rs` 按均线差绝对值、`crates/qx-strategy/src/c_api.rs` 把 FFI 决策里的原值带出，`crates/qx-strategy/src/contract.rs` 写进契约输出，`crates/qx-cli/src/strategy_contract.rs` 再读进 `Signal.confidence`；可是 `SignalMerger::merge`（`crates/qx-zhenlu/src/lib.rs`）产出的 `TargetPosition` 没有这一格，合并即丢，全仓也没有任何阈值、缩放或排序读它（排序只读 `priority`）。标度还是三套口径：契约用例写 500/800/1_000 当千分制，`crates/qx-runtime/tests/strategy_contract_schema.rs` 的样例写定点原始量纲，内置策略写裸成交量。而 `schemas/strategy_api_v1.schema.json` 把 confidence 列进 required，外部读者必须给值、给了又什么都不影响——这是「必填但无读者」的形状，比纯粹的冗余更容易骗过对接方。要接上它得先定标度与阈值归谁，再决定它进 `TargetPosition`（进而在仓位与产物里可见）还是就地删掉声明 (V13 R7 扫描B) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "risk_snapshot_carries_fields_no_decision_reads：`RiskSnapshot`（`crates/qx-risk/src/lib.rs`）的七格里，`RiskEngine::evaluate` 只读 `portfolio_id`（非空校验）、`gross_exposure`（对上 `max_exposure`）、`drawdown_bps`（对上 `max_drawdown_bps`）与 `factor_exposure`（键非空校验）；`timestamp` / `net_exposure` / `volatility_bps` 三格既不被判定读、也不进任何回测产物或 API 读模型，其中 `volatility_bps` 在仓库内唯一的构造点（订单级 `evaluate_order` 的投影分支，`crates/qx-risk/src/lib.rs`）恒写 0。按 #118/#171 先例保留不删（删面等于把缺口藏起来）：要接上它们得先给组合级快照定出「谁算波动率、谁消费净敞口、时间戳按谁的表」的归属 (发布审计 第2轮) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
@@ -183,7 +182,6 @@
         "production_approved"
       ],
       "limitations": [
-        "idle_reply_windows_have_no_local_pacer__the_cadence_is_the_childs_cooperation。**二轮复扫登记，未修法**。`crates/qx-cli/src/venue_runtime/ccxt_execution.rs` 的 idle 分支答上话就 `idle_windows += 1`、记 Degraded、然后 `continue`，这一条路既不 break 也不 sleep、更不占重连预算（这是 #166 与 #214 定的语义——无成交的账户不该被具名放弃，idle 既不能计费也不能清零）；`crates/qx-adapter/src/binance.rs` 是同一形态（`BinanceStreamPoll::Idle` 只加 `report.idle_windows` 后 `continue`，那个计数全仓没有上限）。于是这两条 loop 的**节奏唯一来源是对端**：CCXT 侧靠子进程等满 `ccxt_idle_window_ms` 才回 idle，Binance 侧靠 `recv_event()` 把读窗耗尽。真缺陷形态是「对端秒回一个合法 idle」——那种子进程/替身下本进程就是忙轮询，且永远走不到 reconnect 预算那条放弃路径。没有当场改的原因：加本地最小间隔或给 idle_windows 设上限，都会改掉「idle 既不计费也不清零、无成交账户不被放弃」这条既有语义，属于要先定口径的设计决定（已用 `bounded_growth_and_reap_check` 与本轮的死信台账那颗把相邻事实钉住，节奏这一格留在此处） （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "exchange_sandbox_precision_and_bill_matrix_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "external_unknown_result_recovery_requires_reconcile_worker。**续修（V13 R8-B，2026-10-04）：补单闸门的档位已补齐。**`crates/qx-execution/src/lib.rs` 的 `submit()` 原先对已存在的同 `client_id` 订单只挡两类——已确认（`is_terminal()` 或 `Accepted|Working|PartiallyFilled|Filled`，回 `ALREADY_APPLIED`）与已出网但未确认（`Submitted|Unknown`，转 `ReconcileRequired` 并 Err）。`OrderStatus` 共 11 个变体，`CancelPending` 掉出两个分支后直接落到 `venue.submit_order`；而迁移表（`qx-core/src/order.rs` 的 `can_transition_to`）里 `CancelPending` 只能走到 `Cancelled|Filled|Unknown`，`Submitted` 非法，所以对一条撤单在途的订单补发等于用同一个 `client_order_id` 再下一单。已并入 reconcile 闸门，错误信息带上状态名。`PendingSubmit` 刻意放行：只有真的调过 `venue.submit_order` 才会把状态推离 `PendingSubmit`（回包归约，或 Err 与空回包分支经 `mark_reconcile` 转 `Unknown`），所以停在 `PendingSubmit` 等价于「已登记但远端从未收到」（注册后出网前失败、或跨重启恢复），补发是恢复动作而非重复下单；`Accepted` 属 `semantic_replay`，EventLog 按 `correlation_id` 去重，所以这条路径不会重复记账 (V13 R8-B) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "ccxt_funding_fact_still_maps_a_missing_timestamp_ms_to_zero (V11 Q68 §29.5) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
@@ -521,6 +519,19 @@
         "capability_level_is_capped_at_l2：本地 run generation 只到 L2；L3/L4（沙盒/生产）必须由统一 EvidenceBundle 的 venue generation 与真实窗口支撑，构建器今天只声明 L1 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "execution_attempt_queue_volume_is_model_estimated_and_data_sufficiency_policy_is_open：Bar/L1/L2 每次撮合评估及可见盘口/估算队列归因已写入 v7 summary、HTML、XLSX、多腿摘要及 EvidenceBundle 摘要哈希；L2 FIFO 队列首个同价位观察会标记 queue_baseline_unavailable 且不伪报零估算量；当前有限深度快照未包含限价档位时按基线不可用处理、清除旧基线并暂停该观察的估算成交，待同价位档位重新出现后先重建基线，再从后续快照估算可见深度减少。隐藏流动性、撤单与真实队列前量无法由当前快照精确观测（状态：未收口；收口门：补齐档位缺失、档位消失/重现、有效零变化等边界行为回归）"
       ]
+    },
+    "performance_regression_gate": {
+      "implementation": true,
+      "code_tested": true,
+      "sandbox_tested": false,
+      "production_approved": false,
+      "unverified_fields": [
+        "sandbox_tested",
+        "production_approved"
+      ],
+      "limitations": [
+        "profile_measurement_evidence_is_not_complete：此门禁只比较已有同机匹配基准；A 股规则吞吐证据只覆盖合成分钟线、规则/费率/weekday 日历与 PIT-visible 公司行为，不覆盖假日、所有 T+1/整手/涨跌停/停牌分支或 Paper 生命周期，因此不构成完整 ashare-research 验收。ashare-research、crypto-paper、multi-venue-arb 三档仍保持 unmeasured，直到各自完整场景证据实际生成并登记"
+      ]
     }
   },
   "unverified": [
@@ -851,6 +862,16 @@
     },
     {
       "capability": "run_evidence_bundle",
+      "field": "production_approved",
+      "registered_value": false
+    },
+    {
+      "capability": "performance_regression_gate",
+      "field": "sandbox_tested",
+      "registered_value": false
+    },
+    {
+      "capability": "performance_regression_gate",
       "field": "production_approved",
       "registered_value": false
     }

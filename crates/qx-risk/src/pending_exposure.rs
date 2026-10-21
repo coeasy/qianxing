@@ -66,7 +66,7 @@ pub fn pending_order_gross_notional_at_reference_mark<'a>(
                     return Err(QxError::BusinessViolation(format!(
                         "在途市价订单 {} 缺少名义额风控参考价",
                         order.client_id
-                    )))
+                    )));
                 }
             };
             total

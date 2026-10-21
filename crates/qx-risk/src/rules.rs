@@ -175,20 +175,6 @@ impl RuleSet {
         self.decision(context, order, violations)
     }
 
-    /// 兼容旧 `RiskGate` 的规则链判定：只跑 reduce-only 不变式与静态规则，
-    /// 不引入账户级结构/规格/保证金校验。
-    ///
-    /// TODO: 该入口保留至 qx-xingban 回测与 CLI 改为显式传入配置化 `RuleSet`
-    /// 之后删除；新代码应使用 [`RuleSet::evaluate`]。
-    pub fn evaluate_rules_only(
-        &self,
-        context: &OrderRiskContext,
-        order: &Order,
-    ) -> OrderRiskDecision {
-        let violations = self.rule_violations(context, order);
-        self.decision(context, order, violations)
-    }
-
     fn rule_violations(&self, context: &OrderRiskContext, order: &Order) -> Vec<String> {
         let mut violations = Vec::new();
         // reduce-only 是不依赖产品规格的账户不变式：上下文缺少规格时也必须成立。

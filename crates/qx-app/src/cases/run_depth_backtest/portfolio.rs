@@ -34,58 +34,6 @@ struct DepthPortfolioBuildContext<'a> {
     as_of: u64,
 }
 
-pub(super) fn attach_portfolio_summary(
-    summary: &mut serde_json::Value,
-    spec: &DepthBacktestSpec,
-    fills: &[qx_core::Fill],
-) -> Result<(), AppError> {
-    let Some(portfolio) = &spec.portfolio else {
-        return Ok(());
-    };
-    let mut members = vec![(
-        portfolio.primary_priority,
-        spec.strategy.strategy_id.clone(),
-    )];
-    members.extend(
-        portfolio
-            .additional_strategies
-            .iter()
-            .map(|member| (member.priority, member.strategy.strategy_id.clone())),
-    );
-    members.sort();
-    let mut fill_counts = members
-        .iter()
-        .map(|(_, strategy_id)| (strategy_id.clone(), 0_u64))
-        .collect::<BTreeMap<_, _>>();
-    for fill in fills {
-        let strategy_id = fill.strategy_id.as_deref().ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                "Tick/OrderBook 组合成交缺少 strategy_id 归属",
-            )
-        })?;
-        let count = fill_counts.get_mut(strategy_id).ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("Tick/OrderBook 组合成交归属未知策略: {strategy_id}"),
-            )
-        })?;
-        *count += 1;
-    }
-    let object = summary.as_object_mut().ok_or_else(|| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            "Tick/OrderBook 组合摘要不是 JSON 对象",
-        )
-    })?;
-    object.insert(
-        "strategy_ids".into(),
-        serde_json::json!(members.iter().map(|(_, id)| id).collect::<Vec<_>>()),
-    );
-    object.insert("strategy_fills".into(), serde_json::json!(fill_counts));
-    Ok(())
-}
-
 pub(super) fn build_portfolio_strategy(
     spec: &DepthBacktestSpec,
     instrument: &InstrumentId,

@@ -45,6 +45,19 @@ fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
     )
 }
 
+fn run_from<A: AsRef<OsStr>>(working_directory: &Path, args: &[A]) -> (i32, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(working_directory)
+        .args(args)
+        .output()
+        .expect("启动 qx-cli 失败");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
+}
+
 fn summary(stdout: &str) -> serde_json::Value {
     let path = stdout
         .lines()
@@ -204,6 +217,54 @@ fn builtin_entry_binds_the_declared_ashare_rules() {
     );
 }
 
+/// A bare runtime filename must resolve asset paths from the config directory before snapshotting.
+#[test]
+fn builtin_entry_resolves_bare_relative_runtime_config_before_snapshotting() {
+    let root = temp_dir("relative-runtime-config");
+    let working_directory = root.join("cwd");
+    std::fs::create_dir_all(&working_directory).expect("create isolated working directory");
+
+    let template = std::fs::read_to_string(deploy(RUNTIME)).expect("read runtime example");
+    let mut config: serde_json::Value = serde_json::from_str(&template).unwrap();
+    absolutize_paths(&mut config, &root);
+    let config_path = working_directory.join("runtime.json");
+    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+        .expect("write isolated runtime config");
+
+    let args = [
+        "backtest",
+        "builtin",
+        "ema_cross",
+        FRAME,
+        SPEC,
+        "100",
+        "--config",
+        "runtime.json",
+    ];
+    let args = args
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match index {
+            3 => deploy(FRAME).to_string_lossy().into_owned(),
+            4 => deploy(SPEC).to_string_lossy().into_owned(),
+            _ => (*value).to_string(),
+        })
+        .collect::<Vec<_>>();
+    let (code, stdout, stderr) = run_from(&working_directory, &args);
+    assert_eq!(code, 0, "bare relative runtime config must work: {stderr}");
+    let summary = summary(&stdout);
+    assert_eq!(summary["schema_version"], 7);
+    assert_eq!(summary["instrument"], "000001.SZSE");
+    assert_eq!(summary["fills"], 1);
+    assert_eq!(summary["rejected_orders"], 0);
+    assert!(summary["metrics"]["fees_raw"].as_i64().unwrap_or_default() > 0);
+    assert!(summary["model_descriptors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|model| model.as_str().unwrap().starts_with("AShareFee@v1[")));
+}
+
 /// 成交数量合法时规则照样改结果：A 股佣金模型顶掉内置 2/5bp，费用与收益都不同。
 #[test]
 fn ashare_fee_model_replaces_the_builtin_cost_rates() {
@@ -237,6 +298,19 @@ fn ashare_fee_model_replaces_the_builtin_cost_rates() {
 #[test]
 fn broken_ashare_sections_fail_closed_on_the_builtin_entry() {
     let root = temp_dir("fail-closed");
+    let missing_calendar = config_with(&root.join("missing-calendar"), |value| {
+        value["strategy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ashare_calendar_path");
+    });
+    let (code, _, stderr) = run(&builtin_args(Some(&missing_calendar), "150"));
+    assert_eq!(code, 2, "A 股规则缺交易日历必须在 CLI 回测入口拒绝");
+    assert!(
+        stderr.contains("必须提供交易日历"),
+        "错误要说明缺少有界交易日清单: {stderr}"
+    );
+
     let mut rules: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(deploy("qianxing.ashare.rules.json")).unwrap(),
     )
@@ -292,7 +366,7 @@ fn entries_without_ashare_hooks_reject_the_config() {
     ]);
     assert_eq!(code, 2, "深度档没有 A 股挂钩点，收下配置就该拒");
     assert!(
-        stderr.contains("backtest book 不接受 strategy.ashare_rules_path")
+        stderr.contains("深度档位回测不接受 strategy.ashare_rules_path")
             && stderr.contains("盘口引擎"),
         "拒绝要说明是哪条链、为什么: {stderr}"
     );

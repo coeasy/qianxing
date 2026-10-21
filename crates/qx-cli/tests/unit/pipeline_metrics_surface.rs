@@ -94,8 +94,8 @@ fn paper_worker_publishes_pipeline_counters_to_its_metrics_file() {
     // `--once` 的 worker 已经退出：这一格如实回 0，不是"这个 worker 现在健康"。
     assert_eq!(value("qx_worker_up"), 0.0, "`--once` 之后的正文:\n{body}");
     assert!(value("qx_worker_heartbeat_timestamp_seconds") > 0.0);
-    // 计数要按这条夹具链的真实笔数钉死（实测正文 `logs/s484_*.txt`）：`seed_paper_fill_with_fee`
-    // 之后 worker 自开的 pipeline 一共做过 4 次 `ingest`、每次都入账。取相等而不是取">= 2"，
+    // 计数要按这条夹具链的真实笔数钉死：`seed_paper_fill_with_fee` 之后 worker 自开的 pipeline
+    // 一共做过 4 次 `ingest`、每次都入账。取相等而不是取">= 2"，
     // 是因为 `absorb` 的两种错法都可能仍留着非零的数 —— 漏并一个对象是少计，把一个对象并两次
     // 是双计，两边都不会让正文里任何一行报错。
     assert_eq!(
@@ -113,9 +113,11 @@ fn paper_worker_publishes_pipeline_counters_to_its_metrics_file() {
         0.0,
         "实际正文:\n{body}"
     );
+    // 四次 ingest 各刷新一次；Paper 订单准入在持有账户锁后额外 refresh 一次，保证读到锁等待期间
+    // 其他 worker 已提交的事实，因此这格应为 4 + 1。
     assert_eq!(
         value("qx_pipeline_refreshes_total"),
-        4.0,
+        5.0,
         "实际正文:\n{body}"
     );
     assert_eq!(
@@ -347,42 +349,54 @@ fn reporter_escapes_labels_of_the_metrics_it_publishes() {
 /// 单轮能跑出来的差异。
 #[test]
 fn pipeline_metrics_publish_shares_the_heartbeat_cadence() {
-    let source = workspace_source("crates/qx-cli/src/venue_runtime/paper_worker.rs");
-    let lines = source.lines().collect::<Vec<_>>();
-    let heartbeats = lines
+    let sources = [
+        workspace_source("crates/qx-cli/src/venue_runtime/paper_worker.rs"),
+        workspace_source("crates/qx-service/src/paper_execution_host.rs"),
+    ];
+    let heartbeats = sources
         .iter()
+        .flat_map(|source| source.lines())
         .filter(|line| line.contains("context.heartbeat("))
         .count();
-    assert_eq!(
-        heartbeats, 2,
-        "paper 的两条 worker 循环各有一次心跳，形状变了要先回看这条判据"
-    );
-    for (index, line) in lines.iter().enumerate() {
-        if !line.contains("context.heartbeat(") {
-            continue;
-        }
-        let previous = lines[index - 1].trim();
+    assert!(heartbeats > 0, "没有发现 Paper 循环心跳");
+    for source in &sources {
+        let lines = source.lines().collect::<Vec<_>>();
+        let source_heartbeats = lines
+            .iter()
+            .filter(|line| line.contains("context.heartbeat("))
+            .count();
         assert!(
-            previous.starts_with("metrics.publish(true,"),
-            "心跳前必须先发布一次指标，否则抓取端读到的是上一 tick 的累计量:\n  {previous}"
+            source_heartbeats > 0,
+            "每个 Paper worker 循环都要发布并刷新心跳"
+        );
+        for (index, line) in lines.iter().enumerate() {
+            if !line.contains("context.heartbeat(") {
+                continue;
+            }
+            let previous = lines[index - 1].trim();
+            assert!(
+                previous.starts_with("metrics.publish(true,")
+                    || previous.starts_with("metrics.publish_if_due(true,"),
+                "心跳前必须先发布一次指标，否则抓取端读到的是上一 tick 的累计量:\n  {previous}"
+            );
+        }
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.trim().starts_with("metrics.publish(false,"))
+                .count(),
+            source_heartbeats,
+            "每条 Paper 循环退出时都要把 `qx_worker_up` 收成 0"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("PipelineMetricsReporter::new("))
+                .count(),
+            source_heartbeats,
+            "每条 Paper 循环各有一份按进程累计的量"
         );
     }
-    assert_eq!(
-        lines
-            .iter()
-            .filter(|line| line.trim().starts_with("metrics.publish(false,"))
-            .count(),
-        heartbeats,
-        "每条循环退出时都要把 `qx_worker_up` 收成 0"
-    );
-    assert_eq!(
-        source
-            .lines()
-            .filter(|line| line.contains("PipelineMetricsReporter::new("))
-            .count(),
-        heartbeats,
-        "每条 worker 循环各有一份按进程累计的量"
-    );
 }
 
 /// 接口文档要给出这六个样本的真形态：带 `worker`/`account` 标签，而不是标量。

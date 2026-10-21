@@ -2,7 +2,7 @@
 //!
 //! `qx-api` 的 `/metrics` 与 `worker-metrics/*.prom` 实际暴露的指标名以 `qx_api_` /
 //! `qx_control_retired_` / `qx_worker_` / `qx_pipeline_` 四族前缀存在（见
-//! `crates/qx-api/tests/prometheus_exposition.rs` 与 `crates/qx-cli/src/pipeline_metrics_report.rs`）。
+//! `crates/qx-api/tests/prometheus_exposition.rs` 与 `crates/qx-service/src/pipeline_metrics_report.rs`）。
 //! 面板里一旦出现拼写错或引用尚未接线的指标，监控就会「看着在跑实际是瞎的」——这条用例把
 //! 所有 `expr` 抽出来，逐个要求指标名落在已知前缀内，避免 dashboard 与真实出口悄悄分叉。
 

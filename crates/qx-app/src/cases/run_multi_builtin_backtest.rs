@@ -9,7 +9,9 @@ use crate::{
     multi_leg_combined_return_bps, multi_leg_cost_bps, multi_leg_group_attributions,
     multi_leg_group_totals, multi_leg_leg_buckets, multi_leg_leg_integrity, MultiLegLegFacts,
 };
-use qx_core::{InstrumentId, Order, OrderPolicy, OrderStatus, Quantity, Side};
+use qx_core::{
+    InstrumentId, Order, OrderPolicy, OrderStatus, Quantity, Side, TradingInstrumentSpec,
+};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
 use qx_strategy::{
@@ -18,9 +20,44 @@ use qx_strategy::{
 };
 use qx_xingban::BarStrategy;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 mod attribution;
+mod input_snapshot;
+use input_snapshot::MultiBuiltinScratch;
 const MIN_BARS: usize = 3;
+
+/// Validate the shared frame contract before a facade derives cash sizing or provenance.
+/// The same check is repeated against the frozen frames at the execution boundary below.
+pub fn validate_multi_builtin_frames(
+    kind: qx_strategy::BuiltinStrategyKind,
+    quantity_raw: i128,
+    primary: &BarFrame,
+    reference: &BarFrame,
+) -> Result<(), AppError> {
+    if quantity_raw <= 0 {
+        return Err(invalid("多腿内置策略 quantity 必须为正整数"));
+    }
+    if !kind.needs_reference_leg() {
+        return Err(invalid(format!(
+            "多腿回测只接受套利策略，当前为 {}",
+            kind.name()
+        )));
+    }
+    if primary.instrument == reference.instrument {
+        return Err(invalid("多腿内置回测要求两条腿使用不同标的"));
+    }
+    if primary.ts != reference.ts {
+        return Err(invalid("多腿回测要求两条 BarFrame 的时间戳完全对齐"));
+    }
+    if primary.ts.len() < MIN_BARS {
+        return Err(AppError::new(
+            AppErrorCategory::FidelityInsufficient,
+            format!("多腿内置策略回测至少需要 {MIN_BARS} 根对齐 Bar"),
+        ));
+    }
+    Ok(())
+}
 
 pub fn run_multi_builtin_backtest(
     spec: &MultiBuiltinBacktestSpec,
@@ -39,6 +76,136 @@ pub fn run_multi_builtin_backtest(
                 &correlation_id,
             )
         })
+}
+
+/// Normalized application inputs for the multi-builtin CLI workflow. Facades resolve files and
+/// runtime configuration; the app owns the independent-leg specs, temporary output lifecycle, and
+/// dispatch into the shared multi-builtin use case.
+pub struct MultiBuiltinBacktestInputs<'a> {
+    pub strategy: crate::BuiltinStrategySpec,
+    pub primary_frame: &'a BarFrame,
+    pub reference_frame: &'a BarFrame,
+    pub initial_cash_raw: [i128; 2],
+    /// A facade-resolved single-account override cannot describe two independent leg accounts.
+    pub declared_initial_cash_override_raw: Option<i128>,
+    pub market_specs: [Option<&'a TradingInstrumentSpec>; 2],
+    pub margin_models: [Option<&'a crate::BacktestMarginConfig>; 2],
+    pub funding_bps: i64,
+    pub declared_product: Option<qx_core::TradingProduct>,
+    pub execution_cost_rules: qx_xingban::ExecutionCostRules,
+    pub risk_rules: Option<crate::BacktestRiskRules>,
+    pub allow_short: bool,
+    pub fill_model: Option<crate::BacktestFillModel>,
+    pub max_bar_volume_participation_bps: Option<u16>,
+}
+
+/// Run the facade-normalized multi-builtin inputs through qx-app's shared Bar cases.
+pub fn run_multi_builtin_backtest_with_inputs(
+    input: MultiBuiltinBacktestInputs<'_>,
+    context: &RunContext,
+) -> Result<MultiBuiltinBacktestRun, AppError> {
+    validate_multi_builtin_inputs(&input)?;
+    let workspace = MultiBuiltinScratch::create()?;
+    // Engine runs must consume the exact immutable frames the facade used for alignment,
+    // strategy scheduling, and account sizing. Reopening caller-owned paths here creates a
+    // time-of-check/time-of-use split if either file changes during workflow assembly.
+    let primary_snapshot = workspace.write_frame("primary-bars.json", input.primary_frame)?;
+    let reference_snapshot = workspace.write_frame("reference-bars.json", input.reference_frame)?;
+    let primary_run_id = format!(
+        "multi-builtin-{}-primary-{}",
+        input.strategy.kind.name(),
+        workspace.serial
+    );
+    let reference_run_id = format!(
+        "multi-builtin-{}-reference-{}",
+        input.strategy.kind.name(),
+        workspace.serial
+    );
+    let spec = MultiBuiltinBacktestSpec {
+        schema_version: crate::MULTI_BUILTIN_BACKTEST_SCHEMA_VERSION,
+        strategy: input.strategy.clone(),
+        primary: build_multi_builtin_leg_spec(MultiBuiltinLegAssembly {
+            run_id: &primary_run_id,
+            frame: input.primary_frame,
+            path: &primary_snapshot,
+            output_dir: &workspace.path.join("primary"),
+            initial_cash_raw: input.initial_cash_raw[0],
+            market_spec: input.market_specs[0],
+            margin_model: input.margin_models[0],
+            account_id: "multi-leg-primary",
+            shared: &input,
+        }),
+        reference: build_multi_builtin_leg_spec(MultiBuiltinLegAssembly {
+            run_id: &reference_run_id,
+            frame: input.reference_frame,
+            path: &reference_snapshot,
+            output_dir: &workspace.path.join("reference"),
+            initial_cash_raw: input.initial_cash_raw[1],
+            market_spec: input.market_specs[1],
+            margin_model: input.margin_models[1],
+            account_id: "multi-leg-reference",
+            shared: &input,
+        }),
+        funding_bps: input.funding_bps,
+        declared_product: input.declared_product,
+    };
+    run_multi_builtin_backtest(&spec, context)
+}
+
+fn validate_multi_builtin_inputs(input: &MultiBuiltinBacktestInputs<'_>) -> Result<(), AppError> {
+    validate_multi_builtin_frames(
+        input.strategy.kind,
+        input.strategy.quantity_raw,
+        input.primary_frame,
+        input.reference_frame,
+    )?;
+    if let Some(initial_cash_raw) = input.declared_initial_cash_override_raw {
+        return Err(invalid(format!(
+            "backtest multi-builtin 不接受 strategy.initial_cash_raw={initial_cash_raw}：两条腿的本金各按本腿行情由定资规则算出，一个账户数字无法同时是两条腿的本金。请改用 quantity 表达规模，或删掉这一格"
+        )));
+    }
+    Ok(())
+}
+
+struct MultiBuiltinLegAssembly<'a> {
+    run_id: &'a str,
+    frame: &'a BarFrame,
+    path: &'a Path,
+    output_dir: &'a Path,
+    initial_cash_raw: i128,
+    market_spec: Option<&'a TradingInstrumentSpec>,
+    margin_model: Option<&'a crate::BacktestMarginConfig>,
+    account_id: &'a str,
+    shared: &'a MultiBuiltinBacktestInputs<'a>,
+}
+
+fn build_multi_builtin_leg_spec(input: MultiBuiltinLegAssembly<'_>) -> crate::BacktestSpec {
+    let placeholder = crate::BuiltinStrategySpec::new(
+        qx_strategy::BuiltinStrategyKind::SmaCross,
+        format!("{}-scheduled", input.run_id),
+    );
+    let settlement_currency = qx_core::resolve_settlement_currency(input.market_spec);
+    let mut spec = crate::BacktestSpec::new(
+        crate::BacktestDatasetInput {
+            run_id: input.run_id.into(),
+            instrument: input.frame.instrument.to_string(),
+            bars_path: input.path.to_string_lossy().into_owned(),
+        },
+        settlement_currency,
+        input.initial_cash_raw,
+        20260914,
+        input.output_dir.to_string_lossy().into_owned(),
+        placeholder,
+    );
+    spec.account_id = Some(input.account_id.into());
+    spec.market_spec = input.market_spec.cloned();
+    spec.margin_model = input.margin_model.cloned();
+    spec.execution_cost_rules = Some(input.shared.execution_cost_rules.clone());
+    spec.risk_rules = input.shared.risk_rules.clone();
+    spec.allow_short = Some(input.shared.allow_short);
+    spec.fill_model = input.shared.fill_model;
+    spec.max_bar_volume_participation_bps = input.shared.max_bar_volume_participation_bps;
+    spec
 }
 
 fn run_inner(
@@ -115,12 +282,14 @@ fn run_inner(
             account_id: spec.primary.account_id.clone().unwrap_or_default(),
             outcome: primary_details.outcome,
             report: primary_details.report,
+            risk_rule_set_version: primary_details.risk_rule_set_version,
             targets: primary_targets.primary,
         },
         reference: MultiBuiltinLegRun {
             account_id: spec.reference.account_id.clone().unwrap_or_default(),
             outcome: reference_details.outcome,
             report: reference_details.report,
+            risk_rule_set_version: reference_details.risk_rule_set_version,
             targets: primary_targets.reference,
         },
         funding_bps: spec.funding_bps,

@@ -233,17 +233,18 @@ fn depth_chain_declares_and_revalidates_its_own_frame() {
     let depth_root = temp_cli_case_dir("q66-depth-root");
     let config = read_runtime_config(&template).unwrap();
     let (runtime_root, runtime) = isolated_backtest_runtime(&deploy, &config, "q66-depth");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &frame,
-        None,
-        1,
-        Some(5),
-        DepthExecutionModel::default(),
-        &depth_root,
-        Some(&runtime),
-    )
+    run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &frame,
+        spec_path: None,
+        quantity: 1,
+        fee_bps: Some(5),
+        execution: DepthExecutionModel::default(),
+        root: &depth_root,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .expect("深度回测应跑通");
     let summary = read_first_backtest_summary(&depth_root);
     let verified = recompute_declared_backtest_input(&summary)
@@ -251,7 +252,10 @@ fn depth_chain_declares_and_revalidates_its_own_frame() {
         .expect("深度链摘要也要声明输入");
     assert_eq!(verified.kind, "depth-frame");
     assert_eq!(verified.path.as_str(), frame.to_string_lossy().as_ref());
-    assert_eq!(verified.dataset_version, DEPTH_FRAME_DATASET_VERSION);
+    assert_eq!(
+        verified.dataset_version,
+        qx_app::backtest_input_identity::DEPTH_FRAME_DATASET_VERSION
+    );
     let parsed = read_depth_frame_for_backtest(&frame).unwrap();
     assert_eq!(
         verified.fingerprint,

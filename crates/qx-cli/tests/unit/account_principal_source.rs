@@ -5,6 +5,7 @@
 //! 使用者却以为"我声明了一份本金"。这里的用例把这条拆口钉回去：不等即拒、等值要说出来。
 
 use super::*;
+use qx_service::backtest_bindings::account_base_from_config;
 
 const PAPER_RUNTIME: &str = "qianxing.runtime.paper-strategy.example.json";
 /// 与提交入口用例同一份夹具：这份配置里有一个真正会入账的 Paper 执行 worker。
@@ -157,8 +158,8 @@ fn two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read
         "报错要并列点出两处名字与各自的数: {error}"
     );
     assert!(
-        account_base_from_config(&config).is_err() && configured_account_base(Some(&path)).is_err(),
-        "回测侧的两种读法都必须认这条判据"
+        account_base_from_config(&config).is_err(),
+        "回测本金必须从已校验的 runtime 快照解析并认这条判据"
     );
     // 命令行入口：闸门要排在任何副作用之前。命令文件故意指向不存在的路径，
     // 若走到读命令那一步，报错就会是"命令失败"而不是本金冲突。

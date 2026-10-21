@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "crypto_paper_execution_funding_microbenchmark_v2",
+  "generated_at_utc": "2026-10-21T03:26:22.227315+00:00",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-j",
+    "1",
+    "-p",
+    "qx-zhenlu",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "qx_zhenlu_crypto_paper_lifecycle_v2",
+    "--noplot"
+  ],
+  "source": {
+    "git_head": "343d405660b5672188c5b9dd1a46b626474aea58",
+    "worktree_dirty": true,
+    "benchmark_file_sha256": "0e03cad967b3ffd3dcac135bde8e8624b0ab98712f681cb6db9cef467e4d86c6"
+  },
+  "scenario": "Paper perpetual submit lifecycle: market precision validation, weighted rate limiter refill, maker/taker fees, partial/full fills, Ledger apply_fill_with_spec, funding_payment and apply_instrument_funding; 1/16/256 orders",
+  "records": [
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/1",
+      "orders": 1,
+      "median_ns": 3215.1967993079584,
+      "mean_ns": 3296.068135805362,
+      "mean_ci95_ns": [
+        3256.348987809017,
+        3343.093469954228
+      ],
+      "std_dev_ns": 223.7382020875584
+    },
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+      "orders": 16,
+      "median_ns": 61022.84670953402,
+      "mean_ns": 62924.31159019334,
+      "mean_ci95_ns": [
+        61947.07424572471,
+        64012.781848741564
+      ],
+      "std_dev_ns": 5334.038785093569
+    },
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/256",
+      "orders": 256,
+      "median_ns": 9128508.333333334,
+      "mean_ns": 9307952.333333336,
+      "mean_ci95_ns": [
+        9226483.308333337,
+        9398986.287500001
+      ],
+      "std_dev_ns": 436982.8303277309
+    }
+  ],
+  "profile_coverage_claim": false,
+  "limitations": [
+    "No strategy worker or scheduler, live funding provider retrieval, 8h settlement cadence loop, durable EventLog, or end-to-end API/SDK chain; this is not a complete crypto-paper profile measurement."
+  ]
+}

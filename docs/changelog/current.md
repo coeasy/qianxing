@@ -1,6 +1,223 @@
 # Recent entries
 
+### 0.2.0 版本对齐与退役门禁说明清理（2026-10-21）
+
+把当前 workspace、Rust 锁文件、Python 包、CMake SDK、成熟度发布记录与安装文档统一到 0.2.0。删除活动 Rust 源码和检查器注释中残留的历史行数棘轮/用例地板说法；历史变更记录保留为审计背景，不参与当前验收。架构快速分片复核发现版本动态检查漏导入 `tomllib`，改为直接读取 `[workspace.package]` 的版本声明后，四片完整聚合通过。
+
+- 验证：`cargo metadata --offline` 成功；29 个 workspace 包版本均为 0.2.0；Rust workspace 165 个测试目标合计 1,941 passed、0 failed、2 ignored；默认与无 backend feature 的全目标严格 Clippy `-D warnings`、feature-off `cargo check`、Rust fmt、Python 199/199、架构 `--fast` 四片完整覆盖 221 个具名检查且无重复、成熟度生成检查、Markdown 链接和 `git diff --check` 均通过。
+- 本机 Release CLI 输出 `qianxing 0.2.0 (build 343d405-dirty, target x86_64-pc-windows-msvc, profile release)`，SHA-256 `D737F1EAE554B2169643C39FC0767B4BFC3DA7E921C31E33EAAD52616334C9D7`。用该二进制重新执行 Crypto/A 股确定性验收，result_hash 为 `26fdd6b52d020700` / `6be034a4cb0760fa`，并通过 Paper E2E（提交 1 单、成交 1 单、账簿 4 条）；三份本机验收记录已刷新。工作树仍有未提交改动，该二进制不是干净发布候选，性能证据仍需与干净候选二进制重新绑定。
+
+### 0.1.0 本机全量回归与历史快照门禁清理记录（2026-10-21）
+
+移除以历史文件/测试数量、固定源码行数及静态回测哈希为依据的验收条件，保留实际架构接线、行为语义、产物完整性与重放一致性验证。全量回归发现并修正跨服务迁移后的调用点核对、现货无库存卖出归因假设，以及本地 Python 原生扩展陈旧导致的 CLI/HTTP/Python 哈希差异。用当前 Release 重建 Python stable-ABI wheel，并刷新 Crypto/A 股及 Paper 验收证据。
+
+- 验证：Rust workspace 165 个测试目标全部通过；架构检查 221 项完整聚合；全目标严格 Clippy、生产代码 unwrap/expect lint、无 backend feature Clippy、Rust fmt、Console JS 语法、Python 199/199、成熟度生成校验及 Markdown 链接均通过。Windows Python 3.13 wheel `qianxing-0.1.0-cp310-abi3-win_amd64.whl` 构建、tag/内容检查及隔离目录原生导入 smoke 通过，SHA-256 `0101a934fa9e2070a6d3b275db1bebca90cb0707525b01f3bb5949a067e6dd95`。
+- 后续针对移除历史门禁后调整的 feature 条件断言复验：默认、SQLite、PostgreSQL、NATS、PostgreSQL+NATS 五种配置下 qx-cli 全测试均通过；各配置 9 个测试目标，默认 `cli_behavior_parity` 32/32、`project_commands` 45/45。严格 Clippy、check 通过。测试构建使用隔离 target 与仓库临时目录；MSVC 隔离构建关闭调试符号，并为 PostgreSQL 组合增加 rustc 线程栈以完成大型 qx-cli crate 编译。
+- 候选 `qx-cli` Release SHA-256：`79324835b0e912665a26cac72558e0eb873805e9bd83fc434ba8396a6afb672e`。以此二进制重验 Crypto/A 股样例回测（result_hash `26fdd6b52d020700` / `6be034a4cb0760fa`）、A 股规则 1k/8k/64k profile（P50 281.050/309.601/547.507 ms）及 Crypto Paper 三轮 E2E（P50/P95 2672.090/2716.694 ms）；两项 profile 证据均绑定该二进制 SHA。
+- 尚未声称生产批准：Linux/macOS 与 Python 3.10–3.12 矩阵、PostgreSQL/NATS 服务容器、Linux/macOS C++ SDK 矩阵未在本机执行；Windows C++ SDK 构建、CTest、安装包消费者、JSONL、Rust C ABI 插件与两种共享内存 Worker 协议已通过本机复核。Rust SDK Git 消费者需要已发布候选提交，Binance testnet 需要外部凭据。`ashare-research`、`crypto-paper`、`multi-venue-arb` profile 仍按覆盖范围保持 `unmeasured`。
+- Windows C++ Worker 首次运行遇到系统临时目录 ACL 拒绝；切换到仓库隔离临时根后 shared-memory JSON/columnar 均通过。QXRB 文件打开错误现在包含失败路径及 Win32 错误码，便于区分路径/权限问题。
+
+### A 股规则回归证据与 SDK 测试目录隔离（2026-10-21）
+
+将 A 股规则合同与完整回测生命周期纳入量化场景探针；以当前源码重建 Release 后复测 1k/8k/64k 分钟 Bar、PIT 公司行为与确定性哈希。Rust SDK 测试临时目录改用进程号加纳秒时间戳，避免 PID 复用读取旧产物而出现假冲突。
+
+- 验证：A 股规则合同 33/33、生命周期集成 8/8、Rust SDK 两个独立消费者目标 28/28 与 2/2；量化场景 81 项 executed、0 未执行、0 缺失、2 项外部阻塞。原吞吐证据采用 weekday-only 合成日历，已由 WP-7.89 的沪深公开日历负载补充；合成价格与全部规则分支未纳入吞吐负载，`ashare-research` 状态保持 `unmeasured`。
+
+### 多 Venue Paper 补偿恢复场景证据贯通（2026-10-21）
+
+扩展 Paper 多腿恢复用例，验证 BINANCE 部分成交、OKX 另一腿取消后的跨 Venue 补偿闭环，并继续检查冻结规格对越界补偿回报的拒绝。修正量化探针读取 L2 多策略版本化摘要的路径；将依赖远端已发布提交的 Rust SDK Git 消费者从无网络探针中移出，登记为候选提交发布后的单独验收。
+
+- 验证：恢复用例 2/2；量化场景 79 项执行通过、2 项保留外部阻塞；架构 `--fast` 221 项检查完整聚合通过。`multi-venue-arb` 性能 profile 仍为 `unmeasured`。
+
+### 修复 qx-app 全目标回归的陈旧定资与结果哈希断言（2026-10-21）
+
+qx-app 回归发现手续费预留向上取整后仍断言旧 raw 金额，以及 OrderBook/独立多 builtin 当前稳定结果与旧哈希不符。根据当前精确定资和回测引擎输出更新固定期望，并移除声称仍等于 legacy hash 的过时测试名；保留每次重放的确定性比较。
+
+- 定向验证：qx-app 32 个测试目标 200/200 通过；qx-app/qx-api/qx-sdk 格式检查与全目标严格 Clippy 通过。
+
+### 当前源码 Paper 执行与账簿闭环复验（2026-10-21）
+
+使用刚重建的 qx-cli 验证服务层风险准入、执行 worker 和一次性订单宿主迁移后的 Paper 交易闭环。
+
+- 定向验证：`paper_acceptance.py` 通过；提交 1 单、成交 1 单、账簿事实 4 条；重跑不重复下单，审计链到 Executed，独立目录结果一致。该结果不代表真实 Venue 网络验收。
+
+### 当前源码 A 股/币圈与 API/SDK/Console 链路回归（2026-10-21）
+
+重建当前 qx-cli 后复跑 A 股/币圈双目录确定性验收；验证 qx-api、Rust/Python SDK 和 Console 新增异步研究路由。新菜单与 qx-api RunHandle 启动路由的双向接线由架构检查核对。
+
+- 定向验证：A 股/币圈 `result_hash` 为 `6be034a4cb0760fa` / `26fdd6b52d020700`；qx-api 122 项、Rust qx-sdk 44 项、Python SDK/provider/native E2E 49 项通过；控制台脚本语法通过；API/Console/Rust SDK 接线检查 84 项通过。本轮不是开发完成后的三轮终态全链路审查。
+
+### Rust 核心与回测引擎定向回归（2026-10-21）
+
+对当前工作树的 qx-core 账簿/估值和 qx-xingban A 股/组合/OrderBook 改动执行 crate 全目标回归；将仓库内隔离测试目录 `.tmp-test/` 加入忽略规则，保留本机数据不删。
+
+- 定向验证：qx-core 80/80；qx-xingban 215 passed、0 failed、1 ignored；两 crate 格式检查与全目标严格 Clippy 通过。账簿现金查询 Criterion 的 indexed 1k/8k/64k 中位数为 104.8/131.1/181.6 ns；64k entry-scan 对照约 323.0 µs。1k 相对同机 Criterion base 点估计 +7.8%，未超过台账 10% 阻断阈值；单组读数不代表完整 profile。
+- 候选卫生：将 `.tmp-test/`、CLI runtime store 新生成 runs/队列及 deploy runtime store 新生成 runs/snapshots 加入忽略规则；文件保留，原有跟踪基线保留。剩余 130 个未跟踪资产待审并纳入合适提交。
+
+### 修复 feature-off CI 工作流并覆盖服务层（2026-10-21）
+
+修复 CI feature-off 两条多行命令的 YAML 缩进错误，确保工作流可解析；将新迁入的 `qx-service` 纳入无 backend feature 的全目标检查与严格 Clippy。
+
+- 定向验证：工作流 YAML 解析成功（12 个 job）；feature-off `cargo check --all-targets` 与 Clippy `-D warnings` 通过；架构门禁 `--fast` 四分片完整聚合通过；`git diff --check` 通过。
+
+### Worker market spec 启动预检归服务层（2026-10-21）
+
+将运行时配置中的 worker spec 路径检查、声明标的绑定和逐标的冻结规格校验迁入 `qx-service::worker_market_spec`。runtime-check 保留错误汇总与呈现，Binance/CCXT/Paper worker 在进入服务循环前仍共用此 fail-closed 预检。
+
+- 定向验证：runtime market-spec 预检 1/1；runtime fail-closed/规格单读者架构合同 17/17；qx-service 28/28；qx-service/qx-cli/qx-runtime 严格 Clippy 与格式检查通过。
+
+### Paper/live 账户风险上下文归服务层（2026-10-21）
+
+将 Paper/live 的账户余额准入、可用资金计算、现货库存冻结、衍生品持仓腿与在途 gross exposure 计算、以及 `RiskContext`/`OrderRiskPosition` 构造迁入 `qx-service::risk_host`。CLI 的 worker risk 模块现仅适配既有调用接口，Paper/ Binance/CCXT 共用服务层的风险判断和预留逻辑。
+
+- 定向验证：Paper 保证金估值 7/7、Live 预留 9/9、qx-service 28/28；相关估值/准入/错误传播架构合同 21/21；qx-service/qx-cli/qx-runtime 全目标严格 Clippy 与格式检查通过。
+
+### Live 在途订单规格选择归服务层（2026-10-21）
+
+将 Live 余额快照后的在途订单冻结 market spec 选择迁入 `qx-service::risk_host`。服务层按账户、Venue、instrument 与启用 Execution worker 解析候选规格，拒绝冲突或缺失规格；CLI 仅把服务结果接入资金预留计算。
+
+- 定向验证：Live 在途预留 9/9；Paper/live 准入与估值架构合同 11/11；qx-service/qx-cli/qx-runtime 全目标严格 Clippy 与格式检查通过。
+
+### Paper 多市场账户规格与 FX 快照归服务层（2026-10-21）
+
+将 Paper 账户的多市场冻结 market spec 汇总、持仓/在途订单标的解析、所需 FX 币种推导及直接/反向 Spot FX 一致性校验迁入 `qx-service::risk_host`。worker 规格身份匹配由服务层负责并调用统一 market-spec loader；CLI 保留风险上下文参数适配。
+
+- 定向验证：Paper 保证金估值 7/7；估值与 Paper/live 准入架构合同 11/11；qx-service 28/28；qx-service/qx-cli/qx-runtime 全目标严格 Clippy 与格式检查通过。
+
+### Worker market spec 加载归服务层（2026-10-21）
+
+将 worker 冻结 market spec 的文件读取、相对路径解析与 qx-app 规格校验迁入 `qx-service::worker_market_spec`。风控与 runtime-check 继续走同一个加载器，保留错误诊断和 fail-closed 行为；CLI 只提供既有调用点的服务重导出。
+
+- 定向验证：runtime market-spec 预检 1/1；规格单读者/runtime fail-closed 架构合同 17/17；qx-service 测试 28/28；服务、CLI、runtime 全目标严格 Clippy 与格式检查通过。
+
+### Paper 在途资金预留归服务层（2026-10-21）
+
+将 Paper 账户未终结订单的现货购买力、衍生品保证金及跨币种预留计算移入 `qx-service::risk_host`。CLI 继续负责从运行时配置、冻结规格、EventLog 和账簿组装快照输入；服务层单点执行金额计算与 fail-closed 校验，行为合同确认不存在旧实现复活。
+
+- 定向验证：Paper 保证金估值 7/7、Paper 提交终态 5/5、Live 预留 9/9、qx-service 28/28；Paper/live 架构合同 2/2，相关 crate 严格 Clippy 与格式检查通过。
+
+### 风控一致性合同切换到完整上下文（2026-10-21）
+
+删除把 `RiskGate::check_with_spec` 历史缺口当成当前生产合同的 `known_gap_account_level_margin_is_invisible_to_legacy_gate` 用例。三入口一致性现在都通过完整 `OrderRiskContext` 比较；新增保证金不足的拒绝路径，确保 RiskEngine、RiskContext 门面与 RiskGate 对账户保证金给出一致决定。成熟度遗留项改为准确指向仍未关闭的 Live 跨币种抵押品与跨市场持仓估值。
+
+- 定向验证：`risk_parity` 集成用例 5/5；架构 `--fast` 四片聚合覆盖 221 项且无重复；成熟度报告一致、YAML、Rust 格式和差异检查通过。
+
+### A 股配置日历闭环到订单拒绝（2026-10-21）
+
+扩展 A 股交易日历回归：日历明确排除的普通工作日不得提交买单，错误应说明当前 bar 不在可交易日或停牌；周末和午休时段也应判为非交易时间。此项验证配置日历拒绝语义，不代表仓库已有交易所官方完整日历数据，也不改变 A 股 profile 仍未测的状态。
+
+- 定向验证：qx-xingban `calendar_json_controls_daily_and_intraday_trading_windows` 1/1；格式及差异检查通过。
+
+### 启用 A 股规则时拒绝无界日历与全天时段（2026-10-21）
+
+共享应用绑定器此前允许 `enabled=true` 的 A 股规则快照在交易日列表和 session 均为空时通过，底层会把任意日期和时刻视为可交易。现在回测必须提供有界 `trading_days`+`sessions`，或明确列出 `trading_timestamps`；缺输入在应用入口报错。同步说明部署配置要求，并以架构合同覆盖 fail-closed 绑定。
+
+- 定向验证：绑定器缺日历/缺时段/有效配置用例 1/1；qx-cli A 股/回测合同 50/50；qx-app 全目标严格 Clippy、格式/差异检查及架构 `--fast` 221 项通过。
+
+### 移除历史无效验收门禁并归拢账户准入服务边界（2026-10-21）
+
+复核并清除仅依赖历史数量/规模快照的验收门禁：当前执行路径不再引用架构判据总量/标签快照、测试数量地板、全仓单文件行数棘轮、账簿/报告/API 读面固定行数上限、参数豁免总数上限或旧 `validate_core.py`；相应快照与预算文件不再作为仓库资产。架构检查保留模块归属、唯一实现、真实消费者、行为合同及活文档引用可达性，历史 changelog/归档不再被当作当前引用门禁。模式版本迁移图只覆盖需要读侧显式拒绝/迁移的契约，检查改为其 schema_id 必须属于模式登记册，不再错误要求覆盖所有 DTO schema。另将 Paper/live 共用的账户准入规则迁入 `qx-service::risk_host`。
+
+- 验证：四分片架构门禁全绿并成功聚合；成熟度报告一致性、架构/生成器脚本语法、`git diff --check` 通过；NATS consumer 管道预算行为用例 1/1。活动 tools/maturity/CI/build 路径对退役门禁的检索无结果。
+
+### API/Console/SDK 研究主链路复核与 Windows 隔离用例修复（2026-10-21）
+
+Console 研究菜单现已接通 Bar 后台回测、多账户/多市场任务与参数实验；API 比较回测通过共享 Rust 应用用例稳定排名，并拒绝混合输入血缘。Python 与 Rust SDK 新增/覆盖多市场数据清单、订单簿队列配置、多腿自定义策略工厂和 RunHandle 消费链。将 qx-api RunRegistry/共享限流测试的 scratch 目录从 Windows 系统 Temp 移到仓库 `target/` 隔离目录，修复权限受限环境下的伪失败。
+
+- 定向验证：API/Console/SDK 结构合同 105/105、API 路由合同 8/8；qx-api/qx-sdk 包测试、全目标严格 Clippy 和格式检查通过；Python SDK 分层 38/38、应用用例 37/37、Provider 9/9、新增 backtest DTO/验收用例 5/5。
+
+### Live 下单拒绝过期交易所余额快照（2026-10-21）
+
+Binance/CCXT Live 下单和价差恢复现在校验账户/Venue 最新余额快照时间；快照超过 60 秒或时间戳晚于准入时钟时 fail-closed。最终下单在账户锁内刷新 EventLog 后取当前时钟，锁等待与刷新耗时计入快照年龄。Paper 风控不依赖该交易所快照。
+
+- 定向验证：Live 余额/在途预留 9/9、价差恢复 4/4、Live 风控架构专项 1/1、qx-cli 全目标严格 Clippy 与格式检查通过。恢复用例改用仓库隔离目录后在 Windows runner 通过。
+
+### 快速回测拒绝显式非法的可选 market spec（2026-10-21）
+
+快速回测 manifest 现在要求显式 schema v1 并拒绝未知字段。`market_spec` 字段缺省时仍允许使用运行时配置；若显式为空或类型错误，则在解析时失败，不再静默降级为未配置。
+
+- 定向验证：qx-app 快速回测用例 3/3、CLI manifest/多 venue/A 股用例 5/5、全目标严格 Clippy、格式检查和架构专项 4/4 通过。重编译 CLI 后 A 股/币圈双目录确定性与 replay 验收通过，hash 分别为 `6be034a4cb0760fa` / `26fdd6b52d020700`；A 股报告产品用例 1/1 通过。
+
+### Live 现货按报价币余额快照准入（2026-10-21）
+
+Live 现货买单现在直接使用交易所余额快照中的报价币 `free - borrowed` 购买力，即使账簿报告币种不同也不做汇率换算；快照后同报价币现货在途订单按冻结规格预留，其它报价币现货订单使用独立现金桶，不互相占用。衍生品遇到异结算币在途订单仍 fail-closed，跨币种抵押品估值仍未开放。
+
+- 定向验证：Live 余额/预留行为 8/8；`qx-cli` 全目标严格 Clippy、`live_balance_order_reservation_check()`、workspace 格式和成熟度报告一致性检查通过。
+
+### 为 Rust SDK 注册表发布补齐内部 crate 版本约束（2026-10-21）
+
+工作区内可发布 crate 的所有本地 path 依赖现在同时声明 `0.1.0` registry 版本要求；架构检查逐 crate 校验生产、构建和开发依赖。`qx-sdk` 与其应用层依赖 `qx-app` 增补 repository/homepage/documentation 元数据。使用临时本地 patch 映射解析未上架的工作区依赖后，Cargo 对 `qx-sdk` crate 包默认校验通过；真实注册表发布仍需先按依赖顺序发布内部 crate。
+
+- 定向验证：`qx-sdk` 单测 13/13、独立消费者/集成用例 31/31；`cargo check -p qx-sdk`、严格 Clippy 和本地 patch 环境下 `cargo package -p qx-sdk` 默认校验通过；`registry_dependency_version_check()`、workspace 格式与目标差异检查通过。
+
+### 移除构建脚本的历史步骤数量门槛（2026-10-21）
+
+删除架构检查中固定要求构建脚本恰有 8 个编号步骤和 7 条 Cargo 命令的快照阈值。保留有效合同：Windows 与 Unix 脚本步骤名称/顺序一致、编号连续且分母自洽，Cargo 命令集合一致；解释器交接与门禁执行顺序继续检查。
+
+- 定向验证：`build_script_parity_check()` 通过；`cargo fmt --all -- --check` 与差异空白检查通过。
+
+### Live 同币种跨市场在途订单预留（2026-10-21）
+
+Live 余额快照后的同账户、同 Venue 在途订单现在按其冻结 market spec 计算剩余名义额或初始保证金，因而支持同币种跨市场共享余额预留。市场规格缺失/冲突，或预留资金币种与余额资产不一致时仍 fail-closed；Live 跨币种抵押品与跨市场持仓统一估值仍未关闭。
+
+- 定向验证：Live 在途预留行为 6/6；`cargo clippy --offline -j 1 -p qx-cli --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`live_balance_order_reservation_check()` 与成熟度报告一致性检查通过。
+
 # Changelog
+
+### 复核并固定交易所用户流空闲节奏（2026-10-21）
+
+清除能力台账中已过期的“用户流空闲可能忙轮询”限制：CCXT 的秒回 idle 有至少 100ms 本地让步，Binance 用户流 idle 来自有界 WebSocket 读窗，分片与控制帧循环有明确上限。新增架构合同核对两种节奏来源及行为回归，并更正 CCXT 对本地节流的旧注释。
+
+- 定向验证：CCXT 空闲节流用例、Binance WebSocket 超时用例和 worker 停机结构合同均通过；新增架构合同通过。前后端/SDK 五组架构检查通过，Python SDK 分层/DTO 用例 38/38；`qx-api` 86 个单测 + 36 个集成用例、`qx-sdk` 13 个单测 + 31 个独立消费者用例、C++ SDK 两个 smoke 均通过；`qx-core`/`qx-xingban` 回归与严格 Clippy 通过，覆盖事件账簿估值、A 股 T+1/库存、无前视和风险准入；A 股/币圈双目录回测验收与 ReplayVerifier 均通过，hash 分别为 `6be034a4cb0760fa` / `26fdd6b52d020700`。成熟度报告与格式检查通过。
+
+### Paper 跨币种现货候选资金投影闭环（2026-10-21）
+
+Paper 现货新单按报价币现金建立购买力，报价币可不同于账户账簿报告币种；同币种在途买单先按剩余名义额预留，再通过已配置的 Spot FX 汇率统一换算，缺失或冲突汇率时 fail-closed。Live 对未经统一估值的异币种现货单继续拒绝。新增 EUR 报价的候选单/在途单行为回归，并修正 Paper 账户准入架构检查中已迁移的锁调用与旧结算币购买力判据。
+
+- 定向验证：跨币种 Paper 现货用例 1/1；`paper_account_admission_serialization_check()` 通过；成熟度报告生成一致、workspace 格式检查与目标差异检查通过。
+
+### 持仓开仓杠杆进入账簿重放与 Paper 保证金估值（2026-10-21）
+
+衍生成交的 `TradePosition` 账簿事实现持久化开仓杠杆，账簿重放会恢复按持仓数量加权的倒数杠杆比例；Paper 估值与 OrderBook 组合准入据此扣除标记价下的初始保证金。EventLog 摘要纳入新增杠杆事实，同时不改变缺少该字段的旧事件摘要。旧杠杆持仓在估值/准入时 fail-closed，避免用新订单杠杆伪造历史仓位保证金。
+
+- 定向验证：`qx-core` 80 项单测、45 项集成通过（另有 1 项伸缩量具忽略）；qx-xingban 全 crate 146 项单测与 22 项集成通过；Paper 保证金 7/7、OrderBook 杠杆投影/旧仓拒绝 3/3、EventLog 后端切换 6/6、分段日志恢复 10/10、SQLite EventLog 9/9 通过。新增架构检查确保成交事实、EventLog 摘要、加仓比例归并、Paper 与 OrderBook 保证金投影和未知历史杠杆拒绝逻辑连通；格式及 qx-core/qx-risk/qx-runtime/qx-xingban/qx-cli 全目标严格 Clippy 通过。A 股/币圈确定性回测验收 hash 未变化，分别为 `6be034a4cb0760fa` / `26fdd6b52d020700`。
+- 跨币种现货候选资金投影、Live 跨市场资金统一估值与完整发布矩阵仍未关闭。
+
+### 清除过期的测试数量验收口径（2026-10-21）
+
+修正架构门禁脚本概述中残留的“用例条数只增不减”说法。当前门禁只检查测试模块挂载、旧单文件不复活和共享夹具唯一性；测试数量通过实际测试目标执行验证，不设历史数量地板。历史变更记录中的旧计数仍作为历史记录保留。
+
+### 移除历史诊断输出数量棘轮（2026-10-21）
+
+删除 `process_diagnostics_check` 中固定未标记输出上限与 crate 名册一致性两项历史数量门槛。它们只约束旧快照数字，且成熟度记录与实际门槛已不一致；保留“引入统一日志框架时必须一次完成标签迁移”的架构合同。同步更新能力记录并重生成 `maturity/unverified.json`。
+
+### Live 余额快照与在途订单预留（2026-10-21）
+
+Live 下单入口现与 Paper 一样按账户锁串行化，并在锁内刷新 EventLog 后执行风控到 Venue 提交。风控按最近交易所余额快照的事件序号，预留快照后本地提交、尚未终结的同市场现货买单名义额或衍生品保证金；快照已覆盖的订单不会重复预留。余额快照后出现成交/现金流，或存在无法由当前 worker 认证的跨市场在途订单时，拒绝新单直到新快照抵达。
+
+- 新增行为回归覆盖同市场预留、避免对旧订单双重预留、跨市场无法估值时 fail-closed；Live 提交链架构检查验证 Binance/CCXT 的调用根、账户锁、刷新、风控顺序。
+- 定向验证：Live 行为 5/5；Paper 在途订单 1/1、Paper 提交终态 5/5；qx-risk/qx-cli 全目标 Clippy `-D warnings` 与格式检查通过。
+- 未实现 Live 多市场账户资金统一估值、跨币种现货候选资金投影及持仓开仓杠杆持久化；这些作为发布前风控残余继续保留。
+
+### Paper 账户购买力串行与现货预留修复（2026-10-21）
+
+最终提交风控复核发现 Paper 同账户多个 worker 可能同时基于各自打开的旧 EventLog 快照判断购买力；现新增账户级文件锁，覆盖风控到撮合落账，并在锁内刷新 EventLog。现货买入购买力只按报价币现金计算，持有资产市值不再冒充可重复消费的现金；现货卖出由账户库存/在途卖量约束，不再要求报价币保证金。OMS 在途现货买单按剩余名义额预留，在途衍生品保证金继续按组合/FX 估值；跨币种现货候选单目前 fail-closed。
+
+- 新增旧快照提交回归：两个 pipeline 都在第一笔成交前打开，第二次提交在锁内刷新后因可用资金不足拒绝。
+- 定向验证：`qx-risk` 9/9，Paper 保证金 7/7，Paper 提交终态 5/5，策略订单身份 4/4；qx-risk/qx-cli 全目标严格 Clippy 与目标文件差异检查通过；A 股/现货回测准入 11/11、现货库存集成 2/2、三入口风控 parity 5/5。
+- A 股和币圈示例回测验收均通过双次同目录字节一致、独立目录产物一致与 ReplayVerifier：A 股 `6be034a4cb0760fa`，币圈 `26fdd6b52d020700`。
+- 新增 `paper_account_admission_serialization_check`，仅检查锁→EventLog 刷新→风控→撮合顺序与具名行为合同，不以检查数量作为质量门槛。
+- 同轮架构检查复核发现 `risk_spec_fail_closed_check` 还钉着迁移前的 `check_with_spec` 调用。现改为验证 Bar、单市场和多市场 OrderBook 全部走 `check_with_context` 并进入统一 `RuleSet`，保留缺规格 fail-closed 与三入口 parity 合同；定向 6/6 通过。
+- Live 已按最新交易所余额快照的 EventLog 序号预留其后的同市场未终结订单，并在 Binance/CCXT 提交中用账户锁串行刷新与风控；快照后成交/现金流、跨市场在途订单会 fail-closed，等待下一次余额同步。持仓开仓杠杆持久化、跨币种现货候选资金投影、Live 跨市场共享资金统一估值与最终三轮全链路验收仍未关闭。
+
+### 订单簿衍生品组合保证金准入修复（2026-10-21）
+
+移除按单笔初始保证金与账户标记权益对比的衍生品旁路，改由统一 `OrderRiskContext` 对已结算持仓、未终结在途订单和候选订单的投影初始保证金进行组合判定；现货现金/库存预留与既有撮合语义不变。当前持仓保证金仍按候选订单杠杆估算，Ledger 尚未保存持仓杠杆元数据，因此该口径不能替代交易所 free-margin 快照。
+
+- 新增组合保证金单测和“双订单合计超限”订单簿集成回归，验证第二笔订单被规范风险门拒绝。
+- 定向验证：两项新增回归通过，既有衍生品订单簿成交/账簿语义回归通过，`qx-xingban` 全目标 Clippy `-D warnings` 通过。
+- 派发链抽查确认策略订单经 Binance、CCXT、Paper 最终 worker 风控；当时发现 Paper 可用资金未预留 OMS 在途订单，后续已由本文件顶部的账户串行与购买力修复收敛。Live 本地在途单与交易所余额同步仍待审计。
+- 该轮不代表发布矩阵完成；全量架构门禁与工作区发布矩阵仍待开发收敛后执行。
 
 ### 能力可执行性深检：修一条真缺陷 + 落一份真执行的观测记录（2026-10-11 第 11 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2/§4.2/§9
 
@@ -229,7 +446,7 @@ sync/async run、`RunHandle`、events/cursors、cancel/wait/result、report/veri
   给齐十四格且档位合法、`verified_version` 非空；⑪ provider 名册 == 真实的 `impl DataProvider for X`
   且逐格给齐数据面六格；⑫ 外部 venue 声称 `sandbox`/`order_type` 已验时必须有 outcome=pass 的
   testnet 记录（**与 `capabilities_check` 同一把尺：没有证据不得翻真**）。这一族**恒发十二条、不早退**。
-- **门禁 1028 → 1040 条，地板 968 → 980**；`--snapshot` 已刷新（`maturity/gate_snapshot.json`）。
+- **历史记录（当时）**：门禁 1028 → 1040 条、地板 968 → 980；当时曾使用 `maturity/gate_snapshot.json`。该数量快照门禁已删除，这些读数不再代表当前验收口径。
 - **变异取证 13 发全 KILL**（`.task-tmp/mutate_capability_matrix.py`，按字节还原，每发都断言
   锚点唯一）。覆盖十二颗判据里的每一颗：整份登记面消失 / 五态重排 / 能力写成 `supported: true` /
   领域改名 / 档位写成闭集外的词 / 限制清空 / 证据指向不存在的文件 / `next_gate` 清空 /
@@ -567,8 +784,8 @@ R29 之后做三轮发布前审计（主体链路连通性 / 孤儿逻辑 / 死�
   的**函数体**必须出现 `check_with_spec(` 与规格实参，3 处变异全红（含"只在注释里写锚点"那一处，证明
   判据读代码不读散文）。reduce-only 用例同时补一条反向断言：**无规格入口只能多报"缺规格"，绝不能少报
   reduce-only 那条**——fail-closed 不得波及与规格无关的不变式。
-- **P2-6 门禁读数改由机读快照承载**：`--snapshot` 现在写两份——`maturity/line_budgets.yaml`（行数棘轮）与
-  `maturity/gate_snapshot.json`（条数 / 地板 / label 名册摘要），收尾一条判据核「本轮实测 == 快照」。
+- **历史记录（当时）**：P2-6 曾让 `--snapshot` 同时写行数棘轮与门禁数量/label 摘要，并要求实测值等于快照。
+  后续复核已确认固定数量、标签摘要与静态源码行数都不代表质量；数量快照验收及 `maturity/line_budgets.yaml` 行数棘轮均已删除。
   README 两处写死的条数与地板改成引用文件名。**落地时踩到两个自己造的坑**：① `gate_snapshot_check` 在
   "快照缺失"与"快照在盘"两条路径上各发**不同条数**的判据，于是生成轮记下 N、复核轮算成 N+1，那条相等判据
   永远不可能成立（修法：恒发三条）；② 改了地板常量之后旧快照必然与常量不等，而那颗判据跑在写快照之前——
@@ -1142,3 +1359,87 @@ R29 之后做三轮发布前审计（主体链路连通性 / 孤儿逻辑 / 死�
 
 - NATS publisher 将 Outbox `event_id` 作为 JetStream `Nats-Msg-Id`，使 ack 丢失后的 relay 重试能利用 stream 配置的有限去重窗口。EventLog 投影现以稳定 `log_name` 分区并写入源 `seq`；但 EventLog 尚无 append 顺序上的 seq 严格递增承诺，consumer checkpoint 接入及旧分区状态迁移仍未完成，因此不裁剪 `processed_ids`。qx-storage NATS feature 离线编译、全仓格式检查通过，架构门禁 **1,203/1,203**；未运行行为测试或连接 NATS 验收。
 
+### 订单簿衍生品策略保证金快照（2026-10-21）
+
+- OrderBook 回测的策略回调现在接收标记权益扣除已开仓保证金、在途订单保证金和预估费用后的模拟可用保证金；缺市场价时仍返回缺席，缺在途单风险策略时拒绝估算。该值不代表交易所 free-margin 快照。
+- 定向复核：订单簿回测单测 24/24，`qx-xingban` 全目标严格 Clippy、估值单源与风险规格架构合同通过；未运行全量架构门禁或发布矩阵。
+
+### Runtime 冻结 market spec 预检（2026-10-21）
+
+- `config validate`/`runtime-check` 对启用 worker 已声明的标的，现在会通过唯一 market-spec 加载器校验文件内容和规格，而不止检查路径存在；进程监督器及独立 Binance、CCXT、Paper Execution/SpreadRecovery 启动路径也会在启动 worker 前执行该预检。未声明静态标的的 worker 仍在订单准入时按实际订单标的检查。
+- 定向复核：预检有效/非法规格用例、deploy 模板覆盖 3/3、qx-cli all-targets 严格 Clippy 及运行时配置/路径/market-spec 架构合同通过；全量发布矩阵未运行。
+
+
+### WP-7.68 · 清理成熟度台账中的历史门禁数量地板
+
+成熟度能力台账仍残留历史 `GATE_CHECK_FLOOR` 与门禁总量递增描述，容易被误读为当前验收要求。已从当前能力台账移除这些过时数量阈值与快照措辞；活代码、CI、本地构建和成熟度工具中均无相关门禁或旧入口引用。保留具名行为/结构合同、实际测试执行及基准回归门禁，不改 A 股/币圈/Paper 验收链，也不删归档历史记录。
+
+**定向验证**：当前执行路径检索无 `GATE_CHECK_FLOOR`、`WORKSPACE_TEST_FLOOR`、旧快照/行数预算和 `validate_core.py` 引用；完整架构及发布矩阵未运行。
+
+### WP-7.69 · 运行时冻结规格与双市场回测定向复核
+
+按当前工作树重跑运行时 market spec 预检回归，覆盖合法规格启动放行、非法精度配置拒绝及 runtime reference 诊断；对应架构合同检查运行时配置 fail-closed、market spec 单读者与路径所有权，共 18 项通过。A 股和币圈 CLI 确定性验收重新生成通过，hash 与已登记基线一致：`6be034a4cb0760fa` / `26fdd6b52d020700`。另重跑 A 股报告产品进程用例，验证多文档导出、便携证据重算以及同一输入比较，1/1 通过。
+
+**定向验证**：`runtime_reference_preflight_parses_market_specs_for_declared_worker_symbols` 1/1；三组架构合同 18/18；A 股与币圈回测验收通过；`ashare_runs_export_documents_and_compare_on_the_same_input` 1/1。完整 workspace/全量架构门禁与三轮全链路审查仍待开发收敛后执行。
+
+### WP-7.70 · Paper 本地执行闭环验收复跑
+
+当前 qx-cli 二进制通过 Paper 端到端验收：提交 1 单、成交 1 单、生成 4 条账簿事实，重跑不重复下单，证据链可到 Executed。默认 Windows 临时目录的 Scheduler 状态文件遇到权限拒绝，改到事先确认不存在的 `target/qx-paper-acceptance-wp769-20261021` 隔离根后验收通过；该失败属于临时目录访问问题，未修改业务规则。
+
+**定向验证**：`paper_acceptance.py` 退出码 0；严格 Clippy、A 股/币圈验收、A 股报告产品与运行时规格预检证据见 WP-7.69。本地外部 Venue/sandbox 尚未验收；全量 workspace/全量架构门禁与至少三轮全链路审查仍未完成。
+
+### WP-7.71 · API/Console/SDK 当前树跨层复核
+
+针对当前 API、控制台与 SDK 工作树改动重跑真实行为与结构合同：Python SDK 分层、应用用例、Provider 与新增回测 DTO/原生规格用例共 89/89；API 路由、Console 接线、研究菜单与 RunHandle、Rust/Python/C++ API 合同及 SDK 导出/认领合同共 105 项通过。`cargo test --offline -j 1 -q -p qx-api -p qx-sdk` 全部目标通过，qx-api 86 个单测和各 API/SDK 集成目标零失败；两个 crate 全目标严格 Clippy `-D warnings` 通过。重复测试没有发现新的断链或孤儿公开入口。
+
+**边界/下一步**：WP-3 服务宿主目标仍未完全关闭，CLI `worker_entry.rs` 与 `venue_runtime/` 仍持有 venue 执行实现；该剩余项不能由这轮 API/SDK 用例替代。开发收敛后仍需完成终态三轮全链路发布复核与全量发布矩阵。
+
+### WP-7.72 · Paper 验收目录隔离与非破坏性修复
+
+Paper 验收脚本原先默认使用固定系统临时路径，且若目录存在就递归删除；这既与保留证据便于复核的说明不符，也在 Windows ACL 环境失败。现默认在仓库 `target/` 创建唯一临时目录；显式 `--root` 必须是不存在的新路径，已有目录会 fail closed 且保留原内容。架构 `paper_track_check()` 新增该路径安全合同。
+
+**定向验证**：Paper 轨架构合同 8/8；Python 脚本语法检查通过；已有目录拒绝用例确认原目录 36 个文件未变；不传 `--root` 的完整 Paper 验收通过，OrderSubmitted=1、Filled=1、LedgerApplied=4，并写入当前成熟度记录。全量架构门禁与发布矩阵未运行。
+
+### WP-7.73 · 服务层测试夹具 Windows 临时目录修复
+
+`qx-service::backtest_bindings::builtin_snapshot_normalizes_strategy_identity_and_portable_frame_path` 曾将临时 BarFrame 写入系统 temp，并在当前 Windows ACL 下以 PermissionDenied 失败。夹具现改用仓库 `target/qx-service-tests` 下带进程号、纳秒时间戳及原子序号的新目录，并在断言后清理；不改生产路径或业务逻辑。
+
+**定向验证**：`cargo test --offline -j 1 -q -p qx-service` 28/28；`cargo clippy --offline -j 1 -p qx-service --all-targets -- -D warnings`、`cargo fmt --check -p qx-service`、Paper 验收族架构合同、Python 脚本语法与成熟度生成一致性通过。WP-3 的 venue 领域 runner 迁移和开发完成后的全链路/发布矩阵仍未关闭。
+
+### WP-3.41 · Worker pipeline 指标报告器迁入 qx-service
+
+`PipelineMetricsReporter` 原由 qx-cli 持有，但其生命周期口径、worker-metrics 文件发布和 Prometheus counter 聚合都属于服务宿主职责。现将报告器迁入 `qx-service::pipeline_metrics_report`，依赖服务层唯一的 worker metrics IO；qx-cli 删除旧实现，仅重导出类型并继续把各 worker pipeline 观测交给它。同步更新 runtime 的生产出口说明、Grafana/字段文档及 pipeline 打开站点豁免文档；`health_snapshot_knob_check()` 新增唯一所有权判据，拒绝 CLI 旧实现复活。
+
+迁移复核时 `paper_worker_publishes_pipeline_counters_to_its_metrics_file` 暴露一条旧断言：该夹具的四次 ingest 对应四次 refresh，订单准入在账户锁内另有一次显式刷新以追平锁等待期间的 EventLog，因此总刷新应为五次。行为逻辑正确，已将断言更新为 4 + 1，并在用例说明其新鲜度用途；ingest 仍精确为 4。
+
+**定向验证**：`pipeline_metrics_surface` 7/7；pipeline 打开站点账本 2/2；`health_snapshot_knob_check()` 2/2；qx-service 28/28；qx-service/qx-cli/qx-runtime 全目标严格 Clippy 与格式检查通过。旧 CLI 报告器路径仅留在架构合同中用于确认其不存在。WP-3 其它 venue 领域 runner 所有权与终态三轮发布审查仍开放。
+
+### WP-7.89 · A 股性能夹具改用沪深公开年度休市日历
+
+将 A 股吞吐负载过去自动生成的 weekday-only 日期替换为版本化的沪深 2024-2025 交易日历夹具（485 个开市日），其节假日安排来自上交所、深交所当年年度通知；超过夹具日期范围会直接报错。性能证据分别绑定源夹具和实际传入 Rust 回测的裁剪日历摘要，保留合成分钟行情、未覆盖公告外临时休市与未覆盖完整规则分支的限制。
+
+**定向验证**：夹具检查 3/3；以当前 Release 重建 qx-cli 后完成 1k/8k/64k 三档、每档 3 次与 4 条 PIT 公司行为的回测，P50 为 274.290/305.733/551.723ms，4 条动作相对单动作控制均改变结果哈希，A 股规则/成本绑定均被观察到。二进制 SHA-256 为 `af7801132b07c2c75d56a0e7490da42ccab8bf5c9acaace9ddfc3ddb5578ba0b`，证据：`maturity/evidence/ashare-rules-backtest-2026-10-21-calendar-release.json`。此吞吐证据不覆盖完整规则合同或 Paper 生命周期，`ashare-research` 仍保持 `unmeasured`；最终三轮全链路审查和全量发布矩阵继续开放。
+
+### WP-4.14 · 最新 Release 重验币圈回测与 Crypto Paper 闭环
+
+使用同一当前 Release 二进制重跑 Crypto 与 A 股仓内回测验收，结果哈希分别为 `26fdd6b52d020700` 和 `6be034a4cb0760fa`；两条路径都验证同目录重跑字节一致、独立目录产物一致及无凭据运行，并刷新两份成熟度验收记录。Crypto Paper E2E 以同一二进制重复 3 次，验证 scheduler→strategy→Paper execution→Ledger/EventLog/audit、幂等重跑及独立根一致；P50/P95 为 2862.415/2866.430ms，二进制 SHA-256 `af7801132b07c2c75d56a0e7490da42ccab8bf5c9acaace9ddfc3ddb5578ba0b`，证据：`maturity/evidence/crypto-paper-e2e-2026-10-21-current-release.json`。
+
+此 E2E 不覆盖实时 funding Provider、8 小时 funding 调度和外部数据库，故 `crypto-paper` 仍为 `unmeasured`；`crypto-testnet` 还需要真实凭据/环境。完整三轮全链路审查及最终全量发布矩阵仍开放。
+
+### 发布审查第 1 轮 · 回测至 API、Console 与 SDK 主链路
+
+第一轮沿 Crypto/A 股样例回测、qx-app/共享撮合账簿、qx-api/Console、Rust SDK 与 Python SDK 顺链核验。最新 Release 上两市场回测验收、Paper worker E2E、qx-cli 回测合同 50 项、qx-api/qx-sdk 全目标测试与 Python SDK 测试均通过；Console API 的页面/路由/认证/跨源/关闭行为包含在 qx-api 实测中，控制台 JS 通过 Node 语法检查。没有发现策略到共享回测用例、RunHandle/API 或 SDK facade 的新断链。首次 CLI 合同测试受 Windows 系统临时目录 ACL 阻断，切换到仓库隔离临时目录后同一组 50 项通过。
+
+**证据**：回测合同 50/50；qx-api 86 单测与全部集成目标通过；qx-sdk 全部 44 个测试通过（含 31 个独立消费者用例）；Python 测试 199/199；Node `--check` 与对应差异检查通过。此轮没有替代运行时无限等待审计、全量架构门禁、全 workspace 测试或完整 Release 矩阵；尚有至少两轮全链路审查与最终发布矩阵待完成。
+
+### 发布审查第 2 轮 · Rust 核心账簿、风控、OMS 与撮合
+
+逐条复核账簿开/平/反手的杠杆记录及保证金估值、统一 RiskGate、Bar/OrderBook 现货库存与衍生品保证金预留、OMS/Paper venue 状态与取消边界。发现跨 Bar 卖单预留已有集成回归，但缺少同 Bar 多笔卖单覆盖；补入 BacktestEngine 合同，验证第一笔在途卖单预留库存后第二笔被拒、成交后仓位不为负。代码审查未发现资金预留双计/漏计、借余额放行或会阻塞退出的循环路径。
+
+**定向验证**：`cargo test --offline -j1 -p qx-core -p qx-risk -p qx-zhenlu -p qx-xingban --no-fail-fast` 全部目标通过；`cash_spot_sell_inventory` 3/3；四 crate 全目标严格 Clippy `-D warnings` 与 workspace Rust 格式检查通过。此轮未审 API 生产部署、进程异常恢复及全部 venue 外部对账；发布审查第 3 轮和全量发布矩阵仍待完成。
+
+### 发布审查第 3 轮 · Worker 停机、API/Console 接线与多语言 SDK
+
+沿服务宿主、RuntimeSupervisor、HTTP/Console accept loop、API 投影桥、同步/异步 RunHandle 与 Python/Rust SDK 回测入口检查等待与终态。补入 ConsoleFront 无连接停机回归，验证它在空闲 accept 轮询时会响应停止令牌并返回；原 API 停机、Worker 长间隔取消、投影桥停止合同已一并复测。Console 前端声明路由与 qx-api 路由双向对账，异步研究入口无后端孤儿启动路由，SDK facade 与 Python 分层公开面也通过定向检查。
+
+**定向验证**：新增 Console 停机用例 1/1；qx-api/qx-runtime/qx-service 全目标测试与严格 Clippy 通过；前端/API/SDK/Worker 等六组架构合同共 74 项、0 失败；qx-sdk 44 项、qx-cli 回测合同 50/50、Python SDK 199/199 通过。三轮审查中的定向改动均已通过对应回归。全 workspace / 全量架构门禁 / Release 矩阵仍未执行；版本候选需待最终全量门禁并修复其发现项后再定。

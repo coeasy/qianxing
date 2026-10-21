@@ -555,134 +555,23 @@ pub(crate) fn strategy_submit_command(
 /// 命名的。此前两处 `spawn_worker("api", …)` 写死字面量，于是改名成 `api-gw` 的合法拓扑能过
 /// `config validate`/`doctor`/`runtime-check`，却在 serve 启动瞬间死于"未知 worker: api"
 /// （`supervise` 下一个子进程退出还会连带停掉其余 worker）。这里必须报错，不能回落字面量。
+#[cfg(test)]
 pub(crate) fn configured_api_worker_id(config: &RuntimeConfig) -> Result<String, String> {
-    config
-        .workers
-        .iter()
-        .find(|worker| worker.enabled && worker.role == WorkerRole::Api)
-        .map(|worker| worker.id.clone())
-        .ok_or_else(|| "运行时配置必须且只能启用一个 api worker".to_string())
+    qx_service::http_host::configured_api_worker_id(config)
 }
 
 pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let supervisor = RuntimeSupervisor::new(config.clone())?;
-    // 取监督器实际认过的那份配置，用同一个判据（role）拿 id。
-    let api_worker_id = configured_api_worker_id(supervisor.config())?;
-    let service = build_configured_api_service(supervisor.config(), path)?;
-    let listener = TcpListener::bind(&config.api.bind)
-        .map_err(|error| format!("绑定 API 地址失败 {}: {error}", config.api.bind))?;
-    println!(
-        "[运行时 · API] bind={} transport={:?}，按 Ctrl+C 停止",
-        config.api.bind, config.api.transport
-    );
-    match config.api.transport {
-        ApiTransport::Plaintext => {
-            let projection_stop = Arc::new(AtomicBool::new(false));
-            let mut projection_thread =
-                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
-            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
-                context.heartbeat(runtime_timestamp_ms())?;
-                service
-                    .serve(listener, runtime_timestamp_ms, || context.should_stop())
-                    .map_err(|error| format!("API 服务停止: {error}"))
-            }) {
-                Ok(worker) => worker,
-                Err(error) => {
-                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-                    return Err(error);
-                }
-            };
-            // serve 的 accept 环本来就按 `context.should_stop()` 收摊；这里补的是令牌的另一半：
-            // 走和 worker 同一条停机阶梯，把 SIGINT/SIGTERM 转成监督器的停机请求，
-            // 否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
-            let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
-            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result
-        }
-        ApiTransport::Mtls => {
-            let tls = config
-                .api
-                .tls
-                .as_ref()
-                .ok_or_else(|| "mTLS API 缺少 tls 配置".to_string())?;
-            let server_config = load_mtls_server_config_from_pem(
-                &tls.certificate_chain,
-                &tls.private_key,
-                &tls.client_ca,
-            )?;
-            let operator_paths = config
-                .api
-                .operators
-                .iter()
-                .map(|(operator_id, operator)| {
-                    (operator_id.clone(), PathBuf::from(&operator.certificate))
-                })
-                .collect::<BTreeMap<_, _>>();
-            let identity_reloader = MtlsIdentityPemReloader::new(operator_paths)?;
-            let identity_store = MtlsIdentityStore::new(identity_reloader.load()?);
-            let reloader = TlsPemReloader::new(
-                tls.certificate_chain.clone(),
-                tls.private_key.clone(),
-                tls.client_ca.clone(),
-            );
-            let store = TlsConfigStore::new(server_config);
-            let projection_stop = Arc::new(AtomicBool::new(false));
-            let mut projection_thread =
-                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
-            let reload_stop = Arc::new(AtomicBool::new(false));
-            let reload_stop_thread = Arc::clone(&reload_stop);
-            let reload_store = store.clone();
-            let reload_identity_store = identity_store.clone();
-            let reload_thread = thread::spawn(move || {
-                while !reload_stop_thread.load(Ordering::Acquire) {
-                    if let Err(error) = reloader.reload_if_changed(&reload_store) {
-                        eprintln!("[运行时 · TLS] 证书轮询重载失败，保留当前配置: {error}");
-                    }
-                    if let Err(error) = identity_reloader.reload_if_changed(&reload_identity_store)
-                    {
-                        eprintln!(
-                            "[运行时 · TLS] Operator 证书轮询重载失败，保留当前映射: {error}"
-                        );
-                    }
-                    thread::sleep(Duration::from_secs(1));
-                }
-            });
-            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
-                context.heartbeat(runtime_timestamp_ms())?;
-                service
-                    .serve_tls_mtls_with_stores(
-                        listener,
-                        &store,
-                        &identity_store,
-                        runtime_timestamp_ms,
-                        || context.should_stop(),
-                    )
-                    .map_err(|error| format!("mTLS API 服务停止: {error}"))
-            }) {
-                Ok(worker) => worker,
-                Err(error) => {
-                    reload_stop.store(true, Ordering::Release);
-                    let _ = reload_thread.join();
-                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-                    return Err(error);
-                }
-            };
-            let result = join_worker_handle(&supervisor, worker, "mTLS API", &api_worker_id);
-            reload_stop.store(true, Ordering::Release);
-            let _ = reload_thread.join();
-            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result
-        }
-    }
+    let service = build_configured_api_service(&config, path)?;
+    qx_service::http_host::serve_api(config, service, runtime_timestamp_ms, |bind, transport| {
+        println!("[运行时 · API] bind={bind} transport={transport:?}，按 Ctrl+C 停止");
+    })
 }
 
+#[cfg(test)]
 pub(crate) fn stop_api_projection_bridge(
-    stop: &Arc<AtomicBool>,
+    stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: &mut Option<std::thread::JoinHandle<()>>,
 ) {
-    stop.store(true, Ordering::Release);
-    if let Some(thread) = thread.take() {
-        let _ = thread.join();
-    }
+    qx_service::http_host::stop_api_projection_bridge(stop, thread)
 }

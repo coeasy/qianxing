@@ -9,8 +9,7 @@
 //! 这条用例走**公开面**（`ConsoleFront::handle`），不经 `handle_as`，所以它钉的是运维真正启动的那条
 //! 链：引导换会话 → 带 CSRF 双提交写一条命令 → 从 `/control/audit` 回读身份。它刻意用
 //! `ApiService::new`（**没有** operator 名册），因为 `src/console.rs` 里既有的用例全都配了名册，
-//! 恰好是缺陷藏得最深的那一侧。住在 `tests/` 而不是内联 `mod tests`：`crates/qx-api/src/lib.rs`
-//! 正压在自己的行数预算上。
+//! 恰好是缺陷藏得最深的那一侧。该集成用例验证控制台命令中的 operator 身份由服务端会话注入。
 
 use std::path::PathBuf;
 

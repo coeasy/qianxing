@@ -50,8 +50,6 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo test --workspace
-      - name: Architecture invariants and capability evidence
-        run: python3 tools/check_architecture.py
       - name: Capability unverified register
         run: python3 tools/generate_unverified.py --check
       - name: Python adapters and strategy contracts
@@ -62,8 +60,46 @@ jobs:
       - name: Web console syntax contract
         run: node --check web/console/app.js
 
+  architecture-shards:
+    name: Architecture invariants (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run architecture gate shard
+        run: python3 tools/check_architecture.py --shard "${{ matrix.shard }}/4" --report "target/architecture-shards/shard-${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: architecture-shard-${{ matrix.shard }}
+          path: target/architecture-shards/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  architecture-aggregate:
+    name: Architecture invariants aggregate
+    runs-on: ubuntu-latest
+    needs: architecture-shards
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: architecture-shard-*
+          path: target/architecture-shards
+          merge-multiple: true
+      - name: Verify complete architecture gate coverage
+        run: python3 tools/verify_architecture_shards.py target/architecture-shards 4
+
   performance-trend:
-    name: Non-blocking performance trend
+    name: Blocking registered performance regressions
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -86,6 +122,9 @@ jobs:
           python3 benchmarks/run_ashare_profile_backtest.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/ashare-rules-on.json
+          python3 benchmarks/run_crypto_paper_e2e.py \
+            --binary target/release/qx-cli \
+            --out benchmarks/results/crypto-paper-e2e.json
       - name: Find the latest successful main benchmark artifact
         id: previous
         env:
@@ -97,34 +136,44 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - name: Download the previous benchmark artifact
         if: steps.previous.outputs.run_id != ''
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "${{ steps.previous.outputs.run_id }}" \
             --name performance-baseline --dir benchmarks/results/previous
-      - name: Compare trends (warnings only)
+      - name: Block registered regressions above ledger thresholds
         run: |
           if [[ -f benchmarks/results/previous/end-to-end.json ]]; then
             python3 benchmarks/compare_baseline.py \
               benchmarks/results/previous/end-to-end.json \
-              benchmarks/results/end-to-end.json
+              benchmarks/results/end-to-end.json \
+              --targets maturity/targets.yaml
           else
             echo "No previous compatible end-to-end baseline; recording first sample."
           fi
           if [[ -f benchmarks/results/previous/rust-micro.json ]]; then
             python3 benchmarks/compare_baseline.py \
               benchmarks/results/previous/rust-micro.json \
-              benchmarks/results/rust-micro.json
+              benchmarks/results/rust-micro.json \
+              --targets maturity/targets.yaml
           else
             echo "No previous compatible Rust microbenchmark baseline; recording first sample."
           fi
           if [[ -f benchmarks/results/previous/ashare-rules-on.json ]]; then
             python3 benchmarks/compare_baseline.py \
               benchmarks/results/previous/ashare-rules-on.json \
-              benchmarks/results/ashare-rules-on.json
+              benchmarks/results/ashare-rules-on.json \
+              --targets maturity/targets.yaml
           else
             echo "No previous compatible A-share rules-on baseline; recording first sample."
+          fi
+          if [[ -f benchmarks/results/previous/crypto-paper-e2e.json ]]; then
+            python3 benchmarks/compare_baseline.py \
+              benchmarks/results/previous/crypto-paper-e2e.json \
+              benchmarks/results/crypto-paper-e2e.json \
+              --targets maturity/targets.yaml
+          else
+            echo "No previous compatible crypto Paper E2E baseline; recording first sample."
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -133,6 +182,7 @@ jobs:
             benchmarks/results/end-to-end.json
             benchmarks/results/rust-micro.json
             benchmarks/results/ashare-rules-on.json
+            benchmarks/results/crypto-paper-e2e.json
           if-no-files-found: error
           retention-days: 30
 
@@ -260,11 +310,11 @@ jobs:
       # V13 R28 按登记补上：本机四条腿现跑各 rc 0 / 诊断 0 行。
       - name: Clippy with no backend features
         run: >-
-          cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-cli
+          cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli
           --no-default-features --all-targets -- -D warnings
       - name: Check with no backend features
         run: >-
-          cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-cli
+          cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli
           --no-default-features --all-targets
 
   service-backends:

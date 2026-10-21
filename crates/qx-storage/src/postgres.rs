@@ -1226,11 +1226,8 @@ impl PostgresAuditStore {
     pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
         let existing = self.read()?;
         let records = plane.audit();
-        let common = audit_sync_prefix_len(
-            &existing,
-            &records,
-            "控制面审计与 PostgreSQL 审计前缀不一致",
-        )?;
+        let common =
+            audit_sync_prefix_len(&existing, records, "控制面审计与 PostgreSQL 审计前缀不一致")?;
         let mut appended = 0;
         for record in records.iter().skip(common) {
             self.append(record.clone())?;

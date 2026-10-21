@@ -225,8 +225,8 @@ pub(crate) fn maybe_run(
         if let Some(path) = xlsx_path {
             value["generated_artifacts"]["xlsx"] = json!(path);
         }
-        print!(
-            "{}\n",
+        println!(
+            "{}",
             serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?
         );
     } else {

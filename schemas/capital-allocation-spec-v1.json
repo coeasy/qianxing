@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/capital-allocation-spec-v1.json",
+  "title": "Qianxing CapitalAllocationSpec v1",
+  "description": "Deterministic bounded account-cash allocation input. Account/strategy uniqueness and request-to-account membership remain runtime validations.",
+  "type": "object",
+  "required": ["schema_version", "portfolio_id", "portfolio_budget_raw", "accounts", "requests"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "portfolio_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "portfolio_budget_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+    "accounts": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/CapitalAllocationAccount"}},
+    "requests": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/CapitalAllocationRequest"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "CapitalAllocationAccount": {
+      "type": "object",
+      "required": ["account_id", "available_cash_raw"],
+      "properties": {
+        "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "available_cash_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727}
+      },
+      "additionalProperties": false
+    },
+    "CapitalAllocationRequest": {
+      "type": "object",
+      "required": ["strategy_id", "account_id", "requested_cash_raw", "priority"],
+      "properties": {
+        "strategy_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "requested_cash_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    }
+  }
+}

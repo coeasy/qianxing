@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+mod account_event_log;
+mod account_ledger;
 mod algo_checkpoint;
 mod data_binding;
 #[cfg(feature = "nats")]
@@ -27,6 +29,16 @@ mod supervision;
 mod time;
 mod worker_policy;
 
+/// Shared process/worker host lifecycle used by CLI, HTTP, and future daemon facades.
+pub mod host;
+
+pub use account_event_log::account_event_log_name;
+pub use account_ledger::{
+    account_worker_settlement_currency, check_account_log_settlement,
+    configured_account_event_logs, owns_account_event_log, required_account_event_log,
+    settlement_currency_for_log, worker_account_event_log, worker_settlement_currency,
+    writes_account_ledger,
+};
 pub use algo_checkpoint::AlgoExecutionCheckpointStore;
 pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
 #[cfg(feature = "nats")]
@@ -34,7 +46,7 @@ pub use messaging_workers::{
     run_event_consumer_loop, run_outbox_relay_loop, ConsumerMetricTotals, RelayMetricTotals,
 };
 /// #178：下面这份 `PipelineMetricsSnapshot` 统计 `ingest`/`refresh` 次数，并采集 ingest 时长；
-/// 出口在 `qx-cli/src/pipeline_metrics_report.rs`：Paper worker 把本轮用到的每个 pipeline
+/// 出口在 `qx-service/src/pipeline_metrics_report.rs`：worker 把本轮用到的每个 pipeline
 /// 收进按 worker 进程累计的 `PipelineMetricsReporter`，每个 tick 写进
 /// `worker-metrics/<worker>.prom`，由 `/metrics` 聚合后印出带 `worker`/`account` 标签的
 /// `qx_pipeline_*` 样本。量纲因此是"每个 worker 进程自启动起累计"，唯一的归零边界是进程重启。

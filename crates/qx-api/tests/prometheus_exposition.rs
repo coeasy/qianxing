@@ -5,8 +5,7 @@
 //! 失败后**不报错**，所有以这些指标为条件的告警永不触发。`contains` 在那种正文上照样读得出
 //! 名字，所以这条判据只能按行取：名字读得出、样本读不出，就是没有可抓取的指标。
 //!
-//! 住在 `tests/` 而不是 `src/lib.rs` 的内联用例里，是为了不把常驻反例的压力加到被行数棘轮
-//! 看管的读面上（同 `account_projection_identity.rs` 的口径，V11 T1/T3）。
+//! 作为集成用例验证 API 暴露的 Prometheus 文本格式。
 
 use qx_api::{ApiService, ApiState};
 

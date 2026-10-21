@@ -383,21 +383,21 @@ pub(crate) fn run() {
                 config,
                 dataset_manifest,
             }) => {
-                if let Err(error) = run_depth_backtest_with_quality_manifest(
-                    &fill_tier,
-                    &strategy,
-                    &frame,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
+                if let Err(error) = run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+                    tier: &fill_tier,
+                    strategy_name: &strategy,
+                    frame_path: &frame,
+                    spec_path: spec.as_deref(),
+                    quantity: quantity.unwrap_or(1),
                     fee_bps,
-                    DepthExecutionModel {
+                    execution: DepthExecutionModel {
                         latency_snapshots: latency_snapshots.unwrap_or(0),
                         market_impact_bps: market_impact_bps.unwrap_or(0),
                     },
-                    &root,
-                    config.as_deref(),
-                    dataset_manifest.as_deref(),
-                ) {
+                    root: &root,
+                    runtime_config_path: config.as_deref(),
+                    quality_manifest_path: dataset_manifest.as_deref(),
+                }) {
                     eprintln!("[qx-cli · CLI] 深度档位回测失败: {error}");
                     std::process::exit(2);
                 }

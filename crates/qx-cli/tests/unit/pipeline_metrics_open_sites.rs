@@ -16,25 +16,31 @@ use super::*;
 /// 并账次数必须与站点数**逐函数相等**：多一次是双计，少一次是漏计，两边都不会让正文报错。
 const COUNTED_OPEN_SITES: [(&str, usize); 2] = [
     ("run_paper_spread_recovery_worker", 1),
-    ("run_paper_execution_worker_with_output", 4),
+    ("run_paper_execution_worker", 4),
 ];
 
 /// 不并账的函数：函数名 -> 站点数与"为什么不该出现在按 worker 进程累计的量纲里"。
 ///
-/// 这里的每一项都必须在 `pipeline_metrics_report.rs` 的模块文档里点名，反过来也一样。
-const EXEMPT_OPEN_SITES: [(&str, usize, &str); 10] = [
+/// 这里的每一项都必须在 qx-service `pipeline_metrics_report.rs` 模块文档里点名，反过来也一样。
+const EXEMPT_OPEN_SITES: [(&str, usize, &str); 12] = [
     (
         "open_account_pipeline",
         1,
         "统一入口向 open_runtime_pipeline 的委托",
     ),
-    ("build_configured_api_service_inner", 1, "只读"),
+    (
+        "open_runtime_pipeline",
+        1,
+        "共享的底层打开器，不归属于单个 worker 进程",
+    ),
+    ("hydrate_api_initial_state", 1, "只读"),
+    ("query_api_models", 1, "只读"),
+    ("spawn_api_projection_bridge", 1, "只读行情投影桥"),
     (
         "handle_algo_execution_request",
         2,
         "Paper 算法单受理与父单聚合读面",
     ),
-    ("load_api_query_models", 1, "只读"),
     ("load_api_account_snapshot_for_worker", 1, "只读"),
     ("strategy_current_qty_for", 1, "只读"),
     ("strategy_account_context", 1, "只读"),
@@ -51,8 +57,13 @@ fn production_open_sites() -> BTreeMap<String, (usize, usize)> {
             continue;
         };
         let mut current: Option<String> = None;
+        let mut previous = "";
         for line in text.lines() {
             let trimmed = line.trim_start();
+            if previous == "#[cfg(test)]" && trimmed.starts_with("mod tests {") {
+                break;
+            }
+            previous = trimmed;
             if trimmed.starts_with("//") {
                 continue;
             }
@@ -65,7 +76,11 @@ fn production_open_sites() -> BTreeMap<String, (usize, usize)> {
                 continue;
             };
             let entry = ledger.entry(name).or_default();
-            if line.contains("open_account_pipeline(") || line.contains("open_runtime_pipeline(") {
+            if line.contains("open_account_pipeline(")
+                || line.contains("open_runtime_pipeline(")
+                || line.contains(".open_read_only(")
+                || (line.contains(".open_with(") && !line.contains("self.open_with("))
+            {
                 entry.0 += 1;
             }
             if line.contains(".absorb(") {
@@ -139,7 +154,7 @@ fn account_pipeline_open_sites_are_either_counted_or_exempted_by_name() {
          要么说明它为什么不属于「按 worker 进程累计」这个量纲（豁免名单 + 出口模块文档）"
     );
 
-    let outlet_doc = workspace_source("crates/qx-cli/src/pipeline_metrics_report.rs");
+    let outlet_doc = workspace_source("crates/qx-service/src/pipeline_metrics_report.rs");
     for (name, _, reason) in EXEMPT_OPEN_SITES {
         assert!(
             outlet_doc.contains(name),
@@ -175,10 +190,15 @@ fn open_site_ledger_actually_sees_the_production_sources() {
                 .sum::<usize>(),
         "扫描到的站点总数与两份名单之和不等: {ledger:?}"
     );
-    let expected_absorbs = workspace_source("crates/qx-cli/src/venue_runtime/paper_worker.rs")
-        .lines()
-        .filter(|line| line.contains(".absorb("))
-        .count();
+    let expected_absorbs = [
+        "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+        "crates/qx-service/src/paper_execution_host.rs",
+    ]
+    .into_iter()
+    .map(workspace_source)
+    .flat_map(|source| source.lines().map(str::to_owned).collect::<Vec<_>>())
+    .filter(|line| line.contains(".absorb("))
+    .count();
     assert_eq!(
         absorbs, expected_absorbs,
         "并账次数只应来自 paper 的两条 worker 循环，实际台账: {ledger:?}"

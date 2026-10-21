@@ -8,8 +8,10 @@
 外部两档必须由对应验收流程产生的证据支撑，本地 Paper 或基准数据不得替代。
 
 > **两条轨，别混读（P0-1）**：`testnet/` 与 `production/` 只保存需要真实交易所凭据的验收证据；
-> 本仓的主用法仍是无需交易所凭据的回测与 Paper 闭环，验收结论在 `maturity/backtest_acceptance.yaml`
->（由 `tools/backtest_acceptance.py` 生成）。根目录的 Paper worker scrape 可以证明本地指标路径可读，
+> 本仓的主用法仍是无需交易所凭据的回测与 Paper 闭环；币圈示例与 A 股示例验收分别记录在
+> `maturity/backtest_acceptance.yaml` 和 `maturity/ashare_example_backtest_acceptance.yaml`
+>（由 `tools/backtest_acceptance.py` 生成）。A 股记录使用仓内示例数据，不代表真实行情或完整 profile 测量。
+> 根目录的 Paper worker scrape 可以证明本地指标路径可读，
 > 但不能翻转 `sandbox_tested` / `production_approved`，也不代表持续运行或生产行情质量。
 
 ## 四档证据
@@ -73,15 +75,16 @@ maturity/evidence/
 > `maturity/external_chain.yaml`，由 `tools/check_architecture.py` 的 `external_chain_check`
 > 七颗逐格对账（五段与验收方案 §2 那张表逐行同名同序 / 规则在登记面、方案 §4 与脚本三处同源 /
 > 脚本的**代码**真实现了那条规则 / 现状与盘上逐份 `result.json` 一致 / 没有 `outcome=pass` 记录时
-> 两档必须全为 false / 前两档的翻真依据里不出现证据记录）。本节是**人读**版，数字以那份登记面与
-> `maturity/gate_snapshot.json` 为准。
+> 两档必须全为 false / 前两档的翻真依据里不出现证据记录）。本节是**人读**版；外部验收状态以登记面
+> 与盘上的脱敏 `result.json` 为准，不依赖历史门禁数量或快照。
 
 - **实盘轨**：`maturity/evidence/testnet/20260920T005856Z-dryrun/result.json` 的 `outcome` 是 `"skipped"`。
   因此能力矩阵里 `sandbox_tested: true` **0 条**、`production_approved: true` **0 条**。
   这一档的卡点是**真实交易所凭据**（`QX_BINANCE_TESTNET_API_KEY` / `_SECRET`），不是代码。
-- **回测轨**：`maturity/backtest_acceptance.yaml` 的 `outcome` 是 `"passed"`，
+- **回测轨**：币圈示例 `maturity/backtest_acceptance.yaml` 与 A 股示例
+  `maturity/ashare_example_backtest_acceptance.yaml` 的 `outcome` 均为 `"passed"`，
   自述 `credentials_required: false` / `external_venues: none` / `network_accessed: false` /
-  `orders_sent: false`。它证明的是**无凭据也能完整验收**：同目录重跑逐格相等（含产物文件名与
+  `orders_sent: false`。两条示例各自证明的是**无凭据也能重复验收**：同目录重跑逐格相等（含产物文件名与
   `config_fingerprint`），两个独立目录的 `result_hash` / `data_fingerprint` / `replay_verdict`
   与**路径归一化后**的产物内容相等（`equity.csv` / `fills.csv` 逐字节相等）。
 - 本目录 `maturity/evidence/README.md` 与 `testnet/20260920T005856Z-dryrun/` 下那两份记录

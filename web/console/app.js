@@ -23,6 +23,7 @@ const API_PATHS = {
   controlCommands: "/control/commands",
   appValidateDataset: "/app/validate-dataset",
   appBacktest: "/app/backtest",
+  appBacktestRun: "/app/backtest/start",
   appVerify: "/app/verify",
   appCompareRuns: "/app/compare-runs",
   appRunExperiment: "/app/run-experiment/start",
@@ -31,6 +32,12 @@ const API_PATHS = {
   appVerifyDepth: "/app/verify-depth",
   appMultiLegBacktest: "/app/multi-leg-backtest/start",
   appMultiLegExperiment: "/app/run-multi-leg-experiment/start",
+  appMultiAccountBacktest: "/app/multi-account-backtest/start",
+  appMultiAccountDepthBacktest: "/app/multi-account-depth-backtest/start",
+  appMultiMarketBacktest: "/app/multi-market-backtest/start",
+  appMultiMarketDepthBacktest: "/app/multi-market-depth-backtest/start",
+  appMultiMarketExperiment: "/app/run-multi-market-experiment/start",
+  appMultiMarketDepthExperiment: "/app/run-multi-market-depth-experiment/start",
   appRunStatus: "/app/runs/{run_id}",
   appRunCancel: "/app/runs/{run_id}/cancel",
   events: "/events",
@@ -38,6 +45,7 @@ const API_PATHS = {
 };
 
 const EXTENDED_RESEARCH_ROUTES = {
+  appBacktestRun: API_PATHS.appBacktestRun,
   appCompareRuns: API_PATHS.appCompareRuns,
   appRunExperiment: API_PATHS.appRunExperiment,
   appDepthBacktest: API_PATHS.appDepthBacktest,
@@ -45,6 +53,12 @@ const EXTENDED_RESEARCH_ROUTES = {
   appVerifyDepth: API_PATHS.appVerifyDepth,
   appMultiLegBacktest: API_PATHS.appMultiLegBacktest,
   appMultiLegExperiment: API_PATHS.appMultiLegExperiment,
+  appMultiAccountBacktest: API_PATHS.appMultiAccountBacktest,
+  appMultiAccountDepthBacktest: API_PATHS.appMultiAccountDepthBacktest,
+  appMultiMarketBacktest: API_PATHS.appMultiMarketBacktest,
+  appMultiMarketDepthBacktest: API_PATHS.appMultiMarketDepthBacktest,
+  appMultiMarketExperiment: API_PATHS.appMultiMarketExperiment,
+  appMultiMarketDepthExperiment: API_PATHS.appMultiMarketDepthExperiment,
 };
 const EXTENDED_RESEARCH_MAX_WAIT_MS = 30 * 60 * 1000;
 const EXTENDED_RESEARCH_POLL_MS = 500;

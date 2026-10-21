@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use qx_core::{AccountBalance, AccountPositionSnapshot, Fill};
 
-// 线格式与唯一转换层住在子模块（行数棘轮与概念单点都要求它独立成文件）。
+// 线格式与唯一转换层由子模块承载，保持协议类型与转换实现的职责边界。
 mod wire;
 pub use wire::*;
 

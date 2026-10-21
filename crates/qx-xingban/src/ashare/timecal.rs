@@ -14,7 +14,10 @@ pub(crate) fn timestamp_text_to_ms(text: &str) -> Result<u64, String> {
     if text.len() < 10 {
         return Err("时间必须是 YYYY-MM-DD 或 ISO-8601 字符串".into());
     }
-    let (date, rest) = text.split_at(10);
+    let (date, rest) = text
+        .get(..10)
+        .zip(text.get(10..))
+        .ok_or_else(|| "时间必须是 YYYY-MM-DD 或 ISO-8601 字符串".to_owned())?;
     // 日期午夜（+08:00）对应的 UTC 毫秒。
     let base_ms = date_to_shanghai_midnight_ms(date)?;
     let mut rest = rest;
@@ -170,4 +173,15 @@ pub(crate) fn time_of_day_ms(value: &str) -> Result<u64, String> {
         return Err("时间超出范围".into());
     }
     Ok((hour * 3_600 + minute * 60 + second) * 1_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::timestamp_text_to_ms;
+
+    #[test]
+    fn malformed_unicode_date_is_rejected_without_panicking() {
+        let malformed = "123456789你";
+        assert!(timestamp_text_to_ms(malformed).is_err());
+    }
 }

@@ -209,17 +209,18 @@ fn depth_summary_declares_signal_params_with_raw_quantity() {
     let config = read_runtime_config(&template).unwrap();
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "r4j-depth");
     let out = temp_cli_case_dir("r4j-depth-out");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &deploy.join("qianxing.depth-frame.l1.example.json"),
-        None,
-        QUANTITY_UNITS,
-        None,
-        DepthExecutionModel::default(),
-        &out,
-        Some(&runtime),
-    )
+    run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+        tier: "l1",
+        strategy_name: "sma_cross",
+        frame_path: &deploy.join("qianxing.depth-frame.l1.example.json"),
+        spec_path: None,
+        quantity: QUANTITY_UNITS,
+        fee_bps: None,
+        execution: DepthExecutionModel::default(),
+        root: &out,
+        runtime_config_path: Some(&runtime),
+        quality_manifest_path: None,
+    })
     .unwrap();
     let summary = read_first_backtest_summary(&out);
     assert_eq!(

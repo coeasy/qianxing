@@ -20,7 +20,7 @@ use qx_core::{
     EventKind, EventLog, Fnv1a, Ledger, Money, OrderStatus, Price, Priority, TradingProduct,
     ValuationContext,
 };
-use qx_risk::OrderRiskPosition;
+use qx_risk::{OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -437,23 +437,6 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             .unwrap_or(0),
                         market.spec.contract_size,
                     );
-                    if let Err(error) = risk.check_with_spec(
-                        &local_order,
-                        &position_snapshot,
-                        reference_price,
-                        Some(&market.spec),
-                    ) {
-                        append_event(
-                            &mut log,
-                            ts,
-                            Priority::COMMAND,
-                            EventKind::Rejected {
-                                client_order_id: global_id,
-                                reason: error.to_string(),
-                            },
-                        );
-                        continue;
-                    }
                     let funding = funding::preflight_order(
                         &local_order,
                         policy,
@@ -469,7 +452,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             total_reserved_cash_raw: Some(total_reserved),
                         },
                     )?;
-                    let (reserve_cash, reserve_inventory) = match funding {
+                    let reserve = match funding {
                         FundingDecision::Accept {
                             reserve_cash_raw,
                             reserve_inventory_raw,
@@ -488,6 +471,24 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             continue;
                         }
                     };
+                    let risk_context = OrderRiskContext {
+                        reference_price,
+                        instrument_spec: Some(market.spec.clone()),
+                        position: position_snapshot,
+                        ..OrderRiskContext::default()
+                    };
+                    if let Err(error) = risk.check_with_context(&local_order, &risk_context) {
+                        append_event(
+                            &mut log,
+                            ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: global_id,
+                                reason: error.to_string(),
+                            },
+                        );
+                        continue;
+                    }
                     if let Some(price) = local_order.limit.or(reference_price) {
                         market.strategy.check_order_budget(
                             &local_order,
@@ -503,6 +504,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                         .map_err(qx_core::QxError::BusinessViolation)?;
                     oms.submit(local_order.clone())?;
                     oms.accept(global_id)?;
+                    let (reserve_cash, reserve_inventory) = reserve;
                     if reserve_cash > 0 || reserve_inventory > 0 {
                         market.reservations.reserve(
                             global_id,

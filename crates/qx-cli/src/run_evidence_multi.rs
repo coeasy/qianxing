@@ -69,7 +69,7 @@ pub(crate) fn rerun_multi_barframe(
     // Bundle verification already checked the immutable source RunRecord and summary digest.
     // A portable bundle relocates quality-manifest paths in this in-memory copy, so it must not
     // compare that relocated copy byte-for-byte with the source directory's RunRecord summary.
-    crate::recompute_multi_barframe_input_from_evidence(&summary)?;
+    qx_app::artifact_store::recompute_multi_barframe_input_from_evidence(&summary)?;
     let strategy = summary
         .pointer("/strategy/kind")
         .and_then(serde_json::Value::as_str)

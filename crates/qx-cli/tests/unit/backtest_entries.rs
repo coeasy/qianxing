@@ -39,44 +39,6 @@ fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
         .count();
     assert_eq!(manifests, 1, "RunManifest 仍与 v7 摘要一同发布");
 
-    // 固定输入下与迁移前 CLI 的 assembly + direct engine 路径逐 hash 对拍。
-    let frame_payload = std::fs::read_to_string(&frame).unwrap();
-    let frame_data = BarFrame::from_json(&frame_payload).unwrap();
-    let bars: Vec<Bar> = (&frame_data).into();
-    let account_base = account_base_from_config(&base).unwrap();
-    let costs = execution_cost_binding_from_config(&base, Some(&runtime)).unwrap();
-    let fill = bar_fill_model(base.strategy.fill_model.as_deref(), None).unwrap();
-    let mut assembly = BarBacktestAssembly::new(
-        &frame_data.instrument,
-        base.strategy.account_id.as_deref().unwrap_or("backtest"),
-        account_base.cash,
-        20260911,
-        &costs,
-        fill,
-    )
-    .expect("回测装配参数有效");
-    assembly.risk = strategy_risk_gate(
-        base.strategy.risk_rules.as_ref(),
-        strategy_allows_short(&base, config_margin_mode(&base)),
-    );
-    let direct_config = assembly.into_config();
-    let mut direct_strategy = ContractBarStrategy::from_config(
-        base,
-        &frame_data,
-        account_base.cash,
-        direct_config.currency.clone(),
-        None,
-        None,
-    )
-    .unwrap();
-    let direct_report = BacktestEngine::new(direct_config)
-        .run(&bars, &mut direct_strategy)
-        .unwrap();
-    assert_eq!(
-        summary["result_hash"],
-        format!("{:016x}", direct_report.result_hash()),
-        "qx-app 与迁移前 CLI 引擎路径必须逐 hash 一致"
-    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -107,76 +69,6 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
         ])
     );
     let _ = std::fs::remove_dir_all(root);
-}
-
-/// Phase 4 内核合并的钉桩：三条 Bar 回测链共用 `BarBacktestAssembly`，
-/// 撮合/延迟/数据档位/乘数/初始资金与"缺省即有门禁"的口径只有一份实现。
-#[test]
-fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
-    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let config = BarBacktestAssembly::new(
-        &instrument,
-        "main",
-        backtest_initial_cash(None).unwrap().cash,
-        20260914,
-        &default_execution_cost_binding(),
-        bar_fill_model(None, None).unwrap(),
-    )
-    .expect("缺省回测装配有效")
-    .into_config();
-    assert_eq!(config.instrument, instrument);
-    assert_eq!(config.account_id, "main");
-    assert_eq!(config.currency, "USDT");
-    assert_eq!(
-        config.initial_cash,
-        backtest_initial_cash(None).unwrap().cash,
-        "装配处必须原样带出调用方答的本金，自己不再藏默认值（V11 Q72）"
-    );
-    assert_eq!(
-        backtest_initial_cash(None).unwrap().cash,
-        Money::from_i64(DEFAULT_BACKTEST_INITIAL_CASH),
-        "没人声明时的账户尺度仍是 100,000，只是它现在由 account_base.rs 一处回答"
-    );
-    assert_eq!(config.multiplier, 1);
-    assert_eq!(config.seed, 20260914);
-    assert!(
-        matches!(config.data_tier, DataTier::Bar),
-        "Bar 内核必须是 Bar 数据档: {:?}",
-        config.data_tier
-    );
-    assert!(config.instrument_spec.is_none());
-    assert!(config.virtual_trading.ashare_rules.is_none());
-    assert_eq!(
-        config.risk.rule_set().version(),
-        strategy_risk_gate(None, false).rule_set().version(),
-        "缺省风控门必须与策略回测同源，不允许退回空 RiskGate"
-    );
-}
-
-/// market spec 声明了结算币种时，回测的现金腿必须跟着换到那本账簿。装配处的
-/// USDT 兜底曾盖过 spec 声明：CNY 标的在 USDT 账簿上撮合，等于花一笔账户里
-/// 永远读不到的钱，产物里的成交却标着 USDT。
-#[test]
-fn backtest_assembly_books_in_the_instrument_settlement_currency() {
-    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
-    let mut spec: TradingInstrumentSpec = serde_json::from_str(&payload).unwrap();
-    spec.settlement_currency = "CNY".into();
-    let mut assembly = BarBacktestAssembly::new(
-        &instrument,
-        "main",
-        backtest_initial_cash(None).unwrap().cash,
-        20260914,
-        &default_execution_cost_binding(),
-        bar_fill_model(None, None).unwrap(),
-    )
-    .expect("回测装配参数有效");
-    assembly.instrument_spec = Some(spec);
-    assert_eq!(
-        assembly.into_config().currency,
-        "CNY",
-        "记账币种必须跟着 market spec 声明，不能停在装配处的兜底"
-    );
 }
 
 /// `backtest builtin` 入口：输入校验 fail-closed，且真实跑通共用内核。
@@ -347,17 +239,18 @@ fn builtin_strategy_entries_match_the_printed_partition() {
             kind
         );
         // 深度档入口在读取数据帧之前就按 kind 拒绝。
-        let depth = run_depth_backtest(
-            "l1",
-            kind.name(),
-            &missing,
-            None,
-            1,
-            Some(5),
-            DepthExecutionModel::default(),
-            &case_root,
-            None,
-        )
+        let depth = run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
+            tier: "l1",
+            strategy_name: kind.name(),
+            frame_path: &missing,
+            spec_path: None,
+            quantity: 1,
+            fee_bps: Some(5),
+            execution: DepthExecutionModel::default(),
+            root: &case_root,
+            runtime_config_path: None,
+            quality_manifest_path: None,
+        })
         .unwrap_err();
         assert_eq!(
             depth.contains("只支持单标的策略"),
@@ -471,4 +364,51 @@ fn run_manifests_bear_the_built_code_identity() {
         serde_json::from_str(&std::fs::read_to_string(&persisted).unwrap()).unwrap();
     assert_eq!(payload["code_commit"].as_str(), Some(identity));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
+    let root = temp_cli_case_dir("ccxt-runtime-preflight");
+    let runtime = root.join("missing-runtime.json");
+    let ccxt = root.join("missing-ccxt.json");
+    let (_, _, valid_runtime) = builtin_backtest_example_paths();
+    let month_error = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
+        ccxt_config_path: &ccxt,
+        strategy_name: "sma_cross",
+        instrument: "BTCUSDT.BINANCE",
+        timeframe: "1M",
+        start_ms: 0,
+        end_ms: 1,
+        spec_path: None,
+        quantity: 1,
+        runtime_config_path: Some(&valid_runtime),
+    })
+    .expect_err("不支持的月线周期必须在启动外部 worker 前拒绝");
+    assert!(
+        month_error.contains("月线"),
+        "应返回周期拒绝: {month_error}"
+    );
+    assert!(
+        !month_error.contains("启动公共 CCXT Worker"),
+        "不支持的周期不得先触发 worker 启动: {month_error}"
+    );
+
+    let error = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
+        ccxt_config_path: &ccxt,
+        strategy_name: "sma_cross",
+        instrument: "BTCUSDT.BINANCE",
+        timeframe: "1d",
+        start_ms: 0,
+        end_ms: 1,
+        spec_path: None,
+        quantity: 1,
+        runtime_config_path: Some(&runtime),
+    })
+    .expect_err("Runtime 必须在外部 worker 启动前被完整校验");
+    assert!(error.contains("读取"), "应返回 runtime 读取错误: {error}");
+    assert!(
+        !error.contains("启动公共 CCXT Worker"),
+        "无效 runtime 不得先触发 worker 启动: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }

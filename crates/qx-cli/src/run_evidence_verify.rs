@@ -167,8 +167,12 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
             let frame = read_bar_frame_for_backtest(&input_path)?;
             let (_, manifest) = barframe_dataset_identity(&input_path, &frame)?;
             if let Some(quality_path) = quality_manifest_path.as_deref() {
-                let quality =
-                    verified_dataset_quality(quality_path, &input_path, &frame, &manifest)?;
+                let quality = qx_app::artifact_store::verify_barframe_dataset_quality(
+                    quality_path,
+                    &input_path,
+                    &frame,
+                    &manifest,
+                )?;
                 let fingerprint = quality["manifest_fingerprint"]
                     .as_str()
                     .ok_or("复核后的数据质量清单缺少 fingerprint")?;
@@ -193,14 +197,14 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
                 }
             }
             (
-                barframe_input_provenance(&input_path, &manifest),
+                qx_app::backtest_input_identity::barframe_input_provenance(&input_path, &manifest),
                 frame.ts.len() as u64,
             )
         }
         "depth-frame" => {
             let frame = read_depth_frame_for_backtest(&input_path)?;
             (
-                depth_frame_input_provenance(&input_path, &frame),
+                qx_app::backtest_input_identity::depth_frame_input_provenance(&input_path, &frame),
                 frame.snapshots.len() as u64,
             )
         }

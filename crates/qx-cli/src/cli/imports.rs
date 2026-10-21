@@ -16,7 +16,7 @@ pub(super) use crate::{
     run_strategy_backtest_with_quality_manifest, run_strategy_init, run_strategy_worker,
     run_unified_backtest, run_unified_command, selfcheck, serve_console, storage_adopt,
     usage_errors, validate_dataset, validate_depth_dataset, validate_runtime_references,
-    CcxtBuiltinBacktestInput, DepthExecutionModel,
+    CcxtBuiltinBacktestInput, DepthBacktestCommand, DepthExecutionModel,
 };
 
 #[cfg(all(feature = "nats", feature = "postgres"))]

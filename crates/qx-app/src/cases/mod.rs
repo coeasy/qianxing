@@ -32,10 +32,12 @@ mod experiment_grid;
 mod experiment_spec_artifact;
 mod experiment_split;
 pub(crate) mod guard;
+pub(crate) mod kernels;
 mod paper_available_margin_raw;
 mod plan_algo_execution;
 mod plan_capital_allocation;
 mod plan_risk_parity;
+pub(crate) mod risk_gate;
 mod run_backtest;
 mod run_depth_backtest;
 mod run_depth_experiment;
@@ -72,9 +74,10 @@ pub use paper_available_margin_raw::paper_available_margin_raw;
 pub use plan_algo_execution::plan_algo_execution;
 pub use plan_capital_allocation::plan_capital_allocation;
 pub use plan_risk_parity::plan_risk_parity;
+pub(crate) use risk_gate::backtest_risk_gate;
 pub use run_backtest::run_backtest;
 pub use run_backtest::StrategyArtifactIdentity;
-pub(crate) use run_backtest::{backtest_risk_gate, bind_execution, bind_margin};
+pub(crate) use run_backtest::{bind_execution, bind_margin};
 pub use run_depth_backtest::run_depth_backtest;
 pub use run_depth_backtest::{
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots,
@@ -92,7 +95,10 @@ pub use run_experiment::{
 };
 pub use run_multi_account_backtest::run_multi_account_backtest;
 pub use run_multi_account_depth_backtest::run_multi_account_depth_backtest;
-pub use run_multi_builtin_backtest::run_multi_builtin_backtest;
+pub use run_multi_builtin_backtest::{
+    run_multi_builtin_backtest, run_multi_builtin_backtest_with_inputs,
+    validate_multi_builtin_frames, MultiBuiltinBacktestInputs,
+};
 pub use run_multi_leg_backtest::run_multi_leg_backtest;
 pub use run_multi_leg_backtest_with_funding_provider::FUNDING_RATE_JSON_CONTENT_TYPE;
 pub use run_multi_leg_backtest_with_strategy::run_multi_leg_backtest_with_strategy;

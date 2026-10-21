@@ -117,6 +117,112 @@ fn terminal_record(case: &PaperSubmitCase, client_id: u64) -> (CommandStatus, St
     (record.status, record.result_code.clone())
 }
 
+#[test]
+fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
+    let case = paper_submit_case("paper-account-admission-lock", 8011, true);
+    let config = read_runtime_config(&case.config_path).unwrap();
+    let worker = config
+        .workers
+        .iter()
+        .find(|worker| {
+            worker.enabled
+                && worker.role == WorkerRole::Execution
+                && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
+        })
+        .expect("Paper execution worker is configured")
+        .clone();
+    let log_name = required_account_event_log(&worker).unwrap();
+    let mut funding = LiveEventPipeline::open(&case.data_dir, &log_name, "USDT").unwrap();
+    funding
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::AccountCashflow {
+                cashflow: AccountCashflow {
+                    account_id: worker.account_id.clone().unwrap(),
+                    venue_id: "paper".into(),
+                    currency: "USDT".into(),
+                    kind: CashflowKind::Transfer,
+                    amount: Money::from_i64(1_000),
+                    external_id: "admission-lock:funding".into(),
+                },
+            },
+            1,
+            1,
+            1,
+            "admission-lock:funding",
+        ))
+        .unwrap();
+    drop(funding);
+
+    // Both pipelines intentionally capture the same pre-submit projection. The second must
+    // refresh after it obtains the per-account admission lock before evaluating its order.
+    let mut first_pipeline = open_account_pipeline(
+        &config,
+        &case.data_dir,
+        &log_name,
+        OutboxRecovery::ReprojectOnOpen,
+    )
+    .unwrap();
+    let mut second_pipeline = open_account_pipeline(
+        &config,
+        &case.data_dir,
+        &log_name,
+        OutboxRecovery::ReprojectOnOpen,
+    )
+    .unwrap();
+    let spread_store = open_spread_group_store(&case.data_dir).unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let make_command = |client_id| {
+        let mut order = mk_order(client_id, &instrument, Side::Buy, 1);
+        order.qty = Quantity::from_i64(6);
+        order.limit = Some(Price::from_i64(100));
+        ControlCommand {
+            command_id: client_id,
+            request_id: format!("admission-lock-{client_id}"),
+            operator_id: "paper".into(),
+            reason: "serialize Paper account buying power".into(),
+            kind: CommandKind::SubmitOrder,
+            target: client_id.to_string(),
+            payload: BTreeMap::from([(
+                "order_json".into(),
+                serde_json::to_string(&order).unwrap(),
+            )]),
+            permission: Permission::Trading,
+            dry_run: false,
+        }
+    };
+    let first = paper_submit_match_attempt(
+        &config,
+        &case.config_path,
+        &case.data_dir,
+        &make_command(8011),
+        &worker,
+        &mut first_pipeline,
+        &spread_store,
+        10,
+    );
+    assert!(
+        first.is_ok(),
+        "first order should consume most of the available 1,000 USDT: {first:?}"
+    );
+
+    let second = paper_submit_match_attempt(
+        &config,
+        &case.config_path,
+        &case.data_dir,
+        &make_command(8012),
+        &worker,
+        &mut second_pipeline,
+        &spread_store,
+        11,
+    );
+    let second = second.expect_err("a stale pre-submit balance must not authorize a second order");
+    assert!(
+        second.contains("超过账户可用保证金") || second.contains("超过账户可用现金"),
+        "{second}"
+    );
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
 /// 一次性入口：缺行情这条 fail-closed 拒绝要落成终态、确认出队，并把真正的下一步写进文案。
 #[test]
 fn paper_submit_order_without_market_quote_terminates_and_acks_the_queue() {

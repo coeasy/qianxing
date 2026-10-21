@@ -15,8 +15,7 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
     // 读面：三处账户级读模型 + 一处策略绑定 + 一处 StrategyContext，全部显式 ReadOnly，
     // 且一处都不许出现写面分支。
     for (path, want) in [
-        ("crates/qx-cli/src/api_service.rs", 2_usize),
-        ("crates/qx-cli/src/api_service/api_service_builder.rs", 1),
+        ("crates/qx-service/src/api_host.rs", 1_usize),
         ("crates/qx-cli/src/strategy_binding.rs", 1),
         ("crates/qx-cli/src/strategy_contract/account_context.rs", 1),
     ] {
@@ -32,23 +31,32 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
             "{path} 里出现了写面声明：这条链路是读模型，补投影会把读请求变成写请求"
         );
     }
+    let read_models = workspace_source("crates/qx-service/src/api_read_model.rs");
+    assert_eq!(
+        read_models.matches(".open_read_only(").count(),
+        2,
+        "账户查询与快照读取都必须使用 qx-service 的只读 pipeline 打开器"
+    );
     // API 轮询桥（读面）与 Paper 行情桥（写面）在同一个文件里，各恰好一处。
-    let bridges = workspace_source("crates/qx-cli/src/market_bridges.rs");
+    let bridges = workspace_source("crates/qx-service/src/api_host.rs");
     assert_eq!(
         bridges.matches("storage.open_read_only(").count(),
         1,
         "API 轮询桥的读面入口丢了：它每 tick 投影整本日志，正是本轮量出来的那笔开销"
     );
+    let market_bridge = workspace_source("crates/qx-service/src/market_bridges.rs");
     assert_eq!(
-        bridges.matches("storage.open(").count(),
+        market_bridge.matches("storage.open(").count(),
         1,
         "Paper 行情桥要走写面入口（它确实往账户日志追加行情），份数变了要按新名册改判据"
     );
 
     // 写面：提交与 worker 仍然显式要求补投影 —— 本轮不是把恢复能力删了换性能。
     for (path, want) in [
-        ("crates/qx-cli/src/venue_runtime/paper_submit.rs", 2_usize),
-        ("crates/qx-cli/src/venue_runtime/paper_worker.rs", 7),
+        // 一次性初始资金写入仍由 CLI 发起；常驻提交和 worker 写面已归 qx-service 所有。
+        ("crates/qx-cli/src/venue_runtime/paper_submit.rs", 1_usize),
+        ("crates/qx-service/src/paper_execution_host.rs", 5),
+        ("crates/qx-cli/src/venue_runtime/paper_worker.rs", 1),
     ] {
         let source = workspace_source(path);
         assert_eq!(
@@ -64,10 +72,8 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
         );
     }
 
-    // 分派层：三个后端 × 两个面都要有分支，且两个公开入口各绑定一个面。
-    // 这一层住在 `runtime_wiring/pipeline_storage.rs`（第十七遍从 runtime_wiring.rs 拆出，
-    // 父文件当时越过 500 行门槛），所以按路径取数的判据要跟着搬到子文件。
-    let wiring = workspace_source("crates/qx-cli/src/runtime_wiring/pipeline_storage.rs");
+    // 后端分派现由 qx-service 唯一拥有：三个后端 × 两种恢复模式各自保留分支。
+    let wiring = workspace_source("crates/qx-service/src/pipeline.rs");
     for (needle, want) in [
         ("OutboxRecovery::ReprojectOnOpen =>", 3),
         ("OutboxRecovery::ReadOnly =>", 3),
@@ -91,27 +97,33 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
     }
     assert_eq!(
         wiring.matches("recovery: OutboxRecovery").count(),
-        1,
-        "分派层只应该有一处 `recovery` 形参（`open_with`），多一处说明面又被搬到别处各定一份"
+        3,
+        "服务层 open_with/open_runtime_pipeline/open_account_pipeline 都必须显式接收恢复面"
     );
-    // 拆出去的分派层必须仍挂在父模块上，否则它是编译不可见的死源码：判据照样绿，
-    // 生产走的还是旧的那一份。
+    // CLI 只保留 service 的兼容导出及账户身份适配，不得复制存储实现。
     let parent = workspace_source("crates/qx-cli/src/runtime_wiring.rs");
-    for needle in [
-        "mod pipeline_storage;",
-        "pub(crate) use pipeline_storage::PipelineStorage;",
-    ] {
-        assert_eq!(
-            parent.matches(needle).count(),
-            1,
-            "分派层的挂载行 `{needle}` 份数不对：缺一半就是拆出去的模块没人用"
-        );
-    }
+    assert_eq!(
+        parent
+            .matches("pub(crate) use qx_service::pipeline::{")
+            .count(),
+        1,
+        "CLI 必须从 qx-service 复用唯一的 pipeline 实现"
+    );
+    let service_pipeline_export = parent
+        .split("pub(crate) use qx_service::pipeline::{")
+        .nth(1)
+        .and_then(|tail| tail.split("};").next())
+        .unwrap_or_default();
+    assert!(
+        service_pipeline_export.contains("PipelineStorage")
+            && service_pipeline_export.contains("event_log_exists")
+            && service_pipeline_export.contains("open_account_pipeline"),
+        "qx-service 的 pipeline 导出必须包含存储、查询及账户/运行时统一打开器"
+    );
     assert_eq!(
         parent.matches("recovery: OutboxRecovery").count(),
-        2,
-        "两个统一入口（`open_runtime_pipeline` 与 `open_account_pipeline`）必须各自把面收成形参，\
-         少一处就是某条链又靠注释决定自己是读还是写"
+        0,
+        "CLI 只重导出 service pipeline，不重复实现账户 EventLog 打开器"
     );
 
     // 内核：补投影只在写面分支里发生；投影游标必须在序列化之前过滤。

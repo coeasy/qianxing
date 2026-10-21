@@ -69,21 +69,43 @@ fn ccxt_watch_reply_only_treats_explicit_idle_flag_as_idle() {
 /// "没有缺省窗口就一直 await"那条臂不得回来。三处都只在父进程被强杀或柜台静默时才发作，
 /// 别处没有用例先喊。
 #[test]
+fn ccxt_instant_idle_replies_are_throttled_without_delaying_long_polls() {
+    assert_eq!(
+        ccxt_idle_poll_delay(Duration::ZERO),
+        Duration::from_millis(100)
+    );
+    assert_eq!(
+        ccxt_idle_poll_delay(Duration::from_millis(40)),
+        Duration::from_millis(60)
+    );
+    assert_eq!(
+        ccxt_idle_poll_delay(Duration::from_millis(100)),
+        Duration::ZERO
+    );
+    assert_eq!(
+        ccxt_idle_poll_delay(Duration::from_secs(30)),
+        Duration::ZERO
+    );
+}
+
+#[test]
 fn ccxt_idle_heartbeat_literals_exist_on_both_sides_of_the_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let rust = std::fs::read_to_string(
         root.join("crates")
-            .join("qx-cli")
+            .join("qx-service")
             .join("src")
-            .join("venue_runtime")
-            .join("ccxt_execution.rs"),
+            .join("ccxt_user_stream_host.rs"),
     )
     .unwrap();
     let python =
         std::fs::read_to_string(root.join("python").join("qianxing_ccxt").join("worker.py"))
             .unwrap();
     assert!(
-        rust.contains("\"wait_ms\": watch_idle_ms") && rust.contains("ccxt_watch_reply_is_idle"),
+        rust.contains("\"wait_ms\": watch_idle_ms")
+            && rust.contains("ccxt_watch_reply_is_idle")
+            && rust.contains("ccxt_idle_poll_delay(stream_call_started.elapsed())")
+            && rust.contains("context.sleep_ms(idle_poll_delay.as_millis() as u64)"),
         "Rust 侧不再发 wait_ms 或不再读 idle，空闲回话链路断了"
     );
     assert!(
@@ -105,9 +127,8 @@ fn ccxt_idle_heartbeat_literals_exist_on_both_sides_of_the_boundary() {
     );
     let budget = std::fs::read_to_string(
         root.join("crates")
-            .join("qx-cli")
+            .join("qx-service")
             .join("src")
-            .join("venue_runtime")
             .join("ccxt_stream_retry.rs"),
     )
     .unwrap();
@@ -212,10 +233,9 @@ fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let source = std::fs::read_to_string(
         root.join("crates")
-            .join("qx-cli")
+            .join("qx-service")
             .join("src")
-            .join("venue_runtime")
-            .join("ccxt_market_worker.rs"),
+            .join("ccxt_market_host.rs"),
     )
     .unwrap();
     assert!(
@@ -270,5 +290,32 @@ fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
     assert!(
         !source.contains("thread::sleep(Duration::from_millis(500))"),
         "固定 500ms 重生死循环回来了"
+    );
+}
+
+#[test]
+fn ccxt_user_stream_does_not_respawn_after_shutdown_interrupts_backoff() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let source = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-service")
+            .join("src")
+            .join("ccxt_user_stream_host.rs"),
+    )
+    .unwrap();
+    let backoff_wait = source
+        .find("context.sleep_ms(backoff.as_millis() as u64)")
+        .expect("user-stream reconnect uses cancellable backoff");
+    let stop_guard = source[backoff_wait..]
+        .find("if context.should_stop()")
+        .map(|offset| backoff_wait + offset)
+        .expect("shutdown is checked immediately after the wait");
+    let replacement = source[backoff_wait..]
+        .find("CcxtProcessClient::spawn(&python, &ccxt_config_path, None)")
+        .map(|offset| backoff_wait + offset)
+        .expect("reconnect worker spawn remains present");
+    assert!(
+        stop_guard < replacement,
+        "shutdown after backoff must exit before spawning a replacement process"
     );
 }

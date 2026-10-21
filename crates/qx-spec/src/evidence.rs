@@ -121,8 +121,8 @@ impl VenueEvidencePayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EvidenceGeneration {
-    Venue(VenueEvidencePayload),
-    Run(RunEvidencePayload),
+    Venue(Box<VenueEvidencePayload>),
+    Run(Box<RunEvidencePayload>),
 }
 
 /// 唯一的证据包文档与 schema。`generation` 是来源判别字段。
@@ -176,12 +176,12 @@ impl EvidenceBundle {
             let run: RunEvidencePayload = serde_json::from_value(value)
                 .map_err(|error| format!("旧运行证据包解析失败: {error}"))?;
             run.validate()?;
-            EvidenceGeneration::Run(run)
+            EvidenceGeneration::Run(Box::new(run))
         } else {
             let venue: VenueEvidencePayload = serde_json::from_value(value)
                 .map_err(|error| format!("旧 venue 证据包解析失败: {error}"))?;
             venue.validate()?;
-            EvidenceGeneration::Venue(venue)
+            EvidenceGeneration::Venue(Box::new(venue))
         };
         Ok(Self {
             schema_version: EVIDENCE_BUNDLE_SCHEMA_VERSION,
@@ -192,14 +192,14 @@ impl EvidenceBundle {
     pub fn venue(payload: VenueEvidencePayload) -> Self {
         Self {
             schema_version: EVIDENCE_BUNDLE_SCHEMA_VERSION,
-            generation: EvidenceGeneration::Venue(payload),
+            generation: EvidenceGeneration::Venue(Box::new(payload)),
         }
     }
 
     pub fn run(payload: RunEvidencePayload) -> Self {
         Self {
             schema_version: EVIDENCE_BUNDLE_SCHEMA_VERSION,
-            generation: EvidenceGeneration::Run(payload),
+            generation: EvidenceGeneration::Run(Box::new(payload)),
         }
     }
 }

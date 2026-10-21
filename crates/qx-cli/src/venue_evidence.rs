@@ -44,7 +44,7 @@ fn redact_config(value: &mut Value) {
     }
 }
 
-fn stage_name<'a>(stage: &'a Value) -> Result<&'a str, String> {
+fn stage_name(stage: &Value) -> Result<&str, String> {
     stage
         .get("stage")
         .and_then(Value::as_str)

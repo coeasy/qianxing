@@ -424,9 +424,9 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
     assert_eq!(ranked.len(), 2);
     assert_eq!(ranked[0]["rank"], 1);
     assert_eq!(ranked[1]["rank"], 2);
-    assert_eq!(ranked[0]["result_hash"].as_str().is_some(), true);
-    assert_eq!(ranked[1]["result_hash"].as_str().is_some(), true);
-    assert_eq!(ranked[0]["run_id"] == ranked[1]["run_id"], false);
+    assert!(ranked[0]["result_hash"].as_str().is_some());
+    assert!(ranked[1]["result_hash"].as_str().is_some());
+    assert_ne!(ranked[0]["run_id"], ranked[1]["run_id"]);
     assert!(
         comparison_html.is_file(),
         "offline comparison HTML must be written"

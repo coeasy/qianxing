@@ -168,6 +168,15 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
         .join("qianxing.runtime.paper-strategy.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let frozen_spec = workspace_root
+        .join("deploy")
+        .join("qianxing.binance.spot.spec.json");
+    for worker in &mut config.workers {
+        if worker.instrument_spec_path.is_some() {
+            worker.instrument_spec_path = Some(frozen_spec.to_string_lossy().into_owned());
+        }
+    }
     let config_path = root.join("runtime.json");
     std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
 

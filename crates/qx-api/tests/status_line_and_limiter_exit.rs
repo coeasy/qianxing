@@ -11,20 +11,27 @@ use qx_api::{ApiPolicy, ApiService, ApiState};
 use qx_storage::FileTokenBucket;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn temp_root(label: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-api-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/qx-api-test-tmp")
+        .join(format!(
+            "qianxing-api-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    std::fs::create_dir_all(&root).expect("create isolated API test directory");
+    root
 }
 
 /// 起一条明文监听，返回 `(地址, 停机旗标, serve 的返回通道)`。

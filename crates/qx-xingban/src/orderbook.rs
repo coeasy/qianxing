@@ -361,17 +361,16 @@ impl OrderBookMatchingEngine {
     }
 
     /// 应用一组在该盘口快照撮合前生效的撤单，再按快照撮合。
-
-    fn record_attempt(
-        &mut self,
-        order: &Order,
-        ts: u64,
-        requested_qty_raw: i128,
-        filled_qty_raw: i128,
-        price_raw: Option<i128>,
-        reason: ExecutionAttemptReason,
-        liquidity: ExecutionLiquidityEvidence,
-    ) {
+    fn record_attempt(&mut self, attempt: ExecutionAttemptDraft<'_>) {
+        let ExecutionAttemptDraft {
+            order,
+            ts,
+            requested_qty_raw,
+            filled_qty_raw,
+            price_raw,
+            reason,
+            liquidity,
+        } = attempt;
         self.execution_attempts.push(ExecutionAttempt {
             ts,
             order_id: order.client_id,
@@ -418,6 +417,16 @@ impl OrderBookMatchingEngine {
             },
         }
     }
+}
+
+pub(super) struct ExecutionAttemptDraft<'a> {
+    pub(super) order: &'a Order,
+    pub(super) ts: u64,
+    pub(super) requested_qty_raw: i128,
+    pub(super) filled_qty_raw: i128,
+    pub(super) price_raw: Option<i128>,
+    pub(super) reason: ExecutionAttemptReason,
+    pub(super) liquidity: ExecutionLiquidityEvidence,
 }
 
 #[cfg(test)]

@@ -270,15 +270,7 @@ fn strategy_runtime_resolves_execution_market_specs_from_config_directory() {
 
 #[test]
 fn dedicated_paper_spread_recovery_worker_runs_one_scan_without_orders() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-cli-paper-recovery-worker-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = temp_cli_case_dir("paper-recovery-worker");
     let template = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

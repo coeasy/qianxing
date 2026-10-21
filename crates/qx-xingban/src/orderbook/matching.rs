@@ -91,15 +91,15 @@ impl OrderBookMatchingEngine {
                         // A missing price level in a finite-depth snapshot is not proof of zero
                         // queue depth. Discard any stale baseline and wait for an exact-level
                         // observation before estimating reductions or fills.
-                        self.record_attempt(
-                            &order,
-                            snapshot.ts,
-                            order.remaining().raw(),
-                            0,
-                            None,
-                            ExecutionAttemptReason::QueueBaselineUnavailable,
-                            ExecutionLiquidityEvidence::default(),
-                        );
+                        self.record_attempt(ExecutionAttemptDraft {
+                            order: &order,
+                            ts: snapshot.ts,
+                            requested_qty_raw: order.remaining().raw(),
+                            filled_qty_raw: 0,
+                            price_raw: None,
+                            reason: ExecutionAttemptReason::QueueBaselineUnavailable,
+                            liquidity: ExecutionLiquidityEvidence::default(),
+                        });
                         next.push(PendingBookOrder {
                             order,
                             ready_at_snapshot: pending_order.ready_at_snapshot,
@@ -239,15 +239,15 @@ impl OrderBookMatchingEngine {
                     } else {
                         attempt_reason = ExecutionAttemptReason::NoVisibleLiquidity;
                     }
-                    self.record_attempt(
-                        &order,
-                        snapshot.ts,
+                    self.record_attempt(ExecutionAttemptDraft {
+                        order: &order,
+                        ts: snapshot.ts,
                         requested_qty_raw,
-                        executed_qty_raw,
-                        executed_price_raw,
-                        attempt_reason,
-                        attempt_liquidity,
-                    );
+                        filled_qty_raw: executed_qty_raw,
+                        price_raw: executed_price_raw,
+                        reason: attempt_reason,
+                        liquidity: attempt_liquidity,
+                    });
                     order.status = if order.filled.raw() >= order.qty.raw() {
                         OrderStatus::Filled
                     } else if order.filled.raw() > 0 {
@@ -405,15 +405,15 @@ impl OrderBookMatchingEngine {
             } else {
                 ExecutionAttemptReason::NoVisibleLiquidity
             };
-            self.record_attempt(
-                &order,
-                snapshot.ts,
+            self.record_attempt(ExecutionAttemptDraft {
+                order: &order,
+                ts: snapshot.ts,
                 requested_qty_raw,
-                executed_qty_raw,
-                first_price_raw,
-                attempt_reason,
-                attempt_liquidity,
-            );
+                filled_qty_raw: executed_qty_raw,
+                price_raw: first_price_raw,
+                reason: attempt_reason,
+                liquidity: attempt_liquidity,
+            });
             order.status = if order.filled.raw() >= order.qty.raw() {
                 OrderStatus::Filled
             } else if order.filled.raw() > 0 {

@@ -119,6 +119,42 @@ impl OrderBookStrategy for DerivativeBuy {
     }
 }
 
+struct DerivativeDoubleBuy {
+    emitted: u8,
+}
+
+impl OrderBookStrategy for DerivativeDoubleBuy {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _position: i128,
+    ) -> Result<Vec<Order>, String> {
+        if self.emitted >= 2 {
+            return Ok(Vec::new());
+        }
+        self.emitted += 1;
+        let client_id = if self.emitted == 1 { 101 } else { 102 };
+        Ok(vec![Order {
+            client_id,
+            instrument: snapshot.instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(6),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                margin_mode: MarginMode::Cross,
+                position_mode: PositionMode::OneWay,
+                position_side: PositionSide::Net,
+                leverage: 10,
+                ..OrderPolicy::default()
+            }),
+        }])
+    }
+}
+
 fn snapshot(ts: u64, ask: i64) -> OrderBookSnapshot {
     OrderBookSnapshot {
         instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
@@ -307,6 +343,63 @@ fn derivative_order_book_uses_margin_ledger_semantics() {
             .raw(),
         Quantity::from_i64(1).raw()
     );
+}
+
+#[test]
+fn derivative_orders_share_one_projected_portfolio_margin_budget() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let spec = TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: TradingProduct::Perpetual,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: true,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 100,
+        maintenance_margin_bps: 500,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let config = OrderBookBacktestConfig {
+        instrument,
+        account_id: "main".into(),
+        currency: "USDT".into(),
+        initial_cash: Money::from_i64(100),
+        fee_bps: 0,
+        instrument_spec: Some(spec),
+        risk: RiskGate::conservative_default(),
+        data_tier: DataTier::L2L3,
+    };
+    let mut strategy = DerivativeDoubleBuy { emitted: 0 };
+    let report = OrderBookBacktestEngine::new(config)
+        .run(&[snapshot(1, 100), snapshot(2, 101)], &mut strategy)
+        .unwrap();
+    let submitted = report
+        .event_log
+        .events()
+        .iter()
+        .filter(|event| matches!(&event.kind, EventKind::OrderSubmitted { .. }))
+        .count();
+    assert_eq!(submitted, 1, "只应提交账户可承受的第一笔订单");
+    let rejected = report
+        .event_log
+        .events()
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::Rejected {
+                client_order_id: 102,
+                reason,
+            } => Some(reason),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rejected.len(), 1);
+    assert!(rejected[0].contains("初始保证金超过账户可用保证金"));
 }
 
 /// 小额合约乘数的盘口回测必须按真实名义额计费：Ledger 用

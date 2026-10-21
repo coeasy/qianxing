@@ -3,6 +3,9 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -10,6 +13,18 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("qx-cli has a repository root")
         .to_path_buf()
+}
+
+fn fresh_run_dir(name: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_nanos();
+    let path = repo_root()
+        .join("target")
+        .join(format!("{name}-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&path).expect("create unique workspace-local test output");
+    path
 }
 
 fn depth_spec(run_id: &str, depth_path: &Path, output_dir: &Path) -> String {
@@ -130,11 +145,9 @@ fn python_run(root: &Path, payload: &str, function: &str) -> Option<Value> {
 
 #[test]
 fn market_aware_tick_spec_has_the_same_rust_result_through_cli_http_and_python() {
+    let _env_guard = ENV_LOCK.lock().expect("lock process environment for test");
     let root = repo_root();
-    let run_dir = root
-        .join("target")
-        .join(format!("qx-app-depth-sdk-{}", std::process::id()));
-    std::fs::create_dir_all(&run_dir).expect("create workspace-local test output");
+    let run_dir = fresh_run_dir("qx-app-depth-sdk");
     let depth_path = run_dir.join("ticks.json");
     std::fs::write(&depth_path, sample_depth()).expect("write Tick frame");
     let spec = depth_spec(
@@ -194,11 +207,9 @@ fn market_aware_tick_spec_has_the_same_rust_result_through_cli_http_and_python()
 
 #[test]
 fn depth_strategy_portfolio_uses_the_same_shared_result_through_cli_http_and_python() {
+    let _env_guard = ENV_LOCK.lock().expect("lock process environment for test");
     let root = repo_root();
-    let run_dir = root
-        .join("target")
-        .join(format!("qx-app-depth-portfolio-{}", std::process::id()));
-    std::fs::create_dir_all(&run_dir).expect("create portfolio test output root");
+    let run_dir = fresh_run_dir("qx-app-depth-portfolio");
     let depth_path = run_dir.join("portfolio-ticks.json");
     std::fs::write(&depth_path, sample_depth()).expect("write portfolio Tick frame");
     let mut spec: Value = serde_json::from_str(&depth_spec(
@@ -287,11 +298,9 @@ fn depth_strategy_portfolio_uses_the_same_shared_result_through_cli_http_and_pyt
 
 #[test]
 fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
+    let _env_guard = ENV_LOCK.lock().expect("lock process environment for test");
     let root = repo_root();
-    let run_dir = root
-        .join("target")
-        .join(format!("qx-app-depth-grid-{}", std::process::id()));
-    std::fs::create_dir_all(&run_dir).expect("create test output root");
+    let run_dir = fresh_run_dir("qx-app-depth-grid");
     let depth_path = run_dir.join("grid-ticks.json");
     std::fs::write(&depth_path, sample_depth()).expect("write Tick frame");
     let mut base: Value = serde_json::from_str(&depth_spec(
@@ -368,7 +377,14 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
         eprintln!("[skip] Python app extension is not built in this test environment");
     }
 
-    let handle_spec = make_spec("tick-grid-handle", &run_dir.join("handle-artifacts"));
+    let handle_run_id = format!(
+        "tick-grid-handle-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos()
+    );
+    let handle_spec = make_spec(&handle_run_id, &run_dir.join("handle-artifacts"));
     let started = service.handle("POST", "/app/run-depth-experiment/start", &handle_spec, 0);
     assert_eq!(
         started.status, 200,
@@ -376,10 +392,10 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
         started.body
     );
     let started: Value = serde_json::from_str(&started.body).expect("start status JSON");
-    assert_eq!(started["run_id"], "tick-grid-handle");
+    assert_eq!(started["run_id"], handle_run_id);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        let status = service.handle("GET", "/app/runs/tick-grid-handle", "", 0);
+        let status = service.handle("GET", &format!("/app/runs/{handle_run_id}"), "", 0);
         let status: Value = serde_json::from_str(&status.body).expect("terminal status JSON");
         if matches!(
             status["status"].as_str(),
@@ -399,11 +415,9 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
 
 #[test]
 fn depth_strategy_selection_is_shared_by_cli_http_and_python() {
+    let _env_guard = ENV_LOCK.lock().expect("lock process environment for test");
     let root = repo_root();
-    let run_dir = root
-        .join("target")
-        .join(format!("qx-app-depth-selection-{}", std::process::id()));
-    std::fs::create_dir_all(&run_dir).expect("create test output root");
+    let run_dir = fresh_run_dir("qx-app-depth-selection");
     let depth_path = run_dir.join("selection-ticks.json");
     std::fs::write(&depth_path, sample_depth()).expect("write Tick frame");
     let make_spec = |experiment_id: &str, output_dir: &Path| {

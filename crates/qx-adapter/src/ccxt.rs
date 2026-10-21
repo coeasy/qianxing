@@ -4,7 +4,7 @@
 //! 提交结果未知时要求对账，不自动重试或补单；订单回报经 `sync_order` 明确进入统一 VenueEvent。
 
 pub use crate::ccxt_provider::CcxtBarDataProvider;
-use crate::io_budget::write_all_within;
+use crate::io_budget::{write_all_within, write_all_within_cancellable, CancellableWrite};
 use crate::order_lifecycle::OrderLifecycle;
 use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
@@ -22,9 +22,26 @@ use std::io::BufReader;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 pub trait CcxtRpc: Send {
     fn call(&mut self, request: Value) -> Result<Value, String>;
+
+    fn call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        if should_cancel() {
+            return Ok(CcxtCallOutcome::Cancelled);
+        }
+        self.call(request).map(CcxtCallOutcome::Response)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CcxtCallOutcome {
+    Response(Value),
+    Cancelled,
 }
 
 pub struct CcxtProcessClient {
@@ -53,9 +70,13 @@ impl CcxtProcessClient {
         if let Some(working_dir) = working_dir {
             command.current_dir(working_dir);
         }
-        let mut child = command
+        let child = command
             .spawn()
             .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
+        Self::from_child(child, timeout_ms, python)
+    }
+
+    fn from_child(mut child: Child, timeout_ms: u64, worker_program: &str) -> Result<Self, String> {
         // `take()` 失败要先把子进程收掉再返回：`Stdio::piped()` 之后这两个 `Some` 是
         // 不变式，此路径今天走不到，但上游一旦把 worker 改成无管道模式，这条 `?`
         // 就会留下一个无人回收的孤儿进程。与 `strategy_host.rs` 的同一处防御对齐
@@ -80,7 +101,7 @@ impl CcxtProcessClient {
         // 无界通道让杂印与迟到的应答一路攒下去；改成有界之后泵在写满时被顶住，
         // 背压回到子进程的 stdout 管道，内存不再随运行时长增长（V13 R1-D）。
         let (sender, responses) = mpsc::sync_channel(1);
-        let worker_program = python.to_string();
+        let worker_program = worker_program.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -119,6 +140,82 @@ impl CcxtProcessClient {
     /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
+    }
+
+    /// Send one request while observing the owning worker's shutdown token during both IPC phases.
+    /// A cancelled in-flight request is ambiguous, so the subprocess is killed and the result is
+    /// reported as cancellation; callers must not retry an order automatically.
+    pub fn call_cancellable(
+        &mut self,
+        request: Value,
+        mut should_cancel: impl FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        let payload = serde_json::to_string(&request)
+            .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
+        let mut bytes = payload.into_bytes();
+        bytes.push(b'\n');
+        let stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
+        let started = Instant::now();
+        let timeout = Duration::from_millis(self.timeout_ms);
+        let written =
+            write_all_within_cancellable(stdin, bytes, timeout, &mut should_cancel, || {
+                self.stop_child()
+            })?;
+        self.stdin = match written {
+            CancellableWrite::Written(stdin) => Some(stdin),
+            CancellableWrite::Cancelled => return Ok(CcxtCallOutcome::Cancelled),
+        };
+
+        loop {
+            if should_cancel() {
+                self.stop_child();
+                return Ok(CcxtCallOutcome::Cancelled);
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                self.stop_child();
+                return Err(format!(
+                    "CCXT Worker 响应超时 timeout_ms={}，提交结果未知",
+                    self.timeout_ms
+                ));
+            }
+            match self
+                .responses
+                .recv_timeout(remaining.min(Duration::from_millis(20)))
+            {
+                Ok(result) => {
+                    let line = result?;
+                    let response: Value = serde_json::from_str(&line)
+                        .map_err(|error| format!("解析 CCXT Worker 响应失败: {error}"))?;
+                    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+                        let error = response.get("error").cloned().unwrap_or_else(|| json!({}));
+                        let class = error
+                            .get("class")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        return Err(format!("CCXT Worker [{class}] {error}"));
+                    }
+                    return Ok(CcxtCallOutcome::Response(
+                        response.get("result").cloned().unwrap_or(Value::Null),
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("CCXT Worker 响应通道已断开，提交结果未知".into());
+                }
+            }
+        }
+    }
+
+    fn stop_child(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.stdin.take();
     }
 }
 
@@ -243,6 +340,14 @@ impl CcxtRpc for CcxtProcessClient {
             .cloned()
             .ok_or_else(|| "CCXT Worker 成功响应缺少 result".to_string())
     }
+
+    fn call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        CcxtProcessClient::call_cancellable(self, request, should_cancel)
+    }
 }
 
 impl Drop for CcxtProcessClient {
@@ -255,6 +360,7 @@ impl Drop for CcxtProcessClient {
 pub struct CcxtProcessVenue {
     id: String,
     rpc: Box<dyn CcxtRpc>,
+    shutdown_check: Option<Box<dyn FnMut() -> bool + Send>>,
     connected: bool,
     /// 本地订单状态、远端订单号映射与成交去重键共用同一封顶策略：终态订单在超过
     /// `MAX_CACHED_ORDERS + ORDER_EVICT_HYSTERESIS` 后按 client_id 升序退场，派生索引同步级联。
@@ -272,12 +378,22 @@ impl CcxtProcessVenue {
         Self {
             id: id.into(),
             rpc,
+            shutdown_check: None,
             connected: true,
             orders: BTreeMap::new(),
             remote_ids: BTreeMap::new(),
             seen_trade_ids: BTreeMap::new(),
             cumulative_costs: BTreeMap::new(),
         }
+    }
+
+    /// Attach the owning worker's cancellation token to all subsequent venue RPC calls.
+    pub fn with_shutdown_check(
+        mut self,
+        should_stop: impl FnMut() -> bool + Send + 'static,
+    ) -> Self {
+        self.shutdown_check = Some(Box::new(should_stop));
+        self
     }
 
     /// 订单缓存封顶后级联清掉派生索引：远端订单号、成交去重键、累计成本都必须跟着
@@ -481,7 +597,17 @@ impl CcxtProcessVenue {
     }
 
     fn call_or_reconcile(&mut self, request: Value) -> QxResult<Value> {
-        match self.rpc.call(request) {
+        let response = match self.shutdown_check.as_mut() {
+            Some(should_stop) => self
+                .rpc
+                .call_cancellable(request, should_stop.as_mut())
+                .and_then(|outcome| match outcome {
+                    CcxtCallOutcome::Response(value) => Ok(value),
+                    CcxtCallOutcome::Cancelled => Err("CCXT Worker 请求因停机取消".into()),
+                }),
+            None => self.rpc.call(request),
+        };
+        match response {
             Ok(result) => Ok(result),
             Err(error) => {
                 // 一旦 RPC 返回错误，不能继续把本地 Venue 当作可提交状态；
@@ -499,6 +625,27 @@ impl CcxtProcessVenue {
     /// 原始观察结果，订单事实仍必须通过 `sync_order` 和 Runtime 归约。
     pub fn stream_call(&mut self, request: Value) -> QxResult<Value> {
         self.call_or_reconcile(request)
+    }
+
+    pub fn stream_call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> QxResult<CcxtCallOutcome> {
+        match self.rpc.call_cancellable(request, should_cancel) {
+            Ok(CcxtCallOutcome::Cancelled) => {
+                self.connected = false;
+                Ok(CcxtCallOutcome::Cancelled)
+            }
+            Ok(response) => Ok(response),
+            Err(error) => {
+                let error = QxError::ReconcileRequired(format!("CCXT Worker 结果未知: {error}"));
+                if Self::reconciliation_trigger(&error) {
+                    self.connected = false;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// 连接断开后替换 JSONL RPC 进程；本地 remote order/成交去重状态保留，

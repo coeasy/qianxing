@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/dataset-manifest-validation-spec-v1.json",
+  "title": "Qianxing DatasetManifestValidationSpec v1",
+  "description": "Tolerant BarFrame quality diagnosis input. The application reads source bytes without rewriting them, publishes an idempotent DatasetManifestV2, and uses a content hash when canonical frame fingerprinting is unavailable.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "frame_path",
+    "dataset_id",
+    "version",
+    "interval_ms",
+    "timezone",
+    "output_path"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "frame_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "interval_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "output_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    }
+  },
+  "additionalProperties": false
+}

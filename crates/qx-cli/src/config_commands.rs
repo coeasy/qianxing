@@ -308,7 +308,7 @@ pub(crate) fn collect_doctor_report_for_config(
         "message": format!("配置指纹={fingerprint}")
     }));
 
-    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, config);
     for warning in reference_warnings {
         checks.push(serde_json::json!({
             "name": "runtime_reference",
@@ -369,8 +369,8 @@ pub(crate) fn collect_doctor_report_for_config(
         &mut warnings,
         &mut failures,
     );
-    check_account_log_settlement(&config, &mut checks, &mut failures);
-    check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
+    check_account_log_settlement(config, &mut checks, &mut failures);
+    check_orphan_event_logs(path, config, &mut checks, &mut warnings);
 
     // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
     // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加

@@ -307,7 +307,16 @@ fn calendar_json_controls_daily_and_intraday_trading_windows() {
     assert!(rules.is_trading(day));
     assert!(rules.is_trading(day + 9 * 3_600_000 + 30 * 60_000));
     assert!(!rules.is_trading(day + 12 * 3_600_000));
-    assert!(!rules.is_trading(day + DAY_MS));
+    let excluded_weekday = day + DAY_MS;
+    assert!(!rules.is_trading(excluded_weekday));
+    let error = rules
+        .validate_order(&order(Side::Buy, rules.lot_size), 0, 0, excluded_weekday)
+        .expect_err("未列入交易日历的工作日必须拒绝提交 A 股订单");
+    assert!(
+        error.contains("A 股当前 bar 不在可交易日或处于停牌"),
+        "日历排除日拒绝应清楚说明原因：{error}"
+    );
+    assert!(!rules.is_trading(day + 5 * DAY_MS), "周末必须被日历排除");
 }
 
 /// 未声明涨跌停带时按板块表推导：创业板/科创板 ±20%、北交所 ±30%，不再是扁平 ±10%。

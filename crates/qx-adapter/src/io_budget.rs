@@ -1,6 +1,6 @@
 //! Compatibility export; the implementation lives in the transport-neutral `qx-process-io` crate.
 
-pub use qx_process_io::write_all_within;
+pub use qx_process_io::{write_all_within, write_all_within_cancellable, CancellableWrite};
 
 #[cfg(test)]
 mod tests {

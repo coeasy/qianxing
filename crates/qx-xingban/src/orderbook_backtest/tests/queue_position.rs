@@ -37,7 +37,7 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
             sequence: 1,
             bids: vec![crate::BookLevel {
                 price: Price::from_i64(99),
-                qty: Quantity::from_i64(4),
+                qty: Quantity::from_i64(8),
             }],
             ..snapshot(1, 100)
         },
@@ -46,7 +46,7 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
             sequence: 2,
             bids: vec![crate::BookLevel {
                 price: Price::from_i64(99),
-                qty: Quantity::from_i64(4),
+                qty: Quantity::from_i64(8),
             }],
             ..snapshot(2, 100)
         },
@@ -114,7 +114,7 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
     );
     assert_eq!(
         first_queue_observation.displayed_qty_raw,
-        Some(Quantity::from_i64(4).raw())
+        Some(Quantity::from_i64(8).raw())
     );
     assert_eq!(first_queue_observation.displayed_reduction_raw, None);
     assert_eq!(first_queue_observation.estimated_volume_raw, None);

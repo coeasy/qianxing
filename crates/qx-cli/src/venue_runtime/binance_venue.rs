@@ -39,36 +39,6 @@ pub(crate) fn new_binance_venue(
     })
 }
 
-pub(crate) fn configured_ws_endpoint(worker: &WorkerConfig) -> Result<(String, u16), String> {
-    let endpoint = worker
-        .endpoint
-        .as_deref()
-        .ok_or_else(|| format!("worker {} 缺少 WebSocket endpoint", worker.id))?;
-    let remainder = endpoint
-        .strip_prefix("wss://")
-        .or_else(|| endpoint.strip_prefix("ws://"))
-        .ok_or_else(|| format!("worker {} endpoint 必须使用 ws:// 或 wss://", worker.id))?;
-    let authority = remainder
-        .split('/')
-        .next()
-        .filter(|authority| !authority.is_empty())
-        .ok_or_else(|| format!("worker {} endpoint 缺少主机", worker.id))?;
-    let (host, port) = authority
-        .rsplit_once(':')
-        .filter(|(_, port)| !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit()))
-        .map(|(host, port)| (host, port.parse::<u16>().unwrap_or_default()))
-        .unwrap_or((authority, 443));
-    if host.is_empty()
-        || host.contains(':')
-        || host.contains('\r')
-        || host.contains('\n')
-        || port == 0
-    {
-        return Err(format!("worker {} endpoint 主机非法", worker.id));
-    }
-    Ok((host.to_string(), port))
-}
-
 pub(crate) fn run_binance_public_probe(testnet: bool, instrument: &str) -> Result<(), String> {
     let instrument = InstrumentId::parse(instrument)
         .ok_or_else(|| format!("Binance public probe instrument 非法: {instrument}"))?;
@@ -103,20 +73,15 @@ pub(crate) fn run_binance_private_probe(
     worker_id: &str,
 ) -> Result<(), String> {
     let config = read_runtime_config(runtime_path)?;
-    let mut worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == worker_id)
-        .cloned()
-        .ok_or_else(|| format!("找不到 Binance private probe worker: {worker_id}"))?;
-    if !worker.enabled
-        || !matches!(
-            worker.role,
-            WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
-        )
-    {
-        return Err(format!("worker {worker_id} 不是启用的 Binance 私有 worker"));
-    }
+    let mut worker = qx_service::worker_host::configured_worker_for_roles(
+        &config,
+        worker_id,
+        &[
+            WorkerRole::UserStream,
+            WorkerRole::Execution,
+            WorkerRole::Reconciler,
+        ],
+    )?;
     if VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Binance) {
         return Err(format!("worker {worker_id} 不是 Binance worker"));
     }

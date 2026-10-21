@@ -12,7 +12,7 @@
 
 schema_version: 1
 updated_at: "2026-10-06"
-release_version: "0.1.0"
+release_version: "0.2.0"
 
 # ---- 冻结的 schema 版本（u32 / u16 字面量） ----
 frozen_versions:

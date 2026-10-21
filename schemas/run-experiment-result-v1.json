@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/run-experiment-result-v1.json",
+  "title": "Qianxing RunExperimentResult v1",
+  "description": "Bounded Bar parameter experiment output with isolated candidate errors, deterministic comparison, optional walk-forward report and benchmark rows.",
+  "type": "object",
+  "required": ["schema_version", "experiment_id", "spec_fingerprint", "total_candidates", "completed_candidates", "succeeded_candidates", "failed_candidates", "candidates", "comparison", "artifact_path"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._-]+$"},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "total_candidates": {"type": "integer", "minimum": 1, "maximum": 256},
+    "completed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "succeeded_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "failed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
+    "comparison": {"anyOf": [{"$ref": "compare-runs-result-v1.json"}, {"type": "null"}]},
+    "out_of_sample": {"$ref": "#/$defs/OutOfSampleReport"},
+    "baselines": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/BaselineReport"}},
+    "artifact_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Candidate": {
+      "type": "object",
+      "required": ["ordinal", "parameters", "outcome", "error"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "strategy_kind": {"enum": ["sma_cross", "ema_cross", "macd", "rsi", "bollinger", "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend", "keltner_trend", "vwap_reversion", "volatility_breakout"]},
+        "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "outcome": {"anyOf": [{"$ref": "backtest-outcome-v1.json"}, {"type": "null"}]},
+        "error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "FoldReport": {
+      "type": "object",
+      "required": ["fold", "train_range", "test_range", "selected_ordinal", "selected_parameters", "in_sample_return_bps", "out_of_sample_return_bps"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 0},
+        "train_range": {"$ref": "#/$defs/TimeRange"},
+        "test_range": {"$ref": "#/$defs/TimeRange"},
+        "selected_ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "selected_parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "in_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "out_of_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "selected_strategy_kind": {"enum": ["sma_cross", "ema_cross", "macd", "rsi", "bollinger", "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend", "keltner_trend", "vwap_reversion", "volatility_breakout"]}
+      },
+      "additionalProperties": false
+    },
+    "TimeRange": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 0, "maximum": 18446744073709551615}, {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}], "minItems": 2, "maxItems": 2},
+    "OutOfSampleReport": {
+      "type": "object",
+      "required": ["folds", "in_sample_return_bps", "out_of_sample_return_bps", "degradation_bps"],
+      "properties": {
+        "folds": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/FoldReport"}},
+        "in_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "out_of_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "degradation_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
+      },
+      "additionalProperties": false
+    },
+    "BaselineReport": {
+      "type": "object",
+      "required": ["name", "return_bps", "max_drawdown_bps"],
+      "properties": {
+        "name": {"enum": ["buy-and-hold", "zero-signal", "none"]},
+        "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    }
+  }
+}

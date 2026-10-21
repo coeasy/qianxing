@@ -11,16 +11,10 @@ pub(crate) fn run_paper_spread_recovery_worker(
     once: bool,
 ) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == worker_id)
-        .cloned()
-        .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
-    if !worker.enabled
-        || worker.role != WorkerRole::SpreadRecovery
-        || VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
-    {
+    let worker =
+        qx_service::worker_host::configured_worker(&config, worker_id, WorkerRole::SpreadRecovery)?;
+    validate_worker_market_specs(path, &worker)?;
+    if VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper) {
         return Err(format!(
             "worker {worker_id} 不是启用的 Paper SpreadRecovery worker"
         ));
@@ -29,66 +23,68 @@ pub(crate) fn run_paper_spread_recovery_worker(
     let log_name = required_account_event_log(&worker)?;
     let runtime_config = config.clone();
     let runtime_config_path = path.to_path_buf();
-    let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
-    let handle = supervisor.spawn_worker(&registered_id, move |context| {
-        context.mark(
-            qx_runtime::ServiceStatus::Ready,
-            "paper spread recovery scanning",
-            Some(runtime_timestamp_ms()),
-        )?;
-        let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
-        let mut recovery_stalls = 0_u32;
-        while !context.should_stop() {
-            let now = runtime_timestamp_ms();
-            // Paper 恢复接的是任意 venue 的待补偿腿（`accept_any_venue`），所以待恢复计数也
-            // 按同一口径取：venue 传空串，不把自己限死在 "paper" 这个腿归属上。
-            let pending_before = pending_spread_recovery_groups(&root, "")?;
-            if pending_before > 0 {
-                let mut pipeline = open_account_pipeline(
-                    &runtime_config,
-                    &root,
-                    &log_name,
-                    OutboxRecovery::ReprojectOnOpen,
-                )
-                .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
-                let validator =
-                    recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-                let costs = execution_cost_binding_from_config(
-                    &runtime_config,
-                    Some(&runtime_config_path),
-                )?;
-                for message in recover_paper_spread_groups(
-                    &root,
-                    &mut pipeline,
-                    context.id(),
-                    now,
-                    Some(&validator),
-                    &costs,
-                )? {
-                    eprintln!("[HedgeRecovery] {message}");
-                }
-                metrics.absorb(&pipeline);
-                let pending_after = pending_spread_recovery_groups(&root, "")?;
-                recovery_stalls = if pending_after >= pending_before {
-                    recovery_stalls.saturating_add(1)
+    qx_service::worker_host::run_worker(
+        config,
+        &registered_id,
+        WorkerRole::SpreadRecovery,
+        "Paper SpreadRecovery",
+        move |context| {
+            context.mark(
+                qx_runtime::ServiceStatus::Ready,
+                "paper spread recovery scanning",
+                Some(runtime_timestamp_ms()),
+            )?;
+            let mut metrics =
+                PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
+            let mut recovery_stalls = 0_u32;
+            qx_service::worker_host::run_polling_worker(&context, once, || {
+                let now = runtime_timestamp_ms();
+                // Paper 恢复接的是任意 venue 的待补偿腿（`accept_any_venue`），所以待恢复计数也
+                // 按同一口径取：venue 传空串，不把自己限死在 "paper" 这个腿归属上。
+                let pending_before = pending_spread_recovery_groups(&root, "")?;
+                if pending_before > 0 {
+                    let mut pipeline = open_account_pipeline(
+                        &runtime_config,
+                        &root,
+                        &log_name,
+                        OutboxRecovery::ReprojectOnOpen,
+                    )
+                    .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
+                    let validator =
+                        recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+                    let costs = execution_cost_binding_from_config(
+                        &runtime_config,
+                        Some(&runtime_config_path),
+                    )?;
+                    for message in recover_paper_spread_groups(
+                        &root,
+                        &mut pipeline,
+                        context.id(),
+                        now,
+                        Some(&validator),
+                        &costs,
+                    )? {
+                        eprintln!("[HedgeRecovery] {message}");
+                    }
+                    metrics.absorb(&pipeline);
+                    let pending_after = pending_spread_recovery_groups(&root, "")?;
+                    recovery_stalls = if pending_after >= pending_before {
+                        recovery_stalls.saturating_add(1)
+                    } else {
+                        0
+                    };
                 } else {
-                    0
-                };
-            } else {
-                recovery_stalls = 0;
-            }
-            metrics.publish(true, now);
-            context.heartbeat(now)?;
-            if once {
-                break;
-            }
-            thread::sleep(spread_recovery_poll_delay(recovery_stalls));
-        }
-        metrics.publish(false, runtime_timestamp_ms());
-        Ok(())
-    })?;
-    join_worker_handle(&supervisor, handle, "Paper SpreadRecovery", worker_id)
+                    recovery_stalls = 0;
+                }
+                metrics.publish(true, now);
+                context.heartbeat(now)?;
+                Ok(spread_recovery_poll_delay(recovery_stalls).as_millis() as u64)
+            })?;
+            metrics.publish(false, runtime_timestamp_ms());
+            Ok(())
+        },
+    )
 }
 
 pub(crate) fn run_paper_execution_worker(
@@ -106,19 +102,13 @@ fn run_paper_execution_worker_with_output(
     quiet: bool,
 ) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == worker_id)
-        .cloned()
-        .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
-    if !worker.enabled
-        || !matches!(
-            worker.role,
-            WorkerRole::Execution | WorkerRole::SpreadRecovery
-        )
-        || VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
-    {
+    let worker = qx_service::worker_host::configured_worker_for_roles(
+        &config,
+        worker_id,
+        &[WorkerRole::Execution, WorkerRole::SpreadRecovery],
+    )?;
+    validate_worker_market_specs(path, &worker)?;
+    if VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper) {
         return Err(format!(
             "worker {worker_id} 不是启用的 Paper Execution worker"
         ));
@@ -134,407 +124,21 @@ fn run_paper_execution_worker_with_output(
     if worker.role == WorkerRole::SpreadRecovery {
         return run_paper_spread_recovery_worker(path, worker_id, once);
     }
-    let root = Path::new(&config.storage.data_dir).to_path_buf();
-    let store = configured_control_store(&config)?;
-    let queue = configured_command_queue(&config, &root)?;
-    let log_name = required_account_event_log(&worker)?;
-    let runtime_config = config.clone();
-    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
-    let algo_checkpoints = qx_runtime::AlgoExecutionCheckpointStore::new(&root);
-    let supervisor = RuntimeSupervisor::new(config)?;
-    let registered_id = worker.id.clone();
-    let runtime_config_path = path.to_path_buf();
-    let handle = supervisor.spawn_worker(&registered_id, move |context| {
-        let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
-        let mut pipeline = open_account_pipeline(
-            &runtime_config,
-            &root,
-            &log_name,
-            OutboxRecovery::ReprojectOnOpen,
-        )
-        .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
-        seed_paper_initial_cash_from_config(
-            &mut pipeline,
-            &runtime_config,
-            &worker,
-            runtime_timestamp_ms(),
-        )?;
-        metrics.absorb(&pipeline);
-        drop(pipeline);
-        let mut algo_page_cursor = None::<String>;
-        context.mark(
-            qx_runtime::ServiceStatus::Ready,
-            "paper execution queue polling",
-            Some(runtime_timestamp_ms()),
-        )?;
-        while !context.should_stop() {
-            let now = runtime_timestamp_ms();
-            // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
-            let lease_now = lease_clock(now);
-            let control = store.load()?;
-            for command in control.pending().filter(|command| {
-                matches!(command.kind, CommandKind::SubmitOrder)
-                    && paper_submit_matches_worker(command, &worker)
-            }) {
-                queue
-                    .enqueue_command(command.clone(), lease_now)
-                    .map_err(|error| format!("补入 Paper SubmitOrder 队列失败: {error:?}"))?;
-            }
-            let mut processed = 0_usize;
-            for queued in queue
-                .available_commands(lease_now)
-                .map_err(|error| format!("读取 Paper SubmitOrder 队列失败: {error:?}"))?
-            {
-                let command = queued.command.clone();
-                if !paper_submit_matches_worker(&command, &worker) {
-                    continue;
-                }
-                let lease =
-                    match queue.claim_command(command.command_id, context.id(), lease_now, 30) {
-                        Ok(lease) => lease,
-                        Err(StorageError::LeaseHeld { .. }) => continue,
-                        Err(error) => {
-                            return Err(format!("领取 Paper SubmitOrder 租约失败: {error:?}"));
-                        }
-                    };
-                if command_is_final(&control, command.command_id) {
-                    queue
-                        .ack_command_at(
-                            command.command_id,
-                            context.id(),
-                            lease.fencing_token,
-                            lease_now,
-                        )
-                        .map_err(|error| format!("清理已终态 Paper SubmitOrder 失败: {error:?}"))?;
-                    continue;
-                }
-                let action = if command.dry_run {
-                    Ok("DRY_RUN_VALIDATED".into())
-                } else {
-                    // 跨腿屏障由 `qx-execution` 网关在写入任何事实之前自行判定，
-                    // 这里只注入由存储根解析出的组快照。
-                    let spread_store = open_spread_group_store(&root)?;
-                    let mut market_pipeline = open_account_pipeline(
-                        &runtime_config,
-                        &root,
-                        &log_name,
-                        OutboxRecovery::ReprojectOnOpen,
-                    )
-                    .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
-                    // Accepted/领取之后的可预期失败都要变成这条命令的终态：缺行情只是
-                    // 「行情还没进来」，它不该把整个执行 worker 打停，更不该让同一条命令
-                    // 在一次性入口和常驻循环里得到两种裁决（V13 第三十一遍 ② #273）。
-                    let result = paper_submit_match_attempt(
-                        &runtime_config,
-                        &runtime_config_path,
-                        &command,
-                        &worker,
-                        &mut market_pipeline,
-                        &spread_store,
-                        now,
-                    );
-                    let outcome = if is_fail_closed_rejection(&result) {
-                        // 网关未写入任何事实：归约会把真正的 FAIL_CLOSED 文案覆盖成
-                        // "订单组缺少 EventLog 订单"，因此这条路径直接保留原拒绝原因。
-                        result
-                    } else {
-                        // 执行事实已写入同一个 pipeline，多腿订单组归约无需再打开一次日志。
-                        sync_spread_group_after_order(&root, &market_pipeline, &command, now)?;
-                        result
-                    };
-                    metrics.absorb(&market_pipeline);
-                    outcome
-                };
-                let (_, record_result) = store
-                    .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
-                    .map_err(|error| format!("回写 Paper SubmitOrder 终态失败: {error}"))?;
-                let record = record_result
-                    .map_err(|error| format!("Paper SubmitOrder 执行失败: {error:?}"))?;
-                queue
-                    .ack_command_at(
-                        command.command_id,
-                        context.id(),
-                        lease.fencing_token,
-                        lease_now,
-                    )
-                    .map_err(|error| format!("确认 Paper SubmitOrder 失败: {error:?}"))?;
-                processed += 1;
-                context.mark(
-                    if record.status == qx_control::CommandStatus::Executed {
-                        qx_runtime::ServiceStatus::Ready
-                    } else {
-                        qx_runtime::ServiceStatus::Degraded
-                    },
-                    format!(
-                        "command_id={} status={:?}",
-                        command.command_id, record.status
-                    ),
-                    Some(now),
-                )?;
-            }
-            let mut algo_pipeline = open_account_pipeline(
-                &runtime_config,
-                &root,
-                &log_name,
-                OutboxRecovery::ReprojectOnOpen,
-            )
-            .map_err(|error| format!("打开 Paper 算法订单 EventLog 失败: {error}"))?;
-            let (algo_advanced, next_page_cursor) = run_paper_algo_execution_cycle(
-                &runtime_config,
-                &runtime_config_path,
-                &worker,
-                &root,
-                &log_name,
-                &mut algo_pipeline,
-                &algo_checkpoints,
-                algo_page_cursor.as_deref(),
-                now,
-            )?;
-            processed += algo_advanced;
-            algo_page_cursor = next_page_cursor;
-            metrics.absorb(&algo_pipeline);
-            if !dedicated_spread_recovery {
-                let mut recovery_pipeline = open_account_pipeline(
-                    &runtime_config,
-                    &root,
-                    &log_name,
-                    OutboxRecovery::ReprojectOnOpen,
-                )
-                .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
-                let validator = recovery_order_validator(
-                    &worker,
-                    &recovery_pipeline,
-                    Some(&runtime_config_path),
-                );
-                let costs = execution_cost_binding_from_config(
-                    &runtime_config,
-                    Some(&runtime_config_path),
-                )?;
-                for message in recover_paper_spread_groups(
-                    &root,
-                    &mut recovery_pipeline,
-                    context.id(),
-                    now,
-                    Some(&validator),
-                    &costs,
-                )? {
-                    eprintln!("[HedgeRecovery] {message}");
-                }
-                metrics.absorb(&recovery_pipeline);
-            }
-            metrics.publish(true, now);
-            context.heartbeat(now)?;
-            if once {
-                if !quiet {
-                    println!(
-                        "[Paper · Execution] worker={} processed={}",
-                        context.id(),
-                        processed
-                    );
-                }
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-        metrics.publish(false, runtime_timestamp_ms());
-        Ok(())
-    })?;
-    join_worker_handle(&supervisor, handle, "Paper", worker_id)
+    qx_service::paper_execution_host::run_paper_execution_worker(
+        config,
+        path.to_path_buf(),
+        worker,
+        once,
+        quiet,
+    )
 }
 
 /// 按真实 worker 边界顺序执行一轮本地 Paper 主链路。
 ///
 /// 该入口不是新的业务分支，而是把 Scheduler、Strategy 和 Execution 的
 /// `--once` 验收顺序固定下来，便于 CI、部署检查和故障恢复测试复用。
-pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
-    run_paper_pipeline_once_with_report(path, true).map(|_| ())
-}
-
-pub(crate) struct PaperPipelineOutcome {
-    pub(crate) scheduler_id: String,
-    pub(crate) strategy_ids: Vec<String>,
-    pub(crate) execution_id: String,
-    pub(crate) orders_total: usize,
-    pub(crate) new_orders: usize,
-    pub(crate) ledger_entries_total: usize,
-    pub(crate) new_ledger_entries: usize,
-}
-
-pub(crate) fn run_paper_pipeline_once_with_report(
-    path: &Path,
-    print_summary: bool,
-) -> Result<PaperPipelineOutcome, String> {
-    let config = read_runtime_config(path)?;
-    let scheduler_id = config
-        .workers
-        .iter()
-        .find(|worker| worker.enabled && worker.role == WorkerRole::Scheduler)
-        .map(|worker| worker.id.clone())
-        .ok_or_else(|| "Paper 主链路缺少启用的 Scheduler worker".to_string())?;
-    let strategy_ids: Vec<String> = config
-        .workers
-        .iter()
-        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
-        .map(|worker| worker.id.clone())
-        .collect();
-    if strategy_ids.is_empty() {
-        return Err("Paper 主链路缺少启用的 Strategy worker".to_string());
-    }
-    let execution_id = config
-        .workers
-        .iter()
-        .find(|worker| {
-            worker.enabled
-                && worker.role == WorkerRole::Execution
-                && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
-        })
-        .map(|worker| worker.id.clone())
-        .ok_or_else(|| "Paper 主链路缺少启用的 Paper Execution worker".to_string())?;
-
-    let quiet_workers = !print_summary;
-    run_scheduler_worker(path, &scheduler_id, true, quiet_workers)?;
-    // Each Strategy worker owns its own strategy instance and job lease. Running
-    // only the first configured worker made this E2E helper falsely certify a
-    // multi-strategy Paper topology after exercising just one strategy.
-    for strategy_id in &strategy_ids {
-        run_strategy_worker(path, strategy_id, true, quiet_workers)?;
-    }
-
-    // Paper 执行必须消费已经进入 EventLog 的市场事实。验收 fixture 不连接
-    // 网络，因此在执行 worker 前显式注入一条可审计 L1 报价；真实部署由
-    // MarketData worker 写入同一账户/运行时日志，不再使用固定价格兜底。
-    let execution_worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == execution_id)
-        .ok_or_else(|| "Paper Execution worker 配置在注入行情前消失".to_string())?;
-    let root = Path::new(&config.storage.data_dir);
-    let log_name = required_account_event_log(execution_worker)?;
-    let mut market_pipeline =
-        open_account_pipeline(&config, root, &log_name, OutboxRecovery::ReprojectOnOpen)
-            .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
-    // 快照本轮进场时账户事实流里已经躺着多少订单/账本分录。策略阶段只把意向排成
-    // 命令（控制面），订单要等执行 worker 撮合才落进事实流，所以这里的读数就是
-    // "本轮之前"的基线：同日重跑时上一轮的成交还在这本 EventLog 里，末行必须能
-    // 把"本轮真的跑出一手"与"只是复用上一轮的既有事实"分开（V13 R2 #275）。
-    let orders_before = market_pipeline.orders().len();
-    let ledger_before = market_pipeline.ledger().entries().len();
-    let instrument = config
-        .strategy
-        .instrument
-        .as_deref()
-        .and_then(InstrumentId::parse)
-        .ok_or_else(|| "Paper 验收策略缺少合法 instrument".to_string())?;
-    let market_ts = runtime_timestamp_ms();
-    market_pipeline
-        .ingest(RuntimeEventEnvelope::market_quote(
-            instrument,
-            QuoteTick::new(
-                market_ts,
-                Price::from_i64(99),
-                Quantity::from_i64(1_000),
-                Price::from_i64(100),
-                Quantity::from_i64(1_000),
-                market_ts,
-            ),
-            market_ts,
-            market_ts,
-            format!("{log_name}:paper-check-market:{market_ts}"),
-        ))
-        .map_err(|error| format!("注入 Paper 验收行情失败: {error:?}"))?;
-    run_paper_execution_worker_with_output(path, &execution_id, true, quiet_workers)?;
-
-    let root = Path::new(&config.storage.data_dir);
-    let worker = config
-        .workers
-        .iter()
-        .find(|worker| worker.id == execution_id)
-        .ok_or_else(|| "Paper Execution worker 配置在验收期间消失".to_string())?;
-    let log_name = required_account_event_log(worker)?;
-    let pipeline = open_account_pipeline(&config, root, &log_name, OutboxRecovery::ReprojectOnOpen)
-        .map_err(|error| format!("打开 Paper 主链路 EventLog 失败: {error}"))?;
-    if pipeline.orders().is_empty() || pipeline.ledger().entries().is_empty() {
-        let control = configured_control_store(&config)?
-            .load()
-            .map_err(|error| format!("读取 Paper 主链路审计状态失败: {error}"))?;
-        let recent: Vec<String> = control
-            .audit()
-            .iter()
-            .rev()
-            .take(3)
-            .map(|record| format!("{:?}:{}", record.status, record.result_code))
-            .collect();
-        return Err(format!(
-            "Paper 主链路验收未产生订单或 Ledger 事实；最近命令审计: {recent:?}"
-        ));
-    }
-    let queue = configured_command_queue(&config, root)?;
-    if !queue
-        .pending_commands()
-        .map_err(|error| format!("读取 Paper 主链路命令队列失败: {error:?}"))?
-        .is_empty()
-    {
-        return Err("Paper 主链路验收结束后仍有未确认命令".into());
-    }
-    let control = configured_control_store(&config)?.load()?;
-    let missing_execution_audit: Vec<u64> = pipeline
-        .orders()
-        .iter()
-        .skip(orders_before)
-        .filter(|order| {
-            !control.audit().iter().any(|record| {
-                record.status == qx_control::CommandStatus::Executed
-                    && record.command_id == order.client_id
-            })
-        })
-        .map(|order| order.client_id)
-        .collect();
-    if !missing_execution_audit.is_empty() {
-        return Err(format!(
-            "Paper 主链路验收缺少 SubmitOrder Executed 审计记录: {missing_execution_audit:?}"
-        ));
-    }
-    // 末行按"本轮新增"而不是事实流的累计量给结论：同日重跑时上一轮的成交还躺在这本
-    // EventLog 里，`orders()` 非空、`orders()[0]` 的 Executed 审计也还在，上面的闸门
-    // 全都过——可本轮调度 skipped=1、策略与执行各 processed=0，端到端其实一手没跑。
-    // 若照旧只印累计数与 ✓，就把一次空转报成了一次验收通过（V13 R2 #275）。
-    let orders_now = pipeline.orders().len();
-    let ledger_now = pipeline.ledger().entries().len();
-    let new_orders = orders_now.saturating_sub(orders_before);
-    let new_ledger = ledger_now.saturating_sub(ledger_before);
-    if print_summary {
-        if new_orders > 0 {
-            println!(
-                "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+{} 本轮新增) ledger_entries={} (+{} 本轮新增) ✓",
-                scheduler_id,
-                strategy_ids.join(","),
-                execution_id,
-                orders_now,
-                new_orders,
-                ledger_now,
-                new_ledger
-            );
-        } else {
-            println!(
-                "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+0 本轮新增) ledger_entries={} 本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑",
-                scheduler_id,
-                strategy_ids.join(","),
-                execution_id,
-                orders_now,
-                ledger_now
-            );
-        }
-    }
-    Ok(PaperPipelineOutcome {
-        scheduler_id,
-        strategy_ids,
-        execution_id,
-        orders_total: orders_now,
-        new_orders,
-        ledger_entries_total: ledger_now,
-        new_ledger_entries: new_ledger,
-    })
-}
+pub(crate) use pipeline::{run_paper_pipeline_once, run_paper_pipeline_once_with_report};
+mod pipeline;
 
 pub(crate) fn run_paper_check(path: &Path, as_json: bool) -> Result<(), String> {
     if !as_json {

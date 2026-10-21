@@ -299,17 +299,17 @@ fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
         [
             "b8646edf8be77ad8",
             "b8646edf8be77ad8",
-            "bc981176c8088103",
-            "75722cbd0d446dea",
-            "dc16d1fedb7d6dcd",
-            "3cfa9ec23751b0cf",
-            "eda51c507a65f6ed",
-            "a9393af81c1dd406",
-            "7d740301443a3f60",
-            "24a0704b9d293ab5",
-            "75722cbd0d446dea",
+            "7c9c80855309e4f3",
+            "96e1b8599ab38ac2",
+            "45763eaafd9a88b5",
+            "144082afa09698e7",
+            "f9fac261f0c68fed",
+            "99926bc58bbdc06e",
+            "07bea6896df2684a",
+            "462495222f7865f9",
+            "29eaa3b5f7a79d32",
             "b8646edf8be77ad8",
-            "a9393af81c1dd406",
+            "91d4215d864e454e",
         ]
     );
     assert_eq!(run_depth_experiment(&spec, &context).unwrap(), result);

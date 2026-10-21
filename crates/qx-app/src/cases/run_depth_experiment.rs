@@ -338,30 +338,38 @@ fn run_depth_experiment_inner(
             &mut candidate.market_making,
             &parameters,
         ) {
-            Ok(()) => {
-                let run = match (identity, factory.as_deref_mut()) {
-                    (Some(identity), Some(factory)) => factory(&candidate)
-                        .map_err(|error| {
-                            invalid(format!("候选 {ordinal} 自定义策略 factory 失败: {error}"))
-                        })
-                        .and_then(|strategy| {
-                            run_inner_with_experiment_strategy(
-                                &candidate,
-                                context,
-                                cancellation,
-                                identity.clone(),
-                                strategy,
-                            )
-                        }),
-                    (None, None) => run_inner(&candidate, context, cancellation),
-                    _ => Err(invariant("自定义深度实验身份与 factory 状态不一致")),
-                };
-                match run {
-                    Ok(Some(outcome)) => Ok(outcome),
-                    Ok(None) => return Ok(None),
-                    Err(error) => Err(error),
+            Ok(()) => match DepthBacktestSpec::validate_entry(
+                &candidate.tier,
+                candidate.strategy.kind,
+                candidate.strategy.quantity_raw,
+                candidate.fee_bps,
+            ) {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    let run = match (identity, factory.as_deref_mut()) {
+                        (Some(identity), Some(factory)) => factory(&candidate)
+                            .map_err(|error| {
+                                invalid(format!("候选 {ordinal} 自定义策略 factory 失败: {error}"))
+                            })
+                            .and_then(|strategy| {
+                                run_inner_with_experiment_strategy(
+                                    &candidate,
+                                    context,
+                                    cancellation,
+                                    identity.clone(),
+                                    strategy,
+                                )
+                            }),
+                        (None, None) => run_inner(&candidate, context, cancellation),
+                        _ => Err(invariant("自定义深度实验身份与 factory 状态不一致")),
+                    };
+                    match run {
+                        Ok(Some(outcome)) => Ok(outcome),
+                        Ok(None) => return Ok(None),
+                        Err(error) => Err(error),
+                    }
                 }
-            }
+            },
             Err(error) => Err(error),
         };
         candidates.push(match outcome {

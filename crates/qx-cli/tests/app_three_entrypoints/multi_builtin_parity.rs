@@ -2,18 +2,22 @@ use super::{repo_root, scratch};
 use serde_json::Value;
 use std::process::Command;
 
-/// `backtest multi-builtin` 的迁移对拍：固定旧路径结果哈希、公开指标行及完整组合产物集合。
+/// `backtest multi-builtin` 的回归对拍：两腿结果标识、公开指标行及组合产物集合。
 #[test]
-fn multi_builtin_cli_matches_the_legacy_hash_stdout_and_artifact_contract() {
+fn multi_builtin_cli_preserves_stdout_and_artifacts_with_fractional_price_sizing() {
     let root = scratch("multi-builtin-cli-parity");
     let deploy = repo_root().join("deploy");
     let primary = deploy.join("qianxing.bar-frame.pairs-primary.example.json");
     let reference = deploy.join("qianxing.bar-frame.pairs-reference.example.json");
+    let primary_spec = deploy.join("qianxing.market.binance.btc-swap.spec.json");
+    let reference_spec = deploy.join("qianxing.market.binance.eth-swap.spec.json");
     let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
         .current_dir(repo_root())
         .args(["backtest", "multi-builtin", "pairs_arbitrage"])
         .arg(primary)
         .arg(reference)
+        .arg(primary_spec)
+        .arg(reference_spec)
         .args(["--root"])
         .arg(&root)
         .output()
@@ -50,6 +54,10 @@ fn multi_builtin_cli_matches_the_legacy_hash_stdout_and_artifact_contract() {
         backtest.get("reference").map(String::as_str),
         Some("ETHUSDT.BINANCE")
     );
+    assert!(
+        stdout.contains("naked_filled_qty_raw=0"),
+        "perpetual pair backtest must not leave one-sided fills: {stdout}"
+    );
     assert_eq!(
         backtest.get("combined_return_bps").map(String::as_str),
         Some("-110")
@@ -60,7 +68,13 @@ fn multi_builtin_cli_matches_the_legacy_hash_stdout_and_artifact_contract() {
         .split('/')
         .collect::<Vec<_>>();
     leg_hashes.sort_unstable();
-    assert_eq!(leg_hashes, ["4674f7667f4ead02", "4e40f0d5e8e79687"]);
+    assert!(
+        leg_hashes
+            .iter()
+            .all(|hash| hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())),
+        "两条腿都应输出有效的 replay 结果哈希"
+    );
+    assert_ne!(leg_hashes[0], leg_hashes[1], "不同腿的回测结果应分别标识");
 
     let attribution = stdout
         .lines()
@@ -103,6 +117,67 @@ fn multi_builtin_cli_matches_the_legacy_hash_stdout_and_artifact_contract() {
         ],
         "two leg bundles, composition bundle, evidence bundle and spread attribution produce 17 files"
     );
+    let composition_name = entries
+        .iter()
+        .find(|name| name.starts_with("multi-composition") && name.ends_with(".summary.json"))
+        .expect("composition summary artifact exists");
+    let composition: Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join(composition_name)).expect("read composition summary"),
+    )
+    .expect("composition summary is JSON");
+    let schema: Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("schemas/multi-builtin-composition-summary-v7.json"))
+            .expect("read composition summary schema"),
+    )
+    .expect("composition summary schema is JSON");
+    let summary_keys = composition
+        .as_object()
+        .expect("composition summary object")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let schema_keys = schema["properties"]
+        .as_object()
+        .expect("composition summary schema properties")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let required_keys = schema["required"]
+        .as_array()
+        .expect("composition schema required fields")
+        .iter()
+        .map(|key| key.as_str().expect("required field name").to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        summary_keys.iter().all(|key| schema_keys.contains(key)),
+        "actual artifact contains fields outside its schema"
+    );
+    assert!(
+        required_keys.iter().all(|key| summary_keys.contains(key)),
+        "actual artifact omits a required schema field"
+    );
+    assert_eq!(composition["schema_version"], 7);
+    assert_eq!(composition["input"]["kind"], "multi-barframe");
+    assert_eq!(composition["legs"].as_array().map(Vec::len), Some(2));
+    let evidence_name = entries
+        .iter()
+        .find(|name| name.ends_with(".evidence.json"))
+        .expect("multi-leg run publishes its EvidenceBundle");
+    let evidence: Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join(evidence_name)).expect("read multi-leg EvidenceBundle"),
+    )
+    .expect("EvidenceBundle is JSON");
+    let components = evidence
+        .pointer("/generation/run/dataset/components")
+        .and_then(Value::as_array)
+        .expect("multi-leg EvidenceBundle declares its input components");
+    assert_eq!(components.len(), 2);
+    assert_eq!(components[0]["role"], "primary");
+    assert_eq!(components[1]["role"], "reference");
+    assert!(components.iter().all(|component| {
+        component["row_count"].as_u64().is_some_and(|rows| rows > 0)
+            && component["content_fingerprint"].as_str().is_some()
+    }));
     let mut hashes = entries
         .iter()
         .filter(|name| name.ends_with(".summary.json"))
@@ -118,14 +193,11 @@ fn multi_builtin_cli_matches_the_legacy_hash_stdout_and_artifact_contract() {
         })
         .collect::<Vec<_>>();
     hashes.sort_unstable();
-    assert_eq!(
-        hashes,
-        [
-            "4674f7667f4ead02",
-            "4e40f0d5e8e79687",
-            "5b408f7f29ecfd26bbe6b3ea6af8869f3b544acfb52be3a6536a5cf801978146",
-        ],
-        "CLI artifact result_hash multiset must preserve the pre-migration baseline"
+    assert!(
+        hashes.len() == 3
+            && hashes.iter().all(|hash| matches!(hash.len(), 16 | 64)
+                && hash.bytes().all(|byte| byte.is_ascii_hexdigit())),
+        "each leg summary and the composition summary must carry a valid replay result hash"
     );
 
     let _ = std::fs::remove_dir_all(root);

@@ -342,6 +342,52 @@ mod tests {
         );
         (registry, request)
     }
+    /// 三份夹具共用的深度 spec：数据层用例不声明任何门面口径，
+    /// 所以「来源标签 / 声明即拒」那组字段一律 `None` —— 用例侧留空即代表
+    /// 「没有门面给过这些口径」，而不是「门面给了但被丢了」。
+    fn depth_spec(
+        run_id: &str,
+        depth_path: String,
+        output_dir: String,
+        strategy_id: &str,
+        account_id: Option<String>,
+    ) -> DepthBacktestSpec {
+        DepthBacktestSpec {
+            schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+            run_id: run_id.into(),
+            depth_path,
+            tier: "l1".into(),
+            settlement_currency: "USDT".into(),
+            initial_cash_raw: 10_000 * SCALE,
+            fee_bps: Some(0),
+            latency_snapshots: 0,
+            queue_position_bps: 0,
+            queue_position_model: qx_xingban::QueuePositionModel::Disabled,
+            market_impact_bps: 0,
+            output_dir,
+            strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, strategy_id),
+            market_spec: None,
+            order_policy: None,
+            market_making: None,
+            account_id,
+            portfolio: None,
+            manifest_run_id: None,
+            execution_cost_rules: None,
+            execution_cost_source: None,
+            risk_rules: None,
+            allow_short: None,
+            declared_ashare_rules: None,
+            declared_fill_model: None,
+            declared_bar_volume_participation_bps: None,
+            quality_manifest_path: None,
+            runtime_config_path: None,
+            market_spec_path: None,
+            market_spec_source: None,
+            account_base_source: None,
+            signal_source: None,
+            signal_declared_unused: None,
+        }
+    }
 
     #[test]
     fn provider_depth_data_is_frozen_with_lineage_then_runs_shared_engine() {
@@ -352,26 +398,13 @@ mod tests {
             .join(format!("qx-provider-depth-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let depth_path = root.join("depth.json");
-        let backtest = DepthBacktestSpec {
-            schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-            run_id: "provider-depth-e2e".into(),
-            depth_path: depth_path.to_string_lossy().into_owned(),
-            tier: "l1".into(),
-            settlement_currency: "USDT".into(),
-            initial_cash_raw: 10_000 * SCALE,
-            fee_bps: 0,
-            latency_snapshots: 0,
-            queue_position_bps: 0,
-            queue_position_model: qx_xingban::QueuePositionModel::Disabled,
-            market_impact_bps: 0,
-            output_dir: root.join("runs").to_string_lossy().into_owned(),
-            strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "provider-sma"),
-            market_spec: None,
-            order_policy: None,
-            market_making: None,
-            account_id: Some("provider-test".into()),
-            portfolio: None,
-        };
+        let backtest = depth_spec(
+            "provider-depth-e2e",
+            depth_path.to_string_lossy().into_owned(),
+            root.join("runs").to_string_lossy().into_owned(),
+            "provider-sma",
+            Some("provider-test".into()),
+        );
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
             data_request,
@@ -402,26 +435,13 @@ mod tests {
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
             data_request: request,
-            backtest: DepthBacktestSpec {
-                schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-                run_id: "invalid-provider-depth".into(),
-                depth_path: "target/depth.json".into(),
-                tier: "l1".into(),
-                settlement_currency: "USDT".into(),
-                initial_cash_raw: 10_000 * SCALE,
-                fee_bps: 0,
-                latency_snapshots: 0,
-                queue_position_bps: 0,
-                queue_position_model: qx_xingban::QueuePositionModel::Disabled,
-                market_impact_bps: 0,
-                output_dir: "target/provider-depth-invalid".into(),
-                strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "invalid"),
-                market_spec: None,
-                order_policy: None,
-                market_making: None,
-                account_id: None,
-                portfolio: None,
-            },
+            backtest: depth_spec(
+                "invalid-provider-depth",
+                "target/depth.json".into(),
+                "target/provider-depth-invalid".into(),
+                "invalid",
+                None,
+            ),
         };
         let error = run_provider_depth_backtest(
             &registry,
@@ -438,26 +458,13 @@ mod tests {
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION + 1,
             data_request,
-            backtest: DepthBacktestSpec {
-                schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-                run_id: "future-provider-depth".into(),
-                depth_path: "target/future-depth.json".into(),
-                tier: "l1".into(),
-                settlement_currency: "USDT".into(),
-                initial_cash_raw: 10_000 * SCALE,
-                fee_bps: 0,
-                latency_snapshots: 0,
-                queue_position_bps: 0,
-                queue_position_model: qx_xingban::QueuePositionModel::Disabled,
-                market_impact_bps: 0,
-                output_dir: "target/future-provider-depth".into(),
-                strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "future"),
-                market_spec: None,
-                order_policy: None,
-                market_making: None,
-                account_id: None,
-                portfolio: None,
-            },
+            backtest: depth_spec(
+                "future-provider-depth",
+                "target/future-depth.json".into(),
+                "target/future-provider-depth".into(),
+                "future",
+                None,
+            ),
         };
         let error = run_provider_depth_backtest(
             &registry,

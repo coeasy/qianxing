@@ -3,6 +3,7 @@ use qx_sdk::{
     Client, DepthBacktestSpec, MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, RunStatus,
 };
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -10,6 +11,16 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("qx-sdk has a repository root")
         .to_path_buf()
+}
+
+fn scratch(label: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after the Unix epoch")
+        .as_nanos();
+    repo_root()
+        .join(".tmp-test/qx-sdk")
+        .join(format!("{label}-{}-{nonce}", std::process::id()))
 }
 
 fn multi_account_spec(run_id: &str, account_id: &str, output: &Path) -> BacktestSpec {
@@ -35,7 +46,7 @@ fn multi_account_spec(run_id: &str, account_id: &str, output: &Path) -> Backtest
 
 #[test]
 fn independent_consumer_runs_sync_and_async_multi_account_batches() {
-    let root = std::env::temp_dir().join(format!("qx-sdk-multi-account-{}", std::process::id()));
+    let root = scratch("multi-account");
     std::fs::create_dir_all(&root).expect("create isolated artifact root");
     let batch = MultiAccountBacktestSpec {
         schema_version: 1,
@@ -66,8 +77,7 @@ fn independent_consumer_runs_sync_and_async_multi_account_batches() {
 
 #[test]
 fn independent_consumer_runs_sync_and_async_multi_account_depth_batches() {
-    let root =
-        std::env::temp_dir().join(format!("qx-sdk-multi-account-depth-{}", std::process::id()));
+    let root = scratch("multi-account-depth");
     std::fs::create_dir_all(&root).expect("create isolated artifact root");
     let fixture = repo_root().join("deploy/qianxing.depth-frame.l1.example.json");
     let alternate = root.join("eth-okx-depth.json");
@@ -91,7 +101,7 @@ fn independent_consumer_runs_sync_and_async_multi_account_depth_batches() {
         tier: "l1".into(),
         settlement_currency: "USDT".into(),
         initial_cash_raw: 100_000 * 1_000_000_000,
-        fee_bps: 0,
+        fee_bps: Some(0),
         latency_snapshots: 0,
         queue_position_bps: 0,
         queue_position_model: Default::default(),
@@ -103,6 +113,21 @@ fn independent_consumer_runs_sync_and_async_multi_account_depth_batches() {
         market_making: None,
         account_id: Some("account-a".into()),
         portfolio: None,
+        manifest_run_id: None,
+        execution_cost_rules: None,
+        execution_cost_source: None,
+        risk_rules: None,
+        allow_short: None,
+        declared_ashare_rules: None,
+        declared_fill_model: None,
+        declared_bar_volume_participation_bps: None,
+        quality_manifest_path: None,
+        runtime_config_path: None,
+        market_spec_path: None,
+        market_spec_source: None,
+        account_base_source: None,
+        signal_source: None,
+        signal_declared_unused: None,
     };
     let mut second = first.clone();
     second.run_id = "sdk-depth-account-b".into();

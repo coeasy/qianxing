@@ -174,6 +174,17 @@ WALK_FORWARD_SPEC = {
 # 专项 worker/API e2e，不得继续由旧的静态 MISSING 记录覆盖。
 BLOCKED = [
     {
+        "name": "rust_sdk_git_consumer",
+        "label": "Rust SDK 固定提交 Git 安装与仓外消费者运行",
+        "anchor": "tools/check_rust_sdk_git_consumer.py",
+        "blocked_by": (
+            "无网络量化场景探针不执行 Git fetch；该消费者需引用已发布到远端的固定提交，"
+            "本地未提交工作树不能作为仓外 Git 依赖来源。"
+        ),
+        "next_gate": "发布候选提交推送到远端后，单独运行 tools/check_rust_sdk_git_consumer.py 并保存消费者构建与回测证据。",
+        "evidence": ["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"],
+    },
+    {
         "name": "live_exchange_trading",
         "label": "实盘交易所交易",
         "anchor": "crates/qx-adapter/src/ccxt.rs",
@@ -533,6 +544,25 @@ def depth_portfolio_observation(summary_path: Path) -> str:
     return f"strategy_fills={json.dumps(strategy_fills, sort_keys=True)} result_hash={summary['result_hash']}"
 
 
+def depth_portfolio_summary_path(output_dir: Path, run_id: str) -> Path:
+    """Resolve the versioned run summary from the artifact store's runs directory."""
+    summaries = sorted((output_dir / "runs").glob(f"{run_id}-*.v*.summary.json"))
+    if len(summaries) != 1:
+        raise ValueError(
+            f"expected one depth portfolio summary for {run_id}, found {len(summaries)}"
+        )
+    return summaries[0]
+
+
+def ashare_case_observation(output: str, required_cases: tuple[str, ...]) -> str:
+    """Require the A-share rule and end-to-end cases to appear in Cargo's executed output."""
+    executed_cases = set(re.findall(r"^test ([^\r\n]+) \.\.\. ok$", output, re.MULTILINE))
+    missing = sorted(case for case in required_cases if not any(case in row for row in executed_cases))
+    if missing:
+        raise ValueError(f"A-share profile coverage cases did not execute: {missing}")
+    return f"executed_cases={len(executed_cases)} required_cases={len(required_cases)} missing=0"
+
+
 def main() -> int:
     binary = resolve_binary()
     PROBE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -726,7 +756,7 @@ def main() -> int:
                 "next_gate": "让账户级风险快照覆盖已成交持仓和所有非终态订单，再重跑回归场景。",
                 "evidence": [
                     "crates/qx-cli/tests/unit/paper_pending_exposure.rs",
-                    "crates/qx-cli/src/venue_runtime/worker_risk.rs",
+                    "crates/qx-service/src/risk_host.rs",
                     "crates/qx-risk/src/rules.rs",
                 ],
             }
@@ -1219,12 +1249,12 @@ def main() -> int:
                 "name": "paper_cross_currency_spot_fx_valuation",
                 "label": "Paper 跨币种现货报价币记账与 FX 风控估值",
                 "status": "executed" if ok else "declared_not_executed",
-                "anchor": "crates/qx-cli/src/venue_runtime/worker_risk.rs",
+                "anchor": "crates/qx-service/src/risk_host.rs",
                 "command": " ".join(argv),
                 "exit_code": code,
                 "observed": observed,
                 "evidence": [
-                    "crates/qx-cli/src/venue_runtime/worker_risk.rs",
+                    "crates/qx-service/src/risk_host.rs",
                     "crates/qx-cli/tests/unit/paper_margin_valuation.rs",
                     "crates/qx-core/src/ledger/fill.rs",
                 ],
@@ -1697,7 +1727,7 @@ def main() -> int:
         ["app", "depth-backtest", str(depth_portfolio_spec_path.relative_to(ROOT)).replace("\\", "/")],
         r'"fills":(\d+)',
         extra_from_output=lambda _output: depth_portfolio_observation(
-            ROOT / depth_portfolio_spec["output_dir"] / f"{depth_portfolio_run_id}.summary.json"
+            depth_portfolio_summary_path(ROOT / depth_portfolio_spec["output_dir"], depth_portfolio_run_id)
         ),
         evidence=[
             "crates/qx-xingban/src/portfolio_orderbook.rs",
@@ -1916,6 +1946,82 @@ def main() -> int:
     )
 
     executed(
+        "ashare_research_rule_contracts",
+        "A 股 T+1/整手、交易时段、停牌、板块涨跌停与公司行为规则合同",
+        "crates/qx-xingban/src/ashare/tests.rs",
+        ["test", "--offline", "-p", "qx-xingban", "--lib", "ashare", "--", "--test-threads=1"],
+        r"(test result: ok\. 33 passed; 0 failed)",
+        extra_from_output=lambda output: ashare_case_observation(
+            output,
+            (
+                "calendar_json_controls_daily_and_intraday_trading_windows",
+                "sealed_limit_and_halt_block_the_correct_side",
+                "t_plus_one_and_lot_rules_are_enforced",
+                "ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules",
+                "ex_rights_anchor_folds_dividend_bonus_shares_and_rights_issue_together",
+                "supported_data_actions_convert_and_complex_actions_fail_closed",
+            ),
+        ),
+        evidence=[
+            "crates/qx-xingban/src/ashare/tests.rs",
+            "crates/qx-xingban/src/ashare/trading.rs",
+            "crates/qx-xingban/src/backtest/order_admission.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "ashare_research_backtest_lifecycle",
+        "A 股分钟涨停锚、T+1 在途卖单与 PIT as-of 回测生命周期",
+        "crates/qx-xingban/tests/ashare_pit_asof.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "--test", "ashare_limit_anchor",
+            "--test", "ashare_pit_asof",
+            "--test", "ashare_previous_close_series",
+            "--test", "ashare_t1_pending_sell",
+            "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 2 passed; 0 failed)",
+        extra_from_output=lambda output: ashare_case_observation(
+            output,
+            (
+                "a_sealed_intraday_limit_up_blocks_the_fill_when_anchored_to_the_session_close",
+                "same_dataset_under_different_as_of_produces_distinguishable_backtests",
+                "an_active_sell_from_a_prior_bar_reserves_t1_available_shares",
+                "adaptive_previous_close_series_matches_pointwise_rules_for_dense_actions",
+            ),
+        ),
+        evidence=[
+            "crates/qx-xingban/tests/ashare_limit_anchor.rs",
+            "crates/qx-xingban/tests/ashare_pit_asof.rs",
+            "crates/qx-xingban/tests/ashare_previous_close_series.rs",
+            "crates/qx-xingban/tests/ashare_t1_pending_sell.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "multi_venue_paper_hedge_recovery",
+        "BINANCE 成交、OKX 腿取消后的跨 Venue Paper 补偿恢复",
+        "crates/qx-service/src/spread_recovery_host.rs",
+        [
+            "test", "--offline", "-p", "qx-cli", "paper_hedge_recovery",
+            "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 2 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="venues=BINANCE,OKX partial_fill_qty=1 compensation_fills=1 group_status=Hedged frozen_spec_enforced=true",
+        evidence=[
+            "crates/qx-cli/tests/unit/paper_hedge_recovery.rs",
+            "crates/qx-service/src/spread_recovery_host.rs",
+            "crates/qx-execution/src/lib.rs",
+            "crates/qx-zhenlu/src/lib.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
         "checked_fee_basis_point_arithmetic",
         "费用模型费率范围与极大金额基点计算校验",
         "crates/qx-core/src/fee.rs",
@@ -1991,7 +2097,7 @@ def main() -> int:
                "API get=completed remaining_raw=0"),
         evidence=[
             "crates/qx-cli/src/api_algo_execution.rs",
-            "crates/qx-cli/src/venue_runtime/paper_algo_worker.rs",
+            "crates/qx-service/src/paper_algo_host.rs",
             "crates/qx-api/src/algo_execution_tests.rs",
             "python/qianxing/app.py",
             "cpp/include/qianxing_app.hpp",
@@ -2114,19 +2220,6 @@ def main() -> int:
             "python/qianxing/app.py",
             "python/tests/test_app_use_cases.py",
         ],
-        command_prefix="python",
-    )
-
-    executed(
-        "rust_sdk_git_consumer",
-        "Rust SDK 固定提交 Git 安装与仓外消费者运行",
-        "tools/check_rust_sdk_git_consumer.py",
-        ["tools/check_rust_sdk_git_consumer.py"],
-        r"(rust_sdk_git_consumer=passed fills=\d+ multi_market_candidates=\d+ remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=\w+)",
-        # Cargo's embedded Git fetch can fail to create pack temp files on Windows;
-        # the CLI Git backend uses the same pinned revision without that cache issue.
-        env_extra={"CARGO_NET_GIT_FETCH_WITH_CLI": "true"},
-        evidence=["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"],
         command_prefix="python",
     )
 

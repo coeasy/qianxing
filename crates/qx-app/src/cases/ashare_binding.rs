@@ -8,7 +8,7 @@ pub struct AshareBacktestBinding {
     pub rules_path: String,
 }
 
-/// Load and validate the A-share rule snapshot and its optional data components.
+/// Load and validate the A-share rule snapshot, optional action events and bounded trading calendar.
 ///
 /// The caller resolves relative paths before invoking this application-layer binder.
 pub fn bind_ashare_backtest_rules(
@@ -62,8 +62,55 @@ pub fn bind_ashare_backtest_rules(
             "配置 ashare_rules_path 后 enabled 必须为 true",
         ));
     }
+    if rules.trading_days.is_empty() && rules.trading_timestamps.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "A 股回测必须提供交易日历 trading_days 或显式 trading_timestamps；拒绝按任意日期可交易处理",
+        ));
+    }
+    if rules.session_windows.is_empty() && rules.trading_timestamps.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "A 股回测必须提供交易时段 sessions 或显式 trading_timestamps；拒绝按全天时段可交易处理",
+        ));
+    }
     Ok(Some(AshareBacktestBinding {
         rules,
         rules_path: path.to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_ashare_backtest_rules;
+
+    const RULES: &str = r#"{"enabled":true}"#;
+    const CALENDAR_DAYS_ONLY: &str = r#"{"calendar_id":"cn-test","trading_days":["2024-06-03"]}"#;
+    const CALENDAR_WITH_SESSIONS: &str = r#"{"calendar_id":"cn-test","trading_days":["2024-06-03"],"sessions":[["09:30","11:30"],["13:00","15:00"]]}"#;
+
+    #[test]
+    fn enabled_rules_fail_closed_without_bounded_calendar_and_sessions() {
+        let missing_calendar =
+            bind_ashare_backtest_rules(Some(("rules.json", RULES)), None, None, "000001.SZSE")
+                .expect_err("缺交易日清单时不能按任意日期可交易运行");
+        assert!(missing_calendar.to_string().contains("必须提供交易日历"));
+
+        let missing_sessions = bind_ashare_backtest_rules(
+            Some(("rules.json", RULES)),
+            None,
+            Some(CALENDAR_DAYS_ONLY),
+            "000001.SZSE",
+        )
+        .expect_err("缺交易时段时不能按全天可交易运行");
+        assert!(missing_sessions.to_string().contains("必须提供交易时段"));
+
+        let binding = bind_ashare_backtest_rules(
+            Some(("rules.json", RULES)),
+            None,
+            Some(CALENDAR_WITH_SESSIONS),
+            "000001.SZSE",
+        )
+        .expect("有界交易日历和时段必须可用");
+        assert_eq!(binding.unwrap().rules.trading_days.len(), 1);
+    }
 }

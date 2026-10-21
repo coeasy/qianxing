@@ -80,7 +80,7 @@ fn normalize_stdout(args: &[&str], working_dir: &Path, stdout: &str) -> String {
     if args.first().copied() == Some("run") {
         return normalize_stdout(&args[1..], working_dir, &stdout);
     }
-    if args.iter().any(|arg| *arg == "--json") {
+    if args.contains(&"--json") {
         let mut value: serde_json::Value =
             serde_json::from_str(&stdout).expect("--json stdout must be a JSON value");
         normalize_json_paths(&mut value);
@@ -255,7 +255,7 @@ fn pure_local_entrypoints_replay_the_same_process_contract() {
             "qx-cli {args:?} changed across clean replays"
         );
         assert!(
-            first.stdout.trim().len() > 0,
+            !first.stdout.trim().is_empty(),
             "qx-cli {args:?} emitted no contract output"
         );
         assert!(

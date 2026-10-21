@@ -5,12 +5,14 @@
 //! 该模块只产出归因事实，不改变撮合结果，供多标的回测与实时投影复用。
 
 mod buckets;
+mod cash_sizing;
 mod combined_equity;
 mod combined_return;
 mod metrics;
 mod multi_builtin_summary;
 mod quality;
 pub use buckets::{multi_leg_leg_buckets, multi_leg_realized_standing_at};
+pub use cash_sizing::multi_leg_leg_cash_reserve;
 pub use combined_equity::{multi_leg_combined_equity_metrics, MultiLegCombinedEquity};
 pub use combined_return::multi_leg_combined_return_bps;
 pub use metrics::{multi_leg_cost_bps, multi_leg_group_totals, multi_leg_leg_integrity};

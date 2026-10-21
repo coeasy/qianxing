@@ -212,10 +212,10 @@ fn multi_leg_strategy_selection_runs_all_arbitrage_kinds_deterministically() {
             })
             .collect::<Vec<_>>(),
         [
-            ("d6a20bc288a68171", "66078d855b4b6d81"),
-            ("a708bae0043cb1ed", "736029293c98ae8f"),
-            ("e48094e360a4488a", "dfc24481448cec08"),
-            ("0cc4fc22ac161d50", "4a6ff50e9df0a710"),
+            ("d825fc7cead9585f", "66078d855b4b6d81"),
+            ("1e2690bc87ec6286", "8563dd0fe2ae0c86"),
+            ("8a1218b12866ab9b", "f382693ecd7cb454"),
+            ("d825fc7cead9585f", "4a6ff50e9df0a710"),
         ]
     );
     assert_eq!(run_multi_leg_experiment(&spec, &context).unwrap(), result);

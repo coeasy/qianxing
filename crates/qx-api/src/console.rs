@@ -512,6 +512,32 @@ mod tests {
         ConsoleFront::new(service, config).expect("控制台")
     }
 
+    #[test]
+    fn console_accept_loop_returns_when_stopped_without_connections() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind console listener");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let thread_stopped = Arc::clone(&stopped);
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = front().serve(listener, || 1, || thread_stopped.load(Ordering::Acquire));
+            tx.send(result).expect("send console accept result");
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "console must stay alive before shutdown"
+        );
+        stopped.store(true, Ordering::Release);
+        assert!(rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("console accept loop must observe shutdown without a connection")
+            .is_ok());
+    }
+
     fn request(method: &str, target: &str, extra: &str) -> String {
         format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:18082\r\n{extra}Content-Length: 0\r\n\r\n")
     }

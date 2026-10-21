@@ -109,6 +109,38 @@ fn assert_unknown_submit_fact_contract<V: VenuePort, F: FnOnce() -> V>(
         .orders
         .iter()
         .any(|registered| registered.client_id == order.client_id));
+    assert_eq!(
+        state
+            .orders
+            .iter()
+            .find(|registered| registered.client_id == order.client_id)
+            .map(|registered| registered.status),
+        Some(OrderStatus::Unknown),
+        "未知远端结果必须保留为待对账订单"
+    );
+
+    // 控制命令可能已经被本地终结为失败，但订单级未知事实必须阻止同一
+    // client_order_id 再次触发 Venue 副作用，直到对账确认远端状态。
+    let retry_error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "contract-worker",
+        101,
+        &mut source_seq,
+    )
+    .submit(order.clone())
+    .unwrap_err();
+    assert!(retry_error.contains("必须先对账"), "{retry_error}");
+    assert_eq!(
+        state.events.len(),
+        2,
+        "重复提交只可追加待对账事实，不得伪造远端回报"
+    );
+    assert!(matches!(
+        state.events.last().map(|event| &event.event),
+        Some(ExecutionEvent::ReconcileRequired { client_order_id })
+            if *client_order_id == order.client_id
+    ));
 }
 
 #[test]

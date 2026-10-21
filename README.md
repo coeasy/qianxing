@@ -60,8 +60,8 @@
 | WebSocket 事件流 | 1（任意路径 + `Upgrade: websocket`） | `admit_websocket` 的准入判定，口径见 `deploy/README.md` 的 WS 段 |
 | `deploy/` 顶层示例配置模板 | 53 | `crates/qx-cli/tests/unit/deploy_template_coverage.rs`：登记表与磁盘清单逐名相等，新增不登记即红 |
 | Cargo workspace 成员 | 25（24 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
-| 静态架构不变量 | 见 `maturity/gate_snapshot.json`（`checks` / `gate_check_floor` / `labels_sha256`） | `tools/check_architecture.py`：`--snapshot` 写入该机读快照，收尾处拿本轮实测与它逐值比对（条数只降不升由地板常量守） |
-| Rust 用例 | 全仓地板 `WORKSPACE_TEST_FLOOR = 1233`；本轮整树 121 段 / 1218 passed | 同一门禁 + `cargo test --workspace --no-fail-fast`，读数见「版本与现状」 |
+| 静态架构不变量 | `tools/check_architecture.py` 中的具名契约检查 | 每条检查验证具体行为、边界或实现归属；不以检查数/测试数作为验收质量 |
+| Rust 用例 | 以实际测试执行结果为准 | `cargo test --workspace --no-fail-fast` |
 
 数字之外那半句更重要：`maturity/capabilities.yaml` 的四档证据里 `sandbox_tested` 与
 `production_approved` **无一为真**。所以上面这些"跑得通"说的是本机可重放的回测、Paper 闭环与
@@ -88,7 +88,7 @@
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.1.0 qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.2.0 qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -111,7 +111,7 @@ bash tools/build_python_wheel.sh
 # 全量测试
 cargo test --workspace
 
-# 架构不变量自检（V9 收口：单一分派点、无空风控门、回测装配唯一、能力矩阵证据、行数棘轮）
+# 架构不变量自检（验证单一分派点、风险门装配、回测归属与能力证据等具名契约）
 python3 tools/check_architecture.py
 
 # 工业化统一入口：初始化、回测、Paper 主链路和实盘前检查
@@ -221,7 +221,7 @@ python tools/verify_cpp_worker.py build/cpp/Release/qianxing_strategy_jsonl.exe 
 `wss://stream.testnet.binance.vision/ws`，执行与对账 worker 默认指向 `paper` 之外的
 testnet 账户，凭据只从环境变量读取，配置文件中不落任何密钥。
 
-Windows 下用 `build.bat`（cmd.exe 里跑），POSIX 下用 `bash build.sh`。两份脚本跑**同一组 9 步门禁**，门禁按命令多重集与步骤名逐项断言两者同序同条（`build_script_parity_check`）。第 `[0/9]` 步先选出一个真的可用的 Python 解释器，候选顺序是 `QX_PYTHON` → 仓库 venv（Windows `python\.venv\Scripts\python.exe`，POSIX `python/.venv/bin/python`）→ PATH 上的 `python`；判定不信退出码（WindowsApps 的 `python` 存根退出码为 0 却什么都不打印），要求候选把版本号印出来，再要求它能 `import tzdata`。三者都不合格时以退出码 1 停下并印出候选清单与两条修法。挑中之后**必须把它外传成 `QX_PYTHON`**（`build.bat` 用 `for %%I in ("%QX_PY%") do set "QX_PYTHON=%%~fI"`，`build.sh` 用 `export QX_PYTHON`）：`[4/9]` 的两条 Python 桥契约用例与 `[8/9]` 的策略 worker 是 Rust 去起 Python，而 Rust 只读 `QX_PYTHON` 这一个变量（`crates/qx-cli/src/main.rs` 的 `python_interpreter_origin()`），漏掉这一步时 `[0/9]` 打印"已选中"却仍在 Rust 测试那一步以两条桥用例失败收场（V12 §19 #133，当时是 `[3/8]`）。`build_script_parity_check` 逐脚本核对"导出那一行存在且早于 `[1/9]`"，并且只认命令、不认报错提示里那句教用户怎么设 `QX_PYTHON` 的 `echo`（§19 #136）；同一条判据还核对**架构门禁本身在这两份脚本里各被调用一次、失败会中止、且排在任何 `cargo` 之前**（§22 #139）。`.gitattributes` 把 `*.bat`/`*.cmd` 钉成 CRLF、`*.sh` 钉成 LF：带 UTF-8 中文的 LF 版批处理 cmd.exe 读不了，会在文件中途以 `\'不是内部或外部命令\'` 死掉（`windows_batch_parse_check` 逐文件核对行尾与"每行以 ASCII 字节结尾"）。
+Windows 下用 `build.bat`（cmd.exe 里跑），POSIX 下用 `bash build.sh`。两份脚本执行相同的发布检查步骤，并由 `build_script_parity_check` 核对对应命令与步骤顺序。脚本先探测可用的 Python 解释器，候选顺序是 `QX_PYTHON` → 仓库 venv → PATH 上的 `python`，并确认 `tzdata` 可导入；之后执行架构检查、格式检查、Release 构建、Rust 测试、Clippy、Python/JSON 测试、CLI 与生态冒烟、运行时拓扑检查。Rust 启动的 Python 子进程通过 `QX_PYTHON` 选择解释器。`.gitattributes` 将 `*.bat`/`*.cmd` 固定为 CRLF、`*.sh` 固定为 LF，避免 Windows `cmd.exe` 无法解析批处理文件。
 
 上面那两条 wheel 构建命令同样有前置条件：`tools/build_python_wheel.ps1` / `.sh` 先检查目标解释器能否运行 `pip` 和 `maturin`，随后通过 Python 项目的 PEP 517 `maturin` 后端从当前工作树和 `crates/qx-python/Cargo.toml` 一次构建源码与原生扩展；PyO3 `abi3-py310` 生成通用 `cp310-abi3` wheel，不再把某次旧 `.pyd` 复制进新包。maturin 从当前源码和 qx-python Cargo manifest 构建原生扩展；构建器契约由 `crates/qx-cli/tests/unit/artifact_identity_doc.rs` 检查。CI 与发布工作流会安装构建前端；本地解释器缺 `maturin` 时可运行 `uv pip install --python <python> maturin`。`.ps1` 整体是 ASCII-only：Windows PowerShell 5.1 按 ANSI 码页读无 BOM 文件，行尾的中文会让下一行代码整行消失。执行策略也是前置条件：Windows 客户端默认策略禁止运行未签名脚本，未带执行策略的调用会在一行代码都不执行的情况下以 `UnauthorizedAccess` 退出，所以上面的入口写成 `-ExecutionPolicy Bypass -File`。安装包产物落在 `dist/`，而 `/dist/` 在 `.gitignore` 里，故它是本地产物、不随仓库分发。
 
@@ -270,8 +270,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 
 本轮整跑（同一台机器、同一棵终树，2026-10-09）：
 
-- `python tools/check_architecture.py`：0 项 `[FAIL]`，`exit=0`；本轮条数与地板不手抄，读
-  `maturity/gate_snapshot.json`（`--snapshot` 生成；收尾有一条判据核「本轮实测 == 快照」）。
+- `python tools/check_architecture.py`：0 项 `[FAIL]`，`exit=0`；架构检查直接验证具名契约，不依赖历史数量快照。
 - `cargo fmt --all --check` rc 0；`cargo clippy --workspace --all-targets -- -D warnings` rc 0、
   诊断 0 行；`-p qx-runtime`、`-p qx-storage`、`-p qx-api`、`-p qx-cli` 各按
   `--no-default-features --all-targets` 再跑一遍，同样 rc 0、诊断 0 行。**这条 feature-off 腿已在 CI**
@@ -280,7 +279,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
   `qx-runtime/sqlite` 一并打开，`#[cfg(not(feature = "sqlite"))]` 那半边在 workspace 构建里从不被 lint；
   V13 R28 收口了此前登记在 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` §17.11 的这条缺口）。
 - `cargo test --workspace --offline`：**122 个 `test result:` 段 / 1227 passed / 0 failed / 1 ignored**；
-  磁盘在册 `#[test]` 的全仓地板是 `WORKSPACE_TEST_FLOOR = 1233`。
+  历史测试数量仅作旧记录参考，不作为当前验收门槛。
 - `cargo test -p qx-cli --no-default-features --features sqlite`：**19 段 / 453 passed / 0 failed**；
   `cargo test -p qx-cli --bin qx-cli`（文档契约那一批）373 passed / 0 failed。
 - `python -X utf8 -m unittest discover -s python/tests`：**Ran 68 tests / OK**。
@@ -298,7 +297,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 
 | 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |
 |---|---|---|
-| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（`--fill-tier` 只认 `l1`/`l2`：前者走 Tick 且要求帧内每档单档盘口，多一档即拒；后者走订单簿，按 `L2L3` 吃掉帧里带的全部深度，没有第三个 `l3` 旗标）、双腿 `multi-builtin`（组合收益按两条腿的钱合算，并落两腿期初本金与期末权益）、`fast-backtest` 并行、Bar 与深度链各写四份同前缀产物与可重算的输入指纹、事件重放结论；账户本金可经 `strategy.initial_cash_raw` 声明，三条单腿链各印一行生效本金与来源，摘要 v4 落 `account` 块，非法声明与非正本金当场报错（V11 Q71/Q72）；一份 runtime 里回测侧与 Paper 侧的本金必须同号，否则三条链与两个 Paper 入账入口都在任何副作用之前拒掉（V12 R3）；`report`/`status` 的读侧改成 `Option` 语义：缺键印 `absent`、声明过的 0 仍印 0，首行报产物世代与三块的有无，复核结论独占 `input_verified=` 一格（V12 R1）；四个信号旋钮按 kind 收成唯一一张表（`BuiltinStrategyKind::signal_knobs()`），内核需求、运行时体检、stdout 播报与摘要的 `signal{knobs,declared_unused}` 全问它，读者第一次能从产物里区分"没配"与"配了但不生效"（V12 R4 / #102）；`run_manifest.json` 的兄弟路径、`data_fingerprint` 与产物身份有了真正的生产读者，缺失或被篡改都拒（V12 R4-i） | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（当前代码落 v4，缺 `input` 与 `account` 两块），且没有任何用例校验这些跟踪产物；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §34.5 第 3 条，任务 #53）；多腿链仍无 `[X · Account]` 播报，因为它同时是四条链里最长的一条（V11 Q72 §34.5 第 1、4 条）；`multi-builtin` 只在 `--root` 点名时写 1 份归因产物，没有 Bar/深度链那四份同前缀产物、也没有 RunManifest；清单外的旋钮**不 fail-closed**、照常跑只列进 `declared_unused`，"配了但不生效"只有看播报与产物才看得见（V12 §14.2 的偏离记录）；集成用例仍会把产物写进启动目录口径下的 `data/**/runs/`（本轮终树整跑为 0 条，去掉 init 绝对化那一跑立刻写出 26 条未跟踪产物），#82 未修；被 git 跟踪的 `deploy/data/**` 自 #255 起不再被写脏 |
+| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（`--fill-tier` 只认 `l1`/`l2`：前者走 Tick 且要求帧内每档单档盘口，多一档即拒；后者走订单簿，按 `L2L3` 吃掉帧里带的全部深度，没有第三个 `l3` 旗标）、双腿 `multi-builtin`（组合收益按两条腿的钱合算，并落两腿期初本金与期末权益）、`fast-backtest` 并行、Bar 与深度链各写四份同前缀产物与可重算的输入指纹、事件重放结论；账户本金可经 `strategy.initial_cash_raw` 声明，三条单腿链各印一行生效本金与来源，schema v7 摘要记录 `account` 块，非法声明与非正本金当场报错（V11 Q71/Q72）；一份 runtime 里回测侧与 Paper 侧的本金必须同号，否则三条链与两个 Paper 入账入口都在任何副作用之前拒掉（V12 R3）；`report`/`status` 的读侧改成 `Option` 语义：缺键印 `absent`、声明过的 0 仍印 0，首行报产物世代与三块的有无，复核结论独占 `input_verified=` 一格（V12 R1）；四个信号旋钮按 kind 收成唯一一张表（`BuiltinStrategyKind::signal_knobs()`），内核需求、运行时体检、stdout 播报与摘要的 `signal{knobs,declared_unused}` 全问它，读者第一次能从产物里区分"没配"与"配了但不生效"（V12 R4 / #102）；`run_manifest.json` 的兄弟路径、`data_fingerprint` 与产物身份有了真正的生产读者，缺失或被篡改都拒（V12 R4-i） | 被 git 跟踪的 16 份 v1 历史摘要缺输入身份与重放证据，`report` 明确拒绝并提示用当前回测命令重生 v7 摘要；`qx-cli` 回归覆盖旧摘要拒绝与副作用前拦截，迁移不会伪造缺失字段；多腿链仍无 `[X · Account]` 播报，因为它同时是四条链里最长的一条（V11 Q72 §34.5 第 1、4 条）；`multi-builtin` 只在 `--root` 点名时写 1 份归因产物，没有 Bar/深度链那四份同前缀产物、也没有 RunManifest；清单外的旋钮**不 fail-closed**、照常跑只列进 `declared_unused`，"配了但不生效"只有看播报与产物才看得见（V12 §14.2 的偏离记录）；集成用例仍会把产物写进启动目录口径下的 `data/**/runs/`（本轮终树整跑为 0 条，去掉 init 绝对化那一跑立刻写出 26 条未跟踪产物），#82 未修；被 git 跟踪的 `deploy/data/**` 自 #255 起不再被写脏 |
 | 交易 · Paper | 控制面→队列→成交→Ledger、三条入账入口共用精度闸门、拒单与拒绝原因写进产物、崩溃窗口恢复；账户快照的八个钱标量全部区分"算过"与"没算"，权益在任一持仓缺标记价时报 `null` 而不是剩余现金（V11 Q67/Q68/Q70）；七个会提交/排队订单的入口（含 `serve` 与 `strategy-worker`）一律在第一个语句拒 A 股段（V11 Q65 + V12 R1）；账户快照的契约版本真的认版本 —— 只认 `schema_version=1`，且版本判定排在字段解析之前（V12 R2）；带订单的快照写得出也读得回 —— 四张键表（`positions`/`orders`/`fills`/`transfers`）整份交给 `from_json` 认的那一份 serde 编码（`json_table_entries` / `json_position_entries`），键一律是带引号的字符串，`Side`/`OrderStatus` 印变体名而不是数字码，未知变体名当场拒（V12 R4 / TX5，与 V11 R14/R15/R18 同一收口点） | 本地 Ledger 拼出的持仓行没有浮盈/保证金生产者，恒定报 `null`；账户级五个钱字段同样无来源；权益报 `null` 时读侧看不出缺的是哪条标记价（V11 §32.5 第 5 条）；`fills`/`transfers` 行只编码数值与已同形的字符串，因此没有读侧折算层，也就没有"未知码"可拒（V12 §14.5 记为口径而非缺陷） |
 | 交易 · 实盘 | Binance Spot 直连与公共 CCXT 的提交/回报/对账代码路径，缺凭据即退出码 3 fail closed；一轮 CCXT 对账的两半发现（远端孤单 / 本地无远端结果）经同一份清单同时落到事实流、持久报告与健康判定（V11 Q69）；两条用户流的重连都有连续失败预算 —— Binance 按累计次数计改为 `delivered > 0` 清零并统一走 `qx-core::retry`，CCXT Pro `watch_orders` 从"固定间隔无限重连"补上 500ms 起 / 8s 封顶 / 10 次连续（V12 R4-b/R4-c） | 零真实账户往返：`sandbox_tested=false`；预算与退避只在进程内证过，网络真断时的重连语义无外部记录；Binance 对账链从不查询持仓/资金费/账单，报告只能报 `null`（取数器仍缺，V11 §31.5 第 5 条）；CCXT 资金费快照缺 `timestamp_ms` 时仍兜 0（§31.5 第 1 条）；远端孤单挂单只有报告与健康两面，没有可落事实流的本地句柄（§31.5 第 4 条，口径而非缺陷）；衍生品无直连（只经 CCXT） |
 | 数据 | 四级质量门、PIT `as_of()` 可见性、DatasetBundle 与组件指纹、A 股公司行为台账与八条交易制度；台账的两侧线格式（信封 5 键、动作 35 键、16 个规范动作名、`*_raw` 的定点单位、ISO 日期的空格/`T` 两种分隔）钉在 `python/tests/fixtures/ashare_actions_cross_check.*` 这一份共读夹具上：Python 侧在进程内复算 payload、期望值与除权参考价，Rust 侧读同一格而不是各自抄一份，除权除息日的锚由已装载的公司行为折算（V13 R1-A1/A2，口径见 [`deploy/README.md`](deploy/README.md) 的"公司行为 v1 线格式"一节） | 外部数据源正确性只能按供应商逐个验收，本机不可证明 —— 上面那份夹具是本机自造的对照样本，不是 akshare/交易所落下来的记录 |

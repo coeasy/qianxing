@@ -1996,10 +1996,7 @@ qx_control_retired_audit_records_total {}\n",
             let config = match configs.current() {
                 Ok(config) => config,
                 Err(error) => {
-                    break Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("读取 TLS 配置失败: {error}"),
-                    ));
+                    break Err(std::io::Error::other(format!("读取 TLS 配置失败: {error}")));
                 }
             };
             let secured = match tls_stream(stream, config) {
@@ -2016,10 +2013,9 @@ qx_control_retired_audit_records_total {}\n",
             let policy = match identities.current() {
                 Ok(policy) => policy,
                 Err(error) => {
-                    break Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("读取 mTLS 身份策略失败: {error}"),
-                    ));
+                    break Err(std::io::Error::other(format!(
+                        "读取 mTLS 身份策略失败: {error}"
+                    )));
                 }
             };
             let operator_id = policy
@@ -2299,6 +2295,43 @@ mod tests {
     }
 
     #[test]
+    fn compare_runs_route_uses_the_shared_deterministic_application_case() {
+        let request = serde_json::json!({
+            "schema_version": 1,
+            "runs": [
+                {"run_id":"run-z","instrument":"600000.SSE","data_fingerprint":"bars:abc","result_hash":"hash-z","return_bps":100,"max_drawdown_bps":300},
+                {"run_id":"run-a","instrument":"600000.SSE","data_fingerprint":"bars:abc","result_hash":"hash-a","return_bps":100,"max_drawdown_bps":200}
+            ]
+        });
+        let response = ApiService::new(ApiState::default()).handle(
+            "POST",
+            "/app/compare-runs",
+            &request.to_string(),
+            1,
+        );
+        assert_eq!(response.status, 200, "{response:?}");
+        let body: serde_json::Value =
+            serde_json::from_str(&response.body).expect("valid JSON result");
+        assert_eq!(body["schema_version"], 1);
+        assert_eq!(body["runs"][0]["rank"], 1);
+        assert_eq!(body["runs"][0]["run"]["run_id"], "run-a");
+        assert_eq!(body["runs"][1]["rank"], 2);
+
+        let mut conflicting = request;
+        conflicting["runs"][1]["data_fingerprint"] = serde_json::json!("bars:other");
+        let response = ApiService::new(ApiState::default()).handle(
+            "POST",
+            "/app/compare-runs",
+            &conflicting.to_string(),
+            2,
+        );
+        assert_eq!(
+            response.status, 409,
+            "mixed input lineage must fail closed: {response:?}"
+        );
+    }
+
+    #[test]
     fn query_port_exposes_account_orders_positions_balances_and_audit() {
         let mut state = ApiState::default();
         let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", 100);
@@ -2349,6 +2382,8 @@ mod tests {
             ts: 100,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         });
         state.reconcile_reports.insert(
             "reconciler".into(),
@@ -2524,14 +2559,18 @@ mod tests {
 
     #[test]
     fn shared_file_rate_limit_is_visible_to_multiple_api_services() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-api-rate-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("target/qx-api-test-tmp")
+            .join(format!(
+                "qianxing-api-rate-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         let first = ApiService::new(ApiState::default())
             .with_shared_file_rate_limit(FileTokenBucket::new(&root, "api", 1, 0).unwrap());
         let second = ApiService::new(ApiState::default())

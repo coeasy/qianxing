@@ -27,9 +27,11 @@ fn app_backtest_binds_execution_costs_and_ashare_rules() {
         latency_insert_ns: 0,
         ..ExecutionCostRules::default()
     });
-    let mut ashare = AshareRuleConfig::default();
-    ashare.enabled = true;
-    ashare.t_plus_one = false;
+    let ashare = AshareRuleConfig {
+        enabled: true,
+        t_plus_one: false,
+        ..AshareRuleConfig::default()
+    };
     spec.ashare_rules = Some(ashare);
 
     let context = RunContext::new(CallerCapability::Research, "execution-binding");

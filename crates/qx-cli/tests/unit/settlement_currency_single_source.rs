@@ -16,7 +16,7 @@ use super::*;
 #[test]
 fn every_settlement_currency_fallback_reads_the_same_default() {
     assert_eq!(
-        backtest_settlement_currency(None),
+        qx_core::resolve_settlement_currency(None),
         DEFAULT_SETTLEMENT_CURRENCY,
         "回测装配的兜底必须取自单源常量"
     );
@@ -64,8 +64,8 @@ fn declaring_the_default_currency_matches_declaring_nothing() {
         ..workspace_spot_spec()
     };
     assert_eq!(
-        backtest_settlement_currency(Some(&spec)),
-        backtest_settlement_currency(None),
+        qx_core::resolve_settlement_currency(Some(&spec)),
+        qx_core::resolve_settlement_currency(None),
         "显式声明缺省币种与不声明必须给出同一个账簿键"
     );
 }

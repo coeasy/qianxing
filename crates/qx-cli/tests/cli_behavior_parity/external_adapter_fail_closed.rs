@@ -107,6 +107,22 @@ fn optional_storage_and_messaging_commands_reject_before_external_io() {
     ];
 
     for (label, args, expected_diagnostic) in cases {
+        // The feature-off contract applies only when that backend is not compiled in. Feature
+        // matrix builds validate the enabled path through its own runtime/config contracts; they
+        // must not keep expecting the disabled-feature message after enabling the backend.
+        if (label == "storage-adopt-postgres" && cfg!(feature = "postgres"))
+            || (matches!(
+                label,
+                "outbox-relay"
+                    | "outbox-relay-worker"
+                    | "event-consumer-worker"
+                    | "consumer-dlq-replay"
+            ) && cfg!(feature = "nats"))
+            || (label == "outbox-relay-postgres"
+                && cfg!(all(feature = "nats", feature = "postgres")))
+        {
+            continue;
+        }
         let first = observe_in_isolated_dir(label, args);
         let second = observe_in_isolated_dir(label, args);
         assert_eq!(

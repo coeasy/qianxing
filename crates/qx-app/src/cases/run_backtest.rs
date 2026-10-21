@@ -29,8 +29,8 @@ mod bar_strategy;
 mod cancellation;
 mod custom_strategy;
 mod execution_binding;
-mod risk_binding;
 pub(in crate::cases) mod strategy_slot;
+use crate::cases::risk_gate::backtest_risk_gate;
 pub(in crate::cases) use bar_strategy::run_backtest_inner_with_bar_strategy;
 pub(super) use bar_strategy::BacktestRunDetails;
 use cancellation::run_engine;
@@ -38,7 +38,6 @@ pub(in crate::cases) use custom_strategy::run_backtest_inner_with_experiment_str
 pub use custom_strategy::StrategyArtifactIdentity;
 use custom_strategy::{strategy_slots_config_hash, InjectedStrategy};
 pub(crate) use execution_binding::{bind_execution, bind_margin};
-pub(crate) use risk_binding::backtest_risk_gate;
 use strategy_slot::build_single_native_strategy;
 use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};
 
@@ -389,7 +388,7 @@ fn run_backtest_inner_unchecked_with_details(
         clock_start: report.clock_start,
         clock_end: report.clock_end,
         seed: report.seed,
-        risk_rule_set_version,
+        risk_rule_set_version: risk_rule_set_version.clone(),
         fee_model,
         fill_model,
         fill_model_details: Some(report.fill_model_descriptor.clone()),
@@ -439,7 +438,11 @@ fn run_backtest_inner_unchecked_with_details(
         artifacts,
         account_id: spec.account_id.clone(),
     };
-    Ok(Some(BacktestRunDetails { outcome, report }))
+    Ok(Some(BacktestRunDetails {
+        outcome,
+        report,
+        risk_rule_set_version,
+    }))
 }
 
 /// 规格摘要：`BacktestSpec` 的规范化 JSON 过一遍 FNV-1a。

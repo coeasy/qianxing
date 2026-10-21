@@ -11,7 +11,7 @@ use crate::{escape_html, summary_block, summary_number, summary_text};
 
 /// Classify existing summary pointers for machine-readable report and EvidenceBundle output.
 /// A pointer's class describes provenance, not accuracy, and no metric is recalculated here.
-
+///
 /// 渲染结果可信度面板；纯函数，不经文件系统，与 [`crate::report_html::render_report_html`]
 /// 共用同一份摘要读法。
 pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {

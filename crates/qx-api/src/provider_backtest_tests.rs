@@ -9,7 +9,17 @@ use qx_provider::{
     ProviderError, ProviderRegistry, ProviderResult,
 };
 use qx_strategy::BuiltinStrategyKind;
-use std::{collections::BTreeSet, fs, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
+
+static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct FixtureProvider {
     capability: ProviderCapability,
@@ -34,10 +44,14 @@ fn workspace_root() -> PathBuf {
 
 impl TestDirectory {
     fn new() -> Self {
+        let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let path = std::env::current_dir()
             .unwrap()
             .join("target")
-            .join(format!("qx-api-provider-route-{}", std::process::id()));
+            .join(format!(
+                "qx-api-provider-route-{}-{sequence}",
+                std::process::id()
+            ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         Self(path)
@@ -195,7 +209,7 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
             tier: "l1".into(),
             settlement_currency: "USDT".into(),
             initial_cash_raw: 100_000_000_000_000,
-            fee_bps: 0,
+            fee_bps: Some(0),
             latency_snapshots: 0,
             queue_position_bps: 0,
             queue_position_model: Default::default(),
@@ -210,6 +224,21 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
             market_making: None,
             account_id: None,
             portfolio: None,
+            manifest_run_id: None,
+            execution_cost_rules: None,
+            execution_cost_source: None,
+            risk_rules: None,
+            allow_short: None,
+            declared_ashare_rules: None,
+            declared_fill_model: None,
+            declared_bar_volume_participation_bps: None,
+            quality_manifest_path: None,
+            runtime_config_path: None,
+            market_spec_path: None,
+            market_spec_source: None,
+            account_base_source: None,
+            signal_source: None,
+            signal_declared_unused: None,
         },
     }
 }
@@ -249,6 +278,60 @@ fn provider_spec() -> ProviderBacktestSpec {
         timezone: "UTC".into(),
         manifest_path: None,
     }
+}
+
+#[test]
+fn provider_backtest_specs_serialize_with_registered_schema_fields() {
+    fn keys(value: &serde_json::Value) -> BTreeSet<String> {
+        value
+            .as_object()
+            .expect("serialized contract object")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    fn properties(schema: &serde_json::Value, path: &[&str]) -> BTreeSet<String> {
+        let mut value = schema;
+        for segment in path {
+            value = &value[segment];
+        }
+        keys(value)
+    }
+
+    let bar_schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../schemas/provider-backtest-spec-v1.json"
+    ))
+    .unwrap();
+    let bar = serde_json::to_value(provider_spec()).unwrap();
+    assert!(keys(&bar).is_subset(&properties(&bar_schema, &["properties"])));
+    assert!(keys(&bar["data_request"]).is_subset(&properties(
+        &bar_schema,
+        &["$defs", "DataRequest", "properties"]
+    )));
+    assert!(keys(&bar["backtest"]).is_subset(&properties(
+        &bar_schema,
+        &["$defs", "BacktestSpec", "properties"]
+    )));
+    assert_eq!(bar["data_request"]["kind"], "Bar");
+
+    let depth_schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../schemas/provider-depth-backtest-spec-v1.json"
+    ))
+    .unwrap();
+    let depth_root = std::path::Path::new("provider-schema-contract");
+    let depth = serde_json::to_value(provider_depth_spec(depth_root)).unwrap();
+    assert!(keys(&depth).is_subset(&properties(&depth_schema, &["properties"])));
+    assert!(keys(&depth["data_request"]).is_subset(&properties(
+        &depth_schema,
+        &["$defs", "DataRequest", "properties"]
+    )));
+    assert!(keys(&depth["backtest"]).is_subset(&properties(
+        &depth_schema,
+        &["$defs", "DepthBacktestSpec", "properties"]
+    )));
+    assert_eq!(depth["data_request"]["kind"], "Quote");
+    assert_eq!(depth["data_request"]["frequency"], "tick");
 }
 
 #[test]

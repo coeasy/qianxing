@@ -31,8 +31,8 @@ cargo build --release -p qx-cli
 python benchmarks/run_baseline.py --binary target/release/qx-cli.exe --out benchmarks/results/current.json
 # 机器可读
 python benchmarks/run_baseline.py --json --out benchmarks/results/current.json
-# 与同硬件基线对比；超过 ±20% 只告警，不改变退出码
-python benchmarks/compare_baseline.py benchmarks/results/baseline.json benchmarks/results/current.json
+# 与同硬件基线对比；目标台账登记组回归超过 10% 时非零退出
+python benchmarks/compare_baseline.py benchmarks/results/baseline.json benchmarks/results/current.json --targets maturity/targets.yaml
 ```
 
 它测什么、不测什么（诚实口径，别把没测的读成测了）：
@@ -48,20 +48,50 @@ JSON 同时包含 `linear_scaling_curve`：相邻 N 的 p50 差分、每 Bar 边
 超过 20% 阈值才标记为候选正向拐点。该结果不是内核稳态单 tick 成本曲线，也不是统计显著性结论；
 不得用它替代 `maturity/capabilities.yaml` 里按 EventLog 长度测得的稳态单 tick 数据。
 
+## Crypto Paper worker 端到端
+
+```bash
+python benchmarks/run_crypto_paper_e2e.py \
+  --binary target/release/qx-cli \
+  --repeats 5 \
+  --out benchmarks/results/crypto-paper-e2e.json
+```
+
+该采样重复调用现有 `tools/paper_acceptance.py`，每轮在隔离目录里走 scheduler、strategy、Paper execution、
+账簿/EventLog/审计、同目录幂等重跑和独立目录事实一致性。每个样本都必须先通过 acceptance，随后报告
+整轮 wall-clock p50/p95；它不拆解单笔订单延迟，也不覆盖真实 funding provider 或 8 小时结算调度。
+CI 把 workload `crypto-paper-worker-acceptance-v1` 作为已登记的 `end_to_end` 项比较，首次匹配仅记录，
+后续同硬件回退超过 targets.yaml 的 10% 阈值会阻断。它与 qx-zhenlu v2 microbenchmark 共同形成 Crypto Paper
+性能证据，但不单独声称完整 profile 已测量。
+
 ## Rust 微基准：Criterion + JSON 证据
 
 `criterion_performance` 使用 Criterion 覆盖 `append_batch`、EventLog `digest`、全量重放、
-L2 撮合、SQLite 管线的全量/增量重放对拍，以及 A 股昨收逐点反扫/序列预计算；对拍必须得到
+Scheduler 活跃运行索引、L2 撮合、Paper Venue 订单生命周期、SQLite 管线的全量/增量重放对拍，
+以及 A 股昨收逐点反扫/序列预计算；对拍必须得到
 相同 digest，A 股两种计算必须逐 Bar 返回相同锚点。运行完整测量并同时保留兼容 JSON 记录：
 
 ```bash
+cargo bench -p qx-core --bench criterion_performance -- --noplot
+cargo bench -p qx-scheduler --bench criterion_performance -- --noplot
+cargo bench -p qx-xingban --bench criterion_performance -- --noplot
+cargo bench -p qx-zhenlu --bench criterion_performance -- --noplot
 cargo bench -p qx-cli --bench criterion_performance -- --noplot
 python benchmarks/run_rust_bench.py --out benchmarks/results/rust-micro.json
 ```
 
-`run_rust_bench.py` 先运行 Criterion，再运行稳定 JSON 微基准，并把 Criterion 的 mean、median、
+EventLog 与 Ledger 基准归 `qx-core`，调度索引归 `qx-scheduler`，撮合/A 股归 `qx-xingban`，
+Paper Venue 订单生命周期归 `qx-zhenlu`，应用级回测归 `qx-cli`。各 crate 的 Criterion group 使用
+独立前缀，避免 workspace 共用的 `target/criterion` 下同名结果互相覆盖。`run_rust_bench.py`
+依序运行所有 crate，核对必需样本后再运行稳定 JSON 微基准，并把 Criterion 的 mean、median、
 标准差和 95% 置信区间摘要写进同一份证据。只有同一硬件指纹和相同 workload 才参与趋势比较；
 跨硬件结果单独留档，不合并成一条趋势。
+
+`qx_zhenlu_crypto_paper_lifecycle_v2` 测量 1/16/256 笔并行挂单的定点规格校验、加权限频、
+Paper Venue 提交、maker/taker 费用、首次部分成交、账簿成交记账及一次 funding 计算/结算。
+它不包含策略 worker、真实 provider 费率读取、结算周期调度或持久 EventLog，不能单独作为完整
+`crypto-paper` profile 测量。`v2` workload id 与之前不含精度/限频/账簿/funding 的 PaperVenue 微基准隔离，
+避免将不同语义范围当作同一 Criterion 趋势基线。
 
 `backtest_risk_metrics` 在相同权益序列上配对比较 qx-core 当前计算与旧的双临时向量算法，覆盖
 1k/8k/64k 个周期；测量前逐字段断言 Sharpe、Sortino、Calmar、胜率和收益因子完全相等。当前实现
@@ -148,6 +178,16 @@ python benchmarks/run_profile_backtest.py
 `maturity/evidence/ashare-rules-backtest-current-2026-10-19.json`。该轮结果哈希跨重复稳定，且与单条分红控制组不同；
 与前次证据的运行配置摘要不同，不作严格 A/B 或提速归因。仍不覆盖逐项规则分支和 Paper 生命周期，因此不翻转 profile 状态。
 
+2026-10-21 基于当前工作树重建 Release 后，以三档分钟 Bar、每档 4 条 PIT 可见现金分红、每档 5 次重复复测；1k/8k/64k P50/P95 为
+275.235/298.256ms、310.972/321.875ms、550.624/560.258ms，64k P50 吞吐 116,235 bars/s。拒单数为 32/258/2,064，
+每档结果哈希跨重复稳定，4 条动作均相对单动作对照改变结果。当前二进制 SHA-256 为
+`656a932bf7c45cfd8464dccbb414b6ff518f316b86ffc59651f6b71c7ca00047`，证据为
+`maturity/evidence/ashare-rules-backtest-2026-10-21-current-release.json`。同日 A 股定向规则合同 33/33、
+分钟涨停锚/T+1 在途卖单/PIT as-of 生命周期用例 8/8 通过，并登记在 `maturity/quant_scenarios.yaml`。
+此证据仍使用合成分钟行情；日历现改为上交所/深交所公布的 2024-2025 节假日安排，不覆盖公告外临时休市，
+也没有把全部制度分支压进吞吐负载，
+因此 `ashare-research` 仍保持 `unmeasured`。二进制来自脏工作树，不能作为发布候选产物。
+
 ```bash
 python benchmarks/run_ashare_profile_backtest.py
 ```
@@ -191,9 +231,10 @@ python benchmarks/compare_multi_market_visible_lookup.py \
 `maturity/evidence/multi-market-visible-lookup-ab-2026-10-16.json`。这不否定查询从 O(B) 降到 O(log B)，
 但该场景尚未测出端到端收益，也不代表生产多市场 profile。
 
-`compare_baseline.py` 只在硬件指纹一致且 workload size 重叠时比较 p50/p95，偏差超过阈值输出
-GitHub Actions warning annotation，并始终以 0 退出，避免噪声指标阻塞 CI。尚未生成可比较的同机
-`baseline.json` 前，它会明确报告跳过比较。
+`compare_baseline.py` 只在硬件指纹一致且 workload size 重叠时比较 p50/p95。只有
+`maturity/targets.yaml` 登记的性能组参与阻断；回归超过登记阈值会输出 error annotation 并非零退出，
+性能提升不会导致失败。首次采样、没有匹配 workload 或硬件指纹不同仍明确跳过比较。CI 下载上一份
+成功主分支的基准 artifact；一旦找到该运行，artifact 下载失败会阻断当前 job，避免把漏取历史误判为首次采样。
 
 当前 Rust target 不采集内存峰值、分配次数或逐阶段 p99；这些指标没有测量钩子，不在报告里
 伪造。`maturity/targets.yaml` 仍只将真实具备 profile 对应证据的场景标为 measured。

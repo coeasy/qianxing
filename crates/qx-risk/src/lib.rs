@@ -143,6 +143,9 @@ impl OrderRiskPosition {
 #[derive(Clone, Debug, Default)]
 pub struct OrderRiskContext {
     pub available_margin_raw: Option<i128>,
+    /// Portfolio-derived initial margin after applying the candidate order. When present,
+    /// this replaces the isolated single-order estimate in `validate_order`.
+    pub projected_initial_margin_raw: Option<i128>,
     pub reference_price: Option<Price>,
     pub instrument_spec: Option<TradingInstrumentSpec>,
     pub max_order_notional_raw: Option<i128>,
@@ -218,6 +221,7 @@ impl OrderRiskContext {
         order.validate().map_err(QxError::BusinessViolation)?;
         let Some(spec) = self.instrument_spec.as_ref() else {
             if self.available_margin_raw.is_some()
+                || self.projected_initial_margin_raw.is_some()
                 || self.max_order_notional_raw.is_some()
                 || self.max_position_notional_raw.is_some()
             {
@@ -268,13 +272,23 @@ impl OrderRiskContext {
                 ));
             }
         }
-        if let Some(available) = self.available_margin_raw {
+        let spot_sell_needs_no_cash_margin =
+            spec.product == qx_core::TradingProduct::Spot && order.side == Side::Sell;
+        if let Some(available) = self
+            .available_margin_raw
+            .filter(|_| !spot_sell_needs_no_cash_margin)
+        {
             if available < 0 {
                 return Err(QxError::BusinessViolation("可用保证金不能为负".into()));
             }
             if !policy.reduce_only {
-                let required =
-                    spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
+                let required = match self.projected_initial_margin_raw {
+                    Some(required) if required < 0 => {
+                        return Err(QxError::BusinessViolation("投影初始保证金不能为负".into()));
+                    }
+                    Some(required) => required,
+                    None => spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?,
+                };
                 if required > available {
                     return Err(QxError::BusinessViolation(
                         "订单初始保证金超过账户可用保证金".into(),
@@ -480,5 +494,92 @@ mod tests {
             ..OrderRiskContext::default()
         };
         assert!(rule.check(&with_spec, &order).is_ok());
+    }
+
+    #[test]
+    fn projected_initial_margin_overrides_isolated_order_estimate() {
+        use qx_core::{TradingInstrumentSpec, TradingProduct, SCALE};
+        let order = Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        };
+        let context = OrderRiskContext {
+            available_margin_raw: Some(50 * SCALE),
+            projected_initial_margin_raw: Some(25 * SCALE),
+            reference_price: order.limit,
+            instrument_spec: Some(TradingInstrumentSpec {
+                instrument: order.instrument.clone(),
+                product: TradingProduct::Perpetual,
+                base_currency: "BTC".into(),
+                quote_currency: "USDT".into(),
+                settlement_currency: "USDT".into(),
+                contract_size: SCALE,
+                linear: true,
+                inverse: false,
+                price_tick: 1,
+                qty_step: 1,
+                min_qty: 1,
+                max_leverage: 20,
+                maintenance_margin_bps: 500,
+                valid_from: 1,
+                valid_to: None,
+            }),
+            ..OrderRiskContext::default()
+        };
+        assert!(
+            RiskEngine::evaluate_order(&context, &order).allowed,
+            "portfolio-projected requirement must override the isolated order estimate"
+        );
+    }
+
+    #[test]
+    fn spot_sell_does_not_require_quote_cash_margin() {
+        use qx_core::{TradingInstrumentSpec, TradingProduct, SCALE};
+        let order = Order {
+            client_id: 2,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Sell,
+            qty: Quantity::from_i64(1),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        };
+        let context = OrderRiskContext {
+            available_margin_raw: Some(0),
+            reference_price: order.limit,
+            instrument_spec: Some(TradingInstrumentSpec {
+                instrument: order.instrument.clone(),
+                product: TradingProduct::Spot,
+                base_currency: "BTC".into(),
+                quote_currency: "USDT".into(),
+                settlement_currency: "USDT".into(),
+                contract_size: SCALE,
+                linear: false,
+                inverse: false,
+                price_tick: 1,
+                qty_step: SCALE,
+                min_qty: SCALE,
+                max_leverage: 1,
+                maintenance_margin_bps: 0,
+                valid_from: 1,
+                valid_to: None,
+            }),
+            ..OrderRiskContext::default()
+        };
+        assert!(
+            RiskEngine::evaluate_order(&context, &order).allowed,
+            "spot inventory is checked separately; a sell must not need quote cash"
+        );
     }
 }

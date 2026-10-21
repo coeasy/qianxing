@@ -8,6 +8,7 @@ use qx_xingban::{BacktestReport, BarStrategy};
 pub(in crate::cases) struct BacktestRunDetails {
     pub(in crate::cases) outcome: BacktestOutcome,
     pub(in crate::cases) report: BacktestReport,
+    pub(in crate::cases) risk_rule_set_version: String,
 }
 
 pub(in crate::cases) fn run_backtest_inner_with_bar_strategy(

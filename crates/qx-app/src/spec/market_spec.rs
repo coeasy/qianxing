@@ -5,6 +5,34 @@ use serde_json::Value;
 
 pub const CCXT_MARKET_SPEC_VERSION: &str = "ccxt-market-spec-v1";
 pub const PRODUCT_MARKET_SPEC_VERSION: &str = "product-market-spec-v1";
+pub const DEFAULT_INSTRUMENT_SPEC_VERSION: &str = "default-instrument-spec-v1";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BacktestMarketSpecBinding {
+    pub spec: Option<TradingInstrumentSpec>,
+    pub app_margin_model: Option<BacktestMarginConfig>,
+    pub source: &'static str,
+}
+
+/// Bind an optional market snapshot to every market-dependent backtest input in one place.
+pub fn backtest_market_spec_binding(
+    instrument: &InstrumentId,
+    market: Option<&Value>,
+) -> Result<BacktestMarketSpecBinding, AppError> {
+    let Some(market) = market else {
+        return Ok(BacktestMarketSpecBinding {
+            spec: None,
+            app_margin_model: None,
+            source: DEFAULT_INSTRUMENT_SPEC_VERSION,
+        });
+    };
+
+    Ok(BacktestMarketSpecBinding {
+        spec: Some(market_spec_from_value(instrument, market)?),
+        app_margin_model: Some(backtest_margin_model_from_market(market)),
+        source: market_spec_source_label(market),
+    })
+}
 
 fn market_value_is_product_spec(market: &Value) -> bool {
     market.get("base_currency").is_some()
@@ -223,4 +251,53 @@ pub fn backtest_margin_model_from_market(market: &Value) -> BacktestMarginConfig
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::new(AppErrorCategory::InvalidInput, message)
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    #[test]
+    fn absent_snapshot_returns_the_default_binding() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
+        let binding = backtest_market_spec_binding(&instrument, None).expect("default binding");
+
+        assert_eq!(binding.spec, None);
+        assert_eq!(binding.app_margin_model, None);
+        assert_eq!(binding.source, DEFAULT_INSTRUMENT_SPEC_VERSION);
+    }
+
+    #[test]
+    fn product_snapshot_binds_spec_margin_and_source_together() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
+        let market = serde_json::json!({
+            "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+            "product": "spot",
+            "base_currency": "BTC",
+            "quote_currency": "USDT",
+            "settlement_currency": "USDT",
+            "contract_size": 1_000_000_000_i64,
+            "linear": true,
+            "inverse": false,
+            "price_tick": 1_000_000_i64,
+            "qty_step": 1_000_000_i64,
+            "min_qty": 1_000_000_i64,
+            "max_leverage": 1,
+            "maintenance_margin_bps": 0,
+            "valid_from": 0,
+            "valid_to": null
+        });
+        let binding = backtest_market_spec_binding(&instrument, Some(&market))
+            .expect("valid product market binding");
+
+        assert_eq!(
+            binding.spec.as_ref().map(|spec| &spec.instrument),
+            Some(&instrument)
+        );
+        assert_eq!(
+            binding.app_margin_model,
+            Some(BacktestMarginConfig::NoMargin)
+        );
+        assert_eq!(binding.source, PRODUCT_MARKET_SPEC_VERSION);
+    }
 }

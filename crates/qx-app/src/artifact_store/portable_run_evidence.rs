@@ -486,18 +486,17 @@ pub fn commit_portable_run_evidence_export(
         let parent = target.parent().ok_or("证据包导出目标缺少父目录")?;
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建证据包目录失败 {}: {error}", parent.display()))?;
-        std::fs::write(&target, generated.payload).map_err(|error| {
-            format!("写入{}失败 {}: {error}", generated.label, target.display())
-        })?;
+        sink::publish_bytes(&target, &generated.payload, sink::PublishMode::CreateNew)
+            .map_err(|error| format!("写入{}失败：{error}", generated.label))?;
     }
     let payload = plan.bundle.to_json()?;
     let bundle_target = staging.join("evidence.json");
-    std::fs::write(&bundle_target, payload).map_err(|error| {
-        format!(
-            "写入导出 EvidenceBundle 失败 {}: {error}",
-            bundle_target.display()
-        )
-    })?;
+    sink::publish_bytes(
+        &bundle_target,
+        payload.as_bytes(),
+        sink::PublishMode::CreateNew,
+    )
+    .map_err(|error| format!("写入导出 EvidenceBundle 失败：{error}"))?;
     std::fs::rename(&staging, output_dir).map_err(|error| {
         format!(
             "提交证据包目录失败 {} -> {}: {error}",

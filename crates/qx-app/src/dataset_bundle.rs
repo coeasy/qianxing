@@ -2,7 +2,8 @@
 
 use crate::{AppError, AppErrorCategory};
 use qx_data::{
-    ArrowDatasetManifest, DatasetBundleManifest, DatasetComponentFormat, DatasetManifest,
+    ArrowDatasetManifest, DatasetBundleManifest, DatasetComponentFormat, DatasetComponentManifest,
+    DatasetManifest,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -13,6 +14,23 @@ pub struct DatasetBundleComponentBindings<'a> {
     pub component_paths: &'a BTreeMap<String, String>,
     pub ashare_actions_path: Option<&'a str>,
     pub ashare_calendar_path: Option<&'a str>,
+}
+
+/// Assemble and validate a bundle from already identified component manifests.
+/// Component identity calculation stays with the producer; ownership of bundle
+/// composition and validation stays in the shared Rust application layer.
+pub fn assemble_dataset_bundle(
+    bundle_id: impl Into<String>,
+    version: impl Into<String>,
+    source: impl Into<String>,
+    components: impl IntoIterator<Item = DatasetComponentManifest>,
+) -> Result<DatasetBundleManifest, String> {
+    let mut bundle = DatasetBundleManifest::new(bundle_id, version, source);
+    for component in components {
+        bundle.add_component(component)?;
+    }
+    bundle.validate()?;
+    Ok(bundle)
 }
 
 /// Verify that the bundle's Bar component matches the selected ingested dataset.
@@ -183,4 +201,55 @@ fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
 
 fn invalid_component(message: impl Into<String>) -> AppError {
     AppError::new(AppErrorCategory::InvalidInput, message)
+}
+
+#[cfg(test)]
+mod assembly_tests {
+    use super::assemble_dataset_bundle;
+    use qx_data::{DatasetComponentFormat, DatasetComponentManifest, DatasetManifest};
+
+    fn component(kind: &str) -> DatasetComponentManifest {
+        DatasetComponentManifest {
+            kind: kind.into(),
+            format: DatasetComponentFormat::Json,
+            dataset: DatasetManifest {
+                dataset_id: format!("bundle.{kind}"),
+                version: "v1".into(),
+                source: "test".into(),
+                fingerprint: format!("{kind}-fingerprint"),
+                schema_version: 1,
+                start_timestamp: 1,
+                end_timestamp: 2,
+            },
+            row_count: 1,
+        }
+    }
+
+    #[test]
+    fn bundle_assembly_validates_required_bars_and_duplicate_components() {
+        assert!(
+            assemble_dataset_bundle("bundle", "v1", "test", [component("actions")])
+                .unwrap_err()
+                .contains("must contain a bars component")
+        );
+        assert!(assemble_dataset_bundle(
+            "bundle",
+            "v1",
+            "test",
+            [component("bars"), component("bars")]
+        )
+        .unwrap_err()
+        .contains("already exists: bars"));
+
+        let bundle = assemble_dataset_bundle(
+            "bundle",
+            "v1",
+            "test",
+            [component("bars"), component("actions")],
+        )
+        .unwrap();
+        assert_eq!(bundle.components.len(), 2);
+        assert_eq!(bundle.component("bars").unwrap().row_count, 1);
+        assert!(bundle.fingerprint().is_ok());
+    }
 }

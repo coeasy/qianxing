@@ -24,6 +24,12 @@ fn l1_tick_use_case_runs_the_rust_engine_and_publishes_verifiable_artifacts() {
     let summary: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&first.artifacts.summary).expect("summary"))
             .expect("summary JSON");
+    assert_eq!(first.display_summary, summary);
+    let public_outcome = serde_json::to_value(&first).expect("stable depth outcome JSON");
+    assert!(public_outcome.get("display_summary").is_none());
+    let mut display_only_change = first.clone();
+    display_only_change.display_summary["display_only_probe"] = serde_json::json!(true);
+    assert_eq!(first, display_only_change);
     assert_eq!(summary["account_id"], "acct.depth-test");
     let verified = verify_depth_run(&first, &context).expect("verify L1 artifacts");
     assert!(verified.verified, "{:?}", verified.mismatches);
@@ -74,7 +80,8 @@ fn l2_order_book_use_case_uses_depth_matching_and_replay_verification() {
 fn l2_market_making_replaces_quotes_through_shared_matching_risk_oms_and_replay() {
     let root = scratch("app-l2-market-making");
     let mut request = spec("l2-market-making", &root, "l2", 2);
-    request.fee_bps = 10;
+    request.fee_bps = Some(10);
+    // WP-2 之后 fee_bps 是 Option：`Some(10)` = 显式点名 10bp 旗标，`None` 才走成本规则 / 内核默认。原 `= 10` 语义不变。
     request.market_making = Some(qx_xingban::MarketMakingConfig {
         spread_bps: 100,
         quote_qty_raw: SCALE,
@@ -241,12 +248,12 @@ fn depth_portfolio_runs_multiple_strategies_through_the_shared_tick_and_book_eng
         let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fills artifact");
         assert_eq!(
             fills.lines().next(),
-            Some("ts,order_id,qty_raw,price_raw,fee_raw,strategy_id")
+            Some("order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id")
         );
         let owners = fills
             .lines()
             .skip(1)
-            .filter_map(|line| line.split(',').nth(5))
+            .filter_map(|line| line.split(',').nth(6))
             .collect::<std::collections::BTreeSet<_>>();
         assert!(owners.contains("depth-sma"), "{tier} primary attribution");
         assert!(

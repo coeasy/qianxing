@@ -48,6 +48,7 @@ class ProviderQuery:
     required_auth_scope: str | None = None
     require_realtime: bool = False
     max_staleness_ms: int | None = None
+    required_data_tier: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -75,11 +76,21 @@ class ProviderCapability:
     priority: int
     quality_score: int
     cost_score: int
+    data_tiers: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         for key in ("data_kinds", "asset_classes", "frequencies"):
             value[key] = sorted(set(value[key]))
+        # Preserve the pre-tier Python constructor while emitting the Rust contract's
+        # explicit depth declaration. Quote defaults to L1; callers needing L2 say so.
+        tiers = set(self.data_tiers)
+        if not tiers:
+            if "Bar" in self.data_kinds:
+                tiers.add("bar")
+            if "Quote" in self.data_kinds:
+                tiers.add("l1")
+        value["data_tiers"] = sorted(tiers)
         return value
 
     def to_json(self) -> str:
@@ -208,9 +219,11 @@ class ProviderRegistry:
         from qianxing.app import DepthBacktestOutcome, DepthBacktestSpec
 
         values = spec.to_dict() if isinstance(spec, DepthBacktestSpec) else dict(spec)
+        request = query.to_dict()
+        request["required_data_tier"] = query.required_data_tier or values["tier"]
         payload = json.loads(
             self._native.run_depth_backtest_with_provider_json(
-                query.to_json(),
+                json.dumps(request, sort_keys=True, separators=(",", ":")),
                 json.dumps(values, sort_keys=True, separators=(",", ":")),
             )
         )

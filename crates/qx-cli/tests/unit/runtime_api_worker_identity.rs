@@ -105,20 +105,31 @@ fn join_worker_handle_propagates_the_worker_error_instead_of_swallowing_it() {
 /// 而这类漏接在行为上只有真按 Ctrl+C 才看得见，所以在这里按源码点名。
 #[test]
 fn both_serve_branches_join_the_api_worker_through_the_shutdown_ladder() {
-    let text = std::fs::read_to_string(
+    let cli = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join("strategy_contract.rs"),
     )
     .unwrap();
-    for role in ["\"API\"", "\"mTLS API\""] {
-        let call = format!("join_worker_handle(&supervisor, worker, {role}, &api_worker_id)");
-        assert_eq!(
-            text.matches(&call).count(),
-            1,
-            "serve 的 {role} 分支不再经停机阶梯汇合 API worker"
-        );
-    }
+    let service = workspace_source("crates/qx-service/src/http_host.rs");
+    let service = &service[service.find("pub fn serve_api(").unwrap()..];
+    let cli = cli
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    let service = service
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    assert!(cli.contains("qx_service::http_host::serve_api("));
+    assert_eq!(
+        service
+            .matches("qx_runtime::host::join_worker_handle(")
+            .count(),
+        2
+    );
+    assert!(service.contains("\"API\""));
+    assert!(service.contains("\"mTLSAPI\""));
 }
 
 /// #164 的另一半：投影桥线程的收摊必须置空句柄并 join。少了 join 时尾部写入看不见，
@@ -159,7 +170,8 @@ fn stop_api_projection_bridge_joins_and_clears_the_projection_thread() {
 /// `crates/qx-api/tests/request_timestamp_clock.rs` 用真 socket 钉。
 #[test]
 fn both_serve_branches_pass_a_live_clock_to_the_api_worker() {
-    let text = workspace_source("crates/qx-cli/src/strategy_contract.rs");
+    let text = workspace_source("crates/qx-service/src/http_host.rs");
+    let text = &text[text.find("pub fn serve_api(").unwrap()..];
     let stripped = text
         .chars()
         .filter(|c| !c.is_whitespace())

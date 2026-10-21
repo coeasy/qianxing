@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/depth-dataset-manifest-validation-spec-v1.json",
+  "title": "Qianxing DepthDatasetManifestValidationSpec v1",
+  "description": "Strict L1/L2 depth-frame quality diagnosis input. The app validates the declared tier and cadence before publishing an idempotent DatasetManifestV2; cross-row quality findings are computed from the frame.",
+  "type": "object",
+  "required": ["schema_version", "frame_path", "tier", "interval_ms", "timezone", "output_path"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "frame_path": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "tier": {"enum": ["l1", "l2"]},
+    "interval_ms": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
+    "timezone": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "output_path": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"}
+  },
+  "additionalProperties": false
+}

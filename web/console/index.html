@@ -124,12 +124,19 @@
       <p class="foot">选择 qx-app 已实现的研究用例并提交对应版本化 JSON。标的与数据路径按服务端配置解析；指标、撮合、归因和排名均由共享 Rust 内核完成。Paper/Live 不属于此研究入口。</p>
       <label for="extended-research-route">研究用例</label>
       <select id="extended-research-route">
+        <option value="appBacktestRun">Bar 回测（后台任务）· /app/backtest/start</option>
         <option value="appRunExperiment">Bar 多参数实验 · /app/run-experiment</option>
         <option value="appDepthBacktest">Tick/OrderBook 回测 · /app/depth-backtest</option>
         <option value="appDepthExperiment">深度参数实验 · /app/run-depth-experiment</option>
         <option value="appVerifyDepth">深度产物复核 · /app/verify-depth</option>
         <option value="appMultiLegBacktest">多腿回测 · /app/multi-leg-backtest</option>
         <option value="appMultiLegExperiment">多腿参数实验 · /app/run-multi-leg-experiment</option>
+        <option value="appMultiAccountBacktest">多账户 Bar 回测 · /app/multi-account-backtest</option>
+        <option value="appMultiAccountDepthBacktest">多账户深度回测 · /app/multi-account-depth-backtest</option>
+        <option value="appMultiMarketBacktest">多市场 Bar 回测 · /app/multi-market-backtest</option>
+        <option value="appMultiMarketDepthBacktest">多市场深度回测 · /app/multi-market-depth-backtest</option>
+        <option value="appMultiMarketExperiment">多市场 Bar 参数实验 · /app/run-multi-market-experiment</option>
+        <option value="appMultiMarketDepthExperiment">多市场深度参数实验 · /app/run-multi-market-depth-experiment</option>
         <option value="appCompareRuns">运行结果比较 · /app/compare-runs</option>
       </select>
       <label for="extended-research-spec">请求 JSON</label>

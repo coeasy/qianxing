@@ -295,6 +295,7 @@ fn paper_kelly_strategy_reaches_the_market_spec_risk_and_ledger_path() {
     let result = paper_submit_match_attempt(
         &config,
         &runtime_path,
+        &data_dir,
         &command,
         worker,
         &mut pipeline,

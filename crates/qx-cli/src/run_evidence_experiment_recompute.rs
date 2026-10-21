@@ -398,7 +398,10 @@ fn compare_multi_leg_experiment(original: &Value, recomputed: &Value) -> Result<
     if original.get("ranking") != recomputed.get("ranking") {
         return Err("多腿实验排名复算不一致".into());
     }
-    println!("多腿实验全部 {} 个候选已复算一致", before.len());
+    println!(
+        "[Experiment · Recompute] 多腿实验全部 {} 个候选已复算一致",
+        before.len()
+    );
     Ok(())
 }
 

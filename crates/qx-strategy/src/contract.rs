@@ -341,15 +341,6 @@ impl StrategyContractOutput {
         Ok(())
     }
 
-    /// 仅供契约往返用例编码一份已知良好的输出：生产链路只**解码** worker 产物
-    /// （`from_json_for`），从不需要把 `StrategyContractOutput` 再编码回去，故按 test-only 收口，
-    /// 不留一个零生产调用的公开编码器（V13 R3-B）。
-    #[cfg(test)]
-    pub(crate) fn to_json_for(&self, input: &StrategyContractInput) -> Result<String, String> {
-        self.validate_for(input)?;
-        serde_json::to_string(self).map_err(|error| format!("策略输出契约序列化失败: {error}"))
-    }
-
     pub fn from_json_for(input: &str, request: &StrategyContractInput) -> Result<Self, String> {
         let value: Self = serde_json::from_str(input)
             .map_err(|error| format!("策略输出契约 JSON 无效: {error}"))?;

@@ -10,8 +10,9 @@ mod common;
 use common::{backtest_spec, dataset_spec, scratch};
 use qx_app::{
     AppError, AppErrorCategory, BacktestArtifacts, BacktestOutcome, BacktestSpec,
-    BuiltinStrategySpec, DatasetSpec, DatasetVerdict, VerificationResult,
-    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS,
+    BuiltinStrategySpec, DatasetSpec, DatasetVerdict, DepthBacktestSpec, MultiLegBacktestSpec,
+    VerificationResult, BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION,
+    MIN_BACKTEST_BARS,
 };
 use qx_strategy::BuiltinStrategyKind;
 use serde_json::Value;
@@ -215,6 +216,87 @@ fn a_schema_version_mismatch_is_rejected_not_best_effort_parsed() {
     backtest.schema_version = BACKTEST_SPEC_SCHEMA_VERSION + 1;
     assert_eq!(
         backtest.validate().expect_err("版本不符必须拒").category(),
+        AppErrorCategory::InvalidInput
+    );
+}
+
+#[test]
+fn depth_backtest_spec_uses_the_registered_strict_v1_wire_contract() {
+    let payload = r#"{
+        "schema_version": 1,
+        "run_id": "depth-v1",
+        "depth_path": "depth.json",
+        "tier": "l2",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 10000,
+        "latency_snapshots": 0,
+        "queue_position_bps": 0,
+        "market_impact_bps": 0,
+        "output_dir": "runs",
+        "strategy": {
+            "kind": "sma_cross",
+            "strategy_id": "depth-v1",
+            "quantity_raw": 1,
+            "fast_window": 5,
+            "slow_window": 20
+        }
+    }"#;
+    let spec = DepthBacktestSpec::from_json(payload).expect("valid legacy v1 depth spec");
+    spec.validate().expect("minimal depth spec validates");
+    let serialized = spec.to_json().expect("serialize depth spec");
+    assert!(!serialized.contains("queue_position_model"));
+    assert!(!serialized.contains("fee_bps"));
+    assert_eq!(
+        DepthBacktestSpec::from_json(&serialized).expect("round trip"),
+        spec
+    );
+
+    let unknown = payload.replace(
+        "\"tier\": \"l2\",",
+        "\"tier\": \"l2\", \"legacy_typo\": true,",
+    );
+    assert_eq!(
+        DepthBacktestSpec::from_json(&unknown)
+            .expect_err("unknown top-level field must be rejected")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+}
+
+#[test]
+fn multi_leg_backtest_spec_uses_the_registered_strict_v1_wire_contract() {
+    let payload = r#"{
+        "schema_version": 1,
+        "run_id": "multi-leg-v1",
+        "primary_bars_path": "primary.json",
+        "reference_bars_path": "reference.json",
+        "settlement_currency": "USDT",
+        "primary_initial_cash_raw": 100000,
+        "reference_initial_cash_raw": 100000,
+        "seed": 0,
+        "output_dir": "runs",
+        "strategy": {
+            "kind": "pairs_arbitrage",
+            "strategy_id": "multi-leg-v1",
+            "quantity_raw": 1,
+            "fast_window": 2,
+            "slow_window": 5
+        }
+    }"#;
+    let spec = MultiLegBacktestSpec::from_json(payload).expect("valid v1 two-leg spec");
+    let serialized = spec.to_json().expect("serialize multi-leg spec");
+    assert_eq!(
+        MultiLegBacktestSpec::from_json(&serialized).expect("round trip"),
+        spec
+    );
+    assert!(!serialized.contains("funding_events"));
+    assert!(serialized.contains("\"fill_model\":\"next_bar_open\""));
+
+    let unknown = payload.replace("\"seed\": 0,", "\"seed\": 0, \"legacy_typo\": true,");
+    assert_eq!(
+        MultiLegBacktestSpec::from_json(&unknown)
+            .expect_err("unknown top-level field must be rejected")
+            .category(),
         AppErrorCategory::InvalidInput
     );
 }

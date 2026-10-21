@@ -3,8 +3,8 @@ mod common;
 use common::{depth_spec as spec, scratch};
 use qx_app::{
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, verify_depth_run,
-    AppErrorCategory, BuiltinStrategySpec, CallerCapability, DepthBacktestSpec,
-    PortfolioBacktestConfig, PortfolioStrategySpec, RunContext, StrategyArtifactIdentity,
+    BuiltinStrategySpec, CallerCapability, DepthBacktestSpec, PortfolioBacktestConfig,
+    PortfolioStrategySpec, RunContext, StrategyArtifactIdentity,
 };
 use qx_core::{Quantity, Side};
 use qx_strategy::{
@@ -146,7 +146,7 @@ fn multiple_custom_strategies_share_tick_and_order_book_portfolio_slots() {
         let owners = fills
             .lines()
             .skip(1)
-            .filter_map(|line| line.split(',').nth(5))
+            .filter_map(|line| line.split(',').nth(6))
             .collect::<std::collections::BTreeSet<_>>();
         assert!(owners.contains("depth-sma"));
         assert!(owners.contains("depth-momentum"));
@@ -185,7 +185,10 @@ fn multiple_custom_strategies_share_tick_and_order_book_portfolio_slots() {
             ],
             &RunContext::new(CallerCapability::Research, format!("changed-{run_id}")),
         )
-        .expect_err("changed strategy source cannot reuse run_id");
-        assert_eq!(changed_identity.category(), AppErrorCategory::Conflict);
+        .expect("changed strategy source is a distinct content-addressed run");
+        assert_ne!(
+            changed_identity.artifacts.run_manifest,
+            outcome.artifacts.run_manifest
+        );
     }
 }
