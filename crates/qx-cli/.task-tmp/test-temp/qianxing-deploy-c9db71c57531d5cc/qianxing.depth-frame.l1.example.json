@@ -1,0 +1,1610 @@
+{
+  "schema_version": 1,
+  "source": "example-depth-l1-v1",
+  "instrument": {
+    "symbol": "BTCUSDT",
+    "venue": "BINANCE"
+  },
+  "snapshots": [
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 1000,
+      "sequence": 1,
+      "bids": [
+        {
+          "price": 64998000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65002000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 2000,
+      "sequence": 2,
+      "bids": [
+        {
+          "price": 64978000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64982000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 3000,
+      "sequence": 3,
+      "bids": [
+        {
+          "price": 64958000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64962000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 4000,
+      "sequence": 4,
+      "bids": [
+        {
+          "price": 64938000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64942000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 5000,
+      "sequence": 5,
+      "bids": [
+        {
+          "price": 64918000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64922000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 6000,
+      "sequence": 6,
+      "bids": [
+        {
+          "price": 64898000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64902000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 7000,
+      "sequence": 7,
+      "bids": [
+        {
+          "price": 64878000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64882000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 8000,
+      "sequence": 8,
+      "bids": [
+        {
+          "price": 64858000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64862000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 9000,
+      "sequence": 9,
+      "bids": [
+        {
+          "price": 64838000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64842000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 10000,
+      "sequence": 10,
+      "bids": [
+        {
+          "price": 64818000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64822000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 11000,
+      "sequence": 11,
+      "bids": [
+        {
+          "price": 64798000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64802000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 12000,
+      "sequence": 12,
+      "bids": [
+        {
+          "price": 64778000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64782000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 13000,
+      "sequence": 13,
+      "bids": [
+        {
+          "price": 64758000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64762000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 14000,
+      "sequence": 14,
+      "bids": [
+        {
+          "price": 64738000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64742000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 15000,
+      "sequence": 15,
+      "bids": [
+        {
+          "price": 64718000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64722000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 16000,
+      "sequence": 16,
+      "bids": [
+        {
+          "price": 64698000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64702000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 17000,
+      "sequence": 17,
+      "bids": [
+        {
+          "price": 64678000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64682000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 18000,
+      "sequence": 18,
+      "bids": [
+        {
+          "price": 64658000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64662000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 19000,
+      "sequence": 19,
+      "bids": [
+        {
+          "price": 64638000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64642000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 20000,
+      "sequence": 20,
+      "bids": [
+        {
+          "price": 64618000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64622000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 21000,
+      "sequence": 21,
+      "bids": [
+        {
+          "price": 64643000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64647000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 22000,
+      "sequence": 22,
+      "bids": [
+        {
+          "price": 64668000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64672000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 23000,
+      "sequence": 23,
+      "bids": [
+        {
+          "price": 64693000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64697000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 24000,
+      "sequence": 24,
+      "bids": [
+        {
+          "price": 64718000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64722000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 25000,
+      "sequence": 25,
+      "bids": [
+        {
+          "price": 64743000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64747000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 26000,
+      "sequence": 26,
+      "bids": [
+        {
+          "price": 64768000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64772000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 27000,
+      "sequence": 27,
+      "bids": [
+        {
+          "price": 64793000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64797000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 28000,
+      "sequence": 28,
+      "bids": [
+        {
+          "price": 64818000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64822000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 29000,
+      "sequence": 29,
+      "bids": [
+        {
+          "price": 64843000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64847000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 30000,
+      "sequence": 30,
+      "bids": [
+        {
+          "price": 64868000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64872000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 31000,
+      "sequence": 31,
+      "bids": [
+        {
+          "price": 64893000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64897000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 32000,
+      "sequence": 32,
+      "bids": [
+        {
+          "price": 64918000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64922000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 33000,
+      "sequence": 33,
+      "bids": [
+        {
+          "price": 64943000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64947000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 34000,
+      "sequence": 34,
+      "bids": [
+        {
+          "price": 64968000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64972000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 35000,
+      "sequence": 35,
+      "bids": [
+        {
+          "price": 64993000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 64997000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 36000,
+      "sequence": 36,
+      "bids": [
+        {
+          "price": 65018000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65022000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 37000,
+      "sequence": 37,
+      "bids": [
+        {
+          "price": 65043000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65047000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 38000,
+      "sequence": 38,
+      "bids": [
+        {
+          "price": 65068000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65072000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 39000,
+      "sequence": 39,
+      "bids": [
+        {
+          "price": 65093000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65097000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 40000,
+      "sequence": 40,
+      "bids": [
+        {
+          "price": 65118000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65122000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 41000,
+      "sequence": 41,
+      "bids": [
+        {
+          "price": 65143000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65147000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 42000,
+      "sequence": 42,
+      "bids": [
+        {
+          "price": 65168000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65172000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 43000,
+      "sequence": 43,
+      "bids": [
+        {
+          "price": 65193000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65197000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 44000,
+      "sequence": 44,
+      "bids": [
+        {
+          "price": 65218000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65222000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 45000,
+      "sequence": 45,
+      "bids": [
+        {
+          "price": 65243000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65247000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 46000,
+      "sequence": 46,
+      "bids": [
+        {
+          "price": 65268000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65272000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 47000,
+      "sequence": 47,
+      "bids": [
+        {
+          "price": 65293000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65297000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 48000,
+      "sequence": 48,
+      "bids": [
+        {
+          "price": 65318000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65322000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 49000,
+      "sequence": 49,
+      "bids": [
+        {
+          "price": 65343000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65347000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 50000,
+      "sequence": 50,
+      "bids": [
+        {
+          "price": 65368000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65372000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 51000,
+      "sequence": 51,
+      "bids": [
+        {
+          "price": 65393000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65397000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 52000,
+      "sequence": 52,
+      "bids": [
+        {
+          "price": 65418000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65422000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 53000,
+      "sequence": 53,
+      "bids": [
+        {
+          "price": 65443000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65447000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 54000,
+      "sequence": 54,
+      "bids": [
+        {
+          "price": 65468000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65472000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 55000,
+      "sequence": 55,
+      "bids": [
+        {
+          "price": 65493000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65497000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 56000,
+      "sequence": 56,
+      "bids": [
+        {
+          "price": 65518000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65522000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 57000,
+      "sequence": 57,
+      "bids": [
+        {
+          "price": 65543000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65547000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 58000,
+      "sequence": 58,
+      "bids": [
+        {
+          "price": 65568000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65572000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 59000,
+      "sequence": 59,
+      "bids": [
+        {
+          "price": 65593000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65597000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 60000,
+      "sequence": 60,
+      "bids": [
+        {
+          "price": 65618000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65622000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 61000,
+      "sequence": 61,
+      "bids": [
+        {
+          "price": 65593000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65597000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 62000,
+      "sequence": 62,
+      "bids": [
+        {
+          "price": 65568000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65572000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 63000,
+      "sequence": 63,
+      "bids": [
+        {
+          "price": 65543000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65547000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 64000,
+      "sequence": 64,
+      "bids": [
+        {
+          "price": 65518000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65522000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 65000,
+      "sequence": 65,
+      "bids": [
+        {
+          "price": 65493000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65497000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 66000,
+      "sequence": 66,
+      "bids": [
+        {
+          "price": 65468000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65472000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 67000,
+      "sequence": 67,
+      "bids": [
+        {
+          "price": 65443000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65447000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 68000,
+      "sequence": 68,
+      "bids": [
+        {
+          "price": 65418000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65422000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 69000,
+      "sequence": 69,
+      "bids": [
+        {
+          "price": 65393000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65397000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 70000,
+      "sequence": 70,
+      "bids": [
+        {
+          "price": 65368000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65372000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 71000,
+      "sequence": 71,
+      "bids": [
+        {
+          "price": 65343000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65347000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 72000,
+      "sequence": 72,
+      "bids": [
+        {
+          "price": 65318000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65322000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 73000,
+      "sequence": 73,
+      "bids": [
+        {
+          "price": 65293000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65297000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 74000,
+      "sequence": 74,
+      "bids": [
+        {
+          "price": 65268000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65272000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 75000,
+      "sequence": 75,
+      "bids": [
+        {
+          "price": 65243000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65247000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 76000,
+      "sequence": 76,
+      "bids": [
+        {
+          "price": 65218000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65222000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 77000,
+      "sequence": 77,
+      "bids": [
+        {
+          "price": 65193000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65197000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 78000,
+      "sequence": 78,
+      "bids": [
+        {
+          "price": 65168000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65172000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 79000,
+      "sequence": 79,
+      "bids": [
+        {
+          "price": 65143000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65147000000000,
+          "qty": 2000000000
+        }
+      ]
+    },
+    {
+      "instrument": {
+        "symbol": "BTCUSDT",
+        "venue": "BINANCE"
+      },
+      "ts": 80000,
+      "sequence": 80,
+      "bids": [
+        {
+          "price": 65118000000000,
+          "qty": 2000000000
+        }
+      ],
+      "asks": [
+        {
+          "price": 65122000000000,
+          "qty": 2000000000
+        }
+      ]
+    }
+  ]
+}

@@ -1,24 +1,12 @@
 //! `RunBacktest` 用例（T2-2，方案 §5 阶段 2、§15.3-A）。
 //!
-//! 一次 Bar 回测在这里被拆成六步，顺序是刻意的：
-//!
-//! 1. **校验规格**（`spec.validate()`）——形状不对就不该碰磁盘。
-//! 2. **读输入并复核身份**——标的、时间戳、样本量；读不到是 `DataUnavailable`，
-//!    读到了但不够用是 `FidelityInsufficient`。
-//! 3. **装配**——撮合/费率/保证金/风控门/延迟各取一个**具名**模型。这里没有"默认"这个
-//!    选项：`BacktestConfig` 的每一格都由本文件点名，所以产物里的口径与代码里的口径是同一份。
-//! 4. **跑引擎**——`BacktestEngine` 是唯一的撮合实现，应用层不复制它。
-//! 5. **重放自检**——`ReplayVerifier::verify` 必须过，且重放摘要必须等于结果哈希。
-//!    过不了就不落盘（与 CLI 回测同一道闸）。这一步是"可复算"从口号变成门的地方。
-//! 6. **落四份产物**——先查冲突（同一 `run_id` 已有不同内容 → `Conflict`），再写。
+//! 先校验 spec 与输入，再用具名模型装配唯一的 `BacktestEngine`；运行后校验 replay hash，
+//! 冲突检查通过后写四份产物。数据不足返回 `FidelityInsufficient`，无效或缺失输入不落产物。
 //!
 //! ## 为什么冲突检查排在写之前
 //!
-//! 覆盖既有运行等于让两次**不同**的运行共用一个身份：事后拿 `run_id` 去查，拿到的是后一次，
-//! 而引用它的报告、对比、台账说的可能是前一次。所以同一 `run_id` 只有在
-//! `config_hash` 与 `data_fingerprint` 都相同时才允许重写（那才是幂等重跑），
-//! 否则当场 `Conflict`——让调用方换 `run_id` 或换产物目录，而不是悄悄改写历史。
-
+//! 同一 `run_id` 仅当 `config_hash` 与 `data_fingerprint` 都相同才允许幂等重跑；否则
+//! 返回 `Conflict`，避免两个不同运行共用一个身份。
 use crate::cases::artifacts::{
     artifact_paths, ensure_output_dir, equity_csv, existing_manifest, fills_csv, read_text,
     summary_json, write_text, ProtectiveExitSummary, RunSummary, DATA_TIER, SUMMARY_SCHEMA_VERSION,
@@ -32,17 +20,25 @@ use crate::spec::{BacktestOutcome, BacktestSpec, MIN_BACKTEST_BARS};
 use qx_core::{Fnv1a, InstrumentId, Money, ReplayVerifier, RunManifest};
 use qx_datastruct::BarFrame;
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, LeverageMargin,
-    MakerTakerFeeModel, NextBarOpenFillModel, NoMargin, PortfolioBarStrategy, ProtectiveExitPolicy,
-    ProtectiveExitReason, RunManifestIdentity, VirtualTradingConfig, ZeroLatency,
+    BacktestConfig, BacktestEngine, BarStrategy, DataTier, PortfolioBarStrategy,
+    ProtectiveExitPolicy, ProtectiveExitReason,
 };
-use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 
+mod bar_strategy;
+mod cancellation;
 mod custom_strategy;
+mod execution_binding;
 pub(in crate::cases) mod strategy_slot;
+use crate::cases::risk_gate::backtest_risk_gate;
+pub(in crate::cases) use bar_strategy::run_backtest_inner_with_bar_strategy;
+pub(super) use bar_strategy::BacktestRunDetails;
+use cancellation::run_engine;
+pub(in crate::cases) use custom_strategy::run_backtest_inner_with_experiment_strategy;
 pub use custom_strategy::StrategyArtifactIdentity;
 use custom_strategy::{strategy_slots_config_hash, InjectedStrategy};
+pub(crate) use execution_binding::{bind_execution, bind_margin};
+use strategy_slot::build_single_native_strategy;
 use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};
 
 /// Historical default retained for callers whose spec predates explicit account ownership.
@@ -99,37 +95,22 @@ pub(super) fn run_backtest_inner(
     run_backtest_inner_with_strategies(spec, context, cancellation, Vec::new())
 }
 
-pub(super) fn run_backtest_inner_with_experiment_strategy(
-    spec: &BacktestSpec,
-    context: &RunContext,
-    cancellation: Option<&CancellationToken>,
-    identity: StrategyArtifactIdentity,
-    strategy: Box<dyn qx_strategy::Strategy>,
-) -> Result<Option<BacktestOutcome>, AppError> {
-    identity.validate_for_experiment(spec)?;
-    run_backtest_inner_unchecked(
-        spec,
-        context,
-        cancellation,
-        vec![InjectedStrategy { identity, strategy }],
-    )
-}
-
 fn run_backtest_inner_with_strategies(
     spec: &BacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
     injected: Vec<InjectedStrategy>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
-    run_backtest_inner_unchecked(spec, context, cancellation, injected)
+    bar_strategy::run_backtest_inner_unchecked(spec, context, cancellation, injected)
 }
 
-fn run_backtest_inner_unchecked(
+fn run_backtest_inner_unchecked_with_details(
     spec: &BacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
     injected: Vec<InjectedStrategy>,
-) -> Result<Option<BacktestOutcome>, AppError> {
+    bar_strategy: Option<Box<dyn BarStrategy>>,
+) -> Result<Option<BacktestRunDetails>, AppError> {
     spec.validate()?;
     let identities = injected
         .iter()
@@ -189,22 +170,21 @@ fn run_backtest_inner_unchecked(
             ),
         ));
     }
-    let data_fingerprint = format!("barframe:{:016x}", frame.digest());
-    let risk = RiskGate::conservative_default();
+    let data_fingerprint = format!(
+        "barframe:{}",
+        qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("BarFrame 内容指纹计算失败：{error}"),
+            )
+        })?
+    );
+    let risk = backtest_risk_gate(spec);
     let risk_rule_set_version = risk.rule_set().version().to_string();
-    let fee = spec
-        .fee_schedule
-        .map(|schedule| schedule.model())
-        .unwrap_or_else(MakerTakerFeeModel::default_maker_taker);
-    let fee_model = fee.descriptor();
-    let fill_model = NextBarOpenFillModel.name().to_string();
-    let margin: Box<dyn qx_xingban::MarginRule> = match &spec.market_spec {
-        Some(market) if market.product.supports_leverage() => Box::new(LeverageMargin {
-            leverage: 1,
-            maintenance_bp: i64::from(market.maintenance_margin_bps),
-        }),
-        _ => Box::new(NoMargin),
-    };
+    let execution = bind_execution(spec)?;
+    let fee_model = execution.fee_descriptor;
+    let fill_model = execution.fill_name.clone();
+    let margin = bind_margin(spec);
     let instrument_spec_version = market_spec_version(spec.market_spec.as_ref())?;
     let account_id = spec
         .account_id
@@ -218,17 +198,17 @@ fn run_backtest_inner_unchecked(
         currency: spec.settlement_currency.clone(),
         initial_cash: Money::from_raw(spec.initial_cash_raw),
         multiplier: 1,
-        fill: Box::new(NextBarOpenFillModel),
-        fee: Box::new(fee),
+        fill: execution.fill,
+        fee: execution.fee,
         data_tier: DataTier::Bar,
-        latency: Box::new(ZeroLatency),
+        latency: execution.latency,
         margin,
         seed: spec.seed,
         risk,
-        virtual_trading: VirtualTradingConfig::default(),
+        virtual_trading: execution.virtual_trading,
     };
+    let currency = config.currency.clone();
     let as_of = bars.first().map(|bar| bar.ts).unwrap_or(1);
-    let mut strategy_slots = Vec::new();
     let primary_allocation = spec
         .portfolio
         .as_ref()
@@ -242,43 +222,6 @@ fn run_backtest_inner_unchecked(
     let injected_version = injected
         .get(&spec.strategy.strategy_id)
         .map(|injected| injected.identity.strategy_version.clone());
-    let injected_strategy = injected
-        .remove(&spec.strategy.strategy_id)
-        .map(|injected| injected.strategy);
-    strategy_slots.push(build_strategy_slot(
-        &spec.strategy,
-        StrategySlotContext {
-            priority: primary_priority,
-            reserved_capital_raw: primary_allocation,
-            instrument: &instrument,
-            account_id: &account_id,
-            currency: &config.currency,
-            data_fingerprint: &data_fingerprint,
-            as_of,
-            strategy_version: injected_version.as_deref(),
-        },
-        injected_strategy,
-    )?);
-    if let Some(portfolio) = &spec.portfolio {
-        for member in &portfolio.additional_strategies {
-            strategy_slots.push(build_strategy_slot(
-                &member.strategy,
-                StrategySlotContext {
-                    priority: member.priority,
-                    reserved_capital_raw: member.reserved_capital_raw,
-                    instrument: &instrument,
-                    account_id: &account_id,
-                    currency: &config.currency,
-                    data_fingerprint: &data_fingerprint,
-                    as_of,
-                    strategy_version: None,
-                },
-                injected
-                    .remove(&member.strategy.strategy_id)
-                    .map(|injected| injected.strategy),
-            )?);
-        }
-    }
     let strategy_id = if spec.portfolio.is_some() {
         "portfolio".to_string()
     } else {
@@ -291,8 +234,6 @@ fn run_backtest_inner_unchecked(
     } else {
         strategy_version(&spec.strategy)
     };
-    let mut strategy = PortfolioBarStrategy::new(strategy_slots)
-        .map_err(|error| AppError::from_qx_error(&error))?;
     let engine = match spec.protective_exit {
         Some(policy) => BacktestEngine::new(config)
             .with_protective_exits(ProtectiveExitPolicy {
@@ -303,15 +244,63 @@ fn run_backtest_inner_unchecked(
             .map_err(|error| AppError::from_qx_error(&error))?,
         None => BacktestEngine::new(config),
     };
-    let report = match cancellation {
-        Some(cancellation) => engine
-            .run_with_cancel(&bars, &mut strategy, || cancellation.is_cancelled())
-            .map_err(|error| AppError::from_qx_error(&error))?,
-        None => Some(
-            engine
-                .run(&bars, &mut strategy)
-                .map_err(|error| AppError::from_qx_error(&error))?,
-        ),
+    let report = if let Some(mut strategy) = bar_strategy {
+        run_engine(engine, &bars, strategy.as_mut(), cancellation)?
+    } else if spec.portfolio.is_none() && injected.is_empty() {
+        let mut strategy = build_single_native_strategy(
+            &spec.strategy,
+            StrategySlotContext {
+                priority: primary_priority,
+                reserved_capital_raw: primary_allocation,
+                instrument: &instrument,
+                account_id: &account_id,
+                currency: &currency,
+                data_fingerprint: &data_fingerprint,
+                as_of,
+                strategy_version: injected_version.as_deref(),
+            },
+        )?;
+        run_engine(engine, &bars, &mut strategy, cancellation)?
+    } else {
+        let mut strategy_slots = vec![build_strategy_slot(
+            &spec.strategy,
+            StrategySlotContext {
+                priority: primary_priority,
+                reserved_capital_raw: primary_allocation,
+                instrument: &instrument,
+                account_id: &account_id,
+                currency: &currency,
+                data_fingerprint: &data_fingerprint,
+                as_of,
+                strategy_version: injected_version.as_deref(),
+            },
+            injected
+                .remove(&spec.strategy.strategy_id)
+                .map(|injected| injected.strategy),
+        )?];
+        if let Some(portfolio) = &spec.portfolio {
+            for member in &portfolio.additional_strategies {
+                strategy_slots.push(build_strategy_slot(
+                    &member.strategy,
+                    StrategySlotContext {
+                        priority: member.priority,
+                        reserved_capital_raw: member.reserved_capital_raw,
+                        instrument: &instrument,
+                        account_id: &account_id,
+                        currency: &currency,
+                        data_fingerprint: &data_fingerprint,
+                        as_of,
+                        strategy_version: None,
+                    },
+                    injected
+                        .remove(&member.strategy.strategy_id)
+                        .map(|injected| injected.strategy),
+                )?);
+            }
+        }
+        let mut strategy = PortfolioBarStrategy::new(strategy_slots)
+            .map_err(|error| AppError::from_qx_error(&error))?;
+        run_engine(engine, &bars, &mut strategy, cancellation)?
     };
     let Some(report) = report else {
         return Ok(None);
@@ -354,25 +343,25 @@ fn run_backtest_inner_unchecked(
         &config_hash,
         &data_fingerprint,
     )?;
-    let manifest = report
-        .run_manifest_with_input_components(
-            RunManifestIdentity {
-                run_id: &spec.run_id,
-                code_commit: context.code_commit(),
-                config_hash: &config_hash,
-                strategy_version: &strategy_version,
-                instrument_spec_version: &instrument_spec_version,
-                runtime_version: &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
-            },
-            &data_fingerprint,
-            BTreeMap::new(),
+    let manifest = crate::build_backtest_run_manifest(
+        &report,
+        crate::BacktestRunManifestInput {
+            run_id: &spec.run_id,
+            code_commit: context.code_commit(),
+            config_hash: &config_hash,
+            strategy_version: &strategy_version,
+            instrument_spec_version: &instrument_spec_version,
+            runtime_version: &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
+            data_fingerprint: &data_fingerprint,
+            input_components: BTreeMap::new(),
+        },
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("RunManifest 构建失败: {error}"),
         )
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("RunManifest 构建失败: {error}"),
-            )
-        })?;
+    })?;
     ensure_output_dir(spec)?;
     let summary = RunSummary {
         schema_version: SUMMARY_SCHEMA_VERSION,
@@ -399,10 +388,12 @@ fn run_backtest_inner_unchecked(
         clock_start: report.clock_start,
         clock_end: report.clock_end,
         seed: report.seed,
-        risk_rule_set_version,
+        risk_rule_set_version: risk_rule_set_version.clone(),
         fee_model,
         fill_model,
+        fill_model_details: Some(report.fill_model_descriptor.clone()),
         data_tier: DATA_TIER.to_string(),
+        rejection_facts: crate::trade_facts::rejection_facts_u64(&report.event_log),
         protective_exit_fills: report
             .protective_exit_fills
             .iter()
@@ -424,8 +415,7 @@ fn run_backtest_inner_unchecked(
     write_text(&artifacts.summary, &summary_json(&summary)?)?;
     write_text(&artifacts.equity, &equity_csv(&timestamps, &report.equity))?;
     write_text(&artifacts.fills, &fills_csv(&report.fills))?;
-    // manifest 是这一轮完整性的提交标记。先原子发布数据文件，最后发布 manifest，
-    // 这样首次写入中途失败时 verify 不会看到一份指向半套产物的“已完成”运行。
+    // 最后发布 manifest，避免 verify 把首次写入中途失败的半套产物当成已完成运行。
     write_text(
         &artifacts.run_manifest,
         &manifest.to_json().map_err(|error| {
@@ -436,7 +426,7 @@ fn run_backtest_inner_unchecked(
         })?,
     )?;
 
-    Ok(Some(BacktestOutcome {
+    let outcome = BacktestOutcome {
         run_id: spec.run_id.clone(),
         instrument: spec.instrument.clone(),
         result_hash: format!("{:016x}", report.result_hash()),
@@ -447,6 +437,11 @@ fn run_backtest_inner_unchecked(
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
         account_id: spec.account_id.clone(),
+    };
+    Ok(Some(BacktestRunDetails {
+        outcome,
+        report,
+        risk_rule_set_version,
     }))
 }
 

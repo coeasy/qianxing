@@ -3,11 +3,66 @@
   "registry_version": 1,
   "entries": [
     {
+      "schema_id": "backtest-outcome-v1",
+      "version": 1,
+      "path": "schemas/backtest-outcome-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "verification-result-v1",
+      "version": 1,
+      "path": "schemas/verification-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "dataset-verdict-v1",
+      "version": 1,
+      "path": "schemas/dataset-verdict-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
       "schema_id": "account-snapshot-v1",
       "version": 1,
       "path": "schemas/account-snapshot-v1.json",
       "producer": "qx-protocol",
-      "consumers": ["qx-python", "qx-cli", "qx-api"],
+      "consumers": [
+        "qx-python",
+        "qx-cli",
+        "qx-api"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-protocol/tests/snapshot_schema_contract.rs",
@@ -18,26 +73,40 @@
       "schema_id": "strategy-api-v1",
       "version": 1,
       "path": "schemas/strategy_api_v1.schema.json",
-      "producer": "qx-runtime",
-      "consumers": ["python/qianxing_strategy", "cpp", "qx-cli"],
+      "producer": "qx-strategy",
+      "consumers": [
+        "python/qianxing_strategy",
+        "cpp",
+        "qx-cli"
+      ],
       "compatibility": "backward",
-      "golden_fixtures": ["crates/qx-runtime/tests/strategy_contract_schema.rs"]
+      "golden_fixtures": [
+        "crates/qx-runtime/tests/strategy_contract_schema.rs"
+      ]
     },
     {
       "schema_id": "strategy-api-input-v1",
       "version": 1,
       "path": "schemas/strategy-api-input-v1.json",
-      "producer": "qx-runtime",
-      "consumers": ["python/qianxing_strategy", "cpp", "qx-cli"],
+      "producer": "qx-strategy",
+      "consumers": [
+        "python/qianxing_strategy",
+        "cpp",
+        "qx-cli"
+      ],
       "compatibility": "backward",
-      "golden_fixtures": ["crates/qx-runtime/tests/strategy_contract_input_schema.rs"]
+      "golden_fixtures": [
+        "crates/qx-runtime/tests/strategy_contract_input_schema.rs"
+      ]
     },
     {
       "schema_id": "project-manifest-v1",
       "version": 1,
       "path": "schemas/project-manifest-v1.json",
       "producer": "qx-spec",
-      "consumers": ["qx-cli"],
+      "consumers": [
+        "qx-cli"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-spec/src/tests.rs",
@@ -49,16 +118,574 @@
       "version": 1,
       "path": "schemas/dataset-manifest-v2.json",
       "producer": "qx-data",
-      "consumers": ["qx-cli", "qx-spec"],
+      "consumers": [
+        "qx-cli",
+        "qx-spec"
+      ],
       "compatibility": "backward",
-      "golden_fixtures": ["crates/qx-data/src/catalog_v2.rs"]
+      "golden_fixtures": [
+        "crates/qx-data/src/catalog_v2.rs"
+      ]
+    },
+    {
+      "schema_id": "dataset-spec-v1",
+      "version": 1,
+      "path": "schemas/dataset-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "dataset-manifest-validation-spec-v1",
+      "version": 1,
+      "path": "schemas/dataset-manifest-validation-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/dataset_manifest_validation.rs"
+      ]
+    },
+    {
+      "schema_id": "builtin-strategy-spec-v1",
+      "version": 1,
+      "path": "schemas/builtin-strategy-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "depth-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/depth-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-leg-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-leg-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-builtin-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-builtin-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_builtin_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-builtin-composition-summary-v7",
+      "version": 7,
+      "path": "schemas/multi-builtin-composition-summary-v7.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/tests/app_three_entrypoints/multi_builtin_parity.rs",
+        "crates/qx-cli/tests/multi_leg_quality_manifest.rs"
+      ]
+    },
+    {
+      "schema_id": "compare-runs-result-v1",
+      "version": 1,
+      "path": "schemas/compare-runs-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/cases/compare_runs.rs",
+        "crates/qx-api/src/lib.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "compare-runs-spec-v1",
+      "version": 1,
+      "path": "schemas/compare-runs-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/cases/compare_runs.rs",
+        "crates/qx-api/src/lib.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-account-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-account-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-account-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-account-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_backtest.rs",
+        "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        "crates/qx-sdk/tests/multi_account_client.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-account-depth-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-account-depth-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_depth_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-account-depth-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-account-depth-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_depth_backtest.rs",
+        "crates/qx-sdk/tests/multi_account_client.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-market-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-market-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-market-depth-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-market-depth-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_depth_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "provider-depth-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/provider-depth-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/provider_backtest_tests.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "provider-depth-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/provider-depth-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/provider_backtest_tests.rs",
+        "python/tests/test_provider_sdk.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "depth-backtest-outcome-v1",
+      "version": 1,
+      "path": "schemas/depth-backtest-outcome-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/depth_backtest.rs",
+        "python/tests/test_provider_sdk.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-leg-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-leg-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/spec_contract.rs",
+        "crates/qx-api/src/app_multi_leg_tests.rs",
+        "python/tests/test_provider_sdk.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-market-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-market-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_backtest.rs",
+        "crates/qx-api/src/app_multi_market_tests.rs",
+        "python/tests/test_app_use_cases.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-market-depth-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-market-depth-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_depth_backtest.rs",
+        "crates/qx-api/src/app_multi_market_tests.rs",
+        "python/tests/test_app_use_cases.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "provider-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/provider-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/provider_backtest_tests.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "provider-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/provider-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/provider_backtest_tests.rs",
+        "python/tests/test_provider_sdk.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "run-experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/run-experiment-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/cases/run_experiment.rs"
+      ]
+    },
+    {
+      "schema_id": "run-experiment-result-v1",
+      "version": 1,
+      "path": "schemas/run-experiment-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/use_cases.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "run-depth-experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/run-depth-experiment-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/depth_experiment.rs"
+      ]
+    },
+    {
+      "schema_id": "run-depth-experiment-result-v1",
+      "version": 1,
+      "path": "schemas/run-depth-experiment-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/depth_experiment.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "run-multi-leg-experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/run-multi-leg-experiment-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_leg_experiment.rs"
+      ]
+    },
+    {
+      "schema_id": "run-multi-leg-experiment-result-v1",
+      "version": 1,
+      "path": "schemas/run-multi-leg-experiment-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_leg_experiment.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "run-multi-market-experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/run-multi-market-experiment-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_experiment.rs"
+      ]
+    },
+    {
+      "schema_id": "run-multi-market-experiment-result-v1",
+      "version": 1,
+      "path": "schemas/run-multi-market-experiment-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_experiment.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "run-multi-market-depth-experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/run-multi-market-depth-experiment-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_depth_backtest.rs"
+      ]
+    },
+    {
+      "schema_id": "run-multi-market-depth-experiment-result-v1",
+      "version": 1,
+      "path": "schemas/run-multi-market-depth-experiment-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_multi_market_tests.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
     },
     {
       "schema_id": "experiment-spec-v1",
       "version": 1,
       "path": "schemas/experiment-spec-v1.json",
       "producer": "qx-spec",
-      "consumers": ["qx-cli"],
+      "consumers": [
+        "qx-cli"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-spec/src/tests.rs",
@@ -70,7 +697,9 @@
       "version": 1,
       "path": "schemas/run-record-v1.json",
       "producer": "qx-spec",
-      "consumers": ["qx-cli"],
+      "consumers": [
+        "qx-cli"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-spec/src/tests.rs",
@@ -82,31 +711,9 @@
       "version": 1,
       "path": "schemas/capability-manifest-v1.json",
       "producer": "qx-spec",
-      "consumers": ["qx-cli"],
-      "compatibility": "backward",
-      "golden_fixtures": [
-        "crates/qx-spec/src/tests.rs",
-        "crates/qx-cli/src/plan_commands.rs"
-      ]
-    },
-    {
-      "schema_id": "run-evidence-v1",
-      "version": 1,
-      "path": "schemas/run-evidence-v1.json",
-      "producer": "qx-spec",
-      "consumers": ["qx-cli"],
-      "compatibility": "backward",
-      "golden_fixtures": [
-        "crates/qx-spec/src/tests.rs",
-        "crates/qx-cli/src/plan_commands.rs"
-      ]
-    },
-    {
-      "schema_id": "evidence-bundle-v1",
-      "version": 1,
-      "path": "schemas/evidence-bundle-v1.json",
-      "producer": "qx-spec",
-      "consumers": ["qx-cli"],
+      "consumers": [
+        "qx-cli"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-spec/src/tests.rs",
@@ -118,11 +725,161 @@
       "version": 1,
       "path": "schemas/schema-registry-v1.json",
       "producer": "qx-spec",
-      "consumers": ["qx-cli"],
+      "consumers": [
+        "qx-cli"
+      ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-spec/src/tests.rs",
         "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "evidence-bundle-v3",
+      "version": 3,
+      "path": "schemas/evidence-bundle-v3.json",
+      "producer": "qx-spec",
+      "consumers": [
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "trade-control-spec-v1",
+      "version": 1,
+      "path": "schemas/trade-control-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-api",
+        "qx-python"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/cases/validate_trade_control.rs",
+        "crates/qx-api/src/app_trade_control.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "risk-parity-spec-v1",
+      "version": 1,
+      "path": "schemas/risk-parity-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/spec/risk_parity.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "risk-parity-result-v1",
+      "version": 1,
+      "path": "schemas/risk-parity-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/tests/app_three_entrypoints/risk_parity.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "algo-execution-spec-v1",
+      "version": 1,
+      "path": "schemas/algo-execution-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/spec/algo_execution.rs",
+        "crates/qx-app/tests/algo_execution.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "algo-execution-plan-v1",
+      "version": 1,
+      "path": "schemas/algo-execution-plan-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/algo_execution.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "capital-allocation-spec-v1",
+      "version": 1,
+      "path": "schemas/capital-allocation-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/spec/capital_allocation.rs",
+        "crates/qx-sdk/tests/capital_allocation_consumer.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "capital-allocation-result-v1",
+      "version": 1,
+      "path": "schemas/capital-allocation-result-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-api",
+        "qx-python",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/tests/capital_allocation_route.rs",
+        "crates/qx-sdk/tests/capital_allocation_consumer.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "depth-dataset-manifest-validation-spec-v1",
+      "version": 1,
+      "path": "schemas/depth-dataset-manifest-validation-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_market_depth_backtest.rs",
+        "crates/qx-cli/tests/cli_behavior_parity/depth_dataset_validate.rs",
+        "python/tests/test_sdk_layering.py"
       ]
     }
   ]

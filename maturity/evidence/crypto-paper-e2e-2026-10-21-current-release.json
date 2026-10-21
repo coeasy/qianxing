@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "crypto_paper_worker_acceptance_e2e",
+  "generated_at_utc": "2026-10-21T04:51:24.712655+00:00",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "qx-cli.exe",
+  "binary_sha256": "79324835b0e912665a26cac72558e0eb873805e9bd83fc434ba8396a6afb672e",
+  "scenario": "tools/paper_acceptance.py: scheduler -> strategy -> Paper execution -> Ledger/EventLog/audit, same-root idempotent rerun, and independent-root parity",
+  "profile_coverage_claim": false,
+  "records": [
+    {
+      "benchmark": "end_to_end",
+      "operations": "crypto-paper-worker-acceptance-v1",
+      "samples": 3,
+      "median_ms": 2672.09,
+      "p95_ms": 2716.694,
+      "raw_ms": [
+        2716.694,
+        2672.09,
+        2660.308
+      ]
+    }
+  ],
+  "limitations": [
+    "The worker acceptance fixture uses one Paper order and does not model funding provider retrieval, eight-hour funding cadence, or an externally deployed database.",
+    "Maker/taker, precision, weighted rate-limit, partial-fill and funding-ledger performance is measured separately by qx_zhenlu_crypto_paper_lifecycle_v2; this E2E row is not a complete crypto-paper profile claim."
+  ]
+}

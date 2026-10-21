@@ -10,10 +10,10 @@
 # 或多登记一份不存在的产物，都红）。
 schema_version: 1
 kind: artifact-migration
-updated_at: "2026-10-10"
+updated_at: "2026-10-15"
 registry: maturity/schema-registry.json
 # 关系图的边：一行 = 一份产物 → 一个读侧文件 → 一个版本常量 → 一条版本处置 → 一条常驻用例。
-# `on_unknown_version` 当前只有 `refuse` 一态：本仓 11 份在册契约都有独立版本号，读侧都在解析
+# `on_unknown_version` 当前只有 `refuse` 一态：本仓 10 份现行契约都有版本号，读侧都在解析
 # 之前显式比对常量。将来若出现没有版本号的契约（只靠字段集合拒绝未知键），要**同时**扩这里与
 # `artifact_migration_check` 的允许集 —— 两处一起改，不许只改表（只改表会让那一态没有任何牙齿）。
 artifacts:
@@ -25,14 +25,14 @@ artifacts:
     refusal_reason: "账户快照 schema_version={} 不受支持（本构建只认 {}）"
     refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
   - schema_id: strategy-api-v1
-    reader: crates/qx-runtime/src/strategy_contract/contract.rs
+    reader: crates/qx-strategy/src/contract.rs
     version_field: schema_version
     version_const: STRATEGY_CONTRACT_SCHEMA_VERSION
     on_unknown_version: refuse
     refusal_reason: "StrategyContractOutput schema_version 不匹配，期望 {STRATEGY_CONTRACT_SCHEMA_VERSION} 实得 {}"
     refusal_case: strategy_output_decode_entry_rejects_foreign_schema_version
   - schema_id: strategy-api-input-v1
-    reader: crates/qx-runtime/src/strategy_contract/contract.rs
+    reader: crates/qx-strategy/src/contract.rs
     version_field: schema_version
     version_const: STRATEGY_CONTRACT_SCHEMA_VERSION
     on_unknown_version: refuse
@@ -73,14 +73,7 @@ artifacts:
     on_unknown_version: refuse
     refusal_reason: "能力清单 schema_version={} 不受支持（本构建只认 {}）"
     refusal_case: capability_manifest_refuses_an_unsupported_schema_version
-  - schema_id: run-evidence-v1
-    reader: crates/qx-spec/src/run_evidence.rs
-    version_field: schema_version
-    version_const: RUN_EVIDENCE_SCHEMA_VERSION
-    on_unknown_version: refuse
-    refusal_reason: "运行证据包 schema_version={} 不受支持（本构建只认 {}）"
-    refusal_case: run_evidence_bundle_refuses_an_unsupported_schema_version
-  - schema_id: evidence-bundle-v1
+  - schema_id: evidence-bundle-v3
     reader: crates/qx-spec/src/evidence.rs
     version_field: schema_version
     version_const: EVIDENCE_BUNDLE_SCHEMA_VERSION
@@ -94,8 +87,62 @@ artifacts:
     on_unknown_version: refuse
     refusal_reason: "模式登记册 schema_version={} 不受支持（本构建只认 {}）"
     refusal_case: schema_registry_refuses_an_unsupported_schema_version
-# 显式迁移表。今天为空：本仓没有「同一份产物跨版本就地升级」的读侧 —— 每一份都在读入口先比
-# 版本常量，未知版本一律具名拒绝（这正是校准 C3 要的 fail-closed）。留这一格是让将来新增的真
-# 迁移有地方登记，且 `artifact_migration_check` 会核「登记了迁移就必须有在盘的迁移函数」——
-# 空表是被判据承认的状态，不是没人管。
-migrations: []
+# 显式迁移表：venue/run v1 与统一 EvidenceBundle v2 均迁到 v3。未知版本仍在读入口具名拒绝
+# （fail-closed）；`artifact_migration_check` 会核「登记了迁移就必须有在盘的迁移函数」。
+migrations:
+  - from_version: "run-evidence-v1@1"
+    to_version: "evidence-bundle-v3@3"
+    migration_fn: migrate_legacy_evidence_bundle
+    reader: crates/qx-spec/src/evidence.rs
+  - from_version: "evidence-bundle-v1@1"
+    to_version: "evidence-bundle-v3@3"
+    migration_fn: migrate_legacy_evidence_bundle
+    reader: crates/qx-spec/src/evidence.rs
+  - from_version: "evidence-bundle-v2@2"
+    to_version: "evidence-bundle-v3@3"
+    migration_fn: migrate_legacy_evidence_bundle
+    reader: crates/qx-spec/src/evidence.rs
+
+# Backtest summaries are a versioned report artifact rather than a FoundationDocument in
+# schema-registry.json. Keep their writer/readability matrix here so a schema bump cannot silently
+# strand persisted runs or make an old generation look current.
+backtest_summary_contract:
+  writer_file: crates/qx-app/src/artifact_store/backtest_summary.rs
+  writer_const: BACKTEST_SUMMARY_SCHEMA_VERSION
+  current_version: 7
+  report_reader_file: crates/qx-cli/src/report_command.rs
+  report_accepts: "5,6,7"
+  acceptance_case: backtest_summary_reader_compatibility_matches_matrix
+  refusal_case: legacy_summary_refusal_precedes_html_and_evidence_side_effects
+backtest_summary_versions:
+  v1:
+    report: refuse
+  v2:
+    report: refuse
+  v3:
+    report: refuse
+  v4:
+    report: refuse
+  v5:
+    report: read
+  v6:
+    report: read
+  v7:
+    report: read_write
+  v8:
+    report: refuse
+  future:
+    report: refuse
+backtest_summary_features:
+  replay:
+    introduced_in: 2
+  input_identity:
+    introduced_in: 3
+  account:
+    introduced_in: 4
+  run_record:
+    introduced_in: 5
+  ashare_analysis:
+    introduced_in: 6
+  execution_attempts:
+    introduced_in: 7

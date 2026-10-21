@@ -6,11 +6,12 @@
 use crate::error::QxResult;
 use crate::event::{Event, EventKind};
 use crate::ledger::Ledger;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// FNV-1a 64：零依赖、跨平台稳定。
 ///
 /// 不用 `DefaultHasher`——它的输出**不保证跨版本稳定**，会破坏"两次运行哈希一致"。
+#[derive(Clone, Copy)]
 pub struct Fnv1a {
     h: u64,
 }
@@ -22,6 +23,10 @@ impl Fnv1a {
         Self {
             h: 0xcbf2_9ce4_8422_2325,
         }
+    }
+
+    pub(crate) fn from_state(h: u64) -> Self {
+        Self { h }
     }
 
     fn write_byte(&mut self, b: u8) {
@@ -58,178 +63,8 @@ impl Fnv1a {
     }
 }
 
-/// 事件日志：append-only，不可变。保留/归档策略见 `qx-runtime` 的 `pipeline` 模块文档（只增长 + 按段归档）。
-#[derive(Clone, Default)]
-pub struct EventLog {
-    events: Vec<Event>,
-    /// `events` 里出现过的 seq：归约器每个 tick 重放整份日志，重复检测必须与长度无关（原先每条扫一遍 `events`，整场重放因此 O(n²)）。
-    seqs: BTreeSet<u64>,
-    next_seq: u64,
-}
-
-impl EventLog {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn next_seq(&self) -> u64 {
-        self.next_seq
-    }
-
-    pub fn alloc_seq(&mut self) -> u64 {
-        let s = self.next_seq;
-        self.next_seq += 1;
-        s
-    }
-
-    pub fn append(&mut self, e: Event) {
-        self.next_seq = self.next_seq.max(e.seq.saturating_add(1));
-        self.seqs.insert(e.seq);
-        self.events.push(e);
-    }
-
-    /// 追加并校验事件序号，供生产归约器使用。
-    pub fn append_checked(&mut self, e: Event) -> QxResult<()> {
-        self.append_batch(std::slice::from_ref(&e)).map(|_| ())
-    }
-
-    /// 单事务语义的批量追加（方案 §5.2 DD-2 / §5.4 P1-1）：**要么整批落地、要么一条不落**。
-    ///
-    /// 逐条 `append_checked` 的写法在中途失败时会把前半批留在日志里——调用方以为整批被拒、
-    /// 实际已经写进一半，恢复重放于是看到一段本不该存在的历史。这里先在**影子状态**上把整批
-    /// 校验完（元数据、批内与既有 seq 冲突、整段因果序、next_seq 溢出），全部通过才提交；
-    /// 失败时 `self` 一字不改。代价是 O(批大小)，不随历史长度增长。
-    ///
-    /// 返回真正追加的条数（成功时等于 `batch.len()`）。
-    pub fn append_batch(&mut self, batch: &[Event]) -> QxResult<usize> {
-        if batch.is_empty() {
-            return Ok(0);
-        }
-        let mut staged_seqs: BTreeSet<u64> = BTreeSet::new();
-        let mut previous = self.events.last().map(|e| (e.ts, e.prio, e.seq));
-        let mut next_seq = self.next_seq;
-        for event in batch {
-            event
-                .metadata
-                .validate()
-                .map_err(crate::error::QxError::Invariant)?;
-            if self.seqs.contains(&event.seq) || !staged_seqs.insert(event.seq) {
-                return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
-            }
-            let key = (event.ts, event.prio, event.seq);
-            if previous.is_some_and(|p| key <= p) {
-                return Err(crate::error::QxError::Invariant(
-                    "事件追加违反时间/优先级/序号顺序".into(),
-                ));
-            }
-            previous = Some(key);
-            next_seq = event
-                .seq
-                .checked_add(1)
-                .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?
-                .max(next_seq);
-        }
-        // 整批校验通过，才动 `self`；上面的任何一步失败都已经原样返回、日志保持提交前状态。
-        self.next_seq = next_seq;
-        for event in batch {
-            self.seqs.insert(event.seq);
-            self.events.push(event.clone());
-        }
-        Ok(batch.len())
-    }
-
-    /// 校验已加载日志的序号和因果排序。
-    pub fn validate(&self) -> QxResult<()> {
-        let mut previous: Option<(u64, u8, u64)> = None;
-        let mut seen_seq = BTreeSet::new();
-        let mut max_seq = None;
-        for event in &self.events {
-            event
-                .metadata
-                .validate()
-                .map_err(crate::error::QxError::Invariant)?;
-            if !seen_seq.insert(event.seq) {
-                return Err(crate::error::QxError::Invariant("事件日志 seq 重复".into()));
-            }
-            let key = (event.ts, event.prio, event.seq);
-            if previous.is_some_and(|p| key <= p) {
-                return Err(crate::error::QxError::Invariant(
-                    "事件日志未按时间/优先级/序号排序".into(),
-                ));
-            }
-            previous = Some(key);
-            max_seq = Some(max_seq.map_or(event.seq, |max: u64| max.max(event.seq)));
-        }
-        let expected_next = match max_seq {
-            Some(seq) => seq
-                .checked_add(1)
-                .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?,
-            None => 0,
-        };
-        if self.next_seq != expected_next {
-            return Err(crate::error::QxError::Invariant(
-                "事件日志 next_seq 与最大 seq 不一致".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn events(&self) -> &[Event] {
-        &self.events
-    }
-
-    pub fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
-    }
-
-    /// 稳定 JSON 载荷。文件/对象存储由边界层负责，Kernel 只负责纯序列化语义。
-    pub fn to_json(&self) -> QxResult<String> {
-        self.validate()?;
-        serde_json::to_string(&self.events).map_err(|error| {
-            crate::error::QxError::Invariant(format!("事件日志序列化失败: {error}"))
-        })
-    }
-
-    pub fn from_json(input: &str) -> QxResult<Self> {
-        let events: Vec<Event> = serde_json::from_str(input).map_err(|error| {
-            crate::error::QxError::Permanent(format!("事件日志 JSON 无法解析: {error}"))
-        })?;
-        let mut log = Self::new();
-        for event in events {
-            log.append(event);
-        }
-        log.validate()?;
-        Ok(log)
-    }
-
-    /// 全量摘要：事件序列完全一致则哈希一致。
-    pub fn digest(&self) -> u64 {
-        self.digest_of_prefix(self.events.len())
-            .expect("前缀长度等于日志长度时必然可算")
-    }
-
-    /// 前 `len` 条事件的摘要，与 [`Self::digest`] 同构：长度前缀取 `len`，再逐条喂事件。
-    ///
-    /// 存储层的增量追加（`SqliteEventLogStore::append_batch`，方案 §5.4 P1-1）用它核对
-    /// "已落库前缀没被改写"：manifest 里存的摘要正是当日志只有 `len` 条时算出来的那一个，
-    /// 所以两边相等 ⇔ 前缀逐条相同。这一步是**纯内存**计算，不碰 I/O——增量路径要省掉的
-    /// 正是"把 N 条历史读回来反序列化"。`len` 超过日志长度返回 `None`。
-    pub fn digest_of_prefix(&self, len: usize) -> Option<u64> {
-        if len > self.events.len() {
-            return None;
-        }
-        let mut h = Fnv1a::new();
-        h.write_u64(len as u64);
-        for e in &self.events[..len] {
-            e.digest(&mut h);
-        }
-        Some(h.finish())
-    }
-}
+mod event_log;
+pub use event_log::EventLog;
 
 /// 运行 Manifest：代码+数据+配置+随机性+结果的全量指纹。
 #[derive(Clone, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -360,10 +195,29 @@ impl ReplayVerifier {
     /// 这里没有"把同一段事件切片再哈希一遍"那种步骤 —— 旧实现 `rebuild_from` 就是这么算
     /// `replay_hash` 的，于是它与 `result_hash` 恒等且**不可能失败**，写在产物里是一条假校验。
     pub fn replay(events: &[Event]) -> QxResult<(EventLog, Ledger)> {
+        Self::replay_events(events.iter().cloned())
+    }
+
+    /// 消费调用方已经拥有的事件，避免先为 EventLog 克隆整条事件。
+    ///
+    /// Replay 同时保留 EventLog 与 Ledger 两份事实投影，因此 LedgerApplied 的账簿 entry
+    /// 仍需复制一次；但事件信封及其元数据可以直接移动给 EventLog。
+    pub fn replay_owned(events: Vec<Event>) -> QxResult<(EventLog, Ledger)> {
+        Self::replay_events(events)
+    }
+
+    fn replay_events(events: impl IntoIterator<Item = Event>) -> QxResult<(EventLog, Ledger)> {
         let mut log = EventLog::new();
         let mut ledger = Ledger::new();
         for event in events {
-            log.append_checked(event.clone()).map_err(|error| {
+            let seq = event.seq;
+            let ts = event.ts;
+            let prio = event.prio;
+            let ledger_entry = match &event.kind {
+                EventKind::LedgerApplied { entry } => Some(entry.clone()),
+                _ => None,
+            };
+            log.append_checked(event).map_err(|error| {
                 let previous = log.events().last().map_or_else(
                     || "无前序事件".to_string(),
                     |item| format!("前序 (ts={}, prio={})", item.ts, item.prio),
@@ -371,11 +225,11 @@ impl ReplayVerifier {
                 // 错误里带上"卡在哪一条"：只有一句"顺序不对"的使用者无法定位事实流。
                 crate::error::QxError::Invariant(format!(
                     "事件重放在 seq={} (ts={}, prio={}) 处被拒绝: {error}; {previous}",
-                    event.seq, event.ts, event.prio
+                    seq, ts, prio
                 ))
             })?;
-            if let EventKind::LedgerApplied { entry } = &event.kind {
-                ledger.apply_entry(entry.clone())?;
+            if let Some(entry) = ledger_entry {
+                ledger.apply_entry(entry)?;
             }
         }
         log.validate()?;

@@ -51,12 +51,9 @@ impl CallerCapability {
     }
 }
 
-/// 本 crate 在**门面没有交代自己的构建身份**时写进 RunManifest 的那一格。
-///
-/// 它只是包版本，不是提交号——真实的提交号由门面经 [`RunContext::with_code_commit`] 注入
-/// （CLI 有 `build_identity::BUILD_REVISION`）。宁可写一个诚实的"版本号"，也不要把
-/// `"unknown"` 当成提交号塞进产物：后者看起来像"查过了，没有"。
-pub const APP_DEFAULT_CODE_COMMIT: &str = env!("CARGO_PKG_VERSION");
+/// qx-app 构建时读取的源码提交身份。门面可通过 [`RunContext::with_code_commit`] 覆盖为
+/// 自己的发布身份；无 Git 元数据时如实回落为 `unknown`，不把包版本伪装成提交号。
+pub const APP_DEFAULT_CODE_COMMIT: &str = env!("QX_GIT_COMMIT");
 
 /// 一次调用的上下文：谁在调、拿什么 id 对齐、这次运行的代码身份是什么。
 ///
@@ -80,8 +77,7 @@ impl RunContext {
         }
     }
 
-    /// 让门面把**自己的**构建身份带进来。CLI 传 `build_identity::BUILD_REVISION`；
-    /// 不调用时是包版本（见 [`APP_DEFAULT_CODE_COMMIT`]）。
+    /// 让门面把**自己的**构建身份带进来。未覆盖时使用 qx-app 构建时记录的源码身份。
     pub fn with_code_commit(mut self, code_commit: impl Into<String>) -> Self {
         self.code_commit = code_commit.into();
         self

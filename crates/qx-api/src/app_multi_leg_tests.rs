@@ -183,6 +183,47 @@ fn multi_account_depth_fixture() -> (app_surface::AppPaths, String) {
     (paths, body)
 }
 
+fn bar_backtest_fixture() -> (app_surface::AppPaths, String) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(format!("qx-api-bar-run-{}-{unique}", std::process::id()));
+    let data_root = root.join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy/qianxing.bar-frame.example.json");
+    std::fs::copy(&fixture, data_root.join("bars.json")).unwrap();
+    let paths = app_surface::AppPaths {
+        data_root,
+        artifact_root: root.join("artifacts"),
+    };
+    let spec = serde_json::json!({
+        "schema_version": 1,
+        "run_id": "api-bar-async",
+        "instrument": "BTCUSDT.BINANCE",
+        "bars_path": "bars.json",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 1_000_000_000_000_000_i128,
+        "seed": 17,
+        "output_dir": "client-controlled-path-is-overridden",
+        "strategy": {
+            "kind": "sma_cross",
+            "strategy_id": "api-bar-sma",
+            "quantity_raw": qx_core::SCALE,
+            "fast_window": 2,
+            "slow_window": 3
+        }
+    });
+    (paths, spec.to_string())
+}
+
 #[test]
 fn multi_leg_http_facade_uses_service_paths_and_the_same_outcome_contract() {
     let (paths, body) = fixture_paths();
@@ -303,6 +344,43 @@ fn multi_leg_async_route_runs_to_a_terminal_result_through_the_shared_registry()
     )
     .unwrap();
     assert_eq!(ahead.status, 400, "{}", ahead.body);
+}
+
+#[test]
+fn bar_async_route_runs_to_a_terminal_result_through_the_shared_registry() {
+    let (paths, body) = bar_backtest_fixture();
+    let registry = app_surface::AppRunRegistry::open(paths.artifact_root.join(".app-runs"));
+    let started =
+        app_surface::app_run_route("POST", "/app/backtest/start", &body, &paths, &registry)
+            .unwrap();
+    assert_eq!(started.status, 200, "{}", started.body);
+    let started_json: serde_json::Value = serde_json::from_str(&started.body).unwrap();
+    assert_eq!(started_json["run_id"], "api-bar-async");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let record = paths.artifact_root.join(".app-runs/api-bar-async.json");
+    let completed = loop {
+        if let Ok(body) = std::fs::read_to_string(&record) {
+            let document: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if matches!(document["status"].as_str(), Some("succeeded" | "failed")) {
+                break document;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Bar RunHandle did not reach a terminal state"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(completed["status"], "succeeded", "{completed}");
+
+    drop(registry);
+    let reopened = app_surface::AppRunRegistry::open(paths.artifact_root.join(".app-runs"));
+    let restored = reopened.status("api-bar-async");
+    let restored_json: serde_json::Value = serde_json::from_str(&restored.body).unwrap();
+    assert_eq!(restored.status, 200, "{}", restored.body);
+    assert_eq!(restored_json["status"], "succeeded");
+    assert_eq!(restored_json["result"]["run_id"], "api-bar-async");
 }
 
 #[test]

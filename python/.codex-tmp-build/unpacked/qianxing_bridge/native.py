@@ -1,0 +1,608 @@
+"""Optional Rust/PyO3 acceleration and Arrow C Data Interface bridge.
+
+The pure-Python JSON implementation remains the portable fallback.  When the
+``_qianxing_native`` extension is installed, Arrow columns are imported through
+the standard ``__arrow_c_array__`` protocol and retain Rust-owned release
+semantics until pyarrow consumes them.
+"""
+
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+
+def _extension() -> Any:
+    # A top-level `_qianxing_native` may belong to another installed Qianxing
+    # version (or an unrelated package). Never search past an importable bundled
+    # extension merely because it is an older generation: doing so can silently
+    # mix Python sources from one install with a native binary from another.
+    try:
+        return import_module("qianxing_bridge._qianxing_native")
+    except ImportError:
+        # The top-level name is retained only for developer builds that put the
+        # cdylib directly on sys.path while the bundled module is absent.
+        try:
+            return import_module("_qianxing_native")
+        except ImportError as developer_error:
+            raise RuntimeError(
+                "_qianxing_native is not installed; build the qx-python wheel first"
+            ) from developer_error
+
+
+def available() -> bool:
+    try:
+        _extension()
+    except RuntimeError:
+        return False
+    return True
+
+
+#: 应用层用例入口。扩展是构建产物，旧世代没有它们——所以"扩展能 import"
+#: 与"这个世代有应用层入口"是两件事，探针必须按名字问，不能按 import 成功推断。
+APP_ENTRYPOINTS = (
+    "app_screen_ashare_bars",
+    "app_validate_dataset",
+    "app_run_backtest",
+    "app_run_backtest_with_strategy",
+    "app_start_backtest_with_strategy",
+    "app_run_backtest_with_strategy_slots",
+    "app_start_backtest_with_strategy_slots",
+    "app_run_depth_backtest_with_strategy",
+    "app_start_depth_backtest_with_strategy",
+    "app_run_depth_backtest_with_strategy_slots",
+    "app_start_depth_backtest_with_strategy_slots",
+    "app_run_multi_leg_backtest_with_strategy",
+    "app_start_multi_leg_backtest_with_strategy",
+    "app_run_multi_account_backtest",
+    "app_start_multi_account_backtest",
+    "app_run_multi_account_depth_backtest",
+    "app_start_multi_account_depth_backtest",
+    "app_start_backtest",
+    "app_verify_run",
+    "app_compare_runs",
+    "app_plan_risk_parity",
+    "app_plan_capital_allocation",
+    "app_plan_algo_execution",
+    "app_run_experiment",
+    "app_start_experiment",
+    "app_run_experiment_with_strategy",
+    "app_start_experiment_with_strategy",
+    "app_run_depth_backtest",
+    "app_start_depth_backtest",
+    "app_run_depth_experiment",
+    "app_start_depth_experiment",
+    "app_run_depth_experiment_with_strategy",
+    "app_start_depth_experiment_with_strategy",
+    "app_verify_depth_run",
+    "app_run_multi_leg_backtest",
+    "app_start_multi_leg_backtest",
+    "app_run_multi_market_backtest",
+    "app_start_multi_market_backtest",
+    "app_run_multi_market_experiment",
+    "app_start_multi_market_experiment",
+    "app_run_multi_market_experiment_with_strategy",
+    "app_start_multi_market_experiment_with_strategy",
+    "app_run_multi_market_depth_experiment",
+    "app_start_multi_market_depth_experiment",
+    "app_run_multi_market_depth_experiment_with_strategy",
+    "app_start_multi_market_depth_experiment_with_strategy",
+    "app_run_multi_market_backtest_with_strategy_slots",
+    "app_start_multi_market_backtest_with_strategy_slots",
+    "app_run_multi_market_depth_backtest",
+    "app_start_multi_market_depth_backtest",
+    "app_run_multi_market_depth_backtest_with_strategy_slots",
+    "app_start_multi_market_depth_backtest_with_strategy_slots",
+    "app_run_multi_leg_experiment",
+    "app_start_multi_leg_experiment",
+    "app_run_multi_leg_experiment_with_strategy",
+    "app_start_multi_leg_experiment_with_strategy",
+)
+
+
+def app_available() -> bool:
+    """这个扩展是不是**带应用层用例**的那一代。
+
+    ``available()`` 只回答"能 import"，而构建产物可能比源码旧（例如 `target/release` 里躺着
+    上一次构建的 `.pyd`，`python/qianxing_bridge/` 里是新的一份）。按名字问一次，才能让
+    "扩展没构建"与"扩展是旧世代"在调用方那里分得开。
+    """
+    try:
+        extension = _extension()
+    except RuntimeError:
+        return False
+    return all(hasattr(extension, name) for name in APP_ENTRYPOINTS)
+
+
+def frame_digest(payload: str) -> int:
+    return int(_extension().frame_digest(payload))
+
+
+def fingerprint_bars(payload: str) -> str:
+    return str(_extension().fingerprint_bars(payload))
+
+
+def frame_to_json(payload: str) -> str:
+    return str(_extension().frame_to_json(payload))
+
+
+def app_screen_ashare_bars(payload: str) -> str:
+    """Run A-share screening metrics and ranking in the shared Rust application layer."""
+    return str(_extension().app_screen_ashare_bars(payload))
+
+
+def provider_registry() -> Any:
+    """Create the Rust-owned deterministic provider registry for Python adapters."""
+    return _extension().ProviderRegistry()
+
+
+def app_list_builtin_strategies() -> str:
+    """Return the built-in strategy catalog from the shared Rust strategy crate."""
+    return str(_extension().app_list_builtin_strategies())
+
+
+def provider_bar_dataset_json(
+    registry: Any,
+    query_json: str,
+    dataset_id: str,
+    dataset_version: str,
+    interval_ms: int,
+    timezone: str,
+) -> str:
+    """Return the canonical BarFrame and validated DatasetManifestV2 from Rust."""
+    return str(
+        registry.fetch_bar_dataset_json(
+            query_json, dataset_id, dataset_version, interval_ms, timezone
+        )
+    )
+
+
+def provider_result_json(
+    provider_id: str,
+    provider_version: str,
+    request_id: str,
+    received_at: int,
+    payload_rows_json: str,
+) -> str:
+    """Build lineage hashes in Rust for rows returned by a Python provider adapter."""
+    return str(
+        _extension().provider_result_json(
+            provider_id, provider_version, request_id, received_at, payload_rows_json
+        )
+    )
+
+
+def app_validate_dataset(spec_json: str) -> str:
+    """应用层用例 ``ValidateDataset``：传 ``DatasetSpec`` JSON，换回 ``DatasetVerdict`` JSON。
+
+    与 ``qx-cli app validate-dataset``、``POST /app/validate-dataset`` 调的是同一个
+    ``qx-app`` 用例。失败抛 ``_qianxing_native.QxAppError``，异常文本就是 ``AppError`` 的
+    JSON 文档（与另两个入口逐字节相同）。
+    """
+    return str(_extension().app_validate_dataset(spec_json))
+
+
+def app_run_backtest(spec_json: str) -> str:
+    """应用层用例 ``RunBacktest``：传 ``BacktestSpec`` JSON，换回 ``BacktestOutcome`` JSON。
+
+    产物落在 spec 的 ``output_dir`` 下（与 CLI/HTTP 同一份实现、同一份产物形状）。
+    """
+    return str(_extension().app_run_backtest(spec_json))
+
+
+def app_run_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> str:
+    """Run a Python strategy callback through the shared Rust Bar engine."""
+    return str(
+        _extension().app_run_backtest_with_strategy(
+            spec_json, strategy_id, strategy_version, source_sha256, callback
+        )
+    )
+
+
+def app_start_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> Any:
+    """Start a cancellable Python strategy run in the Rust RunHandle lifecycle."""
+    return _extension().app_start_backtest_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    """Run several named Python strategies in one Rust Bar portfolio."""
+    return str(
+        _extension().app_run_backtest_with_strategy_slots(
+            spec_json, identities_json, callbacks
+        )
+    )
+
+
+def app_start_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    """Start several named Python strategies in one cancellable Rust Bar portfolio."""
+    return _extension().app_start_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    )
+
+
+def app_run_depth_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> str:
+    """Run a Python strategy on Rust Tick or OrderBook matching."""
+    return str(
+        _extension().app_run_depth_backtest_with_strategy(
+            spec_json, strategy_id, strategy_version, source_sha256, callback
+        )
+    )
+
+
+def app_start_depth_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> Any:
+    """Start a cancellable Python strategy on the Rust Tick/OrderBook engine."""
+    return _extension().app_start_depth_backtest_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    """Run multiple Python callbacks in Rust's same-account Tick/OrderBook portfolio."""
+    return str(
+        _extension().app_run_depth_backtest_with_strategy_slots(
+            spec_json, identities_json, callbacks
+        )
+    )
+
+
+def app_start_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    """Start a cancellable multi-callback Rust Tick/OrderBook portfolio run."""
+    return _extension().app_start_depth_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    )
+
+
+def app_run_multi_leg_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> str:
+    """Run a Python strategy on Rust's two-leg Bar workflow."""
+    return str(_extension().app_run_multi_leg_backtest_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, callback
+    ))
+
+
+def app_start_multi_leg_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> Any:
+    """Start a cancellable Python strategy on Rust's two-leg Bar workflow."""
+    return _extension().app_start_multi_leg_backtest_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_multi_leg_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run a bounded parameter grid with a fresh Python strategy for each Rust candidate."""
+    return str(_extension().app_run_multi_leg_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_multi_leg_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start a cancellable parameter grid with a fresh strategy for each candidate."""
+    return _extension().app_start_multi_leg_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    )
+
+
+def app_run_multi_account_backtest(spec_json: str) -> str:
+    """Run isolated account Bar backtests with the shared Rust use case."""
+    return str(_extension().app_run_multi_account_backtest(spec_json))
+
+
+def app_start_multi_account_backtest(spec_json: str) -> Any:
+    """Start a multi-account Bar backtest in the shared Rust run lifecycle."""
+    return _extension().app_start_multi_account_backtest(spec_json)
+
+
+def app_run_multi_account_depth_backtest(spec_json: str) -> str:
+    """Run isolated Tick/OrderBook accounts through the shared Rust depth kernel."""
+    return str(_extension().app_run_multi_account_depth_backtest(spec_json))
+
+
+def app_start_multi_account_depth_backtest(spec_json: str) -> Any:
+    """Start a cancellable multi-account Tick/OrderBook batch in Rust."""
+    return _extension().app_start_multi_account_depth_backtest(spec_json)
+
+
+def app_start_backtest(spec_json: str) -> Any:
+    """Start a Bar backtest in the Rust engine and return its lifecycle handle."""
+    return _extension().app_start_backtest(spec_json)
+
+
+def app_verify_run(outcome_json: str) -> str:
+    """应用层用例 ``VerifyRun``：传 ``BacktestOutcome`` JSON，换回 ``VerificationResult`` JSON。
+
+    ``outcome_json`` 直接取 ``app_run_backtest`` 的返回值——各入口的交接面是同一份文档。
+    """
+    return str(_extension().app_verify_run(outcome_json))
+
+
+def app_compare_runs(spec_json: str) -> str:
+    """Deterministically compare completed runs via the shared Rust application use case."""
+    return str(_extension().app_compare_runs(spec_json))
+
+
+def app_plan_risk_parity(spec_json: str) -> str:
+    """Create a deterministic long-only risk-parity plan in the Rust core."""
+    return str(_extension().app_plan_risk_parity(spec_json))
+
+
+def app_plan_capital_allocation(spec_json: str) -> str:
+    """Allocate portfolio cash using deterministic Rust-owned priority rules."""
+    return str(_extension().app_plan_capital_allocation(spec_json))
+
+
+def app_plan_algo_execution(spec_json: str) -> str:
+    """Plan TWAP/VWAP child orders in the Rust application use case."""
+    return str(_extension().app_plan_algo_execution(spec_json))
+
+
+def app_run_experiment(spec_json: str) -> str:
+    """Expand and execute a bounded Rust backtest parameter experiment."""
+    return str(_extension().app_run_experiment(spec_json))
+
+
+def app_start_experiment(spec_json: str) -> Any:
+    """Start a bounded parameter grid in the Rust application worker."""
+    return _extension().app_start_experiment(spec_json)
+
+
+def app_run_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run Python-authored parameter candidates through the shared Rust Bar engine."""
+    return str(_extension().app_run_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start cancellable Python-authored candidates on the shared Rust experiment worker."""
+    return _extension().app_start_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    )
+
+
+def app_run_depth_backtest(spec_json: str) -> str:
+    """Execute the shared Rust L1 Tick or L2 order-book backtest use case."""
+    return str(_extension().app_run_depth_backtest(spec_json))
+
+
+def app_start_depth_backtest(spec_json: str) -> Any:
+    """Start an L1 Tick or L2 order-book run in the Rust engine."""
+    return _extension().app_start_depth_backtest(spec_json)
+
+
+def app_run_depth_experiment(spec_json: str) -> str:
+    """Run a bounded parameter grid through the shared Rust depth use case."""
+    return str(_extension().app_run_depth_experiment(spec_json))
+
+
+def app_start_depth_experiment(spec_json: str) -> Any:
+    """Start a cancellable Rust Tick/OrderBook parameter experiment."""
+    return _extension().app_start_depth_experiment(spec_json)
+
+
+def app_run_depth_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run caller-authored Tick/OrderBook candidates through the shared Rust engines."""
+    return str(_extension().app_run_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_depth_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start a cancellable Tick/OrderBook grid with a new Python callback per candidate."""
+    return _extension().app_start_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    )
+
+
+def app_verify_depth_run(outcome_json: str) -> str:
+    """Verify depth artifacts via the shared Rust application use case."""
+    return str(_extension().app_verify_depth_run(outcome_json))
+
+
+def app_run_multi_leg_backtest(spec_json: str) -> str:
+    """Execute the shared Rust two-leg Bar backtest use case."""
+    return str(_extension().app_run_multi_leg_backtest(spec_json))
+
+
+def app_start_multi_leg_backtest(spec_json: str) -> Any:
+    """Start a cancellable Rust two-leg Bar run."""
+    return _extension().app_start_multi_leg_backtest(spec_json)
+
+
+def app_run_multi_market_backtest(spec_json: str) -> str:
+    """Execute the shared Rust N-market Bar portfolio use case."""
+    return str(_extension().app_run_multi_market_backtest(spec_json))
+
+
+def app_start_multi_market_backtest(spec_json: str) -> Any:
+    """Start a cancellable N-market run in the shared Rust application layer."""
+    return _extension().app_start_multi_market_backtest(spec_json)
+
+
+def app_run_multi_market_depth_backtest(spec_json: str) -> str:
+    return str(_extension().app_run_multi_market_depth_backtest(spec_json))
+
+
+def app_start_multi_market_depth_backtest(spec_json: str) -> Any:
+    return _extension().app_start_multi_market_depth_backtest(spec_json)
+
+
+def app_run_multi_market_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    return str(_extension().app_run_multi_market_depth_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    ))
+
+
+def app_start_multi_market_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    return _extension().app_start_multi_market_depth_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    )
+
+
+def app_run_multi_market_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    return str(_extension().app_run_multi_market_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    ))
+
+
+def app_start_multi_market_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    return _extension().app_start_multi_market_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    )
+
+
+def app_run_multi_leg_experiment(spec_json: str) -> str:
+    """Run a bounded parameter grid through the shared Rust multi-leg use case."""
+    return str(_extension().app_run_multi_leg_experiment(spec_json))
+
+
+def app_start_multi_leg_experiment(spec_json: str) -> Any:
+    """Start a cancellable multi-leg parameter grid in Rust."""
+    return _extension().app_start_multi_leg_experiment(spec_json)
+
+
+def app_run_multi_market_experiment(spec_json: str) -> str:
+    """Run a bounded candidate grid through the shared Rust multi-market engine."""
+    return str(_extension().app_run_multi_market_experiment(spec_json))
+
+
+def app_start_multi_market_experiment(spec_json: str) -> Any:
+    """Start a cancellable shared-account multi-market candidate grid."""
+    return _extension().app_start_multi_market_experiment(spec_json)
+
+
+def app_run_multi_market_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> str:
+    return str(_extension().app_run_multi_market_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    ))
+
+
+def app_start_multi_market_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> Any:
+    return _extension().app_start_multi_market_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    )
+
+
+def app_run_multi_market_depth_experiment(spec_json: str) -> str:
+    return str(_extension().app_run_multi_market_depth_experiment(spec_json))
+
+
+def app_start_multi_market_depth_experiment(spec_json: str) -> Any:
+    return _extension().app_start_multi_market_depth_experiment(spec_json)
+
+
+def app_run_multi_market_depth_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> str:
+    return str(_extension().app_run_multi_market_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    ))
+
+
+def app_start_multi_market_depth_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> Any:
+    return _extension().app_start_multi_market_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    )
+
+
+def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:
+    import pyarrow as pa
+
+    native = _extension()
+    return tuple(
+        pa.array(native.owned_arrow_array(payload, column))
+        for column in range(6)
+    )

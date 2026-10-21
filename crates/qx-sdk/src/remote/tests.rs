@@ -131,9 +131,11 @@ fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
     let spec = crate::ProviderBacktestSpec {
         data_request: crate::DataRequest::new(query, crate::DataRequirements::default()),
         backtest: crate::BacktestSpec::new(
-            "provider-run",
-            "BTCUSDT.BINANCE",
-            "bars.json",
+            crate::BacktestDatasetInput {
+                run_id: "provider-run".into(),
+                instrument: "BTCUSDT.BINANCE".into(),
+                bars_path: "bars.json".into(),
+            },
             "USDT",
             100_000_000_000_000,
             20261013,

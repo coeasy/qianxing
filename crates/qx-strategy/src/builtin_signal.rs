@@ -51,6 +51,48 @@ impl BuiltinSignalKnob {
     }
 }
 
+/// Provenance for the built-in signal knobs declared for one strategy run.
+///
+/// This keeps the distinction between configured knobs and knobs actually consumed by a kind in
+/// the strategy core, next to the authoritative `signal_knobs` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltinSignalProvenance {
+    pub source: &'static str,
+    pub knobs: String,
+    pub declared_unused: String,
+}
+
+impl BuiltinSignalProvenance {
+    pub fn from_declared(
+        kind: BuiltinStrategyKind,
+        declared: impl IntoIterator<Item = BuiltinSignalKnob>,
+    ) -> Self {
+        let declared = declared.into_iter().collect::<Vec<_>>();
+        let unused = declared
+            .iter()
+            .filter(|knob| !kind.uses_signal_knob(**knob))
+            .map(|knob| knob.config_key())
+            .collect::<Vec<_>>();
+        Self {
+            source: if declared.is_empty() {
+                "builtin-default"
+            } else {
+                "config"
+            },
+            knobs: kind.signal_knob_list(),
+            declared_unused: if unused.is_empty() {
+                "none".to_string()
+            } else {
+                unused.join(",")
+            },
+        }
+    }
+
+    pub fn defaults(kind: BuiltinStrategyKind) -> Self {
+        Self::from_declared(kind, std::iter::empty())
+    }
+}
+
 /// MACD 的三档窗口：内核常数，不随 `builtin_*` 四项变动（清单里它是唯一没有任何旋钮的 kind）。
 pub const MACD_WINDOWS: (usize, usize, usize) = (12, 26, 9);
 /// MACD 发出第一个信号所需的最少可见 Bar 数：26 根慢线 + 9 个 MACD 值 + 1 根判定交叉。

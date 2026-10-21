@@ -1,0 +1,30 @@
+schema_version: 1
+updated_at: "2026-10-17"
+decision: explicit_two_path_boundary
+decision_reason: >-
+  Bar OHLCV and sequential L1/L2 book snapshots expose different execution facts.
+  A Bar FillContext can describe one bar and an order intent; it cannot describe
+  resting queue depth or snapshot-to-snapshot order state. Unifying the types
+  would require inventing book facts for Bar inputs or erasing the stateful
+  order-book execution contract.
+paths:
+  bar_fill_model:
+    input_contract: "OHLCV Bar + FillContext(side, remaining_qty, limit, halted)"
+    resolver: "crates/qx-cli/src/backtests/fill_model.rs::bar_fill_model"
+    model_contract: "crates/qx-xingban/src/fill.rs::FillModel"
+    dispatch: "crates/qx-xingban/src/venue.rs::Venue::on_bar"
+    scope: "Bar OHLCV; models must not claim L1/L2 queue or depth evidence"
+    optional_bar_volume_limit: "cumulative fills for all orders on one Bar are capped by declared OHLCV volume participation bps; this is a capacity limit, not queue reconstruction"
+  order_book_execution:
+    input_contract: "ordered L1/L2 OrderBookSnapshot sequence"
+    model_contract: "crates/qx-xingban/src/orderbook.rs::OrderBookExecutionModel"
+    dispatch: "crates/qx-xingban/src/orderbook.rs::OrderBookMatchingEngine::on_snapshot_with_cancellations"
+    state: "pending orders, snapshot latency, queue-ahead estimates, remaining level liquidity"
+    callers: "TickBacktestEngine and OrderBookBacktestEngine"
+    scope: "Tick/L1 and OrderBook/L2; matching advances on validated snapshots"
+separation_invariants:
+  - "Bar venue dispatches only FillModel::evaluate (one fill decision with an audit reason)"
+  - "OrderBookMatchingEngine owns snapshot matching and pending-order state"
+  - "Bar-only resolvers reject probabilistic and volume-sensitive models without book data"
+  - "cumulative per-Bar market-volume participation cap is shared by every order and its configured bps is reported"
+  - "Neither model family is adapted into fabricated inputs for the other"

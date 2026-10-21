@@ -12,7 +12,7 @@
 #   by_design 刻意不做，并写明为什么（不是漏掉）
 schema_version: 1
 kind: http-surface-coverage
-updated_at: "2026-10-08"
+updated_at: "2026-10-15"
 self_built_file: crates/qx-api/src/transport.rs
 self_built_file: crates/qx-api/src/ws.rs
 self_built_file: crates/qx-api/src/admission.rs
@@ -30,15 +30,15 @@ areas:
     case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
     note: 只认 Content-Length 定长正文；头尾 `\r\n\r\n` 之后按它等正文。请求总量硬上界 1 MiB。
   - area: transfer_encoding_chunked
-    status: gap
+    status: covered
     anchor: crates/qx-api/src/transport.rs read_request_until
-    case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
-    note: '不实现 chunked。带 `Transfer-Encoding: chunked` 的请求会被读成"无正文"，正文解析随即失败——**fail closed 但报错位置在 400 而不是 411**，且客户端拿不到"我不支持这种 framing"的明确信号。'
+    case: crates/qx-api/src/transport.rs chunked_request_framing_is_rejected_explicitly
+    note: '不实现 chunked；任何 `Transfer-Encoding` 请求在读取正文前以 `InvalidData` 和明确的 unsupported framing 原因拒绝，不再按空正文误读。'
   - area: duplicate_content_length
-    status: gap
+    status: covered
     anchor: crates/qx-api/src/transport.rs read_request_until
-    case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
-    note: '头扫描取**第一条** Content-Length 就 break，第二条被忽略。因为响应恒为 `Connection: close`、且正文有 1 MiB 上界，构不成请求走私的经典前提；但"同一头出现两次该拒"这条规矩本仓没有。'
+    case: crates/qx-api/src/transport.rs duplicate_content_length_is_rejected_as_ambiguous_framing
+    note: '头名大小写不敏感地统计全部 `Content-Length`；出现重复值立即拒绝，避免对同一请求产生两种正文边界解释。'
   - area: request_overall_deadline
     status: covered
     anchor: crates/qx-api/src/transport.rs HTTP_REQUEST_DEADLINE
@@ -60,15 +60,15 @@ areas:
     case: crates/qx-api/tests/browser_admission.rs preflight_from_an_unlisted_origin_says_403_with_its_own_code_name
     note: 预检按 `api.cors_allowed_origins` 逐字符比对；不在册的源回 403 并带自己的码名；没有名单时预检落到 404 且不出任何 CORS 头（不假装允许）。
   - area: query_percent_decoding
-    status: partial
+    status: covered
     anchor: crates/qx-api/src/admission.rs percent_decode
-    case: crates/qx-api/tests/browser_admission.rs without_an_allowlist_the_preflight_falls_through_to_the_404_and_no_cors_headers_appear
-    note: 实现按 %XX 解码并在坏转义时回 `query string percent-encoding is malformed`；但**没有一条直接点名 percent_decode 的用例**——它现在只被"路由带键"那批用例间接走到。欠账记在这里。
+    case: crates/qx-api/src/http_contract_tests.rs percent_decode_directly_covers_encoded_text_plus_and_malformed_bytes
+    note: 直接核对 %XX、加号空格、UTF-8 多字节还原，并拒绝不完整转义、非十六进制字符和非法 UTF-8。
   - area: header_lookup_case_insensitive
-    status: partial
+    status: covered
     anchor: crates/qx-api/src/admission.rs header_value
-    case: crates/qx-api/tests/browser_admission.rs a_request_body_cannot_hijack_the_websocket_handshake
-    note: 头名按 ASCII 大小写不敏感比对（`eq_ignore_ascii_case`）。大小写混排的直接用例没有，靠握手那条间接覆盖。
+    case: crates/qx-api/src/http_contract_tests.rs header_lookup_matches_ascii_case_insensitively_and_ignores_body
+    note: 直接核对混合大小写、首尾空白裁剪、查无此头，以及正文中的伪头不参与查找。
   - area: connection_budget
     status: covered
     anchor: crates/qx-api/src/admission.rs DEFAULT_MAX_CONCURRENT_CONNECTIONS
@@ -97,23 +97,23 @@ areas:
   - area: ws_close_frame_detection
     status: covered
     anchor: crates/qx-api/src/ws.rs WsCloseScanner
-    case: crates/qx-api/src/ws.rs a_complete_close_frame_is_detected
+    case: crates/qx-api/src/ws/tests.rs a_complete_close_frame_is_detected
     note: Close 帧 opcode 0x8 只认帧起点的帧头；按整块缓冲逐字节扫会把 16 个字节值都命中，正常载荷被误判成断连（V13 R11 修）。
   - area: ws_frame_write_lengths
-    status: partial
+    status: covered
     anchor: crates/qx-api/src/transport.rs write_ws_text
-    case: crates/qx-api/src/ws.rs payload_bytes_matching_close_are_not_a_close_frame
-    note: 服务端只写文本帧，7/16/64 位长度三档都有分支；但没有一条直接对 `write_ws_text` 三个长度档逐档断言的用例——目前靠端到端 WS 用例间接覆盖。欠账记在这里。
+    case: crates/qx-api/src/http_contract_tests.rs websocket_text_writer_encodes_all_three_payload_length_forms
+    note: 直接断言 125/126/65,536 字节正文分别使用 7/16/64 位长度编码，并核对总帧长度。
   - area: ws_ping_pong
-    status: gap
-    anchor: crates/qx-api/src/ws.rs WS_MAX_IDLE_ROUNDS
-    case: crates/qx-api/src/ws.rs a_close_frame_split_across_reads_is_still_detected
-    note: 服务端不主动 ping、也不回 pong；空闲靠 WS_MAX_IDLE_ROUNDS 的轮次上界收摊。对端若只靠 ping 保活会被本服务按空闲断开。
+    status: covered
+    anchor: crates/qx-api/src/ws.rs respond_to_client_frames
+    case: crates/qx-api/src/ws/ping_pong_tests.rs client_ping_gets_an_unmasked_pong_with_the_same_payload
+    note: 对端 Ping 按跨读帧边界解析，服务端返回载荷相同的未掩码 Pong；服务端不主动发 Ping，WS_MAX_IDLE_ROUNDS 仍作为双向静默上界。
   - area: ws_client_frame_masking
-    status: partial
+    status: covered
     anchor: crates/qx-api/src/ws.rs WsCloseScanner
-    case: crates/qx-api/src/ws.rs an_unfinished_frame_cannot_grow_the_buffer_past_the_cap
-    note: 扫描器按掩码位跳过 4 字节掩码键以定位帧边界；本通道只推送事件、不消费客户端载荷，所以不校验客户端必须掩码（RFC 6455 要求客户端掩码，服务端收到未掩码帧本可断连）。
+    case: crates/qx-api/src/ws/tests.rs an_unmasked_client_frame_ends_the_session
+    note: '所有客户端帧必须带 RFC 6455 掩码位；扫描器按协议跳过 4 字节掩码键，未掩码帧使会话立即收摊。'
   - area: accept_loop_lifecycle
     status: covered
     anchor: crates/qx-api/src/lib.rs serve
@@ -127,6 +127,6 @@ areas:
 
 verdict:
   decision: keep_self_built
-  reason: 上表 21 格里 13 格 covered、4 格 partial、3 格 gap、1 格 by_design。缺口全部落在**本仓不用的 HTTP 特性**上（chunked 请求体、重复 Content-Length、ping/pong 保活），没有一格落在本仓真正提供的读面上；而迁库要动的是 route/service 契约、mTLS 操作员映射、连接额度与停机令牌四处已由判据钉住的边界。按 §9 排期原则 3「零新依赖」，先登记、后评估：当前缺口不足以支撑一次迁库。
-  accepted_gaps: transfer_encoding_chunked,duplicate_content_length,query_percent_decoding,header_lookup_case_insensitive,ws_frame_write_lengths,ws_ping_pong,ws_client_frame_masking
+  reason: 上表 21 格里 20 格 covered、0 格 gap、0 格 partial、1 格 by_design。请求 chunked framing 与重复 Content-Length 均明确 fail closed；客户端未掩码 WS 帧立即结束会话。客户端 Ping 会收到同载荷 Pong，服务端不主动发 Ping；迁库仍需改动 route/service 契约、mTLS 操作员映射、连接额度与停机令牌四处已由判据钉住的边界，当前不构成迁库理由。
+  accepted_gaps:
   migration_trigger: 出现下列任一条即重新评估迁库：① 需要一个本仓读面真正要用的 HTTP 特性（keep-alive/流水线、chunked 请求体、HTTP/2、代理转发头语义）；② 需要把 API 暴露给不受控客户端，届时"重复 Content-Length 该拒""未掩码客户端帧该断"这类规矩从"本仓不用"变成"必须防"；③ WS 需要双向载荷（本通道现在是单向推送）。

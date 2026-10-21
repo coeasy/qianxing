@@ -1,8 +1,8 @@
 //! HTTP/WebSocket 传输层：套接字选项、TLS 包装、请求读取、响应写出与握手摘要。
 //!
 //! 这些函数不含任何领域判定——权限、限流、路由与投影都在 `lib.rs` 的 `ApiService` 上。
-//! 外置的理由是行数棘轮：`lib.rs` 已顶到登记值，浏览器准入面（CORS、连接预算、升级
-//! 路径闸、查询串解码）还要在同一个 crate 里落地，与判定无关的字节搬运必须先挪出去。
+//! 独立承载与领域判定无关的字节搬运；浏览器准入面（CORS、连接预算、升级路径闸、查询串解码）
+//! 仍由同 crate 的 API 服务处理。
 
 use crate::ApiResponse;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -47,6 +47,17 @@ pub(crate) fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Re
     stream.write_all(&frame)
 }
 
+pub(crate) fn write_ws_pong<S: Write>(stream: &mut S, payload: &[u8]) -> std::io::Result<()> {
+    if payload.len() > 125 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "WebSocket control frame payload exceeds 125 bytes",
+        ));
+    }
+    stream.write_all(&[0x8a, payload.len() as u8])?;
+    stream.write_all(payload)
+}
+
 /// 一条 HTTP 请求（头部 + 正文）的**整体**截止。
 ///
 /// `configure_connection` 装的 100 毫秒单次读超时只挡得住「不再发字节」的对端：
@@ -88,21 +99,37 @@ pub(crate) fn read_request_until<S: Read>(
         if let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
             let header_end = header_end + 4;
             let header = String::from_utf8_lossy(&request[..header_end]);
-            let mut content_length = 0_usize;
+            let mut content_length = None;
+            let mut has_transfer_encoding = false;
             for line in header.lines() {
                 let Some((name, value)) = line.split_once(':') else {
                     continue;
                 };
                 if name.eq_ignore_ascii_case("Content-Length") {
-                    content_length = value.trim().parse::<usize>().map_err(|_| {
+                    if content_length.is_some() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "duplicate Content-Length",
+                        ));
+                    }
+                    content_length = Some(value.trim().parse::<usize>().map_err(|_| {
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             "invalid Content-Length",
                         )
-                    })?;
-                    break;
+                    })?);
+                }
+                if name.eq_ignore_ascii_case("Transfer-Encoding") {
+                    has_transfer_encoding = true;
                 }
             }
+            if has_transfer_encoding {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Transfer-Encoding is unsupported",
+                ));
+            }
+            let content_length = content_length.unwrap_or(0);
             let expected = header_end.checked_add(content_length).ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "request length overflow")
             })?;
@@ -134,7 +161,7 @@ pub(crate) fn parse_http_request(request: &str) -> Result<(String, String, Strin
 /// 判定过的**定值**：这里不做任何转义，把客户端给的字符串直接塞进来就是一条响应头注入。
 ///
 /// 追加而不改 `ApiResponse` 的形状，是因为那份结构体是读面的公开返回类型，
-/// `crates/qx-cli/src/tests/api_response_field_doc.rs` 按它的字段逐条与文档比相等；
+/// `crates/qx-cli/tests/unit/api_response_field_doc.rs` 按它的字段逐条与文档比相等；
 /// 跨源头是**这一条连接**的属性（随 `Origin` 而变），不是响应的属性。
 ///
 /// 状态行的短语必须与状态码本身说的是同一件事：`403` 与 `503` 过去一起落进 `_ => "Internal
@@ -387,6 +414,31 @@ mod tests {
         assert_eq!(read, payload, "读取必须原样交出整份请求字节");
     }
 
+    #[test]
+    fn chunked_request_framing_is_rejected_explicitly() {
+        let request =
+            b"POST /metrics HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+        let error = read_request_until(
+            &mut std::io::Cursor::new(request),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .expect_err("chunked framing must not be treated as an empty body");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "Transfer-Encoding is unsupported");
+    }
+
+    #[test]
+    fn duplicate_content_length_is_rejected_as_ambiguous_framing() {
+        let request = b"POST /metrics HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\ncontent-length: 4\r\n\r\nbody";
+        let error = read_request_until(
+            &mut std::io::Cursor::new(request),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .expect_err("duplicate lengths must not choose one framing interpretation");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "duplicate Content-Length");
+    }
+
     /// 排空跑在唯一的 accept 线程上：对端每 150 毫秒滴一个字节时，`configure_connection`
     /// 的 100 毫秒单次读超时永远追不上，64 KiB 的字节界要 65,536 轮才走满。这一颗问的是
     /// `HTTP_REFUSE_DRAIN_DEADLINE` 那把墙钟在不在场（V13 R17-b）。
@@ -430,3 +482,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "http_contract_tests.rs"]
+mod http_contract_tests;

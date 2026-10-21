@@ -1,7 +1,6 @@
 //! `ccxt-submit-order` 一次性提交入口的参数契约。
 //!
-//! 与 `plan_args.rs` / `data_validate_args.rs` 同因：`cli_args.rs` 处在行数棘轮顶格，
-//! 新命令的参数结构单独成文件，既守住预算，也让「哪个命令读哪些参数」一处可见。
+//! 与其他命令参数结构分开组织，让「哪个命令读哪些参数」一处可见。
 //! CCXT 凭据不进本文件：凭据的环境变量名写在 CCXT 配置 JSON 的 `credential_env` 里，
 //! 运行时由公共 CCXT Worker 从环境变量读取（见 `python/qianxing_ccxt/worker.py`）。
 

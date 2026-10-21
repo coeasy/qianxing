@@ -9,17 +9,18 @@ license.workspace = true
 default = []
 sqlite = ["qx-storage/sqlite"]
 postgres = ["qx-storage/postgres"]
+nats = ["qx-storage/nats"]
 
 [dependencies]
-qx-core = { path = "../qx-core" }
-qx-data = { path = "../qx-data" }
-qx-execution = { path = "../qx-execution" }
-qx-guanxing = { path = "../qx-guanxing" }
-qx-factor = { path = "../qx-factor" }
-qx-strategy = { path = "../qx-strategy" }
-qx-zhenlu = { path = "../qx-zhenlu" }
-qx-control = { path = "../qx-control" }
-qx-storage = { path = "../qx-storage" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-data = { version = "0.2.1", path = "../qx-data" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-factor = { version = "0.2.1", path = "../qx-factor" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-storage = { version = "0.2.1", path = "../qx-storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # 停机信号：把 Ctrl+C / SIGINT / SIGTERM 接到 ShutdownToken 上（版本与锁内已有的传递依赖同档）。

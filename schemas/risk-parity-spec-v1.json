@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/risk-parity-spec-v1.json",
+  "title": "Qianxing RiskParitySpec v1",
+  "description": "Frozen return observations and marks for a deterministic long-only risk-parity plan. Cross-asset alignment and solver feasibility remain runtime validations.",
+  "type": "object",
+  "required": ["schema_version", "portfolio_id", "available_cash_raw", "target_gross_notional_raw", "current_positions", "assets", "max_turnover_bps", "min_trade_notional_raw"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "portfolio_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "available_cash_raw": {"type": "integer", "minimum": 1, "maximum": 170141183460469231731687303715884105727},
+    "target_gross_notional_raw": {"type": "integer", "minimum": 1, "maximum": 170141183460469231731687303715884105727},
+    "current_positions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+    "assets": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/RiskParityAssetSpec"}},
+    "max_turnover_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "min_trade_notional_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RiskParityAssetSpec": {
+      "type": "object",
+      "required": ["instrument", "mark_price_raw", "returns_bps"],
+      "properties": {
+        "instrument": {"type": "string", "minLength": 1},
+        "mark_price_raw": {"type": "integer", "minimum": 1, "maximum": 170141183460469231731687303715884105727},
+        "returns_bps": {"type": "array", "minItems": 2, "maxItems": 10000, "items": {"type": "integer", "minimum": -1000, "maximum": 1000}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

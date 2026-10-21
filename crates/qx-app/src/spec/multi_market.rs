@@ -16,6 +16,9 @@ pub const MAX_STRATEGIES_PER_MARKET: usize = 16;
 pub struct MultiMarketBacktestMarket {
     pub instrument: String,
     pub bars_path: String,
+    /// Optional DatasetManifestV2 quality evidence for this BarFrame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_manifest_path: Option<String>,
     /// Stable order for same-timestamp market events; instrument id breaks ties.
     pub priority: u32,
     pub market_spec: Option<TradingInstrumentSpec>,
@@ -111,6 +114,15 @@ impl MultiMarketBacktestSpec {
             }
             if market.bars_path.trim().is_empty() {
                 return Err(invalid(format!("市场 {instrument} bars_path 不能为空")));
+            }
+            if market
+                .dataset_manifest_path
+                .as_deref()
+                .is_some_and(|path| path.trim().is_empty())
+            {
+                return Err(invalid(format!(
+                    "市场 {instrument} dataset_manifest_path 若在场就不能为空"
+                )));
             }
             if market.strategies.is_empty() || market.strategies.len() > MAX_STRATEGIES_PER_MARKET {
                 return Err(invalid(format!(

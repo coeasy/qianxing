@@ -47,6 +47,10 @@ pub struct LedgerEntry {
     /// Hedge 模式下记录 Long/Short 分仓；None 表示传统 OneWay 净仓。
     #[serde(default)]
     pub position_side: Option<PositionSide>,
+    /// Leverage used to create a derivative position fill. `None` means that the
+    /// entry predates leverage persistence or is not a leveraged TradePosition.
+    #[serde(default)]
+    pub leverage: Option<u32>,
 }
 
 /// A timestamped funding rate declared by a historical market-data source.
@@ -79,6 +83,11 @@ pub struct PositionState {
     /// `TradingInstrumentSpec` 的现金腿时还会再乘 `contract_size`，所以
     /// `contract_size != SCALE` 的产品这里只是每手口径的统计，账户现金以现金腿为准。
     pub realized_pnl: Money,
+    /// Quantity weighted reciprocal leverage at SCALE precision. This preserves
+    /// the aggregate initial-margin ratio when fills add at different leverages.
+    /// `None` is deliberately unknown and makes leveraged Paper valuation fail closed.
+    #[serde(default)]
+    pub margin_ratio_raw: Option<i128>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,14 +120,39 @@ pub struct ConvertibleBondConversion {
 
 #[derive(Clone, Debug, Default)]
 pub struct Ledger {
-    cash: BTreeMap<(String, String), i128>,
-    positions: BTreeMap<(String, InstrumentId), PositionState>,
-    hedge_positions: BTreeMap<(String, InstrumentId, PositionSide), PositionState>,
+    cash: BTreeMap<String, BTreeMap<String, i128>>,
+    positions: BTreeMap<String, BTreeMap<InstrumentId, PositionState>>,
+    hedge_positions:
+        BTreeMap<String, BTreeMap<InstrumentId, BTreeMap<PositionSide, PositionState>>>,
     rights_entitlements: BTreeMap<(String, InstrumentId), i128>,
     cash_dividend_entitlements: BTreeMap<(String, String, InstrumentId), i128>,
     convertible_bond_interest_entitlements: BTreeMap<(String, String, InstrumentId), i128>,
     entries: Vec<LedgerEntry>,
     next_id: u64,
+}
+
+enum PositionUpdate {
+    OneWay {
+        account_id: String,
+        instrument: InstrumentId,
+        state: PositionState,
+    },
+    Hedge {
+        account_id: String,
+        instrument: InstrumentId,
+        side: PositionSide,
+        state: PositionState,
+    },
+}
+
+fn required_instrument<'a>(
+    entry: &'a LedgerEntry,
+    reason: &'static str,
+) -> QxResult<&'a InstrumentId> {
+    entry
+        .instrument
+        .as_ref()
+        .ok_or_else(|| QxError::Invariant(reason.into()))
 }
 
 mod cash;
@@ -137,10 +171,7 @@ impl Ledger {
 
     /// 以完整 entry 重放账簿。entry id、现金和持仓变更都必须连续且可验证。
     pub fn apply_entry(&mut self, entry: LedgerEntry) -> QxResult<u64> {
-        let mut staged = self.clone();
-        let id = staged.apply_entry_inner(entry)?;
-        *self = staged;
-        Ok(id)
+        self.apply_entry_inner(entry)
     }
 
     fn apply_entry_inner(&mut self, entry: LedgerEntry) -> QxResult<u64> {
@@ -156,6 +187,16 @@ impl Ledger {
         if entry.multiplier <= 0 {
             return Err(QxError::Invariant("账簿 entry 合约乘数必须为正".into()));
         }
+        if entry.leverage == Some(0)
+            || (entry.leverage.is_some() && !matches!(entry.kind, LedgerEntryKind::TradePosition))
+        {
+            return Err(QxError::Invariant(
+                "杠杆只能是正数并绑定 TradePosition entry".into(),
+            ));
+        }
+        let mut rights_update = None;
+        let mut dividend_update = None;
+        let mut convertible_interest_update = None;
         if matches!(entry.kind, LedgerEntryKind::RightsEntitlement) {
             if entry.amount.raw() != 0
                 || entry.price.is_some()
@@ -165,8 +206,8 @@ impl Ledger {
             {
                 return Err(QxError::Invariant("权利余额 entry 结构非法".into()));
             }
-            let instrument = entry.instrument.clone().unwrap();
-            let key = (entry.account_id.clone(), instrument);
+            let instrument = required_instrument(&entry, "权利余额 entry 缺少标的")?;
+            let key = (entry.account_id.clone(), instrument.clone());
             let current = self.rights_entitlements.get(&key).copied().unwrap_or(0);
             let next = current
                 .checked_add(entry.quantity.raw())
@@ -174,7 +215,7 @@ impl Ledger {
             if next < 0 {
                 return Err(QxError::BusinessViolation("权利余额不足".into()));
             }
-            self.rights_entitlements.insert(key, next);
+            rights_update = Some((key, next));
         }
         if matches!(entry.kind, LedgerEntryKind::CashDividendEntitlement) {
             if entry.price.is_some()
@@ -188,8 +229,12 @@ impl Ledger {
             {
                 return Err(QxError::Invariant("现金分红权益 entry 结构非法".into()));
             }
-            let instrument = entry.instrument.clone().unwrap();
-            let key = (entry.account_id.clone(), entry.currency.clone(), instrument);
+            let instrument = required_instrument(&entry, "现金分红权益 entry 缺少标的")?;
+            let key = (
+                entry.account_id.clone(),
+                entry.currency.clone(),
+                instrument.clone(),
+            );
             let current = self
                 .cash_dividend_entitlements
                 .get(&key)
@@ -201,7 +246,7 @@ impl Ledger {
             if next < 0 {
                 return Err(QxError::BusinessViolation("现金分红权益余额不足".into()));
             }
-            self.cash_dividend_entitlements.insert(key, next);
+            dividend_update = Some((key, next));
         }
         if matches!(
             entry.kind,
@@ -218,8 +263,12 @@ impl Ledger {
             {
                 return Err(QxError::Invariant("可转债利息权益 entry 结构非法".into()));
             }
-            let instrument = entry.instrument.clone().unwrap();
-            let key = (entry.account_id.clone(), entry.currency.clone(), instrument);
+            let instrument = required_instrument(&entry, "可转债利息权益 entry 缺少标的")?;
+            let key = (
+                entry.account_id.clone(),
+                entry.currency.clone(),
+                instrument.clone(),
+            );
             let current = self
                 .convertible_bond_interest_entitlements
                 .get(&key)
@@ -231,23 +280,29 @@ impl Ledger {
             if next < 0 {
                 return Err(QxError::BusinessViolation("可转债利息权益余额不足".into()));
             }
-            self.convertible_bond_interest_entitlements
-                .insert(key, next);
+            convertible_interest_update = Some((key, next));
         }
-        if entry.amount.raw() != 0 {
-            let key = (entry.account_id.clone(), entry.currency.clone());
-            let current = self.cash.get(&key).copied().unwrap_or(0);
+        let cash_update = if entry.amount.raw() != 0 {
+            let current = self
+                .cash
+                .get(&entry.account_id)
+                .and_then(|currencies| currencies.get(&entry.currency))
+                .copied()
+                .unwrap_or(0);
             let next = current
                 .checked_add(entry.amount.raw())
                 .ok_or_else(|| QxError::Invariant("现金余额溢出".into()))?;
-            self.cash.insert(key, next);
-        }
+            Some((entry.account_id.clone(), entry.currency.clone(), next))
+        } else {
+            None
+        };
+        let mut position_update = None;
         if matches!(entry.kind, LedgerEntryKind::TradePosition)
             || (matches!(entry.kind, LedgerEntryKind::CorporateAction) && entry.quantity.raw() != 0)
         {
             let instrument = entry
                 .instrument
-                .clone()
+                .as_ref()
                 .ok_or_else(|| QxError::Invariant("持仓 entry 缺少 instrument".into()))?;
             let price = entry
                 .price
@@ -258,62 +313,137 @@ impl Ledger {
                         "LedgerEntry position_side=Net 必须使用 OneWay 净仓".into(),
                     ));
                 }
-                self.apply_hedge_position_delta(
-                    &entry.account_id,
-                    &instrument,
-                    position_side,
+                let mut state = self
+                    .hedge_positions
+                    .get(&entry.account_id)
+                    .and_then(|positions| positions.get(instrument))
+                    .and_then(|sides| sides.get(&position_side))
+                    .cloned()
+                    .unwrap_or_default();
+                apply_position_state_delta(
+                    &mut state,
                     entry.quantity.raw(),
                     price,
                     entry.multiplier,
+                    entry.leverage,
+                    matches!(entry.kind, LedgerEntryKind::CorporateAction),
                 )?;
+                position_update = Some(PositionUpdate::Hedge {
+                    account_id: entry.account_id.clone(),
+                    instrument: instrument.clone(),
+                    side: position_side,
+                    state,
+                });
             } else {
-                self.apply_position_delta(
-                    &entry.account_id,
-                    &instrument,
+                let mut state = self
+                    .positions
+                    .get(&entry.account_id)
+                    .and_then(|positions| positions.get(instrument))
+                    .cloned()
+                    .unwrap_or_default();
+                apply_position_state_delta(
+                    &mut state,
                     entry.quantity.raw(),
                     price,
                     entry.multiplier,
+                    entry.leverage,
+                    matches!(entry.kind, LedgerEntryKind::CorporateAction),
                 )?;
+                position_update = Some(PositionUpdate::OneWay {
+                    account_id: entry.account_id.clone(),
+                    instrument: instrument.clone(),
+                    state,
+                });
             }
         }
         let id = entry.id;
-        self.next_id = self
+        let next_id = self
             .next_id
             .checked_add(1)
             .ok_or_else(|| QxError::Invariant("账簿序号溢出".into()))?;
+
+        // Validate and calculate every fallible projection before touching the ledger. The only
+        // staged copies above are the affected PositionState and keys, not the full append-only
+        // ledger; successful commits therefore stay O(log accounts/instruments) instead of
+        // cloning all prior entries on every replayed fact.
+        if let Some((key, value)) = rights_update {
+            self.rights_entitlements.insert(key, value);
+        }
+        if let Some((key, value)) = dividend_update {
+            self.cash_dividend_entitlements.insert(key, value);
+        }
+        if let Some((key, value)) = convertible_interest_update {
+            self.convertible_bond_interest_entitlements
+                .insert(key, value);
+        }
+        if let Some((account_id, currency, value)) = cash_update {
+            self.cash
+                .entry(account_id)
+                .or_default()
+                .insert(currency, value);
+        }
+        if let Some(update) = position_update {
+            match update {
+                PositionUpdate::OneWay {
+                    account_id,
+                    instrument,
+                    state,
+                } => {
+                    self.positions
+                        .entry(account_id)
+                        .or_default()
+                        .insert(instrument, state);
+                }
+                PositionUpdate::Hedge {
+                    account_id,
+                    instrument,
+                    side,
+                    state,
+                } => {
+                    self.hedge_positions
+                        .entry(account_id)
+                        .or_default()
+                        .entry(instrument)
+                        .or_default()
+                        .insert(side, state);
+                }
+            }
+        }
+        self.next_id = next_id;
         self.entries.push(entry);
         Ok(id)
     }
 
-    fn apply_position_delta(
-        &mut self,
-        account_id: &str,
-        instrument: &InstrumentId,
-        delta: i128,
-        price: Price,
-        multiplier: i128,
-    ) -> QxResult<()> {
-        let key = (account_id.to_string(), instrument.clone());
-        let mut state = self.positions.get(&key).cloned().unwrap_or_default();
-        apply_position_state_delta(&mut state, delta, price, multiplier)?;
-        self.positions.insert(key, state);
-        Ok(())
+    pub(super) fn iter_positions(
+        &self,
+    ) -> impl Iterator<Item = ((&str, &InstrumentId), &PositionState)> {
+        self.positions.iter().flat_map(|(account, positions)| {
+            positions
+                .iter()
+                .map(move |(instrument, state)| ((account.as_str(), instrument), state))
+        })
     }
 
-    fn apply_hedge_position_delta(
-        &mut self,
-        account_id: &str,
-        instrument: &InstrumentId,
-        position_side: PositionSide,
-        delta: i128,
-        price: Price,
-        multiplier: i128,
-    ) -> QxResult<()> {
-        let key = (account_id.to_string(), instrument.clone(), position_side);
-        let mut state = self.hedge_positions.get(&key).cloned().unwrap_or_default();
-        apply_position_state_delta(&mut state, delta, price, multiplier)?;
-        self.hedge_positions.insert(key, state);
-        Ok(())
+    pub(super) fn iter_cash(&self) -> impl Iterator<Item = ((&str, &str), &i128)> {
+        self.cash.iter().flat_map(|(account, currencies)| {
+            currencies
+                .iter()
+                .map(move |(currency, amount)| ((account.as_str(), currency.as_str()), amount))
+        })
+    }
+
+    pub(super) fn iter_hedge_positions(
+        &self,
+    ) -> impl Iterator<Item = ((&str, &InstrumentId, PositionSide), &PositionState)> {
+        self.hedge_positions
+            .iter()
+            .flat_map(|(account, positions)| {
+                positions.iter().flat_map(move |(instrument, sides)| {
+                    sides
+                        .iter()
+                        .map(move |(side, state)| ((account.as_str(), instrument, *side), state))
+                })
+            })
     }
 
     fn append(&mut self, mut entry: LedgerEntry) -> QxResult<u64> {
@@ -327,6 +457,8 @@ fn apply_position_state_delta(
     delta: i128,
     price: Price,
     multiplier: i128,
+    leverage: Option<u32>,
+    preserve_margin_ratio: bool,
 ) -> QxResult<()> {
     if delta == 0 {
         return Ok(());
@@ -350,6 +482,24 @@ fn apply_position_state_delta(
             .checked_abs()
             .ok_or_else(|| QxError::Invariant("持仓结果绝对值溢出".into()))?;
         state.average_entry = Price::from_raw(weighted / next_abs);
+        if preserve_margin_ratio {
+            // Corporate actions may rescale quantity while preserving economic exposure.
+        } else if current == 0 {
+            state.margin_ratio_raw = margin_ratio_for_leverage(leverage)?;
+        } else {
+            state.margin_ratio_raw = match (state.margin_ratio_raw, leverage) {
+                (Some(existing), Some(leverage)) => {
+                    let add_ratio = margin_ratio_for_leverage(Some(leverage))?
+                        .ok_or_else(|| QxError::Invariant("新开仓杠杆缺失".into()))?;
+                    let weighted_ratio = old_abs
+                        .checked_mul(existing)
+                        .and_then(|value| add_abs.checked_mul(add_ratio)?.checked_add(value))
+                        .ok_or_else(|| QxError::Invariant("持仓保证金比例合计溢出".into()))?;
+                    Some(weighted_ratio / next_abs)
+                }
+                _ => None,
+            };
+        }
     } else {
         let close_qty = current
             .checked_abs()
@@ -381,10 +531,23 @@ fn apply_position_state_delta(
         );
         if next == 0 {
             state.average_entry = Price::ZERO;
+            state.margin_ratio_raw = None;
         } else if current.signum() != next.signum() {
             state.average_entry = price;
+            state.margin_ratio_raw = margin_ratio_for_leverage(leverage)?;
         }
     }
     state.quantity = Quantity::from_raw(next);
     Ok(())
+}
+
+fn margin_ratio_for_leverage(leverage: Option<u32>) -> QxResult<Option<i128>> {
+    leverage
+        .map(|leverage| {
+            if leverage == 0 {
+                return Err(QxError::BusinessViolation("持仓杠杆必须大于 0".into()));
+            }
+            Ok(SCALE / i128::from(leverage))
+        })
+        .transpose()
 }

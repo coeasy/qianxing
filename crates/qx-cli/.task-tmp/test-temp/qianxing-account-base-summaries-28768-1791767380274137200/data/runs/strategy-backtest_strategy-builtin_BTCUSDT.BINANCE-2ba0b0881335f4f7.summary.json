@@ -1,0 +1,80 @@
+{
+  "account": {
+    "initial_cash_raw": "200000000000000",
+    "source": "strategy-initial-cash"
+  },
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 70,
+  "clock_end": 70000,
+  "clock_start": 1000,
+  "execution_costs": {
+    "source": "runtime-config-default"
+  },
+  "fill_model": {
+    "name": "next_bar_open",
+    "source": "builtin-default"
+  },
+  "fills": 1,
+  "input": {
+    "dataset_id": "strategy-bars:BTCUSDT.BINANCE",
+    "dataset_version": "barframe-json-v1",
+    "fingerprint": "613fdc1dc0b779e7",
+    "kind": "barframe",
+    "path": "D:\\aex_work\\qianxing\\deploy\\qianxing.bar-frame.example.json"
+  },
+  "input_data_hash": "e5c20c038f1bb74c",
+  "instrument": "BTCUSDT.BINANCE",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+  "metrics": {
+    "calmar": null,
+    "fees_raw": 43250000,
+    "final_equity_raw": 200018956750000,
+    "max_drawdown_bps": 0,
+    "profit_factor": null,
+    "return_bps": 0,
+    "sharpe": 0.6119186542030475,
+    "sortino": null,
+    "turnover_raw": 86500000000,
+    "win_rate": 0.2753623188405797
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "MakerTaker@v1[params=maker_bp=2;taker_bp=5]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1"
+  ],
+  "rejected_orders": 0,
+  "rejection_reasons": [],
+  "replay": {
+    "events": 7,
+    "ledger_entries": 4,
+    "log_digest": "83b0d31b7f1b5447",
+    "run_ledger_entries": 4
+  },
+  "result_hash": "83b0d31b7f1b5447",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
+  },
+  "run_manifest": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-account-base-summaries-28768-1791767380274137200\\data\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE-2ba0b0881335f4f7.run.json",
+  "run_record": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-account-base-summaries-28768-1791767380274137200\\data\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE-2ba0b0881335f4f7.record.json",
+  "sample_unit": "bar",
+  "schema_version": 5,
+  "signal": {
+    "declared_unused": "builtin_fast_window,builtin_slow_window,builtin_period,builtin_threshold_bps",
+    "fast_window": 5,
+    "kind": "macd",
+    "knobs": "none",
+    "period": 14,
+    "quantity_raw": "1000000000",
+    "slow_window": 20,
+    "source": "config",
+    "threshold_bps": "100"
+  },
+  "strategy_id": "strategy-builtin"
+}

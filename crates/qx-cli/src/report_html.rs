@@ -13,8 +13,15 @@
 //! 产物无任何外部资源引用（内联 SVG 不带 `xmlns`、无 `http`、无外链 CSS/JS），因此可以
 //! 离线双击打开、可以进版本库、可以被门禁按「出现 http 即判红」钉住。
 
-use super::*;
+use crate::build_identity;
+use crate::report_credibility::credibility_panel;
+pub(crate) use crate::report_equity_csv::{read_equity_analysis_csv, read_equity_csv};
+use crate::report_fidelity::fidelity_panel;
+use crate::report_output_paths::report_artifact_paths;
+use crate::report_readout::{summary_number, summary_text, READOUT_ABSENT};
+use crate::report_svg::{equity_svg, fills_svg, money, monthly_svg, year_month};
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 
 /// 一条成交点：只保留画图需要的三格。
 pub(crate) struct FillPoint {
@@ -37,30 +44,18 @@ pub(crate) fn write_report_html(
     summary: &serde_json::Value,
     output: Option<&Path>,
 ) -> Result<ReportArtifacts, String> {
-    let stem = summary_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_suffix(".summary.json"))
-        .ok_or_else(|| {
-            format!(
-                "报告摘要文件名不是 *.summary.json: {}",
-                summary_path.display()
-            )
-        })?;
-    let sibling = |suffix: &str| summary_path.with_file_name(format!("{stem}.{suffix}"));
-    let equity_path = sibling("equity.csv");
-    let fills_path = sibling("fills.csv");
-    let equity = if equity_path.is_file() {
-        read_equity_csv(&equity_path)?
+    let paths = report_artifact_paths(summary_path)?;
+    let equity = if paths.equity_csv.is_file() {
+        read_equity_csv(&paths.equity_csv)?
     } else {
         Vec::new()
     };
-    let fills = if fills_path.is_file() {
-        read_fills_csv(&fills_path)?
+    let fills = if paths.fills_csv.is_file() {
+        read_fills_csv(&paths.fills_csv)?
     } else {
         Vec::new()
     };
-    let out = output.map_or_else(|| sibling("report.html"), Path::to_path_buf);
+    let out = output.map_or_else(|| paths.html.clone(), Path::to_path_buf);
     if !out
         .extension()
         .and_then(|ext| ext.to_str())
@@ -76,7 +71,11 @@ pub(crate) fn write_report_html(
             .and_then(|name| name.to_str())
             .ok_or_else(|| "HTML 输出文件名无效".to_string())?
     } else {
-        stem
+        paths
+            .html
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "默认 HTML 报告文件名无效".to_string())?
     };
     let parent = out
         .parent()
@@ -101,12 +100,20 @@ pub(crate) fn write_report_html(
         (&artifacts.fills_svg, fills_svg(&fill_values)),
         (&artifacts.monthly_svg, monthly_svg(&monthly)),
     ] {
-        std::fs::write(path, content)
-            .map_err(|error| format!("写入 SVG 报告失败 {}: {error}", path.display()))?;
+        qx_app::artifact_store::sink::publish(
+            path,
+            &content,
+            qx_app::artifact_store::sink::PublishMode::Overwrite,
+        )
+        .map_err(|error| format!("发布 SVG 报告失败 {}: {error}", path.display()))?;
     }
     let html = render_report_html(summary, &equity, &fills, &monthly);
-    std::fs::write(&artifacts.html, html)
-        .map_err(|error| format!("写入 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
+    qx_app::artifact_store::sink::publish(
+        &artifacts.html,
+        &html,
+        qx_app::artifact_store::sink::PublishMode::Overwrite,
+    )
+    .map_err(|error| format!("发布 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
     Ok(artifacts)
 }
 
@@ -208,7 +215,6 @@ pub(crate) fn render_report_html(
     risk_cards.push_str(&ratio_card("卡玛", "calmar"));
     risk_cards.push_str(&ratio_card("盈利周期占比", "win_rate"));
     risk_cards.push_str(&ratio_card("收益因子", "profit_factor"));
-
     let equity_series: Vec<i128> = equity.iter().map(|(_, value)| *value).collect();
     let fills_points: Vec<(u64, i128, i128)> = fills
         .iter()
@@ -245,7 +251,15 @@ pub(crate) fn render_report_html(
         html,
         "<section class=\"cards\" aria-label=\"风险调整收益比率\">{risk_cards}</section>"
     );
+    if let Some(section) = crate::report_benchmark::benchmark_html_section(summary) {
+        html.push_str(&section);
+    }
+    if let Some(section) = crate::ashare_analysis_html_section(summary) {
+        html.push_str(&section);
+    }
     html.push_str(&credibility_panel(summary));
+    html.push_str(&fidelity_panel(summary));
+    html.push_str(&execution::execution_attempts_section(summary));
     html.push_str("<section class=\"charts\">\n");
     let _ = writeln!(
         html,
@@ -276,6 +290,8 @@ pub(crate) fn render_report_html(
     html
 }
 
+mod execution;
+
 /// 转义摘要中的文本字段，避免用户控制的标的名/路径被解释成 HTML 或外部资源。
 pub(crate) fn escape_html(value: &str) -> String {
     value
@@ -296,7 +312,9 @@ fn tone_of(value: Option<i128>) -> &'static str {
 }
 
 fn card(label: &str, value: &str, tone: &str) -> String {
-    format!("<div class=\"card\"><span class=\"k\">{label}</span><span class=\"v {tone}\">{value}</span></div>")
+    format!(
+        "<div class=\"card\"><span class=\"k\">{label}</span><span class=\"v {tone}\">{value}</span></div>"
+    )
 }
 
 /// 产物身份表：读者要能一眼看出「这份结果跑的是哪份输入、用哪套口径」。
@@ -378,38 +396,8 @@ fn monthly_returns(equity: &[(i64, i128)], initial_raw: Option<i128>) -> Vec<(i3
     out
 }
 
-/// 读 `*.equity.csv`（`index,ts,equity_raw,position_raw`）。非表头的行解析不出即报错，
-/// 不静默跳过——静默跳过的曲线会与摘要数字对不上，那是更难查的错。
-fn read_equity_csv(path: &Path) -> Result<Vec<(i64, i128)>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取权益曲线失败 {}: {error}", path.display()))?;
-    let mut rows = Vec::new();
-    for (line_no, line) in text.lines().enumerate() {
-        if line_no == 0 || line.trim().is_empty() {
-            continue;
-        }
-        let cols: Vec<&str> = line.split(',').collect();
-        let ts = cols
-            .get(1)
-            .and_then(|value| value.parse::<i64>().ok())
-            .ok_or_else(|| format!("权益曲线 {} 第 {} 行 ts 非法", path.display(), line_no + 1))?;
-        let equity = cols
-            .get(2)
-            .and_then(|value| value.parse::<i128>().ok())
-            .ok_or_else(|| {
-                format!(
-                    "权益曲线 {} 第 {} 行 equity_raw 非法",
-                    path.display(),
-                    line_no + 1
-                )
-            })?;
-        rows.push((ts, equity));
-    }
-    Ok(rows)
-}
-
 /// 读 `*.fills.csv`（`order_id,ts,qty_raw,price_raw,...`），口径同 [`read_equity_csv`]。
-fn read_fills_csv(path: &Path) -> Result<Vec<FillPoint>, String> {
+pub(crate) fn read_fills_csv(path: &Path) -> Result<Vec<FillPoint>, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|error| format!("读取成交明细失败 {}: {error}", path.display()))?;
     let mut rows = Vec::new();
@@ -468,6 +456,11 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 .cred .cstat.ok { color: #0b57d0; background: #e8f0fe; }
 .cred .cstat.warn { color: #7a4f01; background: #fef7e0; }
 .cred .cstat.absent { color: #5f6368; background: #f1f3f4; }
+.fidelity { margin: 18px 0; }
+.fidelity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.fidelity article { min-width: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; }
+.fidelity h2, .fidelity h3 { margin: 0 0 10px; font-size: 15px; }
+.fidelity-note { color: #7a4f01; background: #fef7e0; padding: 8px 10px; font-size: 13px; }
 .charts { display: flex; flex-direction: column; gap: 18px; }
 figure { margin: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; }
 figcaption { font-size: 13px; color: #5f6368; margin-bottom: 8px; }

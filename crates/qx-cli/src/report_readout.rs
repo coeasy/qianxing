@@ -5,7 +5,7 @@
 //! 不得印一个合法的 `0` 冒充"算过了、结果是零"。
 //!
 //! 为什么值得单独一个文件：这条规则只有三行代码，但它约束的是**任何**把摘要格子印出来的地方，
-//! 而 `config_commands.rs` 已登记的行数预算只降不升（`maturity/line_budgets.yaml`）。
+//! 由这里提供唯一读法，避免不同命令对缺失字段给出不同解释。
 //! 读法住在这里，两个命令共用一份，门禁才能拿"只有一处 `unwrap_or(0)` 形状"当判据。
 
 use serde_json::Value;
@@ -16,7 +16,7 @@ pub(crate) const READOUT_ABSENT: &str = "absent";
 /// 摘要有这个块吗（`input` 自 v3、`account` 自 v4）。用于把"这个世代的产物没声明过"说出来，
 /// 而不是把块里的每一格各自念成缺席——前者是用者需要的信息，后者会让人以为核对过却全空。
 pub(crate) fn summary_block<'a>(summary: &'a Value, key: &str) -> Option<&'a Value> {
-    summary.get(key).filter(|value| !value.is_null())
+    qx_app::report_analysis::summary_block(summary, key)
 }
 
 /// 摘要落盘的 `schema_version`；缺这个键的产物属于"世代未知"，读侧要如实报未知。
@@ -29,22 +29,12 @@ pub(crate) fn summary_schema_version(summary: &Value) -> Option<i64> {
 /// 为什么要同时接字符串：i128 的定点钱在摘要里按字符串落盘（见 `account.initial_cash_raw`），
 /// 只认 JSON number 会把一个真实存在的数读成缺席——那是另一种骗人。
 pub(crate) fn summary_number(summary: &Value, pointer: &str) -> Option<i128> {
-    match summary.pointer(pointer)? {
-        Value::Null => None,
-        Value::String(text) => text.trim().parse::<i128>().ok(),
-        value @ Value::Number(_) => value.to_string().parse::<i128>().ok(),
-        _ => None,
-    }
+    qx_app::report_analysis::summary_number(summary, pointer)
 }
 
 /// 一格的文本读法。
 pub(crate) fn summary_text(summary: &Value, pointer: &str) -> Option<String> {
-    match summary.pointer(pointer)? {
-        Value::String(text) => Some(text.clone()),
-        Value::Null => None,
-        value @ Value::Number(_) => Some(value.to_string()),
-        _ => None,
-    }
+    qx_app::report_analysis::summary_text(summary, pointer)
 }
 
 /// 缺席的统一排版：`None` 一律印 [`READOUT_ABSENT`]，绝不落回任何合法取值。
@@ -71,6 +61,8 @@ pub(crate) fn summary_generation_note(summary: &Value) -> String {
         ("account", 4),
         ("replay", 2),
         ("run_record", 5),
+        ("ashare_analysis", 6),
+        ("execution_attempts", 7),
     ] {
         let declared = summary_block(summary, key).is_some();
         let expected = match summary_schema_version(summary) {

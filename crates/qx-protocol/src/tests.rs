@@ -1,7 +1,6 @@
 //! `qx-protocol` 的 crate 内用例（V12 R2 从 `lib.rs` 末尾原样搬家，行为逐字相同）。
 //!
-//! 搬家理由与线格式子模块同一处：账户快照的行数棘轮只认"整文件下行"，而契约版本这类
-//! 每条都要独立成用例的读侧纪律会持续长大，留在 crate 根等于让生产实现替测试付行数。
+//! 账户快照契约按读侧不变量拆分用例，便于逐项验证版本、字段与兼容行为。
 //! 作为 crate 根的子模块，这里依旧能碰到根内的私有项。
 use super::*;
 
@@ -52,7 +51,7 @@ fn wrong_base_is_rejected() {
 #[test]
 fn json_wire_format_is_stable_and_uses_raw_integers() {
     let snapshot = snapshot();
-    let json = snapshot.to_json();
+    let json = snapshot.to_json().expect("protocol JSON serializes");
     assert!(json.starts_with("{\"protocol\":\"QIANXING_ACCOUNT\""));
     assert!(json.contains("\"cash_raw\":{\"USDT\":1000}"));
     assert!(json.contains("\"quantity_raw\":2"));
@@ -60,7 +59,7 @@ fn json_wire_format_is_stable_and_uses_raw_integers() {
     let wire = snapshot.to_wire_json().unwrap();
     assert_eq!(AccountSnapshot::from_wire_json(&wire).unwrap(), snapshot);
     let qifi = snapshot.to_qifi();
-    let qifi_json = qifi.to_json();
+    let qifi_json = qifi.to_json().expect("protocol JSON serializes");
     assert!(qifi_json.contains("\"protocol\":\"QIFI\""));
     assert_eq!(QifiEnvelope::from_json(&qifi_json).unwrap(), qifi);
 }
@@ -110,7 +109,7 @@ fn rows_keyed_by_integer_still_produce_and_recover_valid_json() {
         },
     );
     snapshot.seal();
-    let text = snapshot.to_json();
+    let text = snapshot.to_json().expect("protocol JSON serializes");
     let parsed: serde_json::Value = serde_json::from_str(&text)
         .unwrap_or_else(|error| panic!("带行的快照线格式必须是合法 JSON: {error}\n{text}"));
     for (table, key) in [("orders", "7"), ("fills", "9"), ("transfers", "11")] {
@@ -178,7 +177,8 @@ fn stable_json_and_file_snapshot_store_are_recoverable_and_idempotent() {
 #[test]
 fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     let mut value: serde_json::Value =
-        serde_json::from_str(&snapshot().to_json()).expect("稳定 JSON 必须可解析");
+        serde_json::from_str(&snapshot().to_json().expect("protocol JSON serializes"))
+            .expect("稳定 JSON 必须可解析");
     value["schema_version"] = serde_json::Value::from(7u64);
     value["header"]["schema_version"] = serde_json::Value::from(7u64);
     let future = serde_json::to_string(&value).unwrap();
@@ -191,7 +191,10 @@ fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     );
 
     // 版本号也是哈希的一部分：不能靠"改掉版本就换一份哈希"绕开校验。
-    let mut header_only = serde_json::from_str::<serde_json::Value>(&snapshot().to_json()).unwrap();
+    let mut header_only = serde_json::from_str::<serde_json::Value>(
+        &snapshot().to_json().expect("protocol JSON serializes"),
+    )
+    .unwrap();
     header_only["header"]["schema_version"] = serde_json::Value::from(7u64);
     assert!(matches!(
         AccountSnapshot::from_json(&serde_json::to_string(&header_only).unwrap()),
@@ -228,7 +231,8 @@ fn header_version_that_is_not_the_declared_integer_is_rejected() {
         serde_json::json!(1.0),
     ] {
         let mut value: serde_json::Value =
-            serde_json::from_str(&snapshot().to_json()).expect("稳定 JSON 必须可解析");
+            serde_json::from_str(&snapshot().to_json().expect("protocol JSON serializes"))
+                .expect("稳定 JSON 必须可解析");
         value["header"]["schema_version"] = declared.clone();
         let error = AccountSnapshot::from_json(&serde_json::to_string(&value).unwrap())
             .expect_err("读不出与顶层相同整数的版本号必须被拒");
@@ -246,13 +250,15 @@ fn header_version_that_is_not_the_declared_integer_is_rejected() {
 #[test]
 fn header_without_version_is_the_stored_shape_and_still_round_trips() {
     let stored: serde_json::Value =
-        serde_json::from_str(&snapshot().to_json()).expect("稳定 JSON 必须可解析");
+        serde_json::from_str(&snapshot().to_json().expect("protocol JSON serializes"))
+            .expect("稳定 JSON 必须可解析");
     assert!(
         stored["header"].get("schema_version").is_none(),
         "夹具依赖的事实：自家写侧本来就不在 header 里抄第二份版本号"
     );
-    let parsed = AccountSnapshot::from_json(&snapshot().to_json())
-        .expect("缺席的 header 版本号按顶层归一，否则自家存储读不回来");
+    let parsed =
+        AccountSnapshot::from_json(&snapshot().to_json().expect("protocol JSON serializes"))
+            .expect("缺席的 header 版本号按顶层归一，否则自家存储读不回来");
     assert_eq!(parsed, snapshot());
     assert_eq!(
         parsed.header.schema_version,
@@ -277,7 +283,8 @@ fn header_without_version_is_the_stored_shape_and_still_round_trips() {
 #[test]
 fn future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem() {
     let mut value: serde_json::Value =
-        serde_json::from_str(&snapshot().to_json()).expect("稳定 JSON 必须可解析");
+        serde_json::from_str(&snapshot().to_json().expect("protocol JSON serializes"))
+            .expect("稳定 JSON 必须可解析");
     value["schema_version"] = serde_json::Value::from(7u64);
     value["header"]["schema_version"] = serde_json::Value::from(7u64);
     value

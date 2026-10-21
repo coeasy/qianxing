@@ -109,7 +109,7 @@
 | 当前产物 | `dist/qianxing_bridge-0.1.0-**cp312-cp312**-win_amd64.whl`（虽然 `qx-python` 开了 `abi3-py310`，**tag 未对齐 abi3**，属观察项） |
 | 打包工具 | **setuptools**（非 maturin），`dependencies = []`，七个 extras 承载 ccxt/ccxtpro/tz/akshare/baostock/easy-tdx |
 | wheel 内容 | 四个纯 Python 包 + `_qianxing_native.pyd`；**web console 资产不在 wheel 内**（独立的 `qianxing-web-console-*.tar.gz`） |
-| 相关门禁 | `wheel_optional_dependency_check`(`check_architecture.py:10855`)：顶层 `dependencies` 不许含 ccxt/tzdata、七档 extras 齐备、报错点名 extras 必须已定义、四个包每个 `.py` 语法合法；`wheel_builder_check`(`:774`)：探测须早于 `pip wheel`、ps1 ASCII 行尾；`:12711` 要求 wheel 版本 ≡ workspace Cargo 版本；`crates/qx-cli/src/tests/artifact_identity_doc.rs:96-135` 钉住「构建→删旧→stage→打包」四步顺序，且交付文档不得出现 64 位整档 sha |
+| 相关门禁 | `wheel_optional_dependency_check`(`check_architecture.py:10855`)：顶层 `dependencies` 不许含 ccxt/tzdata、七档 extras 齐备、报错点名 extras 必须已定义、四个包每个 `.py` 语法合法；`wheel_builder_check`(`:774`)：探测须早于 `pip wheel`、ps1 ASCII 行尾；`:12711` 要求 wheel 版本 ≡ workspace Cargo 版本；`crates/qx-cli/tests/unit/artifact_identity_doc.rs:96-135` 钉住「构建→删旧→stage→打包」四步顺序，且交付文档不得出现 64 位整档 sha |
 | **门禁的盲区** | `wheel_optional_dependency_check` **只管 Python 依赖，不管原生扩展链接面与体积** → 「Python 跑回测」会让约 3.7 万行内核代码进 wheel，而**现有门禁不会说话**（需新增判据，见 §9） |
 
 ---

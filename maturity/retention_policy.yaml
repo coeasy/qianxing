@@ -1,0 +1,23 @@
+schema_version: 1
+updated_at: "2026-10-15"
+kind: runtime_retention_policy
+event_log:
+  policy: append_only_with_immutable_segment_archives
+  in_log_eviction: prohibited
+  rotation: change_log_name_and_keep_prior_log
+  archive_unit: "sealed segment with digest metadata"
+  reason: "EventLog is the replay source for account projections; truncation would break replay and prefix checks."
+scheduler_runs:
+  terminal_record_limit: 4096
+  active_records: always_retained_and_not_counted
+  eviction_order: "oldest canonical trading_day, then run_id"
+  trading_day_contract: "valid Gregorian YYYYMMDD"
+  per_job_anchor:
+    fields: [through_trading_day, evicted_count, digest, last_run_id, has_success]
+    digest: "FNV-1a 64-bit chained over evicted JobRun fields, including manifest_digest presence and value"
+    purpose: "preserve deterministic lineage commitment and the successful-job dependency fact after detail eviction"
+    caveat: "not a cryptographic signature and does not replace archived JobRun detail"
+  stale_run_rule: "reject a run when its trading_day is at or behind that job's retention watermark"
+  legacy_state_migration: "on load, old scheduler snapshots are pruned to the current terminal limit and an anchor is generated before state validation"
+  completed_jobs: "bounded by the configured job set; success is derived from retained runs plus sticky anchor flags"
+  read_surface: "GET /scheduler/runs returns active and retained terminal records only; anchors remain in persisted scheduler state"

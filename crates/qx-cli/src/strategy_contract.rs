@@ -1,16 +1,13 @@
 //! 策略契约装配：Bar 窗口加载、账户上下文、意图到订单的转换。
 //!
-//! Python / C ABI / 内置三种策略宿主共用这一份契约，使回测、Paper 与 Live
-//! 走同一条 target→intent→order 路径。
+//! Python / C ABI / 内置策略宿主共用契约，将 target→intent→order 收敛为回测、Paper 与 Live 的共享路径。
+mod imports;
+use imports::*;
 
-use super::*;
 mod account_context;
 mod execution_spec;
-mod signal_merge;
 pub(crate) use account_context::strategy_account_context;
-pub(crate) use execution_spec::{
-    normalize_strategy_order_quantity, strategy_execution_market_spec,
-};
+pub(crate) use execution_spec::strategy_execution_market_spec;
 
 /// 把持久化 Python/C++ JSONL 策略和受信任 C ABI 策略接入与 Rust
 /// 原生策略相同的 Bar 回测循环。
@@ -63,7 +60,7 @@ impl ContractBarStrategy {
             ))
         } else if let Some(executable) = config.strategy.external_executable.as_deref() {
             ContractStrategyClient::Process(Box::new(
-                StrategyProcessClient::start_process_with_transport_config(
+                StrategyProcessClient::start_process_with_ring_directory(
                     executable,
                     &config.strategy.external_args,
                     &config.strategy.external_env,
@@ -74,6 +71,7 @@ impl ContractBarStrategy {
                         capacity: config.strategy.shared_memory_capacity,
                         slot_bytes: config.strategy.shared_memory_slot_bytes,
                     },
+                    None,
                     None,
                 )?,
             ))
@@ -156,7 +154,8 @@ impl BarStrategy for ContractBarStrategy {
                 .request(&input)
                 .map_err(qx_core::QxError::BusinessViolation)?,
             ContractStrategyClient::Native(strategy) => {
-                let context = native_strategy_context(&self.config.strategy, &input);
+                let context = native_strategy_context(&self.config.strategy, &input)
+                    .map_err(qx_core::QxError::BusinessViolation)?;
                 let event = NativeMarketEvent::Bar {
                     instrument: instrument.clone(),
                     ts: visible.ts,
@@ -404,18 +403,6 @@ pub(crate) fn build_strategy_order(
     )
 }
 
-/// 一次输出的 `intent_id` 只是**轮内局部序号**（`schemas/strategy_api_v1.md`：uniqueness
-/// per decision），而订单身份在控制面（`command_id`）与执行面（`client_order_id`）都是全店
-/// 唯一键。所以身份必须由"哪一轮 + 轮内第几条"折出来：同一轮重放仍落回同一身份（幂等），
-/// 换一轮则得到新身份。`trace.intent_id` 保留策略侧原值，归因不受影响。
-fn strategy_order_identity(round_scope: &str, intent_id: u64) -> u64 {
-    let mut hash = qx_core::Fnv1a::new();
-    hash.write_text(round_scope);
-    hash.write_u64(intent_id);
-    // client_order_id 必须为正（`Order::validate`），摘要取到 0 的概率与一次哈希碰撞同级。
-    hash.finish().max(1)
-}
-
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
 /// `round_scope` 是这一轮的标识：worker 链与回测链都传 `output.request_id`（即调度器的
@@ -433,112 +420,39 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     current_qty: i128,
     market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Order, String> {
-    let account_id = config
-        .strategy
-        .account_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Strategy 产生订单必须配置 account_id".to_string())?;
-    let instrument = InstrumentId::parse(&intent.instrument)
-        .ok_or_else(|| format!("Strategy intent instrument 非法: {}", intent.instrument))?;
-    let side = match intent.side.to_ascii_lowercase().as_str() {
-        "buy" => Side::Buy,
-        "sell" => Side::Sell,
-        other => return Err(format!("Strategy intent side 非法: {other}")),
-    };
-    let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    let position_mode = match intent.position_mode.as_deref() {
-        None => config
-            .strategy
-            .position_mode
-            .unwrap_or(PositionMode::OneWay),
-        Some("one_way") => PositionMode::OneWay,
-        Some("hedge") => PositionMode::Hedge,
-        Some(other) => return Err(format!("Strategy intent position_mode 非法: {other}")),
-    };
-    let margin_mode = match intent.margin_mode.as_deref() {
-        None => config
-            .strategy
-            .margin_mode
-            .unwrap_or(if product == TradingProduct::Spot {
-                MarginMode::Cash
-            } else {
-                MarginMode::Cross
-            }),
-        Some("cash") => MarginMode::Cash,
-        Some("cross") => MarginMode::Cross,
-        Some("isolated") => MarginMode::Isolated,
-        Some(other) => return Err(format!("Strategy intent margin_mode 非法: {other}")),
-    };
-    let leverage = intent
-        .leverage
-        .unwrap_or(config.strategy.leverage.unwrap_or(1));
-    let allow_short = strategy_allows_short(config, margin_mode);
-    let position_side = match intent
-        .position_side
-        .as_deref()
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("long") => PositionSide::Long,
-        Some("short") => PositionSide::Short,
-        Some("net") | None if position_mode == PositionMode::OneWay => PositionSide::Net,
-        Some("net") | None => {
-            if side == Side::Buy {
-                PositionSide::Long
-            } else {
-                PositionSide::Short
-            }
-        }
-        Some(other) => return Err(format!("Strategy intent position_side 非法: {other}")),
-    };
-    let policy = OrderPolicy {
-        reduce_only: intent.reduce_only,
-        position_side,
-        margin_mode,
-        position_mode,
-        leverage,
-        post_only: intent.post_only,
-    };
-    let qty_raw = normalize_strategy_order_quantity(intent.qty_raw, market_spec)?;
-    let mut order = Order {
-        client_id: strategy_order_identity(round_scope, intent.intent_id),
-        instrument,
-        side,
-        qty: qx_core::Quantity::from_raw(qty_raw),
-        limit: intent.limit_price_raw.map(Price::from_raw),
-        status: OrderStatus::PendingSubmit,
-        filled: qx_core::Quantity::ZERO,
-        account_id: account_id.into(),
-        trace: Some(qx_core::OrderTrace {
-            strategy_id: Some(strategy_id.into()),
-            signal_id: Some(signal_id),
-            intent_id: Some(intent.intent_id),
-            rule_version: Some(config.strategy.version.clone()),
-        }),
-        policy: None,
-    };
-    if product != TradingProduct::Spot
-        || config.strategy.product.is_some()
-        || config.strategy.margin_mode.is_some()
-        || config.strategy.position_mode.is_some()
-        || config.strategy.leverage.is_some()
-        || intent.margin_mode.is_some()
-        || intent.position_mode.is_some()
-        || intent.leverage.is_some()
-        || intent.reduce_only
-        || intent.post_only
-        || intent.position_side.is_some()
-    {
-        order.policy = Some(policy);
-    }
-    order
-        .validate()
-        .map_err(|error| format!("Strategy API v1 OrderIntent 转订单失败: {error}"))?;
+    let built = qx_app::build_strategy_order_from_intent(
+        &qx_app::StrategyOrderInput {
+            intent_id: intent.intent_id,
+            instrument: intent.instrument.clone(),
+            side: intent.side.clone(),
+            qty_raw: intent.qty_raw,
+            limit_price_raw: intent.limit_price_raw,
+            reduce_only: intent.reduce_only,
+            post_only: intent.post_only,
+            position_side: intent.position_side.clone(),
+            margin_mode: intent.margin_mode.clone(),
+            position_mode: intent.position_mode.clone(),
+            leverage: intent.leverage,
+        },
+        &qx_app::StrategyOrderBindings {
+            account_id: config.strategy.account_id.as_deref().unwrap_or_default(),
+            strategy_id,
+            signal_id,
+            round_scope,
+            rule_version: &config.strategy.version,
+            product: config.strategy.product,
+            position_mode: config.strategy.position_mode,
+            margin_mode: config.strategy.margin_mode,
+            leverage: config.strategy.leverage,
+            market_spec,
+        },
+    )
+    .map_err(|error| error.message().to_string())?;
+    let allow_short = strategy_allows_short(config, built.margin_mode);
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
-    risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
+    risk.check(&built.order, &OrderRiskPosition::new(current_qty, 0))
         .map_err(|error| format!("Strategy API v1 RiskGate 拒绝 OrderIntent: {error:?}"))?;
-    Ok(order)
+    Ok(built.order)
 }
 
 #[allow(clippy::too_many_arguments)] // Signal identity, target, and frozen market context remain individually auditable.
@@ -558,42 +472,20 @@ pub(crate) fn build_strategy_order_with_signal(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "Strategy 产生订单必须配置 instrument".to_string())?;
-    let current = qx_zhenlu::portfolio::PortfolioState {
-        portfolio_id: strategy_id.into(),
-        timestamp: now,
-        cash: 0,
-        positions: BTreeMap::from([(instrument_text.to_string(), current_qty)]),
-    };
-    let rebalance = qx_zhenlu::portfolio::rebalance(
-        &current,
-        &[qx_zhenlu::portfolio::TargetPosition::single(
-            InstrumentId::parse(instrument_text)
-                .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?,
-            target_qty,
-        )],
-        &qx_zhenlu::portfolio::PortfolioConstraint {
-            max_turnover_bps: 10_000,
-            min_trade_size: 1,
-        },
-    )?;
-    if rebalance.positions.is_empty() {
-        return Ok(None);
-    }
-    let account_id = config
-        .strategy
-        .account_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Strategy 产生订单必须配置 account_id".to_string())?;
-    let instrument = InstrumentId::parse(instrument_text)
-        .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?;
-    let signal = Signal {
-        strategy_id: strategy_id.into(),
+    let account_id = config.strategy.account_id.as_deref().unwrap_or_default();
+    let margin_mode = config_margin_mode(config);
+    let allow_short = strategy_allows_short(config, margin_mode);
+    let order = qx_app::build_strategy_target_order(&qx_app::StrategyTargetOrderInput {
+        instrument: instrument_text,
+        account_id,
+        strategy_id,
+        run_id,
+        now,
+        current_qty,
+        target_qty,
         signal_id: contract_output
             .map(|output| output.signal_id)
             .unwrap_or_else(|| run_id.max(1)),
-        instrument: instrument.clone(),
-        target_qty,
         confidence: contract_output
             .map(|output| output.confidence)
             .unwrap_or(1_000),
@@ -607,58 +499,20 @@ pub(crate) fn build_strategy_order_with_signal(
                 }
             })
             .unwrap_or(now),
-    };
-    let targets = signal_merge::merge_strategy_signals(vec![signal], now)?;
-    let target = targets
-        .first()
-        .ok_or_else(|| "Strategy Signal 已过期或为空".to_string())?;
-    let Some(intent) = rebalance_intent(
-        target,
-        current_qty,
-        strategy_id,
-        account_id,
-        run_id.max(1),
-        now,
-    ) else {
+        product: config.strategy.product,
+        position_mode: config.strategy.position_mode,
+        margin_mode,
+        leverage: config.strategy.leverage,
+        has_explicit_policy: config.strategy.product.is_some()
+            || config.strategy.margin_mode.is_some()
+            || config.strategy.position_mode.is_some()
+            || config.strategy.leverage.is_some(),
+        market_spec,
+    })
+    .map_err(|error| error.message().to_string())?;
+    let Some(order) = order else {
         return Ok(None);
     };
-    let mut order = intent.into_order();
-    order.qty = qx_core::Quantity::from_raw(normalize_strategy_order_quantity(
-        order.qty.raw(),
-        market_spec,
-    )?);
-    let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    let position_mode = config
-        .strategy
-        .position_mode
-        .unwrap_or(PositionMode::OneWay);
-    let margin_mode = config_margin_mode(config);
-    let allow_short = strategy_allows_short(config, margin_mode);
-    let leverage = config.strategy.leverage.unwrap_or(1);
-    if product != TradingProduct::Spot
-        || config.strategy.product.is_some()
-        || config.strategy.margin_mode.is_some()
-        || config.strategy.position_mode.is_some()
-        || config.strategy.leverage.is_some()
-    {
-        order.policy = Some(OrderPolicy {
-            reduce_only: false,
-            position_side: if position_mode == PositionMode::OneWay {
-                PositionSide::Net
-            } else if target_qty >= 0 {
-                PositionSide::Long
-            } else {
-                PositionSide::Short
-            },
-            margin_mode,
-            position_mode,
-            leverage,
-            post_only: false,
-        });
-    }
-    order
-        .validate()
-        .map_err(|error| format!("Strategy OrderIntent 转订单失败: {error}"))?;
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
     risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
         .map_err(|error| format!("Strategy RiskGate 拒绝 OrderIntent: {error:?}"))?;
@@ -701,134 +555,23 @@ pub(crate) fn strategy_submit_command(
 /// 命名的。此前两处 `spawn_worker("api", …)` 写死字面量，于是改名成 `api-gw` 的合法拓扑能过
 /// `config validate`/`doctor`/`runtime-check`，却在 serve 启动瞬间死于"未知 worker: api"
 /// （`supervise` 下一个子进程退出还会连带停掉其余 worker）。这里必须报错，不能回落字面量。
+#[cfg(test)]
 pub(crate) fn configured_api_worker_id(config: &RuntimeConfig) -> Result<String, String> {
-    config
-        .workers
-        .iter()
-        .find(|worker| worker.enabled && worker.role == WorkerRole::Api)
-        .map(|worker| worker.id.clone())
-        .ok_or_else(|| "运行时配置必须且只能启用一个 api worker".to_string())
+    qx_service::http_host::configured_api_worker_id(config)
 }
 
 pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let supervisor = RuntimeSupervisor::new(config.clone())?;
-    // 取监督器实际认过的那份配置，用同一个判据（role）拿 id。
-    let api_worker_id = configured_api_worker_id(supervisor.config())?;
-    let service = build_configured_api_service(supervisor.config(), path)?;
-    let listener = TcpListener::bind(&config.api.bind)
-        .map_err(|error| format!("绑定 API 地址失败 {}: {error}", config.api.bind))?;
-    println!(
-        "[运行时 · API] bind={} transport={:?}，按 Ctrl+C 停止",
-        config.api.bind, config.api.transport
-    );
-    match config.api.transport {
-        ApiTransport::Plaintext => {
-            let projection_stop = Arc::new(AtomicBool::new(false));
-            let mut projection_thread =
-                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
-            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
-                context.heartbeat(runtime_timestamp_ms())?;
-                service
-                    .serve(listener, runtime_timestamp_ms, || context.should_stop())
-                    .map_err(|error| format!("API 服务停止: {error}"))
-            }) {
-                Ok(worker) => worker,
-                Err(error) => {
-                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-                    return Err(error);
-                }
-            };
-            // serve 的 accept 环本来就按 `context.should_stop()` 收摊；这里补的是令牌的另一半：
-            // 走和 worker 同一条停机阶梯，把 SIGINT/SIGTERM 转成监督器的停机请求，
-            // 否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
-            let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
-            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result
-        }
-        ApiTransport::Mtls => {
-            let tls = config
-                .api
-                .tls
-                .as_ref()
-                .ok_or_else(|| "mTLS API 缺少 tls 配置".to_string())?;
-            let server_config = load_mtls_server_config_from_pem(
-                &tls.certificate_chain,
-                &tls.private_key,
-                &tls.client_ca,
-            )?;
-            let operator_paths = config
-                .api
-                .operators
-                .iter()
-                .map(|(operator_id, operator)| {
-                    (operator_id.clone(), PathBuf::from(&operator.certificate))
-                })
-                .collect::<BTreeMap<_, _>>();
-            let identity_reloader = MtlsIdentityPemReloader::new(operator_paths)?;
-            let identity_store = MtlsIdentityStore::new(identity_reloader.load()?);
-            let reloader = TlsPemReloader::new(
-                tls.certificate_chain.clone(),
-                tls.private_key.clone(),
-                tls.client_ca.clone(),
-            );
-            let store = TlsConfigStore::new(server_config);
-            let projection_stop = Arc::new(AtomicBool::new(false));
-            let mut projection_thread =
-                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
-            let reload_stop = Arc::new(AtomicBool::new(false));
-            let reload_stop_thread = Arc::clone(&reload_stop);
-            let reload_store = store.clone();
-            let reload_identity_store = identity_store.clone();
-            let reload_thread = thread::spawn(move || {
-                while !reload_stop_thread.load(Ordering::Acquire) {
-                    if let Err(error) = reloader.reload_if_changed(&reload_store) {
-                        eprintln!("[运行时 · TLS] 证书轮询重载失败，保留当前配置: {error}");
-                    }
-                    if let Err(error) = identity_reloader.reload_if_changed(&reload_identity_store)
-                    {
-                        eprintln!(
-                            "[运行时 · TLS] Operator 证书轮询重载失败，保留当前映射: {error}"
-                        );
-                    }
-                    thread::sleep(Duration::from_secs(1));
-                }
-            });
-            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
-                context.heartbeat(runtime_timestamp_ms())?;
-                service
-                    .serve_tls_mtls_with_stores(
-                        listener,
-                        &store,
-                        &identity_store,
-                        runtime_timestamp_ms,
-                        || context.should_stop(),
-                    )
-                    .map_err(|error| format!("mTLS API 服务停止: {error}"))
-            }) {
-                Ok(worker) => worker,
-                Err(error) => {
-                    reload_stop.store(true, Ordering::Release);
-                    let _ = reload_thread.join();
-                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-                    return Err(error);
-                }
-            };
-            let result = join_worker_handle(&supervisor, worker, "mTLS API", &api_worker_id);
-            reload_stop.store(true, Ordering::Release);
-            let _ = reload_thread.join();
-            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result
-        }
-    }
+    let service = build_configured_api_service(&config, path)?;
+    qx_service::http_host::serve_api(config, service, runtime_timestamp_ms, |bind, transport| {
+        println!("[运行时 · API] bind={bind} transport={transport:?}，按 Ctrl+C 停止");
+    })
 }
 
+#[cfg(test)]
 pub(crate) fn stop_api_projection_bridge(
-    stop: &Arc<AtomicBool>,
+    stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: &mut Option<std::thread::JoinHandle<()>>,
 ) {
-    stop.store(true, Ordering::Release);
-    if let Some(thread) = thread.take() {
-        let _ = thread.join();
-    }
+    qx_service::http_host::stop_api_projection_bridge(stop, thread)
 }

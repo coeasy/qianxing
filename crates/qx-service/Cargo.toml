@@ -1,0 +1,36 @@
+[package]
+name = "qx-service"
+description = "牵星服务装配边界：worker、API 与 Provider 服务宿主"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+sqlite = ["qx-api/sqlite", "qx-runtime/sqlite", "qx-storage/sqlite"]
+postgres = ["qx-runtime/postgres", "qx-storage/postgres"]
+nats = ["qx-runtime/nats", "qx-storage/nats"]
+
+[dependencies]
+qx-adapter = { version = "0.2.1", path = "../qx-adapter" }
+qx-app = { version = "0.2.1", path = "../qx-app" }
+qx-api = { version = "0.2.1", path = "../qx-api" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-datastruct = { version = "0.2.1", path = "../qx-datastruct" }
+qx-data = { version = "0.2.1", path = "../qx-data" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-protocol = { version = "0.2.1", path = "../qx-protocol" }
+qx-risk = { version = "0.2.1", path = "../qx-risk" }
+qx-orchestrator = { version = "0.2.1", path = "../qx-orchestrator" }
+qx-runtime = { version = "0.2.1", path = "../qx-runtime" }
+qx-scheduler = { version = "0.2.1", path = "../qx-scheduler" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-storage = { version = "0.2.1", path = "../qx-storage" }
+qx-xingban = { version = "0.2.1", path = "../qx-xingban" }
+serde_json = { workspace = true }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
+
+[dev-dependencies]

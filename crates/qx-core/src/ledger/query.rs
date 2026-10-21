@@ -14,9 +14,8 @@ use std::collections::BTreeMap;
 
 impl Ledger {
     pub fn cash(&self, currency: &str) -> i128 {
-        self.cash
-            .iter()
-            .filter(|((_, c), _)| c == currency)
+        self.iter_cash()
+            .filter(|((_, candidate), _)| *candidate == currency)
             .map(|(_, amount)| *amount)
             .sum()
     }
@@ -24,9 +23,8 @@ impl Ledger {
     pub fn position(&self, instrument: &InstrumentId) -> PositionState {
         let mut out = PositionState::default();
         for ((_, id), state) in self
-            .positions
-            .iter()
-            .filter(|((_, id), _)| id == instrument)
+            .iter_positions()
+            .filter(|((_, id), _)| *id == instrument)
         {
             let _ = id;
             out.quantity =
@@ -41,9 +39,8 @@ impl Ledger {
             }
         }
         for ((_, id, _), state) in self
-            .hedge_positions
-            .iter()
-            .filter(|((_, id, _), _)| id == instrument)
+            .iter_hedge_positions()
+            .filter(|((_, id, _), _)| *id == instrument)
         {
             let _ = id;
             out.quantity =
@@ -63,7 +60,8 @@ impl Ledger {
     pub fn cash_for(&self, account_id: &str, currency: &str) -> i128 {
         *self
             .cash
-            .get(&(account_id.to_string(), currency.to_string()))
+            .get(account_id)
+            .and_then(|currencies| currencies.get(currency))
             .unwrap_or(&0)
     }
 
@@ -74,12 +72,12 @@ impl Ledger {
     /// 就是账户累计已实现盈亏。溢出返回 `None`：读模型宁可报缺席，也不发布回绕过的数。
     pub fn realized_pnl_for(&self, account_id: &str) -> Option<i128> {
         let mut total = 0_i128;
-        for ((account, _), state) in &self.positions {
+        for ((account, _), state) in self.iter_positions() {
             if account == account_id {
                 total = total.checked_add(state.realized_pnl.raw())?;
             }
         }
-        for ((account, _, _), state) in &self.hedge_positions {
+        for ((account, _, _), state) in self.iter_hedge_positions() {
             if account == account_id {
                 total = total.checked_add(state.realized_pnl.raw())?;
             }
@@ -105,14 +103,14 @@ impl Ledger {
             return None;
         }
         let mut total = 0_i128;
-        for ((account, instrument), position) in &self.positions {
+        for ((account, instrument), position) in self.iter_positions() {
             if account != account_id || position.quantity.is_zero() {
                 continue;
             }
             let mark = marks.get(instrument)?;
             total = total.checked_add(Ledger::position_pnl(position, mark, multiplier)?)?;
         }
-        for ((account, instrument, _), position) in &self.hedge_positions {
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id || position.quantity.is_zero() {
                 continue;
             }
@@ -136,7 +134,7 @@ impl Ledger {
             return None;
         }
         let mut value = self.cash(currency);
-        for ((_, instrument), position) in &self.positions {
+        for ((_, instrument), position) in self.iter_positions() {
             let mark = marks.get(instrument)?;
             let n = position
                 .quantity
@@ -146,7 +144,7 @@ impl Ledger {
                 .checked_mul(multiplier)?;
             value = value.checked_add(n)?;
         }
-        for ((_, instrument, _), position) in &self.hedge_positions {
+        for ((_, instrument, _), position) in self.iter_hedge_positions() {
             let mark = marks.get(instrument)?;
             let n = position
                 .quantity
@@ -179,7 +177,7 @@ impl Ledger {
             return None;
         }
         let mut value = self.cash_for(account_id, currency);
-        for ((account, instrument), position) in &self.positions {
+        for ((account, instrument), position) in self.iter_positions() {
             if account != account_id {
                 continue;
             }
@@ -192,7 +190,7 @@ impl Ledger {
                 .checked_mul(multiplier)?;
             value = value.checked_add(n)?;
         }
-        for ((account, instrument, _), position) in &self.hedge_positions {
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id {
                 continue;
             }
@@ -218,7 +216,7 @@ impl Ledger {
         spec.validate()?;
         Ledger::ensure_only_instrument_is_valued(self, account_id, &spec.instrument)?;
         let mut value = self.cash_for(account_id, currency);
-        for ((account, instrument), position) in &self.positions {
+        for ((account, instrument), position) in self.iter_positions() {
             if account != account_id
                 || instrument != &spec.instrument
                 || position.quantity.is_zero()
@@ -237,7 +235,7 @@ impl Ledger {
                 .checked_add(pnl)
                 .ok_or_else(|| QxError::Invariant("衍生品权益溢出".into()))?;
         }
-        for ((account, instrument, _), position) in &self.hedge_positions {
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id
                 || instrument != &spec.instrument
                 || position.quantity.is_zero()
@@ -276,7 +274,7 @@ impl Ledger {
             Ledger::convert_equity_currency(amount, currency, reporting_currency, fx_rates)
         };
         let mut value = 0_i128;
-        for ((account, currency), amount) in &self.cash {
+        for ((account, currency), amount) in self.iter_cash() {
             if account == account_id {
                 value = value
                     .checked_add(convert(*amount, currency)?)
@@ -284,7 +282,7 @@ impl Ledger {
             }
         }
         let settlement_currency = &spec.settlement_currency;
-        for ((account, instrument), position) in &self.positions {
+        for ((account, instrument), position) in self.iter_positions() {
             if account != account_id
                 || instrument != &spec.instrument
                 || position.quantity.is_zero()
@@ -303,7 +301,7 @@ impl Ledger {
                 .checked_add(convert(pnl, settlement_currency)?)
                 .ok_or_else(|| QxError::Invariant("跨币种未实现权益溢出".into()))?;
         }
-        for ((account, instrument, _), position) in &self.hedge_positions {
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id
                 || instrument != &spec.instrument
                 || position.quantity.is_zero()
@@ -343,7 +341,7 @@ impl Ledger {
             }
         }
         let mut equity = 0_i128;
-        for ((account, currency), amount) in &self.cash {
+        for ((account, currency), amount) in self.iter_cash() {
             if account == account_id && *amount != 0 {
                 equity = equity
                     .checked_add(Ledger::convert_equity_currency(
@@ -355,7 +353,7 @@ impl Ledger {
                     .ok_or_else(|| QxError::Invariant("多市场现金权益溢出".into()))?;
             }
         }
-        for ((account, instrument), position) in &self.positions {
+        for ((account, instrument), position) in self.iter_positions() {
             if account != account_id || position.quantity.is_zero() {
                 continue;
             }
@@ -377,7 +375,7 @@ impl Ledger {
                 )?)
                 .ok_or_else(|| QxError::Invariant("多市场持仓权益溢出".into()))?;
         }
-        for ((account, instrument, _), position) in &self.hedge_positions {
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id || position.quantity.is_zero() {
                 continue;
             }
@@ -452,4 +450,173 @@ impl Ledger {
             ctx.reporting_currency,
         )
     }
+
+    /// Paper accounts use the same multi-market and FX valuation rules as every other ledger
+    /// consumer, with an explicit entry point so callers cannot accidentally select a legacy
+    /// equity ruler. The result's `available` field is the value to inject into Paper risk.
+    pub fn valuate_paper(
+        &self,
+        paper: &crate::valuation::PaperValuationContext<'_>,
+    ) -> QxResult<ValuationResult> {
+        let equity = self.equity_for_with_market_specs_and_fx(
+            paper.account_id,
+            paper.marks,
+            paper.reporting_currency,
+            paper.market_specs,
+            paper.fx_rates,
+        )?;
+        let initial_margin = self.initial_margin_for_market_specs_and_fx(
+            paper.account_id,
+            paper.marks,
+            paper.reporting_currency,
+            paper.market_specs,
+            paper.fx_rates,
+        )?;
+        ValuationResult::new(
+            Money::from_raw(equity),
+            Money::from_raw(initial_margin),
+            Money::ZERO,
+            paper.reporting_currency,
+        )
+    }
+
+    fn initial_margin_for_market_specs_and_fx(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, Price>,
+        reporting_currency: &str,
+        specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<i128> {
+        let mut total = 0_i128;
+        for ((account, instrument), position) in self.iter_positions() {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("保证金估值缺少 instrument 规格: {instrument}"))
+            })?;
+            if !spec.product.supports_leverage() {
+                continue;
+            }
+            total = total
+                .checked_add(position_initial_margin_in_reporting_currency(
+                    position,
+                    instrument,
+                    spec,
+                    marks,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("Paper 初始保证金合计溢出".into()))?;
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("保证金估值缺少 instrument 规格: {instrument}"))
+            })?;
+            if !spec.product.supports_leverage() {
+                continue;
+            }
+            total = total
+                .checked_add(position_initial_margin_in_reporting_currency(
+                    position,
+                    instrument,
+                    spec,
+                    marks,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("Paper 初始保证金合计溢出".into()))?;
+        }
+        Ok(total)
+    }
+
+    /// Return the existing one-way and hedge-position initial margin for one instrument.
+    ///
+    /// Each position uses the leverage facts that created it. A non-flat position whose
+    /// historical leverage is unavailable cannot be projected safely and is rejected.
+    pub fn initial_margin_for_instrument(
+        &self,
+        account_id: &str,
+        spec: &TradingInstrumentSpec,
+        mark: Price,
+    ) -> QxResult<i128> {
+        spec.validate()?;
+        if !spec.product.supports_leverage() {
+            return Ok(0);
+        }
+        let mut total = 0_i128;
+        for ((account, instrument), position) in self.iter_positions() {
+            if account == account_id && instrument == &spec.instrument {
+                total = total
+                    .checked_add(position_initial_margin_raw(
+                        position, instrument, spec, mark,
+                    )?)
+                    .ok_or_else(|| QxError::Invariant("标的持仓初始保证金合计溢出".into()))?;
+            }
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account == account_id && instrument == &spec.instrument {
+                total = total
+                    .checked_add(position_initial_margin_raw(
+                        position, instrument, spec, mark,
+                    )?)
+                    .ok_or_else(|| QxError::Invariant("标的持仓初始保证金合计溢出".into()))?;
+            }
+        }
+        Ok(total)
+    }
+}
+
+fn position_initial_margin_raw(
+    position: &PositionState,
+    instrument: &InstrumentId,
+    spec: &TradingInstrumentSpec,
+    mark: Price,
+) -> QxResult<i128> {
+    if position.quantity.is_zero() {
+        return Ok(0);
+    }
+    let margin_ratio = position.margin_ratio_raw.ok_or_else(|| {
+        QxError::ReconcileRequired(format!(
+            "持仓 {instrument} 缺少可回放的开仓杠杆，需从成交事实重建或对账"
+        ))
+    })?;
+    if !(1..=SCALE).contains(&margin_ratio) {
+        return Err(QxError::Invariant(format!(
+            "持仓 {instrument} 的保证金比例非法: {margin_ratio}"
+        )));
+    }
+    let qty = position
+        .quantity
+        .raw()
+        .checked_abs()
+        .ok_or_else(|| QxError::Invariant("保证金持仓绝对值溢出".into()))?;
+    spec.notional(qty, mark.raw())?
+        .checked_mul(margin_ratio)
+        .and_then(|value| value.checked_div(SCALE))
+        .ok_or_else(|| QxError::Invariant("杠杆持仓初始保证金溢出".into()))
+}
+
+fn position_initial_margin_in_reporting_currency(
+    position: &PositionState,
+    instrument: &InstrumentId,
+    spec: &TradingInstrumentSpec,
+    marks: &BTreeMap<InstrumentId, Price>,
+    reporting_currency: &str,
+    fx_rates: &BTreeMap<String, Price>,
+) -> QxResult<i128> {
+    let mark = marks.get(instrument).ok_or_else(|| {
+        QxError::ReconcileRequired(format!("Paper 保证金估值缺少标记价 {instrument}"))
+    })?;
+    let margin = position_initial_margin_raw(position, instrument, spec, *mark)?;
+    Ledger::convert_equity_currency(
+        margin,
+        &spec.settlement_currency,
+        reporting_currency,
+        fx_rates,
+    )
 }

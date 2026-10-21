@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "benchmark": "ledger_entry_lookup",
+  "date": "2026-10-17",
+  "command": "cargo bench -p qx-cli --bench criterion_performance -- ledger_entry_lookup --noplot",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)"
+  },
+  "workload": {
+    "ledger_entries": [1000, 8000, 64000],
+    "lookup_id": "last entry",
+    "comparison": "same in-memory ledger and ID; indexed Ledger::entry(id) versus previous entries().iter().find(|entry| entry.id == id)",
+    "equivalence_checked_before_measurement": true,
+    "black_box": "ledger reference, ID, and returned entry ID"
+  },
+  "results": [
+    {
+      "entries": 1000,
+      "indexed_median_ns": 1.0366,
+      "indexed_slope_ns": 1.0434,
+      "linear_median_ns": 415.1537,
+      "linear_slope_ns": 420.1049,
+      "median_ratio_linear_over_indexed": 400.6
+    },
+    {
+      "entries": 8000,
+      "indexed_median_ns": 1.06,
+      "indexed_slope_ns": 1.0655,
+      "linear_median_ns": 3310.38,
+      "linear_slope_ns": 3331.59,
+      "median_ratio_linear_over_indexed": 3123.0
+    },
+    {
+      "entries": 64000,
+      "indexed_median_ns": 1.04,
+      "indexed_slope_ns": 1.0475,
+      "linear_median_ns": 38636.55,
+      "linear_slope_ns": 38600.81,
+      "median_ratio_linear_over_indexed": 37150.5
+    }
+  ],
+  "limitations": [
+    "Single-process Criterion microbenchmark of lookup only; ledger construction is outside the timed region.",
+    "The indexed and linear implementations return the same final entry; benchmark results do not establish whole-pipeline or end-to-end backtest speedup.",
+    "Synthetic in-memory ledger; does not represent the nine product profiles or production data quality."
+  ]
+}

@@ -276,10 +276,30 @@ pub struct DataView {
 }
 
 impl DataView {
+    /// 在不接管行情所有权的情况下完成质量校验并生成数据元信息。
+    ///
+    /// 适用于只需要质量裁决和内容指纹的消费者，避免为了临时构造视图而复制整份 Bar 序列。
+    pub fn metadata_for_borrowed(
+        bars: &[Bar],
+        source: &DataSourceId,
+    ) -> Result<DataViewMetadata, QualityReport> {
+        let report = QualityGate::check(bars);
+        if matches!(report.verdict(), Verdict::Fail | Verdict::Quarantine) {
+            return Err(report);
+        }
+        let metadata = DataViewMetadata::default_for(source, bars);
+        metadata.validate()?;
+        Ok(metadata)
+    }
+
     /// 生产入口：拒绝未排序、重复或其他质量问题，不隐式修正原始事实。
     pub fn try_new(bars: Vec<Bar>, source: DataSourceId) -> Result<Self, QualityReport> {
-        let metadata = DataViewMetadata::default_for(&source, &bars);
-        Self::try_new_with_metadata(bars, source, metadata)
+        let metadata = Self::metadata_for_borrowed(&bars, &source)?;
+        Ok(Self {
+            bars,
+            source,
+            metadata,
+        })
     }
 
     pub fn try_new_with_metadata(
@@ -305,9 +325,9 @@ impl DataView {
         })
     }
 
-    /// 兼容旧调用方的便捷构造。外部生产数据应使用 `try_new`，避免静默排序掩盖血缘问题。
-    pub fn new(bars: Vec<Bar>, source: DataSourceId) -> Self {
-        Self::try_new(bars, source).expect("DataView::new requires quality-checked monotonic bars")
+    /// 便捷构造入口，与 `try_new` 同样显式返回质量校验错误。
+    pub fn new(bars: Vec<Bar>, source: DataSourceId) -> Result<Self, QualityReport> {
+        Self::try_new(bars, source)
     }
 
     pub fn source(&self) -> &DataSourceId {
@@ -475,7 +495,7 @@ mod tests {
 
     #[test]
     fn as_of_never_returns_future() {
-        let v = DataView::new(bars(), DataSourceId::new("test"));
+        let v = DataView::new(bars(), DataSourceId::new("test")).expect("valid fixture");
         assert_eq!(v.as_of(0).len(), 0);
         assert_eq!(v.as_of(10).len(), 1);
         assert_eq!(v.as_of(20).len(), 2);
@@ -490,7 +510,7 @@ mod tests {
 
     #[test]
     fn data_view_exposes_immutable_metadata_and_hash() {
-        let view = DataView::new(bars(), DataSourceId::new("test"));
+        let view = DataView::new(bars(), DataSourceId::new("test")).expect("valid fixture");
         assert_eq!(view.metadata().schema_version, 1);
         assert_eq!(view.metadata().timezone, "UTC");
         assert_ne!(view.metadata().data_hash, 0);

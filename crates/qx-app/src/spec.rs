@@ -17,8 +17,8 @@
 //! 而**拒绝**会让调用方当场知道自己的身份串不合法。
 
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::{MakerTakerFeeSchedule, TradingInstrumentSpec};
-use qx_strategy::BuiltinStrategyKind;
+use qx_core::MakerTakerFeeSchedule;
+use qx_strategy::{BuiltinStrategyConfig, BuiltinStrategyKind};
 use serde::{Deserialize, Serialize};
 
 /// `DatasetSpec` 的 schema 版本。改形状必须抬它，否则旧调用方会静默按新语义读。
@@ -32,6 +32,7 @@ pub const BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
 /// [`AppErrorCategory::FidelityInsufficient`]，不是给一个看起来像结论的数。
 pub const MIN_BACKTEST_BARS: usize = 2;
 
+mod backtest_validation;
 mod validation;
 use validation::is_identity_token;
 
@@ -64,7 +65,7 @@ impl DatasetSpec {
         }
     }
 
-    /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
+    /// 形状自检。**只查 spec 自己是否完整**，不碰磁盘。
     pub fn validate(&self) -> Result<(), AppError> {
         if self.schema_version != DATASET_SPEC_SCHEMA_VERSION {
             return Err(AppError::new(
@@ -162,6 +163,78 @@ impl BuiltinStrategySpec {
             period: default_strategy_period(),
             threshold_bps: default_strategy_threshold_bps(),
         }
+    }
+
+    /// Convert the domain strategy config used by Rust, Python, and native hosts into the stable
+    /// single-instrument application request. Pair-specific bindings cannot be represented by a
+    /// `BacktestSpec` and are rejected instead of being silently dropped.
+    pub fn from_strategy_config(strategy: &BuiltinStrategyConfig) -> Result<Self, AppError> {
+        if strategy.kind.needs_reference_leg()
+            || strategy.reference_instrument.is_some()
+            || strategy.primary_market_spec.is_some()
+            || strategy.reference_market_spec.is_some()
+            || strategy.primary_policy.is_some()
+            || strategy.reference_policy.is_some()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "双腿策略配置不能转换为单标的 BuiltinStrategySpec",
+            ));
+        }
+        strategy.validate().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("内置策略配置无效: {error}"),
+            )
+        })?;
+        Ok(Self {
+            kind: strategy.kind,
+            strategy_id: strategy.strategy_id.clone(),
+            quantity_raw: strategy.quantity.raw(),
+            target_notional_raw: strategy.target_notional_raw,
+            target_available_margin_bps: strategy.target_available_margin_bps,
+            target_volatility_bps: strategy.target_volatility_bps,
+            target_kelly_fraction_bps: strategy.target_kelly_fraction_bps,
+            kelly_lookback_bars: strategy.kelly_lookback_bars,
+            fast_window: strategy.fast_window,
+            slow_window: strategy.slow_window,
+            period: strategy.period,
+            threshold_bps: strategy.threshold_bps,
+        })
+    }
+
+    /// Convert a validated pair-strategy config into the shared multi-leg application request.
+    /// This preserves every sizing and signal field while keeping reference-leg validation at the
+    /// application boundary instead of asking each facade to project fields manually.
+    pub fn from_multi_leg_strategy_config(
+        strategy: &BuiltinStrategyConfig,
+    ) -> Result<Self, AppError> {
+        if !strategy.kind.needs_reference_leg() || strategy.reference_instrument.is_none() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿 BuiltinStrategySpec 需要套利策略和 reference_instrument",
+            ));
+        }
+        strategy.validate().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("多腿内置策略配置无效: {error}"),
+            )
+        })?;
+        Ok(Self {
+            kind: strategy.kind,
+            strategy_id: strategy.strategy_id.clone(),
+            quantity_raw: strategy.quantity.raw(),
+            target_notional_raw: strategy.target_notional_raw,
+            target_available_margin_bps: strategy.target_available_margin_bps,
+            target_volatility_bps: strategy.target_volatility_bps,
+            target_kelly_fraction_bps: strategy.target_kelly_fraction_bps,
+            kelly_lookback_bars: strategy.kelly_lookback_bars,
+            fast_window: strategy.fast_window,
+            slow_window: strategy.slow_window,
+            period: strategy.period,
+            threshold_bps: strategy.threshold_bps,
+        })
     }
 
     /// 形状自检与领域策略旋钮清单保持一致；不生效的旋钮不阻断本次运行。
@@ -274,208 +347,28 @@ impl BuiltinStrategySpec {
     }
 }
 
-/// `RunBacktest` 的输入。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BacktestSpec {
-    pub schema_version: u32,
-    /// 运行身份。同时是**correlation id**：报错、产物、日志三处用它对齐。
-    pub run_id: String,
-    pub instrument: String,
-    pub bars_path: String,
-    /// 结算币种。它决定现金腿落在哪本账簿，所以必填——不给默认值。
-    pub settlement_currency: String,
-    /// 本金（定点原值）。V11 Q72 之后这是必答题：藏在默认值里会让整条收益率
-    /// 压在一个调用方毫不知情的常数上。
-    pub initial_cash_raw: i128,
-    pub seed: u64,
-    /// 产物目录。四份产物（`*.run.json` / `*.summary.json` / `*.equity.csv` / `*.fills.csv`）
-    /// 都落在它下面。
-    pub output_dir: String,
-    /// Ledger/account ownership for this run. Omitted legacy specs use `app`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
-    /// Frozen venue market contract used by the shared Bar matching, risk, margin and ledger path.
-    /// Omitted legacy specs keep their historical compatibility semantics.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_spec: Option<TradingInstrumentSpec>,
-    /// Frozen maker/taker schedule used by the shared Rust matching and accounting path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fee_schedule: Option<MakerTakerFeeSchedule>,
-    pub strategy: BuiltinStrategySpec,
-    /// Optional deterministic same-account strategy basket. Omitted specs keep
-    /// their historical single-strategy behavior and JSON shape.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub portfolio: Option<PortfolioBacktestConfig>,
-    /// Optional position-level protective exits, evaluated on completed bars
-    /// and routed through the same OMS/risk/matching path as strategy orders.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protective_exit: Option<ProtectiveExitSpec>,
-}
-impl BacktestSpec {
-    /// 构造一份当前版本的 spec（其余字段按调用方给的填）。
-    #[allow(clippy::too_many_arguments)] // 与产物身份逐格对应，合并成参数包会让必答项变成可选。
-    pub fn new(
-        run_id: impl Into<String>,
-        instrument: impl Into<String>,
-        bars_path: impl Into<String>,
-        settlement_currency: impl Into<String>,
-        initial_cash_raw: i128,
-        seed: u64,
-        output_dir: impl Into<String>,
-        strategy: BuiltinStrategySpec,
-    ) -> Self {
-        Self {
-            schema_version: BACKTEST_SPEC_SCHEMA_VERSION,
-            run_id: run_id.into(),
-            instrument: instrument.into(),
-            bars_path: bars_path.into(),
-            settlement_currency: settlement_currency.into(),
-            initial_cash_raw,
-            seed,
-            output_dir: output_dir.into(),
-            account_id: None,
-            market_spec: None,
-            fee_schedule: None,
-            strategy,
-            portfolio: None,
-            protective_exit: None,
-        }
-    }
-    /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
-    pub fn validate(&self) -> Result<(), AppError> {
-        if self.schema_version != BACKTEST_SPEC_SCHEMA_VERSION {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!(
-                    "BacktestSpec schema_version={} 本版本只认 {}",
-                    self.schema_version, BACKTEST_SPEC_SCHEMA_VERSION
-                ),
-            ));
-        }
-        for (field, value) in [
-            ("instrument", &self.instrument),
-            ("bars_path", &self.bars_path),
-            ("settlement_currency", &self.settlement_currency),
-            ("output_dir", &self.output_dir),
-        ] {
-            if value.trim().is_empty() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("BacktestSpec.{field} 不能为空"),
-                ));
-            }
-        }
-        if !is_identity_token(&self.run_id) {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!(
-                    "BacktestSpec.run_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符（它会变成产物文件名），实际 {:?}",
-                    self.run_id
-                ),
-            ));
-        }
-        if self
-            .account_id
-            .as_deref()
-            .is_some_and(|account_id| !is_identity_token(account_id))
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "BacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
-            ));
-        }
-        if qx_core::InstrumentId::parse(&self.instrument).is_none() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BacktestSpec.instrument 非法: {}", self.instrument),
-            ));
-        }
-        if self.initial_cash_raw <= 0 {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "BacktestSpec.initial_cash_raw 必须为正",
-            ));
-        }
-        if let Some(market) = &self.market_spec {
-            market
-                .validate()
-                .map_err(|error| AppError::from_qx_error(&error))?;
-            if market.product == qx_core::TradingProduct::Option {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "Bar 回测暂不接收期权规格：行权价、到期日与认购/认沽身份尚未建模",
-                ));
-            }
-            if qx_core::InstrumentId::parse(&self.instrument).as_ref() != Some(&market.instrument) {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "BacktestSpec.market_spec.instrument 必须与 BacktestSpec.instrument 一致",
-                ));
-            }
-            if market.settlement_currency != self.settlement_currency {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "BacktestSpec.market_spec.settlement_currency 必须与 settlement_currency 一致",
-                ));
-            }
-            if self.fee_schedule.is_none() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "指定 market_spec 时必须显式提供 fee_schedule，禁止静默套用默认费率",
-                ));
-            }
-        }
-        if let Some(fees) = self.fee_schedule {
-            fees.validate()
-                .map_err(|error| AppError::from_qx_error(&error))?;
-        }
-        if let Some(policy) = self.protective_exit {
-            policy.validate()?;
-        }
-        self.strategy.validate()?;
-        if let Some(portfolio) = &self.portfolio {
-            if self.protective_exit.is_some() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "策略组合暂不支持账户净持仓级 protective_exit，避免退出成交无法归属到策略持仓",
-                ));
-            }
-            portfolio.validate(&self.strategy, self.initial_cash_raw)?;
-        }
-        Ok(())
-    }
+mod backtest;
+pub use backtest::{BacktestDatasetInput, BacktestFillModel, BacktestRiskRules, BacktestSpec};
 
-    /// 从 JSON 读入（严格：多余键即拒）。
-    pub fn from_json(payload: &str) -> Result<Self, AppError> {
-        serde_json::from_str(payload).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BacktestSpec JSON 无效: {error}"),
-            )
-        })
-    }
-
-    /// 稳定 JSON 形态（规范化输出，供三个入口逐字节比对）。
-    pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("BacktestSpec 序列化失败: {error}"),
-            )
-        })
-    }
-}
-
+mod margin;
+pub use margin::{BacktestMarginConfig, BacktestMarginTier};
 mod depth;
 pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION};
 mod multi_leg;
 pub use multi_leg::{
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
+mod multi_builtin;
+pub use multi_builtin::{
+    MultiBuiltinAttribution, MultiBuiltinBacktestRun, MultiBuiltinBacktestSpec, MultiBuiltinLegRun,
+    MULTI_BUILTIN_BACKTEST_SCHEMA_VERSION,
+};
+mod dataset_manifest;
+pub use dataset_manifest::*;
 mod multi_account;
 pub use multi_account::*;
+pub mod market_spec;
 pub mod multi_market;
 mod multi_market_depth;
 pub use multi_market_depth::*;
@@ -488,7 +381,8 @@ pub use risk_parity::{
 };
 mod algo_execution;
 pub use algo_execution::{
-    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, ALGO_EXECUTION_PLAN_SCHEMA_VERSION,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
 };
 mod protective_exit;
 pub use protective_exit::ProtectiveExitSpec;
@@ -497,5 +391,6 @@ pub use portfolio::{PortfolioBacktestConfig, PortfolioStrategySpec};
 mod capital_allocation;
 pub use capital_allocation::{
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
-    CapitalAllocationSpec, CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
+    CapitalAllocationSpec, CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION,
+    CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
 };

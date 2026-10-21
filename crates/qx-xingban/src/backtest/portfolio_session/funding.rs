@@ -9,7 +9,6 @@ pub(super) struct PreparedTimeline {
     pub end: u64,
     pub events: Vec<OwnedTimelineEvent>,
     pub settlements: BTreeMap<u64, BTreeMap<InstrumentId, i64>>,
-    pub timestamps: Vec<u64>,
 }
 
 pub(super) fn prepare_timeline(
@@ -36,27 +35,19 @@ pub(super) fn prepare_timeline(
     let start = timeline.clock_start().unwrap_or(0);
     let end = timeline.clock_end().unwrap_or(0);
     let events = timeline
-        .events()
-        .iter()
-        .map(|event| OwnedTimelineEvent {
-            instrument: event.instrument.clone(),
-            bar: *event.bar,
+        .indexed_events()
+        .map(|(market_index, bar_index, event)| OwnedTimelineEvent {
+            market_index,
+            bar_index,
+            ts: event.bar.ts,
         })
         .collect::<Vec<_>>();
     let settlements = scheduled_settlements(start, end, rates, funding_events, specs)?;
-    let timestamps = events
-        .iter()
-        .map(|event| event.bar.ts)
-        .chain(settlements.keys().copied())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
     Ok(PreparedTimeline {
         start,
         end,
         events,
         settlements,
-        timestamps,
     })
 }
 
@@ -85,6 +76,8 @@ pub(super) fn scheduled_settlements(
             )));
         }
     }
+    // The input slice outlives both indexes, so borrow its instrument keys instead of
+    // cloning one owned InstrumentId per funding event.
     let mut event_instruments = std::collections::BTreeSet::new();
     let mut event_keys = std::collections::BTreeSet::new();
     for event in funding_events {
@@ -103,13 +96,13 @@ pub(super) fn scheduled_settlements(
                 event.instrument, event.settlement_ts, event.rate_bps
             )));
         }
-        if !event_keys.insert((event.instrument.clone(), event.settlement_ts)) {
+        if !event_keys.insert((&event.instrument, event.settlement_ts)) {
             return Err(qx_core::QxError::BusinessViolation(format!(
                 "历史资金费事件重复: instrument={}, settlement_ts={}",
                 event.instrument, event.settlement_ts
             )));
         }
-        event_instruments.insert(event.instrument.clone());
+        event_instruments.insert(&event.instrument);
     }
     if rates
         .iter()
@@ -172,20 +165,34 @@ pub(super) fn scheduled_settlements(
     Ok(events)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_settlements(
-    ts: u64,
-    settlements: &BTreeMap<InstrumentId, i64>,
-    account_id: &str,
-    currency: &str,
-    specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
-    marks: &BTreeMap<InstrumentId, Price>,
-    mark_timestamps: &BTreeMap<InstrumentId, u64>,
-    ledger: &mut Ledger,
-    log: &mut EventLog,
-    totals: &mut BTreeMap<InstrumentId, i128>,
-    cashflows: &mut BTreeMap<InstrumentId, Vec<(u64, i128)>>,
-) -> Result<(), qx_core::QxError> {
+pub(super) struct SettlementContext<'a> {
+    pub(super) ts: u64,
+    pub(super) settlements: &'a BTreeMap<InstrumentId, i64>,
+    pub(super) account_id: &'a str,
+    pub(super) currency: &'a str,
+    pub(super) specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    pub(super) marks: &'a BTreeMap<InstrumentId, Price>,
+    pub(super) mark_timestamps: &'a BTreeMap<InstrumentId, u64>,
+    pub(super) ledger: &'a mut Ledger,
+    pub(super) log: &'a mut EventLog,
+    pub(super) totals: &'a mut BTreeMap<InstrumentId, i128>,
+    pub(super) cashflows: &'a mut BTreeMap<InstrumentId, Vec<(u64, i128)>>,
+}
+
+pub(super) fn apply_settlements(context: SettlementContext<'_>) -> Result<(), qx_core::QxError> {
+    let SettlementContext {
+        ts,
+        settlements,
+        account_id,
+        currency,
+        specs,
+        marks,
+        mark_timestamps,
+        ledger,
+        log,
+        totals,
+        cashflows,
+    } = context;
     for (instrument, rate_bps) in settlements {
         let position = ledger.position_for(account_id, instrument).quantity.raw();
         if position == 0 {
@@ -227,9 +234,7 @@ pub(super) fn apply_settlements(
             },
         )?;
         let entry = ledger
-            .entries()
-            .iter()
-            .find(|entry| entry.id == entry_id)
+            .entry(entry_id)
             .cloned()
             .ok_or_else(|| qx_core::QxError::Invariant("资金费账簿项未写入".into()))?;
         let seq = log.alloc_seq();

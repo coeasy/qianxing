@@ -1,0 +1,418 @@
+use crate::run_evidence_multi_market::{
+    recompute_multi_market_barframe_identity, recompute_multi_market_depth_identity,
+    rerun_multi_market_barframe, rerun_multi_market_depth,
+};
+use crate::run_evidence_recompute::{
+    recompute_multi_barframe_identity, rerun_depth_backtest, rerun_strategy, resolve_reference,
+};
+use crate::*;
+use qx_spec::{EvidenceBundle, EvidenceGeneration, FoundationDocument};
+use std::path::Path;
+
+fn report_json_equivalent(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    match (left, right) {
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| report_json_equivalent(value, other))
+                })
+        }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| report_json_equivalent(left, right))
+        }
+        (serde_json::Value::Number(left), serde_json::Value::Number(right)) => {
+            if left == right {
+                true
+            } else {
+                left.as_f64()
+                    .zip(right.as_f64())
+                    .is_some_and(|(left, right)| (left - right).abs() <= 1e-9)
+            }
+        }
+        _ => left == right,
+    }
+}
+
+pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(), String> {
+    let payload = std::fs::read_to_string(bundle_path).map_err(|error| {
+        format!(
+            "读取运行 EvidenceBundle 失败 {}: {error}",
+            bundle_path.display()
+        )
+    })?;
+    let bundle = EvidenceBundle::from_json(&payload)?;
+    let EvidenceGeneration::Run(run) = &bundle.generation else {
+        return Err("evidence verify-run 只接受 generation=run".into());
+    };
+    let root = bundle_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut manifest_path = None;
+    let mut summary_path = None;
+    let mut runtime_config_path = None;
+    let mut runtime_config_fingerprint_matches_run_hash = None;
+    let mut market_spec_path = None;
+    let mut market_spec_primary_path = None;
+    let mut market_spec_reference_path = None;
+    let mut verified = 0usize;
+    for artifact in &run.artifacts {
+        let path = resolve_reference(root, &artifact.path)?;
+        let digest = qx_strategy::file_digest::sha256_file_hex(&path)?;
+        if digest != artifact.digest {
+            return Err(format!(
+                "EvidenceBundle 产物摘要不匹配: {} 声明={} 实际={digest}",
+                artifact.path, artifact.digest
+            ));
+        }
+        if artifact.name == "run_manifest" {
+            manifest_path = Some(path);
+        } else if artifact.name == "summary" {
+            summary_path = Some(path);
+        } else if artifact.name == "runtime_config" {
+            runtime_config_path = Some(path);
+        } else if artifact.name == "market_spec" {
+            market_spec_path = Some(path);
+        } else if artifact.name == "market_spec_primary" {
+            market_spec_primary_path = Some(path);
+        } else if artifact.name == "market_spec_reference" {
+            market_spec_reference_path = Some(path);
+        }
+        verified += 1;
+    }
+    let manifest_path = manifest_path.ok_or("运行 EvidenceBundle 缺少 run_manifest 产物")?;
+    let manifest_payload = std::fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("读取 RunManifest 失败 {}: {error}", manifest_path.display()))?;
+    let manifest = qx_core::RunManifest::from_json(&manifest_payload)?;
+    if manifest.run_id != run.run.run_id
+        || manifest.code_commit != run.run.code_commit
+        || manifest.runtime_version != run.run.runtime_version
+        || manifest.config_hash != run.run.config_hash
+        || manifest.data_fingerprint != run.run.data_fingerprint
+        || manifest.input_components != run.run.input_components
+        || manifest.result_hash != run.run.result_hash
+        || manifest.strategy_version != run.run.strategy_version
+        || manifest.instrument_spec_version != run.run.instrument_spec_version
+        || manifest.model_fingerprint != run.run.model_fingerprint
+        || manifest.input_event_hash != run.run.input_event_hash
+        || manifest.output_event_hash != run.run.output_event_hash
+        || manifest.clock_start != run.run.clock_start
+        || manifest.clock_end != run.run.clock_end
+        || manifest.global_seed != run.run.global_seed
+        || manifest.determinism_mode != run.run.determinism_mode
+    {
+        return Err("RunManifest 与 EvidenceBundle.run 身份字段不一致".into());
+    }
+    if let Some(config_path) = &runtime_config_path {
+        if !run.run.run_id.starts_with("depth-backtest:") {
+            let config = read_runtime_config(config_path)?;
+            let fingerprint = config.fingerprint()?;
+            runtime_config_fingerprint_matches_run_hash = Some(fingerprint == run.run.config_hash);
+            let strategy_run = run.run.run_id.starts_with("strategy-backtest:");
+            if fingerprint != run.run.config_hash && !strategy_run {
+                return Err(format!(
+                    "EvidenceBundle runtime_config 指纹不匹配: {} != {}",
+                    fingerprint, run.run.config_hash
+                ));
+            }
+        }
+    }
+    crate::run_evidence_build_attestation::verify_attached_build_attestation(
+        root,
+        &run.artifacts,
+        runtime_config_path.as_deref(),
+        &run.run.run_id,
+    )?;
+    let input_path = if matches!(
+        run.dataset.kind.as_str(),
+        "multi-barframe" | "multi-market-barframe" | "multi-market-depthframe"
+    ) {
+        let primary = run
+            .dataset
+            .components
+            .first()
+            .ok_or("multi-barframe 缺少 primary 输入")?;
+        resolve_reference(root, &primary.path)?
+    } else {
+        resolve_reference(root, &run.dataset.path)?
+    };
+    let quality_manifest_path = run
+        .dataset
+        .quality_manifest_path
+        .as_deref()
+        .map(|path| resolve_reference(root, path))
+        .transpose()?;
+    match (
+        quality_manifest_path.as_deref(),
+        run.dataset.quality_manifest_sha256.as_deref(),
+    ) {
+        (Some(path), Some(expected)) => {
+            let actual = qx_strategy::file_digest::sha256_file_hex(path)?;
+            if actual != expected {
+                return Err(format!(
+                    "EvidenceBundle 数据质量清单 SHA-256 不匹配: {} 声明={} 实际={actual}",
+                    path.display(),
+                    expected
+                ));
+            }
+        }
+        (None, None) => {}
+        _ => return Err("EvidenceBundle 数据质量清单路径与 SHA-256 必须成对存在".into()),
+    }
+    let (recomputed, input_rows) = match run.dataset.kind.as_str() {
+        "barframe" => {
+            let frame = read_bar_frame_for_backtest(&input_path)?;
+            let (_, manifest) = barframe_dataset_identity(&input_path, &frame)?;
+            if let Some(quality_path) = quality_manifest_path.as_deref() {
+                let quality = qx_app::artifact_store::verify_barframe_dataset_quality(
+                    quality_path,
+                    &input_path,
+                    &frame,
+                    &manifest,
+                )?;
+                let fingerprint = quality["manifest_fingerprint"]
+                    .as_str()
+                    .ok_or("复核后的数据质量清单缺少 fingerprint")?;
+                if run.dataset.manifest_fingerprint.as_deref() != Some(fingerprint) {
+                    return Err(
+                        "EvidenceBundle 数据质量清单 fingerprint 与文件重算结果不一致".into(),
+                    );
+                }
+                let mut report = quality["quality_report"].clone();
+                if let Some(fields) = report.as_object_mut() {
+                    fields.remove("row_count");
+                }
+                let declared_report = run
+                    .dataset
+                    .quality_report
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|error| format!("编码 EvidenceBundle 数据质量报告失败: {error}"))?;
+                if declared_report.as_ref() != Some(&report) {
+                    return Err("EvidenceBundle 数据质量报告与清单重算结果不一致".into());
+                }
+            }
+            (
+                qx_app::backtest_input_identity::barframe_input_provenance(&input_path, &manifest),
+                frame.ts.len() as u64,
+            )
+        }
+        "depth-frame" => {
+            let frame = read_depth_frame_for_backtest(&input_path)?;
+            (
+                qx_app::backtest_input_identity::depth_frame_input_provenance(&input_path, &frame),
+                frame.snapshots.len() as u64,
+            )
+        }
+        "multi-barframe" => recompute_multi_barframe_identity(root, &run.dataset)?,
+        "multi-market-barframe" => recompute_multi_market_barframe_identity(
+            root,
+            &run.dataset,
+            &manifest.input_components,
+        )?,
+        "multi-market-depthframe" => {
+            recompute_multi_market_depth_identity(root, &run.dataset, &manifest)?
+        }
+        kind => return Err(format!("未知的 EvidenceBundle 输入类型: {kind}")),
+    };
+    if recomputed.dataset_id != run.dataset.dataset_id
+        || recomputed.dataset_version != run.dataset.version
+        || recomputed.fingerprint != run.dataset.content_fingerprint
+    {
+        return Err(format!(
+            "EvidenceBundle 输入身份与文件重算结果不一致: dataset_id={}/{}, version={}/{}, fingerprint={}/{}",
+            run.dataset.dataset_id,
+            recomputed.dataset_id,
+            run.dataset.version,
+            recomputed.dataset_version,
+            run.dataset.content_fingerprint,
+            recomputed.fingerprint
+        ));
+    }
+    if input_rows != run.dataset.row_count {
+        return Err(format!(
+            "EvidenceBundle 输入行数与文件不一致: 声明={} 实际={input_rows}",
+            run.dataset.row_count
+        ));
+    }
+    if run.recompute.expected_result_hash != run.run.result_hash {
+        return Err("recompute.expected_result_hash 与 run.result_hash 不一致".into());
+    }
+    if let Some(analysis) = &run.report_analysis {
+        let benchmark_path = resolve_reference(root, &analysis.input_path)?;
+        let digest = qx_strategy::file_digest::sha256_file_hex(&benchmark_path)?;
+        if digest != analysis.input_sha256 {
+            return Err(format!(
+                "EvidenceBundle 报告分析输入 SHA-256 不匹配: {}",
+                analysis.input_path
+            ));
+        }
+        let calendar_path = analysis
+            .calendar_input_path
+            .as_deref()
+            .map(|path| resolve_reference(root, path))
+            .transpose()?;
+        match (&calendar_path, &analysis.calendar_input_sha256) {
+            (Some(path), Some(expected)) => {
+                let actual = qx_strategy::file_digest::sha256_file_hex(path)?;
+                if &actual != expected {
+                    return Err(format!(
+                        "EvidenceBundle 报告分析交易日历 SHA-256 不匹配: {}",
+                        analysis.calendar_input_path.as_deref().unwrap_or_default()
+                    ));
+                }
+            }
+            (None, None) => {}
+            _ => return Err("EvidenceBundle 报告分析交易日历路径与 SHA-256 必须同时存在".into()),
+        }
+        let summary_path = summary_path
+            .as_deref()
+            .ok_or("报告分析证据缺少 summary 产物")?;
+        let summary: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(summary_path)
+                .map_err(|error| format!("读取报告分析 summary 失败: {error}"))?,
+        )
+        .map_err(|error| format!("报告分析 summary JSON 无效: {error}"))?;
+        let portfolio_return_bps = i64::try_from(
+            report_readout::summary_number(&summary, "/metrics/return_bps")
+                .ok_or("报告分析 summary 缺少 return_bps")?,
+        )
+        .map_err(|_| "报告分析 return_bps 超出 i64 范围")?;
+        let mut recomputed = crate::report_benchmark::benchmark_analysis(
+            summary_path,
+            &benchmark_path,
+            portfolio_return_bps,
+            calendar_path.as_deref(),
+        )?;
+        if let Some(object) = recomputed
+            .pointer_mut("/benchmark")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            object.remove("path");
+        }
+        if let Some(object) = recomputed
+            .pointer_mut("/calendar")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            object.remove("path");
+        }
+        let mut recorded: serde_json::Value = serde_json::from_str(&analysis.analysis)
+            .map_err(|error| format!("EvidenceBundle 基准分析 JSON 无效: {error}"))?;
+        if let Some(object) = recorded
+            .pointer_mut("/benchmark")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            object.remove("path");
+        }
+        if let Some(object) = recorded
+            .pointer_mut("/calendar")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            object.remove("path");
+        }
+        if analysis.kind != "benchmark"
+            || analysis.instrument
+                != recomputed
+                    .pointer("/benchmark/instrument")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            || analysis.input_fingerprint
+                != recomputed
+                    .pointer("/benchmark/fingerprint")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            || !report_json_equivalent(&recorded, &recomputed)
+        {
+            return Err("EvidenceBundle 基准分析与输入行情重算结果不一致".into());
+        }
+    }
+    if recompute {
+        match run.dataset.kind.as_str() {
+            "barframe" if run.run.run_id.starts_with("strategy-backtest:") => {
+                if quality_manifest_path.is_none()
+                    && (run.dataset.manifest_fingerprint.is_some()
+                        || run.dataset.quality_report.is_some())
+                {
+                    return Err(
+                        "EvidenceBundle 声明了数据质量但未绑定质量清单文件，无法独立复算".into(),
+                    );
+                }
+                let config_path = runtime_config_path
+                    .as_deref()
+                    .ok_or("EvidenceBundle 未附带 runtime_config；无法执行离线策略复算")?;
+                rerun_strategy(
+                    config_path,
+                    &input_path,
+                    market_spec_path.as_deref(),
+                    quality_manifest_path.as_deref(),
+                    &manifest.run_id,
+                    &run.recompute.expected_result_hash,
+                    &run.run.code_commit,
+                )?;
+            }
+            "depth-frame" if run.run.run_id.starts_with("depth-backtest:") => {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("深度运行 EvidenceBundle 缺少 summary 产物，无法重建复算参数")?;
+                rerun_depth_backtest(
+                    summary_path,
+                    &input_path,
+                    runtime_config_path.as_deref(),
+                    market_spec_path.as_deref(),
+                    &manifest,
+                )?;
+            }
+            "multi-barframe" if run.run.run_id.starts_with("multi-composition:") => {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("多腿运行 EvidenceBundle 缺少 summary 产物")?;
+                crate::run_evidence_multi::rerun_multi_barframe(
+                    root,
+                    summary_path,
+                    &run.dataset,
+                    runtime_config_path.as_deref(),
+                    market_spec_primary_path.as_deref(),
+                    market_spec_reference_path.as_deref(),
+                    &manifest,
+                )?;
+            }
+            "multi-market-barframe" => {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("多市场运行 EvidenceBundle 缺少 summary 产物")?;
+                rerun_multi_market_barframe(root, summary_path, &run.dataset, &manifest)?;
+            }
+            "multi-market-depthframe" => {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("多市场深度 EvidenceBundle 缺少 summary 产物")?;
+                rerun_multi_market_depth(root, summary_path, &run.dataset, &manifest)?;
+            }
+            "barframe" | "depth-frame" => {
+                return Err(format!(
+                    "当前离线复算不支持该 RunManifest 类型: {}",
+                    run.run.run_id
+                ));
+            }
+            kind => return Err(format!("当前离线复算不支持输入类型: {kind}")),
+        }
+    }
+    print_machine_json(&serde_json::json!({
+        "ok": true,
+        "operation": "run-evidence-input-and-artifact-verified",
+        "generation": "run",
+        "run_id": run.run.run_id,
+        "verified_artifact_count": verified,
+        "input_identity_recomputed": true,
+        "input_row_count_recomputed": input_rows,
+        "result_hash": run.run.result_hash,
+        "result_recomputed": recompute,
+        "runtime_config_fingerprint_matches_run_hash": runtime_config_fingerprint_matches_run_hash,
+        "limitation": if recompute { "策略回测（含证据包内可执行的外部策略发布物）、单标的 L1/L2 深度回测、双腿 multi-builtin、多市场 builtin Bar 与多市场 builtin 深度回测已使用匹配 code_commit 的当前构建重跑；策略回测按目标 RunManifest.run_id 选取 result_hash。运行配置文件及其依赖摘要已核验，但路径搬运后的绝对路径配置指纹可能不等于来源运行的 path-resolved config_hash；--recompute 通过结果摘要补足行为核对。复算子进程会移除敏感凭据和代理环境变量，但这不构成操作系统级断网，也不验证第三方构建可重现性；实验入口尚不支持完整复算。" } else { "此命令核验工件摘要、RunManifest 身份与输入数据指纹；未启用 --recompute 时不声称独立复算 result_hash。运行配置 SHA-256 已核验；策略运行的路径解析可能使搬运后的配置指纹无法直接与来源 config_hash 对比。" }
+    }))?;
+    Ok(())
+}

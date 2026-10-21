@@ -1,29 +1,11 @@
 use crate::*;
 
-pub(crate) fn ccxt_submit_matches_worker(command: &ControlCommand, worker: &WorkerConfig) -> bool {
-    let Some(expected_account) = worker.account_id.as_deref() else {
-        return false;
-    };
-    let Some(expected_venue) = worker.venue_id.as_deref() else {
-        return false;
-    };
-    order_from_submit_command(command)
-        .map(|order| {
-            order.account_id == expected_account
-                && order
-                    .instrument
-                    .venue
-                    .as_str()
-                    .eq_ignore_ascii_case(expected_venue)
-        })
-        .unwrap_or(false)
-}
+pub(crate) use qx_service::ccxt_execution_host::ccxt_submit_matches_worker;
 
 /// 通过公共 Python CCXT Worker 执行已审计 SubmitOrder。
 ///
-/// `worker.endpoint` 约定为 CCXT JSON 配置文件路径，Python 解释器使用
-/// `QX_PYTHON` 环境变量或默认 `python`。Rust 侧只负责命令队列、EventLog、
-/// OMS 和 Ledger，交易所协议全部由公共 CCXT 完成。
+/// CLI 仅负责读取运行时配置和连接器设置；队列、租约、执行、恢复与终态回写
+/// 由 qx-service 持有。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_ccxt_execution_worker(
     context: qx_runtime::WorkerContext,
@@ -36,250 +18,23 @@ pub(crate) fn run_ccxt_execution_worker(
     dedicated_spread_recovery: bool,
     once: bool,
 ) -> Result<(), String> {
-    if worker.role != WorkerRole::Execution {
-        return Err(format!("worker {} 不是 CCXT Execution worker", worker.id));
-    }
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
     let python = python_interpreter();
-    let owner = worker.id.clone();
-    context.mark(
-        qx_runtime::ServiceStatus::Ready,
-        format!(
-            "ccxt execution queue polling venue={}",
-            worker.venue_id.as_deref().unwrap_or("")
-        ),
-        Some(runtime_timestamp_ms()),
-    )?;
-    // 内联恢复扫描按共享节律自节流：队列轮询仍每 100ms 一轮，但原地不动时不会再
-    // 每轮起灭一个公共 CCXT 子进程（V13 R2 #168c 的节律，此前只落在另三条循环上）。
-    let mut recovery_stalls = 0_u32;
-    let mut recovery_next_at = 0_u64;
-    while !context.should_stop() {
-        let now = runtime_timestamp_ms();
-        // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
-        let lease_now = lease_clock(now);
-        let control = control_store.load()?;
-        let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
-        if !dedicated_spread_recovery && now >= recovery_next_at {
-            let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
-            if pending_before > 0 {
-                let mut recovery_pipeline = pipeline_storage
-                    .open(
-                        required_account_event_log(&worker)?,
-                        settlement_currency.clone(),
-                    )
-                    .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
-                let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-                    .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
-                let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
-                let mut recovery_seq = recovery_pipeline
-                    .log()
-                    .events()
-                    .last()
-                    .map(|event| event.source_seq)
-                    .unwrap_or(0);
-                let validator = recovery_order_validator(
-                    &worker,
-                    &recovery_pipeline,
-                    Some(&runtime_config_path),
-                );
-                let (_, diagnostics) = recover_spread_groups_for_venue(
-                    SpreadRecoveryContext {
-                        root: &pipeline_storage.root,
-                        venue_id,
-                        accept_any_venue: false,
-                        order_validator: Some(&validator),
-                        pipeline: &mut recovery_pipeline,
-                        worker_id: &worker.id,
-                        now,
-                        source_seq: &mut recovery_seq,
-                    },
-                    recovery_venue,
-                )?;
-                for message in diagnostics {
-                    eprintln!("[HedgeRecovery] {message}");
-                }
-                let pending_after =
-                    pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
-                recovery_stalls = if pending_after >= pending_before {
-                    recovery_stalls.saturating_add(1)
-                } else {
-                    0
-                };
-            } else {
-                recovery_stalls = 0;
-            }
-            recovery_next_at = now.saturating_add(
-                u64::try_from(spread_recovery_poll_delay(recovery_stalls).as_millis())
-                    .unwrap_or(u64::MAX),
-            );
-        }
-        for command in control.pending().filter(|command| {
-            matches!(&command.kind, CommandKind::SubmitOrder)
-                && ccxt_submit_matches_worker(command, &worker)
-        }) {
-            queue
-                .enqueue_command(command.clone(), lease_now)
-                .map_err(|error| format!("补入 CCXT SubmitOrder 队列失败: {error:?}"))?;
-        }
-        for queued in queue
-            .available_commands(lease_now)
-            .map_err(|error| format!("读取 CCXT SubmitOrder 队列失败: {error:?}"))?
-        {
-            if context.should_stop() {
-                break;
-            }
-            let command = queued.command.clone();
-            if !ccxt_submit_matches_worker(&command, &worker) {
-                continue;
-            }
-            let lease = match queue.claim_command(command.command_id, &owner, lease_now, 30) {
-                Ok(lease) => lease,
-                Err(StorageError::LeaseHeld { .. }) => continue,
-                Err(error) => return Err(format!("领取 CCXT SubmitOrder 租约失败: {error:?}")),
-            };
-            if command_is_final(&control, command.command_id) {
-                queue
-                    .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
-                    .map_err(|error| format!("清理已终态 CCXT SubmitOrder 失败: {error:?}"))?;
-                continue;
-            }
-            let action = if command.dry_run {
-                Ok("DRY_RUN_VALIDATED".into())
-            } else if let Err(reason) =
-                require_worker_risk_spec(&worker, &command, Some(&runtime_config_path))
-            {
-                Err(reason)
-            } else {
-                // 跨腿屏障由 `qx-execution` 网关自行判定；CLI 只注入存储根解析出的组快照。
-                let spread_store = open_spread_group_store(&pipeline_storage.root)?;
-                let mut pipeline = pipeline_storage
-                    .open(
-                        required_account_event_log(&worker)?,
-                        settlement_currency.clone(),
-                    )
-                    .map_err(|error| format!("打开 CCXT EventLog 失败: {error}"))?;
-                let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-                    .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
-                let mut venue = CcxtProcessVenue::new(
-                    worker.venue_id.clone().unwrap_or_else(|| "ccxt".into()),
-                    Box::new(client),
-                );
-                let mut source_seq = 0_u64;
-                let validator =
-                    recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-                let requested_order = order_from_submit_command(&command)
-                    .map_err(|error| format!("CCXT 订单载荷非法: {error:?}"))?;
-                if requested_order.limit.is_none() && worker.instrument_spec_path.is_some() {
-                    let ticker = venue
-                        .stream_call(serde_json::json!({
-                            "op": "fetch_ticker",
-                            "instrument": requested_order.instrument.to_string(),
-                        }))
-                        .map_err(|error| format!("CCXT 风控参考价查询失败: {error:?}"))?;
-                    let ticker = ticker
-                        .get("ticker")
-                        .ok_or_else(|| "CCXT ticker 响应缺少 ticker".to_string())?;
-                    let bid = Price::from_raw(raw_json_i128(ticker, "bid_raw")?);
-                    let ask = Price::from_raw(raw_json_i128(ticker, "ask_raw")?);
-                    let bid_qty = Quantity::from_raw(raw_json_i128(ticker, "bid_qty_raw")?);
-                    let ask_qty = Quantity::from_raw(raw_json_i128(ticker, "ask_qty_raw")?);
-                    let event_ts = ticker
-                        .get("timestamp_ms")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(now);
-                    source_seq = source_seq.saturating_add(1);
-                    pipeline
-                        .ingest(RuntimeEventEnvelope::venue(
-                            RuntimeExternalEvent::MarketQuote {
-                                instrument: requested_order.instrument.clone(),
-                                bid,
-                                ask,
-                                bid_qty,
-                                ask_qty,
-                            },
-                            event_ts,
-                            now,
-                            source_seq,
-                            format!("{}:risk-ticker:{}", worker.id, requested_order.client_id),
-                        ))
-                        .map_err(|error| format!("写入 CCXT 风控参考行情失败: {error:?}"))?;
-                }
-                let result = execute_submit_order_with_worker_risk(
-                    &command,
-                    &worker,
-                    &mut venue,
-                    &mut pipeline,
-                    now,
-                    &mut source_seq,
-                    Some(&runtime_config_path),
-                    Some(&spread_store),
-                );
-                if is_fail_closed_rejection(&result) {
-                    // 网关在写入任何事实之前就拒绝了：没有腿订单可归约、没有敞口要
-                    // 补偿，原样把 FAIL_CLOSED 原因交给控制面记录。
-                    drop(venue);
-                } else {
-                    let latest_pipeline = pipeline_storage
-                        .open(
-                            required_account_event_log(&worker)?,
-                            settlement_currency.clone(),
-                        )
-                        .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
-                    sync_spread_group_after_order(
-                        &pipeline_storage.root,
-                        &latest_pipeline,
-                        &command,
-                        now,
-                    )?;
-                    let (venue, recovery) = recover_spread_groups_for_venue(
-                        SpreadRecoveryContext {
-                            root: &pipeline_storage.root,
-                            venue_id: worker.venue_id.as_deref().unwrap_or("ccxt"),
-                            accept_any_venue: false,
-                            order_validator: Some(&validator),
-                            pipeline: &mut pipeline,
-                            worker_id: &worker.id,
-                            now,
-                            source_seq: &mut source_seq,
-                        },
-                        venue,
-                    )?;
-                    for message in recovery {
-                        eprintln!("[HedgeRecovery] {message}");
-                    }
-                    drop(venue);
-                }
-                result
-            };
-            let (_, record_result) = control_store
-                .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
-                .map_err(|error| format!("回写 CCXT SubmitOrder 终态失败: {error}"))?;
-            let record =
-                record_result.map_err(|error| format!("CCXT SubmitOrder 执行失败: {error:?}"))?;
-            queue
-                .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
-                .map_err(|error| format!("确认 CCXT SubmitOrder 失败: {error:?}"))?;
-            context.mark(
-                if record.status == qx_control::CommandStatus::Executed {
-                    qx_runtime::ServiceStatus::Ready
-                } else {
-                    qx_runtime::ServiceStatus::Degraded
-                },
-                format!(
-                    "command_id={} status={:?}",
-                    command.command_id, record.status
-                ),
-                Some(now),
-            )?;
-        }
-        context.heartbeat(now)?;
-        if once {
-            break;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    Ok(())
+    qx_service::ccxt_execution_host::run_ccxt_execution_worker(
+        qx_service::ccxt_execution_host::CcxtExecutionWorkerInput {
+            context,
+            worker,
+            pipeline_storage,
+            control_store,
+            queue,
+            runtime_config,
+            python,
+            ccxt_config_path,
+            runtime_config_path,
+            dedicated_spread_recovery,
+            once,
+        },
+    )
 }
 
 /// 使用公共 CCXT Pro `watch_orders` 接收账户订单变化，再通过同一 CCXT
@@ -293,199 +48,18 @@ pub(crate) fn run_ccxt_user_stream_worker(
     runtime_config_path: PathBuf,
     once: bool,
 ) -> Result<(), String> {
-    if worker.role != WorkerRole::UserStream {
-        return Err(format!("worker {} 不是 CCXT UserStream worker", worker.id));
-    }
     let python = python_interpreter();
-    let log_name = required_account_event_log(&worker)?;
-    let mut pipeline = pipeline_storage
-        .open(
-            log_name,
-            account_worker_currency_from_path(&runtime_config_path, &worker)?,
-        )
-        .map_err(|error| format!("打开 CCXT UserStream EventLog 失败: {error}"))?;
-    context.mark(
-        qx_runtime::ServiceStatus::Ready,
-        format!(
-            "ccxt pro user stream venue={}",
-            worker.venue_id.as_deref().unwrap_or("")
-        ),
-        Some(runtime_timestamp_ms()),
-    )?;
-    let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-        .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
-    // 空闲回话上限取自身读窗的 4/5：让"这一窗没有事件"先答回来，读窗到期就重新只
-    // 表示子进程真的卡住 —— 而不是一个没有成交的账户在十个窗口后被具名放弃。
-    // 这条循环自身不睡，节律全靠这个窗口，所以下界由 ccxt.rs 的读窗校验兜住（#214）。
-    let watch_idle_ms = qx_adapter::ccxt_idle_window_ms(client.timeout_ms());
-    let mut venue = CcxtProcessVenue::new(
-        worker.venue_id.clone().unwrap_or_else(|| "ccxt".into()),
-        Box::new(client),
-    );
-    let mut source_seq = pipeline
-        .log()
-        .events()
-        .last()
-        .map(|event| event.source_seq)
-        .unwrap_or(0);
-    let mut reconnect_budget = CcxtReconnectBudget::default();
-    let mut idle_windows = 0_u64;
-    loop {
-        if context.should_stop() {
-            break;
-        }
-        pipeline
-            .refresh()
-            .map_err(|error| format!("刷新 CCXT UserStream EventLog 失败: {error:?}"))?;
-        let received_ts = runtime_timestamp_ms();
-        let result = match venue.stream_call(serde_json::json!({
-            "op": "watch_orders",
-            "instrument": null,
-            "received_ts": received_ts,
-            "wait_ms": watch_idle_ms,
-        })) {
-            Ok(result) => result,
-            Err(error) => {
-                let detail = format!("{error:?}");
-                if detail.contains("[unsupported]") || detail.contains("[authentication]") {
-                    return Err(format!("CCXT Pro 用户流不可用: {detail}"));
-                }
-                // 非致命故障也要有终点：连续失败到上限就具名报错，不再无限重启子进程。
-                let backoff = reconnect_budget
-                    .note_failure()
-                    .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
-                context.mark(
-                    qx_runtime::ServiceStatus::Degraded,
-                    format!(
-                        "ccxt pro user stream reconnecting failures={}: {detail}",
-                        reconnect_budget.consecutive_failures()
-                    ),
-                    Some(received_ts),
-                )?;
-                thread::sleep(backoff);
-                let replacement = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-                    .map_err(|spawn_error| {
-                        format!("重连公共 CCXT Pro Worker 失败: {spawn_error}")
-                    })?;
-                venue.replace_rpc(Box::new(replacement));
-                continue;
-            }
-        };
-        // 子进程答上了话：连续失败预算清零，长期健康的流不会累积历史故障。
-        reconnect_budget.note_success();
-        let event = result
-            .get("event")
-            .ok_or_else(|| "CCXT Pro watch_orders 响应缺少 event".to_string())?;
-        if event.get("stream").and_then(serde_json::Value::as_str) != Some("orders") {
-            return Err("CCXT Pro 用户流返回了非 orders 事件".into());
-        }
-        // 子进程答上了话、只是这一窗没有订单事件：不占重连预算，否则一个当天没有
-        // 成交的账户会在几个 30 秒窗口后被具名放弃；也不清 idle 计数之外的东西。
-        if ccxt_watch_reply_is_idle(event) {
-            idle_windows = idle_windows.saturating_add(1);
-            context.mark(
-                qx_runtime::ServiceStatus::Degraded,
-                format!("ccxt pro user stream idle consecutive_windows={idle_windows}"),
-                Some(received_ts),
-            )?;
-            if once {
-                break;
-            }
-            continue;
-        }
-        idle_windows = 0;
-        let events = event
-            .get("events")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
-        let mut matched = 0_usize;
-        let mut reduced = 0_usize;
-        let mut reconcile_errors = 0_usize;
-        for update in events {
-            let remote_id = update
-                .get("order_id")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "CCXT Pro order 事件缺少 order_id".to_string())?;
-            let client_order_id = update
-                .get("client_order_id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|value| value.parse::<u64>().ok());
-            let local = pipeline.orders().into_iter().find(|order| {
-                client_order_id == Some(order.client_id)
-                    || pipeline
-                        .venue_order_id(order.client_id)
-                        .as_deref()
-                        .is_some_and(|value| value == remote_id)
-            });
-            let Some(order) = local else {
-                // 未知 remote order 不允许自动注册或下单补偿；交给 Reconcile worker
-                // 按交易所 open orders/账单做完整快照核对。
-                continue;
-            };
-            matched = matched.saturating_add(1);
-            venue
-                .restore_order(order.clone(), remote_id)
-                .map_err(|error| format!("恢复 CCXT Pro remote order 失败: {error:?}"))?;
-            let event_ts = update
-                .get("timestamp_ms")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(received_ts);
-            let venue_events = match venue.sync_order(order.client_id, event_ts) {
-                Ok(events) => events,
-                Err(error) => {
-                    reconcile_errors = reconcile_errors.saturating_add(1);
-                    let reason = format!("{error:?}");
-                    EventLogReconcilePort::new(&mut pipeline, &worker.id, received_ts, &mut source_seq)
-                        .at_event_ts(event_ts)
-                        .with_tag("sync-error")
-                        .require_reconcile(order.client_id, &reason)
-                        .map_err(|ingest_error| {
-                            format!(
-                                "归约 CCXT Pro order 失败 {error:?}，且无法写入 ReconcileRequired: {ingest_error}"
-                            )
-                        })?;
-                    continue;
-                }
-            };
-            let reduced_events = if let Some(spec) =
-                load_worker_instrument_spec(&worker, &order, Some(&runtime_config_path))?
-            {
-                ingest_venue_events_with_spec(
-                    &mut pipeline,
-                    venue_events,
-                    &worker.id,
-                    received_ts,
-                    &mut source_seq,
-                    &spec,
-                )?
-            } else {
-                ingest_venue_events(
-                    &mut pipeline,
-                    venue_events,
-                    &worker.id,
-                    received_ts,
-                    &mut source_seq,
-                )?
-            };
-            reduced = reduced.saturating_add(reduced_events);
-        }
-        context.mark(
-            qx_runtime::ServiceStatus::Ready,
-            format!(
-                "ccxt pro orders matched={matched} reduced={reduced} reconcile_errors={reconcile_errors}"
-            ),
-            Some(received_ts),
-        )?;
-        context.heartbeat(received_ts)?;
-        if once {
-            break;
-        }
-    }
-    context.mark(
-        qx_runtime::ServiceStatus::Stopped,
-        format!("ccxt pro user stream stopped idle_windows={idle_windows}"),
-        Some(runtime_timestamp_ms()),
-    )?;
-    Ok(())
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    qx_service::ccxt_user_stream_host::run_ccxt_user_stream_worker(
+        qx_service::ccxt_user_stream_host::CcxtUserStreamWorkerInput {
+            context,
+            worker,
+            pipeline_storage,
+            runtime_config,
+            python,
+            ccxt_config_path,
+            runtime_config_path,
+            once,
+        },
+    )
 }

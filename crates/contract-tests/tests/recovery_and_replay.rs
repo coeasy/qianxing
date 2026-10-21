@@ -145,16 +145,16 @@ fn risk_preflight_rejects_before_event_log_or_venue_side_effect() {
         risk: &risk,
         position: &OrderRiskPosition::default(),
     };
-    let result = submit_order_with_risk(
-        &command,
-        &mut venue,
-        &mut pipeline,
-        "execution",
-        1,
-        &mut source_seq,
-        &risk_context,
-        None,
-    );
+    let result = submit_order_with_risk(qx_execution::SubmitOrderWithRiskRequest {
+        command: &command,
+        venue: &mut venue,
+        pipeline: &mut pipeline,
+        worker_id: "execution",
+        now: 1,
+        source_seq: &mut source_seq,
+        context: &risk_context,
+        spread_store: None,
+    });
     assert!(result.is_err());
     assert!(pipeline.orders().is_empty());
     assert!(venue.snapshot().is_empty());

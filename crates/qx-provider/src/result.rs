@@ -46,6 +46,18 @@ impl ProviderCapability {
             || self.auth_scope.trim().is_empty()
             || self.rate_limit_per_second == 0
             || self.historical_start > self.historical_end
+            || (self.data_kinds.contains(&DataKind::Bar)
+                && !self.data_tiers.contains(&super::MarketDataTier::Bar))
+            || (self.data_kinds.contains(&DataKind::Quote)
+                && !self.data_tiers.iter().any(|tier| {
+                    matches!(tier, super::MarketDataTier::L1 | super::MarketDataTier::L2)
+                }))
+            || self.data_tiers.iter().any(|tier| match tier {
+                super::MarketDataTier::Bar => !self.data_kinds.contains(&DataKind::Bar),
+                super::MarketDataTier::L1 | super::MarketDataTier::L2 => {
+                    !self.data_kinds.contains(&DataKind::Quote)
+                }
+            })
         {
             return Err(ProviderError::new(
                 ProviderErrorClass::Permanent,
@@ -65,6 +77,10 @@ impl ProviderCapability {
 
     pub fn matches_request(&self, request: &DataRequest) -> bool {
         self.matches(&request.query)
+            && request
+                .requirements
+                .required_data_tier
+                .is_none_or(|tier| self.data_tiers.contains(&tier))
             && request
                 .requirements
                 .required_auth_scope
@@ -363,7 +379,12 @@ impl ProviderResult {
             ));
         }
         const BAR_JSON_CONTENT_TYPE: &str = "application/vnd.qianxing.bar+json;v=1";
-        let instrument_name = query.instrument_set.iter().next().expect("length checked");
+        let instrument_name = query.instrument_set.iter().next().ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorClass::Permanent,
+                "BarFrame 装配要求一个标的，但 instrument 集合为空",
+            )
+        })?;
         let instrument = qx_core::InstrumentId::parse(instrument_name).ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorClass::Permanent,

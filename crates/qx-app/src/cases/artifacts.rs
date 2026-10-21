@@ -29,13 +29,12 @@
 //! 判据（`event_backtest_evidence_check` 的 `self_hash_fallback == 0`）正面冲突——那条判据守的
 //! 正是"引擎自哈希不得冒充输入身份"。少抄一份，两件事同时解决。
 
+use crate::artifact_store::sink;
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{BacktestArtifacts, BacktestSpec};
-use qx_core::Fill;
+use qx_core::{Fill, RunManifest};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::{Path, PathBuf};
 
 /// `summary` 的 schema 版本。改字段必须抬它——读回侧按它判断"这份产物是哪个世代"。
 pub(super) const SUMMARY_SCHEMA_VERSION: u32 = 1;
@@ -81,7 +80,13 @@ pub(super) struct RunSummary {
     pub risk_rule_set_version: String,
     pub fee_model: String,
     pub fill_model: String,
+    /// Optional structured audit details; absent when reading legacy v1 artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_model_details: Option<qx_xingban::FillModelDescriptor>,
     pub data_tier: String,
+    /// Optional grouped order rejections; absent in old v1 summaries with no integrity block.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejection_facts: Vec<(String, u64)>,
     /// Absent for runs without protective exits (preserves the v1 wire shape).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protective_exit_fills: Vec<ProtectiveExitSummary>,
@@ -119,29 +124,111 @@ pub(super) fn ensure_output_dir(spec: &BacktestSpec) -> Result<(), AppError> {
         .map_err(|error| AppError::from_io(&format!("创建产物目录 {}", spec.output_dir), &error))
 }
 
-/// 写一份文本产物。四份产物共用它，所以"写失败怎么归类"只有一处口径。
-pub(super) fn write_text(path: &str, body: &str) -> Result<(), AppError> {
-    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temporary = format!("{path}.tmp-{}-{serial}", std::process::id());
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| AppError::from_io(&format!("创建临时产物 {temporary}"), &error))?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| AppError::from_io(&format!("写入临时产物 {temporary}"), &error))?;
-        file.sync_all()
-            .map_err(|error| AppError::from_io(&format!("同步临时产物 {temporary}"), &error))?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-            .map_err(|error| AppError::from_io(&format!("发布产物 {path}"), &error))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
+/// Persist a content-addressed run manifest under `<root>/runs`.
+/// Existing identical manifests are idempotent; a conflicting manifest at the same identity is
+/// rejected. The path and digest convention are shared by CLI, HTTP and SDK callers.
+pub(crate) fn persist_run_manifest(
+    root: &Path,
+    manifest: &RunManifest,
+) -> Result<PathBuf, AppError> {
+    let runs_root = root.join("runs");
+    std::fs::create_dir_all(&runs_root)
+        .map_err(|error| AppError::from_io("创建回测 RunManifest 目录", &error))?;
+    let safe_run_id = manifest
+        .run_id
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let path = runs_root.join(format!("{safe_run_id}-{:016x}.run.json", manifest.digest()));
+    let payload = manifest.to_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("RunManifest 序列化失败: {error}"),
+        )
+    })?;
+    match std::fs::read_to_string(&path) {
+        Ok(existing) => {
+            let restored = RunManifest::from_json(&existing).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("已有回测 RunManifest 无效 {}: {error}", path.display()),
+                )
+            })?;
+            if restored != *manifest {
+                return Err(AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                ));
+            }
+            return Ok(path);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(AppError::from_io("读取已有回测 RunManifest", &error)),
     }
-    result
+    // 落盘委托全仓唯一发布出口（`artifact_store::sink`）：此前这里是
+    // 「读判等 → 自造临时文件 → sync → hard_link」的三十行长逻辑。sink 对
+    // Idempotent 已含「内容相同即幂等、不同即冲突」，此处只多一层**语义级**
+    // 比对：字节不同但 `RunManifest` 解析相等时仍算同一事实（format 漂移不算冲突）。
+    match sink::publish(&path, &payload, sink::PublishMode::Idempotent) {
+        Ok(()) => {}
+        // sink 已按字节判过等；此处补一层**语义级**比对：字节不同但
+        // `RunManifest` 解析相等（format 漂移）时仍算同一事实。
+        Err(sink::PublishError::Conflict(_)) => {
+            let existing = std::fs::read_to_string(&path).map_err(|_| {
+                AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                )
+            })?;
+            let restored = RunManifest::from_json(&existing).map_err(|parse_error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!(
+                        "并发生成的回测 RunManifest 无效 {}: {parse_error}",
+                        path.display()
+                    ),
+                )
+            })?;
+            if restored != *manifest {
+                return Err(AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        Err(sink::PublishError::Io(error)) => {
+            return Err(AppError::from_io("发布回测 RunManifest", &error));
+        }
+    }
+    Ok(path)
+}
+
+/// 写一份文本产物。四份产物共用它，所以"写失败怎么归类"只有一处口径。
+///
+/// 委托全仓唯一发布出口（`artifact_store::sink`，`Overwrite` 档：这些是每跑一次
+/// 就整份重写的可再生展示件，语义与原先的「临时文件 + rename」完全一致）。
+pub(super) fn write_text(path: &str, body: &str) -> Result<(), AppError> {
+    let path = Path::new(path);
+    sink::publish(path, body, sink::PublishMode::Overwrite).map_err(|error| match error {
+        sink::PublishError::Io(error) => AppError::from_io("发布产物", &error),
+        // Overwrite 档不冲突；真出现就是原语被改坏，按冲突报比按存储故障报诚实。
+        sink::PublishError::Conflict(message) => AppError::new(AppErrorCategory::Conflict, message),
+    })
 }
 
 /// 读一份文本产物。读不到时由 [`AppError::from_io`] 归类（不在盘 → `DataUnavailable`）。
@@ -197,21 +284,37 @@ pub(super) fn csv_rows(body: &str) -> Vec<&str> {
         .collect()
 }
 
-/// `equity.csv` 末行的第二列。读不出来就是 `None`——调用方据此报"复核不通过"，
-/// **不**拿 0 当兜底。
-pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
-    let last = csv_rows(body).pop()?;
-    last.split(',').nth(1)?.trim().parse::<i128>().ok()
+/// `equity.csv` 的**权益列号**：按表头定位 `equity_raw`。
+///
+/// 两代形状共存——Bar 链是 `ts,equity_raw`，深度链统一摘要后是
+/// `index,ts,equity_raw,position_raw`。硬编码第 1 列会在四列形状上静默读到时间戳，
+/// 于是"权益末值"变成一个 5 位的时间值，复核给出**假阴性**（明明一致却说错）。
+/// 按列名取列；表头里没有这一格（再老的产物）时退回第 1 列，保留旧行为。
+fn equity_column(body: &str) -> usize {
+    let header = body.lines().next().unwrap_or_default();
+    header
+        .split(',')
+        .position(|cell| cell.trim() == "equity_raw")
+        .unwrap_or(1)
 }
 
-/// `equity.csv` 第二列的**整列**（按行序）。任意一行读不出来就是 `None`。
+/// `equity.csv` 末行的权益列。读不出来就是 `None`——调用方据此报"复核不通过"，
+/// **不**拿 0 当兜底。
+pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
+    let column = equity_column(body);
+    let last = csv_rows(body).pop()?;
+    last.split(',').nth(column)?.trim().parse::<i128>().ok()
+}
+
+/// `equity.csv` 权益列的**整列**（按行序）。任意一行读不出来就是 `None`。
 ///
 /// 与 [`last_equity_raw`] 同一把尺：**不**跳过坏行凑一个"看起来完整"的序列——切分评估
 /// 按 Bar 序号对齐，中间少一格会让训练窗与测试窗错位，而错位不会自己出声。
 pub(super) fn equity_series(body: &str) -> Option<Vec<i128>> {
+    let column = equity_column(body);
     csv_rows(body)
         .into_iter()
-        .map(|row| row.split(',').nth(1)?.trim().parse::<i128>().ok())
+        .map(|row| row.split(',').nth(column)?.trim().parse::<i128>().ok())
         .collect()
 }
 

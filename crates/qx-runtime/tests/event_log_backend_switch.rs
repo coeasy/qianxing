@@ -58,6 +58,8 @@ fn seeded_log() -> EventLog {
                 ts: 5,
                 multiplier: 1,
                 position_side: None,
+
+                leverage: None,
             },
         },
     ))

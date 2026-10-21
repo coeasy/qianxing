@@ -161,6 +161,9 @@ fn provider_error(error: RegistryError) -> AppError {
             AppErrorCategory::InvalidInput,
             format!("duplicate Provider registration: {id}"),
         ),
+        RegistryError::Invariant(message) => {
+            AppError::new(AppErrorCategory::InternalInvariant, message)
+        }
         RegistryError::Provider(error) => {
             let category = match error.class {
                 ProviderErrorClass::SwitchProvider => AppErrorCategory::DataUnavailable,
@@ -239,6 +242,7 @@ mod tests {
             provider_id: "fixture-funding".into(),
             version: "v1".into(),
             data_kinds: BTreeSet::from([DataKind::Financial]),
+            data_tiers: BTreeSet::new(),
             asset_classes: BTreeSet::from(["crypto".into()]),
             frequencies: BTreeSet::from(["funding_8h".into()]),
             auth_scope: "public".into(),
@@ -308,13 +312,17 @@ mod tests {
         strategy.period = 14;
         strategy.threshold_bps = 100;
         let mut spec = MultiLegBacktestSpec::new(
-            "provider-funding-e2e",
-            fixture_dir
-                .join("qianxing.bar-frame.pairs-primary.example.json")
-                .to_string_lossy(),
-            fixture_dir
-                .join("qianxing.bar-frame.pairs-reference.example.json")
-                .to_string_lossy(),
+            crate::spec::MultiLegDatasetInput {
+                run_id: ("provider-funding-e2e").into(),
+                primary_bars_path: (fixture_dir
+                    .join("qianxing.bar-frame.pairs-primary.example.json")
+                    .to_string_lossy())
+                .into(),
+                reference_bars_path: (fixture_dir
+                    .join("qianxing.bar-frame.pairs-reference.example.json")
+                    .to_string_lossy())
+                .into(),
+            },
             "USDT",
             1_000_000_000_000_000,
             1_000_000_000_000_000,

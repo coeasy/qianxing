@@ -1,5 +1,5 @@
 //! 多腿跨腿屏障的**网关层**反向验证（V10 §6.1 第 5 项，从 CLI 的
-//! `crates/qx-cli/src/tests/paper_and_strategy_worker.rs` 搬下来）。
+//! `crates/qx-cli/tests/unit/paper_and_strategy_worker.rs` 搬下来）。
 //!
 //! 屏障判定已从 CLI 下沉到 `qx-execution`：唯一实现是
 //! [`spread_group_barrier`](crate::spread_group_barrier)，由 [`ExecutionGateway`] 在

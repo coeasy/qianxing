@@ -10,6 +10,9 @@ pub use qx_core::{
     TradingInstrumentSpec, TradingProduct,
 };
 use qx_guanxing::QuoteTick;
+pub use qx_zhenlu::venue_capabilities::{
+    VenueCapabilities, VenueMarketScope, VenueOrderType, PAPER_VENUE_CAPABILITIES,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ExecutionEvent {
@@ -92,6 +95,10 @@ pub trait RiskPort {
 
 pub trait VenuePort {
     fn venue_id(&self) -> &str;
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities;
+    fn validate_submit_capabilities(&self, order: &Order) -> Result<(), String> {
+        self.capabilities().validate_submit(order, self.venue_id())
+    }
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String>;
     fn cancel_order(
         &mut self,
@@ -103,6 +110,11 @@ pub trait VenuePort {
 /// 多 Venue 路由端口。它刻意只返回标准事实，不承诺跨 Venue 原子性；
 /// 应用层必须在每条腿事实落盘后更新 SpreadOrderGroup，失败进入补偿/对账。
 pub trait VenueRouterPort {
+    fn capabilities_for(
+        &self,
+        venue_id: &str,
+    ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities>;
+
     fn submit_order(
         &mut self,
         venue_id: &str,

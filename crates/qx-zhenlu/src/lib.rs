@@ -9,6 +9,7 @@ pub use algo::{
 };
 pub mod oms;
 pub mod portfolio;
+pub mod venue_capabilities;
 pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
@@ -44,6 +45,7 @@ impl RiskContext {
     fn canonical_context(&self, position: &OrderRiskPosition) -> CanonicalOrderRiskContext {
         CanonicalOrderRiskContext {
             available_margin_raw: self.available_margin_raw,
+            projected_initial_margin_raw: None,
             reference_price: self.reference_price,
             instrument_spec: self.instrument_spec.clone(),
             max_order_notional_raw: self.max_order_notional_raw,
@@ -66,7 +68,7 @@ impl RiskContext {
     ///
     /// 规则的解释实现只有一份（`qx_risk::RuleSet`），三条路径按各自缺的输入选不同方法（逐个 grep
     /// 生产调用点确认，旧注释说"三条路都经由本方法"是错的）：意图闸门走 `RiskGate::check*` →
-    /// `evaluate_rules_only`（`runtime_wiring.rs` 装配），提交端口走 `evaluate_order` → `account_limits_only`，
+    /// `RuleSet::evaluate`，提交端口走 `evaluate_order` → `account_limits_only`，
     /// 本方法这条组合口径只有 `risk_parity.rs` 拿它做三入口一致性取证。
     pub fn evaluate_order_with_rules(
         &self,
@@ -90,8 +92,8 @@ impl RiskContext {
     }
 }
 
-/// 旧 `RiskGate` 调用形状到规范风控上下文的转换：只带持仓快照与参考价，
-/// 因此上下文没有产品规格与账户限额；reduce-only 不变式与静态规则链语义与迁移前一致。
+/// 旧 `RiskGate` 调用形状到规范风控上下文的转换：只带持仓快照与参考价；
+/// `check_with_spec` 可补产品规格，但旧形状仍无法提供可用保证金与账户级限额。
 // deprecated compat: 新代码请构造 `qx_risk::OrderRiskContext` 并调用 `RuleSet::evaluate`。
 fn legacy_gate_context(
     position: &OrderRiskPosition,
@@ -106,9 +108,10 @@ fn legacy_gate_context(
 
 /// 风控门禁。**不短路**：收集全部拒绝原因，策略需要知道所有问题。
 //
-// deprecated compat: 规则实现已上收到 `qx-risk::RuleSet`，本类型只保留旧
-// `(Order, OrderRiskPosition)` 调用形状；构造必须显式命名规则集（[`RiskGate::from_rule_set`] /
-// [`RiskGate::conservative_default`]），不再提供零规则即放行的 `new()`/`Default`（V10 §4.5）。
+// 规则实现已上收到 `qx-risk::RuleSet`；旧 check/check_with_price/check_with_spec 入口仍
+// 保留 `(Order, OrderRiskPosition)` 形状，`check_with_context` 供完整风控快照路径调用。
+// 构造必须显式命名规则集（[`RiskGate::from_rule_set`] / [`RiskGate::conservative_default`]），
+// 不再提供零规则即放行的 `new()`/`Default`（V10 §4.5）。
 pub struct RiskGate {
     rule_set: RuleSet,
 }
@@ -160,7 +163,23 @@ impl RiskGate {
     ) -> QxResult<()> {
         let mut context = legacy_gate_context(pos, reference_price);
         context.instrument_spec = instrument_spec.cloned();
-        let decision = self.rule_set.evaluate_rules_only(&context, o);
+        let decision = self.rule_set.evaluate(&context, o);
+        if decision.allowed {
+            Ok(())
+        } else {
+            Err(QxError::BusinessViolation(decision.violations.join("; ")))
+        }
+    }
+
+    /// Evaluate a complete risk snapshot through the canonical account and static rule path.
+    /// Portfolio backtests can supply their projected initial margin so the facade does not
+    /// recompute it from only the candidate order quantity.
+    pub fn check_with_context(
+        &self,
+        o: &Order,
+        context: &CanonicalOrderRiskContext,
+    ) -> QxResult<()> {
+        let decision = self.rule_set.evaluate(context, o);
         if decision.allowed {
             Ok(())
         } else {
@@ -345,6 +364,7 @@ pub enum VenueReconcileIssue {
 /// Venue 适配器的最小执行契约。适配器只返回事实事件，不直接改 OMS 或账簿。
 pub trait Venue {
     fn id(&self) -> &str;
+    fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities;
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn snapshot(&self) -> Vec<VenueOrderSnapshot>;
@@ -673,7 +693,7 @@ impl SpreadOrderGroup {
             status => {
                 return Err(QxError::VenueState(format!(
                     "SpreadOrderGroup leg 不能从 {status:?} 接受"
-                )))
+                )));
             }
         }
         Ok(())
@@ -1096,7 +1116,7 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
                     let existing = match std::fs::read_to_string(&path) {
                         Ok(value) => value,
                         Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => {
-                            continue
+                            continue;
                         }
                         Err(read_error) => {
                             return Err(format!("读取多腿恢复 claim 失败: {read_error}"));
@@ -1128,7 +1148,7 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
                         Err(remove_error)
                             if remove_error.kind() == std::io::ErrorKind::NotFound =>
                         {
-                            continue
+                            continue;
                         }
                         Err(remove_error) => {
                             return Err(format!("清理过期多腿恢复 claim 失败: {remove_error}"));
@@ -1346,17 +1366,16 @@ impl PaperVenue {
         if quote.source_seq != 0 {
             self.last_source_seq = quote.source_seq;
         }
-        let ids: Vec<u64> = self
-            .orders
-            .iter()
-            .filter(|(_, o)| &o.instrument == instrument && !o.status.is_terminal())
-            .map(|(id, _)| *id)
-            .collect();
         let mut out = Vec::new();
         let mut remaining_buy = quote.ask_qty.raw();
         let mut remaining_sell = quote.bid_qty.raw();
-        for id in ids {
-            let o = self.orders.get_mut(&id).unwrap();
+        // BTreeMap iteration already preserves client-order-id order. Mutate the
+        // matching entries in place to avoid allocating an ID snapshot and then
+        // looking every entry up a second time on each quote.
+        for (id, o) in &mut self.orders {
+            if &o.instrument != instrument || o.status.is_terminal() {
+                continue;
+            }
             let px = match o.side {
                 Side::Buy => quote.ask,
                 Side::Sell => quote.bid,
@@ -1397,7 +1416,7 @@ impl PaperVenue {
                 .fee_model
                 .commission_for_side(qty.raw(), px.raw(), o.side, is_maker);
             let mut fill = Fill {
-                order_id: id,
+                order_id: *id,
                 qty,
                 price: px,
                 fee: qx_core::Money::from_raw(fee),
@@ -1416,7 +1435,15 @@ impl Venue for PaperVenue {
     fn id(&self) -> &str {
         &self.id
     }
+
+    fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities {
+        &venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
     fn submit(&mut self, mut order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_submit(&order, self.id())
+            .map_err(QxError::BusinessViolation)?;
         order.validate().map_err(QxError::BusinessViolation)?;
         self.fee_model.validate()?;
         if !self.connected {
@@ -1448,6 +1475,9 @@ impl Venue for PaperVenue {
     }
 
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_cancel()
+            .map_err(QxError::BusinessViolation)?;
         if !self.connected {
             return Err(QxError::Ambiguous("取消结果未知，必须对账".into()));
         }
@@ -1959,13 +1989,18 @@ mod tests {
         let mut market = order(1, Side::Buy);
         market.limit = None;
         assert!(gate.check(&market, &OrderRiskPosition::new(0, 0)).is_err());
-        assert!(gate
+        let missing_spec = gate
             .check_with_price(
                 &market,
                 &OrderRiskPosition::new_with_multiplier(0, 0, 10),
                 Some(Price::from_i64(100)),
             )
-            .is_err());
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing_spec.contains("TradingInstrumentSpec"),
+            "configured notional risk must reject a missing product specification: {missing_spec}"
+        );
     }
 
     #[test]

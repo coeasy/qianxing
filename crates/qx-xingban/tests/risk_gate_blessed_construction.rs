@@ -38,7 +38,7 @@ impl BarStrategy for BuyBig {
 
 fn mk_order(qty_raw: i128, instrument: &InstrumentId) -> Order {
     Order {
-        client_id: 0,
+        client_id: 1,
         instrument: instrument.clone(),
         side: Side::Buy,
         qty: Quantity::from_raw(qty_raw),

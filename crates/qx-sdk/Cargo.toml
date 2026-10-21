@@ -4,6 +4,9 @@ description = "牵星面向第三方的稳定 Rust 门面（方案 §6.1）：�
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/qx-sdk"
+homepage = "https://github.com/coeasy/qianxing"
 
 [dependencies]
 # 门面的依赖集是**精确**的：它只依赖 qx-app 的公开类型（方案 §6.1「依赖 `qx-app` 的公开类型
@@ -13,10 +16,10 @@ license.workspace = true
 # `qx_strategy::BuiltinStrategyKind`，而 qx-app 没有把它重导出。第三方要构造一份回测规格，
 # 就必须拿得到这个枚举——否则门面等于少了一块，集成方只能自己再加一个 `qx-strategy` 依赖，
 # 那正是门面要消灭的状态。这不是"拼接领域 crate"，是**补全 qx-app 自己的输入类型**。
-qx-app = { version = "0.1.0", path = "../qx-app" }
-qx-execution = { version = "0.1.0", path = "../qx-execution" }
-qx-provider = { version = "0.1.0", path = "../qx-provider" }
-qx-strategy = { version = "0.1.0", path = "../qx-strategy" }
+qx-app = { version = "0.2.1", path = "../qx-app" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
 serde_json = { workspace = true }
 
 [dev-dependencies]

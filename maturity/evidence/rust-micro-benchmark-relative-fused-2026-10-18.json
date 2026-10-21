@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-18T12:33:12Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "benchmark_relative_columns"
+  ],
+  "criterion": {
+    "sample_size": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "interval": "Criterion median point estimate and its 95% confidence interval"
+  },
+  "records": [
+    {
+      "observations": 1000,
+      "legacy_two_pass_prebuilt_tuple": {
+        "median_ns": 18793.21,
+        "median_ci95_ns": [18294.07, 20477.40]
+      },
+      "fused_columnar": {
+        "median_ns": 17463.73,
+        "median_ci95_ns": [17144.19, 18372.85]
+      },
+      "fused_columnar_speedup_pct": 7.07
+    },
+    {
+      "observations": 8000,
+      "legacy_two_pass_prebuilt_tuple": {
+        "median_ns": 146824.53,
+        "median_ci95_ns": [139837.55, 154340.17]
+      },
+      "fused_columnar": {
+        "median_ns": 147640.37,
+        "median_ci95_ns": [137511.37, 158120.18]
+      },
+      "fused_columnar_speedup_pct": -0.56
+    },
+    {
+      "observations": 64000,
+      "legacy_two_pass_prebuilt_tuple": {
+        "median_ns": 1140263.80,
+        "median_ci95_ns": [1083173.44, 1176414.43]
+      },
+      "fused_columnar": {
+        "median_ns": 1074468.66,
+        "median_ci95_ns": [1041428.39, 1179310.22]
+      },
+      "fused_columnar_speedup_pct": 5.77,
+      "temporary_tuple_buffer_bytes_avoided": 1024000
+    }
+  ],
+  "correctness_guard": {
+    "pre_timing_exact_metrics_assertion": "Criterion harness assert_eq passed at 1k/8k/64k observations for legacy two-pass, tuple API, and fused column API, including all cumulative, period, and risk metric fields",
+    "source_contract": "The core reducer validates alignment and positive prices while calculating period active returns and Welford risk metrics in one pass; app report analysis consumes BarFrame columns directly"
+  },
+  "interpretation": "The isolated fused-column path is 7.07% faster at 1k, within noise at 8k (-0.56%), and 5.77% faster at 64k versus the prior two-pass reducer with a prebuilt tuple Vec. Confidence intervals overlap at each size; this is suggestive rather than statistically conclusive. The 64k path avoids 1,024,000 bytes of tuple payload (excluding Vec metadata/capacity). The synthetic microbenchmark excludes file loading, report serialization, and full A-share replay and does not imply end-to-end speedup."
+}

@@ -28,6 +28,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
     }
 
@@ -67,6 +69,8 @@ impl Ledger {
             ts: funding.ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
     }
 
@@ -151,6 +155,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
     }
 }

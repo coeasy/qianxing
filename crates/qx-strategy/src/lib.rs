@@ -1,19 +1,21 @@
 //! 牵星统一策略 SDK：Rust/C ABI/Python 策略共享同一不可变输入与 `StrategyDecision` 契约，执行权仍归 Rust Risk/OMS。
 
-use qx_core::{InstrumentId, Order, OrderPolicy, OrderStatus, OrderTrace, Price, Quantity, Side};
+use qx_core::{InstrumentId, OrderPolicy, Price, Quantity, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-
 pub mod builtin;
 pub mod builtin_signal;
 pub mod c_api;
+pub mod contract;
+mod decision;
 pub mod file_digest;
 pub mod frame;
 pub mod ring;
+pub mod transport;
 pub use builtin::{BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind};
 pub use c_api::{
     sha256_hex, verify_file_sha256, CAbiStrategy, DynamicCAbiLoadPolicy, DynamicCAbiStrategy,
-    QxStrategyVTable, QX_C_STRATEGY_API_VERSION,
+    QxStrategyVTable, QX_C_STRATEGY_ABI_VERSION, QX_C_STRATEGY_API_VERSION,
 };
 pub use frame::{
     StrategyFrame, StrategyFrameKind, DEFAULT_MAX_FRAME_BYTES, STRATEGY_FRAME_HEADER_LEN,
@@ -23,7 +25,6 @@ pub use ring::{
     SharedRingConfig, SharedRingError, SharedRingReader, SharedRingWriter, DEFAULT_RING_CAPACITY,
     DEFAULT_RING_SLOT_BYTES,
 };
-
 pub const STRATEGY_API_VERSION: u32 = 1;
 /// JSON wire version for lifecycle facts delivered to `Strategy::on_order_update`.
 pub const ORDER_UPDATE_SCHEMA_VERSION: u32 = 1;
@@ -244,64 +245,6 @@ pub struct StrategyDecision {
     pub priority: i32,
     pub expires_at: u64,
     pub intents: Vec<StrategyOrderIntent>,
-}
-
-impl StrategyDecision {
-    pub fn validate_for(&self, context: &StrategyContext, event_ts: u64) -> Result<(), String> {
-        context.validate()?;
-        if self.schema_version != STRATEGY_API_VERSION
-            || self.request_id.trim().is_empty()
-            || self.strategy_id != context.strategy_id
-            || self.signal_id == 0
-            || self.intents.iter().any(|intent| intent.validate().is_err())
-            || (self.expires_at != 0 && self.expires_at < event_ts)
-        {
-            return Err("StrategyDecision 身份、版本、有效期或订单意图非法".into());
-        }
-        let mut ids = std::collections::BTreeSet::new();
-        for intent in &self.intents {
-            intent.validate()?;
-            if !ids.insert(intent.intent_id) {
-                return Err("StrategyDecision 存在重复 intent_id".into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 将决定转换为核心订单；该函数只做协议转换，调用方仍必须执行
-    /// RiskGate/OMS 校验，不能把返回值视为已提交订单。
-    pub fn to_orders(&self, context: &StrategyContext) -> Result<Vec<Order>, String> {
-        self.validate_for(context, context.as_of)?;
-        self.intents
-            .iter()
-            .map(|intent| {
-                let mut policy = intent.policy.unwrap_or_default();
-                policy.reduce_only = intent.reduce_only;
-                policy.post_only = intent.post_only;
-                let order = Order {
-                    client_id: intent.intent_id,
-                    instrument: intent.instrument.clone(),
-                    side: intent.side,
-                    qty: intent.qty,
-                    limit: intent.limit,
-                    status: OrderStatus::PendingSubmit,
-                    filled: Quantity::ZERO,
-                    account_id: context.account_id.clone(),
-                    trace: Some(OrderTrace {
-                        strategy_id: Some(context.strategy_id.clone()),
-                        signal_id: Some(self.signal_id),
-                        intent_id: Some(intent.intent_id),
-                        rule_version: Some(context.strategy_version.clone()),
-                    }),
-                    policy: Some(policy),
-                };
-                order
-                    .validate()
-                    .map_err(|error| format!("StrategyDecision 转核心订单失败: {error}"))?;
-                Ok(order)
-            })
-            .collect()
-    }
 }
 
 /// 原生 Rust 策略接口；所有订单意图必须经过 Runtime 的 RiskGate、OMS 和 ExecutionPort。

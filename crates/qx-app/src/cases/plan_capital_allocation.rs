@@ -3,7 +3,7 @@ use crate::{
     context::{CallerCapability, RunContext},
     error::{AppError, AppErrorCategory},
     spec::{
-        CapitalAllocationResult, CapitalAllocationSpec, CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
+        CapitalAllocationResult, CapitalAllocationSpec, CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION,
     },
 };
 
@@ -32,7 +32,7 @@ pub fn plan_capital_allocation(
             },
         )?;
         Ok(CapitalAllocationResult {
-            schema_version: CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
+            schema_version: CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION,
             portfolio_id: spec.portfolio_id.clone(),
             allocations,
         })

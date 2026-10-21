@@ -32,10 +32,14 @@ def _load_native():
     """
     root = Path(__file__).resolve().parents[2]
     loaded = sys.modules.get("qianxing_bridge._qianxing_native")
-    if loaded is not None:
+    if loaded is not None and hasattr(loaded, "app_assemble_dataset_bundle"):
         # Reuse the already imported build. On Windows the loaded DLL is locked, so copying
         # the same source into another per-process directory fails with WinError 32.
         return loaded
+    if loaded is not None:
+        # An earlier test may have imported an ignored, stale package-local `.pyd`.
+        # Do not let that cached module bypass the version probe below.
+        sys.modules.pop("qianxing_bridge._qianxing_native", None)
     directories = []
     for profile in ("release", "debug"):
         for base in (os.environ.get("CARGO_TARGET_DIR"), str(root / "target")):
@@ -64,6 +68,7 @@ def _load_native():
         if all(
             hasattr(_qianxing_native, name)
             for name in (
+                "app_assemble_dataset_bundle",
                 "app_validate_dataset",
                 "app_run_backtest",
                 "app_run_backtest_with_strategy",
@@ -1452,8 +1457,8 @@ class AppUseCaseTests(unittest.TestCase):
             volumes.append((100 + index % 7 * 13) * scale)
         # Drive a lower-band entry and a later upper-band exit for the conservative spot model.
         bollinger_closes = list(closes)
-        bollinger_closes[14] = 50 * scale
-        bollinger_closes[45] = 180 * scale
+        bollinger_closes[14] = 5 * scale
+        bollinger_closes[45] = 250 * scale
 
         builtin_names = (
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
@@ -1807,6 +1812,19 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(result["failed_candidates"], 0)
         self.assertEqual(len(result["comparison"]["runs"]), 2)
         self.assertTrue(Path(result["artifact_path"]).is_file())
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-experiment-result-v1.json").read_text(encoding="utf-8"))
+        resources = {
+            "https://qianxing.local/schemas/backtest-outcome-v1.json": "backtest-outcome-v1.json",
+            "https://qianxing.local/schemas/compare-runs-result-v1.json": "compare-runs-result-v1.json",
+        }
+        schema_registry = Registry()
+        for uri, name in resources.items():
+            payload = json.loads((Path(__file__).parents[2] / "schemas" / name).read_text(encoding="utf-8"))
+            schema_registry = schema_registry.with_resource(uri, Resource.from_contents(payload))
+        with Path(result["artifact_path"]).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=schema_registry).validate(json.load(report_file))
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
@@ -2182,7 +2200,7 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertGreater(typed_portfolio.fills, 0)
         portfolio_fills = Path(typed_portfolio.artifacts["fills"]).read_text(encoding="utf-8")
         portfolio_owners = {
-            row.split(",")[5]
+            row.split(",")[6]
             for row in portfolio_fills.splitlines()[1:]
             if row.strip()
         }
@@ -2247,6 +2265,16 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(depth_experiment["failed_candidates"], 1)
         self.assertEqual(depth_experiment["succeeded_candidates"], 1)
         self.assertTrue(Path(depth_experiment["artifact_path"]).is_file())
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-depth-experiment-result-v1.json").read_text(encoding="utf-8"))
+        depth_result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "depth-backtest-outcome-v1.json").read_text(encoding="utf-8"))
+        schema_registry = Registry().with_resource(
+            "https://qianxing.local/schemas/depth-backtest-outcome-v1.json",
+            Resource.from_contents(depth_result_schema),
+        )
+        with Path(depth_experiment["artifact_path"]).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=schema_registry).validate(json.load(report_file))
         depth_experiment_handle = self.bridge.start_depth_experiment(
             {
                 **depth_experiment_payload,
@@ -3226,6 +3254,16 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(experiment["failed_candidates"], 1)
         self.assertEqual(experiment["succeeded_candidates"], 1)
         self.assertTrue(Path(experiment["artifact_path"]).is_file())
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-leg-experiment-result-v1.json").read_text(encoding="utf-8"))
+        multi_leg_result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "multi-leg-backtest-result-v1.json").read_text(encoding="utf-8"))
+        schema_registry = Registry().with_resource(
+            "https://qianxing.local/schemas/multi-leg-backtest-result-v1.json",
+            Resource.from_contents(multi_leg_result_schema),
+        )
+        with Path(experiment["artifact_path"]).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=schema_registry).validate(json.load(report_file))
         experiment_handle = self.bridge.start_multi_leg_experiment(
             {
                 **experiment_payload,
@@ -3350,6 +3388,12 @@ class AppUseCaseTests(unittest.TestCase):
             "markets": markets,
         }
         result = self.bridge.run_multi_market_backtest(payload)
+        from jsonschema import Draft202012Validator
+
+        result_schema = json.loads(
+            (Path(__file__).resolve().parents[2] / "schemas" / "multi-market-backtest-result-v1.json").read_text(encoding="utf-8")
+        )
+        Draft202012Validator(result_schema).validate(result)
         self.assertEqual(result["markets_total"], 3)
         self.assertEqual(result["strategies_total"], 3)
         self.assertGreater(result["successful_fills"], 0)
@@ -3362,7 +3406,10 @@ class AppUseCaseTests(unittest.TestCase):
              "output_dir": str(self.output_dir / "multi-market-handle")}
         )
         self.assertEqual(handle.wait(10_000), "succeeded")
-        self.assertEqual(json.loads(handle.result_json())["markets_total"], 3)
+        handle_payload = handle.result_json()
+        self.assertIsNotNone(handle_payload)
+        self.assertEqual(json.loads(handle_payload)["markets_total"], 3)
+        Draft202012Validator(result_schema).validate(json.loads(handle_payload))
         print(
             "MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 "
             "callback_version=python-test-v1 replay_verified=true run_handle=succeeded"
@@ -3372,11 +3419,14 @@ class AppUseCaseTests(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BuiltinStrategySpec,
+            DataUnavailableError,
+            InvalidInputError,
             MultiMarketBacktestMarket,
             MultiMarketBacktestSpec,
             PortfolioStrategySpec,
             run_multi_market_backtest,
         )
+        from dataclasses import replace
         typed = MultiMarketBacktestSpec(
             run_id="python-multi-market-typed",
             account_id="acct.multi-python",
@@ -3399,6 +3449,17 @@ class AppUseCaseTests(unittest.TestCase):
                 ) for item in markets
             ),
         )
+        invalid_manifest_market = replace(
+            typed.markets[0], dataset_manifest_path=""
+        )
+        invalid_manifest_spec = replace(
+            typed,
+            run_id="python-multi-market-empty-manifest",
+            output_dir=str(self.output_dir / "multi-market-empty-manifest"),
+            markets=(invalid_manifest_market, *typed.markets[1:]),
+        )
+        with self.assertRaisesRegex(InvalidInputError, "dataset_manifest_path"):
+            run_multi_market_backtest(invalid_manifest_spec)
         typed_result = run_multi_market_backtest(typed)
         self.assertEqual(typed_result.markets_total, 3)
 
@@ -3418,6 +3479,16 @@ class AppUseCaseTests(unittest.TestCase):
         experiment_result = run_multi_market_experiment(experiment_spec)
         self.assertEqual(experiment_result.total_candidates, 4)
         self.assertEqual(experiment_result.succeeded_candidates, 4)
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-market-experiment-result-v1.json").read_text(encoding="utf-8"))
+        backtest_result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "multi-market-backtest-result-v1.json").read_text(encoding="utf-8"))
+        registry = Registry().with_resource(
+            "https://qianxing.local/schemas/multi-market-backtest-result-v1.json",
+            Resource.from_contents(backtest_result_schema),
+        )
+        with Path(experiment_result.artifact_path).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=registry).validate(json.load(report_file))
         self.assertTrue(all(
             candidate.outcome.markets_total == 3
             for candidate in experiment_result.candidates
@@ -3502,11 +3573,14 @@ class AppUseCaseTests(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BuiltinStrategySpec,
+            DataUnavailableError,
             InstrumentId,
             MultiMarketDepthBacktestMarket,
             MultiMarketDepthBacktestSpec,
+            QueuePositionFifoVolumeEstimate,
             ExperimentParameterSpace,
             RunMultiMarketDepthExperimentSpec,
+            run_multi_market_depth_backtest,
             TradingInstrumentSpec,
             run_multi_market_depth_backtest_with_strategy_slots,
             start_multi_market_depth_backtest,
@@ -3562,7 +3636,13 @@ class AppUseCaseTests(unittest.TestCase):
                 depth_path=str(depth_path),
                 priority=1 - market_index,
                 market_spec=market_spec,
+                dataset_manifest_path=None,
                 data_tier="l1" if market_index == 0 else None,
+                queue_position_model=(
+                    QueuePositionFifoVolumeEstimate(volume_advance_bps=0)
+                    if market_index == 1
+                    else None
+                ),
                 strategy=BuiltinStrategySpec(
                     kind="sma_cross",
                     strategy_id=f"python-l2-{market_index}",
@@ -3576,6 +3656,17 @@ class AppUseCaseTests(unittest.TestCase):
             output_dir=str(self.output_dir / "multi-market-depth-out"),
             markets=tuple(markets),
         )
+
+        from dataclasses import replace
+        missing_manifest_market = replace(markets[0], dataset_manifest_path="missing-depth-manifest.json")
+        missing_manifest_spec = replace(
+            spec,
+            run_id="python-multi-market-depth-missing-manifest",
+            output_dir=str(self.output_dir / "multi-market-depth-missing-manifest"),
+            markets=(missing_manifest_market, markets[1]),
+        )
+        with self.assertRaises(DataUnavailableError):
+            run_multi_market_depth_backtest(missing_manifest_spec)
 
         class BuyOnce:
             def __init__(self):
@@ -3616,6 +3707,12 @@ class AppUseCaseTests(unittest.TestCase):
             "strategy": BuyOnce(),
         } for index in range(2)]
         outcome = run_multi_market_depth_backtest_with_strategy_slots(spec, bindings)
+        result_schema = json.loads(
+            (Path(__file__).resolve().parents[2] / "schemas" / "multi-market-depth-backtest-result-v1.json").read_text(encoding="utf-8")
+        )
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(result_schema).validate(json.loads(json.dumps(outcome.__dict__)))
         self.assertEqual(outcome.markets_total, 2)
         self.assertEqual(outcome.successful_fills, 1)
         artifact = json.loads(Path(outcome.artifact_path).read_text(encoding="utf-8"))
@@ -3634,6 +3731,7 @@ class AppUseCaseTests(unittest.TestCase):
         handle = start_multi_market_depth_backtest(builtin_spec)
         self.assertEqual(handle.wait(10_000), "succeeded")
         builtin_outcome = handle.result()
+        Draft202012Validator(result_schema).validate(json.loads(json.dumps(builtin_outcome.__dict__)))
         self.assertEqual(builtin_outcome.markets_total, 2)
         self.assertGreater(builtin_outcome.successful_fills, 0)
         self.assertIsNone(handle.result(), "multi-market depth result is delivered once")
@@ -3667,6 +3765,16 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(experiment.completed_candidates, 2)
         self.assertEqual(experiment.succeeded_candidates, 2, repr(experiment.candidates))
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-market-depth-experiment-result-v1.json").read_text(encoding="utf-8"))
+        depth_result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "multi-market-depth-backtest-result-v1.json").read_text(encoding="utf-8"))
+        registry = Registry().with_resource(
+            "https://qianxing.local/schemas/multi-market-depth-backtest-result-v1.json",
+            Resource.from_contents(depth_result_schema),
+        )
+        with Path(experiment.artifact_path).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=registry).validate(json.load(report_file))
         experiment_handle = start_multi_market_depth_experiment_with_strategy(
             RunMultiMarketDepthExperimentSpec(
                 **{**experiment_spec.__dict__,

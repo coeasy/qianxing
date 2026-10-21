@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import signal
 import struct
 import subprocess
 import tempfile
@@ -18,7 +19,11 @@ from qianxing_strategy import StrategyBars, StrategyInput, StrategyIntent, Strat
 from qianxing_strategy.frame import REQUEST, RESPONSE, encode_frame, read_frame
 from qianxing_strategy.ring import RingEmpty, RingFull, SharedMemoryRing
 from qianxing_strategy.columnar import decode_request
-from qianxing_strategy.worker import PARENT_LIVENESS_PROBE_SECONDS, _load_handler
+from qianxing_strategy.worker import (
+    PARENT_LIVENESS_PROBE_SECONDS,
+    _load_handler,
+    _parent_process_alive,
+)
 
 
 class StrategyContractTest(unittest.TestCase):
@@ -111,7 +116,7 @@ class StrategyContractTest(unittest.TestCase):
                 StrategyIntent(
                     intent_id=101,
                     instrument="BTCUSDT.BINANCE",
-                    side="buy",
+                    side="BUY",
                     qty_raw=3,
                     limit_price_raw=100,
                     post_only=True,
@@ -128,6 +133,7 @@ class StrategyContractTest(unittest.TestCase):
         restored = StrategyOutput.from_json(output.to_json(self.request), self.request)
         self.assertEqual(restored, output)
         self.assertEqual(restored.intents[1].side, "sell")
+        self.assertEqual(restored.intents[0].side, "buy")
 
     def test_intent_carries_the_three_derivative_fields_rust_emits(self):
         # Rust StrategyContractIntent 对未设置的 margin_mode/position_mode/leverage 写的是
@@ -143,10 +149,11 @@ class StrategyContractTest(unittest.TestCase):
                 StrategyIntent(
                     intent_id=701,
                     instrument="BTCUSDT.BINANCE",
-                    side="buy",
+                    side="BUY",
                     qty_raw=3,
-                    margin_mode="isolated",
-                    position_mode="hedge",
+                    position_side="LONG",
+                    margin_mode="ISOLATED",
+                    position_mode="HEDGE",
                     leverage=10,
                 ),
                 StrategyIntent(
@@ -165,8 +172,14 @@ class StrategyContractTest(unittest.TestCase):
         restored = StrategyOutput.from_json(json.dumps(payload), self.request)
         self.assertEqual(restored, output)
         self.assertEqual(
-            (restored.intents[0].margin_mode, restored.intents[0].leverage),
-            ("isolated", 10),
+            (
+                restored.intents[0].side,
+                restored.intents[0].position_side,
+                restored.intents[0].margin_mode,
+                restored.intents[0].position_mode,
+                restored.intents[0].leverage,
+            ),
+            ("buy", "long", "isolated", "hedge", 10),
         )
 
     def test_intent_rejects_derivative_fields_rust_would_reject(self):
@@ -316,6 +329,78 @@ class StrategyContractTest(unittest.TestCase):
                 if worker.poll() is None:
                     worker.kill()
                     worker.wait()
+
+    def test_shared_worker_exits_after_its_real_parent_is_force_killed(self):
+        """ring worker must notice OS parent death, not rely on Rust Drop/stdin EOF."""
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("input.bin", "output.bin"):
+                SharedMemoryRing.create(Path(directory) / name, 8, 4096).close()
+            module = Path(directory) / "strategy.py"
+            module.write_text(self._WORKER_STRATEGY_SOURCE, encoding="utf-8")
+            harness = (
+                "import os, subprocess, sys, time; "
+                "args=sys.argv[1:]; args[-1]=str(os.getpid()); "
+                "child=subprocess.Popen(args, stdin=subprocess.DEVNULL, "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+                "print(child.pid, flush=True); time.sleep(30)"
+            )
+            command = [
+                sys.executable,
+                "-m",
+                "qianxing_strategy.worker",
+                "--module",
+                str(module),
+                "--protocol",
+                "shared_memory_json",
+                "--input-ring",
+                str(Path(directory) / "input.bin"),
+                "--output-ring",
+                str(Path(directory) / "output.bin"),
+                "--ring-capacity",
+                "8",
+                "--ring-slot-bytes",
+                "4096",
+                "--parent-pid",
+                "0",
+            ]
+            parent = subprocess.Popen(
+                [sys.executable, "-c", harness, *command],
+                cwd=str(Path(__file__).resolve().parents[1]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            worker_pid = None
+            try:
+                line = parent.stdout.readline()
+                self.assertTrue(line.strip(), "parent harness did not publish its worker pid")
+                worker_pid = int(line.strip())
+                parent.kill()
+                parent.wait(timeout=5)
+
+                deadline = time.monotonic() + PARENT_LIVENESS_PROBE_SECONDS * 5
+                while _parent_process_alive(worker_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertFalse(
+                    _parent_process_alive(worker_pid),
+                    "shared-memory worker survived after its real parent was force-killed",
+                )
+            finally:
+                if parent.poll() is None:
+                    parent.kill()
+                    parent.wait(timeout=5)
+                if worker_pid is not None and _parent_process_alive(worker_pid):
+                    try:
+                        os.kill(worker_pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    deadline = time.monotonic() + 5
+                    while _parent_process_alive(worker_pid) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                if parent.stdout is not None:
+                    parent.stdout.close()
+                if parent.stderr is not None:
+                    parent.stderr.close()
 
     def test_shared_worker_keeps_serving_while_the_parent_is_alive(self):
         """同一条闸门不能把健康的 worker 一起误杀：父进程在时请求必须答得回来。"""

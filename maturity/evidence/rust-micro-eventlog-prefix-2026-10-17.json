@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "benchmark": "event_log_prefix_digest",
+  "date": "2026-10-17",
+  "command": "cargo bench -p qx-cli --bench criterion_performance -- event_log_prefix_digest --noplot",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)"
+  },
+  "workload": {
+    "prefix_events": [
+      1000,
+      8000,
+      64000
+    ],
+    "log_state": "prefix digest computed, one valid event appended, then the original prefix digest queried",
+    "comparison": "cached digest and next-sequence lookup versus the previous separate full digest and max-sequence scans",
+    "log_construction_outside_timed_region": true,
+    "criterion_sample_size": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2
+  },
+  "results": [
+    {
+      "events": 1000,
+      "cached_median_ns": 13.35,
+      "cached_median_ci95_ns": [
+        12.95,
+        13.79
+      ],
+      "prior_two_scans_median_ns": 131868.25,
+      "prior_two_scans_median_ci95_ns": [
+        131180.7,
+        133088.67
+      ],
+      "prior_over_cached_ratio": 9880.4
+    },
+    {
+      "events": 8000,
+      "cached_median_ns": 12.83,
+      "cached_median_ci95_ns": [
+        12.45,
+        13.0
+      ],
+      "prior_two_scans_median_ns": 1059502.74,
+      "prior_two_scans_median_ci95_ns": [
+        1056556.71,
+        1064557.14
+      ],
+      "prior_over_cached_ratio": 82578.19
+    },
+    {
+      "events": 64000,
+      "cached_median_ns": 12.16,
+      "cached_median_ci95_ns": [
+        12.1,
+        12.44
+      ],
+      "prior_two_scans_median_ns": 8994105.5,
+      "prior_two_scans_median_ci95_ns": [
+        8946745.0,
+        9041181.67
+      ],
+      "prior_over_cached_ratio": 739668.79
+    }
+  ],
+  "limitations": [
+    "This isolates EventLog prefix digest lookup and does not measure segment file I/O, serialization, or end-to-end pipeline/backtest speed.",
+    "Appending an EventLog automatically caches the prefix at the pre-append length; same-instance and cloned logs can reuse that summary while it remains in the eight-entry cache. Cache eviction and prefixes that were never captured still require a scan.",
+    "The digest format and event serialization are unchanged.",
+    "Synthetic event counts do not represent the nine product profiles or production data quality."
+  ]
+}

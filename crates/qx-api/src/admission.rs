@@ -254,6 +254,13 @@ pub(crate) struct ConnectionGuard {
 }
 
 impl ConnectionBudget {
+    pub(crate) fn default_budget() -> Arc<Self> {
+        Arc::new(Self {
+            limit: DEFAULT_MAX_CONCURRENT_CONNECTIONS,
+            live: AtomicUsize::new(0),
+        })
+    }
+
     pub(crate) fn new(limit: usize) -> Result<Arc<Self>, String> {
         if limit == 0 {
             return Err("max_concurrent_connections 不能为 0：那等于不接任何连接".to_string());
@@ -280,7 +287,7 @@ impl ConnectionBudget {
                 Ok(_) => {
                     return Some(ConnectionGuard {
                         budget: Arc::clone(self),
-                    })
+                    });
                 }
                 Err(actual) => live = actual,
             }
@@ -325,7 +332,7 @@ pub fn validate_admission_config(
 
 /// 百分号解码失败的口径（`error_json` 的正文）。
 ///
-/// 写成一句英文而不是一颗小写码名，是有意的：`crates/qx-cli/src/tests/api_endpoint_table_routes.rs`
+/// 写成一句英文而不是一颗小写码名，是有意的：`crates/qx-cli/tests/unit/api_endpoint_table_routes.rs`
 /// 的 `emitted_error_names` 把 `error_json("` 之后连续 6 个以上的小写下划线串当成对外承诺的
 /// 稳定码名，逐条要求文档里有名字。这一格说的是"你给的查询串解不开"，与
 /// `base_hash is required` 同一族（都是请求形状问题），不该占一颗码名。

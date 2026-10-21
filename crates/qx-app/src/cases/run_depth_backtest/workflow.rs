@@ -1,22 +1,22 @@
 //! Shared Rust execution and evidence orchestration for depth runs.
 
-use super::portfolio::{attach_portfolio_summary, build_portfolio_strategy};
-use super::{
-    artifact_paths, invalid_input, publish, CallbackStrategy, InjectedDepthStrategy,
-    DEFAULT_ACCOUNT_ID,
-};
-use crate::cases::artifacts::{equity_csv, existing_manifest, fills_csv, read_text};
+use super::artifacts::{config_hash, persist, portfolio_fill_attribution, DepthArtifactInput};
+use super::portfolio::{build_portfolio_strategy, has_builtin_sizing, strategy_specs};
+use super::quality::verified_depth_dataset_quality;
+use super::{invalid_input, CallbackStrategy, InjectedDepthStrategy, DEFAULT_ACCOUNT_ID};
+use crate::cases::artifacts::read_text;
+use crate::cases::risk_gate::{risk_gate_for, risk_rule_source_label};
 use crate::run_handle::CancellationToken;
 use crate::{AppError, AppErrorCategory, DepthBacktestOutcome, DepthBacktestSpec, RunContext};
-use qx_core::{Fnv1a, Money, Quantity, ReplayVerifier, RunManifest};
+use qx_core::{Money, Quantity, ReplayVerifier};
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
 use qx_xingban::{
     depth_frame_to_ticks, DataTier, DepthBarStrategy, DepthFrame, MarketMakingStrategy,
     NativeOrderBookStrategy, NativeTickStrategy, OrderBookBacktestConfig, OrderBookBacktestEngine,
-    OrderBookExecutionModel, RunManifestIdentity, TickBacktestConfig, TickBacktestEngine,
+    OrderBookExecutionModel, TickBacktestConfig, TickBacktestEngine,
 };
-use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 pub(in crate::cases) fn run_inner(
     spec: &DepthBacktestSpec,
@@ -68,25 +68,30 @@ pub(in crate::cases) fn run_inner_with_strategy(
             format!("DepthFrame 校验失败 {}: {error}", spec.depth_path),
         )
     })?;
-    if frame.snapshots.len() < 2 {
+    if frame.snapshots.is_empty() {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
-            "Tick/OrderBook 回测至少需要两份快照",
+            "Tick/OrderBook 回测至少需要一份快照",
         ));
     }
+    // 延迟的**帧相对**上界是唯一的拒点（三个入口共用这一条）：`latency_snapshots` 数的是"提交后还要
+    // 再等几份快照"，而内核每份快照只撮合一轮，成熟条件恒为 `1 + 延迟 + 1 <= 帧内快照数`。越过这条线
+    // 不是"延迟更长"，而是任何订单都永远等不到成熟——撮合一笔都不成交却照常退 0、落一份空成交表。
+    // 文案点名旗标与这份帧实际可用的上界，否则使用者无从判断该改成多少。
     if spec.latency_snapshots > 0
         && spec.latency_snapshots >= (frame.snapshots.len() as u64).saturating_sub(1)
     {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
             format!(
-                "latency_snapshots={} 在 {} 份快照上无法成熟成交；最大有效延迟为 {}",
+                "深度延迟永远等不到成交：--latency-snapshots={} 在这份 {} 份快照的帧上无法成熟，最多用 {}（延迟按快照个数计，订单要等到提交后第 延迟+1 份才成熟）",
                 spec.latency_snapshots,
                 frame.snapshots.len(),
                 (frame.snapshots.len() as u64).saturating_sub(2)
             ),
         ));
     }
+    // 帧本身短不是旗标的错：单份快照的缺省延迟照样可以跑，只是任何策略都等不到第二份快照的信号。
     if spec.tier == "l1"
         && frame
             .snapshots
@@ -95,7 +100,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
     {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
-            "L1 Tick 回测每份快照必须恰有一个 bid 和一个 ask 档位",
+            "L1 Tick 回测只接受一档盘口：每份快照必须恰有一个 bid 和一个 ask 档位",
         ));
     }
 
@@ -106,8 +111,16 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 "market_spec.instrument 与 Tick/OrderBook 输入标的不一致",
             ));
         }
-        let first_ts = frame.snapshots.first().expect("at least two snapshots").ts;
-        let last_ts = frame.snapshots.last().expect("at least two snapshots").ts;
+        let first_ts = frame
+            .snapshots
+            .first()
+            .map(|snapshot| snapshot.ts)
+            .ok_or_else(|| invalid_input("Tick/OrderBook DepthFrame has no snapshots"))?;
+        let last_ts = frame
+            .snapshots
+            .last()
+            .map(|snapshot| snapshot.ts)
+            .ok_or_else(|| invalid_input("Tick/OrderBook DepthFrame has no snapshots"))?;
         if first_ts < market_spec.valid_from
             || market_spec
                 .valid_to
@@ -119,22 +132,6 @@ pub(in crate::cases) fn run_inner_with_strategy(
             )));
         }
     }
-    let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
-    let config_hash = {
-        let mut hash = Fnv1a::new();
-        hash.write_text(&spec.to_json()?);
-        let mut identities = injected
-            .iter()
-            .map(|custom| &custom.identity)
-            .collect::<Vec<_>>();
-        identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
-        for identity in identities {
-            hash.write_text(&identity.strategy_id);
-            hash.write_text(&identity.strategy_version);
-            hash.write_text(&identity.source_sha256);
-        }
-        format!("{:016x}", hash.finish())
-    };
     let strategy_id = injected
         .iter()
         .find(|custom| custom.identity.strategy_id == spec.strategy.strategy_id)
@@ -149,15 +146,45 @@ pub(in crate::cases) fn run_inner_with_strategy(
         .iter()
         .find(|custom| custom.identity.strategy_id == spec.strategy.strategy_id)
         .map(|custom| custom.identity.strategy_version.clone())
-        .unwrap_or_else(|| format!("{}-v1", strategy_id));
-    let risk = RiskGate::conservative_default();
+        .unwrap_or_else(|| format!("builtin-{}-v1", spec.strategy.kind.name()));
+    // 风控门与吃单费率都只在用例里解析一次：门面各自的兜底会出现"同一份配置在 book 上用
+    // 一套口径、在 multi-builtin 上用另一套"（V10 §4.2 / V11 Q0c）。
+    let risk = risk_gate_for(spec.risk_rules.as_ref(), spec.allow_short());
     let risk_rule_set_version = risk.rule_set().version().to_string();
-    let mut model = OrderBookExecutionModel::new(spec.fee_bps).map_err(invalid_input)?;
+    let risk_rule_source = risk_rule_source_label(spec.risk_rules.as_ref());
+    let fee_bps = spec.resolved_fee_bps();
+    let cost_source = spec.resolved_cost_source();
+    let mut model = OrderBookExecutionModel::new(fee_bps).map_err(invalid_input)?;
     model.latency_snapshots = spec.latency_snapshots;
     model.queue_position_bps = spec.queue_position_bps;
+    model.queue_position_model = spec.queue_position_model;
     model.market_impact_bps = spec.market_impact_bps;
     model.validate().map_err(invalid_input)?;
-
+    let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
+    // 质量清单是输入的一部分：它与本帧的身份、档位与时间轴在这里按本帧**重算**核对，不再由门面
+    // 各自核对（否则同一条 quality_manifest_path 在三个入口上有三种含义）。
+    let dataset_quality = spec
+        .quality_manifest_path
+        .as_deref()
+        .map(Path::new)
+        .map(|path| {
+            verified_depth_dataset_quality(path, Path::new(&spec.depth_path), &frame, &spec.tier)
+        })
+        .transpose()?;
+    // 自定义策略的身份按 strategy_id 排序后并入指纹：结果取决于"是谁在跑"，与入参顺序无关。
+    let mut custom_identities: Vec<&crate::cases::StrategyArtifactIdentity> =
+        injected.iter().map(|custom| &custom.identity).collect();
+    custom_identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
+    let config_hash = config_hash(
+        spec,
+        &frame,
+        fee_bps,
+        &risk_rule_set_version,
+        dataset_quality
+            .as_ref()
+            .and_then(|quality| quality["manifest_fingerprint"].as_str()),
+        &custom_identities,
+    );
     let strategy_config = BuiltinStrategyConfig {
         fast_window: spec.strategy.fast_window,
         slow_window: spec.strategy.slow_window,
@@ -179,6 +206,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
     };
     strategy_config.validate().map_err(invalid_input)?;
     let strategy = BuiltinStrategy::new(strategy_config).map_err(invalid_input)?;
+    let cash = BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]);
     let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
@@ -187,8 +215,11 @@ pub(in crate::cases) fn run_inner_with_strategy(
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots[0].ts,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]),
-        available_margin_raw: Some(spec.initial_cash_raw),
+        available_margin_raw: crate::cases::strategy_available_margin_raw(
+            &cash,
+            &spec.settlement_currency,
+        ),
+        cash,
         risk_state: "backtest".into(),
     };
     let mut depth_strategy =
@@ -222,7 +253,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 account_id: account_id.clone(),
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
-                fee_bps: spec.fee_bps,
+                fee_bps,
                 instrument_spec: spec.market_spec.clone(),
                 risk,
             })
@@ -274,7 +305,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 account_id: account_id.clone(),
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
-                fee_bps: spec.fee_bps,
+                fee_bps,
                 instrument_spec: spec.market_spec.clone(),
                 risk,
                 data_tier: DataTier::L2L3,
@@ -374,99 +405,25 @@ pub(in crate::cases) fn run_inner_with_strategy(
         ));
     }
 
-    let artifacts = artifact_paths(spec);
-    if let Some(existing) = existing_manifest(&artifacts.run_manifest)? {
-        let existing = RunManifest::from_json(&existing).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::StorageFailure,
-                format!("既有 RunManifest 无法解析: {error}"),
-            )
-        })?;
-        if existing.config_hash != config_hash || existing.data_fingerprint != data_fingerprint {
-            return Err(AppError::new(
-                AppErrorCategory::Conflict,
-                format!("run_id {} 已绑定到不同的 Tick/OrderBook 输入", spec.run_id),
-            ));
-        }
-    }
-    let manifest = report
-        .run_manifest(
-            RunManifestIdentity {
-                run_id: &spec.run_id,
-                code_commit: context.code_commit(),
-                config_hash: &config_hash,
-                strategy_version: &strategy_version,
-                instrument_spec_version: if spec.market_spec.is_some() {
-                    "trading-instrument-spec-v1"
-                } else {
-                    "instrument-spec:none"
-                },
-                runtime_version: &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
-            },
-            &data_fingerprint,
-        )
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("Tick/OrderBook RunManifest 构建失败: {error}"),
-            )
-        })?;
-    std::fs::create_dir_all(&spec.output_dir)
-        .map_err(|error| AppError::from_io(&format!("创建产物目录 {}", spec.output_dir), &error))?;
-
-    let mut summary = serde_json::json!({
-        "schema_version": 1,
-        "run_id": spec.run_id,
-        "instrument": instrument.to_string(),
-        "tier": spec.tier,
-        "market_spec": spec.market_spec,
-        "order_policy": spec.order_policy,
-        "market_making": spec.market_making,
-        "strategy_id": strategy_id,
-        "strategy_version": strategy_version,
-        "snapshots": report.snapshot_ts.len(),
-        "fills": report.fills.len(),
-        "equity_points": report.equity.len(),
-        "result_hash": format!("{:016x}", report.result_hash()),
-        "data_fingerprint": data_fingerprint,
-        "config_hash": config_hash,
-        "return_bps": report.return_bps,
-        "max_drawdown_bps": report.max_drawdown_bps,
-        "final_equity_raw": report.final_equity(),
-        "fees_raw": report.fees_raw,
-        "turnover_raw": report.turnover_raw,
-        "replay_events": replay.events,
-        "replay_ledger_entries": replay.ledger_entries,
-        "ledger_entries": report.ledger.entries().len(),
-        "risk_rule_set_version": risk_rule_set_version,
-        "model_descriptors": report.model_descriptors,
-        "assumptions": report.assumptions,
-    });
-    attach_portfolio_summary(&mut summary, spec, &report.fills)?;
-    if spec.account_id.is_some() {
-        if let Some(object) = summary.as_object_mut() {
-            object.insert("account_id".into(), serde_json::json!(account_id));
-        }
-    }
-    let summary = serde_json::to_string(&summary).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("Tick/OrderBook 摘要序列化失败: {error}"),
-        )
+    // 四份产物由用例经统一发布出口落盘：内容寻址、失败不留下半份、重复落同一份内容才算幂等。
+    let persisted = persist(DepthArtifactInput {
+        spec,
+        frame: &frame,
+        report: &report,
+        risk_rule_set_version: &risk_rule_set_version,
+        risk_rule_source,
+        cost_source: &cost_source,
+        config_hash: &config_hash,
+        data_fingerprint: &data_fingerprint,
+        dataset_quality: dataset_quality.as_ref(),
+        strategy_id: &strategy_id,
+        strategy_version: &strategy_version,
+        account_id: spec.account_id.as_deref(),
+        portfolio: portfolio_fill_attribution(spec, &report.fills)?,
+        context,
     })?;
-    publish(&artifacts.summary, &summary)?;
-    publish(
-        &artifacts.equity,
-        &equity_csv(&report.snapshot_ts, &report.equity),
-    )?;
-    publish(&artifacts.fills, &fills_csv(&report.fills))?;
-    let manifest_json = manifest.to_json().map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("Tick/OrderBook RunManifest 序列化失败: {error}"),
-        )
-    })?;
-    publish(&artifacts.run_manifest, &manifest_json)?;
+    let artifacts = persisted.artifacts;
+    let manifest_digest = format!("{:016x}", persisted.manifest.digest());
 
     Ok(Some(DepthBacktestOutcome {
         run_id: spec.run_id.clone(),
@@ -476,25 +433,12 @@ pub(in crate::cases) fn run_inner_with_strategy(
         data_fingerprint,
         fills: report.fills.len() as u64,
         equity_points: report.equity.len() as u64,
+        snapshots: report.snapshot_ts.len() as u64,
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
+        manifest_digest,
         account_id: spec.account_id.clone(),
+        display_summary: persisted.summary,
     }))
-}
-
-fn strategy_specs(spec: &DepthBacktestSpec) -> impl Iterator<Item = &crate::BuiltinStrategySpec> {
-    std::iter::once(&spec.strategy).chain(
-        spec.portfolio
-            .iter()
-            .flat_map(|portfolio| portfolio.additional_strategies.iter())
-            .map(|member| &member.strategy),
-    )
-}
-
-fn has_builtin_sizing(strategy: &crate::BuiltinStrategySpec) -> bool {
-    strategy.target_notional_raw.is_some()
-        || strategy.target_available_margin_bps.is_some()
-        || strategy.target_volatility_bps.is_some()
-        || strategy.target_kelly_fraction_bps.is_some()
 }

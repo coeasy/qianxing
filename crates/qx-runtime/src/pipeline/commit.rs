@@ -147,14 +147,15 @@ impl LiveEventPipeline {
                 | RuntimeExternalEvent::AccountCashflow { .. }
                 | RuntimeExternalEvent::FillWithSpec { .. }
         );
-        if let Some(existing) = self.log.events().iter().find(|event| {
-            (!metadata.dedup_key.is_empty() && event.metadata.dedup_key == metadata.dedup_key)
-                || (event.correlation_id == correlation_id
-                    && (event.source_seq == source_seq || semantic_replay))
-        }) {
+        if let Some(engine_ts) = self.event_identities.duplicate_ts(
+            &metadata.dedup_key,
+            &correlation_id,
+            source_seq,
+            semantic_replay,
+        ) {
             return Ok(RuntimeIngestReceipt {
                 derived_seqs: Vec::new(),
-                engine_ts: existing.ts,
+                engine_ts,
                 deduplicated: true,
             });
         }
@@ -351,9 +352,7 @@ impl LiveEventPipeline {
                 let entry_id = self.apply_cashflow(&cashflow, engine_ts)?;
                 let entry = self
                     .ledger
-                    .entries()
-                    .iter()
-                    .find(|entry| entry.id == entry_id)
+                    .entry(entry_id)
                     .cloned()
                     .ok_or_else(|| QxError::Invariant("Cashflow Ledger entry 丢失".into()))?;
                 let derived = self.append_at_engine(
@@ -382,9 +381,7 @@ impl LiveEventPipeline {
                 for id in ids {
                     let entry = self
                         .ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == id)
+                        .entry(id)
                         .cloned()
                         .ok_or_else(|| QxError::Invariant("Ledger entry 丢失".into()))?;
                     let derived = self.append_at_engine(
@@ -410,9 +407,7 @@ impl LiveEventPipeline {
                 for id in ids {
                     let entry = self
                         .ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == id)
+                        .entry(id)
                         .cloned()
                         .ok_or_else(|| QxError::Invariant("Ledger entry 丢失".into()))?;
                     let derived = self.append_at_engine(

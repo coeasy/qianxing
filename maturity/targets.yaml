@@ -18,17 +18,17 @@
 # 本文件只写目标与证据指针，不复制收益算法、不写实测数字；实测数字只以 evidence 指向的产物为准。
 
 schema_version: 1
-updated_at: "2026-10-06"
-release_version: "0.1.0"
+updated_at: "2026-10-21"
+release_version: "0.2.1"
 
 # ---- 硬件画像：目标数字只在同画像内可比 ----
 hardware_profiles:
-  sandbox-windows-x64:
+  local-windows-amd-ryzen7-8700g:
     os: windows
     cpu: x86_64
-    cores: 4
-    ram_gb: 16
-    notes: "沙箱 Windows 构建机；性能目标只在此画像内对比，跨机数字不合并"
+    cores: 8
+    ram_gb: 61
+    notes: "MS-7E27 / Ryzen 7 8700G；8 物理核、16 逻辑核、约 61 GiB 可见物理内存；同机同版本比较"
 
 # ---- §17 的十个维度：research = 单机/研究目标，production = 分布式/生产目标 ----
 dimensions:
@@ -73,6 +73,14 @@ dimensions:
     production: "热路径无整管线 clone，存储/投影异步但事实提交有边界"
     acceptance: "criterion/负载/内存基准"
 
+# CI only blocks same-hardware regressions for groups with a prior matching sample.
+# Missing history is the first sample and remains record-only.
+benchmark_regression_thresholds:
+  end_to_end: 0.10
+  rust_micro: 0.10
+  criterion: 0.10
+  ashare_rules_on: 0.10
+
 # ---- 逐 profile：以 profile / 场景 / 硬件 / 版本 / 证据路径为键 ----
 # evidence 一律 unavailable：本仓库当前 sandbox_tested / production_approved 均为 0，
 # 目标尚未被任何外部证据翻转。任何一格改成真实路径，必须先真的把证据落到盘上。
@@ -80,63 +88,64 @@ profile_targets:
   ashare-research:
     scenario: "A 股股票/ETF 日线与分钟 Bar、T+1、整手、涨跌停、停牌、复权与 PIT"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   ashare-paper:
     scenario: "A 股 Paper：不连接券商，用回放/实时行情做虚拟成交"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   cn-futures-research:
     scenario: "国内期货：夜盘交易日历、合约乘数、保证金、手续费、交割换月"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   cn-options-research:
     scenario: "国内期权：合约链、到期、行权指派、组合腿与卖方保证金"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   global-equity-paper:
     scenario: "国际股票/ETF：时区与交易日历、多币种 FX 估值、公司行动"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   fx-paper:
     scenario: "FX/CFD：pip/tick、合约乘数、隔夜利息、保证金与对冲模式"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   crypto-paper:
     scenario: "加密现货/永续 Paper：maker/taker、精度、限频、部分成交、funding"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   crypto-testnet:
     scenario: "加密测试网：真实测试环境验证提交/回报/对账，必须额外提供凭据与 evidence"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
   multi-venue-arb:
     scenario: "多 Venue 多腿套利：组级状态机、部分成交补偿与跨 Venue 对账，默认只跑 Paper"
     topology: single_node
-    hardware: sandbox-windows-x64
-    version: "0.1.0"
+    hardware: local-windows-amd-ryzen7-8700g
+    version: "0.2.1"
     measurement_status: unmeasured
     evidence: unavailable
+

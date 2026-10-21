@@ -574,6 +574,12 @@ impl Event {
                     Some(crate::trading::PositionSide::Net) => 3,
                     None => 0,
                 });
+                // Preserve pre-leverage event hashes when the optional fact is absent.
+                // Once present, bind the opening policy to the replay digest.
+                if let Some(leverage) = entry.leverage {
+                    h.write_u64(1);
+                    h.write_u64(u64::from(leverage));
+                }
             }
             EventKind::ReconcileRequired { client_order_id } => {
                 h.write_u64(11);
@@ -625,6 +631,41 @@ mod tests {
         left.digest(&mut left_hash);
         right.digest(&mut right_hash);
         assert_ne!(left_hash.finish(), right_hash.finish());
+    }
+
+    #[test]
+    fn ledger_event_digest_includes_persisted_opening_leverage() {
+        let mut entry = LedgerEntry {
+            id: 1,
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            kind: LedgerEntryKind::TradePosition,
+            amount: Money::ZERO,
+            instrument: Some(InstrumentId::parse("BTCUSDT.BINANCE").unwrap()),
+            quantity: Quantity::from_i64(1),
+            price: Some(Price::from_i64(100)),
+            order_id: Some(7),
+            ts: 1,
+            multiplier: 1,
+            position_side: None,
+            leverage: None,
+        };
+        let legacy = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::LedgerApplied {
+                entry: entry.clone(),
+            },
+        );
+        entry.leverage = Some(10);
+        let leveraged = Event::new(1, 1, Priority::APPLY, EventKind::LedgerApplied { entry });
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&legacy), digest(&leveraged));
     }
 
     #[test]

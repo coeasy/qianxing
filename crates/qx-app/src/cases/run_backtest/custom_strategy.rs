@@ -1,10 +1,14 @@
 //! Strategy artifact identity and caller-supplied strategy entrypoint.
 
-use super::{run_backtest_inner_with_strategies, spec_config_hash, BacktestSpec};
+use super::{
+    bar_strategy::run_backtest_inner_unchecked, run_backtest_inner_with_strategies,
+    spec_config_hash, BacktestSpec,
+};
 use crate::cases::attach;
 use crate::cases::guard::guard_panics;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
+use crate::run_handle::CancellationToken;
 use crate::spec::BacktestOutcome;
 use qx_core::Fnv1a;
 use qx_strategy::Strategy;
@@ -194,6 +198,22 @@ impl StrategyArtifactIdentity {
         }
         Ok(())
     }
+}
+
+pub(in crate::cases) fn run_backtest_inner_with_experiment_strategy(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    identity: StrategyArtifactIdentity,
+    strategy: Box<dyn Strategy>,
+) -> Result<Option<BacktestOutcome>, AppError> {
+    identity.validate_for_experiment(spec)?;
+    run_backtest_inner_unchecked(
+        spec,
+        context,
+        cancellation,
+        vec![InjectedStrategy { identity, strategy }],
+    )
 }
 
 pub(super) struct InjectedStrategy {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import struct
 import sys
@@ -17,6 +18,20 @@ sys.path.insert(0, str(WORKSPACE / "python"))
 
 from qianxing_strategy.frame import REQUEST, RESPONSE, encode_frame, read_frame  # noqa: E402
 from qianxing_strategy.ring import RingEmpty, SharedMemoryRing  # noqa: E402
+from qianxing_strategy.worker import (  # noqa: E402
+    PARENT_LIVENESS_PROBE_SECONDS,
+    _parent_process_alive,
+)
+
+
+def _process_is_running(pid: int) -> bool:
+    if os.name != "nt":
+        proc_stat = Path(f"/proc/{pid}/stat")
+        if proc_stat.exists():
+            state = proc_stat.read_text(encoding="ascii").rsplit(")", 1)[-1].strip()[:1]
+            if state == "Z":
+                return False
+    return _parent_process_alive(pid)
 
 
 def main() -> int:
@@ -142,6 +157,58 @@ def main() -> int:
                     raise RuntimeError(
                         f"C++ worker exited {orphan_code} instead of 0 on parent loss: {captured}"
                     )
+
+                # A dead PID proves the polling branch, but not that the PID passed by Rust is
+                # actually monitored after an abrupt host death. Put the C++ worker under a real
+                # intermediate parent, kill that parent without closing any ring or stdin, and
+                # require the orphan to exit on its own liveness probe.
+                harness = (
+                    "import os, subprocess, sys, time; "
+                    "args=sys.argv[1:]; args[-1]=str(os.getpid()); "
+                    "child=subprocess.Popen(args, stdin=subprocess.DEVNULL, "
+                    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+                    "time.sleep(0.2); "
+                    "assert child.poll() is None, 'worker exited before parent kill'; "
+                    "print(child.pid, flush=True); time.sleep(30)"
+                )
+                parent = subprocess.Popen(
+                    [sys.executable, "-c", harness, *ring_arguments, "--parent-pid", "0"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                worker_pid = None
+                try:
+                    line = parent.stdout.readline() if parent.stdout else ""
+                    if not line.strip():
+                        raise RuntimeError("C++ parent-death harness did not publish worker pid")
+                    worker_pid = int(line.strip())
+                    parent.kill()
+                    parent.wait(timeout=5)
+
+                    deadline = time.monotonic() + PARENT_LIVENESS_PROBE_SECONDS * 5
+                    while _process_is_running(worker_pid) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    if _process_is_running(worker_pid):
+                        raise RuntimeError(
+                            "C++ shared-memory worker survived after its real parent was force-killed"
+                        )
+                finally:
+                    if parent.poll() is None:
+                        parent.kill()
+                        parent.wait(timeout=5)
+                    if worker_pid is not None and _process_is_running(worker_pid):
+                        try:
+                            os.kill(worker_pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        cleanup_deadline = time.monotonic() + 5
+                        while _process_is_running(worker_pid) and time.monotonic() < cleanup_deadline:
+                            time.sleep(0.05)
+                    if parent.stdout is not None:
+                        parent.stdout.close()
+                    if parent.stderr is not None:
+                        parent.stderr.close()
             finally:
                 process.terminate()
                 try:

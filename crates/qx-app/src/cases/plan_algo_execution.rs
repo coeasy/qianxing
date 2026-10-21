@@ -2,7 +2,7 @@ use super::{attach, guard::guard_panics};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{
-    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, ALGO_EXECUTION_PLAN_SCHEMA_VERSION,
 };
 
 /// Shared Rust execution planner. It emits an immutable child schedule only;
@@ -21,7 +21,12 @@ pub fn plan_algo_execution(
                 spec.total_quantity_raw,
                 spec.start_ts,
                 spec.end_ts,
-                spec.child_count.expect("validated TWAP child_count"),
+                spec.child_count.ok_or_else(|| {
+                    AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        "validated TWAP spec is missing child_count",
+                    )
+                })?,
             ),
             AlgoExecutionMethod::Vwap => qx_zhenlu::plan_vwap(
                 &spec.parent_id,
@@ -33,7 +38,7 @@ pub fn plan_algo_execution(
         }
         .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?;
         Ok(AlgoExecutionPlan {
-            schema_version: ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+            schema_version: ALGO_EXECUTION_PLAN_SCHEMA_VERSION,
             method: spec.method,
             parent_id: spec.parent_id.clone(),
             children,

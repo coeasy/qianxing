@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/capital-allocation-result-v1.json",
+  "title": "Qianxing CapitalAllocationResult v1",
+  "description": "Deterministically priority-ordered portfolio budget allocation returned by qx-app. Account membership, duplicate strategy checks, and budget conservation are enforced by the Rust planner.",
+  "type": "object",
+  "required": ["schema_version", "portfolio_id", "allocations"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "portfolio_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "allocations": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/CapitalAllocation"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "CapitalAllocation": {
+      "type": "object",
+      "required": ["strategy_id", "account_id", "priority", "requested_cash_raw", "allocated_cash_raw"],
+      "properties": {
+        "strategy_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "requested_cash_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+        "allocated_cash_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727}
+      },
+      "additionalProperties": false
+    }
+  }
+}

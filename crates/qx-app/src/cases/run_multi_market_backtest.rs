@@ -7,39 +7,25 @@ use super::run_backtest::strategy_slot::{
     build_strategy_slot, strategy_version, StrategySlotContext,
 };
 use super::run_multi_leg_backtest::execution_market_spec;
+use super::run_multi_market_manifest::{
+    build_run_manifest, dataset_manifest_fingerprint, existing_identical, invalid,
+    max_drawdown_bps, take_runtime_market, verify_dataset_quality, DataIdentity,
+    MultiMarketManifestInput, PreparedMarket,
+};
 use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiMarketBacktestOutcome,
     MultiMarketBacktestSpec, RunContext, StrategyArtifactIdentity,
 };
-use qx_core::{Fnv1a, InstrumentId, MakerTakerFeeModel, Money};
+use qx_core::{Fnv1a, MakerTakerFeeModel, Money};
 use qx_datastruct::BarFrame;
 use qx_strategy::Strategy;
 use qx_xingban::{
-    LeverageMargin, MarketRoutedBarStrategy, NextBarOpenFillModel, NoMargin, PortfolioBarEngine,
-    PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarStrategy, ZeroLatency,
+    LeverageMargin, MarketRoutedBarStrategy, NoMargin, PortfolioBarEngine,
+    PortfolioBarSessionConfig, PortfolioBarStrategy,
 };
 use qx_zhenlu::RiskGate;
-use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-
-#[derive(Serialize)]
-struct DataIdentity {
-    instrument: String,
-    content_hash: String,
-    row_count: usize,
-}
-
-struct PreparedMarket {
-    instrument: InstrumentId,
-    bars: Vec<qx_guanxing::Bar>,
-    priority: u32,
-    contract: qx_core::TradingInstrumentSpec,
-    fee: Option<MakerTakerFeeModel>,
-    margin: Option<Box<dyn qx_xingban::MarginRule>>,
-    seed: u64,
-    identity: DataIdentity,
-}
 
 pub fn run_multi_market_backtest(
     spec: &MultiMarketBacktestSpec,
@@ -166,7 +152,7 @@ pub(super) fn validate_injected(
 
 pub(super) fn run_inner(
     spec: &MultiMarketBacktestSpec,
-    _context: &RunContext,
+    context: &RunContext,
     cancellation: Option<&crate::run_handle::CancellationToken>,
     mut injected: BTreeMap<String, InjectedMarketStrategy>,
 ) -> Result<Option<MultiMarketBacktestOutcome>, AppError> {
@@ -174,14 +160,19 @@ pub(super) fn run_inner(
         return Ok(None);
     }
     spec.validate()?;
-    let spec_json = spec.to_json()?;
+    let mut identity_spec = spec.clone();
+    identity_spec.output_dir.clear();
+    for market in &mut identity_spec.markets {
+        market.bars_path.clear();
+        market.dataset_manifest_path = None;
+    }
+    let spec_json = identity_spec.to_json()?;
     let mut spec_hasher = Fnv1a::new();
     spec_hasher.write_text(&spec_json);
     let spec_fingerprint_base = spec_hasher.finish();
 
     let mut prepared = Vec::with_capacity(spec.markets.len());
     let mut data_hasher = Fnv1a::new();
-    let mut runtime_markets = Vec::with_capacity(spec.markets.len());
     let mut routed_strategies = Vec::with_capacity(spec.markets.len());
     let mut strategy_count = 0_usize;
     let mut strategy_identities = Vec::new();
@@ -210,10 +201,29 @@ pub(super) fn run_inner(
             ));
         }
         let instrument = frame.instrument.clone();
-        let data_hash = frame.digest();
+        let input_path = PathBuf::from(&market.bars_path)
+            .canonicalize()
+            .map_err(|error| AppError::from_io("解析多市场 BarFrame 输入路径", &error))?;
+        let data_hash = qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!(
+                    "市场 {} 的 BarFrame 内容指纹计算失败：{error}",
+                    market.instrument
+                ),
+            )
+        })?;
+        let dataset_quality = market
+            .dataset_manifest_path
+            .as_deref()
+            .map(|path| verify_dataset_quality(path, &market.bars_path, &frame, &data_hash))
+            .transpose()?;
         data_hasher.write_text(&instrument.to_string());
-        data_hasher.write_u64(data_hash);
-        let market_data_fingerprint = format!("barframe:{data_hash:016x}");
+        data_hasher.write_text(&data_hash);
+        if let Some(quality) = &dataset_quality {
+            data_hasher.write_text(dataset_manifest_fingerprint(quality)?);
+        }
+        let market_data_fingerprint = format!("barframe:{data_hash}");
         let contract = execution_market_spec(
             market.market_spec.as_ref(),
             &instrument,
@@ -275,9 +285,11 @@ pub(super) fn run_inner(
             seed: spec.seed,
             identity: DataIdentity {
                 instrument: market.instrument.clone(),
-                content_hash: format!("{data_hash:016x}"),
+                path: input_path.to_string_lossy().to_string(),
+                content_hash: data_hash,
                 row_count,
             },
+            dataset_quality,
         });
     }
     if !injected.is_empty() {
@@ -300,21 +312,15 @@ pub(super) fn run_inner(
         .iter()
         .map(|market| DataIdentity {
             instrument: market.identity.instrument.clone(),
+            path: market.identity.path.clone(),
             content_hash: market.identity.content_hash.clone(),
             row_count: market.identity.row_count,
         })
         .collect::<Vec<_>>();
-    runtime_markets.extend(prepared.iter_mut().map(|market| PortfolioBarMarket {
-        instrument: market.instrument.clone(),
-        priority: market.priority,
-        bars: market.bars.as_slice(),
-        spec: market.contract.clone(),
-        fill: Box::new(NextBarOpenFillModel),
-        fee: Box::new(market.fee.take().expect("fee prepared")),
-        latency: Box::new(ZeroLatency),
-        margin: market.margin.take().expect("margin prepared"),
-        seed: market.seed,
-    }));
+    let runtime_markets = prepared
+        .iter_mut()
+        .map(take_runtime_market)
+        .collect::<Result<Vec<_>, AppError>>()?;
     let data_fingerprint = format!("{:016x}", data_hasher.finish());
     let mut strategy = MarketRoutedBarStrategy::new(routed_strategies)
         .map_err(|error| AppError::from_qx_error(&error))?;
@@ -355,11 +361,53 @@ pub(super) fn run_inner(
     let max_drawdown_bps = max_drawdown_bps(&report.equity)?;
     let successful_fills =
         u64::try_from(report.fills.len()).map_err(|_| invalid("多市场成交数超出 u64 范围"))?;
-    let output_path =
-        PathBuf::from(&spec.output_dir).join(format!("{}.multi-market.json", spec.run_id));
-    let artifact_path = output_path.to_string_lossy().into_owned();
     std::fs::create_dir_all(&spec.output_dir)
         .map_err(|error| AppError::from_io("创建多市场回测产物目录", &error))?;
+    let output_root = PathBuf::from(&spec.output_dir)
+        .canonicalize()
+        .map_err(|error| AppError::from_io("解析多市场回测产物目录", &error))?;
+    let output_path = output_root.join(format!("{}.multi-market.json", spec.run_id));
+    let artifact_path = output_path.to_string_lossy().into_owned();
+    let manifest_path = output_root.join(format!("{}.multi-market.run.json", spec.run_id));
+    let run_manifest_path = manifest_path.to_string_lossy().into_owned();
+    let equity_path = output_root.join(format!("{}.multi-market.equity.json", spec.run_id));
+    let equity_artifact_path = equity_path.to_string_lossy().into_owned();
+    let fills_path = output_root.join(format!("{}.multi-market.fills.json", spec.run_id));
+    let fills_artifact_path = fills_path.to_string_lossy().into_owned();
+    let mut input_components = prepared
+        .iter()
+        .map(|market| {
+            (
+                format!("barframe:{}", market.identity.instrument),
+                market.identity.content_hash.clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for market in &prepared {
+        if let Some(quality) = &market.dataset_quality {
+            input_components.insert(
+                format!("dataset-quality:{}", market.identity.instrument),
+                dataset_manifest_fingerprint(quality)?.to_string(),
+            );
+        }
+    }
+    let result_hash = format!("{:016x}", report.result_hash());
+    let event_hash = format!("{:016x}", report.event_log.digest());
+    let run_manifest_json = build_run_manifest(MultiMarketManifestInput {
+        spec,
+        context,
+        data_fingerprint: &data_fingerprint,
+        input_components,
+        clock_start: report.clock_start,
+        clock_end: report.clock_end,
+        spec_fingerprint: &spec_fingerprint,
+        result_hash: &result_hash,
+        event_hash: &event_hash,
+    })?;
+    let equity_json = serde_json::to_string(&report.equity)
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let fills_json = serde_json::to_string(&report.fills)
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
     let outcome = MultiMarketBacktestOutcome {
         run_id: spec.run_id.clone(),
         account_id: spec.account_id.clone(),
@@ -386,17 +434,45 @@ pub(super) fn run_inner(
         "spec": spec,
         "outcome": outcome,
         "market_data": data_identities,
+        "dataset_quality": prepared.iter().filter_map(|market| market.dataset_quality.as_ref().map(|quality| (market.identity.instrument.clone(), quality.clone()))).collect::<BTreeMap<_, _>>(),
         "strategy_identities": strategy_identities,
         "per_market_fills": per_market_fills,
         "equity": report.equity,
         "event_log": report.event_log.events(),
         "ledger_entries": report.ledger.entries(),
         "replay_verified": true,
+        "run_manifest_path": run_manifest_path,
+        "equity_path": equity_artifact_path,
+        "fills_path": fills_artifact_path,
     });
     let artifact_json = serde_json::to_string(&artifact)
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let manifest_exists = match std::fs::read_to_string(&manifest_path) {
+        Ok(existing) if existing == run_manifest_json => true,
+        Ok(_) => {
+            return Err(AppError::new(
+                AppErrorCategory::Conflict,
+                format!("多市场运行 RunManifest 已存在且内容不同: {run_manifest_path}"),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(AppError::from_io("读取多市场 RunManifest", &error)),
+    };
+    let equity_exists = existing_identical(&equity_path, &equity_json, "权益曲线")?;
+    let fills_exists = existing_identical(&fills_path, &fills_json, "成交明细")?;
     match std::fs::read_to_string(&output_path) {
-        Ok(existing) if existing == artifact_json => return Ok(Some(outcome)),
+        Ok(existing) if existing == artifact_json => {
+            if !equity_exists {
+                write_text(&equity_artifact_path, &equity_json)?;
+            }
+            if !fills_exists {
+                write_text(&fills_artifact_path, &fills_json)?;
+            }
+            if !manifest_exists {
+                write_text(&run_manifest_path, &run_manifest_json)?;
+            }
+            return Ok(Some(outcome));
+        }
         Ok(_) => {
             return Err(AppError::new(
                 AppErrorCategory::Conflict,
@@ -406,29 +482,15 @@ pub(super) fn run_inner(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取多市场回测产物", &error)),
     }
+    if !equity_exists {
+        write_text(&equity_artifact_path, &equity_json)?;
+    }
+    if !fills_exists {
+        write_text(&fills_artifact_path, &fills_json)?;
+    }
+    if !manifest_exists {
+        write_text(&run_manifest_path, &run_manifest_json)?;
+    }
     write_text(&outcome.artifact_path, &artifact_json)?;
     Ok(Some(outcome))
-}
-
-fn max_drawdown_bps(equity: &[(u64, i128)]) -> Result<u32, AppError> {
-    let mut peak = 0_i128;
-    let mut maximum = 0_u32;
-    for (_, value) in equity {
-        peak = peak.max(*value);
-        if peak <= 0 || *value >= peak {
-            continue;
-        }
-        let drawdown = peak
-            .checked_sub(*value)
-            .and_then(|loss| loss.checked_mul(10_000))
-            .and_then(|loss| loss.checked_div(peak))
-            .unwrap_or(10_000)
-            .clamp(0, 10_000) as u32;
-        maximum = maximum.max(drawdown);
-    }
-    Ok(maximum)
-}
-
-fn invalid(message: impl Into<String>) -> AppError {
-    AppError::new(AppErrorCategory::InvalidInput, message)
 }

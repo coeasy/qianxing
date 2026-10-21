@@ -74,14 +74,16 @@ pub fn depth_frame_to_ticks(frame: &DepthFrame) -> Result<Vec<QuoteTick>, String
     frame.validate()?;
     let mut ticks = Vec::with_capacity(frame.snapshots.len());
     for snapshot in &frame.snapshots {
-        let ([bid], [ask]) = (snapshot.bids.as_slice(), snapshot.asks.as_slice()) else {
+        if !crate::orderbook::has_l1_shape(snapshot) {
             return Err(format!(
                 "L1 档位回测只接受一档盘口，实际 bid={} ask={} (ts={})",
                 snapshot.bids.len(),
                 snapshot.asks.len(),
                 snapshot.ts
             ));
-        };
+        }
+        let bid = &snapshot.bids[0];
+        let ask = &snapshot.asks[0];
         ticks.push(QuoteTick::new(
             snapshot.ts,
             bid.price,

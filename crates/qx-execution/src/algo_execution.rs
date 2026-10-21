@@ -162,11 +162,12 @@ impl AlgoExecutionState {
                 gateway.now
             ));
         }
-        if self.last_step_ts.is_some_and(|last| now < last) {
-            return Err(format!(
-                "算法执行时钟不得回退: previous={} current={now}",
-                self.last_step_ts.expect("checked above")
-            ));
+        if let Some(last) = self.last_step_ts {
+            if now < last {
+                return Err(format!(
+                    "算法执行时钟不得回退: previous={last} current={now}"
+                ));
+            }
         }
         self.last_step_ts = Some(now);
         if let Some(result) = self.terminal_step(gateway)? {

@@ -1,11 +1,25 @@
 //! 跨语言策略回测链：`run_strategy_backtest`（含 L1/L2 归因装配）。
 
-use super::*;
+use super::{
+    barframe_dataset_identity, read_bar_frame_for_backtest, read_runtime_config,
+    run_single_strategy_backtest, verify_strategy_artifact, DatasetRunBinding, JsonDatasetRegistry,
+    SingleStrategyBacktestInput,
+};
+use std::path::Path;
 
 pub(crate) fn run_strategy_backtest(
     runtime_path: &Path,
     frame_path: &Path,
     spec_path: Option<&Path>,
+) -> Result<(), String> {
+    run_strategy_backtest_with_quality_manifest(runtime_path, frame_path, spec_path, None)
+}
+
+pub(crate) fn run_strategy_backtest_with_quality_manifest(
+    runtime_path: &Path,
+    frame_path: &Path,
+    spec_path: Option<&Path>,
+    quality_manifest_path: Option<&Path>,
 ) -> Result<(), String> {
     let config = read_runtime_config(runtime_path)?;
     let frame = read_bar_frame_for_backtest(frame_path)?;
@@ -13,6 +27,13 @@ pub(crate) fn run_strategy_backtest(
         return Err("跨语言 Bar 回测至少需要两根 Bar".into());
     }
     let (bars, manifest) = barframe_dataset_identity(frame_path, &frame)?;
+    let dataset_quality = quality_manifest_path
+        .map(|path| {
+            qx_app::artifact_store::verify_barframe_dataset_quality(
+                path, frame_path, &frame, &manifest,
+            )
+        })
+        .transpose()?;
     // `storage.data_dir` 只有一条落点：相对进程当前目录，与可写运行态、`report`/`status` 读侧
     // 和事件回测证据闸门同指一棵树。产物曾按「相对 runtime.json 同级」另立口径，于是同一份配置
     // 下 `fast-backtest` 写出的 runs/ 落在闸门永远不看的那棵树里（V13 R2 第二十七遍 #255）。
@@ -28,175 +49,51 @@ pub(crate) fn run_strategy_backtest(
         "[Data · Dataset] dataset={} version={} source={} fingerprint={}",
         manifest.dataset_id, manifest.version, manifest.source, manifest.fingerprint
     );
+    if let Some(quality) = dataset_quality.as_ref() {
+        println!(
+            "[Data · Quality] manifest_fingerprint={} rows={} interval_ms={} missing_intervals={}",
+            quality["manifest_fingerprint"]
+                .as_str()
+                .unwrap_or("unknown"),
+            quality["quality_report"]["row_count"]
+                .as_u64()
+                .unwrap_or_default(),
+            quality["quality_report"]["interval_ms"]
+                .as_u64()
+                .unwrap_or_default(),
+            quality["quality_report"]["missing_intervals"]
+                .as_u64()
+                .unwrap_or_default(),
+        );
+    }
     // 同一份身份必须跟着产物走：只印在 stdout 上的指纹，事后拿着摘要无从复核（V11 Q66）。
-    let input = barframe_input_provenance(frame_path, &manifest);
-    let strategies = if config.strategies.is_empty() {
-        vec![config.strategy.clone()]
-    } else {
-        config.strategies.clone()
-    };
-    for strategy in strategies {
-        let strategy_id = strategy
-            .id
-            .clone()
-            .unwrap_or_else(|| strategy.version.clone());
-        let mut strategy_config = config.clone();
-        strategy_config.strategy = strategy;
-        strategy_config.strategies.clear();
-        resolve_strategy_runtime_paths(&mut strategy_config.strategy, runtime_path);
-        let (bundle_fingerprint, bundle_components) =
-            if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
-                let bundle_payload =
-                    read_example_json(Path::new(bundle_path), "策略 DatasetBundleManifest 组件 ")?;
-                let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
-                    .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
-                let fingerprint =
-                    verify_dataset_bundle_binding(Path::new(bundle_path), &manifest, bars.len())?;
-                verify_dataset_bundle_component_bindings(
-                    &bundle,
-                    &strategy_config.strategy,
-                    &strategy_id,
-                )?;
-                let components = bundle
-                    .components
-                    .iter()
-                    .map(|(kind, component)| (kind.clone(), component.dataset.fingerprint.clone()))
-                    .collect::<BTreeMap<_, _>>();
-                (Some(fingerprint), Some(components))
-            } else {
-                (None, None)
-            };
-        if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
-            let bundle_payload =
-                read_example_json(Path::new(bundle_path), "策略 DatasetBundleManifest 组件 ")?;
-            let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
-                .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
-            if bundle.component("corporate_actions").is_some()
-                && !strategy_config
-                    .strategy
-                    .dataset_component_paths
-                    .contains_key("corporate_actions")
-                && strategy_config.strategy.ashare_actions_path.is_none()
-            {
-                return Err(format!(
-                    "策略 Bundle 包含 corporate_actions，但未配置 ashare_actions_path: {strategy_id}"
-                ));
-            }
-            if bundle.component("calendar").is_some()
-                && !strategy_config
-                    .strategy
-                    .dataset_component_paths
-                    .contains_key("calendar")
-                && strategy_config.strategy.ashare_calendar_path.is_none()
-            {
-                return Err(format!(
-                    "策略 Bundle 包含 calendar，但未配置 ashare_calendar_path: {strategy_id}"
-                ));
-            }
-        }
-        verify_strategy_artifact(&strategy_config.strategy)?;
-        run_single_strategy_backtest(
-            &strategy_config,
-            Some(runtime_path),
-            &frame,
-            &bars,
-            spec_path,
-            &strategy_id,
-            bundle_fingerprint
-                .as_deref()
-                .zip(bundle_components.as_ref())
-                .map(
-                    |(bundle_fingerprint, component_fingerprints)| DatasetRunBinding {
-                        bundle_fingerprint,
-                        component_fingerprints,
-                    },
-                ),
-            &data_root,
-            input.clone(),
+    let input = qx_app::backtest_input_identity::barframe_input_provenance(frame_path, &manifest);
+    let strategy_bindings =
+        qx_service::backtest_bindings::strategy_batch::strategy_batch_backtest_bindings(
+            &config,
+            runtime_path,
+            &manifest,
+            bars.len(),
         )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn persist_backtest_run_manifest(
-    root: &Path,
-    manifest: &RunManifest,
-) -> Result<PathBuf, String> {
-    let runs_root = root.join("runs");
-    std::fs::create_dir_all(&runs_root)
-        .map_err(|error| format!("创建回测 RunManifest 目录失败: {error}"))?;
-    let safe_run_id = manifest
-        .run_id
-        .chars()
-        .map(|value| {
-            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
-                value
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let path = runs_root.join(format!("{safe_run_id}-{:016x}.run.json", manifest.digest()));
-    let payload = manifest.to_json()?;
-    if path.exists() {
-        let existing = std::fs::read_to_string(&path).map_err(|error| {
-            format!("读取已有回测 RunManifest 失败 {}: {error}", path.display())
+    for binding in strategy_bindings {
+        let bundle_fingerprint = binding.dataset_bundle_fingerprint.as_deref();
+        verify_strategy_artifact(&binding.config.strategy)?;
+        run_single_strategy_backtest(SingleStrategyBacktestInput {
+            config: &binding.config,
+            config_fingerprint: binding.config_fingerprint,
+            runtime_config_path: Some(runtime_path),
+            frame: &frame,
+            bars: &bars,
+            spec_path,
+            strategy_id: &binding.strategy_id,
+            dataset_binding: bundle_fingerprint.map(|bundle_fingerprint| DatasetRunBinding {
+                bundle_fingerprint,
+                component_fingerprints: &binding.dataset_component_fingerprints,
+            }),
+            run_manifest_root: &data_root,
+            input: input.clone(),
+            dataset_quality: dataset_quality.clone(),
         })?;
-        let restored = RunManifest::from_json(&existing)?;
-        if restored != *manifest {
-            return Err(format!(
-                "同一回测 RunManifest 路径已存在不同内容: {}",
-                path.display()
-            ));
-        }
-        return Ok(path);
-    }
-    let temporary = path.with_extension(format!("run.json.tmp.{}", std::process::id()));
-    std::fs::write(&temporary, payload)
-        .map_err(|error| format!("写入回测 RunManifest 失败 {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, &path) {
-        let _ = std::fs::remove_file(&temporary);
-        if !path.exists() {
-            return Err(format!(
-                "提交回测 RunManifest 失败 {}: {error}",
-                path.display()
-            ));
-        }
-    }
-    Ok(path)
-}
-
-pub(crate) fn write_backtest_artifact(
-    path: &Path,
-    payload: &str,
-    label: &str,
-) -> Result<(), String> {
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)
-            .map_err(|error| format!("读取已有{label}失败 {}: {error}", path.display()))?;
-        if existing == payload {
-            return Ok(());
-        }
-        return Err(format!(
-            "同一回测{label}路径已存在不同内容: {}",
-            path.display()
-        ));
-    }
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temporary, payload)
-        .map_err(|error| format!("写入{label}失败 {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        if path.exists() {
-            let existing = std::fs::read_to_string(path).map_err(|read_error| {
-                format!("读取并发生成的{label}失败 {}: {read_error}", path.display())
-            })?;
-            let _ = std::fs::remove_file(&temporary);
-            if existing == payload {
-                return Ok(());
-            }
-        }
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!("提交{label}失败 {}: {error}", path.display()));
     }
     Ok(())
 }

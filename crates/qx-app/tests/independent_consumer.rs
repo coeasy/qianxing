@@ -17,8 +17,9 @@
 //! 而不是在测试里现造：独立 consumer 的第一件事本来就是"拿到一份别人的数据"。
 
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, BacktestOutcome, BacktestSpec, BuiltinStrategySpec,
-    CallerCapability, DatasetSpec, RunContext, BACKTEST_SPEC_SCHEMA_VERSION,
+    run_backtest, validate_dataset, verify_run, BacktestDatasetInput, BacktestOutcome,
+    BacktestSpec, BuiltinStrategySpec, CallerCapability, DatasetSpec, RunContext,
+    BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use qx_strategy::BuiltinStrategyKind;
 use std::path::{Path, PathBuf};
@@ -44,10 +45,9 @@ fn sample_bars() -> PathBuf {
 fn scratch(label: &str) -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let serial = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "qx-app-consumer/{label}-{}-{serial}",
-        std::process::id()
-    ));
+    let root = repo_root()
+        .join("target/qx-app-consumer")
+        .join(format!("{label}-{}-{serial}", std::process::id()));
     std::fs::create_dir_all(&root).expect("建临时目录");
     root
 }
@@ -61,9 +61,11 @@ fn spec(run_id: &str, output_dir: &Path) -> BacktestSpec {
     strategy.fast_window = 2;
     strategy.slow_window = 3;
     BacktestSpec::new(
-        run_id,
-        "BTCUSDT.BINANCE",
-        sample_bars().to_string_lossy().into_owned(),
+        BacktestDatasetInput {
+            run_id: run_id.into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: sample_bars().to_string_lossy().into_owned(),
+        },
         "USDT",
         // 10 万 USDT 本金（定点 1e9）。写死标度而不是引 `qx_core::SCALE`：这一份是**独立
         // consumer 的输入**，它只承诺与三个门面同形的 JSON，不承诺与某个内部常量同源。
@@ -117,6 +119,7 @@ fn an_independent_consumer_completes_a_backtest_and_verifies_it_without_the_cli(
     // ④ 同一身份重跑逐位同哈希——"可复现"这条承诺在独立 consumer 手上同样成立。
     let again = run_backtest(&backtest, &research("consumer-run")).expect("重跑");
     assert_eq!(again.result_hash, outcome.result_hash);
+    let _ = std::fs::remove_dir_all(output_dir);
 }
 
 #[test]
@@ -137,4 +140,5 @@ fn an_independent_consumer_sees_the_same_error_document_the_facades_do() {
     let payload: serde_json::Value = serde_json::from_str(&error.to_json()).expect("错误可解析");
     assert_eq!(payload["action"], "PROVIDE_DATA");
     assert_eq!(payload["retry"], "NEVER");
+    let _ = std::fs::remove_dir_all(output_dir);
 }

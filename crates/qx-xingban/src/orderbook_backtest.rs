@@ -4,10 +4,10 @@
 //! 因此策略不会用当前快照直接成交，避免回测中的同一快照作弊。
 
 use qx_core::{
-    Event, EventKind, EventLog, Fill, Fnv1a, Ledger, OrderStatus, Price, Priority, ReplayVerifier,
+    Event, EventKind, EventLog, Fnv1a, Ledger, OrderStatus, Price, Priority, ReplayVerifier,
     TradingInstrumentSpec, ValuationContext,
 };
-use qx_risk::OrderRiskPosition;
+use qx_risk::{OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
 
 use crate::orderbook_strategies::OrderBookStrategy;
@@ -23,6 +23,8 @@ use funding::{FillFundingContext, FundingContext, FundingDecision, SpotCashReser
 pub use portfolio::{
     OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
 };
+use report::execution_model_descriptors;
+pub use report::{OrderBookBacktestReport, QueuePositionSensitivityReport};
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -35,35 +37,11 @@ pub struct OrderBookBacktestConfig {
     pub currency: String,
     pub initial_cash: qx_core::Money,
     pub fee_bps: i128,
-    /// 可选产品规格。配置衍生品后，订单必须显式携带 OrderPolicy，成交和
-    /// 未平仓头寸使用 `Ledger::apply_fill_with_spec`，不能退化为现货现金语义。
+    /// 可选产品规格；衍生品必须显式携带 OrderPolicy 并按规格记账。
     pub instrument_spec: Option<TradingInstrumentSpec>,
     pub risk: RiskGate,
     /// 输入深度档位声明；L2 以上才有逐档撮合意义，L1 由 Tick 引擎固定。
     pub data_tier: DataTier,
-}
-
-pub struct OrderBookBacktestReport {
-    pub fills: Vec<Fill>,
-    pub ledger: Ledger,
-    pub event_log: EventLog,
-    pub pending_orders: usize,
-    /// 与 Bar 回测同形的统一产物：每个快照结束后的账户权益、净持仓与时间。
-    pub equity: Vec<i128>,
-    pub positions: Vec<i128>,
-    pub snapshot_ts: Vec<u64>,
-    pub fees_raw: i128,
-    pub turnover_raw: i128,
-    pub return_bps: i32,
-    pub max_drawdown_bps: u32,
-    pub initial_equity_raw: i128,
-    pub input_data_hash: u64,
-    pub clock_start: u64,
-    pub clock_end: u64,
-    pub data_tier: DataTier,
-    pub risk_rule_set_version: String,
-    pub model_descriptors: Vec<String>,
-    pub assumptions: Vec<String>,
 }
 
 fn book_notional(
@@ -74,6 +52,18 @@ fn book_notional(
     match spec {
         Some(spec) => spec.notional(qty, price),
         None => Ok(qx_core::fee::notional(qty, price)),
+    }
+}
+
+fn reference_price(snapshot: &OrderBookSnapshot) -> Option<Price> {
+    match (
+        snapshot.bids.first().map(|level| level.price),
+        snapshot.asks.first().map(|level| level.price),
+    ) {
+        (Some(bid), Some(ask)) => Some(Price::from_raw(bid.raw().saturating_add(ask.raw()) / 2)),
+        (Some(bid), None) => Some(bid),
+        (None, Some(ask)) => Some(ask),
+        (None, None) => None,
     }
 }
 
@@ -104,9 +94,8 @@ impl OrderBookBacktestEngine {
             .ok_or_else(|| qx_core::QxError::Invariant("未请求取消但订单簿回测未产生报告".into()))
     }
 
-    /// Run the same deterministic engine with cooperative cancellation checks
-    /// during input validation and at every snapshot boundary. `None` is a
-    /// cancellation result; partial books are never returned as a valid report.
+    /// Run with cooperative cancellation checks before execution and each snapshot.
+    /// `None` means cancellation; partial reports are never returned.
     pub fn run_with_cancel<F>(
         self,
         snapshots: &[OrderBookSnapshot],
@@ -178,11 +167,8 @@ impl OrderBookBacktestEngine {
                 "订单簿回测快照 ts/sequence 必须严格递增".into(),
             ));
         }
-        if matches!(data_tier, DataTier::Bar) {
-            return Err(qx_core::QxError::BusinessViolation(
-                "订单簿回测需要盘口快照档位（L1 或 L2/L3），不能声明为 Bar".into(),
-            ));
-        }
+        crate::orderbook::validate_backtest_data_tier(data_tier, snapshots)
+            .map_err(qx_core::QxError::BusinessViolation)?;
         if let Some(model) = execution_model.as_ref() {
             // 与上方规格/instrument 校验同一约定：冲突要报错，不能让配置里的
             // fee_bps 被执行模型静默覆盖，否则回测成本口径与声明不一致。
@@ -207,28 +193,19 @@ impl OrderBookBacktestEngine {
             }
         }
         let input_data_hash = input_hash.finish();
-        // 执行模型的三个高保真参数必须出现在产物里：只把它们喂进撮合器而不写进
-        // model_descriptors，就等于"能配但看不出来配了什么"。
+        // 关键执行参数必须进入模型描述子，避免只传给撮合器却不留证据。
         let effective_model = match execution_model {
             Some(model) => model,
             None => OrderBookExecutionModel::new(fee_bps)
                 .map_err(qx_core::QxError::BusinessViolation)?,
         };
-        let model_descriptors = vec![
-            format!("data_tier={data_tier:?}"),
-            format!(
-                "orderbook-matching@v1 fee_bps={} latency_snapshots={} queue_position_bps={} market_impact_bps={}",
-                effective_model.fee_bps,
-                effective_model.latency_snapshots,
-                effective_model.queue_position_bps,
-                effective_model.market_impact_bps
-            ),
-            format!("risk_rule_set={risk_rule_set_version}"),
-            match instrument_spec.as_ref() {
-                Some(spec) => format!("ledger=spec:{:?}", spec.product),
-                None => "ledger=cash-spot".to_string(),
-            },
-        ];
+        let model_descriptors = execution_model_descriptors(
+            data_tier,
+            &effective_model,
+            &risk_rule_set_version,
+            instrument_spec.as_ref(),
+        );
+        let execution_model_descriptor = effective_model.audit_descriptor();
         let mut matcher = OrderBookMatchingEngine::with_model(effective_model)
             .map_err(qx_core::QxError::BusinessViolation)?
             .with_fee_spec(instrument_spec.clone());
@@ -251,9 +228,7 @@ impl OrderBookBacktestEngine {
             snapshots.first().map(|snapshot| snapshot.ts).unwrap_or(1),
         )?;
         let deposit = ledger
-            .entries()
-            .iter()
-            .find(|entry| entry.id == deposit_id)
+            .entry(deposit_id)
             .cloned()
             .ok_or_else(|| qx_core::QxError::Invariant("订单簿回测初始入金缺失".into()))?;
         append_event(
@@ -335,14 +310,9 @@ impl OrderBookBacktestEngine {
                     EventKind::Filled { fill: fill.clone() },
                 );
                 for entry_id in entry_ids {
-                    let entry = ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == entry_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            qx_core::QxError::Invariant("订单簿回测账簿 entry 缺失".into())
-                        })?;
+                    let entry = ledger.entry(entry_id).cloned().ok_or_else(|| {
+                        qx_core::QxError::Invariant("订单簿回测账簿 entry 缺失".into())
+                    })?;
                     append_event(
                         &mut log,
                         fill.ts,
@@ -351,14 +321,17 @@ impl OrderBookBacktestEngine {
                         EventKind::LedgerApplied { entry },
                     );
                 }
-                let cash = ledger.cash_balances_for(&account_id);
-                let margin = margin::settled_cash_margin(
-                    instrument_spec
-                        .as_ref()
-                        .is_some_and(|spec| spec.product.supports_leverage()),
+                let cash = ledger.cash_balances_for_ref(&account_id);
+                let margin = margin::strategy_available_margin_raw(
+                    instrument_spec.as_ref(),
+                    reference_price(snapshot),
                     ledger.cash_for(&account_id, &currency),
-                );
-                strategy.update_account_state(&cash, margin);
+                    fee_bps,
+                    &ledger,
+                    &account_id,
+                    &oms.all_orders(),
+                )?;
+                strategy.update_account_state(cash, margin);
                 strategy.on_fill(&order, &fill)?;
                 fills.push(fill);
             }
@@ -374,25 +347,19 @@ impl OrderBookBacktestEngine {
             }
 
             let position = ledger.position_for(&account_id, &instrument).quantity.raw();
-            let available_margin_raw = margin::settled_cash_margin(
-                instrument_spec
-                    .as_ref()
-                    .is_some_and(|spec| spec.product.supports_leverage()),
+            let current_reference_price = reference_price(snapshot);
+            let available_margin_raw = margin::strategy_available_margin_raw(
+                instrument_spec.as_ref(),
+                current_reference_price,
                 ledger.cash_for(&account_id, &currency),
-            );
-            strategy
-                .update_account_state(&ledger.cash_balances_for(&account_id), available_margin_raw);
-            let reference_price = match (
-                snapshot.bids.first().map(|level| level.price),
-                snapshot.asks.first().map(|level| level.price),
-            ) {
-                (Some(bid), Some(ask)) => {
-                    Some(Price::from_raw(bid.raw().saturating_add(ask.raw()) / 2))
-                }
-                (Some(bid), None) => Some(bid),
-                (None, Some(ask)) => Some(ask),
-                (None, None) => None,
-            };
+                fee_bps,
+                &ledger,
+                &account_id,
+                &oms.all_orders(),
+            )?;
+            let cash = ledger.cash_balances_for_ref(&account_id);
+            strategy.update_account_state(cash, available_margin_raw);
+            let reference_price = current_reference_price;
             let open_order_ids = oms.active_order_ids();
             let open_order_set = open_order_ids
                 .iter()
@@ -482,23 +449,6 @@ impl OrderBookBacktestEngine {
                         reference_price,
                     },
                 )?;
-                if let Err(error) = risk.check_with_spec(
-                    &order,
-                    &position_snapshot,
-                    reference_price,
-                    instrument_spec.as_ref(),
-                ) {
-                    append_event(
-                        &mut log,
-                        snapshot.ts,
-                        Priority::COMMAND,
-                        EventKind::Rejected {
-                            client_order_id: order.client_id,
-                            reason: error.to_string(),
-                        },
-                    );
-                    continue;
-                }
                 let accepted_reservation = match funding::preflight_order(
                     &order,
                     policy,
@@ -532,6 +482,87 @@ impl OrderBookBacktestEngine {
                         continue;
                     }
                 };
+                let (projected_initial_margin_raw, projected_fee_reserve_raw) =
+                    match (instrument_spec.as_ref(), reference_price) {
+                        (Some(spec), Some(price)) if spec.product.supports_leverage() => {
+                            let (margin, fees) = funding::projected_margin_and_fees_raw(
+                                &order,
+                                policy,
+                                spec,
+                                price,
+                                fee_bps,
+                                &ledger,
+                                &account_id,
+                                &oms.all_orders(),
+                            )?;
+                            (Some(margin), fees)
+                        }
+                        (Some(spec), None) if spec.product.supports_leverage() => {
+                            append_event(
+                                &mut log,
+                                snapshot.ts,
+                                Priority::COMMAND,
+                                EventKind::Rejected {
+                                    client_order_id: order.client_id,
+                                    reason: "衍生品组合保证金计算缺少参考价".into(),
+                                },
+                            );
+                            continue;
+                        }
+                        _ => (None, 0),
+                    };
+                let available_margin_raw = if instrument_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.product.supports_leverage())
+                {
+                    let Some(price) = reference_price else {
+                        append_event(
+                            &mut log,
+                            snapshot.ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: order.client_id,
+                                reason: "衍生品组合保证金计算缺少参考价".into(),
+                            },
+                        );
+                        continue;
+                    };
+                    let marks = BTreeMap::from([(instrument.clone(), price)]);
+                    let valuation = ValuationContext::spot(&account_id, &marks, &currency)
+                        .with_spec(instrument_spec.as_ref());
+                    Some(
+                        ledger
+                            .valuate(&valuation)?
+                            .equity
+                            .raw()
+                            .checked_sub(projected_fee_reserve_raw)
+                            .ok_or_else(|| {
+                                qx_core::QxError::Invariant("订单簿投影费用超过标记权益".into())
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                let risk_context = OrderRiskContext {
+                    available_margin_raw,
+                    projected_initial_margin_raw,
+                    reference_price,
+                    instrument_spec: instrument_spec.clone(),
+                    position: position_snapshot,
+                    ..OrderRiskContext::default()
+                };
+                if let Err(error) = risk.check_with_context(&order, &risk_context) {
+                    append_event(
+                        &mut log,
+                        snapshot.ts,
+                        Priority::COMMAND,
+                        EventKind::Rejected {
+                            client_order_id: order.client_id,
+                            reason: error.to_string(),
+                        },
+                    );
+                    continue;
+                }
                 let budget_price = order.limit.or(reference_price);
                 if let Some(price) = budget_price {
                     if let Err(error) =
@@ -624,8 +655,9 @@ impl OrderBookBacktestEngine {
         } else {
             0
         };
-        let report = OrderBookBacktestReport {
+        let mut report = OrderBookBacktestReport {
             fills,
+            execution_attempts: matcher.execution_attempts().to_vec(),
             ledger,
             event_log: log,
             pending_orders: matcher.pending_count(),
@@ -642,6 +674,7 @@ impl OrderBookBacktestEngine {
             clock_end: snapshots.last().map(|snapshot| snapshot.ts).unwrap_or(0),
             data_tier,
             risk_rule_set_version,
+            execution_model_descriptor,
             assumptions: vec![
                 format!("data_tier={data_tier:?}"),
                 "benchmark=flat-cash".into(),
@@ -651,6 +684,7 @@ impl OrderBookBacktestEngine {
             ],
             model_descriptors,
         };
+        report.append_limit_order_fill_rate_descriptor();
         // Facts must replay into the same ledger before this report is returned (V11 Q62).
         ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
         Ok(Some(report))

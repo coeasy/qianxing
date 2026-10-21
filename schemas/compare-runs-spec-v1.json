@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/compare-runs-spec-v1.json",
+  "title": "Qianxing CompareRunsSpec v1",
+  "description": "Compare completed runs only when they share one instrument and data fingerprint. Runtime validation enforces unique run_id and the 2..=10000 batch bound.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "runs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/ComparedRun"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ComparedRun": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "instrument",
+        "data_fingerprint",
+        "result_hash",
+        "return_bps",
+        "max_drawdown_bps"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "instrument": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "data_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "result_hash": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "return_bps": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "max_drawdown_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -186,10 +186,16 @@ def resolve_binary() -> Path:
     override = os.environ.get("QX_CLI")
     if override:
         return Path(override)
-    for candidate in (".cargo-target/debug/qx-cli.exe", "target/debug/qx-cli.exe"):
-        path = ROOT / candidate
-        if path.exists():
-            return path
+    # Repositories may have multiple Cargo target directories (for example, a
+    # CI cache under .cargo-target and a local build under target). Prefer the
+    # freshest executable so the probe cannot silently validate stale code.
+    candidates = [
+        ROOT / candidate
+        for candidate in (".cargo-target/debug/qx-cli.exe", "target/debug/qx-cli.exe")
+    ]
+    existing = [path for path in candidates if path.is_file()]
+    if existing:
+        return max(existing, key=lambda path: path.stat().st_mtime_ns)
     raise SystemExit("找不到 qx-cli 可执行文件：先 `cargo build --offline -p qx-cli`")
 
 

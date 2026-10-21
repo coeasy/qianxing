@@ -9,6 +9,58 @@ struct SubmitBoth {
     fills: Vec<InstrumentId>,
 }
 
+struct SubmitToSharedTargetFromEachMarket {
+    target: InstrumentId,
+    submit_at_ts: u64,
+    submitted_by: std::collections::BTreeSet<InstrumentId>,
+    fill_sources: Vec<String>,
+}
+
+impl BarStrategy for SubmitToSharedTargetFromEachMarket {
+    fn on_bar_orders(
+        &mut self,
+        _history: &[Bar],
+        callback_instrument: &InstrumentId,
+        ts: u64,
+        _position: i128,
+    ) -> Vec<Order> {
+        if ts != self.submit_at_ts {
+            return Vec::new();
+        }
+        if !self.submitted_by.insert(callback_instrument.clone()) {
+            return Vec::new();
+        }
+        vec![Order {
+            client_id: self.submitted_by.len() as u64,
+            instrument: self.target.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_raw(SCALE),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "shared-account".into(),
+            trace: Some(qx_core::OrderTrace {
+                strategy_id: Some(callback_instrument.to_string()),
+                signal_id: None,
+                intent_id: None,
+                rule_version: Some("same-visible-batch-v1".into()),
+            }),
+            policy: None,
+        }]
+    }
+
+    fn on_fill(&mut self, order: &Order, _fill: &Fill) -> Result<(), qx_core::QxError> {
+        self.fill_sources.push(
+            order
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.strategy_id.clone())
+                .unwrap_or_default(),
+        );
+        Ok(())
+    }
+}
+
 impl BarStrategy for SubmitBoth {
     fn on_bar_orders(
         &mut self,
@@ -167,6 +219,195 @@ fn shared_session_routes_cross_market_orders_through_one_cash_ledger_and_replay(
         .events()
         .iter()
         .any(|event| matches!(event.kind, EventKind::Rejected { .. })));
+    report.verify().unwrap();
+}
+
+#[test]
+fn same_visible_timestamp_orders_from_multiple_callbacks_share_one_stable_batch() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let bars = [
+        Bar::new(
+            1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            2,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            3,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+    ];
+    let btc_bars = bars;
+    let eth_bars = bars;
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            market(btc.clone(), 0, &btc_bars, "BTC"),
+            market(eth.clone(), 1, &eth_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = SubmitToSharedTargetFromEachMarket {
+        target: btc.clone(),
+        submit_at_ts: 2,
+        submitted_by: std::collections::BTreeSet::new(),
+        fill_sources: Vec::new(),
+    };
+
+    let report = engine.run(&mut strategy).unwrap();
+
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills_by_instrument[&btc].len(), 2);
+    assert!(report.fills_by_instrument[&eth].is_empty());
+    assert_eq!(
+        strategy.fill_sources,
+        vec![btc.to_string(), eth.to_string()],
+        "orders sharing (market_index, visible_ts) must retain callback append order"
+    );
+    assert_eq!(
+        report
+            .ledger
+            .position_for("shared-account", &btc)
+            .quantity
+            .raw(),
+        2 * SCALE
+    );
+    report.verify().unwrap();
+}
+
+#[test]
+fn shared_session_uses_ordered_fallback_for_unaligned_visible_timestamps() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let btc_bars = [
+        Bar::new(
+            1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            2,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            4,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            5,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+    ];
+    let eth_bars = [
+        Bar::new(
+            1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            3,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            4,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+        Bar::new(
+            5,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+        ),
+    ];
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            market(btc.clone(), 0, &btc_bars, "BTC"),
+            market(eth.clone(), 1, &eth_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = SubmitToSharedTargetFromEachMarket {
+        target: btc.clone(),
+        submit_at_ts: 4,
+        submitted_by: std::collections::BTreeSet::new(),
+        fill_sources: Vec::new(),
+    };
+
+    let report = engine.run(&mut strategy).unwrap();
+
+    assert_eq!(report.fills_by_instrument[&btc].len(), 2);
+    assert!(report.fills_by_instrument[&eth].is_empty());
+    assert_eq!(
+        strategy.fill_sources,
+        vec![btc.to_string(), eth.to_string()],
+        "unaligned visible timestamps must form distinct ordered batches"
+    );
+    assert_eq!(
+        report
+            .ledger
+            .position_for("shared-account", &btc)
+            .quantity
+            .raw(),
+        2 * SCALE
+    );
     report.verify().unwrap();
 }
 

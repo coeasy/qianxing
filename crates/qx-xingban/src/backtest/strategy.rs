@@ -21,9 +21,9 @@ pub trait BarStrategy {
         currency: &str,
         cash_account: bool,
     ) -> Option<i128> {
-        let cash = ledger.cash_balances_for(account_id);
+        let cash = ledger.cash_balances_for_ref(account_id);
         let margin = cash_account.then(|| ledger.cash_for(account_id, currency).max(0));
-        self.update_account_state(&cash, margin);
+        self.update_account_state(cash, margin);
         margin
     }
 
@@ -275,17 +275,13 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             .map_err(qx_core::QxError::BusinessViolation)?;
         let mut orders = Vec::new();
         for update_decision in self.pending_order_updates.drain(..) {
-            orders.extend(
-                update_decision
-                    .to_orders(&self.context)
-                    .map_err(qx_core::QxError::BusinessViolation)?,
-            );
+            update_decision
+                .append_orders(&self.context, &mut orders)
+                .map_err(qx_core::QxError::BusinessViolation)?;
         }
-        orders.extend(
-            decision
-                .to_orders(&self.context)
-                .map_err(qx_core::QxError::BusinessViolation)?,
-        );
+        decision
+            .append_orders(&self.context, &mut orders)
+            .map_err(qx_core::QxError::BusinessViolation)?;
         Ok(orders)
     }
 

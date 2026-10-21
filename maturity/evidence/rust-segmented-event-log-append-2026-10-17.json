@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "benchmark": "segmented_event_log_append",
+  "generated_at_utc": "2026-10-16T22:16:52.143289+00:00",
+  "command": [
+    "cargo",
+    "run",
+    "-p",
+    "qx-storage",
+    "--example",
+    "segmented_event_log_append",
+    "--release",
+    "--offline",
+    "-j1"
+  ],
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "profile": "release",
+  "storage": {
+    "events_per_segment": 1024,
+    "same_instance": "manifest has been validated and cached by the writing store",
+    "reopened_store": "new store instance validates and loads the existing segmented log during timed append",
+    "os_file_cache_controlled": false
+  },
+  "results": [
+    {
+      "appended_events": 1,
+      "benchmark": "segmented_event_log_append",
+      "events_per_segment": 1024,
+      "history_events": 1000,
+      "manifest_bytes": 150,
+      "reopened_store_median_ms": 6.3266,
+      "repeats": 7,
+      "same_instance_warm_median_ms": 4.813300000000001
+    },
+    {
+      "appended_events": 1,
+      "benchmark": "segmented_event_log_append",
+      "events_per_segment": 1024,
+      "history_events": 8000,
+      "manifest_bytes": 149,
+      "reopened_store_median_ms": 14.670900000000001,
+      "repeats": 7,
+      "same_instance_warm_median_ms": 4.7283
+    },
+    {
+      "appended_events": 1,
+      "benchmark": "segmented_event_log_append",
+      "events_per_segment": 1024,
+      "history_events": 64000,
+      "manifest_bytes": 152,
+      "reopened_store_median_ms": 86.6612,
+      "repeats": 7,
+      "same_instance_warm_median_ms": 4.482
+    }
+  ],
+  "limitations": [
+    "This microbenchmark measures one appended event and segmented file storage only; it does not measure full backtest throughput.",
+    "The reopened-store path includes full log decoding and validation, while the operating-system file cache is uncontrolled.",
+    "Synthetic EventKind::Settle histories do not represent production event mixes or the nine product profiles."
+  ]
+}

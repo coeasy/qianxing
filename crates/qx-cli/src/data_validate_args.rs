@@ -1,4 +1,4 @@
-//! `data-validate` 的参数契约，与顶层命令表分开以遵守 cli_args.rs 行数棘轮。
+//! `data-validate` 的参数契约，与顶层命令表分开组织。
 
 use clap::Args;
 use std::path::PathBuf;
@@ -14,4 +14,15 @@ pub(crate) struct DatasetValidateArgs {
     pub(crate) output: PathBuf,
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct DepthDatasetValidateArgs {
+    pub(crate) frame: PathBuf,
+    #[arg(long, value_parser = ["l1", "l2"])]
+    pub(crate) tier: String,
+    pub(crate) interval_ms: u64,
+    #[arg(long, default_value = "UTC")]
+    pub(crate) timezone: String,
+    pub(crate) output: PathBuf,
 }

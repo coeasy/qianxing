@@ -7,13 +7,13 @@ fn protective_exit_backtest_is_identical_across_cli_http_and_python_native() {
     let bars_path = root.join("protective-bars.json");
     let closes = [
         100_000_i128,
-        99_000,
-        98_000,
-        97_000,
-        96_000,
-        150_000,
-        150_000,
-        150_000,
+        101_000,
+        102_000,
+        103_000,
+        104_000,
+        100_000,
+        100_000,
+        100_000,
     ];
     let bars = json!({
         "schema_version": 1,

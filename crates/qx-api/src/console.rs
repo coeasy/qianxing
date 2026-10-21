@@ -35,7 +35,7 @@ use crate::{ApiResponse, ApiService};
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// 会话 cookie 名。`HttpOnly`：页面脚本读不到它，XSS 也偷不走会话。
@@ -200,9 +200,14 @@ impl ConsoleFront {
             .split_once('?')
             .unwrap_or((parsed.target.as_str(), ""));
         let cookies = parse_cookies(parsed.headers.get("cookie").map_or("", String::as_str));
-        let session = cookies
-            .get(CONSOLE_SESSION_COOKIE)
-            .and_then(|id| self.sessions.lock().unwrap().lookup(id, now_ms));
+        let session = if let Some(id) = cookies.get(CONSOLE_SESSION_COOKIE) {
+            match self.lock_sessions() {
+                Ok(mut sessions) => sessions.lookup(id, now_ms),
+                Err(response) => return (response, Vec::new()),
+            }
+        } else {
+            None
+        };
 
         if let Some(asset) = static_asset(route) {
             return match session {
@@ -259,7 +264,10 @@ impl ConsoleFront {
                 Vec::new(),
             );
         }
-        let (id, session) = self.sessions.lock().unwrap().issue(&self.config, now_ms);
+        let (id, session) = match self.lock_sessions() {
+            Ok(mut sessions) => sessions.issue(&self.config, now_ms),
+            Err(response) => return (response, Vec::new()),
+        };
         let max_age = self.config.session_ttl_ms / 1000;
         let cookies = vec![
             (
@@ -277,6 +285,12 @@ impl ConsoleFront {
             ),
         ];
         (self.read_asset(asset), cookies)
+    }
+
+    fn lock_sessions(&self) -> Result<MutexGuard<'_, ConsoleSessions>, ApiResponse> {
+        self.sessions
+            .lock()
+            .map_err(|_| json_response(503, "console_session_store_unavailable"))
     }
 
     fn read_asset(&self, name: &str) -> ApiResponse {
@@ -496,6 +510,32 @@ mod tests {
         )
         .expect("控制台配置");
         ConsoleFront::new(service, config).expect("控制台")
+    }
+
+    #[test]
+    fn console_accept_loop_returns_when_stopped_without_connections() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind console listener");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let thread_stopped = Arc::clone(&stopped);
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = front().serve(listener, || 1, || thread_stopped.load(Ordering::Acquire));
+            tx.send(result).expect("send console accept result");
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "console must stay alive before shutdown"
+        );
+        stopped.store(true, Ordering::Release);
+        assert!(rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("console accept loop must observe shutdown without a connection")
+            .is_ok());
     }
 
     fn request(method: &str, target: &str, extra: &str) -> String {

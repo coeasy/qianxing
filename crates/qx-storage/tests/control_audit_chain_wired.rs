@@ -27,15 +27,17 @@ fn command(id: u64) -> ControlCommand {
 }
 
 fn temp_root(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-audit-wired-{}-{}-{}",
-        name,
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ))
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-audit-wired-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
 }
 
 fn submit(store: &JsonStateStore, id: u64) {

@@ -53,7 +53,9 @@ pub fn ingest_bars<P: DataProvider, S: DataStorage, R: DatasetRegistrar>(
     let first = stored
         .first()
         .ok_or_else(|| "ingested dataset contains no bars for instrument".to_string())?;
-    let last = stored.last().expect("first implies last");
+    let last = stored
+        .last()
+        .ok_or_else(|| "ingested dataset contains no bars for instrument".to_string())?;
     let manifest = DatasetManifest {
         dataset_id: request.dataset_id.clone(),
         version: request.dataset_version.clone(),

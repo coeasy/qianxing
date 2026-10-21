@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "project_id": "qx-c9ff0711c2985023",
+  "profile": "ashare-research",
+  "runtime": "qianxing.runtime.json",
+  "artifact_root": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare",
+  "datasets": [
+    {
+      "dataset_id": "strategy-bars:000001.SZSE",
+      "version": "barframe-json-v1"
+    },
+    {
+      "dataset_id": "ashare.example.000001.calendar",
+      "version": "cn-example-2024"
+    },
+    {
+      "dataset_id": "ashare.example.000001.corporate_actions",
+      "version": "example"
+    }
+  ],
+  "strategies": [
+    {
+      "strategy_id": "strategy-ashare",
+      "language": "rust",
+      "source": "ema_cross"
+    }
+  ]
+}

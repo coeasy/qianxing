@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/run-multi-leg-experiment-result-v1.json",
+  "title": "Qianxing RunMultiLegExperimentResult v1",
+  "description": "Bounded multi-leg strategy experiment with candidate failure isolation and deterministic combined-return ranking.",
+  "type": "object",
+  "required": ["schema_version", "experiment_id", "spec_fingerprint", "total_candidates", "completed_candidates", "succeeded_candidates", "failed_candidates", "candidates", "ranking", "artifact_path"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._-]+$"},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "total_candidates": {"type": "integer", "minimum": 1, "maximum": 256},
+    "completed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "succeeded_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "failed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
+    "ranking": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/RankedCandidate"}},
+    "artifact_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Candidate": {
+      "type": "object",
+      "required": ["ordinal", "parameters", "outcome", "error"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "strategy_kind": {"enum": ["pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage"]},
+        "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "outcome": {"anyOf": [{"$ref": "multi-leg-backtest-result-v1.json"}, {"type": "null"}]},
+        "error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "RankedCandidate": {
+      "type": "object",
+      "required": ["rank", "ordinal", "run_id", "combined_return_bps", "primary_result_hash", "reference_result_hash"],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 1, "maximum": 256},
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "run_id": {"type": "string", "minLength": 1},
+        "combined_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "primary_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "reference_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

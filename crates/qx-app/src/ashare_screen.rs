@@ -59,10 +59,11 @@ pub fn screen_bar_frames(payload: &str) -> Result<String, AppError> {
     for (input_order, item) in input.frames.into_iter().enumerate() {
         let frame = BarFrame::from_json(&item.bars_json)
             .map_err(|error| invalid_input(format!("BarFrame 校验失败: {error:?}")))?;
-        let first = *frame
+        let first = frame
             .close_raw
             .first()
-            .expect("validated BarFrame is non-empty");
+            .copied()
+            .ok_or_else(|| invalid_input("BarFrame 至少需要一根 Bar"))?;
         if first <= 0 || frame.close_raw.iter().any(|close| *close <= 0) {
             return Err(invalid_input(format!(
                 "{} 的收盘价必须始终大于 0",
@@ -76,10 +77,11 @@ pub fn screen_bar_frames(payload: &str) -> Result<String, AppError> {
             )));
         }
 
-        let last = *frame
+        let last = frame
             .close_raw
             .last()
-            .expect("validated BarFrame is non-empty");
+            .copied()
+            .ok_or_else(|| invalid_input("BarFrame 至少需要一根 Bar"))?;
         let return_numerator = last
             .checked_sub(first)
             .and_then(|value| value.checked_mul(10_000))
@@ -116,11 +118,20 @@ pub fn screen_bar_frames(payload: &str) -> Result<String, AppError> {
             source: frame.source.0.clone(),
             bars: frame.len(),
             start_ts: frame.ts[0],
-            end_ts: *frame.ts.last().expect("validated BarFrame is non-empty"),
+            end_ts: frame
+                .ts
+                .last()
+                .copied()
+                .ok_or_else(|| invalid_input("BarFrame 至少需要一根 Bar"))?,
             total_return_bps,
             max_drawdown_bps,
             average_volume_raw,
-            source_hash: format!("{:016x}", frame.digest()),
+            source_hash: qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("BarFrame 内容指纹计算失败：{error}"),
+                )
+            })?,
             bars_path: item.bars_path,
             input_order,
         });

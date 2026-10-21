@@ -41,3 +41,10 @@ pub fn rejection_facts_line(rejections: &[(String, usize)]) -> String {
 pub fn rejection_count(rejections: &[(String, usize)]) -> usize {
     rejections.iter().map(|(_, count)| count).sum()
 }
+
+pub(crate) fn rejection_facts_u64(event_log: &qx_core::EventLog) -> Vec<(String, u64)> {
+    rejection_facts(event_log)
+        .into_iter()
+        .map(|(reason, count)| (reason, count as u64))
+        .collect()
+}

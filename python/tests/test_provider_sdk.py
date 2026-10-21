@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from qianxing.app import (
@@ -332,6 +332,12 @@ class ProviderSdkTest(unittest.TestCase):
                 reference_market_spec=derivative("ETHUSDT.BINANCE"),
             )
             outcome = registry.run_multi_leg_backtest_with_funding(spec, query)
+            from jsonschema import Draft202012Validator
+
+            result_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "multi-leg-backtest-result-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(result_schema).validate(json.loads(json.dumps(asdict(outcome))))
             artifact = json.loads(
                 Path(outcome.attribution_artifact).read_text(encoding="utf-8")
             )
@@ -385,6 +391,12 @@ class ProviderSdkTest(unittest.TestCase):
             result = registry.run_backtest_with_manifest(
                 spec, query, "provider-bars", "source-v1", interval_ms=1
             )
+            from jsonschema import Draft202012Validator
+
+            output_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "provider-backtest-result-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(output_schema).validate(json.loads(json.dumps(asdict(result))))
             self.assertEqual(result.dataset_verdict.dataset_id, "provider-bars")
             self.assertEqual(result.manifest["dataset"]["fingerprint"], manifest["dataset"]["fingerprint"])
             self.assertTrue(Path(result.manifest_path).is_file())
@@ -452,6 +464,12 @@ class ProviderSdkTest(unittest.TestCase):
                 ),
             )
             outcome = registry.run_depth_backtest_from_frame(spec, query, "l1")
+            from jsonschema import Draft202012Validator
+
+            depth_outcome_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "depth-backtest-outcome-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(depth_outcome_schema).validate(json.loads(json.dumps(asdict(outcome))))
             self.assertTrue(verify_depth_run(outcome).verified)
 
             provider_spec = replace(
@@ -461,6 +479,12 @@ class ProviderSdkTest(unittest.TestCase):
                 output_dir=str(root / "provider-run"),
             )
             provider_outcome = registry.run_depth_backtest(provider_spec, query)
+            from jsonschema import Draft202012Validator
+
+            depth_output_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "provider-depth-backtest-result-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(depth_output_schema).validate(json.loads(json.dumps(asdict(provider_outcome))))
             self.assertEqual(provider_outcome.provider_id, "quote-fixture")
             self.assertEqual(provider_outcome.retry_chain, ("quote-fixture",))
             self.assertTrue(verify_depth_run(provider_outcome.outcome).verified)

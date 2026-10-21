@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from importlib.metadata import PackageNotFoundError, version
 from ssl import SSLContext
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypedDict, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -262,18 +262,7 @@ class BuiltinStrategySpec:
     threshold_bps: int = 100
 
     def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        if self.target_notional_raw is None:
-            value.pop("target_notional_raw")
-        if self.target_available_margin_bps is None:
-            value.pop("target_available_margin_bps")
-        if self.target_volatility_bps is None:
-            value.pop("target_volatility_bps")
-        if self.target_kelly_fraction_bps is None:
-            value.pop("target_kelly_fraction_bps")
-        if self.kelly_lookback_bars is None:
-            value.pop("kelly_lookback_bars")
-        return value
+        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 def list_builtin_strategies() -> tuple[BuiltinStrategyInfo, ...]:
@@ -328,6 +317,7 @@ class MultiMarketBacktestMarket:
     bars_path: str
     priority: int
     strategies: tuple[PortfolioStrategySpec, ...]
+    dataset_manifest_path: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     fee_schedule: MakerTakerFeeSchedule | dict[str, Any] | None = None
 
@@ -338,6 +328,8 @@ class MultiMarketBacktestMarket:
             "priority": self.priority,
             "strategies": [strategy.to_dict() for strategy in self.strategies],
         }
+        if self.dataset_manifest_path is not None:
+            value["dataset_manifest_path"] = self.dataset_manifest_path
         for key in ("market_spec", "fee_schedule"):
             item = getattr(self, key)
             if item is not None:
@@ -382,6 +374,8 @@ class MultiMarketDepthBacktestMarket:
     strategy: BuiltinStrategySpec = field(default_factory=lambda: BuiltinStrategySpec("sma_cross", "strategy"))
     order_policy: OrderPolicy | dict[str, Any] | None = None
     data_tier: str | None = None
+    dataset_manifest_path: str | None = None
+    queue_position_model: QueuePositionDisabled | QueuePositionFifoVolumeEstimate | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -395,6 +389,14 @@ class MultiMarketDepthBacktestMarket:
             "market_impact_bps": self.market_impact_bps,
             "strategy": self.strategy.to_dict(),
         }
+        if self.dataset_manifest_path is not None:
+            value["dataset_manifest_path"] = self.dataset_manifest_path
+        if self.queue_position_model is not None:
+            value["queue_position_model"] = (
+                self.queue_position_model.to_dict()
+                if hasattr(self.queue_position_model, "to_dict")
+                else dict(self.queue_position_model)
+            )
         if self.order_policy is not None:
             value["order_policy"] = self.order_policy.to_dict() if hasattr(self.order_policy, "to_dict") else dict(self.order_policy)
         if self.data_tier is not None:
@@ -439,6 +441,7 @@ class MultiMarketDepthBacktestOutcome:
     return_bps: int
     max_drawdown_bps: int
     artifact_path: str
+    execution_models: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiMarketDepthBacktestOutcome":
@@ -464,6 +467,156 @@ class PortfolioBacktestConfig:
 
 
 @dataclass(frozen=True)
+class BacktestMarginTier:
+    max_notional: int
+    initial_bp: int
+    maintenance_bp: int
+    max_leverage: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in asdict(self).items()
+            if value is not None
+        }
+
+
+@dataclass(frozen=True)
+class BacktestNoMargin:
+    kind: Literal["no_margin"] = "no_margin"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BacktestLeverageMargin:
+    leverage: int
+    maintenance_bp: int
+    kind: Literal["leverage"] = "leverage"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BacktestTieredMargin:
+    tiers: tuple[BacktestMarginTier, ...]
+    kind: Literal["tiers"] = "tiers"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, "tiers": [tier.to_dict() for tier in self.tiers]}
+
+
+BacktestMarginConfig = BacktestNoMargin | BacktestLeverageMargin | BacktestTieredMargin
+
+
+@dataclass(frozen=True)
+class BacktestExecutionCostRules:
+    name: str
+    maker_bp: int
+    taker_bp: int
+    latency_base_ns: int = 0
+    latency_insert_ns: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BacktestRiskRules:
+    version: str = "runtime-risk-v1"
+    max_qty_raw: int | None = None
+    max_notional_raw: int | None = None
+    no_short: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in asdict(self).items()
+            if value is not None
+        }
+
+
+class _AshareCorporateActionOptional(TypedDict, total=False):
+    announcement_ts: int | None
+    record_ts: int | None
+    payment_ts: int | None
+    subscription_start_ts: int | None
+    subscription_end_ts: int | None
+    action_type: Literal[
+            "cash_dividend",
+            "bonus_share",
+            "capital_transfer",
+            "rights_issue",
+            "rights_issue_expiry",
+            "new_share_issue",
+            "repurchase",
+            "convertible_bond_issue",
+            "convertible_bond_interest",
+            "convertible_bond_redemption",
+            "convertible_bond_call",
+            "convertible_bond_put",
+            "convertible_bond_conversion",
+            "suspension",
+            "capital_change",
+            "unknown",
+    ]
+    cash_dividend_raw: int
+    split_num: int
+    split_den: int
+    rights_issue_price_raw: int
+    rights_issue_ratio_num: int
+    rights_issue_ratio_den: int
+    issue_price_raw: int
+    conversion_price_raw: int
+    conversion_ratio_num: int
+    conversion_ratio_den: int
+    rights_instrument: str | None
+    subscription_qty_raw: int
+    rights_expiry_qty_raw: int
+    repurchase_qty_raw: int
+    repurchase_price_raw: int
+    convertible_bond_instrument: str | None
+    conversion_target_instrument: str | None
+    conversion_qty_raw: int
+    conversion_target_qty_raw: int
+    interest_per_bond_raw: int
+    settlement_qty_raw: int
+    settlement_price_raw: int
+    issuer_total_shares_raw: int
+    issuer_free_float_shares_raw: int | None
+    source: str
+    published_at_ms: int | None
+    raw_payload: Any | None
+
+
+class AshareCorporateActionEvent(_AshareCorporateActionOptional):
+    ts: int
+
+
+class AshareBacktestRules(TypedDict, total=False):
+    enabled: bool
+    board: Literal["main", "chi_next", "star", "beijing", "etf", "st"]
+    t_plus_one: bool
+    lot_size: int
+    allow_odd_lot_sell: bool
+    limit_up_bp: int
+    limit_down_bp: int
+    price_tick: int
+    commission_bp: int
+    min_commission: int
+    stamp_duty_bp: int
+    transfer_fee_bp: int
+    trading_timestamps: list[int]
+    trading_days: list[int]
+    session_windows: list[tuple[int, int]]
+    halted_timestamps: list[int]
+    previous_close_raw: dict[int, int]
+    corporate_actions: list[AshareCorporateActionEvent]
+
+
+@dataclass(frozen=True)
 class BacktestSpec:
     run_id: str
     instrument: str
@@ -479,30 +632,29 @@ class BacktestSpec:
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     fee_schedule: MakerTakerFeeSchedule | dict[str, int] | None = None
     portfolio: PortfolioBacktestConfig | dict[str, Any] | None = None
+    margin_model: BacktestMarginConfig | dict[str, Any] | None = None
+    execution_cost_rules: BacktestExecutionCostRules | dict[str, Any] | None = None
+    ashare_rules: AshareBacktestRules | dict[str, Any] | None = None
+    fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"] | None = None
+    max_bar_volume_participation_bps: int | None = None
+    risk_rules: BacktestRiskRules | dict[str, Any] | None = None
+    allow_short: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        value = {
-            **asdict(self),
-            "strategy": self.strategy.to_dict(),
-        }
-        if self.account_id is None:
-            value.pop("account_id")
-        if self.protective_exit is None:
-            value.pop("protective_exit")
-        elif isinstance(self.protective_exit, ProtectiveExitSpec):
+        value = {key: item for key, item in asdict(self).items() if item is not None}
+        value["strategy"] = self.strategy.to_dict()
+        if isinstance(self.protective_exit, ProtectiveExitSpec):
             value["protective_exit"] = self.protective_exit.to_dict()
-        if self.market_spec is None:
-            value.pop("market_spec")
-        elif isinstance(self.market_spec, TradingInstrumentSpec):
+        if isinstance(self.market_spec, TradingInstrumentSpec):
             value["market_spec"] = self.market_spec.to_dict()
-        if self.fee_schedule is None:
-            value.pop("fee_schedule")
-        elif isinstance(self.fee_schedule, MakerTakerFeeSchedule):
+        if isinstance(self.fee_schedule, MakerTakerFeeSchedule):
             value["fee_schedule"] = self.fee_schedule.to_dict()
-        if self.portfolio is None:
-            value.pop("portfolio")
-        elif isinstance(self.portfolio, PortfolioBacktestConfig):
+        if isinstance(self.portfolio, PortfolioBacktestConfig):
             value["portfolio"] = self.portfolio.to_dict()
+        for key in ("margin_model", "execution_cost_rules", "risk_rules"):
+            nested = getattr(self, key)
+            if nested is not None and hasattr(nested, "to_dict"):
+                value[key] = nested.to_dict()
         return value
 
 
@@ -1042,6 +1194,27 @@ class OrderPolicy:
 
 
 @dataclass(frozen=True)
+class QueuePositionDisabled:
+    """Preserve the Rust tagged queue model's explicit disabled variant."""
+
+    kind: Literal["disabled"] = "disabled"
+
+    def to_dict(self) -> dict[str, str]:
+        return {"kind": self.kind}
+
+
+@dataclass(frozen=True)
+class QueuePositionFifoVolumeEstimate:
+    """Queue advancement estimated from displayed depth reduction."""
+
+    volume_advance_bps: int
+    kind: Literal["fifo_volume_estimate"] = "fifo_volume_estimate"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, "volume_advance_bps": self.volume_advance_bps}
+
+
+@dataclass(frozen=True)
 class MarketMakingSpec:
     spread_bps: int
     quote_qty_raw: int
@@ -1062,7 +1235,7 @@ class DepthBacktestSpec:
     initial_cash_raw: int
     output_dir: str
     strategy: BuiltinStrategySpec
-    fee_bps: int = 0
+    fee_bps: int | None = None
     latency_snapshots: int = 0
     queue_position_bps: int = 0
     market_impact_bps: int = 0
@@ -1072,6 +1245,22 @@ class DepthBacktestSpec:
     market_making: MarketMakingSpec | dict[str, int] | None = None
     account_id: str | None = None
     portfolio: PortfolioBacktestConfig | dict[str, Any] | None = None
+    manifest_run_id: str | None = None
+    queue_position_model: QueuePositionDisabled | QueuePositionFifoVolumeEstimate | dict[str, Any] | None = None
+    execution_cost_rules: BacktestExecutionCostRules | dict[str, Any] | None = None
+    execution_cost_source: str | None = None
+    risk_rules: BacktestRiskRules | dict[str, Any] | None = None
+    allow_short: bool | None = None
+    declared_ashare_rules: str | None = None
+    declared_fill_model: str | None = None
+    declared_bar_volume_participation_bps: int | None = None
+    quality_manifest_path: str | None = None
+    runtime_config_path: str | None = None
+    market_spec_path: str | None = None
+    market_spec_source: str | None = None
+    account_base_source: str | None = None
+    signal_source: str | None = None
+    signal_declared_unused: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
@@ -1079,6 +1268,10 @@ class DepthBacktestSpec:
             payload["market_making"] = self.market_making.to_dict()
         if isinstance(self.portfolio, PortfolioBacktestConfig):
             payload["portfolio"] = self.portfolio.to_dict()
+        for key in ("queue_position_model", "execution_cost_rules", "risk_rules"):
+            nested = getattr(self, key)
+            if nested is not None and hasattr(nested, "to_dict"):
+                payload[key] = nested.to_dict()
         # Mirror Rust's skip_serializing_if on these optional v1 extensions so
         # legacy requests keep their historical JSON shape across SDKs.
         for optional_field in (
@@ -1087,6 +1280,23 @@ class DepthBacktestSpec:
             "market_making",
             "account_id",
             "portfolio",
+            "manifest_run_id",
+            "fee_bps",
+            "queue_position_model",
+            "execution_cost_rules",
+            "execution_cost_source",
+            "risk_rules",
+            "allow_short",
+            "declared_ashare_rules",
+            "declared_fill_model",
+            "declared_bar_volume_participation_bps",
+            "quality_manifest_path",
+            "runtime_config_path",
+            "market_spec_path",
+            "market_spec_source",
+            "account_base_source",
+            "signal_source",
+            "signal_declared_unused",
         ):
             if payload[optional_field] is None:
                 del payload[optional_field]
@@ -1106,6 +1316,8 @@ class DepthBacktestOutcome:
     max_drawdown_bps: int
     artifacts: dict[str, str]
     account_id: str | None = None
+    snapshots: int = 0
+    manifest_digest: str = ""
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
@@ -1246,6 +1458,8 @@ class MultiLegBacktestSpec:
     fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"] = "next_bar_open"
     schema_version: int = 1
     account_id: str | None = None
+    primary_dataset_manifest_path: str | None = None
+    reference_dataset_manifest_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
@@ -1258,6 +1472,10 @@ class MultiLegBacktestSpec:
             payload.pop("funding_events", None)
         if self.account_id is None:
             payload.pop("account_id")
+        if self.primary_dataset_manifest_path is None:
+            payload.pop("primary_dataset_manifest_path")
+        if self.reference_dataset_manifest_path is None:
+            payload.pop("reference_dataset_manifest_path")
         return payload
 
 
@@ -3384,7 +3602,7 @@ def doctor() -> dict[str, Any]:
     try:
         package_version = version("qianxing")
     except PackageNotFoundError:
-        package_version = "0.1.0"
+        package_version = "0.2.0"
     return {
         "package": "qianxing",
         "version": package_version,

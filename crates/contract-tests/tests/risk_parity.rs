@@ -5,16 +5,10 @@
 //!
 //! (a) `qx_risk::RiskEngine::evaluate_order_with_rules` —— 规范唯一实现；
 //! (b) `qx_zhenlu::RiskContext` 门面 —— Paper/实盘 worker 使用的账户快照形状；
-//! (c) `qx_zhenlu::RiskGate` + `RuleSet` 包装 —— qx-xingban 回测使用的 deprecated
-//!     compat 入口。
+//! (c) `qx_zhenlu::RiskGate::check_with_context` —— 回测准入使用的完整上下文门面。
 //!
-//! (b) 是 (a) 的转调，因此逐字段严格相等；(c) 的入口形状不带账户限额（可用保证金、
-//! 账户级名义额上限），因此只断言规则链可见的部分，并把账户级限额导致的差异显式记录下来。
-//!
-//! **产品规格必须带上**：`MaxNotionalRule` 缺规格即 fail-closed（V13 R26），无规格的
-//! `check_with_price` 会把"缺规格"本身当成一条拒绝，与 (a)/(b) 的规则链结果不可比。
-//! 所以 (c) 走 [`RiskGate::check_with_spec`] 传真实规格——这正是 `qx-xingban` 两条回测
-//! 生产路径（`backtest.rs` / `orderbook_backtest.rs`）今天调用的形状。
+//! 三条入口均消费同一份完整 `OrderRiskContext` 与同一 `RuleSet`；allow/reject 与拒绝原因
+//! 必须一致。旧的 position-only 兼容方法不属于生产准入合同。
 
 use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, Price, Quantity, QxError, Side,
@@ -34,8 +28,6 @@ struct Fixture {
     risk: RiskContext,
     /// (a) 规范上下文，字段与门面逐一对应。
     canonical: OrderRiskContext,
-    /// (c) 旧门禁入口的市场参考价。
-    reference_price: Option<Price>,
     expected_allowed: bool,
 }
 
@@ -97,6 +89,7 @@ fn fixture(case: &Case) -> Fixture {
     };
     let canonical = OrderRiskContext {
         available_margin_raw: Some(case.available_margin_raw),
+        projected_initial_margin_raw: None,
         reference_price,
         instrument_spec: Some(perpetual_spec()),
         max_order_notional_raw,
@@ -127,7 +120,6 @@ fn fixture(case: &Case) -> Fixture {
         position,
         risk,
         canonical,
-        reference_price,
         expected_allowed: case.expected_allowed,
     }
 }
@@ -155,21 +147,12 @@ fn assert_facade_matches_direct(fixture: &Fixture) {
     assert!(!direct.rule_set_version.is_empty());
 }
 
-/// (a)/(b) 与 (c) 的 allow/reject 与 violations 集合一致（忽略规则名前缀）。
-///
-/// (c) 走 [`RiskGate::check_with_spec`] 并传真实产品规格：`MaxNotionalRule` 缺规格即
-/// fail-closed（V13 R26），无规格的 `check_with_price` 会把"缺规格"当成一条拒绝，
-/// 与 (a)/(b) 的规则链结果不可比。两条回测生产路径同样是带规格调用。
+/// (a)/(b) 与完整上下文门禁 (c) 的 allow/reject 与 violations 集合一致。
 fn assert_gate_matches_canonical(fixture: &Fixture) {
     let direct =
         RiskEngine::evaluate_order_with_rules(&fixture.canonical, &fixture.order, &rule_set());
     let gate = RiskGate::from_rule_set(rule_set());
-    let gate_result = gate.check_with_spec(
-        &fixture.order,
-        &fixture.position,
-        fixture.reference_price,
-        Some(&perpetual_spec()),
-    );
+    let gate_result = gate.check_with_context(&fixture.order, &fixture.canonical);
     assert_eq!(gate_result.is_ok(), direct.allowed);
     let from_gate: Vec<String> = match gate_result {
         Ok(()) => Vec::new(),
@@ -277,7 +260,11 @@ fn reduce_only_invariant_agrees_across_all_three_entries() {
     assert_gate_matches_canonical(&fixture);
     // 无规格入口只能**多报**"缺规格"，绝不能**少报** reduce-only 那条。
     let without_spec = RiskGate::from_rule_set(rule_set())
-        .check_with_price(&fixture.order, &fixture.position, fixture.reference_price)
+        .check_with_price(
+            &fixture.order,
+            &fixture.position,
+            fixture.risk.reference_price,
+        )
         .expect_err("零持仓上的 reduce-only 卖单必须被拒绝，与入口是否带规格无关");
     let message = format!("{without_spec}");
     assert!(
@@ -287,35 +274,19 @@ fn reduce_only_invariant_agrees_across_all_three_entries() {
 }
 
 #[test]
-fn known_gap_account_level_margin_is_invisible_to_legacy_gate() {
-    // 现状记录（TODO）：deprecated `RiskGate` 的入口形状只有 `(Order, OrderRiskPosition)`，
-    // 看不到可用保证金，因此账户级保证金拒绝只在 (a)/(b) 出现。
-    // V13 R26 起产品规格可以带上（`check_with_spec`），这条差异已收窄到"账户级保证金"
-    // 一格：这里**刻意带上真实规格**，证明门禁缺的只有账户级保证金这一项输入。
-    // 回测路径接入配置化 `RuleSet` + `OrderRiskContext` 后，本用例应改为三条入口一致。
+fn account_margin_violation_agrees_across_all_three_entries() {
     let fixture = fixture(&Case {
         side: Side::Buy,
         qty_raw: SCALE,
         reduce_only: false,
-        // 1 张合约 @100、10x 杠杆需要 10；只给 5 → 账户级拒绝。
         available_margin_raw: 5 * SCALE,
         max_position_notional_raw: None,
         expected_allowed: false,
     });
     assert_facade_matches_direct(&fixture);
+    assert_gate_matches_canonical(&fixture);
     let direct =
         RiskEngine::evaluate_order_with_rules(&fixture.canonical, &fixture.order, &rule_set());
     assert_eq!(direct.violations.len(), 1);
     assert!(direct.violations[0].contains("订单初始保证金超过账户可用保证金"));
-    let gate = RiskGate::from_rule_set(rule_set());
-    assert!(
-        gate.check_with_spec(
-            &fixture.order,
-            &fixture.position,
-            fixture.reference_price,
-            Some(&perpetual_spec()),
-        )
-        .is_ok(),
-        "已知差异：旧门禁入口不携带账户级保证金"
-    );
 }

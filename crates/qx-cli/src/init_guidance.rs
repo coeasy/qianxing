@@ -12,7 +12,11 @@
 //!   worker」并以 2 退出。现在分三支：paper 印 `paper-check`，带行情夹具的印 `report --json`
 //!   （读上一条回测刚写出的摘要），连 BarFrame 都没复制的不印收尾行——宁缺不错。
 
-use super::*;
+use std::path::Path;
+
+use qx_runtime::RuntimeConfig;
+
+use crate::cli_args;
 
 /// init 生成的项目里那条回测命令：只承认"文件真的被复制进项目、入口真的读得动这份绑定"的组合。
 ///
@@ -52,12 +56,15 @@ pub(crate) fn init_backtest_step(
     Some(if bound_strategy(config) {
         format!("{program} backtest {} {frame}{spec_arg}", output.display())
     } else {
-        format!("{program} backtest builtin sma_cross {frame}{spec_arg}")
+        format!(
+            "{program} backtest builtin sma_cross {frame}{spec_arg} --config {}",
+            output.display()
+        )
     })
 }
 
 /// 这份运行时有没有绑定策略入口。`init_backtest_step` 与推荐流程的收尾行共用这一个谓词：
-/// 只有绑定运行时的回测会写 summary，`backtest builtin` 那一支只把结果印在屏幕上。
+/// 有绑定策略的项目走运行时策略入口；基础配置显式传给 builtin 入口，以保留项目数据目录与配置来源。
 fn bound_strategy(config: &RuntimeConfig) -> bool {
     let strategy = &config.strategy;
     strategy.builtin_strategy.is_some()

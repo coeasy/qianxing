@@ -11,6 +11,7 @@ pub mod ashare;
 pub mod backtest;
 pub mod cost;
 pub mod cost_rules;
+mod execution_attempt;
 pub mod fill;
 pub mod market_making;
 pub mod orderbook;
@@ -40,17 +41,22 @@ pub use self::cost::{
     TieredMargin, ZeroLatency,
 };
 pub use self::cost_rules::{ExecutionCostRules, DEFAULT_MAKER_BP, DEFAULT_TAKER_BP};
+pub(crate) use self::execution_attempt::ExecutionLiquidityEvidence;
+pub use self::execution_attempt::{ExecutionAttempt, ExecutionAttemptReason, FillEvaluation};
 pub use self::fill::{
-    BestPriceFillModel, DataTier, FillContext, FillModel, NextBarOpenFillModel,
-    OneTickSlippageFillModel, ProbabilisticFillModel, VolumeSensitiveFillModel,
+    BarVolumeParticipationLimit, BestPriceFillModel, DataTier, FillContext, FillModel,
+    FillModelDescriptor, NextBarOpenFillModel, OneTickSlippageFillModel, ProbabilisticFillModel,
+    VolumeSensitiveFillModel,
 };
 pub use self::market_making::{MarketMakingConfig, MarketMakingStrategy};
 pub use self::orderbook::{
-    BookLevel, DepthFrame, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
+    BookLevel, DepthFrame, OrderBookExecutionDescriptor, OrderBookExecutionModel,
+    OrderBookMatchingEngine, OrderBookSnapshot, QueuePositionDescriptor, QueuePositionModel,
 };
 pub use self::orderbook_backtest::{
     OrderBookBacktestConfig, OrderBookBacktestEngine, OrderBookBacktestReport,
     OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
+    QueuePositionSensitivityReport,
 };
 pub use self::orderbook_strategies::{
     DepthBarStrategy, NativeOrderBookStrategy, OrderBookActions, OrderBookStrategy,

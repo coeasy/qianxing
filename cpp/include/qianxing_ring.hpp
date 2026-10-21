@@ -60,8 +60,10 @@ public:
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
         if (result.file_ == INVALID_HANDLE_VALUE) {
+            const auto error = GetLastError();
             result.file_ = nullptr;
-            throw std::runtime_error("cannot open QXRB file");
+            throw std::runtime_error("cannot open QXRB file '" + path +
+                                     "' (Windows error " + std::to_string(error) + ")");
         }
         LARGE_INTEGER actual{};
         if (!GetFileSizeEx(result.file_, &actual) ||

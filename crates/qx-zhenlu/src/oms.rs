@@ -142,6 +142,11 @@ impl Oms {
         self.orders.values().cloned().collect()
     }
 
+    /// Borrow all orders without cloning the OMS snapshot.
+    pub fn all_orders_ref(&self) -> impl Iterator<Item = &Order> {
+        self.orders.values()
+    }
+
     pub fn active_order_ids(&self) -> Vec<u64> {
         self.orders
             .iter()

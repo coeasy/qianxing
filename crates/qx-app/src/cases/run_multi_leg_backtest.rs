@@ -119,11 +119,44 @@ pub(super) fn run_inner(
             ));
         }
     }
-    let data_fingerprint = format!(
-        "multi-bar:{:016x}:{:016x}",
-        primary.digest(),
-        reference.digest()
-    );
+    let primary_fingerprint = qx_data::fingerprint_bar_frame(&primary)
+        .map_err(|error| invalid(format!("primary BarFrame 内容指纹计算失败：{error}")))?;
+    let reference_fingerprint = qx_data::fingerprint_bar_frame(&reference)
+        .map_err(|error| invalid(format!("reference BarFrame 内容指纹计算失败：{error}")))?;
+    let dataset_quality = match (
+        spec.primary_dataset_manifest_path.as_deref(),
+        spec.reference_dataset_manifest_path.as_deref(),
+    ) {
+        (Some(primary_manifest), Some(reference_manifest)) => Some(serde_json::json!({
+            "primary": super::run_multi_market_manifest::verify_dataset_quality(
+                primary_manifest,
+                &spec.primary_bars_path,
+                &primary,
+                &primary_fingerprint,
+            )?,
+            "reference": super::run_multi_market_manifest::verify_dataset_quality(
+                reference_manifest,
+                &spec.reference_bars_path,
+                &reference,
+                &reference_fingerprint,
+            )?,
+        })),
+        (None, None) => None,
+        _ => return Err(invalid("多腿回测的数据质量清单必须成对提供")),
+    };
+    let data_fingerprint = if let Some(quality) = &dataset_quality {
+        format!(
+            "multi-bar:{primary_fingerprint}:{reference_fingerprint}:quality:{}:{}",
+            quality["primary"]["manifest_fingerprint"]
+                .as_str()
+                .unwrap_or_default(),
+            quality["reference"]["manifest_fingerprint"]
+                .as_str()
+                .unwrap_or_default(),
+        )
+    } else {
+        format!("multi-bar:{primary_fingerprint}:{reference_fingerprint}")
+    };
     let config_json = spec.to_json()?;
     let mut config_hasher = Fnv1a::new();
     config_hasher.write_text(&config_json);
@@ -180,6 +213,7 @@ pub(super) fn run_inner(
         .primary_initial_cash_raw
         .checked_add(spec.reference_initial_cash_raw)
         .ok_or_else(|| invalid("多腿共享账户初始本金溢出"))?;
+    let cash = BTreeMap::from([(spec.settlement_currency.clone(), initial_cash_raw)]);
     let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
@@ -191,8 +225,11 @@ pub(super) fn run_inner(
             (primary.instrument.to_string(), 0),
             (reference.instrument.to_string(), 0),
         ]),
-        cash: BTreeMap::from([(spec.settlement_currency.clone(), initial_cash_raw)]),
-        available_margin_raw: Some(initial_cash_raw),
+        available_margin_raw: crate::cases::strategy_available_margin_raw(
+            &cash,
+            &spec.settlement_currency,
+        ),
+        cash,
         risk_state: "multi-leg-backtest".into(),
     };
     let target_schedules = std::sync::Arc::new(std::sync::Mutex::new(TargetSchedules {
@@ -314,10 +351,10 @@ pub(super) fn run_inner(
         &reference_buckets,
     )
     .map_err(invalid)?;
-    let totals = crate::multi_leg_group_totals(&attribution.groups);
+    let totals = crate::multi_leg_group_totals(&attribution.groups).map_err(invalid)?;
     let leg_integrity = [
-        crate::multi_leg_leg_integrity(&primary_leg, &primary_buckets),
-        crate::multi_leg_leg_integrity(&reference_leg, &reference_buckets),
+        crate::multi_leg_leg_integrity(&primary_leg, &primary_buckets).map_err(invalid)?,
+        crate::multi_leg_leg_integrity(&reference_leg, &reference_buckets).map_err(invalid)?,
     ];
     let leg_integrity_json = leg_integrity
         .iter()
@@ -413,6 +450,7 @@ pub(super) fn run_inner(
         "fill_model": fill_model_name(spec.fill_model),
         "funding_bps": spec.funding_bps,
         "data_fingerprint": data_fingerprint,
+        "dataset_quality": dataset_quality,
         "config_hash": config_hash,
         "shared_result_hash": format!("{:016x}", portfolio_report.result_hash()),
         "shared_event_log": portfolio_report.event_log.events(),

@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "environment": "testnet",
+  "_comment": "Binance Spot 测试网络验收配置：执行与对账 worker 默认启用，凭据只从环境变量读取；tools/binance_testnet_acceptance.py 会覆盖 storage.data_dir 后使用本文件。",
+  "api": {
+    "bind": "127.0.0.1:18083",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-binance-testnet",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "scheduler",
+      "role": "scheduler",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "binance-market-testnet",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "binance-testnet",
+      "endpoint": "wss://stream.testnet.binance.vision/ws",
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-testnet",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance-testnet",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "binance-execution-main",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance-testnet",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_BINANCE_TESTNET_API_KEY",
+        "secret": "QX_BINANCE_TESTNET_API_SECRET"
+      },
+      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json"
+    },
+    {
+      "id": "binance-spread-recovery-main",
+      "role": "spread_recovery",
+      "enabled": false,
+      "account_id": "main",
+      "venue_id": "binance-testnet",
+      "endpoint": null,
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_BINANCE_TESTNET_API_KEY",
+        "secret": "QX_BINANCE_TESTNET_API_SECRET"
+      },
+      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json"
+    },
+    {
+      "id": "reconciler-main",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance-testnet",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": {
+        "api_key": "QX_BINANCE_TESTNET_API_KEY",
+        "secret": "QX_BINANCE_TESTNET_API_SECRET"
+      }
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "qianxing.scheduler.jobs.example.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "version": "testnet-acceptance-v1",
+    "max_orders": 10,
+    "account_id": "main",
+    "venue_id": "binance-testnet",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 0,
+    "risk_rules": {
+      "version": "testnet-acceptance-v1",
+      "max_qty_raw": 100000000000,
+      "max_notional_raw": null,
+      "no_short": true
+    }
+  },
+  "shutdown_timeout_ms": 30000
+}

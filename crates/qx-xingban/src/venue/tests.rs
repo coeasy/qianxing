@@ -50,6 +50,10 @@ fn pending_orders_hold_funding_until_filled() {
     let no_fill = Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE);
     assert!(engine.on_bar(&no_fill, no_fill.ts).is_empty());
     assert_eq!(engine.pending_funding_reservation_raw(), 100 * SCALE);
+    assert_eq!(
+        engine.execution_attempts()[0].reason,
+        ExecutionAttemptReason::LimitNotMarketable
+    );
 
     let fill = Bar::new(3, 50 * SCALE, 51 * SCALE, 49 * SCALE, 50 * SCALE, SCALE);
     assert_eq!(engine.on_bar(&fill, fill.ts).len(), 1);
@@ -68,6 +72,12 @@ fn partial_fills_release_only_the_filled_share_of_funding() {
     let second = engine.on_bar(&bar, bar.ts + 1);
     assert_eq!(second[0].qty.raw(), SCALE / 2);
     assert_eq!(engine.pending_funding_reservation_raw(), 25 * SCALE);
+    assert_eq!(engine.execution_attempts()[0].requested_qty_raw, 2 * SCALE);
+    assert_eq!(engine.execution_attempts()[0].filled_qty_raw, SCALE);
+    assert_eq!(
+        engine.execution_attempts()[0].reason,
+        ExecutionAttemptReason::ModelPartialFill
+    );
 }
 
 #[test]
@@ -94,6 +104,49 @@ fn order_fills_on_next_bar_open() {
     let fills = e.on_bar(&bar, 20);
     assert_eq!(fills.len(), 1);
     assert_eq!(fills[0].price.raw(), 100); // open 而非 close(105)
+    assert_eq!(e.execution_attempts().len(), 1);
+    assert_eq!(
+        e.execution_attempts()[0].reason,
+        ExecutionAttemptReason::Filled
+    );
+}
+
+#[test]
+fn bar_volume_participation_cap_is_shared_and_resets_for_the_next_bar() {
+    let model = crate::fill::BarVolumeParticipationLimit::new(
+        Box::new(crate::fill::NextBarOpenFillModel),
+        2_500,
+    )
+    .unwrap();
+    let mut engine = BarMatchingEngine::new(Box::new(model), Box::new(qx_core::ZeroFeeModel), 1);
+    engine.submit(market_order(100));
+    engine.submit(market_order(101));
+
+    let first_bar = Bar::new(
+        20,
+        100 * SCALE,
+        101 * SCALE,
+        99 * SCALE,
+        100 * SCALE,
+        10 * SCALE,
+    );
+    let first_fills = engine.on_bar(&first_bar, first_bar.ts);
+    assert_eq!(first_fills.len(), 1);
+    assert_eq!(first_fills[0].order_id, 100);
+    assert_eq!(first_fills[0].qty.raw(), 5 * SCALE / 2);
+
+    let second_bar = Bar::new(
+        21,
+        100 * SCALE,
+        101 * SCALE,
+        99 * SCALE,
+        100 * SCALE,
+        10 * SCALE,
+    );
+    let second_fills = engine.on_bar(&second_bar, second_bar.ts);
+    assert_eq!(second_fills.len(), 1);
+    assert_eq!(second_fills[0].order_id, 100);
+    assert_eq!(second_fills[0].qty.raw(), 5 * SCALE / 2);
 }
 
 /// 真实尺度下手续费不得截断为 0：10 单位 @100.0 = 1000.0 名义，taker 5bp = 0.5。

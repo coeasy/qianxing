@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "generated_from": [
+    "crates/qx-api/src/**/*.rs"
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/account/balances"
+    },
+    {
+      "method": "GET",
+      "path": "/account/ledger"
+    },
+    {
+      "method": "GET",
+      "path": "/account/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/account/positions"
+    },
+    {
+      "method": "GET",
+      "path": "/account/snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/account/snapshot/diff"
+    },
+    {
+      "method": "GET",
+      "path": "/account/snapshot/envelope"
+    },
+    {
+      "method": "GET",
+      "path": "/app/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/app/runs/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/app/strategies"
+    },
+    {
+      "method": "GET",
+      "path": "/control/audit"
+    },
+    {
+      "method": "GET",
+      "path": "/events"
+    },
+    {
+      "method": "GET",
+      "path": "/events/live"
+    },
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/ready"
+    },
+    {
+      "method": "GET",
+      "path": "/reconcile/reports"
+    },
+    {
+      "method": "GET",
+      "path": "/scheduler/runs"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/account-snapshot-v1"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/contract-matrix"
+    },
+    {
+      "method": "POST",
+      "path": "/app/backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/capabilities/providers/preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/app/compare-runs"
+    },
+    {
+      "method": "POST",
+      "path": "/app/depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/depth-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/live/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-account-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-account-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-account-depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-account-depth-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-leg-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-leg-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-market-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-market-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-market-depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-market-depth-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/paper/algo-executions/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/app/paper/algo-executions/get"
+    },
+    {
+      "method": "POST",
+      "path": "/app/paper/algo-executions/list"
+    },
+    {
+      "method": "POST",
+      "path": "/app/paper/algo-executions/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/paper/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/app/plan-algo-execution"
+    },
+    {
+      "method": "POST",
+      "path": "/app/plan-capital-allocation"
+    },
+    {
+      "method": "POST",
+      "path": "/app/plan-risk-parity"
+    },
+    {
+      "method": "POST",
+      "path": "/app/provider-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/provider-depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-depth-experiment"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-depth-experiment/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-experiment"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-experiment/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-leg-experiment"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-leg-experiment/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-market-depth-experiment"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-market-depth-experiment/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-market-experiment"
+    },
+    {
+      "method": "POST",
+      "path": "/app/run-multi-market-experiment/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/runs/{run_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/app/validate-dataset"
+    },
+    {
+      "method": "POST",
+      "path": "/app/verify"
+    },
+    {
+      "method": "POST",
+      "path": "/app/verify-depth"
+    },
+    {
+      "method": "POST",
+      "path": "/control/commands"
+    }
+  ]
+}

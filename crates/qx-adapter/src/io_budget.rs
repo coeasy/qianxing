@@ -1,55 +1,15 @@
-//! 子进程管道上的**带预算**写入（V11 N8）。
-//!
-//! `Write::write_all` 打在管道上是可能永远不返回的：对端不读、缓冲写满，调用线程
-//! 就卡在原地。三处生产调用点（CCXT Worker、策略 worker、事件 consumer handler）的
-//! "响应超时"判定都排在写之后——写一卡，那圈预算根本没机会开始，配置里的
-//! `timeout_ms` 于是只保护了读、没保护写。这里把写交给一颗线程，用带截止时间的
-//! channel 收它：预算内没收到结果就调用 `on_timeout`（生产里是杀掉子进程——管道
-//! 读端随之关闭，卡住的写线程自己以 `BrokenPipe` 收尾，不留一颗僵尸线程）。
+//! Compatibility export; the implementation lives in the transport-neutral `qx-process-io` crate.
 
-use std::io::Write;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
-
-/// 在 `timeout` 预算内写完 `payload` 并 flush。
-///
-/// 成功时把 writer 原样还回来，好让同一条子进程 stdin 继续复用；失败（写报错、
-/// 超出预算、写线程没交回结果）即视为这条管道不再归调用方掌控，返回 `Err` 且不
-/// 带回 writer——把手里的句柄置空即可，下一轮会走同一条"stdin 不可用"的错误出口。
-pub fn write_all_within<W: Write + Send + 'static>(
-    writer: W,
-    payload: Vec<u8>,
-    timeout: Duration,
-    on_timeout: impl FnOnce(),
-) -> Result<W, String> {
-    let (sender, receiver) = mpsc::channel();
-    thread::Builder::new()
-        .name("qx-pipe-writer".into())
-        .spawn(move || {
-            let mut writer = writer;
-            let result = writer.write_all(&payload).and_then(|_| writer.flush());
-            // 收信方可能已因超时先离开：那时 writer 随闭包一起丢弃，不做二次处理。
-            let _ = sender.send((result, writer));
-        })
-        .map_err(|error| format!("启动管道写线程失败: {error}"))?;
-    match receiver.recv_timeout(timeout) {
-        Ok((Ok(()), writer)) => Ok(writer),
-        Ok((Err(error), _)) => Err(format!("写入失败: {error}")),
-        Err(_) => {
-            on_timeout();
-            Err(format!("未在 {}ms 预算内写完", timeout.as_millis()))
-        }
-    }
-}
+pub use qx_process_io::{write_all_within, write_all_within_cancellable, CancellableWrite};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io;
+    use std::io::{self, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::Instant;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     /// 会一直收的管道：写侧不该被预算绊住。
     #[derive(Debug)]

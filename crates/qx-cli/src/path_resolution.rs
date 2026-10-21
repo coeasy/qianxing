@@ -1,6 +1,13 @@
 //! 路径解析：运行时相对路径、策略产物路径与显式绝对路径判定。
 
-use super::*;
+use crate::{
+    configured_event_log_names, read_runtime_config, resolve_worker_runtime_paths, runtime_path,
+};
+pub(crate) use qx_runtime::{
+    is_explicit_absolute_path, resolve_runtime_relative_path, resolve_strategy_runtime_paths,
+};
+use qx_runtime::{RuntimeConfig, StorageBackend, StrategyRuntimeConfig};
+use std::path::{Path, PathBuf};
 
 pub(crate) fn resolve_all_worker_runtime_paths(config: &mut RuntimeConfig, runtime_path: &Path) {
     for worker in &mut config.workers {
@@ -12,16 +19,6 @@ pub(crate) fn resolve_ccxt_config_path(runtime_path: &Path, configured: &str) ->
     resolve_runtime_relative_path(runtime_path, configured)
         .to_string_lossy()
         .into_owned()
-}
-
-pub(crate) fn is_explicit_absolute_path(configured: &str) -> bool {
-    let bytes = configured.as_bytes();
-    Path::new(configured).is_absolute()
-        || (bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'/' | b'\\'))
-        || configured.starts_with("\\\\")
 }
 
 /// `init` / `strategy init` 生成项目时，把 `storage.data_dir` 钉成项目目录下的绝对落点。
@@ -53,32 +50,6 @@ pub(crate) fn anchor_init_data_dir(document: &mut serde_json::Value, project_roo
         "data_dir".into(),
         serde_json::Value::String(anchored.to_string_lossy().into_owned()),
     );
-}
-
-pub(crate) fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
-    if is_explicit_absolute_path(configured) {
-        PathBuf::from(configured)
-    } else {
-        let parent = runtime_path.parent().unwrap_or_else(|| Path::new("."));
-        let configured_path = Path::new(configured);
-
-        // Runtime JSON 通常位于 deploy/ 下。兼容两种常见写法：
-        // `qianxing.foo.json` 与 `deploy/qianxing.foo.json`；后者在
-        // deploy/runtime.json 下直接 join 会错误地变成 deploy/deploy/。
-        // 只在配置首段恰好等于运行时目录名时剥离该冗余段，避免改变
-        // 其它目录布局的语义。
-        let mut components = configured_path.components();
-        let first = components.next();
-        let parent_name = parent.file_name().and_then(|value| value.to_str());
-        if let (Some(std::path::Component::Normal(first)), Some(parent_name)) = (first, parent_name)
-        {
-            if first == std::ffi::OsStr::new(parent_name) {
-                let remainder = components.as_path();
-                return parent.join(remainder);
-            }
-        }
-        parent.join(configured_path)
-    }
 }
 
 pub(crate) fn resolve_runtime_asset_path(
@@ -304,109 +275,6 @@ pub(crate) fn backtest_frame_from_config(runtime: &Path) -> Option<PathBuf> {
     let config = read_runtime_config(runtime).ok()?;
     let configured = config.strategy.bars_snapshot_path.as_deref()?;
     Some(resolve_runtime_relative_path(runtime, configured))
-}
-
-pub(crate) fn resolve_strategy_runtime_paths(
-    strategy: &mut StrategyRuntimeConfig,
-    runtime_path: &Path,
-) {
-    if let Some(configured) = strategy.target_snapshot_path.as_deref() {
-        strategy.target_snapshot_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.research_snapshot_path.as_deref() {
-        strategy.research_snapshot_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.dataset_bundle_path.as_deref() {
-        strategy.dataset_bundle_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    for configured in strategy.dataset_component_paths.values_mut() {
-        *configured = resolve_runtime_relative_path(runtime_path, configured)
-            .to_string_lossy()
-            .into_owned();
-    }
-    if let Some(configured) = strategy.bars_snapshot_path.as_deref() {
-        strategy.bars_snapshot_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.ashare_rules_path.as_deref() {
-        strategy.ashare_rules_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.ashare_actions_path.as_deref() {
-        strategy.ashare_actions_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.ashare_calendar_path.as_deref() {
-        strategy.ashare_calendar_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(configured) = strategy.builtin_reference_bars_snapshot_path.as_deref() {
-        strategy.builtin_reference_bars_snapshot_path = Some(
-            resolve_runtime_relative_path(runtime_path, configured)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    if let Some(executable) = strategy.external_executable.as_deref() {
-        let path_like = executable.contains('/')
-            || executable.contains('\\')
-            || executable.starts_with('.')
-            || Path::new(executable).is_absolute();
-        if path_like {
-            strategy.external_executable = Some(
-                resolve_runtime_relative_path(runtime_path, executable)
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        }
-    }
-    if let Some(module) = strategy.python_module.as_deref() {
-        let path_like = module.ends_with(".py") || module.contains('/') || module.contains('\\');
-        if path_like {
-            strategy.python_module = Some(
-                resolve_runtime_relative_path(runtime_path, module)
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        }
-    }
-    if let Some(library) = strategy.c_abi_library.as_deref() {
-        let path_like = library.contains('/')
-            || library.contains('\\')
-            || library.starts_with('.')
-            || Path::new(library).is_absolute();
-        if path_like {
-            strategy.c_abi_library = Some(
-                resolve_runtime_relative_path(runtime_path, library)
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        }
-    }
 }
 
 pub(crate) fn verify_strategy_artifact(strategy: &StrategyRuntimeConfig) -> Result<(), String> {

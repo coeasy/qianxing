@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "benchmark": "ashare_previous_close_dense_action_sweep",
+  "date": "2026-10-17",
+  "generated_at_utc": "2026-10-17T00:50:28Z",
+  "command": "cargo bench -p qx-cli --bench criterion_performance --offline -- ashare_ex_rights_daily_sweep --noplot",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)",
+    "benchmark_binary_sha256": "4d9ae2791008fa51f533627b2defdc1589966b7fdb53371105c61086abe57f8b"
+  },
+  "workload": {
+    "bars": [
+      1000,
+      8000,
+      64000
+    ],
+    "bars_per_session": 240,
+    "corporate_actions": 4096,
+    "action_type": "synthetic cash dividend, ordered by ex-date and evenly distributed over sessions",
+    "criterion_samples": 10,
+    "warmup_seconds": 1,
+    "measurement_seconds": 2,
+    "timed_operation": "AshareRuleConfig::previous_close_series",
+    "paired_output_equality_checked_before_timing": true,
+    "production_index_gate": "corporate_actions >= 1024 and bars >= 8000"
+  },
+  "results": [
+    {
+      "bars": 1000,
+      "legacy_daily_scan": {
+        "median_us": 14.174,
+        "ci95_us": [
+          13.672,
+          14.878
+        ]
+      },
+      "production_adaptive": {
+        "median_us": 13.048,
+        "ci95_us": [
+          12.87,
+          13.225
+        ]
+      }
+    },
+    {
+      "bars": 8000,
+      "legacy_daily_scan": {
+        "median_us": 82.253,
+        "ci95_us": [
+          81.257,
+          82.886
+        ]
+      },
+      "production_adaptive": {
+        "median_us": 41.303,
+        "ci95_us": [
+          40.91,
+          42.172
+        ]
+      }
+    },
+    {
+      "bars": 64000,
+      "legacy_daily_scan": {
+        "median_us": 874.685,
+        "ci95_us": [
+          863.532,
+          883.001
+        ]
+      },
+      "production_adaptive": {
+        "median_us": 407.741,
+        "ci95_us": [
+          401.777,
+          416.405
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic high-density action stress; not market data or a representative corporate-action frequency distribution.",
+    "Measures the previous-close preparation projection only, not the full backtest or end-to-end A-share profile.",
+    "The 1000-bar case takes the daily-scan fallback in both paths; Criterion samples show host noise and no performance claim is made for that size.",
+    "Does not verify T+1, board limits, exchange calendars, or production data quality."
+  ]
+}

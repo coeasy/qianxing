@@ -18,10 +18,8 @@ capabilities_registry: maturity/capabilities.yaml
 
 # 翻转规则的**唯一措辞**：三处必须同源——本文件、方案 §4、以及验收脚本写进 `result.json` 的那句。
 # 判据按"剥掉 Markdown 反引号后的子串"核对，所以方案里可以继续给关键词加反引号；
-# 同时判据会去核脚本的**代码**真实现了这条（含 live-check 豁免），光改文字不算。
-# 路线图 §4 把同一条转述成「除 `live-check` 外全部阶段退出码为 0」（少一个"之"字）——那是**转述**
-# 而不是第三份口径，判据只钉方案 §4 与脚本这两处（方案自称"脚本与文档同口径"的那两处）。
-flip_rule: "outcome=pass 且除 live-check 之外全部阶段退出码为 0"
+# 唯一的非零退出码例外是经确认的重复 request_id 幂等拒绝，live-check 则必须通过只读安全断言。
+flip_rule: "outcome=pass 且全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
 flip_rule_rest: "skipped/fail 一律保持 false，且必须连同结果包一起归档"
 
 # 四档证据的翻真依据。前两档由源码与本地测试翻真——它们不是任何形式的生产批准。

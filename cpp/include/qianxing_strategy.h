@@ -2,7 +2,7 @@
 #define QIANXING_STRATEGY_H
 
 /*
- * Qianxing Strategy API v1
+ * Qianxing Strategy API v1, C ABI v2
  *
  * Stable C ABI for C/C++ strategies.  The strategy process never receives
  * credentials or a venue handle.  It only reads a snapshot and returns
@@ -26,6 +26,7 @@ extern "C" {
 #endif
 
 #define QX_STRATEGY_API_VERSION 1u
+#define QX_STRATEGY_ABI_VERSION 2u
 
 /* Portable representation of Rust i128.  The numeric value is
  * (hi << 64) | lo in two's-complement form. */
@@ -101,7 +102,9 @@ typedef struct qx_market_event {
 
 typedef struct qx_order_intent {
     uint64_t intent_id;
+    /* UTF-8 byte lengths exclude any optional trailing NUL terminator. */
     const char* instrument;
+    size_t instrument_len;
     qx_order_side side;
     qx_raw128 qty_raw;
     qx_raw128 limit_price_raw;
@@ -109,18 +112,24 @@ typedef struct qx_order_intent {
     uint8_t reduce_only;
     uint8_t post_only;
     const char* position_side; /* net, long or short; null means runtime default */
+    size_t position_side_len;
 } qx_order_intent;
 
 typedef struct qx_strategy_decision {
     uint32_t schema_version;
+    /* UTF-8 byte lengths exclude any optional trailing NUL terminator. */
     const char* request_id;
+    size_t request_id_len;
     const char* strategy_id;
+    size_t strategy_id_len;
     uint64_t signal_id;
     qx_raw128 confidence;
     int32_t priority;
     uint64_t expires_at;
     qx_order_intent* intents;
     size_t intents_len;
+    /* Plugin-declared readable element capacity of intents; must be >= len. */
+    size_t intents_capacity;
 } qx_strategy_decision;
 
 typedef void* qx_strategy_handle;

@@ -46,9 +46,9 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -80,14 +80,20 @@ ACCOUNT_CASHFLOW = "AccountCashflow"
 
 
 def default_binary() -> Path:
-    for candidate in (
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli.exe",
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli",
-        WORKSPACE / "target" / "debug" / "qx-cli.exe",
-        WORKSPACE / "target" / "debug" / "qx-cli",
-    ):
-        if candidate.is_file():
-            return candidate
+    candidates = [
+        WORKSPACE / relative
+        for relative in (
+            ".cargo-target/debug/qx-cli.exe",
+            ".cargo-target/debug/qx-cli",
+            "target/debug/qx-cli.exe",
+            "target/debug/qx-cli",
+        )
+    ]
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    if existing:
+        # Multiple Cargo target directories may be present; never accept an
+        # older cached executable while a newer source build is available.
+        return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
     raise SystemExit("找不到被测 binary：先 `cargo build -p qx-cli`，或用 --binary 指定")
 
 
@@ -330,6 +336,21 @@ def write_record(legs: list[dict[str, Any]], binary: Path) -> None:
     )
 
 
+def prepare_acceptance_root(requested: Path | None) -> Path:
+    """Use a fresh reviewable workspace directory without deleting caller data."""
+    if requested is None:
+        parent = WORKSPACE / "target"
+        parent.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="qianxing-paper-acceptance-", dir=parent))
+
+    root = requested.resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as error:
+        raise SystemExit(f"验收根目录已存在，为保护已有数据请指定一个新目录：{root}") from error
+    return root
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Paper 轨验收（无需交易所凭据）")
     parser.add_argument("--binary", type=Path, default=None)
@@ -338,7 +359,7 @@ def main() -> int:
         "--root",
         type=Path,
         default=None,
-        help="验收工作根目录（默认落在系统临时目录下，跑完保留以便复核）",
+        help="验收工作根目录（默认在仓库 target/ 下创建唯一目录；显式目录必须不存在）",
     )
     parser.add_argument(
         "--dry-run",
@@ -351,10 +372,8 @@ def main() -> int:
     if not runtime.is_file():
         raise SystemExit(f"运行时配置不在盘：{runtime}")
 
-    root = args.root or Path(os.environ.get("TEMP", "/tmp")) / "qianxing-paper-acceptance"
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
+    root = prepare_acceptance_root(args.root)
+    print(f"验收工作目录：{root}")
 
     legs = []
     for label in ("a", "b"):

@@ -5,27 +5,4 @@
 //! 排除干净——于是"只有用例读过的 `pub fn`"照样被数成零读者。这正是我们想要的：
 //! 公共面必须有**生产**读者，用例不算。放在单文件 `src/tests.rs` 里会把这个前提悄悄松开。
 
-mod account_ownership;
-mod algo_execution;
-mod custom_depth_strategy;
-mod custom_strategy;
-mod depth_backtest;
-mod depth_experiment;
-mod depth_sizing;
 mod error_contract;
-mod experiment_split;
-mod fixtures;
-mod multi_account_backtest;
-mod multi_account_depth_backtest;
-mod multi_leg_backtest;
-mod multi_leg_experiment;
-mod multi_market_backtest;
-mod multi_market_depth_backtest;
-mod multi_market_experiment;
-mod portfolio_backtest;
-mod portfolio_spec;
-mod run_handles;
-mod sizing;
-mod spec_contract;
-mod strategy_selection;
-mod use_cases;

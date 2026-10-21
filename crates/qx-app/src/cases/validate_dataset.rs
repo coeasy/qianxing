@@ -55,7 +55,15 @@ fn validate_dataset_inner(spec: &DatasetSpec) -> Result<DatasetVerdict, AppError
         )
     })?;
     let rows = frame.len();
-    let content_fingerprint = format!("barframe:{:016x}", frame.digest());
+    let content_fingerprint = format!(
+        "barframe:{}",
+        qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("BarFrame 内容指纹计算失败：{error}"),
+            )
+        })?
+    );
     let mut gaps: Vec<String> = Vec::new();
     if rows < MIN_BACKTEST_BARS {
         gaps.push(format!(

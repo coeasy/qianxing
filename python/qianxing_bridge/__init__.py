@@ -12,13 +12,9 @@ from typing import Any
 
 # 子模块入口（T2-2）：`app` 是应用层用例的 Python 门面，`native` 是 PyO3 扩展桥。
 # 这里只 import 模块、不触发扩展加载——`native._extension()` 是按需加载的，
-# 扩展没构建时 `import qianxing_bridge` 仍然可用（纯 Python 的那半照样能跑）。
+# 扩展没构建时 `import qianxing_bridge` 仍然可用；依赖 Rust 契约的 digest 与变换清单
+# 在调用时会明确提示构建扩展，不在 Python 再藏一份哈希算法。
 from . import app, native  # noqa: F401
-
-
-_FNV_OFFSET = 0xCBF29CE484222325
-_FNV_PRIME = 0x100000001B3
-_U64_MASK = (1 << 64) - 1
 
 #: BarFrame JSON 契约版本。落盘/交换文档在顶层显式携带该值，Rust 侧
 #: （``qx-data`` 的 ``JsonBarFrameProvider``）据此切换兼容分支与严格模式：
@@ -54,30 +50,6 @@ def read_bar_frame_schema_version(payload: "str | dict[str, Any]") -> int:
     if raw < 0 or raw > BAR_FRAME_SCHEMA_VERSION:
         raise ValueError(f"unsupported BarFrame schema_version: {raw}")
     return raw
-
-
-def _fnv_write_byte(value: int, byte: int) -> int:
-    return ((value ^ byte) * _FNV_PRIME) & _U64_MASK
-
-
-def _fnv_write_u64(value: int, number: int) -> int:
-    for byte in (number & _U64_MASK).to_bytes(8, "little"):
-        value = _fnv_write_byte(value, byte)
-    return value
-
-
-def _fnv_write_i128(value: int, number: int) -> int:
-    for byte in number.to_bytes(16, "little", signed=True):
-        value = _fnv_write_byte(value, byte)
-    return value
-
-
-def _fnv_write_text(value: int, text: str) -> int:
-    encoded = text.encode("utf-8")
-    value = _fnv_write_u64(value, len(encoded))
-    for byte in encoded:
-        value = _fnv_write_byte(value, byte)
-    return value
 
 
 @dataclass(frozen=True)
@@ -201,22 +173,8 @@ class BarFrame:
         )
 
     def digest(self) -> int:
-        value = _FNV_OFFSET
-        value = _fnv_write_text(value, self.instrument)
-        value = _fnv_write_text(value, self.source)
-        value = _fnv_write_u64(value, len(self.ts))
-        for columns in zip(
-            self.ts,
-            self.open_raw,
-            self.high_raw,
-            self.low_raw,
-            self.close_raw,
-            self.volume_raw,
-        ):
-            value = _fnv_write_u64(value, columns[0])
-            for column in columns[1:]:
-                value = _fnv_write_i128(value, column)
-        return value
+        """Return the Rust BarFrame digest through the native compatibility bridge."""
+        return native.frame_digest(self.to_json())
 
     def select_time(self, start: int, end: int) -> "BarFrame":
         if start > end:

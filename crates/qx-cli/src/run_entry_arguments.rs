@@ -9,6 +9,19 @@
 
 use crate::*;
 
+type RunReportArguments = (
+    PathBuf,
+    bool,
+    bool,
+    bool,
+    Option<PathBuf>,
+    Vec<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+    Option<PathBuf>,
+);
+
 /// 读一条单配置文件入口的参数：`(配置文件路径, 是否要机器可读输出)`。
 ///
 /// `json_output` 是逐入口的能力位，不是调用方的偏好：外层不给它生成 JSON 时，
@@ -45,12 +58,17 @@ pub(crate) fn run_entry_arguments(
 pub(crate) fn run_report_entry_arguments(
     arguments: &[String],
     default: impl FnOnce() -> PathBuf,
-) -> Result<(PathBuf, bool, bool, bool, Option<PathBuf>), String> {
+) -> Result<RunReportArguments, String> {
     let mut path: Option<&str> = None;
     let mut output = None;
     let mut json = false;
     let mut html = false;
     let mut evidence = false;
+    let mut against = Vec::new();
+    let mut benchmark_bars = None;
+    let mut benchmark_calendar = None;
+    let mut benchmark_csv = None;
+    let mut xlsx = None;
     let mut values = arguments.iter().skip(1);
     while let Some(value) = values.next() {
         match value.as_str() {
@@ -60,6 +78,50 @@ pub(crate) fn run_report_entry_arguments(
             "--html" => html = true,
             "--evidence" if evidence => return Err(run_usage("report 的 --evidence 只能指定一次")),
             "--evidence" => evidence = true,
+            "--against" => {
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage("report --against 需要一个 summary.json 路径"));
+                };
+                against.push(PathBuf::from(value));
+            }
+            "--benchmark-bars" => {
+                if benchmark_bars.is_some() {
+                    return Err(run_usage("report 的 --benchmark-bars 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage("report --benchmark-bars 需要一个 BarFrame 路径"));
+                };
+                benchmark_bars = Some(PathBuf::from(value));
+            }
+            "--benchmark-csv" => {
+                if benchmark_csv.is_some() {
+                    return Err(run_usage("report 的 --benchmark-csv 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage("report --benchmark-csv 需要一个 CSV 路径"));
+                };
+                benchmark_csv = Some(PathBuf::from(value));
+            }
+            "--benchmark-calendar" => {
+                if benchmark_calendar.is_some() {
+                    return Err(run_usage("report 的 --benchmark-calendar 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage(
+                        "report --benchmark-calendar 需要一个交易日历 JSON 路径",
+                    ));
+                };
+                benchmark_calendar = Some(PathBuf::from(value));
+            }
+            "--xlsx" => {
+                if xlsx.is_some() {
+                    return Err(run_usage("report 的 --xlsx 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage("report --xlsx 需要一个 .xlsx 路径"));
+                };
+                xlsx = Some(PathBuf::from(value));
+            }
             "--output" | "-o" => {
                 if output.is_some() {
                     return Err(run_usage("report 的 --output 只能指定一次"));
@@ -89,6 +151,55 @@ pub(crate) fn run_report_entry_arguments(
                 }
                 output = Some(PathBuf::from(path));
             }
+            value if value.starts_with("--against=") => {
+                let path = value.trim_start_matches("--against=");
+                if path.is_empty() {
+                    return Err(run_usage("report --against 需要一个 summary.json 路径"));
+                }
+                against.push(PathBuf::from(path));
+            }
+            value if value.starts_with("--benchmark-bars=") => {
+                if benchmark_bars.is_some() {
+                    return Err(run_usage("report 的 --benchmark-bars 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--benchmark-bars=");
+                if path.is_empty() {
+                    return Err(run_usage("report --benchmark-bars 需要一个 BarFrame 路径"));
+                }
+                benchmark_bars = Some(PathBuf::from(path));
+            }
+            value if value.starts_with("--benchmark-csv=") => {
+                if benchmark_csv.is_some() {
+                    return Err(run_usage("report 的 --benchmark-csv 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--benchmark-csv=");
+                if path.is_empty() {
+                    return Err(run_usage("report --benchmark-csv 需要一个 CSV 路径"));
+                }
+                benchmark_csv = Some(PathBuf::from(path));
+            }
+            value if value.starts_with("--benchmark-calendar=") => {
+                if benchmark_calendar.is_some() {
+                    return Err(run_usage("report 的 --benchmark-calendar 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--benchmark-calendar=");
+                if path.is_empty() {
+                    return Err(run_usage(
+                        "report --benchmark-calendar 需要一个交易日历 JSON 路径",
+                    ));
+                }
+                benchmark_calendar = Some(PathBuf::from(path));
+            }
+            value if value.starts_with("--xlsx=") => {
+                if xlsx.is_some() {
+                    return Err(run_usage("report 的 --xlsx 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--xlsx=");
+                if path.is_empty() {
+                    return Err(run_usage("report --xlsx 需要一个 .xlsx 路径"));
+                }
+                xlsx = Some(PathBuf::from(path));
+            }
             value if value.starts_with('-') => {
                 return Err(run_usage(&format!("report 不接受旗标 {value}")));
             }
@@ -96,12 +207,22 @@ pub(crate) fn run_report_entry_arguments(
             value => {
                 return Err(run_usage(&format!(
                     "report 只接受一个可选路径，不接受 {value}"
-                )))
+                )));
             }
         }
     }
     if output.is_some() && !html {
         return Err(run_usage("report --output 必须与 --html 一起使用"));
+    }
+    if benchmark_csv.is_some() && benchmark_bars.is_none() {
+        return Err(run_usage(
+            "report --benchmark-csv 必须与 --benchmark-bars 一起使用",
+        ));
+    }
+    if benchmark_calendar.is_some() && benchmark_bars.is_none() {
+        return Err(run_usage(
+            "report --benchmark-calendar 必须与 --benchmark-bars 一起使用",
+        ));
     }
     Ok((
         path.map(PathBuf::from).unwrap_or_else(default),
@@ -109,6 +230,11 @@ pub(crate) fn run_report_entry_arguments(
         html,
         evidence,
         output,
+        against,
+        benchmark_bars,
+        benchmark_calendar,
+        benchmark_csv,
+        xlsx,
     ))
 }
 

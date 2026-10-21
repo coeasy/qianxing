@@ -9,8 +9,10 @@
 有意义**；而本仓的主用法是回测与 Paper 闭环，它一条凭据都不用。把两条轨混在一张表里，
 会让「实盘待外部证据」读成「整体未落地」——这正是 P0-1 卡住的那一格。
 
-本脚本把回测轨做成**可复现的验收**：结论落进 `maturity/backtest_acceptance.yaml`
-（与 `maturity/evidence/**` 不同，**这份是仓库资产**，因为它是"无需凭据"这件事本身的证据）。
+本脚本把回测轨做成**可复现的验收**：币圈示例结论落进 `maturity/backtest_acceptance.yaml`，
+A 股示例结论落进 `maturity/ashare_example_backtest_acceptance.yaml`（均为仓库资产，因为它们是
+"无需凭据"和两条市场规则入口可重复运行的证据）。A 股示例记录只证明仓内示例数据可重复，
+不代表真实行情或完整 `ashare-research` profile 已测量。
 
 ## 判据
 
@@ -54,6 +56,7 @@ from typing import Any
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 RECORD = WORKSPACE / "maturity" / "backtest_acceptance.yaml"
+ASHARE_EXAMPLE_RECORD = WORKSPACE / "maturity" / "ashare_example_backtest_acceptance.yaml"
 
 EXIT_FAILURE = 2
 LEG_BUDGET_SECONDS = 300
@@ -76,20 +79,32 @@ BACKTEST_RESULT_HASH = re.compile(r"\[Strategy · Backtest\].*?result_hash=(\S+)
 # 跨目录归一化时要抹掉的两样（都是 `storage.data_dir` 绝对路径的下游）：内容寻址的
 # `config_hash`，以及由它派生的产物文件名后缀 `...-<16 hex>.<kind>`。
 CONFIG_HASH = re.compile(r'"config_hash":"[0-9a-f]{64}"')
+RUN_ID_CONFIG_HASH = re.compile(
+    r'("run_id":"strategy-backtest:[^":]+:[^":]+:)[0-9a-f]{64}(:)'
+)
+ARTIFACT_CONFIG_FINGERPRINT = re.compile(
+    r"(?<=_)[0-9a-f]{64}(?=_[0-9a-f]{24}-[0-9a-f]{16})"
+)
 ARTIFACT_STEM = re.compile(
-    r"-[0-9a-f]{16}\.(summary\.json|equity\.csv|fills\.csv|record\.json|run\.json)"
+    r"-[0-9a-f]{16}(?:\.v7)?\.(summary\.json|equity\.csv|fills\.csv|record\.json|run\.json)"
 )
 
 
 def default_binary() -> Path:
-    for candidate in (
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli.exe",
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli",
-        WORKSPACE / "target" / "debug" / "qx-cli.exe",
-        WORKSPACE / "target" / "debug" / "qx-cli",
-    ):
-        if candidate.is_file():
-            return candidate
+    candidates = [
+        WORKSPACE / relative
+        for relative in (
+            ".cargo-target/debug/qx-cli.exe",
+            ".cargo-target/debug/qx-cli",
+            "target/debug/qx-cli.exe",
+            "target/debug/qx-cli",
+        )
+    ]
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    if existing:
+        # Multiple Cargo target directories may be present; never accept an
+        # older cached executable while a newer source build is available.
+        return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
     raise SystemExit("找不到被测 binary：先 `cargo build -p qx-cli`，或用 --binary 指定")
 
 
@@ -133,6 +148,10 @@ def sha256_normalized(path: Path, root: Path) -> str:
     for variant in {str(root), str(root).replace("\\", "/"), escaped}:
         text = text.replace(variant, "<ROOT>")
     text = CONFIG_HASH.sub('"config_hash":"<CONFIG_HASH>"', text)
+    # The immutable strategy run ID embeds the same path-derived fingerprint;
+    # normalize that segment while retaining its result identity suffix.
+    text = RUN_ID_CONFIG_HASH.sub(r"\1<CONFIG_HASH>\2", text)
+    text = ARTIFACT_CONFIG_FINGERPRINT.sub("<CONFIG_HASH>", text)
     text = ARTIFACT_STEM.sub(r"-<CONFIG_HASH>.\1", text)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -167,7 +186,7 @@ def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
         "run_manifest": manifest_path,
     }
     record_path = manifest_path.with_name(
-        manifest_path.name.replace(".run.json", ".record.json")
+        manifest_path.name.replace(".run.json", ".v7.record.json")
     )
     for path in (*paths.values(), record_path):
         if not path.is_file():
@@ -186,14 +205,20 @@ def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
     }
 
 
-def backtest(binary: Path, project: Path, cwd: Path) -> dict[str, Any]:
+def backtest(
+    binary: Path,
+    project: Path,
+    cwd: Path,
+    bars_name: str,
+    market_spec_name: str,
+) -> dict[str, Any]:
     code, output = run(
         [
             str(binary),
             "backtest",
             str(project / "qianxing.runtime.json"),
-            str(project / "qianxing.bar-frame.example.json"),
-            str(project / "qianxing.binance.spot.spec.json"),
+            str(project / bars_name),
+            str(project / market_spec_name),
         ],
         cwd,
     )
@@ -202,20 +227,34 @@ def backtest(binary: Path, project: Path, cwd: Path) -> dict[str, Any]:
     return snapshot_from_output(output, project)
 
 
-def one_leg(binary: Path, label: str) -> dict[str, Any]:
+def one_leg(binary: Path, label: str, scenario: str) -> dict[str, Any]:
     """独立目录里建项目，然后**同目录跑两轮** `backtest`。"""
-    root = Path(os.environ.get("TEMP", "/tmp")) / f"qianxing-backtest-acceptance-{label}"
+    # Keep the absolute path short: Windows' default Python builds may still
+    # reject Path.is_file() for the long content-addressed run filenames even
+    # when Rust has successfully written them. The workspace target directory
+    # is also writable on locked-down Windows hosts where %TEMP% ACLs vary.
+    root = WORKSPACE / "target" / "ba" / label
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)
     project = root / "project"
 
-    code, output = run([str(binary), "quickstart", str(project)], root)
+    if scenario == "crypto":
+        setup = [str(binary), "quickstart", str(project)]
+        bars_name = "qianxing.bar-frame.example.json"
+        market_spec_name = "qianxing.binance.spot.spec.json"
+    elif scenario == "ashare-example":
+        setup = [str(binary), "init", str(project / "qianxing.runtime.json"), "--profile", "ashare"]
+        bars_name = "qianxing.ashare.bar-frame.example.json"
+        market_spec_name = "qianxing.ashare.spot.spec.json"
+    else:
+        raise ValueError(f"unknown backtest acceptance scenario: {scenario}")
+    code, output = run(setup, root)
     if code != 0:
-        raise SystemExit(f"[{label}] quickstart 以 {code} 退出：\n{output}")
+        raise SystemExit(f"[{label}] 项目初始化以 {code} 退出：\n{output}")
 
-    first = backtest(binary, project, root)
-    second = backtest(binary, project, root)
+    first = backtest(binary, project, root, bars_name, market_spec_name)
+    second = backtest(binary, project, root, bars_name, market_spec_name)
     status = read_status(binary, project / "qianxing.runtime.json", root)
     return {
         "label": label,
@@ -280,12 +319,12 @@ def compare_no_credentials(legs: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
-def write_record(legs: list[dict[str, Any]], binary: Path) -> None:
+def write_record(legs: list[dict[str, Any]], binary: Path, record_path: Path, scenario: str) -> None:
     first = legs[0]["first"]
     contents = "\n".join(
         f"  {kind}: {digest}" for kind, digest in sorted(first["contents"].items())
     )
-    RECORD.write_text(
+    record_path.write_text(
         "# 回测轨验收记录（P0-1）——由 tools/backtest_acceptance.py 生成，请勿手改。\n"
         "#\n"
         "# 这条轨**不需要任何交易所凭据**：它是本仓主用法（回测 + Paper）的验收边界。\n"
@@ -293,6 +332,7 @@ def write_record(legs: list[dict[str, Any]], binary: Path) -> None:
         "# 那两档只对需要外部 venue 的能力有意义，证据在 maturity/evidence/testnet|production/。\n"
         "schema_version: 1\n"
         "kind: backtest-acceptance\n"
+        f"scenario: {scenario}\n"
         "outcome: passed\n"
         "generated_by: tools/backtest_acceptance.py\n"
         f"generated_at_unix: {int(time.time())}\n"
@@ -321,29 +361,50 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="只跑判据、不写 maturity/backtest_acceptance.yaml",
+        help="只跑币圈与 A 股示例判据、不写两份验收记录",
     )
     args = parser.parse_args()
     binary = args.binary or default_binary()
 
-    legs = [one_leg(binary, "a"), one_leg(binary, "b")]
-    problems = (
-        [p for leg in legs for p in compare_reruns(leg)]
-        + compare_independent(legs)
-        + compare_no_credentials(legs)
-    )
+    scenarios = {
+        "crypto-example": [
+            one_leg(binary, "crypto-a", "crypto"),
+            one_leg(binary, "crypto-b", "crypto"),
+        ],
+        "ashare-example": [
+            one_leg(binary, "ashare-a", "ashare-example"),
+            one_leg(binary, "ashare-b", "ashare-example"),
+        ],
+    }
+    problems = [
+        problem
+        for legs in scenarios.values()
+        for problem in (
+            [p for leg in legs for p in compare_reruns(leg)]
+            + compare_independent(legs)
+            + compare_no_credentials(legs)
+        )
+    ]
     if problems:
         print("回测轨验收未通过（fail closed，不写记录）：")
         for problem in problems:
             print(f"  x {problem}")
         return EXIT_FAILURE
 
-    print(f"回测轨验收通过：result_hash={legs[0]['first']['result_hash']}")
-    print(f"  产物 {len(legs[0]['first']['contents'])} 份；同目录重跑逐格相等、两个独立目录内容相等")
+    for scenario, legs in scenarios.items():
+        print(f"回测轨验收通过 [{scenario}]：result_hash={legs[0]['first']['result_hash']}")
+        print(f"  产物 {len(legs[0]['first']['contents'])} 份；同目录重跑逐格相等、两个独立目录内容相等")
     print(f"  凭据：不需要（子进程环境已摘掉 {'/'.join(CREDENTIAL_ENV_PREFIXES)}）")
     if not args.dry_run:
-        write_record(legs, binary)
+        write_record(scenarios["crypto-example"], binary, RECORD, "crypto-example")
+        write_record(
+            scenarios["ashare-example"],
+            binary,
+            ASHARE_EXAMPLE_RECORD,
+            "ashare-example",
+        )
         print(f"已写入 {RECORD.relative_to(WORKSPACE).as_posix()}")
+        print(f"已写入 {ASHARE_EXAMPLE_RECORD.relative_to(WORKSPACE).as_posix()}")
     return 0
 
 

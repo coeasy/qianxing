@@ -1,70 +1,32 @@
 //! 调度器：UTC tick 归一、调度状态装载、到期作业分派，以及实时策略作业的规格构造。
 
-use super::*;
+use std::path::{Path, PathBuf};
 
-pub(crate) fn utc_schedule_tick(timestamp_ms: u64) -> (String, ScheduleTick) {
-    let seconds = timestamp_ms / 1_000;
-    let days = (seconds / 86_400) as i64;
-    let seconds_in_day = seconds % 86_400;
-    let hour = (seconds_in_day / 3_600) as u8;
-    let minute = ((seconds_in_day % 3_600) / 60) as u8;
-    let (year, month, day) = civil_from_days(days);
-    let weekday = (days + 4).rem_euclid(7) as u8;
-    (
-        format!("{year:04}{month:02}{day:02}"),
-        ScheduleTick {
-            minute,
-            hour,
-            day,
-            month,
-            weekday,
-        },
-    )
-}
+use qx_runtime::{RuntimeConfig, StrategyRuntimeConfig, WorkerRole};
+use qx_scheduler::{
+    utc_schedule_tick, validate_job_owners, JobSpec, JobStatus, LiveStrategyJobInput, ScheduleTick,
+    Scheduler,
+};
+use qx_storage::JsonStateStore;
 
-// Howard Hinnant 的 civil-from-days 算法；调度统一使用 UTC，避免把本机时区
-// 隐式带入 RunManifest 和 Cron 判定。
-pub(crate) fn civil_from_days(days: i64) -> (i32, u8, u8) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if month <= 2 { 1 } else { 0 };
-    (year as i32, month as u8, day as u8)
-}
+use crate::{
+    build_identity, lease_clock, live_strategy_snapshot_digest, resolve_runtime_relative_path,
+    runtime_path, ConfiguredJobQueue,
+};
 
 pub(crate) fn scheduler_manifest(
     worker_id: &str,
     trading_day: &str,
     now: u64,
 ) -> qx_core::RunManifest {
-    qx_core::RunManifest {
-        run_id: format!("{worker_id}-{trading_day}-{now}"),
-        code_commit: build_identity::BUILD_REVISION.into(),
-        config_hash: "runtime-scheduler-v1".into(),
-        data_fingerprint: format!("scheduler:{trading_day}"),
-        input_components: BTreeMap::new(),
-        clock_start: now,
-        clock_end: now,
-        global_seed: 0,
-        determinism_mode: true,
-        result_hash: format!("scheduler-{now}"),
-        strategy_version: "scheduler-dispatch-v1".into(),
-        instrument_spec_version: "runtime-v1".into(),
-        model_fingerprint: "scheduler-dispatch".into(),
-        input_event_hash: format!("input-{now}"),
-        output_event_hash: format!("output-{now}"),
-        runtime_version: build_identity::RUNTIME_VERSION.into(),
-    }
+    qx_scheduler::scheduler_manifest(
+        worker_id,
+        trading_day,
+        now,
+        build_identity::BUILD_REVISION,
+        build_identity::RUNTIME_VERSION,
+    )
 }
-
-/// 实时策略每根闭合 Bar 的作业超时；同时是 `JobRun.deadline_ts` 的推算口径。
-pub(crate) const LIVE_STRATEGY_TIMEOUT_SECONDS: u64 = 60;
 
 /// 实时策略 worker 每一根闭合 Bar 对应的作业规格与运行记录。
 ///
@@ -80,44 +42,16 @@ pub(crate) fn live_strategy_job(
     environment: &str,
 ) -> (JobSpec, qx_scheduler::JobRun) {
     let trading_day = utc_schedule_tick(now).0;
-    let job = JobSpec {
-        job_id: format!("live-strategy:{worker_id}"),
-        job_version: strategy.version.clone(),
-        owner: worker_id.into(),
-        enabled: true,
-        trigger: Trigger::Manual,
-        window: JobWindow::Any,
-        depends_on: Vec::new(),
-        input_refs: vec![format!("barframe:{data_fingerprint:016x}")],
-        output_refs: vec!["strategy-submit-order".into()],
-        timeout_seconds: LIVE_STRATEGY_TIMEOUT_SECONDS,
-        retry_policy: RetryPolicy::default(),
-        concurrency_key: format!(
-            "live-strategy:{}",
-            strategy.instrument.as_deref().unwrap_or("")
-        ),
-        idempotency_key: format!("barframe:{data_fingerprint:016x}"),
-        permission_scope: "strategy".into(),
-        audit_reason: "live-closed-bar".into(),
-        dry_run: environment.eq_ignore_ascii_case("paper"),
-    };
-    let run_id = job.stable_key(&trading_day);
-    // JobRun 的时间戳属于租约域（与 `start_run_at` 写出的记录同一口径），因此这里必须
-    // 用秒；否则同一份队列里会同时存在"按秒比较"和"按毫秒填写"的 deadline。
-    let lease_now = lease_clock(now);
-    let run = qx_scheduler::JobRun {
-        run_id,
-        job_id: job.job_id.clone(),
+    // JobRun uses lease-clock seconds; wall-clock conversion remains at the runtime boundary.
+    qx_scheduler::live_strategy_job(LiveStrategyJobInput {
+        job_version: &strategy.version,
+        worker_id,
+        instrument: strategy.instrument.as_deref(),
+        data_fingerprint,
         trading_day,
-        attempt: 1,
-        status: JobStatus::Running,
-        manifest_digest: Some(data_fingerprint),
-        error_code: None,
-        next_retry_ts: None,
-        started_ts: lease_now,
-        deadline_ts: lease_now.saturating_add(job.timeout_seconds),
-    };
-    (job, run)
+        lease_now: lease_clock(now),
+        environment,
+    })
 }
 
 pub(crate) fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) -> PathBuf {
@@ -132,46 +66,14 @@ pub(crate) fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) 
 /// 而日历的 `Session` 至今只在用例里出现过。于是把 `window` 写成 `Session`/`PostClose`
 /// 的作业要么永远不出队，要么（今天的 `due_jobs` 不看 window）在收盘前后一样触发。
 /// 两种都是"配置声明了、运行时不认"，比拒绝更难发现。
-pub(crate) fn unsupported_dispatch_shape(job: &JobSpec) -> Option<String> {
-    let cron = matches!(&job.trigger, Trigger::Cron(_));
-    if !cron || job.window != JobWindow::Any {
-        return Some(format!(
-            "作业 {} 声明了运行时不会派发的形状：trigger={:?} window={:?}；scheduler-worker 的 tick 只跑 Cron 触发且 window=Any 的作业（交易日历/事件/手工触发没有生产派发者，窗口判定没有交易日历数据源）",
-            job.job_id, job.trigger, job.window
-        ));
-    }
-    // 重试没有派发者：作业队列按 `run_id` 落盘、信封不携带 `attempt`，重投会撞已结算信封
-    // 而不是重来一次；`retry_run_at` 在 qx-scheduler 之外零生产调用者（capabilities.yaml
-    // `scheduler_run_retry_has_no_production_path`）。所以 `max_attempts > 1` 是一句
-    // 没人执行的承诺，同样必须在装载当场拒（V11 N4）。
-    if job.retry_policy.max_attempts > 1 {
-        return Some(format!(
-            "作业 {} 声明了运行时不会派发的形状：retry_policy.max_attempts={}；重试没有派发者（作业队列按 run_id 落盘、信封不携带 attempt，重投会撞已结算信封），请改成 1",
-            job.job_id, job.retry_policy.max_attempts
-        ));
-    }
-    None
-}
-
 /// 读取并核验声明文件里的 JobSpec。形状闸门对每一次启动都成立，不只是第一次。
 ///
 /// 未启用的作业不参与形状判定：它不会被入队，也就没有任何东西会因为它的声明形状而失效
 /// （把退役作业留在清单里是常态，让它替整个拓扑负责等于逼运维删掉历史记录）。
 fn declared_jobs(jobs_path: &Path) -> Result<Vec<JobSpec>, String> {
-    let jobs: Vec<JobSpec> = serde_json::from_str(
-        &std::fs::read_to_string(jobs_path)
-            .map_err(|error| format!("读取 Scheduler JobSpec 失败: {error}"))?,
-    )
-    .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
-    let refused = jobs
-        .iter()
-        .filter(|job| job.enabled)
-        .filter_map(unsupported_dispatch_shape)
-        .collect::<Vec<_>>();
-    if !refused.is_empty() {
-        return Err(refused.join("；"));
-    }
-    Ok(jobs)
+    let payload = std::fs::read_to_string(jobs_path)
+        .map_err(|error| format!("读取 Scheduler JobSpec 失败: {error}"))?;
+    qx_scheduler::declared_jobs(&payload)
 }
 
 /// 作业集合只在状态文件缺失时从 `jobs_path` 重建，所以第二次启动起，声明改动都不会自动
@@ -182,76 +84,7 @@ fn reject_job_set_drift(
     declared: &[JobSpec],
     jobs_path: &Path,
 ) -> Result<(), String> {
-    let declared_ids = declared
-        .iter()
-        .map(|job| job.job_id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut drift = Vec::new();
-    if declared_ids.len() != declared.len() {
-        drift.push("声明文件里有重名 job_id，同名声明的后者永远不会生效".to_string());
-    }
-    for job in declared {
-        match scheduler.job(&job.job_id) {
-            None => drift.push(format!(
-                "作业 {} 只在声明文件里 —— 新增的声明从未进入调度状态",
-                job.job_id
-            )),
-            Some(state_job) if state_job != job => drift.push(format!(
-                "作业 {} 的声明与调度状态里的形状不同 —— 改动过的声明从未生效",
-                job.job_id
-            )),
-            Some(_) => {}
-        }
-    }
-    if scheduler.len() > declared_ids.len() {
-        drift.push(format!(
-            "调度状态里有 {} 个作业不在声明文件里 —— 删掉的声明不会让它们停手，它们仍会按 cron 触发",
-            scheduler.len() - declared_ids.len()
-        ));
-    }
-    if drift.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "Scheduler 声明与状态已分叉: {}；作业集合只在 {} 缺失时重建，要让改动生效必须先把状态文件移走",
-        drift.join("；"),
-        jobs_path.display()
-    ))
-}
-
-/// 作业 owner 必须真有人领取（V11 §41 E7）。Scheduler 只负责把到期作业入队，领取判据在
-/// `workers.rs` 的 `claimable_by(&queued.job.owner, context.id())`；owner 拼错、指向未启用的
-/// worker 时，作业永远留在队列里，而 `start_run_at` 已经把 JobRun 标成 Running，命令面照样
-/// 打印 `READY processed=0`——整段调度事实就这样丢了。判据与领取端共用
-/// `qx_scheduler::claimable_by`，两处各抄一份时装配放行而领取不认（或反过来）都不会被发现。
-fn validate_job_owners(config: &RuntimeConfig, scheduler: &Scheduler) -> Result<(), String> {
-    let claimants = config
-        .workers
-        .iter()
-        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
-        .map(|worker| worker.id.as_str())
-        .collect::<Vec<_>>();
-    let claimants_note = if claimants.is_empty() {
-        "该拓扑没有启用的 Strategy worker".to_string()
-    } else {
-        format!("启用的 Strategy worker: {}", claimants.join(", "))
-    };
-    for job in scheduler.jobs() {
-        if !job.enabled {
-            continue;
-        }
-        let routable = claimants
-            .iter()
-            .any(|claimant| claimable_by(&job.owner, claimant));
-        if !routable {
-            return Err(format!(
-                "Scheduler 作业 {} 的 owner {:?} 无人领取（{claimants_note}）；\
-                 请把 owner 改成启用的 Strategy worker id，或使用 {:?} 交给任意 worker",
-                job.job_id, job.owner, JOB_OWNER_ANY
-            ));
-        }
-    }
-    Ok(())
+    qx_scheduler::reject_job_set_drift(scheduler, declared, jobs_path)
 }
 
 pub(crate) fn load_scheduler_state(
@@ -263,6 +96,12 @@ pub(crate) fn load_scheduler_state(
     let state_reference = Path::new(&config.scheduler.state_path).to_path_buf();
     let state_path = runtime_path(root, &config.scheduler.state_path);
     let jobs_path = scheduler_jobs_path(runtime_config_path, &config.scheduler.jobs_path);
+    let claimants = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
+        .map(|worker| worker.id.clone())
+        .collect::<Vec<_>>();
     let declared = if jobs_path.exists() {
         declared_jobs(&jobs_path)?
     } else {
@@ -282,7 +121,7 @@ pub(crate) fn load_scheduler_state(
         })?;
         reject_job_set_drift(&scheduler, &declared, &jobs_path)?;
         // 载入的既有状态同样要问：状态文件可能是另一套拓扑、或改坏的 owner 留下的。
-        validate_job_owners(config, &scheduler)?;
+        validate_job_owners(&scheduler, &claimants)?;
         scheduler
     } else {
         let mut scheduler = Scheduler::default();
@@ -292,7 +131,7 @@ pub(crate) fn load_scheduler_state(
                 .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
         }
         // 先判再落盘：被拒绝的拓扑不该留下一份调度状态文件让下一次运行继续读它。
-        validate_job_owners(config, &scheduler)?;
+        validate_job_owners(&scheduler, &claimants)?;
         store
             .save_scheduler_at(&state_reference, &scheduler)
             .map_err(|error| format!("初始化 Scheduler 状态失败: {error:?}"))?;
@@ -328,13 +167,14 @@ pub(crate) fn dispatch_scheduled_jobs(
             // 先把已过截止时间的 Running 运行升级为人工接管：Running 运行持有并发键，
             // 不升级就会永远挡住同一 key 的后续交易日，且卡住的作业自身再也不会出队。
             let mut timed_out = 0_usize;
-            for run in scheduler.runs() {
+            let active_run_ids = scheduler.active_run_ids().collect::<Vec<_>>();
+            for run_id in active_run_ids {
                 if scheduler
-                    .is_timed_out(run.run_id, lease_now)
+                    .is_timed_out(run_id, lease_now)
                     .map_err(|error| format!("判定 JobRun 超时失败: {error:?}"))?
                 {
                     scheduler
-                        .mark_timed_out(run.run_id, lease_now)
+                        .mark_timed_out(run_id, lease_now)
                         .map_err(|error| format!("升级超时 JobRun 失败: {error:?}"))?;
                     timed_out += 1;
                 }

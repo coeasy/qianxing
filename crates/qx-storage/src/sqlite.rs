@@ -4,19 +4,28 @@
 //! 语义搬到事务数据库中。它不改变上层 trait，也不把 SQLite 类型泄漏到
 //! Kernel 或调度器；生产环境可以在同一 trait 上替换为 PostgreSQL/MQ 实现。
 
+use super::consumer_cursor::validate_consumer_cursor_advance_with_message;
 use super::{
-    audit_entry_hash, validate_audit_chain, AuditEntry, ConsumerCheckpoint, ConsumerProjection,
-    ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend, DeadLetterRecord,
-    EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease, OutboxStore,
-    QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    audit_entry_hash, audit_sync_prefix_len, validate_audit_chain, AuditEntry, ConsumerCheckpoint,
+    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
+    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
+    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
+use super::{validate_event_log, validate_event_log_name};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::{Event, EventLog, QxResult};
 use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+#[path = "sqlite/dedup.rs"]
+mod dedup;
+use dedup::{validate_event_log_dedup_keys, validate_event_log_dedup_tail};
+#[path = "sqlite/manifest.rs"]
+mod manifest;
+use manifest::{read_event_log_state, write_event_log_state, EventLogManifestDigest};
 
 fn db_string(value: u64) -> String {
     value.to_string()
@@ -54,116 +63,192 @@ fn open(path: &Path) -> Result<Connection, StorageError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| StorageError::Io(error.to_string()))?;
     }
-    let connection = Connection::open(path).map_err(map_sqlite)?;
+    let mut connection = Connection::open(path).map_err(map_sqlite)?;
     connection
-        .execute_batch(
-            "PRAGMA foreign_keys = ON;
-             PRAGMA busy_timeout = 5000;
-             CREATE TABLE IF NOT EXISTS qx_audit_entries (
-                 sequence INTEGER PRIMARY KEY NOT NULL,
-                 record_json TEXT NOT NULL,
-                 previous_hash TEXT NOT NULL,
-                 entry_hash TEXT NOT NULL UNIQUE
-             );
-             CREATE TABLE IF NOT EXISTS qx_jobs (
-                 run_id TEXT PRIMARY KEY NOT NULL,
-                 envelope_json TEXT NOT NULL,
-                 done INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE TABLE IF NOT EXISTS qx_job_leases (
-                 run_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_state (
-                 state_id INTEGER PRIMARY KEY NOT NULL CHECK (state_id = 1),
-                 content TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_commands (
-                 command_id TEXT PRIMARY KEY NOT NULL,
-                 command_json TEXT NOT NULL,
-                 enqueued_ts TEXT NOT NULL,
-                 done INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_command_leases (
-                 command_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_outbox_events (
-                 event_id TEXT PRIMARY KEY NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 sequence TEXT NOT NULL,
-                 schema_version INTEGER NOT NULL,
-                 trace_id TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 created_ts TEXT NOT NULL,
-                 attempts TEXT NOT NULL DEFAULT '0'
-             );
-             CREATE TABLE IF NOT EXISTS qx_outbox_leases (
-                 event_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_checkpoints (
-                 group_id TEXT NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 offset TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 updated_ts TEXT NOT NULL,
-                 PRIMARY KEY(group_id, topic, partition_key)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_processed (
-                 group_id TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 PRIMARY KEY(group_id, event_id)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_dead_letters (
-                 group_id TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 attempts INTEGER NOT NULL,
-                 record_json TEXT NOT NULL,
-                 PRIMARY KEY(group_id, event_id, attempts)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_projections (
-                 group_id TEXT NOT NULL,
-                 projection_key TEXT NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 offset TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 updated_ts TEXT NOT NULL,
-                 PRIMARY KEY(group_id, projection_key)
-             );
-             CREATE TABLE IF NOT EXISTS qx_event_log_entries (
-                 name TEXT NOT NULL,
-                 position INTEGER NOT NULL,
-                 seq INTEGER NOT NULL,
-                 event_ts TEXT NOT NULL,
-                 prio INTEGER NOT NULL,
-                 dedup_key TEXT NOT NULL DEFAULT '',
-                 event_json TEXT NOT NULL,
-                 PRIMARY KEY (name, position)
-             );
-             CREATE UNIQUE INDEX IF NOT EXISTS qx_event_log_entries_seq
-                 ON qx_event_log_entries(name, seq);
-             CREATE UNIQUE INDEX IF NOT EXISTS qx_event_log_entries_dedup
-                 ON qx_event_log_entries(name, dedup_key) WHERE dedup_key <> '';
-             CREATE TABLE IF NOT EXISTS qx_event_log_state (
-                 name TEXT PRIMARY KEY NOT NULL,
-                 event_count INTEGER NOT NULL,
-                 next_seq TEXT NOT NULL,
-                 digest TEXT NOT NULL
-             );",
+        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
+        .map_err(map_sqlite)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sqlite)?;
+    let has_existing_schema_tables: bool = transaction
+        .query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name NOT LIKE 'sqlite_%'
+                   AND name <> 'qx_schema_migrations'
+             )",
+            [],
+            |row| row.get(0),
         )
         .map_err(map_sqlite)?;
+    transaction
+        .execute_batch(super::schema_migrations::CREATE_SCHEMA_MIGRATIONS_SQL)
+        .map_err(map_sqlite)?;
+    let mut versions = {
+        let mut statement = transaction
+            .prepare("SELECT version FROM qx_schema_migrations ORDER BY version")
+            .map_err(map_sqlite)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(map_sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_sqlite)?
+    };
+    let pending =
+        super::schema_migrations::pending_schema_versions(&versions, has_existing_schema_tables)?;
+    for version in pending {
+        match version {
+            "1" => transaction
+                .execute_batch(super::schema_migrations::SQLITE_V1_SCHEMA)
+                .map_err(map_sqlite)?,
+            "2" => transaction
+                .execute_batch(super::schema_migrations::SQLITE_V2_SCHEMA)
+                .map_err(map_sqlite)?,
+            _ => unreachable!("migration plan only contains known schema versions"),
+        }
+        transaction
+            .execute(
+                "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES (?1, '0')",
+                params![version],
+            )
+            .map_err(map_sqlite)?;
+        versions.push(version.into());
+    }
+    super::schema_migrations::validate_schema_versions(&versions)?;
+    transaction.commit().map_err(map_sqlite)?;
     Ok(connection)
+}
+
+/// Explicitly adopt an unversioned SQLite database whose schema exactly matches this crate's
+/// known v1 or v2 migrations. The caller must take a backup first; unknown objects or any schema
+/// drift are rejected without writing the migration ledger.
+pub fn adopt_legacy_sqlite_schema(path: impl AsRef<Path>) -> Result<u32, StorageError> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return Err(StorageError::Conflict(
+            "SQLite 历史数据库文件不存在；显式认领不会创建新数据库".into(),
+        ));
+    }
+    let mut connection = Connection::open(path).map_err(map_sqlite)?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
+        .map_err(map_sqlite)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sqlite)?;
+    let ledger_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='qx_schema_migrations')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite)?;
+    if ledger_exists {
+        return Err(StorageError::Conflict(
+            "SQLite schema 已有迁移台账，不适用历史 schema 认领".into(),
+        ));
+    }
+    let actual = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT type, name, sql FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+                 ORDER BY type, name",
+            )
+            .map_err(map_sqlite)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(map_sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite)?
+            .into_iter()
+            .map(|(kind, name, sql)| ((kind, name), normalize_schema_sql(&sql)))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let legacy_version = [
+        (
+            1,
+            expected_sqlite_schema(super::schema_migrations::SQLITE_V1_SCHEMA, ""),
+        ),
+        (
+            2,
+            expected_sqlite_schema(
+                super::schema_migrations::SQLITE_V1_SCHEMA,
+                super::schema_migrations::SQLITE_V2_SCHEMA,
+            ),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(version, expected)| (actual == expected).then_some(version))
+    .ok_or_else(|| {
+        StorageError::Conflict(
+            "SQLite schema 与已知 v1/v2 不完全一致；未写入迁移台账，请人工迁移或恢复备份".into(),
+        )
+    })?;
+    transaction
+        .execute_batch(super::schema_migrations::CREATE_SCHEMA_MIGRATIONS_SQL)
+        .map_err(map_sqlite)?;
+    transaction
+        .execute(
+            "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ('1', 'manual-adoption')",
+            [],
+        )
+        .map_err(map_sqlite)?;
+    if legacy_version == 2 {
+        transaction
+            .execute(
+                "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ('2', 'manual-adoption')",
+                [],
+            )
+            .map_err(map_sqlite)?;
+    }
+    transaction.commit().map_err(map_sqlite)?;
+    Ok(legacy_version)
+}
+
+fn expected_sqlite_schema(v1: &str, v2: &str) -> BTreeMap<(String, String), String> {
+    v1.split(';')
+        .chain(v2.split(';'))
+        .filter_map(|statement| {
+            let tokens = statement.split_whitespace().collect::<Vec<_>>();
+            if tokens.len() < 3 || !tokens[0].eq_ignore_ascii_case("CREATE") {
+                return None;
+            }
+            let kind_index = if tokens[1].eq_ignore_ascii_case("UNIQUE") {
+                2
+            } else {
+                1
+            };
+            let kind = tokens.get(kind_index)?.to_ascii_lowercase();
+            let mut name_index = kind_index + 1;
+            if tokens
+                .get(name_index)
+                .is_some_and(|token| token.eq_ignore_ascii_case("IF"))
+            {
+                name_index += 3;
+            }
+            let name = tokens.get(name_index)?;
+            Some((
+                (kind, name.to_ascii_lowercase()),
+                normalize_schema_sql(statement),
+            ))
+        })
+        .collect()
+}
+
+fn normalize_schema_sql(sql: &str) -> String {
+    sql.split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .replace("ifnotexists", "")
+        .trim_end_matches(';')
+        .to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +306,7 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
         topic: &str,
         partition_key: &str,
     ) -> Result<Option<ConsumerCheckpoint>, StorageError> {
+        self.validate_load_checkpoint_request(group_id, topic, partition_key)?;
         let connection = open(&self.path)?;
         connection
             .query_row(
@@ -243,6 +329,7 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
     }
 
     fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError> {
+        self.validate_is_processed_request(group_id, event_id)?;
         let connection = open(&self.path)?;
         connection
             .query_row(
@@ -256,7 +343,7 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
     }
 
     fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError> {
-        checkpoint.validate()?;
+        self.validate_commit_processed_request(&checkpoint)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -287,13 +374,13 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
             .map_err(map_sqlite)?;
         if let Some((offset, event_id)) = previous {
             let previous_offset = parse_db_u64(&offset, "consumer.offset")?;
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset && event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -317,7 +404,7 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
     }
 
     fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError> {
-        record.validate()?;
+        self.validate_append_dead_letter_request(&record)?;
         let connection = open(&self.path)?;
         connection
             .execute(
@@ -340,13 +427,14 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
         group_id: &str,
         limit: usize,
     ) -> Result<Vec<DeadLetterRecord>, StorageError> {
+        self.validate_dead_letters_request(group_id)?;
         let connection = open(&self.path)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT record_json FROM qx_consumer_dead_letters
-                 WHERE group_id = ?1 ORDER BY attempts, event_id LIMIT ?2",
-            )
-            .map_err(map_sqlite)?;
+        let sql = format!(
+            "SELECT record_json FROM qx_consumer_dead_letters
+             WHERE group_id = ?1 ORDER BY {} LIMIT ?2",
+            crate::consumer_state_store::DEAD_LETTER_ORDER_BY,
+        );
+        let mut statement = connection.prepare(&sql).map_err(map_sqlite)?;
         let rows = statement
             .query_map(params![group_id, limit as i64], |row| {
                 row.get::<_, String>(0)
@@ -367,7 +455,7 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
         checkpoint: ConsumerCheckpoint,
         projection: ConsumerProjection,
     ) -> Result<(), StorageError> {
-        projection.validate_for(&checkpoint)?;
+        self.validate_commit_processed_with_projection_request(&checkpoint, &projection)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -398,13 +486,13 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
             .map_err(map_sqlite)?;
         if let Some((offset, event_id)) = previous {
             let previous_offset = parse_db_u64(&offset, "consumer.offset")?;
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset && event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         let previous_projection: Option<(String, String)> = transaction
             .query_row(
@@ -417,13 +505,13 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
             .map_err(map_sqlite)?;
         if let Some((offset, event_id)) = previous_projection {
             let previous_offset = parse_db_u64(&offset, "consumer.projection.offset")?;
-            if previous_offset > projection.offset
-                || (previous_offset == projection.offset && event_id != projection.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer projection 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &event_id,
+                projection.offset,
+                &projection.event_id,
+                "consumer projection 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -472,7 +560,7 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
         record: DeadLetterRecord,
         checkpoint: ConsumerCheckpoint,
     ) -> Result<(), StorageError> {
-        record.validate_for(&checkpoint)?;
+        self.validate_append_dead_letter_and_commit_request(&record, &checkpoint)?;
         let content =
             serde_json::to_string(&record).map_err(|error| StorageError::Io(error.to_string()))?;
         let mut connection = open(&self.path)?;
@@ -505,13 +593,13 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
             .map_err(map_sqlite)?;
         if let Some((offset, event_id)) = previous {
             let previous_offset = parse_db_u64(&offset, "consumer.offset")?;
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset && event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -551,6 +639,7 @@ impl TransactionalConsumerStateStore for SqliteConsumerStateStore {
         group_id: &str,
         projection_key: &str,
     ) -> Result<Option<ConsumerProjection>, StorageError> {
+        self.validate_load_projection_request(group_id, projection_key)?;
         let connection = open(&self.path)?;
         connection
             .query_row(
@@ -588,7 +677,7 @@ impl SqliteOutboxStore {
     }
 
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
-        event.validate()?;
+        self.validate_append_request(&event)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -601,18 +690,17 @@ impl SqliteOutboxStore {
         let connection = open(&self.path)?;
         // 用尽投递预算的行排在最后再截页：它们仍要被运维看得见（K2 的人工出口），
         // 但不能占住页首把后面投得出去的事件挤出一页——阈值由 `?2` 绑定，SQL 里不写第二个 8。
-        let mut statement = connection
-            .prepare(
-                "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
+        let sql = format!(
+            "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
                         e.trace_id, e.payload, e.created_ts, e.attempts
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR CAST(l.expires_ts AS INTEGER) <= CAST(?1 AS INTEGER)
-                 ORDER BY CAST(e.attempts AS INTEGER) >= CAST(?2 AS INTEGER),
-                          CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id
+                 {order_by}
                  LIMIT ?3",
-            )
-            .map_err(map_sqlite)?;
+            order_by = crate::outbox_page::SQLITE_OUTBOX_PAGE_ORDER_BY,
+        );
+        let mut statement = connection.prepare(&sql).map_err(map_sqlite)?;
         let rows = statement
             .query_map(
                 params![
@@ -666,12 +754,7 @@ impl SqliteOutboxStore {
         now: u64,
         lease_seconds: u64,
     ) -> Result<OutboxLease, StorageError> {
-        validate_sqlite_outbox_name(event_id)?;
-        if owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "Outbox worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(event_id, owner, lease_seconds)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -697,22 +780,17 @@ impl SqliteOutboxStore {
             )
             .optional()
             .map_err(map_sqlite)?;
-        let mut fencing_token = 1;
-        if let Some((current_owner, expires, token)) = current {
-            let expires_ts = parse_db_u64(&expires, "outbox.expires_ts")?;
-            let current_token = parse_db_u64(&token, "outbox.fencing_token")?;
-            if expires_ts > now && current_owner != owner {
-                return Err(StorageError::LeaseHeld {
-                    run_id: 0,
+        let current = current
+            .map(|(current_owner, expires, token)| {
+                Ok(super::lease_rules::LeaseSnapshot {
                     owner: current_owner,
-                });
-            }
-            fencing_token = if expires_ts <= now {
-                current_token.saturating_add(1).max(1)
-            } else {
-                current_token.max(1)
-            };
-        }
+                    expires_ts: parse_db_u64(&expires, "outbox.expires_ts")?,
+                    fencing_token: parse_db_u64(&token, "outbox.fencing_token")?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), owner, now, 0)?;
         let lease = OutboxLease {
             event_id: event_id.into(),
             owner: owner.into(),
@@ -765,7 +843,7 @@ impl SqliteOutboxStore {
         now: u64,
         retry: bool,
     ) -> Result<(), StorageError> {
-        validate_sqlite_outbox_name(event_id)?;
+        self.validate_finish_request(event_id)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -861,13 +939,8 @@ fn append_outbox_event(connection: &Connection, event: &OutboxEvent) -> Result<(
         .optional()
         .map_err(map_sqlite)?;
     if let Some(existing) = existing {
-        if existing.same_fact(event) {
-            return Ok(());
-        }
-        return Err(StorageError::Conflict(format!(
-            "event_id {} 已被不同 Outbox 事件占用",
-            event.event_id
-        )));
+        <SqliteOutboxStore as OutboxStore>::validate_existing_event(&existing, event)?;
+        return Ok(());
     }
     connection
         .execute(
@@ -887,21 +960,6 @@ fn append_outbox_event(connection: &Connection, event: &OutboxEvent) -> Result<(
             ],
         )
         .map_err(map_sqlite)?;
-    Ok(())
-}
-
-fn validate_sqlite_outbox_name(event_id: &str) -> Result<(), StorageError> {
-    if event_id.is_empty()
-        || event_id.len() > 240
-        || event_id.contains('/')
-        || event_id.contains('\\')
-        || event_id.contains("..")
-        || !event_id.chars().all(|value| {
-            value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.' | ':' | '@')
-        })
-    {
-        return Err(StorageError::InvalidName("Outbox event_id 非法".into()));
-    }
     Ok(())
 }
 
@@ -978,7 +1036,7 @@ impl SqliteSnapshotStore {
             .map_err(|error| ProtocolError::Io(format!("SQLite: {error}")))?;
         let snapshot_id = db_string(snapshot.header.snapshot_id);
         let state_hash = db_string(snapshot.state_hash());
-        let content = snapshot.to_json();
+        let content = snapshot.to_json()?;
         let existing: Option<String> = transaction
             .query_row(
                 "SELECT content FROM qx_snapshots
@@ -1121,9 +1179,7 @@ impl SqliteControlCommandQueue {
         command: ControlCommand,
         enqueued_ts: u64,
     ) -> Result<PathBuf, StorageError> {
-        command
-            .validate()
-            .map_err(|error| StorageError::Conflict(format!("控制命令非法: {error:?}")))?;
+        self.validate_enqueue_request(&command)?;
         let json = serde_json::to_string(&command)
             .map_err(|error| StorageError::Io(format!("控制命令序列化失败: {error}")))?;
         let mut connection = open(&self.path)?;
@@ -1142,14 +1198,9 @@ impl SqliteControlCommandQueue {
         if let Some((existing, _done)) = existing {
             let existing_command: ControlCommand = serde_json::from_str(&existing)
                 .map_err(|error| StorageError::Io(format!("控制命令 JSON 非法: {error}")))?;
-            if existing_command == command {
-                transaction.commit().map_err(map_sqlite)?;
-                return Ok(self.path.clone());
-            }
-            return Err(StorageError::Conflict(format!(
-                "command_id {} 已被不同命令占用",
-                command.command_id
-            )));
+            self.validate_existing_command(&existing_command, &command)?;
+            transaction.commit().map_err(map_sqlite)?;
+            return Ok(self.path.clone());
         }
         transaction
             .execute(
@@ -1170,8 +1221,7 @@ impl SqliteControlCommandQueue {
                 "SELECT c.command_json, c.enqueued_ts, l.expires_ts
                  FROM qx_control_commands c
                  LEFT JOIN qx_control_command_leases l ON l.command_id = c.command_id
-                 WHERE c.done = 0
-                 ORDER BY c.enqueued_ts, c.command_id",
+                 WHERE c.done = 0",
             )
             .map_err(map_sqlite)?;
         let rows = statement
@@ -1205,6 +1255,7 @@ impl SqliteControlCommandQueue {
                 enqueued_ts: parse_db_u64(&enqueued_ts, "enqueued_ts")?,
             });
         }
+        commands.sort_by(super::control_queue::compare_control_command_order);
         Ok(commands)
     }
 
@@ -1215,11 +1266,7 @@ impl SqliteControlCommandQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<ControlCommandLease, StorageError> {
-        if command_id == 0 || owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "command_id、worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(command_id, owner, lease_seconds)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1245,27 +1292,18 @@ impl SqliteControlCommandQueue {
             )
             .optional()
             .map_err(map_sqlite)?;
-        let (fencing_token, expires_ts) = match current {
-            Some((current_owner, expires, token)) => {
-                let expires = parse_db_u64(&expires, "expires_ts")?;
-                let token = parse_db_u64(&token, "fencing_token")?.max(1);
-                if expires > now && current_owner != owner {
-                    return Err(StorageError::LeaseHeld {
-                        run_id: command_id,
-                        owner: current_owner,
-                    });
-                }
-                (
-                    if expires <= now {
-                        token.saturating_add(1).max(1)
-                    } else {
-                        token
-                    },
-                    now.saturating_add(lease_seconds),
-                )
-            }
-            None => (1, now.saturating_add(lease_seconds)),
-        };
+        let current = current
+            .map(|(current_owner, expires, token)| {
+                Ok(super::lease_rules::LeaseSnapshot {
+                    owner: current_owner,
+                    expires_ts: parse_db_u64(&expires, "expires_ts")?,
+                    fencing_token: parse_db_u64(&token, "fencing_token")?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), owner, now, command_id)?;
+        let expires_ts = now.saturating_add(lease_seconds);
         transaction
             .execute(
                 "INSERT INTO qx_control_command_leases
@@ -1451,23 +1489,8 @@ impl SqliteAuditStore {
     pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
         let existing = self.read()?;
         let records = plane.audit();
-        // 只校验公共前缀，不能拦"链比请求更长"。本方法由 transact_control 在控制面事务
-        // commit 之后调用（见 sqlite.rs 的 :1088），两进程并发时 B 的提交会包含 A 的变更，
-        // A 随后才调 sync_control，此时持久化链已经比 A 本地那份 plane 更长。链更长不是
-        // 冲突——A 想追加的记录已在链上，按幂等空操作收口即可；旧写法把这种情况报成
-        // Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"。
-        // 真正要拦的是公共前缀本身对不上（链分叉）。
-        let common = existing.len().min(records.len());
-        if existing
-            .iter()
-            .take(common)
-            .zip(records.iter().take(common))
-            .any(|(entry, record)| entry.record != *record)
-        {
-            return Err(StorageError::Conflict(
-                "控制面审计与 SQLite 审计前缀不一致".into(),
-            ));
-        }
+        let common =
+            audit_sync_prefix_len(&existing, records, "控制面审计与 SQLite 审计前缀不一致")?;
         let mut appended = 0;
         for record in records.iter().skip(common) {
             self.append(record.clone())?;
@@ -1637,7 +1660,7 @@ impl SqliteJobQueue {
             run,
             enqueued_ts,
         };
-        envelope.validate()?;
+        self.validate_enqueue_job_request(&envelope)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1656,14 +1679,9 @@ impl SqliteJobQueue {
         if let Some(existing) = existing {
             let existing_envelope: QueuedJob = serde_json::from_str(&existing)
                 .map_err(|error| StorageError::Io(format!("任务 JSON 非法: {error}")))?;
-            if existing_envelope.job == envelope.job && existing_envelope.run == envelope.run {
-                transaction.commit().map_err(map_sqlite)?;
-                return Ok(self.path.clone());
-            }
-            return Err(StorageError::Conflict(format!(
-                "run_id {} 已被不同任务占用",
-                envelope.run.run_id
-            )));
+            self.validate_existing_job(&existing_envelope, &envelope)?;
+            transaction.commit().map_err(map_sqlite)?;
+            return Ok(self.path.clone());
         }
         transaction
             .execute(
@@ -1703,7 +1721,7 @@ impl SqliteJobQueue {
                 jobs.push(job);
             }
         }
-        jobs.sort_by_key(|job| (job.run.trading_day.clone(), job.run.run_id));
+        jobs.sort_by(crate::job_queue::compare_queued_job_order);
         Ok(jobs)
     }
 
@@ -1714,9 +1732,7 @@ impl SqliteJobQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
-        if worker.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict("worker 和租约时长不能为空".into()));
-        }
+        self.validate_claim_job_request(worker, lease_seconds)?;
         let mut connection = open(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1743,22 +1759,18 @@ impl SqliteJobQueue {
             )
             .optional()
             .map_err(map_sqlite)?;
-        let (fencing_token, expires_ts) = match current {
-            Some((owner, expires, token)) => {
-                let expires = parse_db_u64(&expires, "expires_ts")?;
-                let token = parse_db_u64(&token, "fencing_token")?.max(1);
-                if expires > now && owner != worker {
-                    return Err(StorageError::LeaseHeld { run_id, owner });
-                }
-                let next_token = if expires <= now {
-                    token.saturating_add(1).max(1)
-                } else {
-                    token
-                };
-                (next_token, now.saturating_add(lease_seconds))
-            }
-            None => (1, now.saturating_add(lease_seconds)),
-        };
+        let current = current
+            .map(|(owner, expires, token)| {
+                Ok(super::lease_rules::LeaseSnapshot {
+                    owner,
+                    expires_ts: parse_db_u64(&expires, "expires_ts")?,
+                    fencing_token: parse_db_u64(&token, "fencing_token")?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), worker, now, run_id)?;
+        let expires_ts = now.saturating_add(lease_seconds);
         transaction
             .execute(
                 "INSERT INTO qx_job_leases(run_id, owner, expires_ts, fencing_token)
@@ -1920,20 +1932,6 @@ impl JobQueueBackend for SqliteJobQueue {
 
 /// EventLog 名称沿用文件/分段/PostgreSQL 后端的同一套白名单规则，避免同一
 /// 运行时日志名在不同后端之间被降级接受。
-fn validate_event_log_name(name: &str) -> Result<(), StorageError> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || !name
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
-    {
-        return Err(StorageError::InvalidName(name.into()));
-    }
-    Ok(())
-}
-
 /// SQLite INTEGER 是带符号 64 位；超出范围的 seq 必须显式失败，
 /// 不能被静默截断成另一个事实身份。
 fn event_seq_column(seq: u64) -> Result<i64, StorageError> {
@@ -1957,24 +1955,6 @@ fn encode_event_json(event: &Event) -> Result<String, StorageError> {
 fn decode_event_json(value: &str) -> Result<Event, StorageError> {
     serde_json::from_str(value)
         .map_err(|error| StorageError::Io(format!("SQLite 事件 JSON 非法: {error}")))
-}
-
-/// 同一条日志内 dedup_key 不得重复：文件后端由归约器保证这一不变量，
-/// SQLite 用部分唯一索引 + 这里的前置校验把它变成存储层硬约束。
-fn validate_event_log_dedup_keys(events: &[Event]) -> Result<(), StorageError> {
-    let mut seen = BTreeSet::new();
-    for event in events {
-        if event.metadata.dedup_key.is_empty() {
-            continue;
-        }
-        if !seen.insert(event.metadata.dedup_key.as_str()) {
-            return Err(StorageError::Conflict(format!(
-                "事件日志内 dedup_key {} 重复",
-                event.metadata.dedup_key
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn insert_event_row(
@@ -2042,57 +2022,6 @@ fn stored_event_by_dedup_key(
         .transpose()
 }
 
-/// 读取 manifest 行：`(event_count, next_seq, digest)`。
-fn read_event_log_state(
-    connection: &Connection,
-    name: &str,
-) -> Result<Option<(u64, u64, u64)>, StorageError> {
-    let state = connection
-        .query_row(
-            "SELECT event_count, next_seq, digest FROM qx_event_log_state WHERE name = ?1",
-            params![name],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(map_sqlite)?;
-    let (event_count, next_seq, digest) = match state {
-        Some(state) => state,
-        None => return Ok(None),
-    };
-    Ok(Some((
-        event_row_count(event_count)?,
-        parse_db_u64(&next_seq, "event_log.next_seq")?,
-        parse_db_u64(&digest, "event_log.digest")?,
-    )))
-}
-
-fn write_event_log_state(
-    connection: &Connection,
-    name: &str,
-    log: &EventLog,
-) -> Result<(), StorageError> {
-    let event_count = event_row_index(log.len())?;
-    let next_seq = db_string(log.next_seq());
-    let digest = db_string(log.digest());
-    connection
-        .execute(
-            "INSERT INTO qx_event_log_state(name, event_count, next_seq, digest)
-         VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(name) DO UPDATE SET event_count = excluded.event_count,
-                                        next_seq = excluded.next_seq,
-                                        digest = excluded.digest",
-            params![name, event_count, next_seq, digest],
-        )
-        .map_err(map_sqlite)?;
-    Ok(())
-}
-
 /// 顺序读整条日志，并复用 Kernel 的 seq/因果排序校验和 manifest 摘要比对；
 /// 语义与 `SegmentedEventLogStore::read_if_exists` 一致。
 fn load_event_log(connection: &Connection, name: &str) -> Result<Option<EventLog>, StorageError> {
@@ -2122,8 +2051,12 @@ fn load_event_log(connection: &Connection, name: &str) -> Result<Option<EventLog
         }
         log.append(decode_event_json(&event_json)?);
     }
-    log.validate().map_err(StorageError::Core)?;
-    if log.len() as u64 != event_count || log.next_seq() != next_seq || log.digest() != digest {
+    validate_event_log(&log)?;
+    let digest_matches = match digest {
+        EventLogManifestDigest::Legacy(expected) => log.digest() == expected,
+        EventLogManifestDigest::RollingV2(expected) => log.event_digest() == expected,
+    };
+    if log.len() as u64 != event_count || log.next_seq() != next_seq || !digest_matches {
         return Err(StorageError::Conflict(
             "事件日志 manifest 与事件内容摘要不一致".into(),
         ));
@@ -2140,7 +2073,7 @@ fn write_event_log_in_transaction(
     name: &str,
     log: &EventLog,
 ) -> Result<(), StorageError> {
-    log.validate().map_err(StorageError::Core)?;
+    validate_event_log(log)?;
     validate_event_log_dedup_keys(log.events())?;
     let stored = load_event_log(connection, name)?.unwrap_or_default();
     if stored.len() > log.len()
@@ -2178,14 +2111,22 @@ fn append_event_log_in_transaction(
         Some((count, _, digest)) => {
             let start = usize::try_from(count)
                 .map_err(|_| StorageError::Conflict("事件日志计数超出范围".into()))?;
-            // `digest_of_prefix` 在 `start > log.len()` 时给 `None`，于是"日志被截短"也走这一支。
-            (start, log.digest_of_prefix(start) == Some(digest))
+            let prefix_digest_matches = match digest {
+                EventLogManifestDigest::Legacy(expected) => {
+                    log.digest_of_prefix(start) == Some(expected)
+                }
+                EventLogManifestDigest::RollingV2(expected) => {
+                    log.event_digest_of_prefix(start) == Some(expected)
+                }
+            };
+            (start, prefix_digest_matches)
         }
         None => (0, true),
     };
     if !prefix_intact {
         return Err(StorageError::NonAppendOnly(name.into()));
     }
+    validate_event_log_dedup_tail(connection, name, &log.events()[start..])?;
     for (offset, event) in log.events()[start..].iter().enumerate() {
         insert_event_row(connection, name, event_row_index(start + offset)?, event)?;
     }
@@ -2300,8 +2241,7 @@ impl SqliteEventLogStore {
         outbox_events: &[OutboxEvent],
     ) -> Result<PathBuf, StorageError> {
         validate_event_log_name(name)?;
-        log.validate().map_err(StorageError::Core)?;
-        validate_event_log_dedup_keys(log.events())?;
+        validate_event_log(log)?;
         for event in outbox_events {
             event.validate()?;
         }
@@ -2447,11 +2387,19 @@ impl SqliteEventLogStore {
         Ok(read_event_log_state(&connection, name)?.map(|(_, next_seq, _)| next_seq))
     }
 
-    /// manifest 中记录的摘要；需要验证内容一致性时使用 `validate`。
+    /// 返回稳定的 EventLog 摘要；旧 manifest 可直接读取，新格式会校验日志后计算。
     pub fn digest(&self, name: &str) -> Result<Option<u64>, StorageError> {
         validate_event_log_name(name)?;
         let connection = open(&self.path)?;
-        Ok(read_event_log_state(&connection, name)?.map(|(_, _, digest)| digest))
+        let Some((_, _, digest)) = read_event_log_state(&connection, name)? else {
+            return Ok(None);
+        };
+        match digest {
+            EventLogManifestDigest::Legacy(digest) => Ok(Some(digest)),
+            EventLogManifestDigest::RollingV2(_) => {
+                Ok(load_event_log(&connection, name)?.map(|log| log.digest()))
+            }
+        }
     }
 
     /// 全量顺序读 + 因果排序校验 + manifest 摘要比对；日志不存在时报错。
@@ -2475,10 +2423,12 @@ impl SqliteEventLogStore {
 
 impl EventLogStore for SqliteEventLogStore {
     fn save(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        self.validate_save_request(name, log)?;
         self.write(name, log).map(|_| ()).map_err(Into::into)
     }
 
     fn load(&self, name: &str) -> QxResult<EventLog> {
+        self.validate_load_request(name)?;
         self.read(name).map_err(Into::into)
     }
 }
@@ -2492,7 +2442,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn temp_db(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
+        crate::test_temp_dir().join(format!(
             "qianxing-{label}-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2500,6 +2450,190 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    fn migration_db(label: &str) -> PathBuf {
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qx-storage-{label}-{}-{}.sqlite",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn v1_schema_is_upgraded_transactionally_to_v2() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/qx-storage-schema-migration-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let _ = std::fs::remove_file(&path);
+
+        drop(open(&path).expect("fresh database applies v1 and v2"));
+        let connection = Connection::open(&path).unwrap();
+        let versions = connection
+            .prepare("SELECT version FROM qx_schema_migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, ["1", "2"]);
+        connection
+            .execute("DELETE FROM qx_schema_migrations WHERE version = '2'", [])
+            .unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX qx_jobs_pending_idx;
+                 DROP INDEX qx_control_commands_pending_idx;
+                 DROP INDEX qx_outbox_pending_idx;",
+            )
+            .unwrap();
+        drop(connection);
+
+        drop(open(&path).expect("v1 database applies the v2 index migration"));
+        let connection = Connection::open(&path).unwrap();
+        let version: String = connection
+            .query_row(
+                "SELECT version FROM qx_schema_migrations WHERE version = '2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "2");
+        for index in [
+            "qx_jobs_pending_idx",
+            "qx_control_commands_pending_idx",
+            "qx_outbox_pending_idx",
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "migration did not create {index}");
+        }
+        drop(connection);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_legacy_schema_adoption_recognizes_v1_and_v2_without_losing_data() {
+        let v2_path = migration_db("legacy-adopt-v2");
+        let connection = Connection::open(&v2_path).unwrap();
+        connection
+            .execute_batch(super::super::schema_migrations::SQLITE_V1_SCHEMA)
+            .unwrap();
+        connection
+            .execute_batch(super::super::schema_migrations::SQLITE_V2_SCHEMA)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO qx_control_state(state_id, content) VALUES (1, 'legacy-state')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(adopt_legacy_sqlite_schema(&v2_path).unwrap(), 2);
+        drop(open(&v2_path).unwrap());
+        let connection = Connection::open(&v2_path).unwrap();
+        let state: String = connection
+            .query_row(
+                "SELECT content FROM qx_control_state WHERE state_id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "legacy-state");
+        let versions = connection
+            .prepare("SELECT version FROM qx_schema_migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, ["1", "2"]);
+        drop(connection);
+        let _ = std::fs::remove_file(v2_path);
+
+        let v1_path = migration_db("legacy-adopt-v1");
+        Connection::open(&v1_path)
+            .unwrap()
+            .execute_batch(super::super::schema_migrations::SQLITE_V1_SCHEMA)
+            .unwrap();
+        assert_eq!(adopt_legacy_sqlite_schema(&v1_path).unwrap(), 1);
+        drop(open(&v1_path).expect("the regular migrator upgrades adopted v1 to v2"));
+        let connection = Connection::open(&v1_path).unwrap();
+        let versions = connection
+            .prepare("SELECT version FROM qx_schema_migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, ["1", "2"]);
+        drop(connection);
+        let _ = std::fs::remove_file(v1_path);
+    }
+
+    #[test]
+    fn explicit_legacy_schema_adoption_rejects_drift_without_ledger() {
+        let path = migration_db("legacy-adopt-drift");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(super::super::schema_migrations::SQLITE_V1_SCHEMA)
+            .unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE qx_control_state;
+                 CREATE TABLE qx_control_state(state_id INTEGER PRIMARY KEY, payload TEXT NOT NULL);",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(matches!(
+            adopt_legacy_sqlite_schema(&path),
+            Err(StorageError::Conflict(message)) if message.contains("不完全一致")
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let ledger_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='qx_schema_migrations')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!ledger_exists);
+        drop(connection);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_legacy_schema_adoption_does_not_create_a_missing_database() {
+        let path = migration_db("legacy-adopt-missing");
+        assert!(matches!(
+            adopt_legacy_sqlite_schema(&path),
+            Err(StorageError::Conflict(message)) if message.contains("不会创建新数据库")
+        ));
+        assert!(!path.exists());
     }
 
     fn queued_job() -> (JobSpec, JobRun) {

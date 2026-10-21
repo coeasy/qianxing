@@ -98,9 +98,8 @@ impl StrategyFrame {
             return Err("策略分帧 flags 含未支持位".into());
         }
         let kind = StrategyFrameKind::from_raw(header[6])?;
-        let sequence = u64::from_le_bytes(header[8..16].try_into().expect("fixed header"));
-        let payload_len =
-            u32::from_le_bytes(header[16..20].try_into().expect("fixed header")) as usize;
+        let sequence = u64::from_le_bytes(read_header_field(&header, 8)?);
+        let payload_len = u32::from_le_bytes(read_header_field(&header, 16)?) as usize;
         let total = STRATEGY_FRAME_HEADER_LEN
             .checked_add(payload_len)
             .ok_or_else(|| "策略分帧长度溢出".to_string())?;
@@ -109,7 +108,7 @@ impl StrategyFrame {
                 "策略分帧超过大小上限: bytes={total} max={max_frame_bytes}"
             ));
         }
-        let expected_crc = u32::from_le_bytes(header[20..24].try_into().expect("fixed header"));
+        let expected_crc = u32::from_le_bytes(read_header_field(&header, 20)?);
         let mut payload = vec![0_u8; payload_len];
         reader.read_exact(&mut payload).map_err(format_read_error)?;
         let actual_crc = crc32(&payload);
@@ -124,6 +123,18 @@ impl StrategyFrame {
             payload,
         })
     }
+}
+
+fn read_header_field<const N: usize>(header: &[u8], start: usize) -> Result<[u8; N], String> {
+    let end = start
+        .checked_add(N)
+        .ok_or_else(|| "策略分帧头字段偏移溢出".to_string())?;
+    let field = header
+        .get(start..end)
+        .ok_or_else(|| format!("策略分帧头字段越界: start={start} len={N}"))?;
+    field
+        .try_into()
+        .map_err(|_| format!("策略分帧头字段长度异常: start={start} len={N}"))
 }
 
 fn format_read_error(error: io::Error) -> String {

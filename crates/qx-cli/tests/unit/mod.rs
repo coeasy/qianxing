@@ -1,0 +1,477 @@
+// qx-cli 的行为用例按主题分文件放在这里（Phase 4o 从单文件 `tests_main.rs` 拆出）。
+// 与 `venue_runtime/`、`ledger/` 同一先例：按主题组织测试；共享夹具集中在本文件。
+use super::*;
+mod imports;
+pub(crate) use imports::*;
+
+/// Paper smoke fixture 的账户级风控上下文：绑定仓库内已验收的 BTCUSDT
+/// 现货规格并提供充足保证金。完整风控矩阵在 `qx-execution` 与 `qx-risk`
+/// 的合同测试中覆盖。
+pub(crate) fn smoke_paper_risk_context() -> RiskContext {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let spec: TradingInstrumentSpec = serde_json::from_str(
+        &std::fs::read_to_string(
+            workspace_root
+                .join("deploy")
+                .join("qianxing.binance.spot.spec.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    RiskContext {
+        available_margin_raw: Some(1_000_000 * SCALE),
+        reference_price: Some(Price::from_i64(100)),
+        instrument_spec: Some(spec),
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    }
+}
+
+/// 回测示例配置的 deploy 目录、BarFrame 与运行时模板。
+pub(crate) fn builtin_backtest_example_paths() -> (PathBuf, PathBuf, PathBuf) {
+    let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    (
+        deploy.clone(),
+        deploy.join("qianxing.bar-frame.example.json"),
+        deploy.join("qianxing.runtime.builtin-strategy.example.json"),
+    )
+}
+
+/// 为单个用例创建独立临时目录，避免回测产物落在仓库里。
+pub(crate) fn temp_cli_case_dir(label: &str) -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli tests live below the workspace root")
+        .join("target/qx-cli-test-tmp")
+        .join(format!(
+            "qianxing-cli-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// 把配置写入独立的临时 data_dir，避免回测产物落在仓库里。
+pub(crate) fn isolated_backtest_runtime(
+    deploy: &Path,
+    config: &RuntimeConfig,
+    label: &str,
+) -> (PathBuf, PathBuf) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli tests live below the workspace root")
+        .join("target/qx-cli-test-tmp")
+        .join(format!(
+            "qianxing-cli-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut config = config.clone();
+    config.storage.data_dir = root.to_string_lossy().into_owned();
+    // 运行时文件搬进临时目录后，相对 deploy 的输入路径要固定为绝对路径。
+    config.strategy.bars_snapshot_path = Some(
+        deploy
+            .join("qianxing.bar-frame.example.json")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    config.strategy.dataset_bundle_path = Some(
+        deploy
+            .join("qianxing.dataset-bundle.bar-frame.example.json")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let runtime_path = root.join("runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+    (root, runtime_path)
+}
+
+/// Create a real current-generation summary fixture for report command integration cases.
+pub(crate) fn current_summary_fixture(label: &str) -> (PathBuf, PathBuf) {
+    let (deploy, frame, template) = builtin_backtest_example_paths();
+    let config = read_runtime_config(&template).expect("读取内置回测 runtime 模板");
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &config, label);
+    run_strategy_backtest(&runtime, &frame, None).expect("生成 v7 summary fixture");
+    let summary = list_backtest_summary_paths(&root.join("runs"))
+        .expect("读取生成的 summary")
+        .into_iter()
+        .next()
+        .expect("回测生成一份 summary");
+    (root, summary)
+}
+
+/// Paper 账户域 `(main, paper)` 的账户级日志名。用例一律从这里取，不抄字面量：
+/// 测试里的第二份命名就是生产里第二份命名的温床。
+pub(crate) fn paper_account_log() -> String {
+    account_event_log_name("main", "paper").expect("main/paper 是合法账户身份")
+}
+
+/// 构造一份只做字段填装的 worker 配置，避免每个风控用例重复 14 个字段。
+pub(crate) fn mk_worker(
+    id: &str,
+    role: WorkerRole,
+    venue: &str,
+    instrument_spec_path: Option<&str>,
+) -> WorkerConfig {
+    WorkerConfig {
+        id: id.into(),
+        role,
+        enabled: true,
+        account_id: Some("main".into()),
+        venue_id: Some(venue.into()),
+        endpoint: None,
+        symbols: Vec::new(),
+        settlement_currency: None,
+        credential_env: None,
+        credential_files: None,
+        instrument_spec_path: instrument_spec_path.map(str::to_string),
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    }
+}
+
+/// 读取回测产物目录里的第一份摘要。风控与成本口径用例读的是同一批产物，
+/// 扫描 `runs/` 的写法只留一处，避免第二份实现把"没产物"误判成"通过"。
+pub(crate) fn read_first_backtest_summary(root: &Path) -> serde_json::Value {
+    read_first_artifact(root, ".summary.json")
+}
+
+/// 读取 `runs/` 下第一份以 `suffix` 结尾的 JSON 产物。
+pub(crate) fn read_first_artifact(root: &Path, suffix: &str) -> serde_json::Value {
+    let runs = root.join("runs");
+    let mut paths = std::fs::read_dir(&runs)
+        .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", runs.display()))
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().ends_with(suffix))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    assert!(!paths.is_empty(), "{} 下缺少 {suffix} 产物", runs.display());
+    paths.sort();
+    let payload = std::fs::read_to_string(&paths[0]).unwrap();
+    serde_json::from_str(&payload).unwrap()
+}
+
+/// 仓库内已验收的 BTCUSDT 现货规格绝对路径，供风控配置用例直接引用。
+pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.binance.spot.spec.json")
+}
+
+/// 为账簿记账回归生成指定报价币种的现货规格。
+pub(crate) fn spot_spec_settled_in(dir: &Path, currency: &str) -> PathBuf {
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let mut spec: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    spec["quote_currency"] = serde_json::Value::String(currency.into());
+    spec["settlement_currency"] = serde_json::Value::String(currency.into());
+    let path = dir.join(format!("spot-{currency}.spec.json"));
+    std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
+    path
+}
+
+/// 读取仓库根下的一份文件，按 `/` 分隔的相对路径。
+///
+/// 「数源码里的字面量」这类接线判据全仓有十几处，各自拼一次 `CARGO_MANIFEST_DIR`
+/// 就会有人漏掉 `unwrap`，把"文件改名了"读成"判据通过"。
+pub(crate) fn workspace_source(rel: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(rel);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("读取 {rel} 失败: {error}"))
+}
+
+/// 所有 crate 的生产源码（`crates/*/src/**/*.rs`），跳过用例目录。
+///
+/// 判据问的是"生产里有没有人读"，所以 `src/tests/` 与任何名为 `tests` 的目录都不算
+/// 读者 —— 用例读者是回归证明，按仓库口径另走"保留 + 登记 limitation"那条路。
+pub(crate) fn all_crate_production_sources() -> Vec<PathBuf> {
+    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("crates")];
+    let mut files = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// 路径是否落在某个 crate 目录下（用于把声明该字段的 crate 自己排除出"读者"统计）。
+pub(crate) fn path_under_crate(path: &Path, crate_name: &str) -> bool {
+    path.components()
+        .any(|part| part.as_os_str() == std::ffi::OsStr::new(crate_name))
+}
+
+/// 装配一条 SubmitOrder 控制命令；`dry_run=false` 时进入真实副作用分支。
+pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -> ControlCommand {
+    ControlCommand {
+        command_id,
+        request_id: format!("submit-{command_id}"),
+        operator_id: "ops".into(),
+        reason: "risk boundary integration".into(),
+        kind: CommandKind::SubmitOrder,
+        target: command_id.to_string(),
+        payload: BTreeMap::from([("order_json".into(), serde_json::to_string(order).unwrap())]),
+        permission: Permission::Trading,
+        dry_run,
+    }
+}
+
+/// paper 策略运行时的配置模板，`data_dir` 换到用例的临时目录。
+///
+/// 模板里的规格路径相对 `data_dir`，所以规格文件要绝对化后才读得到。账户读模型的
+/// 多条用例（钱字段口径、默认账户挑选）都以这份配置起步，命名与 `ashare_submit_guard`
+/// 里那份"顺手写一份 runtime.json 并返回路径"的 helper 刻意分开。
+pub(crate) fn paper_runtime_config(data_dir: &Path) -> RuntimeConfig {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let template = workspace_root
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let spec = workspace_binance_spot_spec().to_string_lossy().into_owned();
+    for worker in config.workers.iter_mut() {
+        if worker.instrument_spec_path.is_some() {
+            worker.instrument_spec_path = Some(spec.clone());
+        }
+    }
+    config
+}
+
+/// 把一笔带费用的成交落进 paper 账户日志，产出"持仓未平 + 已付费用"的账户状态。
+pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) {
+    let config_path = data_dir.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut pipeline = LiveEventPipeline::open(data_dir, paper_account_log(), "USDT").unwrap();
+    let ts = runtime_timestamp_ms();
+    pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument.clone(),
+            QuoteTick::new(
+                ts,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                ts,
+            ),
+            ts,
+            ts,
+            "money-fields:quote",
+        ))
+        .unwrap();
+    drop(pipeline);
+    let order = mk_order(9701, &instrument, Side::Buy, 1);
+    let command = mk_submit_command(9701, &order, false);
+    let control = ControlStateBackend::Files(JsonStateStore::new(data_dir));
+    control
+        .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, 10))
+        .unwrap()
+        .1
+        .unwrap();
+    ControlCommandQueue::new(data_dir.join("control-queue"))
+        .enqueue(command.clone(), 10)
+        .unwrap();
+    run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
+}
+
+mod account_event_log_identity;
+mod account_principal_source;
+mod account_registry_paper;
+mod api_app_surface_routes;
+mod api_default_account_reads;
+mod api_doc_cross_references;
+mod api_doc_prose_routes;
+mod api_endpoint_table_routes;
+mod api_query_models_live;
+mod api_read_route_query_contract;
+mod api_response_field_doc;
+mod api_shared_exits_and_status_lines;
+mod api_snapshot_money_fields;
+mod api_snapshot_pnl_fields;
+mod api_transport_auth_boundary_doc;
+mod artifact_identity_doc;
+mod ashare_submit_guard;
+mod cli_json_surface;
+
+/// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
+/// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
+/// V12 R4-e 把 7 文件手工名单换成整棵 `src/` 递归清点：`cli_args.rs` 这类同样编进
+/// `qx-cli.exe` 的文件当时不在名单里，护栏对它就是形同不存在。
+fn qx_cli_surface_sources() -> Vec<PathBuf> {
+    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut files = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // `src/tests/` 只编进测试壳、不编进被测 binary，列进来会天天误报。
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+/// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
+/// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
+fn assert_binary_fresh(binary: &Path) {
+    let built = binary
+        .metadata()
+        .and_then(|m| m.modified())
+        .expect("读取被测 binary 修改时间失败");
+    for source in qx_cli_surface_sources() {
+        let edited = source
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| panic!("找不到被测源码 {}", source.display()));
+        assert!(
+            built >= edited,
+            "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
+            binary.display(),
+            source.display()
+        );
+    }
+}
+
+fn qx_cli_binary() -> PathBuf {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+        let binary = PathBuf::from(path);
+        assert_binary_fresh(&binary);
+        return binary;
+    }
+    let profile_dir = std::env::current_exe()
+        .expect("读取测试可执行文件路径失败")
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("测试可执行文件应位于 target/<profile>/deps")
+        .to_path_buf();
+    let binary = profile_dir.join(if cfg!(windows) {
+        "qx-cli.exe"
+    } else {
+        "qx-cli"
+    });
+    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    // 本 crate 的 `--bin` 单元测试里 `option_env!("CARGO_BIN_EXE_qx-cli")` 取不到值（它只喂给
+    // 集成测试壳），所以走的正是这条回落分支——也正是 `cargo test --bin` 不重链 binary 的那条路。
+    // 新鲜度只写在上面那条分支等于没写：定向跑子进程用例时会静默对着旧行为变绿（V11 S6）。
+    assert_binary_fresh(&binary);
+    binary
+}
+
+mod backtest_account_base;
+mod backtest_cost_provenance;
+mod backtest_entries;
+mod backtest_fill_model;
+mod backtest_input_provenance;
+mod backtest_replay_gate;
+mod backtest_risk_provenance;
+mod backtest_signal_provenance;
+mod blessed_artifacts;
+mod calendar_component_fingerprint;
+mod ccxt_position_facts_honesty;
+mod ccxt_reconcile_round;
+mod ccxt_stream_retry_budget;
+mod cli_surface;
+mod control_command_executor_coverage;
+mod deploy_lookup;
+mod deploy_template_coverage;
+mod e2e_and_python_contract;
+mod enum_variant_surface;
+mod environment_submit_arm_table;
+mod error_code_contract;
+mod event_backtest_evidence;
+#[cfg(feature = "nats")]
+mod event_consumer_write_budget;
+mod event_kind_variant_ledger;
+mod event_log_face_wiring;
+mod execution_and_multi_leg;
+mod grafana_dashboard_metrics;
+mod lease_clock_domain;
+mod live_pending_order_reservation;
+mod live_submit_fail_closed;
+mod market_spec_single_source;
+mod multi_builtin_parity;
+mod panic_boundary;
+mod paper_and_strategy_worker;
+mod paper_bridge_and_bundles;
+mod paper_hedge_recovery;
+mod paper_margin_valuation;
+mod paper_multi_strategy;
+mod paper_pending_exposure;
+mod paper_settlement_currency;
+mod paper_submit_terminal_state;
+mod parallel_run_isolation;
+mod pipeline_metrics_open_sites;
+mod pipeline_metrics_surface;
+mod project_manifest_init;
+mod quickstart_file_budget;
+mod reconcile_worker_identity;
+mod reexport_zero_reader_surface;
+mod report_html;
+mod report_readout;
+mod risk_port_channel;
+mod run_entry_argument_honesty;
+mod run_evidence;
+mod runtime_api_worker_identity;
+mod runtime_market_spec_preflight;
+mod scheduler_dispatch_support;
+mod scheduler_owner_routing;
+mod settlement_currency_caliper;
+mod settlement_currency_single_source;
+mod spread_recovery_cadence;
+mod storage_root_report;
+mod strategy_job_terminal_state;
+mod strategy_order_identity_round_scope;
+mod strategy_snapshot_staleness;
+mod strategy_worker_entries;
+mod worker_observability;
+mod worker_pipe_failure_diagnostics;
+mod zero_reader_fields;

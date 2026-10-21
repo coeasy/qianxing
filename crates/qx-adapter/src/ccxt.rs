@@ -1,11 +1,11 @@
 //! 公共 Python CCXT 的 Rust 进程桥接。
 //!
-//! 这里不实现任何交易所签名或 REST 路径，只把 `qianxing_ccxt.worker` 的
-//! JSONL 协议接入既有 `Venue` 事实边界。提交结果未知时返回 ReconcileRequired，
-//! 不自动重试或补单；订单回报通过 `sync_order` 显式进入统一 VenueEvent。
+//! 这里不实现交易所签名或 REST 路径，只把 `qianxing_ccxt.worker` JSONL 接入既有 `Venue` 事实边界。
+//! 提交结果未知时要求对账，不自动重试或补单；订单回报经 `sync_order` 明确进入统一 VenueEvent。
 
 pub use crate::ccxt_provider::CcxtBarDataProvider;
-use crate::io_budget::write_all_within;
+use crate::io_budget::{write_all_within, write_all_within_cancellable, CancellableWrite};
+use crate::order_lifecycle::OrderLifecycle;
 use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
@@ -14,15 +14,34 @@ use qx_core::{
 use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod restore;
 use std::env;
 use std::fs;
 use std::io::BufReader;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 pub trait CcxtRpc: Send {
     fn call(&mut self, request: Value) -> Result<Value, String>;
+
+    fn call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        if should_cancel() {
+            return Ok(CcxtCallOutcome::Cancelled);
+        }
+        self.call(request).map(CcxtCallOutcome::Response)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CcxtCallOutcome {
+    Response(Value),
+    Cancelled,
 }
 
 pub struct CcxtProcessClient {
@@ -51,9 +70,13 @@ impl CcxtProcessClient {
         if let Some(working_dir) = working_dir {
             command.current_dir(working_dir);
         }
-        let mut child = command
+        let child = command
             .spawn()
             .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
+        Self::from_child(child, timeout_ms, python)
+    }
+
+    fn from_child(mut child: Child, timeout_ms: u64, worker_program: &str) -> Result<Self, String> {
         // `take()` 失败要先把子进程收掉再返回：`Stdio::piped()` 之后这两个 `Some` 是
         // 不变式，此路径今天走不到，但上游一旦把 worker 改成无管道模式，这条 `?`
         // 就会留下一个无人回收的孤儿进程。与 `strategy_host.rs` 的同一处防御对齐
@@ -78,7 +101,7 @@ impl CcxtProcessClient {
         // 无界通道让杂印与迟到的应答一路攒下去；改成有界之后泵在写满时被顶住，
         // 背压回到子进程的 stdout 管道，内存不再随运行时长增长（V13 R1-D）。
         let (sender, responses) = mpsc::sync_channel(1);
-        let worker_program = python.to_string();
+        let worker_program = worker_program.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -117,6 +140,82 @@ impl CcxtProcessClient {
     /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
+    }
+
+    /// Send one request while observing the owning worker's shutdown token during both IPC phases.
+    /// A cancelled in-flight request is ambiguous, so the subprocess is killed and the result is
+    /// reported as cancellation; callers must not retry an order automatically.
+    pub fn call_cancellable(
+        &mut self,
+        request: Value,
+        mut should_cancel: impl FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        let payload = serde_json::to_string(&request)
+            .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
+        let mut bytes = payload.into_bytes();
+        bytes.push(b'\n');
+        let stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
+        let started = Instant::now();
+        let timeout = Duration::from_millis(self.timeout_ms);
+        let written =
+            write_all_within_cancellable(stdin, bytes, timeout, &mut should_cancel, || {
+                self.stop_child()
+            })?;
+        self.stdin = match written {
+            CancellableWrite::Written(stdin) => Some(stdin),
+            CancellableWrite::Cancelled => return Ok(CcxtCallOutcome::Cancelled),
+        };
+
+        loop {
+            if should_cancel() {
+                self.stop_child();
+                return Ok(CcxtCallOutcome::Cancelled);
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                self.stop_child();
+                return Err(format!(
+                    "CCXT Worker 响应超时 timeout_ms={}，提交结果未知",
+                    self.timeout_ms
+                ));
+            }
+            match self
+                .responses
+                .recv_timeout(remaining.min(Duration::from_millis(20)))
+            {
+                Ok(result) => {
+                    let line = result?;
+                    let response: Value = serde_json::from_str(&line)
+                        .map_err(|error| format!("解析 CCXT Worker 响应失败: {error}"))?;
+                    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+                        let error = response.get("error").cloned().unwrap_or_else(|| json!({}));
+                        let class = error
+                            .get("class")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        return Err(format!("CCXT Worker [{class}] {error}"));
+                    }
+                    return Ok(CcxtCallOutcome::Response(
+                        response.get("result").cloned().unwrap_or(Value::Null),
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("CCXT Worker 响应通道已断开，提交结果未知".into());
+                }
+            }
+        }
+    }
+
+    fn stop_child(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.stdin.take();
     }
 }
 
@@ -219,7 +318,7 @@ impl CcxtRpc for CcxtProcessClient {
                 ));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("CCXT Worker 响应通道已断开，提交结果未知".into())
+                return Err("CCXT Worker 响应通道已断开，提交结果未知".into());
             }
         };
         let response: Value = serde_json::from_str(&line)
@@ -241,6 +340,14 @@ impl CcxtRpc for CcxtProcessClient {
             .cloned()
             .ok_or_else(|| "CCXT Worker 成功响应缺少 result".to_string())
     }
+
+    fn call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> Result<CcxtCallOutcome, String> {
+        CcxtProcessClient::call_cancellable(self, request, should_cancel)
+    }
 }
 
 impl Drop for CcxtProcessClient {
@@ -253,6 +360,7 @@ impl Drop for CcxtProcessClient {
 pub struct CcxtProcessVenue {
     id: String,
     rpc: Box<dyn CcxtRpc>,
+    shutdown_check: Option<Box<dyn FnMut() -> bool + Send>>,
     connected: bool,
     /// 本地订单状态、远端订单号映射与成交去重键共用同一封顶策略：终态订单在超过
     /// `MAX_CACHED_ORDERS + ORDER_EVICT_HYSTERESIS` 后按 client_id 升序退场，派生索引同步级联。
@@ -263,17 +371,29 @@ pub struct CcxtProcessVenue {
     cumulative_costs: BTreeMap<u64, i128>,
 }
 
+impl OrderLifecycle for CcxtProcessVenue {}
+
 impl CcxtProcessVenue {
     pub fn new(id: impl Into<String>, rpc: Box<dyn CcxtRpc>) -> Self {
         Self {
             id: id.into(),
             rpc,
+            shutdown_check: None,
             connected: true,
             orders: BTreeMap::new(),
             remote_ids: BTreeMap::new(),
             seen_trade_ids: BTreeMap::new(),
             cumulative_costs: BTreeMap::new(),
         }
+    }
+
+    /// Attach the owning worker's cancellation token to all subsequent venue RPC calls.
+    pub fn with_shutdown_check(
+        mut self,
+        should_stop: impl FnMut() -> bool + Send + 'static,
+    ) -> Self {
+        self.shutdown_check = Some(Box::new(should_stop));
+        self
     }
 
     /// 订单缓存封顶后级联清掉派生索引：远端订单号、成交去重键、累计成本都必须跟着
@@ -290,31 +410,10 @@ impl CcxtProcessVenue {
             .retain(|client_id, _| !evicted.contains(client_id));
     }
 
-    pub fn restore_order(&mut self, order: Order, remote_id: impl Into<String>) -> QxResult<()> {
-        order.validate().map_err(QxError::BusinessViolation)?;
-        let remote_id = remote_id.into();
-        if remote_id.trim().is_empty() {
-            return Err(QxError::ReconcileRequired(
-                "CCXT 恢复订单缺少 remote order id".into(),
-            ));
-        }
-        let same_remote_order = self
-            .remote_ids
-            .get(&order.client_id)
-            .is_some_and(|existing| existing == &remote_id);
-        self.remote_ids.insert(order.client_id, remote_id);
-        if !same_remote_order {
-            self.cumulative_costs.remove(&order.client_id);
-        }
-        self.orders.insert(order.client_id, order);
-        let evicted = evict_stale_terminal_orders(&mut self.orders);
-        self.forget_orders(&evicted);
-        Ok(())
-    }
-
     /// 拉取订单事实并生成增量成交/取消事件。该方法可由 REST 轮询或 CCXT Pro
     /// 用户流 worker 调用，二者都复用同一事实转换。
     pub fn sync_order(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities().require_query()?;
         let order = self
             .orders
             .get(&client_order_id)
@@ -498,15 +597,26 @@ impl CcxtProcessVenue {
     }
 
     fn call_or_reconcile(&mut self, request: Value) -> QxResult<Value> {
-        match self.rpc.call(request) {
+        let response = match self.shutdown_check.as_mut() {
+            Some(should_stop) => self
+                .rpc
+                .call_cancellable(request, should_stop.as_mut())
+                .and_then(|outcome| match outcome {
+                    CcxtCallOutcome::Response(value) => Ok(value),
+                    CcxtCallOutcome::Cancelled => Err("CCXT Worker 请求因停机取消".into()),
+                }),
+            None => self.rpc.call(request),
+        };
+        match response {
             Ok(result) => Ok(result),
             Err(error) => {
                 // 一旦 RPC 返回错误，不能继续把本地 Venue 当作可提交状态；
                 // 调用方必须先 replace_rpc 或交给对账流程恢复。
-                self.connected = false;
-                Err(QxError::ReconcileRequired(format!(
-                    "CCXT Worker 结果未知: {error}"
-                )))
+                let error = QxError::ReconcileRequired(format!("CCXT Worker 结果未知: {error}"));
+                if Self::reconciliation_trigger(&error) {
+                    self.connected = false;
+                }
+                Err(error)
             }
         }
     }
@@ -515,6 +625,27 @@ impl CcxtProcessVenue {
     /// 原始观察结果，订单事实仍必须通过 `sync_order` 和 Runtime 归约。
     pub fn stream_call(&mut self, request: Value) -> QxResult<Value> {
         self.call_or_reconcile(request)
+    }
+
+    pub fn stream_call_cancellable(
+        &mut self,
+        request: Value,
+        should_cancel: &mut dyn FnMut() -> bool,
+    ) -> QxResult<CcxtCallOutcome> {
+        match self.rpc.call_cancellable(request, should_cancel) {
+            Ok(CcxtCallOutcome::Cancelled) => {
+                self.connected = false;
+                Ok(CcxtCallOutcome::Cancelled)
+            }
+            Ok(response) => Ok(response),
+            Err(error) => {
+                let error = QxError::ReconcileRequired(format!("CCXT Worker 结果未知: {error}"));
+                if Self::reconciliation_trigger(&error) {
+                    self.connected = false;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// 连接断开后替换 JSONL RPC 进程；本地 remote order/成交去重状态保留，
@@ -557,7 +688,7 @@ impl CcxtProcessVenue {
                     "CCXT trade 缺少 trade_id".into(),
                 ));
             };
-            if !seen.insert(trade_id.to_string()) {
+            if !Self::remember_fill(seen, trade_id.to_string()) {
                 continue;
             }
             let amount = raw_i128(trade, "fee_raw")?;
@@ -583,7 +714,20 @@ impl Venue for CcxtProcessVenue {
         &self.id
     }
 
+    fn capabilities(&self) -> &'static qx_zhenlu::venue_capabilities::VenueCapabilities {
+        &qx_zhenlu::venue_capabilities::CCXT_PROCESS_VENUE_CAPABILITIES
+    }
+
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_submit(&order, self.id())
+            .map_err(QxError::BusinessViolation)?;
+        Self::validate_order_spec(&order)?;
+        if !Self::can_submit(&order) {
+            return Err(QxError::BusinessViolation(
+                "CCXT 只接受待提交或已提交订单".into(),
+            ));
+        }
         if !self.connected {
             return Err(QxError::VenueState("CCXT Worker 未连接".into()));
         }
@@ -681,15 +825,18 @@ impl Venue for CcxtProcessVenue {
     }
 
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_cancel()
+            .map_err(QxError::BusinessViolation)?;
         let order = self
             .orders
             .get(&client_order_id)
             .ok_or_else(|| QxError::Permanent("CCXT 本地订单不存在".into()))?;
         if order.status.is_terminal() {
-            // 与 PaperVenue 同口径：本地已终态的订单不再产生撤单事实，否则一条
-            // Cancelled 会去改写已成交的终态。
+            // 终态不再产生重复撤单事实。
             return Ok(Vec::new());
         }
+        Self::validate_cancel_state(order, "CCXT")?;
         let remote_id = self
             .remote_ids
             .get(&client_order_id)
@@ -780,381 +927,5 @@ fn cumulative_cost_raw(remote: &Value, filled_raw: i128) -> QxResult<i128> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use qx_core::{
-        InstrumentId, MarginMode, OrderPolicy, PositionMode, PositionSide, Quantity, Side,
-    };
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn ccxt_worker_environment_is_minimal_and_validates_credential_names() {
-        let path =
-            std::env::temp_dir().join(format!("qianxing-ccxt-env-{}.json", std::process::id()));
-        std::fs::write(
-            &path,
-            r#"{"credential_env":{"api_key":"QX_TEST_API_KEY","secret":"QX_TEST_SECRET"}}"#,
-        )
-        .unwrap();
-        let environment = ccxt_worker_environment(&path.to_string_lossy()).unwrap();
-        assert!(!environment.contains_key("QX_UNRELATED_PARENT_SECRET"));
-        let _ = std::fs::write(&path, r#"{"credential_env":{"secret":"BAD=VARIABLE"}}"#);
-        assert!(ccxt_worker_environment(&path.to_string_lossy()).is_err());
-        let _ = std::fs::remove_file(path);
-    }
-
-    /// #214：读窗下界必须大到导得出的空闲窗口还能当真是一次回话往返。
-    /// 用户流那条循环自身不睡，节律全靠这个窗口 —— 下界退化成 1 时窗口是 0，
-    /// 一个没有成交的账户就把 EventLog 刷新与健康 mark 打成毫秒级热循环。
-    #[test]
-    fn ccxt_idle_window_keeps_real_pacing_at_the_timeout_floor() {
-        let floor_window = ccxt_idle_window_ms(CCXT_WORKER_MIN_TIMEOUT_MS);
-        assert!(
-            floor_window >= 500,
-            "读窗下界 {CCXT_WORKER_MIN_TIMEOUT_MS}ms 导出的空闲窗口只有 {floor_window}ms，用户流会打成热循环"
-        );
-        // 回话必须先于读窗到期到达，否则"空闲"永远被读成断链。
-        for timeout_ms in [
-            CCXT_WORKER_MIN_TIMEOUT_MS,
-            5_000,
-            30_000,
-            CCXT_WORKER_MAX_TIMEOUT_MS,
-        ] {
-            assert!(
-                ccxt_idle_window_ms(timeout_ms) < timeout_ms,
-                "读窗 {timeout_ms} 的空闲窗口不再短于读窗，空闲会被具名成链路故障"
-            );
-        }
-    }
-
-    /// #214：校验的两端都要真的挡 —— 下界以下与上界以上都拒绝，界内按值返回。
-    #[test]
-    fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
-        let path =
-            std::env::temp_dir().join(format!("qianxing-ccxt-timeout-{}.json", std::process::id()));
-        let read = |payload: &str| {
-            std::fs::write(&path, payload).unwrap();
-            ccxt_worker_timeout_ms(&path.to_string_lossy())
-        };
-        // 低于下界：过去这条是合法的 1，热循环就是从这一格进来的。
-        let error = read(r#"{"timeout_ms": 1}"#).unwrap_err();
-        assert!(
-            error.contains("timeout_ms 必须在"),
-            "下界没挡住 timeout_ms=1: {error}"
-        );
-        assert!(read(r#"{"timeout_ms": 0}"#).is_err());
-        assert!(read(r#"{"timeout_ms": 300001}"#).is_err());
-        assert_eq!(read(r#"{"timeout_ms": 1000}"#).unwrap(), 1_000);
-        assert_eq!(read(r#"{"timeout_ms": 300000}"#).unwrap(), 300_000);
-        // 不写字段时仍按默认 30 秒，不受下界改动影响。
-        assert_eq!(read("{}").unwrap(), 30_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    struct FakeRpc {
-        calls: Vec<Value>,
-    }
-
-    impl CcxtRpc for FakeRpc {
-        fn call(&mut self, request: Value) -> Result<Value, String> {
-            self.calls.push(request.clone());
-            match request.get("op").and_then(Value::as_str) {
-                Some("create_order") => Ok(json!({
-                    "order": {"order_id": "remote-1", "status": "open", "filled_raw": 0}
-                })),
-                Some("fetch_order") => Ok(json!({
-                    "order": {
-                        "order_id": "remote-1",
-                        "status": "closed",
-                        "filled_raw": 2_000_000_000i64,
-                        "average_raw": 100_000_000_000i64,
-                        "fee_raw": 1_000_000_000i64,
-                        "fee_currency": "USDT"
-                    }
-                })),
-                _ => Ok(json!({})),
-            }
-        }
-    }
-
-    fn order() -> Order {
-        Order {
-            client_id: 7,
-            instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
-            side: Side::Buy,
-            qty: Quantity::from_i64(2),
-            limit: Some(Price::from_i64(100)),
-            status: OrderStatus::PendingSubmit,
-            filled: Quantity::ZERO,
-            account_id: "main".into(),
-            trace: None,
-            policy: None,
-        }
-    }
-
-    #[test]
-    fn ccxt_process_venue_submits_and_syncs_fill_without_custom_exchange_protocol() {
-        let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
-        assert!(matches!(
-            venue.submit(order(), 10).unwrap()[0],
-            VenueEvent::Accepted { .. }
-        ));
-        let events = venue.sync_order(7, 11).unwrap();
-        match &events[0] {
-            VenueEvent::Fill(fill) => {
-                assert_eq!(fill.fee, Money::from_i64(1));
-                assert_eq!(fill.fee_currency.as_deref(), Some("USDT"));
-            }
-            other => panic!("expected fill, got {other:?}"),
-        }
-        assert_eq!(
-            venue.snapshot()[0].filled.raw(),
-            Quantity::from_i64(2).raw()
-        );
-    }
-
-    #[test]
-    fn ccxt_process_venue_enriches_missing_order_fee_from_incremental_trades() {
-        struct TradeFeeRpc;
-        impl CcxtRpc for TradeFeeRpc {
-            fn call(&mut self, request: Value) -> Result<Value, String> {
-                match request.get("op").and_then(Value::as_str) {
-                    Some("create_order") => Ok(json!({
-                        "order": {"order_id": "remote-fee", "status": "open", "filled_raw": 0}
-                    })),
-                    Some("fetch_order") => Ok(json!({
-                        "order": {
-                            "order_id": "remote-fee",
-                            "status": "closed",
-                            "filled_raw": 2_000_000_000_i64,
-                            "average_raw": 100_000_000_000_i64,
-                            "fee_raw": 0
-                        }
-                    })),
-                    Some("fetch_my_trades") => Ok(json!({
-                        "trades": [{
-                            "trade_id": "trade-fee-1",
-                            "fee_raw": 2_000_000_000_i64,
-                            "fee_currency": "USDT"
-                        }]
-                    })),
-                    _ => Ok(json!({})),
-                }
-            }
-        }
-        let mut venue = CcxtProcessVenue::new("okx", Box::new(TradeFeeRpc));
-        venue.submit(order(), 10).unwrap();
-        let events = venue.sync_order(7, 11).unwrap();
-        match &events[0] {
-            VenueEvent::Fill(fill) => {
-                assert_eq!(fill.fee, Money::from_i64(2));
-                assert_eq!(fill.fee_currency.as_deref(), Some("USDT"));
-            }
-            other => panic!("expected fill, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn ccxt_partial_sync_uses_incremental_price_from_cumulative_average() {
-        struct PartialRpc {
-            fetches: usize,
-        }
-
-        impl CcxtRpc for PartialRpc {
-            fn call(&mut self, request: Value) -> Result<Value, String> {
-                match request.get("op").and_then(Value::as_str) {
-                    Some("create_order") => Ok(json!({
-                        "order": {"order_id": "partial-1", "status": "open", "filled_raw": 0}
-                    })),
-                    Some("fetch_order") => {
-                        self.fetches += 1;
-                        if self.fetches == 1 {
-                            Ok(json!({
-                                "order": {
-                                    "order_id": "partial-1",
-                                    "status": "open",
-                                    "filled_raw": 1_000_000_000_i64,
-                                    "average_raw": 100_000_000_000_i64,
-                                    "fee_raw": 1
-                                }
-                            }))
-                        } else {
-                            Ok(json!({
-                                "order": {
-                                    "order_id": "partial-1",
-                                    "status": "closed",
-                                    "filled_raw": 2_000_000_000_i64,
-                                    "average_raw": 110_000_000_000_i64,
-                                    "fee_raw": 2
-                                }
-                            }))
-                        }
-                    }
-                    _ => Ok(json!({})),
-                }
-            }
-        }
-
-        let mut venue = CcxtProcessVenue::new("binance", Box::new(PartialRpc { fetches: 0 }));
-        venue.submit(order(), 10).unwrap();
-        let first = venue.sync_order(7, 11).unwrap();
-        let second = venue.sync_order(7, 12).unwrap();
-        let VenueEvent::Fill(first_fill) = &first[0] else {
-            panic!("expected first partial fill")
-        };
-        let VenueEvent::Fill(second_fill) = &second[0] else {
-            panic!("expected second partial fill")
-        };
-        assert_eq!(first_fill.qty, Quantity::from_i64(1));
-        assert_eq!(first_fill.price, Price::from_i64(100));
-        assert_eq!(second_fill.qty, Quantity::from_i64(1));
-        assert_eq!(second_fill.price, Price::from_i64(120));
-    }
-
-    struct StatusRpc {
-        status: &'static str,
-        filled_raw: i64,
-    }
-
-    impl CcxtRpc for StatusRpc {
-        fn call(&mut self, request: Value) -> Result<Value, String> {
-            match request.get("op").and_then(Value::as_str) {
-                Some("create_order") => Ok(json!({
-                    "order": {"order_id": "status-1", "status": "open", "filled_raw": 0}
-                })),
-                Some("fetch_order") => Ok(json!({
-                    "order": {
-                        "order_id": "status-1",
-                        "status": self.status,
-                        "filled_raw": self.filled_raw,
-                        "average_raw": 100_000_000_000_i64,
-                        "fee_raw": 1
-                    }
-                })),
-                _ => Ok(json!({})),
-            }
-        }
-    }
-
-    #[test]
-    fn ccxt_unknown_status_fails_closed_without_mutating_local_progress() {
-        let mut venue = CcxtProcessVenue::new(
-            "binance",
-            Box::new(StatusRpc {
-                status: "mystery",
-                filled_raw: 0,
-            }),
-        );
-        venue.submit(order(), 10).unwrap();
-        let error = venue.sync_order(7, 11).unwrap_err();
-        assert!(matches!(error, QxError::ReconcileRequired(_)));
-        assert!(!venue.cumulative_costs.contains_key(&7));
-        assert_eq!(venue.snapshot()[0].filled, Quantity::ZERO);
-        assert_eq!(venue.snapshot()[0].status, OrderStatus::PendingSubmit);
-    }
-
-    #[test]
-    fn ccxt_rpc_failure_marks_venue_disconnected_until_rpc_replacement() {
-        struct FailingRpc;
-        impl CcxtRpc for FailingRpc {
-            fn call(&mut self, _request: Value) -> Result<Value, String> {
-                Err("transport closed".into())
-            }
-        }
-
-        let mut venue = CcxtProcessVenue::new("okx", Box::new(FailingRpc));
-        assert!(matches!(
-            venue.submit(order(), 10),
-            Err(QxError::ReconcileRequired(_))
-        ));
-        assert!(!venue.connected());
-        assert!(matches!(
-            venue.submit(order(), 11),
-            Err(QxError::VenueState(_))
-        ));
-    }
-
-    #[test]
-    fn ccxt_closed_partial_order_requires_reconciliation_without_mutating_local_progress() {
-        let mut venue = CcxtProcessVenue::new(
-            "okx",
-            Box::new(StatusRpc {
-                status: "closed",
-                filled_raw: 1_000_000_000,
-            }),
-        );
-        venue.submit(order(), 10).unwrap();
-        let error = venue.sync_order(7, 11).unwrap_err();
-        assert!(matches!(error, QxError::ReconcileRequired(_)));
-        assert!(!venue.cumulative_costs.contains_key(&7));
-        assert_eq!(venue.snapshot()[0].filled, Quantity::ZERO);
-    }
-
-    #[test]
-    fn ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill() {
-        let mut venue = CcxtProcessVenue::new(
-            "binance",
-            Box::new(StatusRpc {
-                status: "canceled",
-                filled_raw: 1_000_000_000,
-            }),
-        );
-        venue.submit(order(), 10).unwrap();
-        let events = venue.sync_order(7, 11).unwrap();
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Fill(_))));
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
-        assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
-        assert_eq!(venue.snapshot()[0].status, OrderStatus::Cancelled);
-    }
-
-    #[test]
-    fn ccxt_order_policy_is_translated_before_create_order() {
-        let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
-        struct PolicyRpc {
-            calls: Arc<Mutex<Vec<Value>>>,
-        }
-        impl CcxtRpc for PolicyRpc {
-            fn call(&mut self, request: Value) -> Result<Value, String> {
-                self.calls.lock().unwrap().push(request.clone());
-                if request.get("op").and_then(Value::as_str) == Some("create_order") {
-                    Ok(json!({
-                        "order": {"order_id": "policy-1", "status": "open", "filled_raw": 0}
-                    }))
-                } else {
-                    Ok(json!({}))
-                }
-            }
-        }
-        let mut requested = order();
-        requested.policy = Some(OrderPolicy {
-            reduce_only: true,
-            position_side: PositionSide::Long,
-            margin_mode: MarginMode::Isolated,
-            position_mode: PositionMode::Hedge,
-            leverage: 3,
-            post_only: true,
-        });
-        let mut venue = CcxtProcessVenue::new(
-            "binance",
-            Box::new(PolicyRpc {
-                calls: Arc::clone(&calls),
-            }),
-        );
-        venue.submit(requested, 10).unwrap();
-        let calls = calls.lock().unwrap();
-        assert!(calls.iter().any(|call| call["op"] == "set_margin_mode"));
-        assert!(calls.iter().any(|call| call["op"] == "set_leverage"));
-        assert!(calls.iter().any(|call| call["op"] == "set_position_mode"));
-        let create = calls
-            .iter()
-            .find(|call| call["op"] == "create_order")
-            .unwrap();
-        assert_eq!(create["params"]["reduceOnly"], true);
-        assert_eq!(create["params"]["postOnly"], true);
-        assert_eq!(create["params"]["positionSide"], "long");
-    }
-}
+#[path = "ccxt/tests.rs"]
+mod tests;

@@ -15,15 +15,20 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "sqlite_event_log/rolling_digest.rs"]
+mod rolling_digest;
+
 fn temp_path(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-event-log-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock must be after unix epoch")
-            .as_nanos()
-    ))
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-event-log-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after unix epoch")
+                .as_nanos()
+        ))
 }
 
 fn temp_db(label: &str) -> PathBuf {
@@ -388,6 +393,23 @@ fn sqlite_event_log_append_batch_is_incremental_and_atomic_with_outbox() {
         Err(StorageError::NonAppendOnly(_))
     ));
     assert_eq!(store.event_count("run").unwrap(), 5);
+
+    // 新尾部不能重复引用已落库前缀的 key，也不能在尾部内部重复；拒绝前不推进 manifest。
+    let mut duplicate_prefix_key = extended.clone();
+    duplicate_prefix_key.append(settled_event(5, 6, "fact-1"));
+    assert!(matches!(
+        store.append_batch("run", &duplicate_prefix_key, &[]),
+        Err(StorageError::Conflict(message)) if message.contains("dedup_key fact-1 重复")
+    ));
+    let mut duplicate_tail_key = extended.clone();
+    duplicate_tail_key.append(settled_event(5, 6, "tail-duplicate"));
+    duplicate_tail_key.append(settled_event(6, 7, "tail-duplicate"));
+    assert!(matches!(
+        store.append_batch("run", &duplicate_tail_key, &[]),
+        Err(StorageError::Conflict(message)) if message.contains("dedup_key tail-duplicate 重复")
+    ));
+    assert_eq!(store.event_count("run").unwrap(), 5);
+    assert_eq!(store.read("run").unwrap().digest(), extended.digest());
 
     // Outbox 冲突必须回滚同事务内的事实追加：同一条已落库事实换个 payload 再投，必须冲突。
     let more = sample_log(7);

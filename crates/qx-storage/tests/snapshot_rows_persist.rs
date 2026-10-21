@@ -75,14 +75,16 @@ fn assert_rows_survive(store: &dyn SnapshotStore, snapshot: &AccountSnapshot) {
 
 #[test]
 fn file_snapshot_store_recovers_a_snapshot_that_has_rows() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-tx5-file-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-tx5-file-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let store = FileSnapshotStore::new(&root);
     let snapshot = snapshot_with_rows();
     assert_rows_survive(&store, &snapshot);
@@ -95,14 +97,16 @@ fn file_snapshot_store_recovers_a_snapshot_that_has_rows() {
 #[test]
 fn sqlite_snapshot_store_recovers_a_snapshot_that_has_rows() {
     use qx_storage::SqliteSnapshotStore;
-    let path = std::env::temp_dir().join(format!(
-        "qianxing-tx5-sqlite-{}-{}.sqlite",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-tx5-sqlite-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let store = SqliteSnapshotStore::new(&path).unwrap();
     let snapshot = snapshot_with_rows();
     assert_rows_survive(&store, &snapshot);

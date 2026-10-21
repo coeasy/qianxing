@@ -16,6 +16,14 @@ pub enum MultiLegFillModel {
     OneTickSlippage,
 }
 
+/// Dataset identity and source files for a two-leg run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MultiLegDatasetInput {
+    pub run_id: String,
+    pub primary_bars_path: String,
+    pub reference_bars_path: String,
+}
+
 /// Input BarFrames must be valid and use distinct instruments. Their timestamps may be unaligned;
 /// callbacks are ordered by timestamp, declared leg priority, then canonical instrument id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +67,11 @@ pub struct MultiLegBacktestSpec {
     /// Shared owner for both legs. Omitted derives one stable account identity from `run_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    /// Optional DatasetManifestV2 inputs; both manifests must be supplied together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_dataset_manifest_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_dataset_manifest_path: Option<String>,
 }
 
 fn default_maker_fee_bps() -> i64 {
@@ -70,11 +83,8 @@ fn default_taker_fee_bps() -> i64 {
 }
 
 impl MultiLegBacktestSpec {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        run_id: impl Into<String>,
-        primary_bars_path: impl Into<String>,
-        reference_bars_path: impl Into<String>,
+        dataset: MultiLegDatasetInput,
         settlement_currency: impl Into<String>,
         primary_initial_cash_raw: i128,
         reference_initial_cash_raw: i128,
@@ -84,9 +94,9 @@ impl MultiLegBacktestSpec {
     ) -> Self {
         Self {
             schema_version: MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
-            run_id: run_id.into(),
-            primary_bars_path: primary_bars_path.into(),
-            reference_bars_path: reference_bars_path.into(),
+            run_id: dataset.run_id,
+            primary_bars_path: dataset.primary_bars_path,
+            reference_bars_path: dataset.reference_bars_path,
             settlement_currency: settlement_currency.into(),
             primary_initial_cash_raw,
             reference_initial_cash_raw,
@@ -105,6 +115,8 @@ impl MultiLegBacktestSpec {
             funding_events: Vec::new(),
             fill_model: MultiLegFillModel::default(),
             account_id: None,
+            primary_dataset_manifest_path: None,
+            reference_dataset_manifest_path: None,
         }
     }
 
@@ -152,6 +164,31 @@ impl MultiLegBacktestSpec {
                 AppErrorCategory::InvalidInput,
                 "多腿 BarFrame 必须来自两份独立输入",
             ));
+        }
+        if self.primary_dataset_manifest_path.is_some()
+            != self.reference_dataset_manifest_path.is_some()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿回测必须同时提供 primary/reference 数据质量清单，或都不提供",
+            ));
+        }
+        for (field, path) in [
+            (
+                "primary_dataset_manifest_path",
+                &self.primary_dataset_manifest_path,
+            ),
+            (
+                "reference_dataset_manifest_path",
+                &self.reference_dataset_manifest_path,
+            ),
+        ] {
+            if path.as_deref().is_some_and(|value| value.trim().is_empty()) {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("MultiLegBacktestSpec.{field} 不能为空"),
+                ));
+            }
         }
         if self.primary_initial_cash_raw <= 0 || self.reference_initial_cash_raw <= 0 {
             return Err(AppError::new(

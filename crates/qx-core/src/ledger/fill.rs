@@ -225,6 +225,8 @@ impl Ledger {
                     ts: fill.ts,
                     multiplier: 1,
                     position_side: None,
+
+                    leverage: None,
                 })?);
             }
         }
@@ -241,6 +243,7 @@ impl Ledger {
             ts: fill.ts,
             multiplier: 1,
             position_side: hedge.then_some(policy.position_side),
+            leverage: Some(policy.leverage),
         })?);
         if fee_raw != 0 {
             ids.push(self.append(LedgerEntry {
@@ -256,6 +259,8 @@ impl Ledger {
                 ts: fill.ts,
                 multiplier: 1,
                 position_side: None,
+
+                leverage: None,
             })?);
         }
         Ok(ids)
@@ -300,6 +305,8 @@ impl Ledger {
             ts: fill.ts,
             multiplier,
             position_side: None,
+
+            leverage: None,
         })?;
         let position_delta = match order.side {
             Side::Buy => fill.qty.raw(),
@@ -321,6 +328,8 @@ impl Ledger {
                 .policy
                 .filter(|policy| policy.position_mode == crate::trading::PositionMode::Hedge)
                 .map(|policy| policy.position_side),
+
+            leverage: None,
         })?;
         let mut ids = vec![cash_id, pos_id];
         // 折算后可能落到 0（极小费用 × 极低价），那时这一腿本就不该存在：
@@ -339,6 +348,8 @@ impl Ledger {
                 ts: fill.ts,
                 multiplier,
                 position_side: None,
+
+                leverage: None,
             })?;
             ids.push(fee_id);
         }

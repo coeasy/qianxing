@@ -5,9 +5,9 @@
 //! 不许反向依赖上层 crate）。合并之前，两边的一致性检查是**手抄的字段映射**：五行比较散在调用点里，
 //! 谁改了字段名都只能靠编译器在那一处抓，第二处漏改则静默放过。
 //!
-//! 这里把映射收成单点。`qx_core::contract::CONTRACT_MATRIX` 的 `market_data_bar` 行点名这一对，
-//! `adapter` 字段指向本模块；`tools/check_architecture.py` 的 `contract_matrix_check` 核对
-//! 「这个 adapter 真有生产读者」，所以它不是登记完就躺着。
+//! 映射实现由 `qx-app::backtest_input_identity` 持有，本模块只保留数据集命令使用的契约矩阵适配器，
+//! 避免 CLI 和回测应用层各自实现字段映射。`qx_core::contract::CONTRACT_MATRIX` 的 `market_data_bar`
+//! 行点名本适配器；架构门禁同时核对它有生产读者、且实现委托给应用层单点。
 
 use qx_data::Bar as IngestBar;
 use qx_guanxing::Bar as MarketBar;
@@ -18,12 +18,7 @@ use qx_guanxing::Bar as MarketBar;
 /// 而不是 `ts`，价格/量列叫 `*_raw` 而不是裸名。这层改名就是"命名转换矩阵"要收的那件事——
 /// 调用点只写意图，改名只在这里发生一次。
 pub(crate) fn ingest_bar_matches_market_bar(ingest: &IngestBar, market: &MarketBar) -> bool {
-    ingest.timestamp == market.ts
-        && ingest.open_raw == market.open
-        && ingest.high_raw == market.high
-        && ingest.low_raw == market.low
-        && ingest.close_raw == market.close
-        && ingest.volume_raw == market.volume
+    qx_app::backtest_input_identity::ingest_bar_matches_market_bar(ingest, market)
 }
 
 #[cfg(test)]

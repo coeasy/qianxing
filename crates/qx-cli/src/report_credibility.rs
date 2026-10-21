@@ -5,9 +5,13 @@
 //! `summary.json` 已有格子的纪律一致。颜色走独立的「可信 / 待核 / 缺席」三色（蓝 / 琥珀 / 灰），
 //! 不碰收益的涨红跌绿语义，避免把"已验证"误读成"涨"。
 
-use super::*;
 use std::fmt::Write as _;
 
+use crate::{escape_html, summary_block, summary_number, summary_text};
+
+/// Classify existing summary pointers for machine-readable report and EvidenceBundle output.
+/// A pointer's class describes provenance, not accuracy, and no metric is recalculated here.
+///
 /// 渲染结果可信度面板；纯函数，不经文件系统，与 [`crate::report_html::render_report_html`]
 /// 共用同一份摘要读法。
 pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
@@ -53,6 +57,102 @@ pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
         .map(|(name, _)| *name)
         .collect();
 
+    let quality = summary.get("dataset_quality");
+    let quality_report = quality.and_then(|value| value.get("quality_report"));
+    let quality_rows = quality_report
+        .and_then(|value| value.get("row_count"))
+        .and_then(serde_json::Value::as_u64);
+    let quality_gaps = quality_report
+        .and_then(|value| value.get("missing_intervals"))
+        .and_then(serde_json::Value::as_u64);
+    let quality_duplicates = quality_report
+        .and_then(|value| value.get("duplicate_rows"))
+        .and_then(serde_json::Value::as_u64);
+    let quality_out_of_order = quality_report
+        .and_then(|value| value.get("out_of_order_rows"))
+        .and_then(serde_json::Value::as_u64);
+    let quality_corporate_actions = quality_report
+        .and_then(|value| value.get("corporate_action_coverage"))
+        .and_then(serde_json::Value::as_bool);
+    let quality_status = if quality_report.is_some()
+        && quality_rows.is_some()
+        && quality_gaps == Some(0)
+        && quality_duplicates == Some(0)
+        && quality_out_of_order == Some(0)
+    {
+        "ok"
+    } else if quality_report.is_some() || (dataset.is_some() && fingerprint.is_some()) {
+        "warn"
+    } else {
+        "absent"
+    };
+    let quality_detail = if let Some(quality_report) = quality_report {
+        let mut details = Vec::new();
+        if let Some(fingerprint) = quality
+            .and_then(|value| value.get("manifest_fingerprint"))
+            .and_then(serde_json::Value::as_str)
+        {
+            details.push(format!("清单 {fingerprint}"));
+        }
+        if let Some(rows) = quality_rows {
+            details.push(format!("{rows} 行"));
+        }
+        if let Some(interval) = quality_report
+            .get("interval_ms")
+            .and_then(serde_json::Value::as_u64)
+        {
+            details.push(format!("间隔 {interval} ms"));
+        }
+        if let Some(gaps) = quality_gaps {
+            details.push(format!("缺口 {gaps}"));
+        }
+        if let Some(duplicates) = quality_duplicates {
+            details.push(format!("重复 {duplicates}"));
+        }
+        if let Some(out_of_order) = quality_out_of_order {
+            details.push(format!("乱序 {out_of_order}"));
+        }
+        if let Some(corporate_actions) = quality_corporate_actions {
+            details.push(format!(
+                "公司行为覆盖 {}",
+                if corporate_actions { "是" } else { "否" }
+            ));
+        }
+        if let Some(timezone) = quality_report
+            .get("timezone")
+            .and_then(serde_json::Value::as_str)
+        {
+            details.push(format!("时区 {timezone}"));
+        }
+        for (role, label) in [("primary", "主腿"), ("reference", "对冲腿")] {
+            let Some(component) = quality.and_then(|value| value.pointer(&format!("/legs/{role}")))
+            else {
+                continue;
+            };
+            let fingerprint = component
+                .get("manifest_fingerprint")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("指纹缺失");
+            let gaps = component
+                .pointer("/quality_report/missing_intervals")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "未声明".to_string());
+            details.push(format!("{label}清单 {fingerprint} · 缺口 {gaps}"));
+        }
+        if details.is_empty() {
+            "质量清单已嵌入，但未声明可展示字段".to_string()
+        } else {
+            details.join(" · ")
+        }
+    } else if let (Some(dataset), Some(_fingerprint)) = (&dataset, &fingerprint) {
+        format!(
+            "数据集 {} 已登记，但摘要未嵌入连续性/缺失值质量报告；回测时可传入 `--dataset-manifest` 指向 `data-validate` 产物",
+            dataset
+        )
+    } else {
+        "摘要未登记数据集身份".to_string()
+    };
     let rows: [(&str, &str, String); 7] = [
         (
             "输入身份",
@@ -102,23 +202,7 @@ pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
                 _ => "摘要未声明风控规则版本".to_string(),
             },
         ),
-        (
-            "数据质量",
-            if dataset.is_some() && fingerprint.is_some() {
-                "warn"
-            } else {
-                "absent"
-            },
-            if dataset.is_some() && fingerprint.is_some() {
-                format!(
-                    "数据集 {} 已登记，但摘要未嵌入连续性/缺失值质量报告；\
-                     要补这一格先跑 `qx-cli data-validate` 落一份带 quality_report 的 DatasetManifestV2",
-                    dataset.as_deref().unwrap()
-                )
-            } else {
-                "摘要未登记数据集身份".to_string()
-            },
-        ),
+        ("数据质量", quality_status, quality_detail),
         (
             "未计算字段",
             if uncomputed.is_empty() { "ok" } else { "warn" },

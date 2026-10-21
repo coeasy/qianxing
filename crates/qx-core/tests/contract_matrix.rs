@@ -33,7 +33,7 @@ fn every_row_speaks_for_itself() {
 #[test]
 fn matrix_view_and_json_are_the_same_table() {
     assert_eq!(contract_matrix().len(), CONTRACT_MATRIX.len());
-    let json = contract_matrix_json();
+    let json = contract_matrix_json().expect("静态契约矩阵必须能序列化");
     for row in CONTRACT_MATRIX {
         assert!(
             json.contains(row.concept),

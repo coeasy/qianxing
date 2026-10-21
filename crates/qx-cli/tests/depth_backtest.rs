@@ -71,8 +71,8 @@ fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .to_string();
     (
         manifest,
-        runs.join(format!("{stem}.summary.json")),
-        runs.join(format!("{stem}.equity.csv")),
+        runs.join(format!("{stem}.v7.summary.json")),
+        runs.join(format!("{stem}.v7.equity.csv")),
     )
 }
 
@@ -106,8 +106,8 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         "被风控挡下的卖空没有记进诚实性行: {integrity}"
     );
     assert!(
-        integrity.contains("1x") && integrity.contains("NoShort"),
-        "诚实性行缺少拒单原因: {integrity}"
+        integrity.contains("1x现货卖出数量超过扣除待成交卖单后的可用持仓"),
+        "诚实性行缺少现货可用持仓拒单原因: {integrity}"
     );
     let first_hash = result_hash(&stdout);
 
@@ -145,10 +145,8 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     assert_eq!(
         rejections
             .iter()
-            .filter(|entry| entry["reason"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("NoShort"))
+            .filter(|entry| entry["reason"].as_str().unwrap_or_default()
+                == "现货卖出数量超过扣除待成交卖单后的可用持仓")
             .count(),
         1,
         "摘要里的拒单原因与诚实性行不一致: {rejections:?}"
@@ -250,7 +248,7 @@ fn depth_execution_model_flags_change_results_and_are_recorded() {
     assert!(
         has_descriptor(
             &baseline,
-            "latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"
+            "latency_snapshots=0 queue_position_bps=0 queue_position=disabled market_impact_bps=0"
         ),
         "摘要没有写出实际撮合模型参数: {:?}",
         baseline["model_descriptors"]

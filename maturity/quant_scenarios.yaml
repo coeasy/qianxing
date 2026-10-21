@@ -2,11 +2,11 @@
 #
 # 这一份回答的是「使用者嘴里的量化场景，本仓哪几个真能跑、跑出来什么数、还有哪几个没落地」。
 # `executed` 真跑过且观测到数字；`declared_not_executed` 是 schema 写了但**没有执行者**；
-# `missing` 是仓内没有对应物；`blocked` 是缺外部前置。非 executed 三档必须写 next_gate。
+# `missing` 是仓内没有对应物；`blocked` 是缺外部前置或探针被内部错误阻断。非 executed 三档必须写 next_gate。
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791974615
+generated_at_unix: 1792551770
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -22,99 +22,99 @@ scenarios:
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "sma_cross"
-    command: "qx-cli backtest builtin sma_cross .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin sma_cross .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=sma_cross instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=c7980a3ec8dd6f4b"
+    observed: "strategy=builtin-sma_cross-v1 instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=4b5f35a66ef74b09"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: momentum
     label: "动量"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "momentum"
-    command: "qx-cli backtest builtin momentum .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin momentum .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=momentum instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=2 max_drawdown_bps=3 result_hash=369540718a4490f9"
+    observed: "strategy=builtin-momentum-v1 instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=2 max_drawdown_bps=3 result_hash=72a6c71a7c68290d"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: mean_reversion
     label: "均值回归"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "mean_reversion"
-    command: "qx-cli backtest builtin mean_reversion .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin mean_reversion .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=mean_reversion instrument=BTCUSDT.BINANCE bars=90 fills=10 return_bps=1 max_drawdown_bps=2 result_hash=4c7eeb938802a501"
+    observed: "strategy=builtin-mean_reversion-v1 instrument=BTCUSDT.BINANCE bars=90 fills=10 return_bps=1 max_drawdown_bps=2 result_hash=42dfd9d4f6a53895"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: breakout
     label: "通道突破"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "donchian_breakout"
-    command: "qx-cli backtest builtin donchian_breakout .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin donchian_breakout .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=donchian_breakout instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=3 result_hash=3640fe335066b298"
+    observed: "strategy=builtin-donchian_breakout-v1 instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=3 result_hash=3640fe335066b298"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: grid_trading
     label: "网格"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "grid"
-    command: "qx-cli backtest builtin grid .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin grid .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=grid instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=1 max_drawdown_bps=2 result_hash=90c8a3fea6f54a90"
+    observed: "strategy=builtin-grid-v1 instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=1 max_drawdown_bps=2 result_hash=3453a958fd989b30"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: oscillator_reversion
     label: "超买超卖反转"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "rsi"
-    command: "qx-cli backtest builtin rsi .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin rsi .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=rsi instrument=BTCUSDT.BINANCE bars=90 fills=4 return_bps=0 max_drawdown_bps=2 result_hash=1d1e354cfb58a90b"
+    observed: "strategy=builtin-rsi-v1 instrument=BTCUSDT.BINANCE bars=90 fills=4 return_bps=0 max_drawdown_bps=2 result_hash=305f8c4f54bb935c"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: ema_trend
     label: "指数均线趋势"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "ema_cross"
-    command: "qx-cli backtest builtin ema_cross .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin ema_cross .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=ema_cross instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=22ac69aa7c5b201f"
+    observed: "strategy=builtin-ema_cross-v1 instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=f6b7c696ee325a91"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: macd_trend
     label: "MACD 趋势动量"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "macd"
-    command: "qx-cli backtest builtin macd .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin macd .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=macd instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=1de73a59fed3b050"
+    observed: "strategy=builtin-macd-v1 instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=d27eedd5f9038cd2"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: bollinger_reversion
     label: "布林带均值回归"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "bollinger"
-    command: "qx-cli backtest builtin bollinger .task-tmp/quant-probe/bollinger-long-only.json"
+    command: "qx-cli backtest builtin bollinger .task-tmp/ashare-profile-20261021-final/bollinger-long-only.json --config .task-tmp/ashare-profile-20261021-final/bollinger-runtime.json"
     exit_code: 0
-    observed: "strategy=bollinger instrument=BTCUSDT.BINANCE bars=90 fills=2 return_bps=0 max_drawdown_bps=0 result_hash=030bcaf677cbd954"
+    observed: "strategy=builtin-bollinger-v1 instrument=BTCUSDT.BINANCE bars=90 fills=2 return_bps=0 max_drawdown_bps=0 result_hash=6d913e8384ed1fab"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: atr_trend
     label: "ATR 波动突破"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
     builtin_kind: "atr_trend"
-    command: "qx-cli backtest builtin atr_trend .task-tmp/quant-probe/builtin-strategies.json"
+    command: "qx-cli backtest builtin atr_trend .task-tmp/ashare-profile-20261021-final/builtin-strategies.json --config .task-tmp/ashare-profile-20261021-final/builtin-runtime.json"
     exit_code: 0
-    observed: "strategy=atr_trend instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=0551d1d818aaecc0"
+    observed: "strategy=builtin-atr_trend-v1 instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=5bf86edf6661cad4"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
   - name: kelly_paper_sizing
     label: "Kelly sizing 的 Paper 实盘模拟执行"
     status: executed
-    anchor: "crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs"
+    anchor: "crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs"
     command: "cargo test -p qx-cli paper_kelly_strategy_reaches_the_market_spec_risk_and_ledger_path -- --test-threads=1"
     exit_code: 0
     observed: "paper_e2e_test=passed fills=1 order_filled=1 ledger_entries_positive=1"
-    evidence: ["crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs", "crates/qx-cli/src/strategy_contract.rs", "crates/qx-cli/src/workers.rs"]
+    evidence: ["crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs", "crates/qx-cli/src/strategy_contract.rs", "crates/qx-cli/src/workers.rs"]
   - name: paper_multi_strategy
     label: "同账户多策略 Paper 调度、执行与账簿归属"
     status: executed
@@ -122,15 +122,15 @@ scenarios:
     command: "cargo test --offline -p qx-cli paper_e2e_entrypoint_runs_every_strategy_worker_and_ledger -- --nocapture --test-threads=1"
     exit_code: 0
     observed: "scheduler=scheduler-paper strategy=strategy-paper,strategy-paper-2 execution=paper-execution orders=2 (+2 本轮新增) ledger_entries=7 (+7 本轮新增) "
-    evidence: ["crates/qx-cli/src/venue_runtime/paper_worker.rs", "crates/qx-cli/src/tests/paper_multi_strategy.rs", "crates/qx-cli/src/workers.rs"]
+    evidence: ["crates/qx-cli/src/venue_runtime/paper_worker.rs", "crates/qx-cli/tests/unit/paper_multi_strategy.rs", "crates/qx-cli/src/workers.rs"]
   - name: paper_pending_order_risk
     label: "Paper 在途订单参与同账户持仓名义额风控"
     status: executed
-    anchor: "crates/qx-cli/src/tests/paper_pending_exposure.rs"
+    anchor: "crates/qx-cli/tests/unit/paper_pending_exposure.rs"
     command: "cargo test --offline -p qx-cli paper_position_limit_reserves_same_account_nonterminal_orders -- --nocapture --test-threads=1"
     exit_code: 0
     observed: "pending_notional_raw=100000000000 candidate_notional_raw=100000000000 aggregate_limit_raw=150000000000 rejected=true"
-    evidence: ["crates/qx-cli/src/tests/paper_pending_exposure.rs", "crates/qx-cli/src/venue_runtime/paper_valuation.rs", "crates/qx-risk/src/rules.rs"]
+    evidence: ["crates/qx-cli/tests/unit/paper_pending_exposure.rs", "crates/qx-service/src/risk_host.rs", "crates/qx-risk/src/rules.rs"]
   - name: backtest_pending_order_risk
     label: "Bar 与 OrderBook 回测在途订单共同受持仓名义额限额约束"
     status: executed
@@ -150,19 +150,19 @@ scenarios:
   - name: paper_cross_currency_spot_fx_valuation
     label: "Paper 跨币种现货报价币记账与 FX 风控估值"
     status: executed
-    anchor: "crates/qx-cli/src/venue_runtime/paper_valuation.rs"
+    anchor: "crates/qx-service/src/risk_host.rs"
     command: "cargo test --offline -p qx-cli paper_cross_currency_spot_uses_quote_cash_and_configured_fx_market"
     exit_code: 0
     observed: "EUR spot cash booked in EUR; risk equity converts EUR cash and ETH/EUR position through configured EUR/USDT mark (11,122 USDT)"
-    evidence: ["crates/qx-cli/src/venue_runtime/paper_valuation.rs", "crates/qx-cli/src/tests/paper_margin_valuation.rs", "crates/qx-core/src/ledger/fill.rs"]
+    evidence: ["crates/qx-service/src/risk_host.rs", "crates/qx-cli/tests/unit/paper_margin_valuation.rs", "crates/qx-core/src/ledger/fill.rs"]
   - name: multi_market_shared_account
     label: "多市场同账户确定性 Bar 组合回测"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_market_backtest.rs"
     command: "cargo test --offline -p qx-app three_market_run_shares_ledger_replays_and_is_idempotent -- --nocapture"
     exit_code: 0
-    observed: "MULTI_MARKET_OBSERVED markets=3 strategies=3 fills=21 equity_points=240 return_bps=17 replay_verified=true"
-    evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-app/src/tests/multi_market_backtest.rs", "crates/qx-xingban/src/backtest/market_router.rs", "crates/qx-sdk/src/client.rs", "crates/qx-python/src/lib.rs", "python/tests/test_app_use_cases.py"]
+    observed: "MULTI_MARKET_OBSERVED markets=3 strategies=3 fills=3 equity_points=240 return_bps=-1 replay_verified=true"
+    evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-app/tests/multi_market_backtest.rs", "crates/qx-xingban/src/backtest/market_router.rs", "crates/qx-sdk/src/client.rs", "crates/qx-python/src/lib.rs", "python/tests/test_app_use_cases.py"]
   - name: multi_market_python_strategy_slots
     label: "Python 自定义策略进入多市场共享账簿"
     status: executed
@@ -218,7 +218,7 @@ scenarios:
     command: "cargo test --offline -p qx-api multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine -- --nocapture"
     exit_code: 0
     observed: "MULTI_MARKET_DEPTH_EXPERIMENT_OBSERVED sync_candidates=4 async_candidates=4 rankings=4 shared_engine=true"
-    evidence: ["crates/qx-app/src/cases/run_multi_market_depth_experiment.rs", "crates/qx-app/src/tests/multi_market_depth_backtest.rs", "crates/qx-api/src/app_surface/multi_market_depth_experiment.rs", "crates/qx-api/src/app_runs/starts.rs", "crates/qx-api/src/app_multi_market_tests.rs", "crates/qx-python/src/strategy_callback/multi_market_depth.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
+    evidence: ["crates/qx-app/src/cases/run_multi_market_depth_experiment.rs", "crates/qx-app/tests/multi_market_depth_backtest.rs", "crates/qx-api/src/app_surface/multi_market_depth_experiment.rs", "crates/qx-api/src/app_runs/starts.rs", "crates/qx-api/src/app_multi_market_tests.rs", "crates/qx-python/src/strategy_callback/multi_market_depth.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
   - name: multi_market_depth_builtin_strategy_bridge
     label: "多市场 L1/L2 内置经典策略适配、真实成交与参数网格"
     status: executed
@@ -226,7 +226,7 @@ scenarios:
     command: "cargo test --offline -p qx-app multi_market_depth_experiment_sweeps_strategy_and_parameters_deterministically -- --nocapture"
     exit_code: 0
     observed: "MULTI_MARKET_DEPTH_BUILTIN_OBSERVED tiers=l1+l2 candidates=4 positive_fill_candidates=4 base_fills=2 replay_verified=true"
-    evidence: ["crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs", "crates/qx-app/src/tests/multi_market_depth_backtest.rs", "crates/qx-xingban/src/orderbook_strategies.rs", "crates/qx-xingban/src/orderbook_backtest/portfolio.rs"]
+    evidence: ["crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs", "crates/qx-app/tests/multi_market_depth_backtest.rs", "crates/qx-xingban/src/orderbook_strategies.rs", "crates/qx-xingban/src/orderbook_backtest/portfolio.rs"]
   - name: multi_market_mixed_l1_tick_l2_orderbook
     label: "Rust 多市场 L1 Tick 与 L2 OrderBook 混合共享组合账簿"
     status: executed
@@ -234,23 +234,23 @@ scenarios:
     command: "cargo test --offline -p qx-app multi_market_orderbook_application_shares_cash_and_accepts_language_callbacks -- --nocapture"
     exit_code: 0
     observed: "MULTI_MARKET_TICK_ORDERBOOK_OBSERVED markets=2 tick_events=2 shared_fills=1 replay_verified=true"
-    evidence: ["crates/qx-xingban/src/orderbook_strategies.rs", "crates/qx-xingban/src/orderbook_backtest/portfolio.rs", "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs", "crates/qx-app/src/tests/multi_market_depth_backtest.rs"]
+    evidence: ["crates/qx-xingban/src/orderbook_strategies.rs", "crates/qx-xingban/src/orderbook_backtest/portfolio.rs", "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs", "crates/qx-app/tests/multi_market_depth_backtest.rs"]
   - name: multi_market_parameter_experiment
     label: "共享账簿多市场参数/策略网格实验及 RunHandle"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_market_experiment.rs"
     command: "cargo test --offline -p qx-app --lib multi_market_parameter_grid_runs_shared_engine_ranks_and_reuses_identity -- --nocapture"
     exit_code: 0
-    observed: "test result: ok. 1 passed; 0 failed; candidates=4 shared_engine=true stable_ranking=true idempotent=true sync=true run_handle=true"
-    evidence: ["crates/qx-app/src/cases/run_multi_market_experiment.rs", "crates/qx-app/src/tests/multi_market_experiment.rs", "crates/qx-app/src/cases/run_multi_market_backtest.rs"]
+    observed: "candidates=4 shared_engine=true stable_ranking=true idempotent=true sync=true run_handle=true"
+    evidence: ["crates/qx-app/src/cases/run_multi_market_experiment.rs", "crates/qx-app/tests/multi_market_experiment.rs", "crates/qx-app/src/cases/run_multi_market_backtest.rs"]
   - name: multi_account_capital_isolation
     label: "多账户购买力隔离与单账户结果一致性"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_account_backtest.rs"
-    command: "cargo test --offline -p qx-app --lib changing_another_accounts_capital_does_not_change_this_accounts_run -- --nocapture"
+    command: "cargo test --offline -p qx-app --test multi_account_backtest changing_another_accounts_capital_does_not_change_this_accounts_run -- --nocapture"
     exit_code: 0
-    observed: "MULTI_ACCOUNT_ISOLATION_OBSERVED account=account-btc other_account_capital_multiplier=100 fills=7 result_hash=21ce82e8c0627fa4 isolated_from_solo=true"
-    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-app/src/cases/run_multi_account_backtest.rs"]
+    observed: "MULTI_ACCOUNT_ISOLATION_OBSERVED account=account-btc other_account_capital_multiplier=100 fills=1 result_hash=e3962932cdd163fb isolated_from_solo=true"
+    evidence: ["crates/qx-app/tests/multi_account_backtest.rs", "crates/qx-app/src/cases/run_multi_account_backtest.rs"]
   - name: multi_account_depth_sdk_http
     label: "多账户 Tick/OrderBook 批量回测的 Rust HTTP、Python 远端与 C++ 远端契约"
     status: executed
@@ -272,60 +272,60 @@ scenarios:
     status: executed
     anchor: "crates/qx-zhenlu/src/lib.rs"
     builtin_kind: "pairs_arbitrage"
-    command: "qx-cli backtest multi-builtin pairs_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/pairs_arbitrage"
+    command: "qx-cli backtest multi-builtin pairs_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/ashare-profile-20261021-final/pairs_arbitrage"
     exit_code: 0
-    observed: "strategy=builtin-pairs_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
+    observed: "strategy=builtin-pairs_arbitrage-multi groups=1 turnover_raw=64200000000000 fees_raw=32100000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
   - name: basis_arbitrage
     label: "基差套利"
     status: executed
     anchor: "crates/qx-zhenlu/src/lib.rs"
     builtin_kind: "basis_arbitrage"
-    command: "qx-cli backtest multi-builtin basis_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/basis_arbitrage"
+    command: "qx-cli backtest multi-builtin basis_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/ashare-profile-20261021-final/basis_arbitrage"
     exit_code: 0
-    observed: "strategy=builtin-basis_arbitrage-multi groups=1 turnover_raw=63000000000000 fees_raw=31500000000"
+    observed: "strategy=builtin-basis_arbitrage-multi groups=0 turnover_raw=0 fees_raw=0"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
   - name: cross_market_arbitrage
     label: "跨市场价差套利"
     status: executed
     anchor: "crates/qx-zhenlu/src/lib.rs"
     builtin_kind: "cross_venue_arbitrage"
-    command: "qx-cli backtest multi-builtin cross_venue_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/cross_market_arbitrage"
+    command: "qx-cli backtest multi-builtin cross_venue_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/ashare-profile-20261021-final/cross_market_arbitrage"
     exit_code: 0
-    observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
+    observed: "strategy=builtin-cross_venue_arbitrage-multi groups=1 turnover_raw=64200000000000 fees_raw=32100000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
   - name: multi_account_cross_market_backtest
     label: "多账户跨市场独立回测"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_account_backtest.rs"
-    command: "qx-cli app multi-account-backtest .task-tmp/quant-probe/multi-account-spec.json"
+    command: "qx-cli app multi-account-backtest .task-tmp/ashare-profile-20261021-final/multi-account-spec.json"
     exit_code: 0
-    observed: "16; accounts=2 successful_fills=16"
-    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
+    observed: "2; accounts=2 successful_fills=2"
+    evidence: ["crates/qx-app/tests/multi_account_backtest.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
   - name: multi_leg_strategy_selection
     label: "四类双腿套利策略选择与确定性批量比较"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
-    command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
+    command: "qx-cli app run-multi-leg-experiment .task-tmp/ashare-profile-20261021-final/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=ee9d48305d2d08de/ebdc8aae80b274a4,7e83885c6a0d72e4/9dd9734a94a66234,d87de131e4cb47dd/7f1c36c4062cb3f1,18c79283d4a2fecf/94a56d79f2001885"
-    evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=8 stable_order=true result_hashes=d825fc7cead9585f/c929ac9c72b3e331,b86fb0757cbffb3c/f87736d2be54caea,1d319733427ca589/adaece3b2acd8b3e,d825fc7cead9585f/8f22da0c52b2a278"
+    evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
     status: executed
     anchor: "crates/qx-xingban/src/backtest/portfolio_timeline.rs"
-    command: "cargo test --offline -p qx-app multi_leg_backtest_accepts_unaligned_market_timestamps --lib -- --test-threads=1"
+    command: "cargo test --offline -p qx-app multi_leg_backtest_accepts_unaligned_market_timestamps --test multi_leg_backtest -- --test-threads=1 --nocapture"
     exit_code: 0
-    observed: "test result: ok. 1 passed; 0 failed; unaligned_market_timeline=true deterministic_timestamp_priority_and_instrument_order=true"
-    evidence: ["crates/qx-xingban/src/backtest/portfolio_timeline.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/src/tests/multi_leg_backtest/unaligned_timestamps.rs"]
+    observed: "UNALIGNED_TIMELINE_OBSERVED markets=2 positive_fill_legs=2 primary_fills=1 reference_fills=1; deterministic_timestamp_priority_and_instrument_order=true"
+    evidence: ["crates/qx-xingban/src/backtest/portfolio_timeline.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/tests/multi_leg_backtest/unaligned_timestamps.rs"]
   - name: shared_multileg_execution
     label: "多标的多腿共享时间线、资金准入、撮合、拒单反馈与统一账簿回放"
     status: executed
     anchor: "crates/qx-xingban/src/backtest/portfolio_session.rs"
-    command: "cargo test --offline -p qx-app multi_leg_backtest_competing_orders_share_one_deterministic_cash_pool --lib -- --test-threads=1"
+    command: "cargo test --offline -p qx-app multi_leg_backtest_competing_orders_share_one_deterministic_cash_pool --test multi_leg_backtest -- --test-threads=1 --nocapture"
     exit_code: 0
-    observed: "test result: ok. 1 passed; 0 failed; shared_ledger=true cross_market_cash_competition=true rejected_order_attributed=true replay_verified=true"
-    evidence: ["crates/qx-xingban/src/backtest/portfolio_session.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/src/tests/multi_leg_backtest.rs", "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs"]
+    observed: "SHARED_MULTILEG_OBSERVED legs=2 primary_fills=0 reference_fills=1 rejected_orders=1 replay_verified=true; shared_ledger=true cross_market_cash_competition=true rejected_order_attributed=true"
+    evidence: ["crates/qx-xingban/src/backtest/portfolio_session.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/tests/multi_leg_backtest.rs", "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs"]
   - name: multileg_funding_ledger_execution
     label: "多腿 funding 在 UTC 8 小时结算边界进入共享账簿、策略可用现金与回放"
     status: executed
@@ -333,23 +333,23 @@ scenarios:
     command: "cargo test --offline -p qx-xingban derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_replays -- --test-threads=1"
     exit_code: 0
     observed: "test result: ok. 1 passed; 0 failed; utc_8h_settlement=true derivative_ledger_cashflow=true strategy_sees_settled_cash=true replay_verified=true"
-    evidence: ["crates/qx-xingban/src/backtest/portfolio_session/funding.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/src/tests/multi_leg_backtest.rs", "crates/qx-core/src/ledger/cash.rs"]
+    evidence: ["crates/qx-xingban/src/backtest/portfolio_session/funding.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/tests/multi_leg_backtest.rs", "crates/qx-core/src/ledger/cash.rs"]
   - name: order_book_execution
     label: "盘口撮合 / 日内高频"
     status: executed
     anchor: "crates/qx-xingban"
-    command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/quant-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
+    command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/ashare-profile-20261021-final/book sma_cross deploy/qianxing.depth-frame.example.json"
     exit_code: 0
-    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:bb98a3580a92ee38 result_hash=e896fa89e839a855"
+    observed: "run_id=book-l2-sma_cross-BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:bb98a3580a92ee38 result_hash=0b899c91f628d498"
     evidence: ["crates/qx-xingban"]
   - name: market_making
     label: "做市（双边限价报价、库存偏移与撤单）"
     status: executed
     anchor: "crates/qx-xingban/src/market_making.rs"
-    command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
+    command: "qx-cli app depth-backtest .task-tmp/ashare-profile-20261021-final/market-making.json"
     exit_code: 0
     observed: "20; result_hash=b7d604ba91dc2a8a"
-    evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
+    evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: multileg_historical_funding_rates
     label: "多腿执行期应用逐标的历史资金费率事件并校验不同正负费率的回放"
     status: executed
@@ -410,26 +410,26 @@ scenarios:
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"
     status: executed
     anchor: "crates/qx-xingban/src/portfolio_orderbook.rs"
-    command: "qx-cli app depth-backtest .task-tmp/quant-probe/depth-portfolio-spec.json"
+    command: "qx-cli app depth-backtest .task-tmp/ashare-profile-20261021-final/depth-portfolio-spec.json"
     exit_code: 0
-    observed: "8; strategy_fills={\"probe-depth-momentum\": 5, \"probe-depth-sma\": 3} result_hash=0df8834b680337f3"
-    evidence: ["crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-xingban/src/backtest/portfolio_budget.rs", "crates/qx-app/src/cases/run_depth_backtest.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
+    observed: "8; strategy_fills={\"probe-depth-momentum\": 5, \"probe-depth-sma\": 3} result_hash=a3c44951d0377748"
+    evidence: ["crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-xingban/src/backtest/portfolio_budget.rs", "crates/qx-app/src/cases/run_depth_backtest.rs", "crates/qx-app/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_spot_dynamic_sizing
     label: "L2 现货现金比例与 Kelly sizing（逐快照现金、组合额度、Rust 共享内核）"
     status: executed
     anchor: "crates/qx-app/src/cases/run_depth_backtest/workflow.rs"
-    command: "qx-cli app depth-backtest .task-tmp/quant-probe/depth-sizing-spec.json"
+    command: "qx-cli app depth-backtest .task-tmp/ashare-profile-20261021-final/depth-sizing-spec.json"
     exit_code: 0
     observed: "141; kelly_fraction_bps=5000 cash_fraction_bps=2500 result_hash=fabde25a5b8ad754"
-    evidence: ["crates/qx-xingban/src/orderbook_backtest.rs", "crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
+    evidence: ["crates/qx-xingban/src/orderbook_backtest.rs", "crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-app/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_selection
-    label: "L2 十种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）"
+    label: "L2 十三种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）"
     status: executed
     anchor: "crates/qx-app/src/cases/run_depth_experiment.rs"
-    command: "qx-cli app run-depth-experiment .task-tmp/quant-probe/depth-strategy-selection-spec.json"
+    command: "qx-cli app run-depth-experiment .task-tmp/ashare-profile-20261021-final/depth-strategy-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":10; strategies=10 candidates=10 succeeded=10 fills=17 stable_order=true result_hashes=b8646edf8be77ad8,b8646edf8be77ad8,829540e78e7dbc3f,7284bed3fa9fc7c6,7461b2df6033bf55,8997a00027811f05,151593ddda835eb2,7f1de7d18a1e3478,a14a9e347cccf26d,7284bed3fa9fc7c6"
-    evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/src/tests/depth_experiment.rs", "crates/qx-cli/tests/app_depth_entrypoints.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
+    observed: "\"total_candidates\":13; strategies=13 candidates=13 succeeded=13 fills=22 stable_order=true result_hashes=b8646edf8be77ad8,b8646edf8be77ad8,5cbe5faff5e75a39,4bbe80b42163263e,46927942ad8d1fcd,5ab59adea49ccbbf,dcf9d4ca5cc1b6a5,6953a87528899b92,b9b59774c452e794,5a0fb65753f9d491,8a3d6b5c18538a8e,b8646edf8be77ad8,1d5e6918007dec42"
+    evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/tests/depth_experiment.rs", "crates/qx-cli/tests/app_depth_entrypoints.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: rust_bar_fill_reduction_kernel
     label: "Bar 成交沿统一精度/预算/OMS/Ledger/事件日志/策略回报归约"
     status: executed
@@ -462,6 +462,30 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; partial_fill_reservation_release=proportional overflow_releases_zero=true"
     evidence: ["crates/qx-xingban/src/venue/tests.rs", "crates/qx-xingban/src/venue.rs"]
+  - name: ashare_research_rule_contracts
+    label: "A 股 T+1/整手、交易时段、停牌、板块涨跌停与公司行为规则合同"
+    status: executed
+    anchor: "crates/qx-xingban/src/ashare/tests.rs"
+    command: "cargo test --offline -p qx-xingban --lib ashare -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 33 passed; 0 failed; executed_cases=33 required_cases=6 missing=0"
+    evidence: ["crates/qx-xingban/src/ashare/tests.rs", "crates/qx-xingban/src/ashare/trading.rs", "crates/qx-xingban/src/backtest/order_admission.rs"]
+  - name: ashare_research_backtest_lifecycle
+    label: "A 股分钟涨停锚、T+1 在途卖单与 PIT as-of 回测生命周期"
+    status: executed
+    anchor: "crates/qx-xingban/tests/ashare_pit_asof.rs"
+    command: "cargo test --offline -p qx-xingban --test ashare_limit_anchor --test ashare_pit_asof --test ashare_previous_close_series --test ashare_t1_pending_sell -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 2 passed; 0 failed; executed_cases=8 required_cases=4 missing=0"
+    evidence: ["crates/qx-xingban/tests/ashare_limit_anchor.rs", "crates/qx-xingban/tests/ashare_pit_asof.rs", "crates/qx-xingban/tests/ashare_previous_close_series.rs", "crates/qx-xingban/tests/ashare_t1_pending_sell.rs"]
+  - name: multi_venue_paper_hedge_recovery
+    label: "BINANCE 成交、OKX 腿取消后的跨 Venue Paper 补偿恢复"
+    status: executed
+    anchor: "crates/qx-service/src/spread_recovery_host.rs"
+    command: "cargo test --offline -p qx-cli paper_hedge_recovery -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 2 passed; 0 failed; venues=BINANCE,OKX partial_fill_qty=1 compensation_fills=1 group_status=Hedged frozen_spec_enforced=true"
+    evidence: ["crates/qx-cli/tests/unit/paper_hedge_recovery.rs", "crates/qx-service/src/spread_recovery_host.rs", "crates/qx-execution/src/lib.rs", "crates/qx-zhenlu/src/lib.rs"]
   - name: checked_fee_basis_point_arithmetic
     label: "费用模型费率范围与极大金额基点计算校验"
     status: executed
@@ -489,11 +513,11 @@ scenarios:
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
     status: executed
-    anchor: "crates/qx-cli/src/tests/paper_submit_terminal_state.rs"
+    anchor: "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs"
     command: "cargo test --offline -p qx-cli paper_worker_resumes_twap_children_across_worker_restarts_and_fills_from_new_quotes -- --test-threads=1"
     exit_code: 0
     observed: "test result: ok. 1 passed; API start=accepted worker_restarts=4 children=2 fills=4,000,000,000 raw API get=completed remaining_raw=0"
-    evidence: ["crates/qx-cli/src/api_algo_execution.rs", "crates/qx-cli/src/venue_runtime/paper_algo_worker.rs", "crates/qx-api/src/algo_execution_tests.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
+    evidence: ["crates/qx-cli/src/api_algo_execution.rs", "crates/qx-service/src/paper_algo_host.rs", "crates/qx-api/src/algo_execution_tests.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
   - name: python_builtin_strategy_catalog
     label: "Python SDK 13 种单腿策略快速选择与批量对比（覆盖原定十大经典策略，共享 Rust 内核）"
     status: executed
@@ -501,7 +525,7 @@ scenarios:
     command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_thirteen_classic_builtin_strategies_run_through_python_rust_kernel"
     exit_code: 0
     observed: "Ran 1 test; single_leg_strategy_kinds=13 candidates=13 stable_order=true shared_comparison=true oos_selected_kind=true walk_forward_folds=2"
-    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
+    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
   - name: python_remote_strategy_catalog
     label: "Python HTTP SDK 通过 Rust 服务端读取内置策略目录"
     status: executed
@@ -517,7 +541,7 @@ scenarios:
     command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_python_strategy_callback_runs_shared_kernel_and_replay_verifier"
     exit_code: 0
     observed: "Ran 1 test; custom_primary_builtin_secondary=true callback_slots=2 bar_shared_ledger=true depth_l1_l2_shared_ledger=true tick_orderbook_event_semantics=true sync=true run_handle=true replay_verified=true all_source_digests_bound=true"
-    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/custom_strategy.rs", "crates/qx-app/src/cases/run_backtest/strategy_slot.rs", "crates/qx-xingban/src/backtest/portfolio_strategy.rs"]
+    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/tests/custom_strategy.rs", "crates/qx-app/src/cases/run_backtest/strategy_slot.rs", "crates/qx-xingban/src/backtest/portfolio_strategy.rs"]
   - name: python_fill_feedback_loop
     label: "Python 策略成交回报与下一 Bar 决策闭环（Rust OMS/账簿/撮合）"
     status: executed
@@ -549,15 +573,7 @@ scenarios:
     command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_python_depth_parameter_experiment_uses_fresh_strategies_in_rust"
     exit_code: 0
     observed: "custom_depth_grid=candidates=2 succeeded=2 fills=2 factory_instances_per_candidate=true run_handle=true asyncio=true"
-    evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/src/tests/depth_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-python/src/strategy_callback.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
-  - name: rust_sdk_git_consumer
-    label: "Rust SDK 固定提交 Git 安装与仓外消费者运行"
-    status: executed
-    anchor: "tools/check_rust_sdk_git_consumer.py"
-    command: "python tools/check_rust_sdk_git_consumer.py"
-    exit_code: 0
-    observed: "rust_sdk_git_consumer=passed fills=1 multi_market_candidates=4 remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=c5927beae40d1768"
-    evidence: ["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"]
+    evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/tests/depth_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-python/src/strategy_callback.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_language_strategy
     label: "多语言策略（Rust 内核 + Python worker）"
     status: executed
@@ -570,7 +586,7 @@ scenarios:
     label: "多参数回测效果对比"
     status: executed
     anchor: "crates/qx-app/src/cases/run_experiment.rs"
-    command: "qx-cli app run-experiment .task-tmp/quant-probe/parameter-sweep.json"
+    command: "qx-cli app run-experiment .task-tmp/ashare-profile-20261021-final/parameter-sweep.json"
     exit_code: 0
     observed: "\"total_candidates\":4,\"completed_candidates\":4,\"succeeded_candidates\":4,\"failed_candidates\":0"
     evidence: ["crates/qx-app/src/cases/run_experiment.rs"]
@@ -578,7 +594,7 @@ scenarios:
     label: "按固定名义金额换算仓位"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
-    command: "qx-cli app backtest .task-tmp/quant-probe/position-sizing.json"
+    command: "qx-cli app backtest .task-tmp/ashare-profile-20261021-final/position-sizing.json"
     exit_code: 0
     observed: "\"fills\":1,\"equity_points\":70; fills=1 target_notional_raw=1000000000000 quantity_raw_min=11299435028 quantity_raw_max=11299435028"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
@@ -586,7 +602,7 @@ scenarios:
     label: "按决策时可用资金比例 sizing"
     status: executed
     anchor: "crates/qx-xingban/src/backtest.rs"
-    command: "qx-cli app backtest .task-tmp/quant-probe/margin-sizing.json"
+    command: "qx-cli app backtest .task-tmp/ashare-profile-20261021-final/margin-sizing.json"
     exit_code: 0
     observed: "\"fills\":1,\"equity_points\":70; fills=1 target_available_margin_bps=1000 quantity_raw_min=112994350282 quantity_raw_max=112994350282"
     evidence: ["crates/qx-xingban/src/backtest.rs"]
@@ -594,7 +610,7 @@ scenarios:
     label: "按滚动 ATR 风险预算 sizing"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
-    command: "qx-cli app backtest .task-tmp/quant-probe/volatility-sizing.json"
+    command: "qx-cli app backtest .task-tmp/ashare-profile-20261021-final/volatility-sizing.json"
     exit_code: 0
     observed: "\"fills\":1,\"equity_points\":70; fills=1 target_volatility_bps=25 quantity_raw_min=156069544589 quantity_raw_max=156069544589"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
@@ -602,7 +618,7 @@ scenarios:
     label: "Kelly fraction 风险预算 sizing（Rust Bar 回测）"
     status: executed
     anchor: "crates/qx-strategy/src/builtin.rs"
-    command: "qx-cli app backtest .task-tmp/quant-probe/kelly-sizing.json"
+    command: "qx-cli app backtest .task-tmp/ashare-profile-20261021-final/kelly-sizing.json"
     exit_code: 0
     observed: "\"fills\":39,\"equity_points\":70; fills=39 target_kelly_fraction_bps=5000 quantity_raw_min=796431324 quantity_raw_max=341565620723"
     evidence: ["crates/qx-strategy/src/builtin.rs"]
@@ -610,9 +626,9 @@ scenarios:
     label: "止损 / 止盈 / 跟踪止损（确定性 Bar 回测）"
     status: executed
     anchor: "crates/qx-xingban/src/backtest.rs"
-    command: "qx-cli app backtest .task-tmp/quant-probe/protective-exit.json"
+    command: "qx-cli app backtest .task-tmp/ashare-profile-20261021-final/protective-exit.json"
     exit_code: 0
-    observed: "\"fills\":3,\"equity_points\":8; fills=3 protective_stop_fills=1 first_trigger_ts=6000 first_fill_ts=7000"
+    observed: "\"fills\":2,\"equity_points\":9; fills=2 protective_stop_fills=1 first_trigger_ts=8000 first_fill_ts=9000"
     evidence: ["crates/qx-xingban/src/backtest.rs"]
   - name: multi_data_source_batch
     label: "多数据源 / 多市场批量对比"
@@ -634,15 +650,15 @@ scenarios:
     label: "样本外 / 走查（OOS / WFA）"
     status: executed
     anchor: "crates/qx-app/src/cases/experiment_split.rs"
-    command: "qx-cli app run-experiment .task-tmp/quant-probe/walk-forward.json"
+    command: "qx-cli app run-experiment .task-tmp/ashare-profile-20261021-final/walk-forward.json"
     exit_code: 0
-    observed: "\"in_sample_return_bps\":27,\"out_of_sample_return_bps\":-20,\"degradation_bps\":47; folds=4"
+    observed: "\"in_sample_return_bps\":-25,\"out_of_sample_return_bps\":1,\"degradation_bps\":-26; folds=4"
     evidence: ["crates/qx-app/src/cases/experiment_split.rs"]
   - name: benchmark_comparison
     label: "基准对照（buy-and-hold / 零信号）"
     status: executed
     anchor: "crates/qx-app/src/cases/experiment_split.rs"
-    command: "qx-cli app run-experiment .task-tmp/quant-probe/walk-forward.json"
+    command: "qx-cli app run-experiment .task-tmp/ashare-profile-20261021-final/walk-forward.json"
     exit_code: 0
     observed: "\"baselines\":[{\"name\":\"buy-and-hold\",\"return_bps\":1800,\"max_drawdown_bps\":1666},{\"name\":\"zero-signal\",\"return_bps\":0,\"max_drawdown_bps\":0}]"
     evidence: ["crates/qx-app/src/cases/experiment_split.rs"]
@@ -658,10 +674,17 @@ scenarios:
     label: "组合再平衡 / 风险平价"
     status: executed
     anchor: "crates/qx-zhenlu/src/portfolio/risk_parity.rs"
-    command: "qx-cli app plan-risk-parity .task-tmp/quant-probe/risk-parity.json"
+    command: "qx-cli app plan-risk-parity .task-tmp/ashare-profile-20261021-final/risk-parity.json"
     exit_code: 0
     observed: "8b1ca1782ec646d9; assets=2 weight_bps=10000 turnover_bps=9999"
     evidence: ["crates/qx-zhenlu/src/portfolio/risk_parity.rs"]
+  - name: rust_sdk_git_consumer
+    label: "Rust SDK 固定提交 Git 安装与仓外消费者运行"
+    status: blocked
+    anchor: "tools/check_rust_sdk_git_consumer.py"
+    blocked_by: "无网络量化场景探针不执行 Git fetch；该消费者需引用已发布到远端的固定提交，本地未提交工作树不能作为仓外 Git 依赖来源。"
+    next_gate: "发布候选提交推送到远端后，单独运行 tools/check_rust_sdk_git_consumer.py 并保存消费者构建与回测证据。"
+    evidence: ["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"]
   - name: live_exchange_trading
     label: "实盘交易所交易"
     status: blocked

@@ -26,11 +26,13 @@ fn now_nanos() -> u128 {
 }
 
 fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-nats-{label}-{}-{}",
-        std::process::id(),
-        now_nanos()
-    ));
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-nats-{label}-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
     std::fs::create_dir_all(&root).expect("创建 NATS 契约测试目录失败");
     root
 }
@@ -116,6 +118,47 @@ where
             .map_err(|error| format!("连接 NATS 失败: {error}"))?;
         let context = async_nats::jetstream::new(client);
         work(context).await
+    })
+}
+
+/// Publish the same business event under a fresh broker message ID so the
+/// consumer's durable event-id dedupe is exercised independently of JetStream's
+/// bounded publish dedupe window.
+fn publish_duplicate_payloads(
+    url: &str,
+    subject_prefix: &str,
+    events: Vec<OutboxEvent>,
+    run: &str,
+) -> Result<(), String> {
+    use async_nats::jetstream::message::PublishMessage;
+
+    let subject_prefix = subject_prefix.trim_end_matches('.').to_string();
+    let replay = events
+        .into_iter()
+        .enumerate()
+        .map(|(index, event)| {
+            let subject = format!("{}.{}", subject_prefix, event.topic.replace(':', "."));
+            let payload = serde_json::to_vec(&event)
+                .map_err(|error| format!("重复事件序列化失败: {error}"))?;
+            Ok((subject, payload, format!("{run}-replay-{index}")))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    with_context(url, move |context| async move {
+        for (subject, payload, message_id) in replay {
+            context
+                .send_publish(
+                    subject,
+                    PublishMessage::build()
+                        .message_id(message_id)
+                        .payload(payload.into()),
+                )
+                .await
+                .map_err(|error| format!("JetStream duplicate publish failed: {error}"))?
+                .await
+                .map_err(|error| format!("JetStream duplicate publish ack failed: {error}"))?;
+        }
+        Ok(())
     })
 }
 
@@ -254,15 +297,21 @@ fn nats_jetstream_publish_consume_deduplicates_by_event_id() {
     );
 
     // 同一批 event_id 再次发布：消费端识别为重复并仍然 ACK，业务副作用不重放。
-    for sequence in 0..3_u64 {
-        publisher
-            .publish(&event(
-                format!("{run}-{sequence}"),
-                sequence,
-                &format!("trace-{run}"),
-            ))
-            .expect("republish must be acknowledged");
-    }
+    publish_duplicate_payloads(
+        &url,
+        &subject_prefix,
+        (0..3_u64)
+            .map(|sequence| {
+                event(
+                    format!("{run}-{sequence}"),
+                    sequence,
+                    &format!("trace-{run}"),
+                )
+            })
+            .collect(),
+        &run,
+    )
+    .expect("same business events under fresh broker IDs must be acknowledged");
     let (replay_applied, duplicates, ack_failures) = drain(&consumer, &store, &seen, 500, 3);
     assert_eq!(ack_failures, 0);
     assert_eq!(replay_applied, 0, "重复投递不得再次触发业务副作用");

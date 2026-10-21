@@ -42,17 +42,12 @@ impl FileJobQueue {
             run,
             enqueued_ts,
         };
-        envelope.validate()?;
+        self.validate_enqueue_job_request(&envelope)?;
         let path = self.queue_path(envelope.run.run_id);
         if path.exists() {
             let existing: QueuedJob = read_state_json(&path)?;
-            if existing.job == envelope.job && existing.run == envelope.run {
-                return Ok(path);
-            }
-            return Err(StorageError::Conflict(format!(
-                "run_id {} 已被不同任务占用",
-                envelope.run.run_id
-            )));
+            self.validate_existing_job(&existing, &envelope)?;
+            return Ok(path);
         }
         self.ensure_dirs()?;
         write_state_json(&self.root, &path, &envelope)?;
@@ -65,7 +60,7 @@ impl FileJobQueue {
             let job: QueuedJob = read_state_json(&path)?;
             jobs.push(job);
         }
-        jobs.sort_by_key(|job: &QueuedJob| (job.run.trading_day.clone(), job.run.run_id));
+        jobs.sort_by(crate::job_queue::compare_queued_job_order);
         Ok(jobs)
     }
 
@@ -92,9 +87,7 @@ impl FileJobQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
-        if worker.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict("worker 和租约时长不能为空".into()));
-        }
+        self.validate_claim_job_request(worker, lease_seconds)?;
         let queue_path = self.queue_path(run_id);
         self.ensure_dirs()?;
         let _claim_lock = self.acquire_claim_lock(run_id)?;
@@ -104,35 +97,31 @@ impl FileJobQueue {
         // 读取即触发信封校验（身份自洽），非法内容按损坏拒绝。
         read_state_json::<QueuedJob>(&queue_path)?;
         let lease_path = self.lease_path(run_id);
-        let mut fencing_token = 1;
-        if lease_path.exists() {
+        let current = if lease_path.exists() {
             let current: JobLease = read_state_json(&lease_path)?;
-            if current.expires_ts > now && current.owner != worker {
-                return Err(StorageError::LeaseHeld {
-                    run_id,
-                    owner: current.owner,
-                });
-            }
             if current.expires_ts <= now {
-                fencing_token = current.fencing_token.saturating_add(1).max(1);
                 self.delete_record(&lease_path)?;
-            } else if current.owner == worker {
-                let lease = JobLease {
-                    run_id,
-                    owner: worker.into(),
-                    expires_ts: now.saturating_add(lease_seconds),
-                    fencing_token: current.fencing_token.max(1),
-                };
-                write_state_json(&self.root, &lease_path, &lease)?;
-                return Ok(lease);
             }
-        }
+            Some(crate::lease_rules::LeaseSnapshot {
+                owner: current.owner,
+                expires_ts: current.expires_ts,
+                fencing_token: current.fencing_token,
+            })
+        } else {
+            None
+        };
+        let fencing_token =
+            crate::lease_rules::claim_fencing_token(current.as_ref(), worker, now, run_id)?;
         let lease = JobLease {
             run_id,
             owner: worker.into(),
             expires_ts: now.saturating_add(lease_seconds),
             fencing_token,
         };
+        if current.as_ref().is_some_and(|lease| lease.expires_ts > now) {
+            write_state_json(&self.root, &lease_path, &lease)?;
+            return Ok(lease);
+        }
         // 首建走 create_new（并发抢占要映射为 LeaseHeld），序列化仍复用信封实现。
         let content = encode_state_json(&lease)?;
         let mut file = std::fs::OpenOptions::new();

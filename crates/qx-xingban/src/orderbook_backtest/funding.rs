@@ -1,4 +1,4 @@
-use qx_core::{Fill, Ledger, Order, OrderPolicy, Price, TradingInstrumentSpec, ValuationContext};
+use qx_core::{Fill, Ledger, Order, OrderPolicy, Price, TradingInstrumentSpec};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
@@ -26,6 +26,128 @@ pub(super) enum FundingDecision {
         reserve_inventory_raw: i128,
     },
     Reject(String),
+}
+
+/// Project initial margin for the filled position, every still-active order, and the
+/// candidate. Order-book backtests use marked equity as the account ceiling; the
+/// portfolio projection must therefore be supplied to the canonical risk gate.
+#[allow(clippy::too_many_arguments)] // Keeps the account, mark, product, and OMS snapshot explicit at the risk boundary.
+pub(super) fn projected_margin_and_fees_raw(
+    candidate: &Order,
+    candidate_policy: OrderPolicy,
+    spec: &TradingInstrumentSpec,
+    reference_price: Price,
+    fee_bps: i128,
+    ledger: &Ledger,
+    account_id: &str,
+    open_orders: &[Order],
+) -> Result<(i128, i128), qx_core::QxError> {
+    let mut projected = ledger.initial_margin_for_instrument(account_id, spec, reference_price)?;
+    let mut projected_fees = 0_i128;
+    for order in open_orders.iter().filter(|order| {
+        order.client_id != candidate.client_id
+            && order.account_id == account_id
+            && order.instrument == candidate.instrument
+            && !order.status.is_terminal()
+            && order.remaining().raw() > 0
+    }) {
+        let policy = order.policy.unwrap_or_default();
+        policy.validate_for(spec)?;
+        let price = order.limit.unwrap_or(reference_price).max(reference_price);
+        if !policy.reduce_only {
+            let margin =
+                spec.initial_margin(order.remaining().raw(), price.raw(), policy.leverage)?;
+            projected = projected
+                .checked_add(margin)
+                .ok_or_else(|| qx_core::QxError::Invariant("在途订单保证金合计溢出".into()))?;
+        }
+        let notional = spec.notional(order.remaining().raw(), price.raw())?;
+        projected_fees = projected_fees
+            .checked_add(qx_core::bp_amount_checked(notional, fee_bps)?)
+            .ok_or_else(|| qx_core::QxError::Invariant("在途订单手续费预留合计溢出".into()))?;
+    }
+    if !candidate_policy.reduce_only {
+        let price = candidate
+            .limit
+            .unwrap_or(reference_price)
+            .max(reference_price);
+        let margin =
+            spec.initial_margin(candidate.qty.raw(), price.raw(), candidate_policy.leverage)?;
+        projected = projected
+            .checked_add(margin)
+            .ok_or_else(|| qx_core::QxError::Invariant("候选订单保证金合计溢出".into()))?;
+        let notional = spec.notional(candidate.qty.raw(), price.raw())?;
+        projected_fees = projected_fees
+            .checked_add(qx_core::bp_amount_checked(notional, fee_bps)?)
+            .ok_or_else(|| qx_core::QxError::Invariant("候选订单手续费预留溢出".into()))?;
+    }
+    if candidate_policy.reduce_only {
+        let price = candidate
+            .limit
+            .unwrap_or(reference_price)
+            .max(reference_price);
+        let notional = spec.notional(candidate.qty.raw(), price.raw())?;
+        projected_fees = projected_fees
+            .checked_add(qx_core::bp_amount_checked(notional, fee_bps)?)
+            .ok_or_else(|| qx_core::QxError::Invariant("候选订单手续费预留溢出".into()))?;
+    }
+    Ok((projected, projected_fees))
+}
+
+/// Estimate strategy-visible free margin from this backtest's marked equity, settled
+/// position margin, live-order margin, and reserved fees. This is a simulation estimate,
+/// not a venue-reported free-margin snapshot.
+pub(super) fn simulated_available_margin_raw(
+    spec: &TradingInstrumentSpec,
+    reference_price: Price,
+    fee_bps: i128,
+    ledger: &Ledger,
+    account_id: &str,
+    open_orders: &[Order],
+) -> Result<i128, qx_core::QxError> {
+    let mut used_margin =
+        ledger.initial_margin_for_instrument(account_id, spec, reference_price)?;
+    let mut reserved_fees = 0_i128;
+    for order in open_orders.iter().filter(|order| {
+        order.account_id == account_id
+            && order.instrument == spec.instrument
+            && !order.status.is_terminal()
+            && order.remaining().raw() > 0
+    }) {
+        let policy = order.policy.ok_or_else(|| {
+            qx_core::QxError::BusinessViolation(format!(
+                "衍生品在途订单缺少保证金策略: client_id={}",
+                order.client_id
+            ))
+        })?;
+        policy.validate_for(spec)?;
+        let price = order.limit.unwrap_or(reference_price).max(reference_price);
+        if !policy.reduce_only {
+            used_margin = used_margin
+                .checked_add(spec.initial_margin(
+                    order.remaining().raw(),
+                    price.raw(),
+                    policy.leverage,
+                )?)
+                .ok_or_else(|| qx_core::QxError::Invariant("在途订单保证金合计溢出".into()))?;
+        }
+        reserved_fees = reserved_fees
+            .checked_add(qx_core::bp_amount_checked(
+                spec.notional(order.remaining().raw(), price.raw())?,
+                fee_bps,
+            )?)
+            .ok_or_else(|| qx_core::QxError::Invariant("在途订单手续费预留合计溢出".into()))?;
+    }
+    let marks = BTreeMap::from([(spec.instrument.clone(), reference_price)]);
+    let valuation = qx_core::ValuationContext::spot(account_id, &marks, &spec.settlement_currency)
+        .with_spec(Some(spec));
+    ledger
+        .valuate(&valuation)?
+        .equity
+        .raw()
+        .checked_sub(used_margin)
+        .and_then(|available| available.checked_sub(reserved_fees))
+        .ok_or_else(|| qx_core::QxError::Invariant("衍生品可用保证金估算溢出".into()))
 }
 
 pub(super) struct FundingContext<'a> {
@@ -84,21 +206,20 @@ pub(super) fn preflight_order(
                 qx_core::QxError::BusinessViolation("订单簿订单缺少保证金参考价".into())
             })?;
         let leveraged = spec.product.supports_leverage();
-        let available = if leveraged {
-            let marks = BTreeMap::from([(order.instrument.clone(), price)]);
-            let valuation = ValuationContext::spot(context.account_id, &marks, context.currency)
-                .with_spec(Some(spec));
-            context.ledger.valuate(&valuation)?.equity.raw()
-        } else {
-            unreserved_cash(
-                context
-                    .ledger
-                    .cash_for(context.account_id, context.currency),
-                context.reservations,
-                context.total_reserved_cash_raw,
-            )?
-        };
-        let required = spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
+        // Derivative funding is evaluated once by the canonical account risk gate below,
+        // using projected portfolio margin. Comparing an isolated order against equity
+        // here can admit multiple individually affordable orders whose sum is not.
+        if leveraged {
+            return Ok(FundingDecision::NotRequired);
+        }
+        let available = unreserved_cash(
+            context
+                .ledger
+                .cash_for(context.account_id, context.currency),
+            context.reservations,
+            context.total_reserved_cash_raw,
+        )?;
+        let required = spec.notional(order.qty.raw(), price.raw())?;
         let required_funding = if order.side == qx_core::Side::Buy {
             required
                 .checked_add(qx_core::bp_amount_checked(
@@ -110,11 +231,9 @@ pub(super) fn preflight_order(
             required
         };
         if required_funding > available {
-            return Ok(FundingDecision::Reject(if leveraged {
-                "订单初始保证金超过订单簿回测权益".into()
-            } else {
-                "买入成本（含预估手续费）超过订单簿回测可用现金".into()
-            }));
+            return Ok(FundingDecision::Reject(
+                "买入成本（含预估手续费）超过订单簿回测可用现金".into(),
+            ));
         }
         return Ok(FundingDecision::Accept {
             reserve_cash_raw: if spot_buy { required_funding } else { 0 },
@@ -356,4 +475,247 @@ fn mul_div_ceil(value: i128, numerator: i128, denominator: i128) -> Result<i128,
         .checked_add(denominator - 1)
         .ok_or_else(|| qx_core::QxError::Invariant("现货挂单资金向上取整溢出".into()))?;
     Ok(adjusted / denominator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_core::{
+        InstrumentId, MarginMode, OrderStatus, PositionMode, PositionSide, Quantity, Side,
+        TradingProduct, SCALE,
+    };
+
+    fn derivative_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
+        TradingInstrumentSpec {
+            instrument,
+            product: TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 10,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        }
+    }
+
+    fn derivative_order(id: u64, instrument: &InstrumentId, qty: i64) -> Order {
+        Order {
+            client_id: id,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(qty),
+            limit: None,
+            status: OrderStatus::Accepted,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                reduce_only: false,
+                position_side: PositionSide::Net,
+                margin_mode: MarginMode::Cross,
+                position_mode: PositionMode::OneWay,
+                leverage: 2,
+                post_only: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn derivative_margin_projection_includes_open_orders_and_candidate() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = derivative_spec(instrument.clone());
+        let open = derivative_order(1, &instrument, 6);
+        let candidate = derivative_order(2, &instrument, 6);
+        let ledger = Ledger::new();
+        let (projected, _) = projected_margin_and_fees_raw(
+            &candidate,
+            candidate.policy.unwrap(),
+            &spec,
+            Price::from_i64(10),
+            0,
+            &ledger,
+            "main",
+            std::slice::from_ref(&open),
+        )
+        .unwrap();
+        let expected = spec
+            .initial_margin(Quantity::from_i64(12).raw(), Price::from_i64(10).raw(), 2)
+            .unwrap();
+        assert_eq!(projected, expected);
+        let context = qx_risk::OrderRiskContext {
+            available_margin_raw: Some(expected - 1),
+            projected_initial_margin_raw: Some(projected),
+            reference_price: Some(Price::from_i64(10)),
+            instrument_spec: Some(spec),
+            ..qx_risk::OrderRiskContext::default()
+        };
+        assert!(context.validate_order(&candidate).is_err());
+    }
+
+    #[test]
+    fn derivative_margin_projection_uses_each_open_positions_persisted_leverage() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = derivative_spec(instrument.clone());
+        let mut ledger = Ledger::new();
+        let mut opened = derivative_order(10, &instrument, 1);
+        opened.policy = Some(OrderPolicy {
+            leverage: 10,
+            ..opened.policy.unwrap()
+        });
+        ledger
+            .apply_fill_with_spec(
+                &opened,
+                &Fill {
+                    order_id: opened.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(10),
+                    ts: 1,
+                    account_id: "main".into(),
+                    ..Fill::default()
+                },
+                "USDT",
+                &spec,
+            )
+            .unwrap();
+
+        let candidate = derivative_order(11, &instrument, 1);
+        let candidate_policy = candidate.policy.unwrap();
+        let (projected, _) = projected_margin_and_fees_raw(
+            &candidate,
+            candidate_policy,
+            &spec,
+            Price::from_i64(10),
+            0,
+            &ledger,
+            "main",
+            &[],
+        )
+        .unwrap();
+        let expected_existing = spec
+            .initial_margin(Quantity::from_i64(1).raw(), Price::from_i64(10).raw(), 10)
+            .unwrap();
+        let expected_candidate = spec
+            .initial_margin(
+                Quantity::from_i64(1).raw(),
+                Price::from_i64(10).raw(),
+                candidate_policy.leverage,
+            )
+            .unwrap();
+        assert_eq!(projected, expected_existing + expected_candidate);
+    }
+
+    #[test]
+    fn simulated_available_margin_reserves_position_orders_and_fees() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = derivative_spec(instrument.clone());
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "USDT", qx_core::Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut opened = derivative_order(10, &instrument, 1);
+        opened.policy = Some(OrderPolicy {
+            leverage: 10,
+            ..opened.policy.unwrap()
+        });
+        ledger
+            .apply_fill_with_spec(
+                &opened,
+                &Fill {
+                    order_id: opened.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    account_id: "main".into(),
+                    ..Fill::default()
+                },
+                "USDT",
+                &spec,
+            )
+            .unwrap();
+        let mut pending = derivative_order(11, &instrument, 2);
+        pending.limit = Some(Price::from_i64(12));
+        let open_orders = [pending];
+
+        let available = simulated_available_margin_raw(
+            &spec,
+            Price::from_i64(10),
+            100,
+            &ledger,
+            "main",
+            &open_orders,
+        )
+        .unwrap();
+        let marks = BTreeMap::from([(instrument.clone(), Price::from_i64(10))]);
+        let equity = ledger
+            .valuate(
+                &qx_core::ValuationContext::spot("main", &marks, "USDT").with_spec(Some(&spec)),
+            )
+            .unwrap()
+            .equity
+            .raw();
+        let position_margin = spec
+            .initial_margin(Quantity::from_i64(1).raw(), Price::from_i64(10).raw(), 10)
+            .unwrap();
+        let pending_margin = spec
+            .initial_margin(Quantity::from_i64(2).raw(), Price::from_i64(12).raw(), 2)
+            .unwrap();
+        let pending_fee = qx_core::bp_amount_checked(
+            spec.notional(Quantity::from_i64(2).raw(), Price::from_i64(12).raw())
+                .unwrap(),
+            100,
+        )
+        .unwrap();
+        assert_eq!(
+            available,
+            equity - position_margin - pending_margin - pending_fee
+        );
+        assert!(available < equity, "持仓和在途单必须占用策略可用保证金");
+    }
+
+    #[test]
+    fn derivative_margin_projection_refuses_a_legacy_position_without_leverage() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = derivative_spec(instrument.clone());
+        let mut ledger = Ledger::new();
+        ledger
+            .apply_entry(qx_core::LedgerEntry {
+                id: 0,
+                account_id: "main".into(),
+                currency: "USDT".into(),
+                kind: qx_core::LedgerEntryKind::TradePosition,
+                amount: qx_core::Money::ZERO,
+                instrument: Some(instrument.clone()),
+                quantity: Quantity::from_i64(1),
+                price: Some(Price::from_i64(10)),
+                order_id: None,
+                ts: 1,
+                multiplier: 1,
+                position_side: None,
+                leverage: None,
+            })
+            .unwrap();
+        let candidate = derivative_order(12, &instrument, 1);
+        let result = projected_margin_and_fees_raw(
+            &candidate,
+            candidate.policy.unwrap(),
+            &spec,
+            Price::from_i64(10),
+            0,
+            &ledger,
+            "main",
+            &[],
+        );
+        assert!(matches!(
+            result,
+            Err(qx_core::QxError::ReconcileRequired(message))
+                if message.contains("缺少可回放的开仓杠杆")
+        ));
+    }
 }

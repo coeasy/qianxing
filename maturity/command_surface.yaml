@@ -1,6 +1,6 @@
 # 顶层 CLI 命令面的 R/P/O/L 能力分类（QX-DEV-PLAN-2026-10-10 T0-2 / 主计划 §5）
 #
-# 目的：把「46 条 CLI 入口」从一张名字清单，变成一张**能力声明表**——每条入口写明它属于哪一档、
+# 目的：把「50 条 CLI 入口」从一张名字清单，变成一张**能力声明表**——每条入口写明它属于哪一档、
 # 默认面是什么、是否需要私有凭据、是否产生外部副作用、是否默认可用，以及它当前为什么只在 CLI 上。
 #
 # 等级口径（与主计划 §5「能力分级矩阵」同一份）：
@@ -9,7 +9,7 @@
 #   O Operator  worker、调度、恢复、存储与运行状态管理，以及无凭据的 venue 只读探测
 #   L Live      真实账户连接、提交订单、对账；默认关闭，不能由「全能力包」自动开启
 #
-# `surface` 记的是**目标默认面**而不是现状：当前 46 条全部只有 CLI 面。R 档计划经 Python SDK 与
+# `surface` 记的是**目标默认面**而不是现状：当前 50 条全部只有 CLI 面。R 档计划经 Python SDK 与
 # 桌面复用；P 档走显式本地配置；O 档走 CLI/管理 API；L 档单独启用。父命令（config/run/strategy/
 # backtest）是命名空间，其等级取子命令里的最高权限档，本身不直接产生副作用——门禁对父命令只要求
 # 写明理由，不套「L 默认关闭 / P 不需凭据 / R 无副作用」三条不变量。
@@ -21,7 +21,7 @@
 # ③ 给 P 档入口写上 credentials: private——Paper 轨本应一条凭据都不用（Paper 验收记录同口径）。
 schema_version: 1
 kind: command-surface-classification
-updated_at: "2026-10-10"
+updated_at: "2026-10-16"
 
 commands:
   # ---- R 研究面：无外部账户副作用 ----
@@ -40,7 +40,7 @@ commands:
     credentials: none
     external_side_effect: none
     default_enabled: true
-    note: 父命令；validate-dataset/backtest/verify/compare-runs/plan-risk-parity/plan-algo-execution/run-experiment/run-depth-experiment/run-multi-leg-experiment/depth-backtest/verify-depth/multi-leg-backtest/multi-account-backtest 子入口复用 qx-app 用例，等级随子命令取 R；SDK 与 HTTP 共用 Rust 用例
+    note: 父命令；validate-dataset/backtest/verify/compare-runs/plan-risk-parity/plan-algo-execution/run-experiment/run-depth-experiment/run-multi-leg-experiment/run-multi-market-experiment/depth-backtest/verify-depth/multi-leg-backtest/multi-market-backtest/multi-market-depth-backtest/multi-account-backtest 子入口复用 qx-app 用例，等级随子命令取 R；SDK 与 HTTP 共用 Rust 用例
   - name: backtest
     level: R
     parent: true
@@ -89,6 +89,14 @@ commands:
     external_side_effect: none
     default_enabled: true
     note: 数据集质量与档位校验；纯本地读，产出 ValidationIssue 报告
+  - name: data-validate-depth
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 诊断本地 L1/L2 深度帧并生成或复核质量清单；不触账户
   - name: dataset-bundle
     level: R
     parent: false
@@ -121,6 +129,14 @@ commands:
     external_side_effect: none
     default_enabled: true
     note: 生态自检（插件/适配器面）；不触账户
+  - name: evidence
+    level: R
+    parent: true
+    surface: cli
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: EvidenceBundle 与离线运行/实验包的签名、复核、复算和导出；只读仓内文件或写本地输出，不连接 venue
   - name: fast-backtest
     level: R
     parent: false
@@ -129,6 +145,14 @@ commands:
     external_side_effect: none
     default_enabled: true
     note: manifest 驱动的离线批量回测；同 Bar 内核，无外部副作用
+  - name: guide
+    level: R
+    parent: false
+    surface: cli
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 按研究者/策略作者/运维/集成者输出分角色首跑指引；只读，不启动运行时或交易
   - name: init
     level: R
     parent: false
@@ -315,6 +339,14 @@ commands:
     external_side_effect: none
     default_enabled: true
     note: 运行时配置校验；输出健康快照与安全边界，不连接交易所
+  - name: storage-adopt-postgres
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: private
+    external_side_effect: none
+    default_enabled: true
+    note: 显式认领匹配已知迁移的 PostgreSQL schema 并写入版本账本；DSN 通过环境变量读取
   - name: scheduler-worker
     level: O
     parent: false

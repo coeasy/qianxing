@@ -5,9 +5,10 @@
 # 那两档只对需要外部 venue 的能力有意义，证据在 maturity/evidence/testnet|production/。
 schema_version: 1
 kind: backtest-acceptance
+scenario: crypto-example
 outcome: passed
 generated_by: tools/backtest_acceptance.py
-generated_at_unix: 1791555027
+generated_at_unix: 1792564852
 binary: qx-cli.exe
 credentials_required: false
 external_venues: none
@@ -18,10 +19,10 @@ independent_dirs: result_hash_and_artifact_contents_equal
 independent_runs: 2
 result_hash: 26fdd6b52d020700
 data_fingerprint: dataset-bundle:8bf50b57f8204ab9
-config_fingerprint: 974fb334c64d59f7f829e5b8256ae7096981d6f58d9cc03f3727a7bcd194c7f0
+config_fingerprint: 161af7d76044eeb2baea353b40a28e0e0645ebb11d88064c08bee88bb7ca44da
 replay_verdict: verified
 artifact_contents:
   equity: 6856055f14a87f482c4d9f8dc3507a4fd6732d08243b77910df6c384028eedde
   fills: 9f8f78cdb8c5fda870b65f4700c98ca68cc59b6953a306e72c97fe2852a0afa1
-  run_manifest: 2e788faf9810b0fa586ad2d26ca00c0331edb9302bebd89c33acc8b862ccc30c
-  summary: 2e857b8dbba091aed19f2a5eb7ff354069666e886a85176604ec557c2ffb5f46
+  run_manifest: eaf12e424c59ea30772e827f757b4179c0631b4b842877218554404fc7ad5eb0
+  summary: 711b2d551b61a9450a02194788fa0c9e93ed594ba2291ba66fcfbdd344ad1225

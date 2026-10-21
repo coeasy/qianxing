@@ -70,7 +70,9 @@ impl JsonBarFrameProvider {
         let first = bars
             .first()
             .ok_or_else(|| "BarFrame manifest cannot be created from empty range".to_string())?;
-        let last = bars.last().expect("first implies last");
+        let last = bars
+            .last()
+            .ok_or_else(|| "BarFrame manifest cannot be created from empty range".to_string())?;
         let manifest = DatasetManifest {
             dataset_id: dataset_id.into(),
             version: self.metadata.version.clone(),

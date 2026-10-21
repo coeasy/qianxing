@@ -45,6 +45,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
     }
 
@@ -92,6 +94,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?);
         *self = staged;
         Ok(ids)
@@ -136,6 +140,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         let mut ids = vec![grant_id];
         if event.subscription_qty_raw > 0 {
@@ -160,6 +166,8 @@ impl Ledger {
                 ts,
                 multiplier: 1,
                 position_side: None,
+
+                leverage: None,
             })?);
         }
         *self = staged;
@@ -198,6 +206,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
     }
 

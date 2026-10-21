@@ -1,7 +1,16 @@
 //! 配置与运维查询命令面：`config`/`status`/`doctor`/`report`/`live-check` 与 `run` 统一派发。
 //! 只做配置读取、引用校验与人读/机读输出；帮助文本见 `cli_help.rs`，初始化一族见 `init_project.rs`。
 
-use super::*;
+use crate::{
+    build_identity, check_account_log_settlement, check_orphan_event_logs, check_storage_data_dir,
+    effective_storage_root, latest_backtest_readout_lines, list_backtest_summary_paths,
+    read_runtime_config, repository_deploy_path, run_entry_arguments, run_live_check,
+    run_paper_check, run_paper_pipeline_once, run_runtime_check, run_unified_backtest,
+    run_unified_report_entry, run_usage, validate_runtime_references, worker_credentials_ready,
+    writes_account_ledger,
+};
+use qx_runtime::{RuntimeConfig, RuntimeSupervisor};
+use std::path::{Path, PathBuf};
 
 pub(crate) fn default_runtime_path() -> PathBuf {
     repository_deploy_path("qianxing.runtime.example.json")
@@ -115,22 +124,6 @@ pub(crate) fn run_config_lock(input: &Path, output: &Path, force: bool) -> Resul
     Ok(())
 }
 
-/// `run` 的可用入口清单：help 文案、缺参提示与"不支持"提示共用同一份；门禁校验它与 help 入口行、
-/// match 分支集合相等（三处各写一遍正是 V10 §4.3 第 4 项"文案自称支持 backtest 而 match 无分支"）。
-pub(crate) const RUN_ENTRY_POINTS: [&str; 7] = [
-    "backtest",
-    "paper",
-    "paper-check",
-    "doctor",
-    "live-check",
-    "runtime-check",
-    "report",
-];
-
-pub(crate) fn run_usage(phrase: &str) -> String {
-    format!("run {phrase}；可用入口：{}", RUN_ENTRY_POINTS.join("、"))
-}
-
 pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
     let action = arguments
         .first()
@@ -155,11 +148,17 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
                 positional.get(2).map(PathBuf::from).as_deref(),
             )
         }
-        "paper" | "paper-check" => {
+        "paper" => {
             let (path, _) = run_entry_arguments(arguments, action, false, || {
                 repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
             })?;
             run_paper_pipeline_once(&path)
+        }
+        "paper-check" => {
+            let (path, json) = run_entry_arguments(arguments, action, true, || {
+                repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
+            })?;
+            run_paper_check(&path, json)
         }
         "doctor" => {
             // 数据面三入口共用 `unified_default_runtime_path`：缺省路径若与 `run backtest` 的
@@ -179,45 +178,9 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
                 run_entry_arguments(arguments, action, true, unified_default_runtime_path)?;
             run_runtime_check(&path, json)
         }
-        "report" => {
-            let (path, json, html, evidence, output) =
-                run_report_entry_arguments(arguments, unified_default_runtime_path)?;
-            run_report_with_output(&path, json, html, evidence, output.as_deref())
-        }
+        "report" => run_unified_report_entry(arguments, unified_default_runtime_path),
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }
-}
-
-pub(crate) fn list_backtest_summary_paths(runs_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut summaries = Vec::new();
-    if !runs_dir.is_dir() {
-        return Ok(summaries);
-    }
-    for entry in std::fs::read_dir(runs_dir)
-        .map_err(|error| format!("读取回测结果目录失败 {}: {error}", runs_dir.display()))?
-    {
-        let entry = entry.map_err(|error| format!("读取回测结果目录项失败: {error}"))?;
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".summary.json"))
-        {
-            summaries.push(path);
-        }
-    }
-    summaries.sort_by(|left, right| {
-        let left_modified = std::fs::metadata(left)
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(UNIX_EPOCH);
-        let right_modified = std::fs::metadata(right)
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(UNIX_EPOCH);
-        left_modified
-            .cmp(&right_modified)
-            .then_with(|| left.cmp(right))
-    });
-    Ok(summaries)
 }
 
 pub(crate) fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, String> {
@@ -319,6 +282,15 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
 
 pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
+    let supervisor_build = RuntimeSupervisor::new(config.clone()).map(|_| ());
+    collect_doctor_report_for_config(path, &config, supervisor_build)
+}
+
+pub(crate) fn collect_doctor_report_for_config(
+    path: &Path,
+    config: &RuntimeConfig,
+    supervisor_build: Result<(), String>,
+) -> Result<serde_json::Value, String> {
     let fingerprint = config.fingerprint()?;
     // 诊断的第一格先回答"我是哪个构建在说这句话"（U1）。
     let mut checks = vec![crate::build_identity::doctor_check()];
@@ -336,7 +308,7 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         "message": format!("配置指纹={fingerprint}")
     }));
 
-    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, config);
     for warning in reference_warnings {
         checks.push(serde_json::json!({
             "name": "runtime_reference",
@@ -397,8 +369,8 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         &mut warnings,
         &mut failures,
     );
-    check_account_log_settlement(&config, &mut checks, &mut failures);
-    check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
+    check_account_log_settlement(config, &mut checks, &mut failures);
+    check_orphan_event_logs(path, config, &mut checks, &mut warnings);
 
     // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
     // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加
@@ -408,8 +380,8 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         .iter()
         .filter(|worker| worker.enabled)
         .count();
-    let (status, message) = match RuntimeSupervisor::new(config.clone()) {
-        Ok(_) => (
+    let (status, message) = match supervisor_build {
+        Ok(()) => (
             "pass",
             format!("监督器可构建，启用 worker={enabled_workers}（未启动，不代表运行健康）"),
         ),
@@ -424,12 +396,43 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         failures.push(message);
     }
 
+    let readiness_layers = serde_json::json!({
+        "R": {
+            "status": if failures.is_empty() { "pass" } else { "blocked" },
+            "scope": "static_research_preflight",
+            "evidence": checks.iter().filter_map(|check| check.get("name").and_then(serde_json::Value::as_str)).collect::<Vec<_>>(),
+            "detail": "配置、路径与监督器构建检查；不代表回测结果有效"
+        },
+        "P": {
+            "status": "not_assessed",
+            "scope": "paper_execution",
+            "required_command": "paper-check",
+            "evidence": Vec::<String>::new(),
+            "detail": "需要执行 Paper 主链路验收"
+        },
+        "O": {
+            "status": "not_assessed",
+            "scope": "operator_runtime",
+            "required_command": "runtime-check",
+            "evidence": Vec::<String>::new(),
+            "detail": "静态 doctor 报告不包含已启动 worker 的运行状态"
+        },
+        "L": {
+            "status": "not_assessed",
+            "scope": "live_account",
+            "required_command": "live-check",
+            "evidence": Vec::<String>::new(),
+            "detail": "静态报告不连接真实账户，也不提交订单"
+        }
+    });
+
     Ok(serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "runtime_path": path.display().to_string(),
-        "environment": config.environment,
+        "environment": config.environment.clone(),
         "profile": config.profile,
         "config_fingerprint": fingerprint,
+        "readiness_layers": readiness_layers,
         "ok": failures.is_empty(),
         "checks": checks,
         "warnings": warnings,

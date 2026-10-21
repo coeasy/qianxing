@@ -14,6 +14,22 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 
+# Rust StrategyContractIntent::validate_for is the canonical vocabulary. Keep this
+# Python mirror checked against that validator and the published JSON schema by
+# strategy_intent_three_language_check in tools/check_architecture.py.
+STRATEGY_INTENT_ENUMS = {
+    "side": ("buy", "sell"),
+    "position_side": ("net", "long", "short"),
+    "margin_mode": ("cash", "cross", "isolated"),
+    "position_mode": ("one_way", "hedge"),
+}
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _canonical_enum_case(value: Any) -> Any:
+    """Normalize ASCII enum spelling exactly as Rust's to_ascii_lowercase does."""
+    return value.translate(_ASCII_LOWER) if isinstance(value, str) else value
+
 
 def _require_text(value: Any, name: str) -> str:
     text = str(value)
@@ -201,34 +217,40 @@ class StrategyIntent:
     position_mode: str | None = None
     leverage: int | None = None
 
+    def __post_init__(self) -> None:
+        # Normalize at construction/from_dict so in-memory bridge objects already
+        # carry the same canonical tokens that Rust serializes and the schema lists.
+        for name in STRATEGY_INTENT_ENUMS:
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _canonical_enum_case(value))
+
     def validate(self) -> None:
         if self.intent_id <= 0:
             raise ValueError("intent_id must be positive")
         _require_text(self.instrument, "intent.instrument")
-        if self.side.lower() not in {"buy", "sell"}:
+        if self.side not in STRATEGY_INTENT_ENUMS["side"]:
             raise ValueError("intent.side must be buy or sell")
         if self.qty_raw <= 0:
             raise ValueError("intent.qty_raw must be positive")
         if self.limit_price_raw is not None and self.limit_price_raw <= 0:
             raise ValueError("intent.limit_price_raw must be positive")
-        if self.position_side is not None and self.position_side.lower() not in {
-            "net",
-            "long",
-            "short",
-        }:
+        if (
+            self.position_side is not None
+            and self.position_side not in STRATEGY_INTENT_ENUMS["position_side"]
+        ):
             raise ValueError("intent.position_side must be net, long or short")
         # 三个衍生品档位与 Rust StrategyContractIntent::validate 同口径：空值表示沿用运行时
         # 主策略配置，非空值必须是运行时认识的规范小写形式，leverage 不允许 0（V12 §16 第三遍）。
-        if self.margin_mode is not None and self.margin_mode.lower() not in {
-            "cash",
-            "cross",
-            "isolated",
-        }:
+        if (
+            self.margin_mode is not None
+            and self.margin_mode not in STRATEGY_INTENT_ENUMS["margin_mode"]
+        ):
             raise ValueError("intent.margin_mode must be cash, cross or isolated")
-        if self.position_mode is not None and self.position_mode.lower() not in {
-            "one_way",
-            "hedge",
-        }:
+        if (
+            self.position_mode is not None
+            and self.position_mode not in STRATEGY_INTENT_ENUMS["position_mode"]
+        ):
             raise ValueError("intent.position_mode must be one_way or hedge")
         if self.leverage is not None and self.leverage <= 0:
             raise ValueError("intent.leverage must be positive")
@@ -238,14 +260,14 @@ class StrategyIntent:
         return {
             "intent_id": self.intent_id,
             "instrument": self.instrument,
-            "side": self.side.lower(),
+            "side": self.side,
             "qty_raw": self.qty_raw,
             "limit_price_raw": self.limit_price_raw,
             "reduce_only": self.reduce_only,
             "post_only": self.post_only,
-            "position_side": None if self.position_side is None else self.position_side.lower(),
-            "margin_mode": None if self.margin_mode is None else self.margin_mode.lower(),
-            "position_mode": None if self.position_mode is None else self.position_mode.lower(),
+            "position_side": self.position_side,
+            "margin_mode": self.margin_mode,
+            "position_mode": self.position_mode,
             "leverage": self.leverage,
         }
 

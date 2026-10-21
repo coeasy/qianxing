@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/risk-parity-result-v1.json",
+  "title": "Qianxing RiskParityResult v1",
+  "description": "Deterministic risk-parity allocation and order plan returned by qx-app. Solver feasibility and the fingerprint calculation are produced by the Rust domain planner.",
+  "type": "object",
+  "required": ["schema_version", "portfolio_id", "plan_hash", "plan"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "portfolio_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "plan_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "plan": {"$ref": "#/$defs/RiskParityPlan"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RiskParityPlan": {
+      "type": "object",
+      "required": ["allocations", "orders", "target_gross_notional_raw", "current_gross_notional_raw", "turnover_bps", "observations", "solver_sweeps"],
+      "properties": {
+        "allocations": {"type": "array", "items": {"$ref": "#/$defs/RiskParityAllocation"}},
+        "orders": {"type": "array", "items": {"$ref": "#/$defs/RiskParityOrderDelta"}},
+        "target_gross_notional_raw": {"type": "integer", "minimum": 1, "maximum": 170141183460469231731687303715884105727},
+        "current_gross_notional_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+        "turnover_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "observations": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
+        "solver_sweeps": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}
+      },
+      "additionalProperties": false
+    },
+    "RiskParityAllocation": {
+      "type": "object",
+      "required": ["instrument", "weight_bps", "target_notional_raw", "target_qty_raw"],
+      "properties": {
+        "instrument": {"type": "string", "minLength": 1},
+        "weight_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "target_notional_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+        "target_qty_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727}
+      },
+      "additionalProperties": false
+    },
+    "RiskParityOrderDelta": {
+      "type": "object",
+      "required": ["instrument", "delta_qty_raw", "estimated_notional_raw"],
+      "properties": {
+        "instrument": {"type": "string", "minLength": 1},
+        "delta_qty_raw": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+        "estimated_notional_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727}
+      },
+      "additionalProperties": false
+    }
+  }
+}

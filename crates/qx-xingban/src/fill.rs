@@ -7,6 +7,7 @@
 use qx_core::Side;
 use qx_guanxing::Bar;
 
+use crate::execution_attempt::{ExecutionAttemptReason, FillEvaluation};
 use crate::rng::DeterministicRng;
 
 /// 数据档位：决定可见深度。
@@ -44,6 +45,16 @@ pub struct FillContext<'a> {
     pub halted: bool,
 }
 
+/// Machine-readable model identity and assumptions for summaries and reports.
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct FillModelDescriptor {
+    pub name: String,
+    pub version: String,
+    pub data_tier: String,
+    pub parameters: String,
+    pub assumption: String,
+}
+
 /// 限价是否满足：买单价不得高于限价，卖单价不得低于限价。
 pub(crate) fn limit_ok(side: Side, limit: Option<i128>, px: i128) -> bool {
     match limit {
@@ -70,18 +81,104 @@ pub trait FillModel {
         String::new()
     }
 
+    /// Optional cumulative participation cap shared by every order matched on one Bar.
+    /// `None` preserves the model's ordinary capacity assumptions.
+    fn bar_volume_participation_bps(&self) -> Option<u16> {
+        None
+    }
+
+    fn audit_descriptor(&self) -> FillModelDescriptor {
+        FillModelDescriptor {
+            name: self.name().to_string(),
+            version: self.version().to_string(),
+            data_tier: format!("{:?}", self.tier()),
+            parameters: self.parameters(),
+            assumption: self.assumption().to_string(),
+        }
+    }
+
     fn descriptor(&self) -> String {
+        let descriptor = self.audit_descriptor();
         format!(
-            "{}@{}[tier={:?};params={};assumption={}]",
-            self.name(),
-            self.version(),
-            self.tier(),
-            self.parameters(),
-            self.assumption()
+            "{}@{}[tier={};params={};assumption={}]",
+            descriptor.name,
+            descriptor.version,
+            descriptor.data_tier,
+            descriptor.parameters,
+            descriptor.assumption
         )
     }
 
     fn fill(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> Option<(i128, i128)>;
+
+    /// Evaluate once and retain a machine-readable explanation for the attempt. Third-party
+    /// models remain source-compatible and default to a generic decline reason until they
+    /// override this method.
+    fn evaluate(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> FillEvaluation {
+        self.fill(ctx, rng).map_or_else(
+            || FillEvaluation::declined(ExecutionAttemptReason::ModelDeclined),
+            |(price, qty)| FillEvaluation::filled(price, qty),
+        )
+    }
+}
+
+/// Decorates an OHLCV fill model with a cumulative per-Bar market-volume participation cap.
+/// Unlike `VolumeSensitiveFillModel`, this does not claim to reconstruct order-book depth.
+pub struct BarVolumeParticipationLimit {
+    inner: Box<dyn FillModel>,
+    participation_bps: u16,
+}
+
+impl BarVolumeParticipationLimit {
+    pub fn new(inner: Box<dyn FillModel>, participation_bps: u16) -> Result<Self, String> {
+        if participation_bps == 0 || participation_bps > 10_000 {
+            return Err("Bar 成交量参与率必须在 1..=10000 bps 内".into());
+        }
+        Ok(Self {
+            inner,
+            participation_bps,
+        })
+    }
+}
+
+impl FillModel for BarVolumeParticipationLimit {
+    fn name(&self) -> &'static str {
+        "BarVolumeParticipationLimit"
+    }
+
+    fn version(&self) -> &'static str {
+        "v1"
+    }
+
+    fn tier(&self) -> DataTier {
+        self.inner.tier()
+    }
+
+    fn assumption(&self) -> &'static str {
+        "底层FillModel定价假设保持不变；所有订单每根Bar累计成交量不超过Bar市场成交量声明比例；不重建盘口或队列"
+    }
+
+    fn parameters(&self) -> String {
+        format!(
+            "inner={}@{}({});participation_bps={}",
+            self.inner.name(),
+            self.inner.version(),
+            self.inner.parameters(),
+            self.participation_bps
+        )
+    }
+
+    fn bar_volume_participation_bps(&self) -> Option<u16> {
+        Some(self.participation_bps)
+    }
+
+    fn fill(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.inner.fill(ctx, rng)
+    }
+
+    fn evaluate(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> FillEvaluation {
+        self.inner.evaluate(ctx, rng)
+    }
 }
 
 /// 下一根 bar 开盘价成交——**结构上杜绝同 bar 作弊**。
@@ -98,14 +195,17 @@ impl FillModel for NextBarOpenFillModel {
         "假设下一根bar开盘可全部成交；不建模排队与容量"
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.evaluate(ctx, _rng).fill
+    }
+    fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         if ctx.halted {
-            return None;
+            return FillEvaluation::declined(ExecutionAttemptReason::MarketHalted);
         }
         let px = ctx.bar.open;
         if limit_ok(ctx.side, ctx.limit, px) {
-            Some((px, ctx.qty))
+            FillEvaluation::filled(px, ctx.qty)
         } else {
-            None
+            FillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
         }
     }
 }
@@ -124,11 +224,14 @@ impl FillModel for BestPriceFillModel {
         "假设最优买卖价提供无限数量——乐观上界，不可用于容量评估"
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.evaluate(ctx, _rng).fill
+    }
+    fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let px = ctx.bar.close;
         if limit_ok(ctx.side, ctx.limit, px) {
-            Some((px, ctx.qty))
+            FillEvaluation::filled(px, ctx.qty)
         } else {
-            None
+            FillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
         }
     }
 }
@@ -152,14 +255,17 @@ impl FillModel for OneTickSlippageFillModel {
         format!("tick={}", self.tick)
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.evaluate(ctx, _rng).fill
+    }
+    fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let px = match ctx.side {
             Side::Buy => ctx.bar.close + self.tick,
             Side::Sell => ctx.bar.close - self.tick,
         };
         if limit_ok(ctx.side, ctx.limit, px) {
-            Some((px, ctx.qty))
+            FillEvaluation::filled(px, ctx.qty)
         } else {
-            None
+            FillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
         }
     }
 }
@@ -189,8 +295,11 @@ impl FillModel for ProbabilisticFillModel {
         )
     }
     fn fill(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.evaluate(ctx, rng).fill
+    }
+    fn evaluate(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> FillEvaluation {
         if rng.next_prob() >= self.prob_fill_on_limit {
-            return None;
+            return FillEvaluation::declined(ExecutionAttemptReason::ProbabilityMiss);
         }
         let base = ctx.bar.close;
         let px = match ctx.side {
@@ -198,9 +307,9 @@ impl FillModel for ProbabilisticFillModel {
             Side::Sell => base - self.tick,
         };
         if limit_ok(ctx.side, ctx.limit, px) {
-            Some((px, ctx.qty))
+            FillEvaluation::filled(px, ctx.qty)
         } else {
-            None
+            FillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
         }
     }
 }
@@ -225,16 +334,19 @@ impl FillModel for VolumeSensitiveFillModel {
         format!("frac_bp={}", self.frac_bp)
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
+        self.evaluate(ctx, _rng).fill
+    }
+    fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let capacity = (ctx.bar.volume * self.frac_bp) / 10_000;
         if capacity <= 0 {
-            return None;
+            return FillEvaluation::declined(ExecutionAttemptReason::NoCapacity);
         }
         let q = ctx.qty.min(capacity);
         let px = ctx.bar.close;
         if limit_ok(ctx.side, ctx.limit, px) {
-            Some((px, q))
+            FillEvaluation::filled(px, q)
         } else {
-            None
+            FillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
         }
     }
 }

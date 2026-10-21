@@ -31,6 +31,22 @@ pub struct SplitPlan {
     pub step_bars: u64,
 }
 
+impl SplitPlan {
+    /// Validate the shape shared by the serialized experiment spec and its execution plan.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.train_bars == 0 || self.test_bars == 0 {
+            return Err("实验切分计划的 train_bars 与 test_bars 都必须为正".into());
+        }
+        if self.walk_forward && self.step_bars == 0 {
+            return Err("实验切分计划打开 walk_forward 时 step_bars 必须为正".into());
+        }
+        if !self.walk_forward && self.step_bars != 0 {
+            return Err("实验切分计划未打开 walk_forward 时 step_bars 必须为 0".into());
+        }
+        Ok(())
+    }
+}
+
 /// 实验规格：一次可复跑实验的全部输入身份。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,16 +106,7 @@ impl FoundationDocument for ExperimentSpec {
                 }
             }
         }
-        let split = &self.split_plan;
-        if split.train_bars == 0 || split.test_bars == 0 {
-            return Err("实验规格 split_plan 的 train_bars 与 test_bars 都必须为正".into());
-        }
-        if split.walk_forward && split.step_bars == 0 {
-            return Err("实验规格打开 walk_forward 时 step_bars 必须为正".into());
-        }
-        if !split.walk_forward && split.step_bars != 0 {
-            return Err("实验规格未打开 walk_forward 时 step_bars 必须为 0".into());
-        }
+        self.split_plan.validate()?;
         if self.baselines.is_empty() {
             return Err("实验规格至少要声明一个基线（可用 none）".into());
         }

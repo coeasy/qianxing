@@ -1,0 +1,128 @@
+{
+  "account": {
+    "initial_cash_raw": "100000000000000",
+    "source": "builtin-default"
+  },
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 70,
+  "clock_end": 70000,
+  "clock_start": 1000,
+  "execution_attempt_count": 2,
+  "execution_attempts": [
+    {
+      "displayed_qty_raw": null,
+      "displayed_reduction_raw": null,
+      "estimated_volume_raw": null,
+      "filled_qty_raw": 1000000000,
+      "instrument": "BTCUSDT.BINANCE",
+      "order_id": 1,
+      "price_raw": 108500000000,
+      "queue_ahead_after_raw": null,
+      "queue_ahead_before_raw": null,
+      "queue_consumed_raw": null,
+      "reason": "filled",
+      "remaining_qty_raw": 0,
+      "requested_qty_raw": 1000000000,
+      "side": "Buy",
+      "ts": 5000
+    },
+    {
+      "displayed_qty_raw": null,
+      "displayed_reduction_raw": null,
+      "estimated_volume_raw": null,
+      "filled_qty_raw": 1000000000,
+      "instrument": "BTCUSDT.BINANCE",
+      "order_id": 2,
+      "price_raw": 95500000000,
+      "queue_ahead_after_raw": null,
+      "queue_ahead_before_raw": null,
+      "queue_consumed_raw": null,
+      "reason": "filled",
+      "remaining_qty_raw": 0,
+      "requested_qty_raw": 1000000000,
+      "side": "Sell",
+      "ts": 61000
+    }
+  ],
+  "execution_costs": {
+    "source": "runtime-config-default"
+  },
+  "fill_model": {
+    "assumption": "假设下一根bar开盘可全部成交；不建模排队与容量",
+    "data_tier": "Bar",
+    "descriptor_schema_version": 1,
+    "name": "next_bar_open",
+    "parameters": "",
+    "source": "builtin-default",
+    "version": "v1"
+  },
+  "fills": 2,
+  "input": {
+    "dataset_id": "strategy-bars:BTCUSDT.BINANCE",
+    "dataset_version": "barframe-json-v1",
+    "fingerprint": "613fdc1dc0b779e7",
+    "kind": "barframe",
+    "path": "\\\\?\\D:\\aex_work\\qianxing\\deploy\\qianxing.bar-frame.example.json"
+  },
+  "input_data_hash": "e5c20c038f1bb74c",
+  "instrument": "BTCUSDT.BINANCE",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+  "metrics": {
+    "calmar": -0.5,
+    "fees_raw": 102000000,
+    "final_equity_raw": 99986898000000,
+    "max_drawdown_bps": 2,
+    "profit_factor": 0.43289444677040534,
+    "return_bps": -1,
+    "sharpe": -0.35851350074339905,
+    "sortino": -0.46052155900160874,
+    "turnover_raw": 204000000000,
+    "win_rate": 0.14492753623188406
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "MakerTaker@v1[params=maker_bp=2;taker_bp=5]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1"
+  ],
+  "rejected_orders": 9,
+  "rejection_reasons": [
+    {
+      "count": 9,
+      "reason": "[BUSINESS_VIOLATION] NoShort: [BUSINESS_VIOLATION] 禁止卖空"
+    }
+  ],
+  "replay": {
+    "events": 22,
+    "ledger_entries": 7,
+    "log_digest": "a2cf4a04a4bf9b21",
+    "run_ledger_entries": 7
+  },
+  "result_hash": "a2cf4a04a4bf9b21",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
+  },
+  "run_manifest": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_9efe2be1a586f57c748f01d8560bb6d84bb1e75a911812ca2886ca0c743eb309_504075e714e461130a582893-1a7010e632fbfdc1.run.json",
+  "run_record": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_9efe2be1a586f57c748f01d8560bb6d84bb1e75a911812ca2886ca0c743eb309_504075e714e461130a582893-1a7010e632fbfdc1.v7.record.json",
+  "runtime_config": "\\\\?\\D:\\aex_work\\qianxing\\crates\\qx-cli\\data\\qianxing-builtin-strategy\\runtime-snapshots\\builtin-grid-9efe2be1a586f57c748f01d8560bb6d84bb1e75a911812ca2886ca0c743eb309.json",
+  "sample_unit": "bar",
+  "schema_version": 7,
+  "signal": {
+    "declared_unused": "builtin_fast_window,builtin_slow_window,builtin_period",
+    "fast_window": 5,
+    "kind": "grid",
+    "knobs": "threshold_bps",
+    "period": 14,
+    "quantity_raw": "1000000000",
+    "slow_window": 20,
+    "source": "config",
+    "threshold_bps": "100"
+  },
+  "strategy_id": "strategy-builtin"
+}

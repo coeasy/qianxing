@@ -7,7 +7,7 @@
 
 use super::{MarketEvent, Strategy, StrategyContext, StrategyDecision, StrategyOrderIntent};
 use qx_core::{InstrumentId, OrderPolicy, PositionSide, Price, Quantity, Side};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::File;
 use std::io::Read;
 use std::os::raw::{c_char, c_void};
@@ -19,7 +19,9 @@ use ring::signature::{UnparsedPublicKey, ED25519};
 const DEFAULT_MAX_LIBRARY_BYTES: u64 = 256 * 1024 * 1024;
 
 pub const QX_C_STRATEGY_API_VERSION: u32 = 1;
+pub const QX_C_STRATEGY_ABI_VERSION: u32 = 2;
 const MAX_PLUGIN_INTENTS: usize = 100_000;
+const MAX_PLUGIN_STRING_BYTES: usize = 1_048_576;
 const ERROR_BUFFER_SIZE: usize = 512;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -125,6 +127,7 @@ pub const QX_ORDER_SIDE_SELL: u32 = 2;
 pub struct QxOrderIntent {
     pub intent_id: u64,
     pub instrument: *const c_char,
+    pub instrument_len: usize,
     pub side: u32,
     pub qty_raw: QxRaw128,
     pub limit_price_raw: QxRaw128,
@@ -132,19 +135,24 @@ pub struct QxOrderIntent {
     pub reduce_only: u8,
     pub post_only: u8,
     pub position_side: *const c_char,
+    pub position_side_len: usize,
 }
 
 #[repr(C)]
 pub struct QxStrategyDecision {
     pub schema_version: u32,
     pub request_id: *const c_char,
+    pub request_id_len: usize,
     pub strategy_id: *const c_char,
+    pub strategy_id_len: usize,
     pub signal_id: u64,
     pub confidence: QxRaw128,
     pub priority: i32,
     pub expires_at: u64,
     pub intents: *mut QxOrderIntent,
     pub intents_len: usize,
+    /// Plugin-declared readable element capacity of `intents`.
+    pub intents_capacity: usize,
 }
 
 pub type QxStrategyHandle = *mut c_void;
@@ -397,6 +405,10 @@ pub struct CAbiStrategy {
     handle: QxStrategyHandle,
 }
 
+fn required_callback<T: Copy>(callback: Option<T>, name: &str) -> Result<T, String> {
+    callback.ok_or_else(|| format!("C ABI Strategy {name} 回调缺失"))
+}
+
 impl CAbiStrategy {
     /// # Safety
     ///
@@ -406,7 +418,7 @@ impl CAbiStrategy {
         vtable: &'static QxStrategyVTable,
         config_json: &str,
     ) -> Result<Self, String> {
-        if vtable.abi_version != QX_C_STRATEGY_API_VERSION
+        if vtable.abi_version != QX_C_STRATEGY_ABI_VERSION
             || vtable.create.is_none()
             || vtable.on_init.is_none()
             || vtable.on_event.is_none()
@@ -416,7 +428,7 @@ impl CAbiStrategy {
             return Err("C ABI Strategy vtable 版本或回调不完整".into());
         }
         let config = cstring(config_json, "config_json")?;
-        let handle = (vtable.create.expect("validated create"))(config.as_ptr());
+        let handle = (required_callback(vtable.create, "create")?)(config.as_ptr());
         if handle.is_null() {
             return Err("C ABI Strategy create 返回空句柄".into());
         }
@@ -424,10 +436,12 @@ impl CAbiStrategy {
     }
 
     fn call_error(label: &str, code: i32, buffer: &[c_char; ERROR_BUFFER_SIZE]) -> String {
-        let detail = unsafe { CStr::from_ptr(buffer.as_ptr()) }
-            .to_string_lossy()
-            .trim()
-            .to_string();
+        let bytes = buffer
+            .iter()
+            .take_while(|byte| **byte != 0)
+            .map(|byte| *byte as u8)
+            .collect::<Vec<_>>();
+        let detail = String::from_utf8_lossy(&bytes).trim().to_string();
         if detail.is_empty() {
             format!("{label} 失败 code={code}")
         } else {
@@ -441,13 +455,22 @@ impl CAbiStrategy {
         context: &StrategyContext,
         event_ts: u64,
     ) -> Result<StrategyDecision, String> {
-        if decision.intents_len > MAX_PLUGIN_INTENTS
+        if decision.intents_capacity > MAX_PLUGIN_INTENTS
+            || decision.intents_len > decision.intents_capacity
             || (decision.intents_len > 0 && decision.intents.is_null())
         {
-            return Err("C ABI Strategy 返回的 intents 指针或长度非法".into());
+            return Err(format!(
+                "C ABI Strategy 返回的 intents 指针或长度/容量非法: len={} capacity={} max={MAX_PLUGIN_INTENTS}",
+                decision.intents_len, decision.intents_capacity
+            ));
         }
-        let request_id = read_required_string(decision.request_id, "request_id")?;
-        let strategy_id = read_required_string(decision.strategy_id, "strategy_id")?;
+        let request_id =
+            read_required_string(decision.request_id, decision.request_id_len, "request_id")?;
+        let strategy_id = read_required_string(
+            decision.strategy_id,
+            decision.strategy_id_len,
+            "strategy_id",
+        )?;
         let raw_intents: &[QxOrderIntent] = if decision.intents_len == 0 {
             &[]
         } else {
@@ -455,7 +478,8 @@ impl CAbiStrategy {
         };
         let mut intents = Vec::with_capacity(raw_intents.len());
         for raw in raw_intents {
-            let instrument_text = read_required_string(raw.instrument, "intent instrument")?;
+            let instrument_text =
+                read_required_string(raw.instrument, raw.instrument_len, "intent instrument")?;
             let instrument = InstrumentId::parse(&instrument_text)
                 .ok_or_else(|| format!("C ABI intent instrument 非法: {instrument_text}"))?;
             let side = match raw.side {
@@ -463,10 +487,14 @@ impl CAbiStrategy {
                 QX_ORDER_SIDE_SELL => Side::Sell,
                 other => return Err(format!("C ABI intent side 非法: {other}")),
             };
-            let policy = if raw.position_side.is_null() {
+            let policy = if raw.position_side.is_null() && raw.position_side_len == 0 {
                 None
             } else {
-                let position_side = read_required_string(raw.position_side, "position_side")?;
+                let position_side = read_required_string(
+                    raw.position_side,
+                    raw.position_side_len,
+                    "position_side",
+                )?;
                 Some(OrderPolicy {
                     position_side: match position_side.to_ascii_lowercase().as_str() {
                         "long" => PositionSide::Long,
@@ -508,9 +536,10 @@ impl Strategy for CAbiStrategy {
     fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
         context.validate()?;
         let buffers = ContextBuffers::new(context)?;
+        let callback = required_callback(self.vtable.on_init, "on_init")?;
         let mut error = [0 as c_char; ERROR_BUFFER_SIZE];
         let code = unsafe {
-            (self.vtable.on_init.expect("validated on_init"))(
+            callback(
                 self.handle,
                 &buffers.context,
                 error.as_mut_ptr(),
@@ -536,17 +565,22 @@ impl Strategy for CAbiStrategy {
         let mut decision = QxStrategyDecision {
             schema_version: 0,
             request_id: ptr::null(),
+            request_id_len: 0,
             strategy_id: ptr::null(),
+            strategy_id_len: 0,
             signal_id: 0,
             confidence: QxRaw128::from_i128(0),
             priority: 0,
             expires_at: 0,
             intents: ptr::null_mut(),
             intents_len: 0,
+            intents_capacity: 0,
         };
         let mut error = [0 as c_char; ERROR_BUFFER_SIZE];
+        let callback = required_callback(self.vtable.on_event, "on_event")?;
+        let free_decision = required_callback(self.vtable.free_decision, "free_decision")?;
         let code = unsafe {
-            (self.vtable.on_event.expect("validated on_event"))(
+            callback(
                 self.handle,
                 &context_buffers.context,
                 &event_buffers.event,
@@ -560,10 +594,7 @@ impl Strategy for CAbiStrategy {
         }
         let decoded = self.decode_decision(&decision, context, event.ts());
         unsafe {
-            (self.vtable.free_decision.expect("validated free_decision"))(
-                self.handle,
-                &mut decision,
-            );
+            free_decision(self.handle, &mut decision);
         }
         decoded
     }
@@ -576,17 +607,21 @@ impl Strategy for CAbiStrategy {
         let Some(callback) = self.vtable.on_order_update else {
             return Ok(None);
         };
+        let free_decision = required_callback(self.vtable.free_decision, "free_decision")?;
         let update = cstring(update, "order update")?;
         let mut decision = QxStrategyDecision {
             schema_version: 0,
             request_id: ptr::null(),
+            request_id_len: 0,
             strategy_id: ptr::null(),
+            strategy_id_len: 0,
             signal_id: 0,
             confidence: QxRaw128::from_i128(0),
             priority: 0,
             expires_at: 0,
             intents: ptr::null_mut(),
             intents_len: 0,
+            intents_capacity: 0,
         };
         let mut error = [0 as c_char; ERROR_BUFFER_SIZE];
         let code = unsafe {
@@ -607,19 +642,13 @@ impl Strategy for CAbiStrategy {
         }
         if decision.signal_id == 0 {
             unsafe {
-                (self.vtable.free_decision.expect("validated free_decision"))(
-                    self.handle,
-                    &mut decision,
-                );
+                free_decision(self.handle, &mut decision);
             }
             return Ok(None);
         }
         let decoded = self.decode_decision(&decision, context, context.as_of);
         unsafe {
-            (self.vtable.free_decision.expect("validated free_decision"))(
-                self.handle,
-                &mut decision,
-            );
+            free_decision(self.handle, &mut decision);
         }
         decoded.map(Some)
     }
@@ -627,9 +656,10 @@ impl Strategy for CAbiStrategy {
 
 impl Drop for CAbiStrategy {
     fn drop(&mut self) {
-        unsafe {
-            (self.vtable.destroy.expect("validated destroy"))(self.handle);
-        }
+        let _ = self
+            .vtable
+            .destroy
+            .map(|destroy| unsafe { destroy(self.handle) });
     }
 }
 
@@ -917,249 +947,28 @@ fn cstring(value: &str, field: &str) -> Result<CString, String> {
     CString::new(value).map_err(|_| format!("C ABI {field} 不能包含 NUL"))
 }
 
-fn read_required_string(pointer: *const c_char, field: &str) -> Result<String, String> {
+fn read_required_string(
+    pointer: *const c_char,
+    length: usize,
+    field: &str,
+) -> Result<String, String> {
     if pointer.is_null() {
         return Err(format!("C ABI {field} 不能为空"));
     }
-    Ok(unsafe { CStr::from_ptr(pointer) }
-        .to_string_lossy()
-        .into_owned())
+    if length == 0 || length > MAX_PLUGIN_STRING_BYTES {
+        return Err(format!(
+            "C ABI {field} 长度非法: len={length} max={MAX_PLUGIN_STRING_BYTES}"
+        ));
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), length) };
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("C ABI {field} 不是合法 UTF-8: {error}"))?;
+    if text.contains('\0') {
+        return Err(format!("C ABI {field} 含有内嵌 NUL"));
+    }
+    Ok(text.to_owned())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ring::signature::KeyPair;
-    use std::collections::BTreeMap;
-    use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static DESTROYED: AtomicUsize = AtomicUsize::new(0);
-
-    unsafe extern "C" fn fake_create(_config: *const c_char) -> QxStrategyHandle {
-        Box::into_raw(Box::new(7_u8)).cast()
-    }
-
-    unsafe extern "C" fn fake_init(
-        _handle: QxStrategyHandle,
-        _context: *const QxStrategyContext,
-        _error: *mut c_char,
-        _error_len: usize,
-    ) -> i32 {
-        0
-    }
-
-    unsafe extern "C" fn fake_event(
-        _handle: QxStrategyHandle,
-        _context: *const QxStrategyContext,
-        event: *const QxMarketEvent,
-        decision: *mut QxStrategyDecision,
-        _error: *mut c_char,
-        _error_len: usize,
-    ) -> i32 {
-        let intents = Box::new([QxOrderIntent {
-            intent_id: (*event).ts,
-            instrument: c"BTCUSDT.BINANCE".as_ptr(),
-            side: QX_ORDER_SIDE_BUY,
-            qty_raw: QxRaw128::from_i128(1_000_000_000),
-            limit_price_raw: QxRaw128::from_i128(0),
-            has_limit_price: 0,
-            reduce_only: 0,
-            post_only: 0,
-            position_side: ptr::null(),
-        }]);
-        (*decision).schema_version = QX_C_STRATEGY_API_VERSION;
-        (*decision).request_id = c"abi-request".as_ptr();
-        (*decision).strategy_id = c"abi-test".as_ptr();
-        (*decision).signal_id = (*event).ts;
-        (*decision).confidence = QxRaw128::from_i128(1);
-        (*decision).priority = 0;
-        (*decision).expires_at = (*event).ts;
-        (*decision).intents = Box::into_raw(intents).cast();
-        (*decision).intents_len = 1;
-        0
-    }
-
-    unsafe extern "C" fn fake_free(_handle: QxStrategyHandle, decision: *mut QxStrategyDecision) {
-        if !(*decision).intents.is_null() {
-            let pointer = std::ptr::slice_from_raw_parts_mut((*decision).intents, 1);
-            drop(Box::from_raw(pointer));
-            (*decision).intents = ptr::null_mut();
-            (*decision).intents_len = 0;
-        }
-    }
-
-    unsafe extern "C" fn fake_destroy(handle: QxStrategyHandle) {
-        drop(Box::from_raw(handle.cast::<u8>()));
-        DESTROYED.fetch_add(1, Ordering::SeqCst);
-    }
-
-    static FAKE_VTABLE: QxStrategyVTable = QxStrategyVTable {
-        abi_version: QX_C_STRATEGY_API_VERSION,
-        create: Some(fake_create),
-        on_init: Some(fake_init),
-        on_event: Some(fake_event),
-        on_order_update: None,
-        free_decision: Some(fake_free),
-        destroy: Some(fake_destroy),
-    };
-
-    #[test]
-    fn raw128_round_trips_signed_extremes() {
-        for value in [0, 1, -1, i128::MAX, i128::MIN] {
-            assert_eq!(QxRaw128::from_i128(value).into_i128(), value);
-        }
-    }
-
-    #[test]
-    fn c_layout_matches_expected_pointer_free_sizes() {
-        assert_eq!(std::mem::size_of::<QxRaw128>(), 16);
-        assert_eq!(std::mem::align_of::<QxRaw128>(), 8);
-        assert_eq!(QX_C_STRATEGY_API_VERSION, crate::STRATEGY_API_VERSION);
-    }
-
-    #[test]
-    fn verified_loader_rejects_invalid_digest_and_size() {
-        let path = std::env::temp_dir().join(format!(
-            "qianxing-strategy-digest-{}.bin",
-            std::process::id()
-        ));
-        fs::write(&path, b"qianxing-plugin").unwrap();
-        let bad = DynamicCAbiLoadPolicy::new("00".repeat(32));
-        assert!(verify_library_file(&path, &bad)
-            .unwrap_err()
-            .contains("SHA-256 不匹配"));
-        let digest = ring::digest::digest(&ring::digest::SHA256, b"qianxing-plugin");
-        let expected = digest
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let too_small = DynamicCAbiLoadPolicy::new(expected).with_max_library_bytes(1);
-        assert!(verify_library_file(&path, &too_small)
-            .unwrap_err()
-            .contains("大小非法"));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn verified_loader_accepts_and_rejects_detached_ed25519_signature() {
-        let path = std::env::temp_dir().join(format!(
-            "qianxing-strategy-signature-{}.bin",
-            std::process::id()
-        ));
-        let bytes = b"qianxing-signed-plugin";
-        fs::write(&path, bytes).unwrap();
-        let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
-        let expected = digest
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let seed = [9_u8; 32];
-        let key_pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
-        let signature = key_pair.sign(bytes);
-        let public_key = key_pair
-            .public_key()
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let signature_hex = signature
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let policy = DynamicCAbiLoadPolicy::new(expected.clone())
-            .with_ed25519_signature(public_key, signature_hex.clone());
-        verify_library_file(&path, &policy).unwrap();
-        let bad = DynamicCAbiLoadPolicy::new(expected)
-            .with_ed25519_signature("00".repeat(32), signature_hex);
-        assert!(verify_library_file(&path, &bad).is_err());
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn decode_decision_rejects_an_invalid_c_side_value() {
-        // Keep plugin-controlled `side` as a plain u32: invalid values for a
-        // repr(C) enum would be UB before the rejection arm can run.
-        let intent = Box::new(QxOrderIntent {
-            intent_id: 1,
-            instrument: c"BTCUSDT.BINANCE".as_ptr(),
-            side: 3,
-            qty_raw: QxRaw128::from_i128(1_000_000_000),
-            limit_price_raw: QxRaw128::from_i128(0),
-            has_limit_price: 0,
-            reduce_only: 0,
-            post_only: 0,
-            position_side: ptr::null(),
-        });
-        let raw = QxStrategyDecision {
-            schema_version: QX_C_STRATEGY_API_VERSION,
-            request_id: c"req-1".as_ptr(),
-            strategy_id: c"abi-test".as_ptr(),
-            signal_id: 1,
-            confidence: QxRaw128::from_i128(0),
-            priority: 0,
-            expires_at: 100,
-            intents: Box::into_raw(intent).cast(),
-            intents_len: 1,
-        };
-        let context = StrategyContext {
-            strategy_id: "abi-test".into(),
-            strategy_version: "v1".into(),
-            account_id: "main".into(),
-            venue_id: "paper".into(),
-            data_fingerprint: "bars-1".into(),
-            as_of: 10,
-            positions: BTreeMap::new(),
-            cash: BTreeMap::new(),
-            available_margin_raw: Some(1_000_000_000),
-            risk_state: "ready".into(),
-        };
-        let strategy = CAbiStrategy {
-            vtable: &FAKE_VTABLE,
-            handle: ptr::null_mut(),
-        };
-        let error = strategy.decode_decision(&raw, &context, 10).unwrap_err();
-        // Two deliberate leaks: `decode_decision` returns before `free_decision`
-        // runs (that happens in `on_event`), and the strategy's `handle` is null,
-        // so its `Drop` would call `fake_destroy` on a null pointer.
-        std::mem::forget(strategy);
-        assert!(
-            error.contains("C ABI intent side 非法") && error.contains("3"),
-            "the rejection must name the offending field and value: {error}",
-        );
-    }
-
-    #[test]
-    fn c_abi_strategy_copies_plugin_decision_before_freeing_it() {
-        let context = StrategyContext {
-            strategy_id: "abi-test".into(),
-            strategy_version: "v1".into(),
-            account_id: "main".into(),
-            venue_id: "paper".into(),
-            data_fingerprint: "bars-1".into(),
-            as_of: 10,
-            positions: BTreeMap::new(),
-            cash: BTreeMap::new(),
-            available_margin_raw: Some(1_000_000_000),
-            risk_state: "ready".into(),
-        };
-        let mut strategy = unsafe { CAbiStrategy::from_vtable(&FAKE_VTABLE, "{}") }.unwrap();
-        strategy.on_init(&context).unwrap();
-        let decision = strategy
-            .on_event(
-                &context,
-                &MarketEvent::Timer {
-                    name: "heartbeat".into(),
-                    ts: 10,
-                },
-            )
-            .unwrap();
-        assert_eq!(decision.intents.len(), 1);
-        assert_eq!(decision.intents[0].qty.raw(), 1_000_000_000);
-        drop(strategy);
-        assert_eq!(DESTROYED.load(Ordering::SeqCst), 1);
-    }
-}
+#[path = "c_api/tests.rs"]
+mod tests;

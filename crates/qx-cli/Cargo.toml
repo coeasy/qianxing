@@ -4,6 +4,7 @@ description = "牵星 CLI：端到端回测演示与确定性自校验"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+autotests = false
 
 [features]
 default = ["sqlite"]
@@ -11,36 +12,85 @@ sqlite = [
     "qx-api/sqlite",
     "qx-storage/sqlite",
     "qx-runtime/sqlite",
+    "qx-service/sqlite",
 ]
-postgres = ["qx-storage/postgres", "qx-runtime/postgres"]
-nats = ["qx-storage/nats"]
+postgres = ["qx-storage/postgres", "qx-runtime/postgres", "qx-service/postgres"]
+nats = ["qx-storage/nats", "qx-runtime/nats", "qx-service/nats"]
 
 [dependencies]
-qx-api = { path = "../qx-api" }
-qx-adapter = { path = "../qx-adapter" }
-qx-core = { path = "../qx-core" }
-qx-datastruct = { path = "../qx-datastruct" }
-qx-guanxing = { path = "../qx-guanxing" }
-qx-xingban = { path = "../qx-xingban" }
-qx-zhenlu = { path = "../qx-zhenlu" }
-qx-genglu = { path = "../qx-genglu" }
-qx-plugin = { path = "../qx-plugin" }
-qx-factor = { path = "../qx-factor" }
-qx-protocol = { path = "../qx-protocol" }
-qx-risk = { path = "../qx-risk" }
-qx-provider = { path = "../qx-provider" }
-qx-scheduler = { path = "../qx-scheduler" }
-qx-control = { path = "../qx-control" }
-qx-data = { path = "../qx-data" }
-qx-execution = { path = "../qx-execution" }
-qx-runtime = { path = "../qx-runtime" }
-qx-strategy = { path = "../qx-strategy" }
-qx-spec = { path = "../qx-spec" }
+qx-api = { version = "0.2.1", path = "../qx-api" }
+qx-adapter = { version = "0.2.1", path = "../qx-adapter" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-datastruct = { version = "0.2.1", path = "../qx-datastruct" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-xingban = { version = "0.2.1", path = "../qx-xingban" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
+qx-genglu = { version = "0.2.1", path = "../qx-genglu" }
+qx-plugin = { version = "0.2.1", path = "../qx-plugin" }
+qx-factor = { version = "0.2.1", path = "../qx-factor" }
+qx-protocol = { version = "0.2.1", path = "../qx-protocol" }
+qx-risk = { version = "0.2.1", path = "../qx-risk" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-scheduler = { version = "0.2.1", path = "../qx-scheduler" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-data = { version = "0.2.1", path = "../qx-data" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-runtime = { version = "0.2.1", path = "../qx-runtime" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-spec = { version = "0.2.1", path = "../qx-spec" }
 # T2-2/G1：`qx-cli app` 是本仓**第一个**把核心研究用例交给应用层的门面入口。
 # 方向是 §15.2 的 facade → application，反向那条由 `layer_dependency_check` 的禁止边守着。
-qx-app = { path = "../qx-app" }
-qx-orchestrator = { path = "../qx-orchestrator" }
-qx-storage = { path = "../qx-storage" }
+qx-app = { version = "0.2.1", path = "../qx-app" }
+qx-service = { version = "0.2.1", path = "../qx-service" }
+qx-orchestrator = { version = "0.2.1", path = "../qx-orchestrator" }
+qx-storage = { version = "0.2.1", path = "../qx-storage" }
 serde_json = { workspace = true }
 serde = { workspace = true }
+zip = { version = "=2.4.2", default-features = false }
 clap = { version = "4.6.7", features = ["derive"] }
+
+[[bench]]
+name = "performance"
+harness = false
+
+[[bench]]
+name = "criterion_performance"
+harness = false
+required-features = ["sqlite"]
+
+# Keep environment-mutating cross-facade fixtures in their own processes. The remaining
+# integration suites are grouped by use case to avoid paying a separate link for every file.
+[[test]]
+name = "app_depth_entrypoints"
+path = "tests/app_depth_entrypoints.rs"
+
+[[test]]
+name = "app_run_lifecycle"
+path = "tests/app_run_lifecycle.rs"
+
+[[test]]
+name = "app_three_entrypoints"
+path = "tests/app_three_entrypoints.rs"
+
+[[test]]
+name = "depth_app_three_entrypoints"
+path = "tests/depth_app_three_entrypoints.rs"
+
+[[test]]
+name = "cli_behavior_parity"
+path = "tests/cli_behavior_parity.rs"
+
+[[test]]
+name = "backtest_contracts"
+path = "tests/backtest_contracts.rs"
+
+[[test]]
+name = "project_commands"
+path = "tests/project_commands.rs"
+
+[[test]]
+name = "artifact_quality"
+path = "tests/artifact_quality.rs"
+
+[dev-dependencies]
+criterion = "0.8.2"

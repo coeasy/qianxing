@@ -12,8 +12,8 @@ use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 
 fn temp_root(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-outbox-contract-{label}-{}-{}",
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/qianxing-outbox-contract-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -49,6 +49,12 @@ fn consumer_event() -> OutboxEvent {
         attempts: 0,
     }
 }
+
+#[path = "outbox_backend_semantics/consumer_scope.rs"]
+mod consumer_scope;
+#[cfg(feature = "sqlite")]
+#[path = "outbox_backend_semantics/schema_migrations.rs"]
+mod schema_migrations;
 
 fn assert_consumer_semantics<S>(store: S)
 where
@@ -86,12 +92,14 @@ where
     assert_eq!(store.dead_letters("ledger-reducer", 10).unwrap().len(), 1);
 }
 
-fn assert_transactional_consumer_semantics<S>(store: S)
+fn assert_transactional_consumer_semantics<S>(store: S, scope: &str)
 where
     S: TransactionalConsumerStateStore + Clone,
 {
-    let engine = ConsumerEngine::new(store.clone(), "ledger-reducer", 2).unwrap();
-    let event = consumer_event();
+    let group_id = format!("ledger-reducer-{scope}");
+    let mut event = consumer_event();
+    event.event_id = format!("{scope}-consumer-event-1");
+    let engine = ConsumerEngine::new(store.clone(), &group_id, 2).unwrap();
     assert_eq!(
         engine
             .consume_with_projection(&event, 5, 1, 10, |event, checkpoint| {
@@ -106,7 +114,7 @@ where
     );
     assert_eq!(
         store
-            .load_projection("ledger-reducer", "account-1")
+            .load_projection(&group_id, "account-1")
             .unwrap()
             .unwrap()
             .payload,
@@ -121,7 +129,7 @@ where
         ConsumerOutcome::Duplicate
     );
     let failed = OutboxEvent {
-        event_id: "consumer-event-2".into(),
+        event_id: format!("{scope}-consumer-event-2"),
         sequence: 2,
         ..event
     };
@@ -137,36 +145,10 @@ where
             .unwrap(),
         ConsumerOutcome::DeadLettered
     );
-    assert_eq!(store.dead_letters("ledger-reducer", 10).unwrap().len(), 1);
+    assert_eq!(store.dead_letters(&group_id, 10).unwrap().len(), 1);
 }
 
-fn assert_transactional_projection_failure_is_side_effect_free<S>(store: S)
-where
-    S: TransactionalConsumerStateStore + Clone,
-{
-    let engine = ConsumerEngine::new(store.clone(), "ledger-reducer", 2).unwrap();
-    let event = consumer_event();
-    let result = engine.consume_with_projection(&event, 5, 1, 10, |_, checkpoint| {
-        let mut projection =
-            ConsumerProjection::for_checkpoint(checkpoint, "account-1", "{\"valid\":true}");
-        projection.group_id = "other-group".into();
-        Ok(projection)
-    });
-    assert!(matches!(result, Err(StorageError::Conflict(_))));
-    assert!(!store
-        .is_processed("ledger-reducer", &event.event_id)
-        .unwrap());
-    assert!(store
-        .load_checkpoint("ledger-reducer", &event.topic, &event.partition_key)
-        .unwrap()
-        .is_none());
-    assert!(store
-        .load_projection("ledger-reducer", "account-1")
-        .unwrap()
-        .is_none());
-}
-
-fn assert_semantics(store: &dyn OutboxStore) {
+fn assert_semantics<S: OutboxStore>(store: &S) {
     store.append_outbox(event()).unwrap();
     store.append_outbox(event()).unwrap();
     let first = store
@@ -206,7 +188,7 @@ fn assert_semantics(store: &dyn OutboxStore) {
 /// sequence 20 排在 2 与 3 之前，等于把同一毫秒落盘的一串事件念反。
 ///
 /// 只按 `namespace` 过滤自己那几行，因此可以多后端共用一个库/目录。
-fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
+fn assert_outbox_delivery_order<S: OutboxStore>(store: &S, namespace: &str) {
     for sequence in [2u64, 20, 3] {
         store
             .append_outbox(OutboxEvent {
@@ -243,7 +225,7 @@ fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
 /// 不再自动投递，`claim_outbox` → `ack_outbox` 这对原语对停摆的行仍然有效，运维因此能把
 /// 一条确认过的事件取走，而不是让它永远压在候选集里（读全量时停摆的行也在其中）。
 /// 反方向——把 `attempts` 调回去重投——三本后端都没有原语，已按缺口登记在 capabilities.yaml。
-fn assert_parked_outbox_has_an_operator_exit(store: &dyn OutboxStore, namespace: &str) {
+fn assert_parked_outbox_has_an_operator_exit<S: OutboxStore>(store: &S, namespace: &str) {
     // 库里原本有几条不去管，问的是"我自己这两条进没进这个数"：三本后端共用一份 DSN/目录时
     // 绝对值不属于任何一颗用例（V13 第 8 轮 A4）。
     let before = store.count_parked_outbox().unwrap();
@@ -307,7 +289,7 @@ fn assert_parked_outbox_has_an_operator_exit(store: &dyn OutboxStore, namespace:
 /// 停摆那行的 attempts 用 `预算 + 6` 而不是预算本身：这一列存成文本时 14 的字典序在 8 之前，
 /// 「按数字比是否用尽预算」与「按字典比」在这里分岔，摘掉 CAST 就退回按落盘时间占住页首。
 /// 只按 `namespace` 过滤自己那几行，因此可以多后端共用一个库/目录。
-fn assert_parked_rows_yield_the_page_head(store: &dyn OutboxStore, namespace: &str) {
+fn assert_parked_rows_yield_the_page_head<S: OutboxStore>(store: &S, namespace: &str) {
     store
         .append_outbox(OutboxEvent {
             event_id: format!("{namespace}-parked"),
@@ -592,14 +574,8 @@ fn file_consumer_contract() {
 #[test]
 fn file_transactional_consumer_projection_contract() {
     let root = temp_root("consumer-transactional-file");
-    assert_transactional_consumer_semantics(FileConsumerStateStore::new(&root));
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn file_transactional_projection_failure_is_side_effect_free() {
-    let root = temp_root("consumer-transactional-failure-file");
-    assert_transactional_projection_failure_is_side_effect_free(FileConsumerStateStore::new(&root));
+    let scope = consumer_scope::unique_scope();
+    assert_transactional_consumer_semantics(FileConsumerStateStore::new(&root), &scope);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -615,18 +591,10 @@ fn sqlite_consumer_contract() {
 #[test]
 fn sqlite_transactional_consumer_projection_contract() {
     let root = temp_root("consumer-transactional-sqlite");
+    let scope = consumer_scope::unique_scope();
     assert_transactional_consumer_semantics(
         SqliteConsumerStateStore::new(root.join("consumer.db")).unwrap(),
-    );
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[cfg(feature = "sqlite")]
-#[test]
-fn sqlite_transactional_projection_failure_is_side_effect_free() {
-    let root = temp_root("consumer-transactional-failure-sqlite");
-    assert_transactional_projection_failure_is_side_effect_free(
-        SqliteConsumerStateStore::new(root.join("consumer.db")).unwrap(),
+        &scope,
     );
     let _ = std::fs::remove_dir_all(root);
 }
@@ -637,7 +605,15 @@ fn sqlite_transactional_projection_failure_is_side_effect_free() {
 fn postgres_transactional_consumer_projection_contract() {
     let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
         .expect("QX_TEST_POSTGRES_DSN must be set for PostgreSQL integration");
-    assert_transactional_consumer_semantics(PostgresConsumerStateStore::connect(&dsn).unwrap());
+    let store = PostgresConsumerStateStore::connect(&dsn).unwrap();
+    let scope = consumer_scope::unique_scope();
+    assert_transactional_consumer_semantics(store.clone(), &scope);
+    consumer_scope::assert_consumer_processed_scope(store.clone());
+    let failure_scope = format!("{scope}-failure");
+    consumer_scope::assert_transactional_projection_failure_is_side_effect_free(
+        store,
+        &failure_scope,
+    );
 }
 
 /// PostgreSQL 上 Outbox 的租约、围栏令牌与重试语义。

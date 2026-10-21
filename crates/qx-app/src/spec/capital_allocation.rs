@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub use qx_zhenlu::portfolio::{CapitalAllocationAccount, CapitalAllocationRequest};
 
 pub const CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION: u32 = 1;
+pub const CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

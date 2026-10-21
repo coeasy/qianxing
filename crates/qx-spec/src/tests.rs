@@ -1,5 +1,7 @@
 use super::*;
 
+mod evidence;
+
 fn project_json() -> String {
     serde_json::json!({
         "schema_version": 1,
@@ -347,26 +349,10 @@ fn capability_manifest_refuses_an_unsupported_schema_version() {
 }
 
 #[test]
-fn evidence_bundle_refuses_an_unsupported_schema_version() {
-    let mut value: serde_json::Value = serde_json::from_str(&evidence_json()).unwrap();
-    value["schema_version"] = serde_json::json!(7);
-    let error = EvidenceBundle::from_json(&value.to_string()).expect_err("未来版本必须被拒");
-    assert_version_refused(error, "schema_version=7", "只认 1");
-}
-
-#[test]
 fn schema_registry_refuses_an_unsupported_schema_version() {
     let mut value: serde_json::Value = serde_json::from_str(&registry_json()).unwrap();
     value["schema_version"] = serde_json::json!(7);
     let error = SchemaRegistry::from_json(&value.to_string()).expect_err("未来版本必须被拒");
-    assert_version_refused(error, "schema_version=7", "只认 1");
-}
-
-#[test]
-fn run_evidence_bundle_refuses_an_unsupported_schema_version() {
-    let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
-    value["schema_version"] = serde_json::json!(7);
-    let error = RunEvidenceBundle::from_json(&value.to_string()).expect_err("未来版本必须被拒");
     assert_version_refused(error, "schema_version=7", "只认 1");
 }
 
@@ -379,7 +365,7 @@ fn run_evidence_bundle_refuses_an_unsupported_schema_version() {
 fn run_evidence_refuses_an_empty_unverified_list() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["unverified"] = serde_json::json!([]);
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("空的未验证清单等于盖单一 verified 标签，必须被拒");
     assert!(
         error.contains("unverified 必须非空"),
@@ -391,7 +377,7 @@ fn run_evidence_refuses_an_empty_unverified_list() {
 fn run_evidence_refuses_a_sandbox_level_claim() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["verification"]["capability_level"] = serde_json::json!("L3");
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("L3 属于沙盒档，必须由带真实 venue 窗口的 EvidenceBundle 支撑");
     assert!(
         error.contains("L3") && error.contains("L2"),
@@ -403,7 +389,7 @@ fn run_evidence_refuses_a_sandbox_level_claim() {
 fn run_evidence_refuses_unverified_artifact_digests() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["verification"]["artifact_digests_verified"] = serde_json::json!(false);
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("没重算过产物摘要的证据包只是引用了一堆路径");
     assert!(
         error.contains("artifact_digests_verified"),
@@ -415,7 +401,7 @@ fn run_evidence_refuses_unverified_artifact_digests() {
 fn run_evidence_refuses_a_cross_reference_mismatch() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["dataset"]["composed_fingerprint"] = serde_json::json!("another-fp");
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("合成数据指纹与 run 块各说各话必须被拒");
     assert!(
         error.contains("dataset.composed_fingerprint") && error.contains("run 块"),
@@ -438,7 +424,7 @@ fn run_evidence_refuses_an_empty_quality_report() {
         "corporate_action_coverage": false,
         "usable_tiers": []
     });
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("空 usable_tiers 的质量报告必须被拒");
     assert!(
         error.contains("quality_report"),
@@ -447,7 +433,7 @@ fn run_evidence_refuses_an_empty_quality_report() {
     // 对照组：同一份证据包把质量报告换成「真的带一档」时必须通过——否则上面那条拒的
     // 可能根本不是空 tiers，而是「只要带报告就拒」。
     value["dataset"]["quality_report"]["usable_tiers"] = serde_json::json!(["bar"]);
-    RunEvidenceBundle::from_json(&value.to_string()).expect("带一档可用档位的质量报告必须被接受");
+    EvidenceBundle::from_json(&value.to_string()).expect("带一档可用档位的质量报告必须被接受");
 }
 
 #[test]
@@ -464,7 +450,7 @@ fn run_evidence_refuses_a_missing_required_artifact() {
     value["artifacts"] = serde_json::json!(kept);
     value["verification"]["verified_artifact_count"] = serde_json::json!(3);
     let error =
-        RunEvidenceBundle::from_json(&value.to_string()).expect_err("缺离线复算必需的产物必须被拒");
+        EvidenceBundle::from_json(&value.to_string()).expect_err("缺离线复算必需的产物必须被拒");
     assert!(
         error.contains("fills"),
         "拒绝文案要点名缺的是哪一份：实际 {error}"
@@ -476,7 +462,7 @@ fn run_evidence_refuses_a_recompute_guide_for_another_run() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["recompute"]["expected_result_hash"] = serde_json::json!("some-other-run");
     let error =
-        RunEvidenceBundle::from_json(&value.to_string()).expect_err("复算指引指的必须是这次运行");
+        EvidenceBundle::from_json(&value.to_string()).expect_err("复算指引指的必须是这次运行");
     assert!(
         error.contains("expected_result_hash"),
         "拒绝文案要点名那一格：实际 {error}"
@@ -487,7 +473,7 @@ fn run_evidence_refuses_a_recompute_guide_for_another_run() {
 fn run_evidence_refuses_an_assumption_without_a_source() {
     let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
     value["assumptions"][0]["source"] = serde_json::json!("   ");
-    let error = RunEvidenceBundle::from_json(&value.to_string())
+    let error = EvidenceBundle::from_json(&value.to_string())
         .expect_err("空 source 等于把假设写成事实，必须被拒");
     assert!(
         error.contains("source"),

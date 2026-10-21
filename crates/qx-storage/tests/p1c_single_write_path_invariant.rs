@@ -42,7 +42,7 @@ fn exponential_backoff_arithmetic_exists_once() {
     let root = workspace_root();
     let crates = root.join("crates");
     let mut files = Vec::new();
-    // 只扫描生产源码 `crates/*/src`（与行数棘轮 / check_architecture 口径一致），
+    // 只扫描生产源码 `crates/*/src`，
     // 避免本用例自身或其他测试字符串触发误报。
     for crate_dir in std::fs::read_dir(&crates).expect("crates 目录必须可读") {
         let src = crate_dir.expect("crate 目录项").path().join("src");

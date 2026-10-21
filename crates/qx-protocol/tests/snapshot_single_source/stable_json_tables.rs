@@ -65,7 +65,7 @@ fn cross_language_sample() -> AccountSnapshot {
 fn stable_json_tables_round_trip_through_the_reader() {
     let snapshot = cross_language_sample();
 
-    let json = snapshot.to_json();
+    let json = snapshot.to_json().expect("protocol JSON serializes");
     let parsed: serde_json::Value = serde_json::from_str(&json)
         .unwrap_or_else(|error| panic!("账户快照稳定 JSON 必须是合法 JSON: {error}"));
     let wire: serde_json::Value = serde_json::to_value(&snapshot).expect("快照可以序列化");
@@ -98,7 +98,10 @@ fn the_cross_language_sample_is_what_the_writer_emits() {
     let expected = std::fs::read_to_string(ACCOUNT_SNAPSHOT_SAMPLE)
         .unwrap_or_else(|error| panic!("跨语言夹具必须存在: {error}"));
     assert_eq!(
-        cross_language_sample().to_json() + "\n",
+        cross_language_sample()
+            .to_json()
+            .expect("protocol JSON serializes")
+            + "\n",
         expected.replace("\r\n", "\n"),
         "夹具必须由写侧原样产出：改了编码就重新产出夹具，不要手抄一份近似形状"
     );

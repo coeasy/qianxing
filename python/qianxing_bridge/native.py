@@ -118,6 +118,81 @@ def frame_digest(payload: str) -> int:
     return int(_extension().frame_digest(payload))
 
 
+def fingerprint_bars(payload: str) -> str:
+    return str(_extension().fingerprint_bars(payload))
+
+
+def sha256_hex_bytes(payload: bytes) -> str:
+    """Hash exact provider bytes with qx-data's canonical SHA-256 implementation."""
+    return str(_extension().sha256_hex_bytes(payload))
+
+
+def reconcile_corporate_actions(payload: str) -> str:
+    """Merge normalized A-share corporate-action JSON in the native Rust boundary."""
+    return str(_extension().reconcile_corporate_actions(payload))
+
+
+def decimal_to_raw(value: str) -> int:
+    """Convert a decimal string with the canonical Rust scale and half-even rounding."""
+    return int(_extension().decimal_to_raw(value))
+
+
+def raw_scale() -> int:
+    """Return qx-core's fixed-point scale."""
+    return int(_extension().raw_scale())
+
+
+def decimal_to_raw_exact(value: str, allow_negative: bool) -> str:
+    """Parse an exact 1e-9 decimal into raw fixed-point units in Rust."""
+    return str(_extension().decimal_to_raw_exact(value, allow_negative))
+
+
+def raw_to_decimal(value: str, allow_negative: bool) -> str:
+    """Format raw fixed-point units with qx-core's canonical decimal display."""
+    return str(_extension().raw_to_decimal(value, allow_negative))
+
+
+def decimal_to_scaled_integer(value: str, multiplier: int) -> int:
+    """Convert an exact decimal string to an integer unit in the Rust core."""
+    return int(_extension().decimal_to_scaled_integer(value, multiplier))
+
+
+def decimal_to_integer_exact(value: str) -> int:
+    """Convert a whole-number decimal spelling to i128 in the Rust core."""
+    return int(_extension().decimal_to_integer_exact(value))
+
+
+def resolve_corporate_action_ratios(payload: str) -> str:
+    """Resolve A-share corporate-action ratio precedence in the Rust domain core."""
+    return str(_extension().resolve_corporate_action_ratios(payload))
+
+
+def validate_corporate_actions_json(payload: str) -> None:
+    """Validate A-share corporate-action business fields in the Rust domain core."""
+    _extension().validate_corporate_actions_json(payload)
+
+
+def calendar_component_fingerprint(payload: str) -> tuple[str, int]:
+    """Return the Rust canonical calendar component digest and trading-day count."""
+    fingerprint, row_count = _extension().calendar_component_fingerprint(payload)
+    return str(fingerprint), int(row_count)
+
+
+def validate_ashare_calendar_json(payload: str) -> None:
+    """Validate the public A-share calendar model through the Rust domain rules."""
+    _extension().validate_ashare_calendar_json(payload)
+
+
+def classify_ccxt_error(class_name: str) -> str:
+    """Classify a CCXT exception class name in qx-core."""
+    return str(_extension().classify_ccxt_error(class_name))
+
+
+def ccxt_error_may_retry(category: str) -> bool:
+    """Use qx-core's retry contract for a stable CCXT category."""
+    return bool(_extension().ccxt_error_may_retry(category))
+
+
 def frame_to_json(payload: str) -> str:
     return str(_extension().frame_to_json(payload))
 
@@ -176,6 +251,11 @@ def app_validate_dataset(spec_json: str) -> str:
     JSON 文档（与另两个入口逐字节相同）。
     """
     return str(_extension().app_validate_dataset(spec_json))
+
+
+def app_assemble_dataset_bundle(payload: str) -> str:
+    """Assemble and validate DatasetBundleManifest in the shared Rust app layer."""
+    return str(_extension().app_assemble_dataset_bundle(payload))
 
 
 def app_run_backtest(spec_json: str) -> str:

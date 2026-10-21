@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/dataset-verdict-v1.json",
+  "title": "Qianxing DatasetVerdict v1",
+  "description": "Read-only Bar dataset suitability verdict. usable is true exactly when no known gaps were reported.",
+  "type": "object",
+  "required": ["dataset_id", "instrument", "rows", "content_fingerprint", "usable", "gaps"],
+  "properties": {
+    "dataset_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "rows": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "content_fingerprint": {"type": "string", "pattern": "^barframe:[0-9a-f]{16}$"},
+    "usable": {"type": "boolean"},
+    "gaps": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  },
+  "allOf": [
+    {"if": {"properties": {"usable": {"const": true}}, "required": ["usable"]}, "then": {"properties": {"gaps": {"maxItems": 0}}}},
+    {"if": {"properties": {"usable": {"const": false}}, "required": ["usable"]}, "then": {"properties": {"gaps": {"minItems": 1}}}}
+  ],
+  "additionalProperties": false
+}

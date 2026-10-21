@@ -1,0 +1,13 @@
+{
+  "command_id": 1001,
+  "request_id": "submit-example-1001",
+  "operator_id": "ops",
+  "reason": "sandbox order acceptance",
+  "kind": "SubmitOrder",
+  "target": "1001",
+  "payload": {
+    "order_json": "{\"client_id\":1001,\"instrument\":{\"symbol\":\"BTCUSDT\",\"venue\":\"BINANCE\"},\"side\":\"Buy\",\"qty\":1000000000,\"limit\":100000000000,\"status\":\"Submitted\",\"filled\":0,\"account_id\":\"main\",\"trace\":null}"
+  },
+  "permission": "Trading",
+  "dry_run": true
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_portfolio_timeline_aligned_markets",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "portfolio_bar_timeline_aligned_64k_bars",
+    "--noplot"
+  ],
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "BEC6366166582A32F89E01547D0788840DBC2235FB8BBB63E30FCDF4855F027B",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "total_bars_per_case": 64000,
+    "market_counts": [2, 8, 32],
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "input": "all markets have the same timestamps; priorities alternate between 0 and 1 to exercise both priority ordering and instrument tie-break ordering",
+    "parity": "before timing, compare the full event order and bar reference identity against a flattened full-sort reference",
+    "baseline": "same duplicate-instrument and quality validation, preallocated flattening, full event/index sort, then split ordered events and indexes",
+    "candidate": "direct two-way merge at two markets; heap k-way merge with root replacement and one sift for more than two markets"
+  },
+  "results": [
+    {
+      "market_count": 2,
+      "candidate_mean_ns": 532172,
+      "candidate_ci95_ns": [497667, 576077],
+      "indexed_sort_mean_ns": 1259101,
+      "indexed_sort_ci95_ns": [1222756, 1301164],
+      "candidate_vs_indexed_sort_speedup_pct": 57.73
+    },
+    {
+      "market_count": 8,
+      "candidate_mean_ns": 1547584,
+      "candidate_ci95_ns": [1497448, 1598948],
+      "indexed_sort_mean_ns": 2042733,
+      "indexed_sort_ci95_ns": [1946566, 2182375],
+      "candidate_vs_indexed_sort_speedup_pct": 24.24
+    },
+    {
+      "market_count": 32,
+      "candidate_mean_ns": 2770118,
+      "candidate_ci95_ns": [2704568, 2857839],
+      "indexed_sort_mean_ns": 2985359,
+      "indexed_sort_ci95_ns": [2884120, 3112342],
+      "candidate_vs_indexed_sort_speedup_pct": 7.21
+    }
+  ],
+  "limitations": [
+    "Synthetic timeline construction only; this does not establish end-to-end A-share backtest speedup.",
+    "The 32-market means are close; treat the measured difference as modest rather than a product-level claim.",
+    "No allocator counter was enabled and this does not change the nine product profile measurement statuses."
+  ]
+}

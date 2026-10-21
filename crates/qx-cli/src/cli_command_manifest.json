@@ -1,0 +1,519 @@
+{
+  "schema_version": 1,
+  "generated_from": [
+    "crates/qx-cli/src/cli_args.rs",
+    "crates/qx-cli/src/*_args.rs"
+  ],
+  "commands": [
+    {
+      "name": "all",
+      "parent": null,
+      "variant": "All"
+    },
+    {
+      "name": "app",
+      "parent": null,
+      "variant": "App"
+    },
+    {
+      "name": "backtest",
+      "parent": null,
+      "variant": "Backtest"
+    },
+    {
+      "name": "binance-private-probe",
+      "parent": null,
+      "variant": "BinancePrivateProbe"
+    },
+    {
+      "name": "binance-public-probe",
+      "parent": null,
+      "variant": "BinancePublicProbe"
+    },
+    {
+      "name": "binance-submit-order",
+      "parent": null,
+      "variant": "BinanceSubmitOrder"
+    },
+    {
+      "name": "binance-worker",
+      "parent": null,
+      "variant": "BinanceWorker"
+    },
+    {
+      "name": "builtin-strategies",
+      "parent": null,
+      "variant": "BuiltinStrategies"
+    },
+    {
+      "name": "ccxt-fetch-ohlcv",
+      "parent": null,
+      "variant": "CcxtFetchOhlcv"
+    },
+    {
+      "name": "ccxt-market-spec",
+      "parent": null,
+      "variant": "CcxtMarketSpec"
+    },
+    {
+      "name": "ccxt-submit-order",
+      "parent": null,
+      "variant": "CcxtSubmitOrder"
+    },
+    {
+      "name": "ccxt-worker",
+      "parent": null,
+      "variant": "CcxtWorker"
+    },
+    {
+      "name": "config",
+      "parent": null,
+      "variant": "Config"
+    },
+    {
+      "name": "console",
+      "parent": null,
+      "variant": "Console"
+    },
+    {
+      "name": "consumer-dlq-replay",
+      "parent": null,
+      "variant": "ConsumerDlqReplay"
+    },
+    {
+      "name": "data-validate",
+      "parent": null,
+      "variant": "DataValidate"
+    },
+    {
+      "name": "data-validate-depth",
+      "parent": null,
+      "variant": "DataValidateDepth"
+    },
+    {
+      "name": "dataset-bundle",
+      "parent": null,
+      "variant": "DatasetBundle"
+    },
+    {
+      "name": "dataset-ingest",
+      "parent": null,
+      "variant": "DatasetIngest"
+    },
+    {
+      "name": "doctor",
+      "parent": null,
+      "variant": "Doctor"
+    },
+    {
+      "name": "ecosystem",
+      "parent": null,
+      "variant": "Ecosystem"
+    },
+    {
+      "name": "event-consumer-worker",
+      "parent": null,
+      "variant": "EventConsumerWorker"
+    },
+    {
+      "name": "evidence",
+      "parent": null,
+      "variant": "Evidence"
+    },
+    {
+      "name": "fast-backtest",
+      "parent": null,
+      "variant": "FastBacktest"
+    },
+    {
+      "name": "guide",
+      "parent": null,
+      "variant": "Guide"
+    },
+    {
+      "name": "init",
+      "parent": null,
+      "variant": "Init"
+    },
+    {
+      "name": "live-check",
+      "parent": null,
+      "variant": "LiveCheck"
+    },
+    {
+      "name": "outbox-relay",
+      "parent": null,
+      "variant": "OutboxRelay"
+    },
+    {
+      "name": "outbox-relay-postgres",
+      "parent": null,
+      "variant": "OutboxRelayPostgres"
+    },
+    {
+      "name": "outbox-relay-worker",
+      "parent": null,
+      "variant": "OutboxRelayWorker"
+    },
+    {
+      "name": "paper",
+      "parent": null,
+      "variant": "Paper"
+    },
+    {
+      "name": "paper-check",
+      "parent": null,
+      "variant": "PaperCheck"
+    },
+    {
+      "name": "paper-e2e",
+      "parent": null,
+      "variant": "PaperE2e"
+    },
+    {
+      "name": "paper-submit-order",
+      "parent": null,
+      "variant": "PaperSubmitOrder"
+    },
+    {
+      "name": "paper-worker",
+      "parent": null,
+      "variant": "PaperWorker"
+    },
+    {
+      "name": "plan",
+      "parent": null,
+      "variant": "Plan"
+    },
+    {
+      "name": "quickstart",
+      "parent": null,
+      "variant": "Quickstart"
+    },
+    {
+      "name": "reconcile",
+      "parent": null,
+      "variant": "Reconcile"
+    },
+    {
+      "name": "recovery-child",
+      "parent": null,
+      "variant": "RecoveryChild"
+    },
+    {
+      "name": "report",
+      "parent": null,
+      "variant": "Report"
+    },
+    {
+      "name": "run",
+      "parent": null,
+      "variant": "Run"
+    },
+    {
+      "name": "runtime-check",
+      "parent": null,
+      "variant": "RuntimeCheck"
+    },
+    {
+      "name": "scheduler-worker",
+      "parent": null,
+      "variant": "SchedulerWorker"
+    },
+    {
+      "name": "serve",
+      "parent": null,
+      "variant": "Serve"
+    },
+    {
+      "name": "status",
+      "parent": null,
+      "variant": "Status"
+    },
+    {
+      "name": "storage-adopt-postgres",
+      "parent": null,
+      "variant": "StorageAdoptPostgres"
+    },
+    {
+      "name": "strategy",
+      "parent": null,
+      "variant": "Strategy"
+    },
+    {
+      "name": "strategy-worker",
+      "parent": null,
+      "variant": "StrategyWorker"
+    },
+    {
+      "name": "supervise",
+      "parent": null,
+      "variant": "Supervise"
+    },
+    {
+      "name": "verify",
+      "parent": null,
+      "variant": "Verify"
+    },
+    {
+      "name": "version",
+      "parent": null,
+      "variant": "Version"
+    },
+    {
+      "name": "help",
+      "parent": null,
+      "variant": "pre_dispatch"
+    },
+    {
+      "name": "backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "compare-runs",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "depth-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "multi-account-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "multi-leg-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "multi-market-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "multi-market-depth-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "plan-algo-execution",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "plan-risk-parity",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "provider-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "provider-depth-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "run-depth-experiment",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "run-experiment",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "run-multi-leg-experiment",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "run-multi-market-experiment",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "validate-dataset",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "verify",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "verify-depth",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "book",
+      "parent": "backtest",
+      "variant": "BacktestCommand"
+    },
+    {
+      "name": "builtin",
+      "parent": "backtest",
+      "variant": "BacktestCommand"
+    },
+    {
+      "name": "ccxt-builtin",
+      "parent": "backtest",
+      "variant": "BacktestCommand"
+    },
+    {
+      "name": "multi-builtin",
+      "parent": "backtest",
+      "variant": "BacktestCommand"
+    },
+    {
+      "name": "explain",
+      "parent": "config",
+      "variant": "ConfigCommand"
+    },
+    {
+      "name": "fingerprint",
+      "parent": "config",
+      "variant": "ConfigCommand"
+    },
+    {
+      "name": "lock",
+      "parent": "config",
+      "variant": "ConfigCommand"
+    },
+    {
+      "name": "validate",
+      "parent": "config",
+      "variant": "ConfigCommand"
+    },
+    {
+      "name": "export-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-leg-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-market-depth-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-market-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-market-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-venue-acceptance",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "recompute-multi-leg-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "recompute-multi-market-depth-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "recompute-multi-market-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "sign",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-multi-leg-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-multi-market-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "backtest",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "doctor",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "live-check",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "paper",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "paper-check",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "report",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "runtime-check",
+      "parent": "run",
+      "variant": "RunCommand"
+    },
+    {
+      "name": "backtest",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "init",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "list",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-leg-backtest-result-v1.json",
+  "title": "Qianxing MultiLegBacktestOutcome v1",
+  "description": "Shared two-leg backtest result identity, per-leg hashes and fills, combined return and attribution artifact path. account_id may be omitted for legacy outcomes.",
+  "type": "object",
+  "required": ["run_id", "primary_instrument", "reference_instrument", "primary_result_hash", "reference_result_hash", "combined_return_bps", "primary_fills", "reference_fills", "attribution_artifact"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "primary_instrument": {"type": "string", "minLength": 1},
+    "reference_instrument": {"type": "string", "minLength": 1},
+    "primary_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "reference_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "combined_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+    "primary_fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "reference_fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "attribution_artifact": {"type": "string", "minLength": 1},
+    "account_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

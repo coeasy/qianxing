@@ -2,7 +2,10 @@
 
 mod model;
 
-use model::{reference_price, total_reserved_cash, validate_market_data_tier, MarketRuntime};
+use model::{
+    reference_price, total_reserved_cash, validate_market_data_tier, write_market_identity,
+    MarketRuntime,
+};
 pub use model::{
     OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
 };
@@ -17,7 +20,7 @@ use qx_core::{
     EventKind, EventLog, Fnv1a, Ledger, Money, OrderStatus, Price, Priority, TradingProduct,
     ValuationContext,
 };
-use qx_risk::OrderRiskPosition;
+use qx_risk::{OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,7 +86,6 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
         self.run_with_cancel(|| false)?
             .ok_or_else(|| qx_core::QxError::Invariant("共享订单簿回测意外取消".into()))
     }
-
     pub fn run_with_cancel<F>(
         self,
         mut is_cancelled: F,
@@ -117,36 +119,16 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
             PortfolioDepthTimeline::new(&series).map_err(qx_core::QxError::BusinessViolation)?;
         let mut input_hash = Fnv1a::new();
         let mut runtime = Vec::with_capacity(markets.len());
+        let mut execution_models = BTreeMap::new();
         let mut specs = BTreeMap::new();
         let mut index_by_instrument = BTreeMap::new();
         for (index, market) in markets.into_iter().enumerate() {
             let instrument = market.instrument_spec.instrument.clone();
-            input_hash.write_text(&instrument.to_string());
-            input_hash.write_text(match market.data_tier {
-                crate::DataTier::L1 => "l1",
-                crate::DataTier::L2L3 => "l2",
-                crate::DataTier::Bar => "bar",
-            });
-            input_hash.write_u64(market.priority as u64);
-            input_hash.write_text(&serde_json::to_string(&market.instrument_spec).map_err(
-                |error| {
-                    qx_core::QxError::Invariant(format!("共享订单簿产品规格序列化失败: {error}"))
-                },
-            )?);
-            input_hash.write_i128(market.execution_model.fee_bps);
-            input_hash.write_u64(market.execution_model.latency_snapshots);
-            input_hash.write_i128(market.execution_model.queue_position_bps);
-            input_hash.write_i128(market.execution_model.market_impact_bps);
-            for snapshot in market.snapshots {
-                input_hash.write_u64(snapshot.ts);
-                input_hash.write_u64(snapshot.sequence);
-                input_hash.write_u64(snapshot.bids.len() as u64);
-                input_hash.write_u64(snapshot.asks.len() as u64);
-                for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
-                    input_hash.write_i128(level.price.raw());
-                    input_hash.write_i128(level.qty.raw());
-                }
-            }
+            write_market_identity(&mut input_hash, &market)?;
+            execution_models.insert(
+                instrument.clone(),
+                market.execution_model.audit_descriptor(),
+            );
             let matcher = OrderBookMatchingEngine::with_model(market.execution_model)
                 .map_err(qx_core::QxError::BusinessViolation)?
                 .with_fee_spec(Some(market.instrument_spec.clone()));
@@ -169,9 +151,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
         let first_ts = timeline.events()[0].snapshot.ts;
         let deposit_id = ledger.deposit(&account_id, &currency, initial_cash, first_ts)?;
         let deposit = ledger
-            .entries()
-            .iter()
-            .find(|entry| entry.id == deposit_id)
+            .entry(deposit_id)
             .cloned()
             .ok_or_else(|| qx_core::QxError::Invariant("共享订单簿初始入金缺失".into()))?;
         append_event(
@@ -305,14 +285,9 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                         EventKind::Filled { fill: fill.clone() },
                     );
                     for entry_id in entry_ids {
-                        let entry = ledger
-                            .entries()
-                            .iter()
-                            .find(|entry| entry.id == entry_id)
-                            .cloned()
-                            .ok_or_else(|| {
-                                qx_core::QxError::Invariant("共享订单簿账簿 entry 缺失".into())
-                            })?;
+                        let entry = ledger.entry(entry_id).cloned().ok_or_else(|| {
+                            qx_core::QxError::Invariant("共享订单簿账簿 entry 缺失".into())
+                        })?;
                         append_event(
                             &mut log,
                             fill.ts,
@@ -323,7 +298,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     market.strategy.on_fill(&local_order, &local_fill)?;
                     fills_by_instrument
                         .get_mut(&market.instrument)
-                        .expect("registered market projection")
+                        .ok_or(qx_core::QxError::Invariant("成交明细投影未注册".into()))?
                         .push(fill.clone());
                     fills.push(fill);
                     order = oms.get(order.client_id).cloned().ok_or_else(|| {
@@ -349,9 +324,9 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
             for event in batch {
                 let market_index = *index_by_instrument
                     .get(&event.instrument)
-                    .expect("timeline market was validated");
+                    .ok_or_else(|| qx_core::QxError::Invariant("订单簿时间线标的未注册".into()))?;
                 let mut total_reserved = total_reserved_cash(&runtime)?;
-                let cash = ledger.cash_balances_for(&account_id);
+                let cash = ledger.cash_balances_for_ref(&account_id);
                 let free_cash = ledger
                     .cash_for(&account_id, &currency)
                     .checked_sub(total_reserved)
@@ -360,7 +335,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     })?
                     .max(0);
                 let market = &mut runtime[market_index];
-                market.strategy.update_account_state(&cash, Some(free_cash));
+                market.strategy.update_account_state(cash, Some(free_cash));
                 let position = ledger
                     .position_for(&account_id, &market.instrument)
                     .quantity
@@ -462,23 +437,6 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             .unwrap_or(0),
                         market.spec.contract_size,
                     );
-                    if let Err(error) = risk.check_with_spec(
-                        &local_order,
-                        &position_snapshot,
-                        reference_price,
-                        Some(&market.spec),
-                    ) {
-                        append_event(
-                            &mut log,
-                            ts,
-                            Priority::COMMAND,
-                            EventKind::Rejected {
-                                client_order_id: global_id,
-                                reason: error.to_string(),
-                            },
-                        );
-                        continue;
-                    }
                     let funding = funding::preflight_order(
                         &local_order,
                         policy,
@@ -494,7 +452,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             total_reserved_cash_raw: Some(total_reserved),
                         },
                     )?;
-                    let (reserve_cash, reserve_inventory) = match funding {
+                    let reserve = match funding {
                         FundingDecision::Accept {
                             reserve_cash_raw,
                             reserve_inventory_raw,
@@ -513,6 +471,24 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             continue;
                         }
                     };
+                    let risk_context = OrderRiskContext {
+                        reference_price,
+                        instrument_spec: Some(market.spec.clone()),
+                        position: position_snapshot,
+                        ..OrderRiskContext::default()
+                    };
+                    if let Err(error) = risk.check_with_context(&local_order, &risk_context) {
+                        append_event(
+                            &mut log,
+                            ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: global_id,
+                                reason: error.to_string(),
+                            },
+                        );
+                        continue;
+                    }
                     if let Some(price) = local_order.limit.or(reference_price) {
                         market.strategy.check_order_budget(
                             &local_order,
@@ -528,6 +504,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                         .map_err(qx_core::QxError::BusinessViolation)?;
                     oms.submit(local_order.clone())?;
                     oms.accept(global_id)?;
+                    let (reserve_cash, reserve_inventory) = reserve;
                     if reserve_cash > 0 || reserve_inventory > 0 {
                         market.reservations.reserve(
                             global_id,
@@ -602,9 +579,15 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
             .iter()
             .map(|market| market.matcher.pending_count())
             .sum();
+        let clock_end = timeline
+            .events()
+            .last()
+            .map(|event| event.snapshot.ts)
+            .ok_or(qx_core::QxError::Invariant("深度时间线为空".into()))?;
         let report = OrderBookPortfolioBacktestReport {
             fills,
             fills_by_instrument,
+            execution_models,
             ledger,
             event_log: log,
             equity,
@@ -615,12 +598,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
             max_drawdown_bps,
             input_data_hash: data_hash,
             clock_start: first_ts,
-            clock_end: timeline
-                .events()
-                .last()
-                .expect("non-empty timeline")
-                .snapshot
-                .ts,
+            clock_end,
         };
         report.verify()?;
         Ok(Some(report))

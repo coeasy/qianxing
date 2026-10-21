@@ -203,6 +203,13 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
     }
 
     impl VenueRouterPort for PricedRouter {
+        fn capabilities_for(
+            &self,
+            _venue_id: &str,
+        ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities> {
+            Some(qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES)
+        }
+
         fn submit_order(
             &mut self,
             venue_id: &str,

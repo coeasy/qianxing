@@ -37,6 +37,33 @@ pub struct RiskExecutionContext<'a> {
     pub position: &'a OrderRiskPosition,
 }
 
+/// Required inputs for the shared order submission boundary. The group store stays
+/// explicit so a caller cannot accidentally bypass the multi-leg barrier.
+pub struct SubmitOrderWithRiskRequest<'a, V: Venue, P: ExecutionEventPort> {
+    pub command: &'a ControlCommand,
+    pub venue: &'a mut V,
+    pub pipeline: &'a mut P,
+    pub worker_id: &'a str,
+    pub now: u64,
+    pub source_seq: &'a mut u64,
+    pub context: &'a RiskExecutionContext<'a>,
+    pub spread_store: Option<&'a dyn SpreadOrderGroupStore>,
+}
+
+/// Required Paper execution inputs. Every safety and pricing decision is a named,
+/// mandatory field; this type intentionally has no `Default` implementation.
+pub struct PaperSubmitRequest<'a, P: ExecutionEventPort + application::LedgerProbe> {
+    pub command: &'a ControlCommand,
+    pub pipeline: &'a mut P,
+    pub now: u64,
+    pub risk: Option<RiskContext>,
+    pub position: Option<OrderRiskPosition>,
+    pub market_quote: Option<QuoteTick>,
+    pub fee_model: Box<dyn FeeModel + Send>,
+    pub allow_synthetic_quote: bool,
+    pub spread_store: Option<&'a dyn SpreadOrderGroupStore>,
+}
+
 /// 把当前账户快照适配为应用层 RiskPort，便于回测、Paper 和实盘执行器
 /// 替换风控实现而不改动 `ExecutionGateway` 的订单副作用边界。
 pub struct RiskContextPort<'a> {
@@ -134,11 +161,16 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
         self.venue.id()
     }
 
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        *self.venue.capabilities()
+    }
+
     fn submit_order(
         &mut self,
         order: qx_core::Order,
         ts: u64,
     ) -> Result<Vec<ExecutionEvent>, String> {
+        self.validate_submit_capabilities(&order)?;
         self.venue
             .submit(order, ts)
             .map(venue_events_to_application)
@@ -150,6 +182,7 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
         client_order_id: u64,
         ts: u64,
     ) -> Result<Vec<ExecutionEvent>, String> {
+        self.capabilities().validate_cancel()?;
         self.venue
             .cancel(client_order_id, ts)
             .map(venue_events_to_application)
@@ -162,11 +195,16 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
         self.venue.id()
     }
 
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        *self.venue.capabilities()
+    }
+
     fn submit_order(
         &mut self,
         order: qx_core::Order,
         ts: u64,
     ) -> Result<Vec<ExecutionEvent>, String> {
+        self.validate_submit_capabilities(&order)?;
         self.venue
             .submit(order, ts)
             .map(venue_events_to_application)
@@ -178,6 +216,7 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
         client_order_id: u64,
         ts: u64,
     ) -> Result<Vec<ExecutionEvent>, String> {
+        self.capabilities().validate_cancel()?;
         self.venue
             .cancel(client_order_id, ts)
             .map(venue_events_to_application)
@@ -186,6 +225,16 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
 }
 
 impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
+    fn capabilities_for(
+        &self,
+        venue_id: &str,
+    ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities> {
+        (self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id()))
+        .then(|| self.capabilities())
+    }
+
     fn submit_order(
         &mut self,
         venue_id: &str,
@@ -226,6 +275,16 @@ impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
 }
 
 impl<V: Venue> VenueRouterPort for VenuePortAdapter<V> {
+    fn capabilities_for(
+        &self,
+        venue_id: &str,
+    ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities> {
+        (self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id()))
+        .then(|| self.capabilities())
+    }
+
     fn submit_order(
         &mut self,
         venue_id: &str,
@@ -392,6 +451,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
 
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
         self.validate_order(&order)?;
+        self.venue.validate_submit_capabilities(&order)?;
         if let Some(existing) = self
             .events
             .orders()
@@ -569,6 +629,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     }
 
     pub fn cancel(&mut self, client_order_id: u64) -> Result<PortExecutionResult, String> {
+        self.venue.capabilities().validate_cancel()?;
         if !self
             .events
             .orders()
@@ -888,6 +949,19 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                         continue;
                     }
                 }
+            }
+            let Some(capabilities) = self.router.capabilities_for(&source_leg.venue_id) else {
+                errors.push(format!(
+                    "补偿腿 {} 的 Venue {} 未声明能力或路由不存在，拒绝注册",
+                    target.leg_id, source_leg.venue_id
+                ));
+                all_filled = false;
+                continue;
+            };
+            if let Err(error) = capabilities.validate_submit(&order, &source_leg.venue_id) {
+                errors.push(format!("补偿腿 {} 能力校验失败: {error}", target.leg_id));
+                all_filled = false;
+                continue;
             }
             self.events
                 .register_order(
@@ -1315,17 +1389,19 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
 ///
 /// 账户级风控走 `context`（快照与市场规格），供 Paper/CCXT/Binance worker 统一使用；
 /// Venue 仍只接收通过预检的订单。
-#[allow(clippy::too_many_arguments)]
 pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
-    command: &ControlCommand,
-    venue: &mut V,
-    pipeline: &mut P,
-    worker_id: &str,
-    now: u64,
-    source_seq: &mut u64,
-    context: &RiskExecutionContext<'_>,
-    spread_store: Option<&dyn SpreadOrderGroupStore>,
+    request: SubmitOrderWithRiskRequest<'_, V, P>,
 ) -> Result<String, String> {
+    let SubmitOrderWithRiskRequest {
+        command,
+        venue,
+        pipeline,
+        worker_id,
+        now,
+        source_seq,
+        context,
+        spread_store,
+    } = request;
     spread_group_barrier(spread_store, command)?;
     let mut venue = BorrowedVenuePort::new(venue);
     let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
@@ -1425,18 +1501,20 @@ impl<'a, P: EventAppender> EventLogReconcilePort<'a, P> {
 /// 同一条判定链。`allow_synthetic_quote` 是**唯一**的伪造价开关，只允许离线 smoke
 /// fixture 显式传 `true`；生产 worker 必须保持 `false` 并提供 `Some(market_quote)`。
 /// `fee_model` 同理：成本口径由调用方显式给出，不留"默认零费"的口子（V11 §4.1）。
-#[allow(clippy::too_many_arguments)] // V10 P1b：组存储作为最后一个形参是刻意的，让编译器逐个点名提交入口是否接了屏障。
 pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerProbe>(
-    command: &ControlCommand,
-    pipeline: &mut P,
-    now: u64,
-    risk: Option<RiskContext>,
-    position: Option<OrderRiskPosition>,
-    market_quote: Option<QuoteTick>,
-    fee_model: Box<dyn FeeModel + Send>,
-    allow_synthetic_quote: bool,
-    spread_store: Option<&dyn SpreadOrderGroupStore>,
+    request: PaperSubmitRequest<'_, P>,
 ) -> Result<String, String> {
+    let PaperSubmitRequest {
+        command,
+        pipeline,
+        now,
+        risk,
+        position,
+        market_quote,
+        fee_model,
+        allow_synthetic_quote,
+        spread_store,
+    } = request;
     // 多腿屏障由网关统一裁决：带 `spread_group_id` 的腿若提交路径没有注入组存储，
     // 无法证明组干净，直接 fail-closed（见 [`spread_group_barrier`]）。
     spread_group_barrier(spread_store, command)?;

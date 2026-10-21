@@ -1,6 +1,6 @@
 //! 帧的列式边界与转换 Manifest 的同源用例。
 //!
-//! V11 R16 起从 `lib.rs` 外置：行数预算只降不升，写侧多印一格契约版本就得在别处节省出来。
+//! 用例独立于生产代码组织，覆盖帧列式边界与转换 Manifest 的一致性。
 
 use super::*;
 
@@ -20,8 +20,10 @@ fn frame_is_pit_bounded_and_round_trips_columns() {
     assert_eq!(frame.len(), 2);
     assert_eq!(frame.close_at(1), Some(11));
     assert_eq!(Vec::<Bar>::from(&frame)[1].ts, 2);
-    assert!(frame.to_json().contains("\"volume_raw\":[1,2]"));
-    assert_eq!(BarFrame::from_json(&frame.to_json()).unwrap(), frame);
+    let payload = frame.to_json();
+    assert!(payload.contains("\"schema_version\":1"));
+    assert!(payload.contains("\"volume_raw\":[1,2]"));
+    assert_eq!(BarFrame::from_json(&payload).unwrap(), frame);
     assert_eq!(frame.digest(), 0xf9d5_8b91_e72d_ae58);
     let selected = frame.select_time(2, 2).unwrap();
     assert_eq!(selected.ts, vec![2]);

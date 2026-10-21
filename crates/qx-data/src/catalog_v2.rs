@@ -43,6 +43,9 @@ pub struct DatasetQualityReport {
     pub duplicate_rows: u64,
     pub out_of_order_rows: u64,
     pub missing_intervals: u64,
+    /// Bar 时间戳间隔，供回测读侧独立复算缺口数；旧 v2 清单缺此格时保持可读但不可作独立复核。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
     pub timezone: String,
     pub corporate_action_coverage: bool,
     pub usable_tiers: Vec<String>,
@@ -100,6 +103,9 @@ impl DatasetManifestV2 {
         if self.quality_report.row_count == 0 {
             return Err("数据集清单 v2 质量报告 row_count 必须为正".into());
         }
+        if self.quality_report.interval_ms == Some(0) {
+            return Err("数据集清单 v2 质量报告 interval_ms 若在场必须为正".into());
+        }
         if !self
             .quality_report
             .usable_tiers
@@ -145,6 +151,9 @@ impl DatasetManifestV2 {
                 "数据存在 {} 个缺口区间，回测前须补洞或点名拒绝",
                 self.quality_report.missing_intervals
             ));
+        }
+        if self.quality_report.interval_ms.is_none() {
+            warnings.push("质量报告未声明 interval_ms，missing_intervals 无法独立复算".into());
         }
         if self.quality_report.out_of_order_rows > 0 || self.quality_report.duplicate_rows > 0 {
             warnings.push(format!(
@@ -195,6 +204,7 @@ mod tests {
                 duplicate_rows: 0,
                 out_of_order_rows: 0,
                 missing_intervals: 0,
+                interval_ms: Some(1),
                 timezone: "Asia/Shanghai".into(),
                 corporate_action_coverage: true,
                 usable_tiers: vec!["bar".into(), "l1".into()],

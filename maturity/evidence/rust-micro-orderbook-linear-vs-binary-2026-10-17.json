@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "benchmark": "l2_queue_price_lookup_algorithm",
+  "date": "2026-10-17",
+  "generated_at_utc": "2026-10-16T23:23:24Z",
+  "command": "cargo bench -p qx-cli --bench criterion_performance --offline -j1 -- l2_queue_price_lookup_algorithm",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)",
+    "benchmark_binary_sha256": "4e6fdb80a7e1535147e874c54a04214c1ec6d961590c804dffa10e79f6c54394"
+  },
+  "workload": {
+    "depth_levels_per_side": [16, 128, 512, 2048],
+    "lookups_per_iteration_per_side": "equal to depth; every query hits a level, visited in reverse book order to force the linear scan through the average-to-deep levels",
+    "price_layout": "unique integer prices; bids descending and asks ascending, matching OrderBookSnapshot validation",
+    "equivalence_checked_before_measurement": true,
+    "setup_outside_timed_region": true,
+    "criterion_samples": 10,
+    "reported_time": "one iteration processes depth lookups; quantities are folded to an observable sum"
+  },
+  "results": [
+    {
+      "depth": 16,
+      "buy": {"linear_median_ns": 70.9, "linear_ci95_ns": [68.8, 76.8], "binary_median_ns": 59.8, "binary_ci95_ns": [57.4, 61.9], "linear_over_binary": 1.19},
+      "sell": {"linear_median_ns": 69.4, "linear_ci95_ns": [67.5, 72.3], "binary_median_ns": 56.3, "binary_ci95_ns": [55.1, 60.1], "linear_over_binary": 1.23}
+    },
+    {
+      "depth": 128,
+      "buy": {"linear_median_ns": 3761.0, "linear_ci95_ns": [3705.0, 3921.6], "binary_median_ns": 720.1, "binary_ci95_ns": [709.1, 743.2], "linear_over_binary": 5.22},
+      "sell": {"linear_median_ns": 3725.8, "linear_ci95_ns": [3597.1, 3885.5], "binary_median_ns": 726.3, "binary_ci95_ns": [704.6, 749.6], "linear_over_binary": 5.13}
+    },
+    {
+      "depth": 512,
+      "buy": {"linear_median_ns": 58142.7, "linear_ci95_ns": [56048.9, 61500.6], "binary_median_ns": 3278.2, "binary_ci95_ns": [3216.1, 3443.6], "linear_over_binary": 17.73},
+      "sell": {"linear_median_ns": 56653.6, "linear_ci95_ns": [55414.4, 58728.1], "binary_median_ns": 3332.6, "binary_ci95_ns": [3283.8, 3421.9], "linear_over_binary": 17.00}
+    },
+    {
+      "depth": 2048,
+      "buy": {"linear_median_ns": 896823.8, "linear_ci95_ns": [882565.4, 917140.4], "binary_median_ns": 15810.9, "binary_ci95_ns": [15345.2, 16444.5], "linear_over_binary": 56.73},
+      "sell": {"linear_median_ns": 902618.0, "linear_ci95_ns": [880407.5, 925617.3], "binary_median_ns": 15588.4, "binary_ci95_ns": [15308.0, 16084.6], "linear_over_binary": 57.90}
+    }
+  ],
+  "limitations": [
+    "This paired microbenchmark compares only the level lookup algorithm over synthetic validated books, not complete matcher behavior.",
+    "Depth and lookup count increase together; observed ratios should not be interpreted as full backtest speedup.",
+    "Does not represent live venue data distributions or the nine product profiles."
+  ]
+}

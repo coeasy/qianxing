@@ -277,6 +277,134 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertFalse(row["ok"])
         self.assertEqual(row["error"]["class"], "authentication")
 
+    def test_jsonl_worker_applies_exact_native_retry_budget_to_ccxt_timeouts(self):
+        class RequestTimeout(Exception):
+            pass
+
+        class AlwaysTimedOut:
+            def __init__(self):
+                self.calls = 0
+                self.closed = 0
+
+            async def watch_orders(self, symbol, since, limit, params):
+                self.calls += 1
+                raise RequestTimeout("socket timed out")
+
+            async def close(self):
+                self.closed += 1
+
+        initial = AlwaysTimedOut()
+        replacements: list[AlwaysTimedOut] = []
+        sleeps: list[float] = []
+
+        def make_exchange(config):
+            replacement = AlwaysTimedOut()
+            replacements.append(replacement)
+            return replacement
+
+        async def record_sleep(delay_seconds: float) -> None:
+            sleeps.append(delay_seconds)
+
+        config = CcxtConfig(
+            exchange_id="binance", ws_max_retries=2, ws_retry_backoff_ms=1
+        )
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(config, exchange=FakeExchange()), pro_exchange=initial
+        )
+        with (
+            patch("asyncio.sleep", new=record_sleep),
+            patch("qianxing_ccxt.worker.create_ccxt_pro_exchange", side_effect=make_exchange),
+        ):
+            row = json.loads(
+                worker.handle_line(
+                    json.dumps(
+                        {
+                            "op": "watch_orders",
+                            "instrument": "BTCUSDT.BINANCE",
+                            "wait_ms": 60_000,
+                        }
+                    )
+                )
+            )
+
+        self.assertFalse(row["ok"], row)
+        self.assertEqual(row["error"]["class"], "retryable")
+        self.assertEqual(initial.calls, 1)
+        self.assertEqual([exchange.calls for exchange in replacements], [1, 1])
+        self.assertEqual([exchange.closed for exchange in [initial, *replacements]], [1, 1, 0])
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual(sleeps, [0.001, 0.002])
+
+    def test_jsonl_worker_retry_decisions_cover_every_native_ccxt_category(self):
+        category_cases = (
+            ("RequestTimeout", "retryable", True),
+            ("DDoSProtection", "rate_limited", True),
+            ("AuthenticationError", "authentication", False),
+            ("InvalidOrder", "invalid", False),
+            ("NotSupported", "unsupported", False),
+            ("ExchangeError", "exchange", False),
+            ("ValueError", "unknown", False),
+        )
+
+        for exception_name, expected_category, should_retry in category_cases:
+            with self.subTest(exception=exception_name):
+                exception_type = type(exception_name, (Exception,), {})
+                exchanges = []
+                sleeps = []
+
+                class FailingPro:
+                    def __init__(self):
+                        self.calls = 0
+
+                    async def watch_orders(self, symbol, since, limit, params):
+                        self.calls += 1
+                        raise exception_type("classified by Rust")
+
+                    async def close(self):
+                        return None
+
+                initial = FailingPro()
+
+                def recreate(config):
+                    replacement = FailingPro()
+                    exchanges.append(replacement)
+                    return replacement
+
+                async def record_sleep(delay_seconds: float) -> None:
+                    sleeps.append(delay_seconds)
+
+                worker = CcxtJsonWorker(
+                    CcxtExchangeClient(
+                        CcxtConfig(
+                            exchange_id="binance",
+                            ws_max_retries=1,
+                            ws_retry_backoff_ms=1,
+                        ),
+                        exchange=FakeExchange(),
+                    ),
+                    pro_exchange=initial,
+                )
+                with (
+                    patch("asyncio.sleep", new=record_sleep),
+                    patch("qianxing_ccxt.worker.create_ccxt_pro_exchange", side_effect=recreate),
+                ):
+                    row = json.loads(
+                        worker.handle_line(
+                            json.dumps(
+                                {
+                                    "op": "watch_orders",
+                                    "instrument": "BTCUSDT.BINANCE",
+                                }
+                            )
+                        )
+                    )
+
+                self.assertFalse(row["ok"], row)
+                self.assertEqual(row["error"]["class"], expected_category)
+                self.assertEqual(initial.calls + sum(item.calls for item in exchanges), 2 if should_retry else 1)
+                self.assertEqual(len(exchanges), 1 if should_retry else 0)
+                self.assertEqual(len(sleeps), 1 if should_retry else 0)
+
 
 if __name__ == "__main__":
     unittest.main()

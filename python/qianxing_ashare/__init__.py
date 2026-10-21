@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import hashlib
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -23,9 +22,9 @@ from qianxing_bridge import (
     BAR_FRAME_SCHEMA_VERSION,
     BarFrame,
 )
+from qianxing_bridge import native
 
 
-SCALE = 1_000_000_000
 _ADJUSTMENTS = {"none", "qfq", "hfq"}
 _FREQUENCIES = {"daily", "weekly", "monthly", "1m", "5m", "15m", "30m", "60m"}
 _CODE_REPLACEMENTS = str.maketrans({"．": ".", "　": " "})
@@ -201,12 +200,12 @@ def _nonnegative_scaled(value: Any, field: str) -> int:
     if value is None or str(value).strip() in {"", "-", "--", "nan", "NaN", "None"}:
         return 0
     try:
-        number = Decimal(str(value).replace(",", "").strip())
-    except (InvalidOperation, ValueError) as exc:
+        raw = native.decimal_to_raw(str(value).replace(",", "").strip())
+    except (ValueError, RuntimeError) as exc:
         raise AshareProviderError(f"invalid {field} value: {value!r}") from exc
-    if not number.is_finite() or number < 0:
+    if raw < 0:
         raise AshareProviderError(f"invalid {field} value: {value!r}")
-    return int((number * SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+    return raw
 
 
 def _nonnegative_raw(value: Any, field: str) -> int:
@@ -215,19 +214,19 @@ def _nonnegative_raw(value: Any, field: str) -> int:
     if value is None or str(value).strip() in {"", "-", "--", "nan", "NaN", "None"}:
         return 0
     try:
-        number = Decimal(str(value).replace(",", "").strip())
-    except (InvalidOperation, ValueError) as exc:
+        number = native.decimal_to_integer_exact(str(value).replace(",", "").strip())
+    except (ValueError, RuntimeError) as exc:
         raise AshareProviderError(f"invalid {field} value: {value!r}") from exc
-    if not number.is_finite() or number < 0 or number != number.to_integral_value():
+    if number < 0:
         raise AshareProviderError(f"invalid {field} value: {value!r}")
-    return int(number)
+    return number
 
 
 def _amount_pick(row: Mapping[str, Any], field: str, *aliases: str) -> int:
-    """读取一个定点金额/数量：`<field>_raw` 视为已定点整数，其余别名按元/股乘 SCALE。
+    """读取一个定点金额/数量：`<field>_raw` 视为已定点整数，其余别名按元/股乘 native scale。
 
     `_raw` 后缀是 v1 信封与 Rust 读侧共用的定点名。行数据里出现同名输入时若再乘
-    一次 SCALE，同一份文档读第二遍就会把每股分红放大十亿倍；不接受该名的字段则把
+    一次 scale，同一份文档读第二遍就会把每股分红放大十亿倍；不接受该名的字段则把
     已规范化的行读回时静默丢成 0。两种口径必须由这一处规则统一。
     """
 
@@ -249,7 +248,13 @@ def _ratio_pair_pick(row: Mapping[str, Any], field: str) -> tuple[int, int] | No
     denominator = _optional_pick(row, f"{field}_den")
     if numerator is None or denominator is None:
         return None
-    return int(numerator), int(denominator)
+    try:
+        return (
+            native.decimal_to_integer_exact(str(numerator).replace(",", "").strip()),
+            native.decimal_to_integer_exact(str(denominator).replace(",", "").strip()),
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise AshareProviderError(f"invalid {field} numerator/denominator") from exc
 
 
 def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
@@ -258,15 +263,15 @@ def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
     if value is None or str(value).strip() in {"", "-", "--", "nan", "NaN", "None"}:
         return 0, 1
     try:
-        number = Decimal(str(value).replace(",", "").strip())
-    except (InvalidOperation, ValueError) as exc:
+        scaled = native.decimal_to_raw(str(value).replace(",", "").strip())
+    except (ValueError, RuntimeError) as exc:
         raise AshareProviderError(f"invalid {field} value: {value!r}") from exc
-    if not number.is_finite() or number < 0:
+    if scaled < 0:
         raise AshareProviderError(f"invalid {field} value: {value!r}")
     # Baostock/TDX 常见字段已经是“每股”或“每十股”，调用方可通过
     # *_per_ten 字段显式指定分母；普通字段按每股处理，避免隐式猜测。
-    scaled = int((number * SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
-    return scaled, SCALE
+    scale = native.raw_scale()
+    return scaled, scale
 
 
 def _canonical_action_type(row: Mapping[str, Any]) -> str:
@@ -522,44 +527,6 @@ def _manifest_timestamp_ms(value: str) -> int:
     return int(datetime.combine(day, time.min, tzinfo=_shanghai()).timestamp() * 1000)
 
 
-def _qx_data_bars_fingerprint(frame: BarFrame) -> str:
-    """复现 Rust qx-data::fingerprint_bars 的稳定 FNV-1a 规则。"""
-
-    frame.validate()
-    value = 0xCBF29CE484222325
-
-    def write_bytes(payload: bytes) -> None:
-        nonlocal value
-        for byte in payload:
-            value = ((value ^ byte) * 0x0100000001B3) & ((1 << 64) - 1)
-
-    def write_u64(number: int) -> None:
-        write_bytes(int(number).to_bytes(8, "little", signed=False))
-
-    def write_i128(number: int) -> None:
-        write_bytes(int(number).to_bytes(16, "little", signed=True))
-
-    def write_text(text: str) -> None:
-        encoded = text.encode("utf-8")
-        write_u64(len(encoded))
-        write_bytes(encoded)
-
-    write_u64(len(frame.ts))
-    for row in zip(
-        frame.ts,
-        frame.open_raw,
-        frame.high_raw,
-        frame.low_raw,
-        frame.close_raw,
-        frame.volume_raw,
-    ):
-        write_text(frame.instrument)
-        write_u64(row[0])
-        for value_raw in row[1:]:
-            write_i128(value_raw)
-    return f"{value:016x}"
-
-
 def build_dataset_bundle_manifest(
     bundle_id: str,
     version: str,
@@ -583,7 +550,7 @@ def build_dataset_bundle_manifest(
     if bars_frame is not None:
         if bars_frame.instrument != bars.instrument or len(bars_frame.ts) != bars.row_count:
             raise ValueError("bars frame does not match bars manifest")
-        bars_fingerprint = _qx_data_bars_fingerprint(bars_frame)
+        bars_fingerprint = native.fingerprint_bars(bars_frame.to_json())
     else:
         bars_fingerprint = bars.source_hash
     components: dict[str, dict[str, Any]] = {
@@ -627,13 +594,23 @@ def build_dataset_bundle_manifest(
             "end_timestamp": _manifest_timestamp_ms(calendar.trading_days[-1]),
             "row_count": len(calendar.trading_days),
         }
-    return {
-        "bundle_id": bundle_id,
-        "version": version,
-        "source": source,
-        "schema_version": ASHARE_SCHEMA_VERSION,
-        "components": components,
-    }
+    return json.loads(
+        native.app_assemble_dataset_bundle(
+            json.dumps(
+                {
+                    "bundle_id": bundle_id,
+                    "version": version,
+                    "source": source,
+                    "components": [
+                        {"kind": kind, **component}
+                        for kind, component in components.items()
+                    ],
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -652,67 +629,19 @@ def reconcile_corporate_actions(
     *sources: Sequence["AshareCorporateAction"],
 ) -> tuple[tuple["AshareCorporateAction", ...], tuple[AshareActionConflict, ...]]:
     """按标的/生效日/类型合并多源事件，并显式返回字段冲突。"""
-
-    merged: dict[tuple[str, str, str], AshareCorporateAction] = {}
-    conflicts: list[AshareActionConflict] = []
-    comparable = (
-        "cash_dividend_raw",
-        "share_ratio_num",
-        "share_ratio_den",
-        "record_date",
-        "payment_date",
-        "rights_issue_price_raw",
-        "rights_issue_ratio_num",
-        "rights_issue_ratio_den",
-        "issue_price_raw",
-        "conversion_price_raw",
-        "conversion_ratio_num",
-        "conversion_ratio_den",
-        "rights_instrument",
-        "subscription_qty_raw",
-        "rights_expiry_qty_raw",
-        "repurchase_qty_raw",
-        "repurchase_price_raw",
-        "convertible_bond_instrument",
-        "conversion_target_instrument",
-        "conversion_qty_raw",
-        "conversion_target_qty_raw",
-    )
     for source_actions in sources:
         for action in source_actions:
             action.validate()
-            key = (action.instrument, action.ex_date, action.action_type)
-            current = merged.get(key)
-            if current is None:
-                merged[key] = action
-                continue
-            updates: dict[str, Any] = {}
-            for field_name in comparable:
-                left = getattr(current, field_name)
-                right = getattr(action, field_name)
-                left_is_empty = left in {0, 1, None, ""} and right not in {0, 1, None, ""}
-                right_is_empty = right in {0, 1, None, ""} and left not in {0, 1, None, ""}
-                if left_is_empty:
-                    updates[field_name] = right
-                elif not right_is_empty and left != right:
-                    conflicts.append(
-                        AshareActionConflict(
-                            instrument=action.instrument,
-                            ex_date=action.ex_date,
-                            action_type=action.action_type,
-                            field=field_name,
-                            left=left,
-                            right=right,
-                            left_source=current.source,
-                            right_source=action.source,
-                        )
-                    )
-            raw = dict(current.raw_payload or {})
-            raw.update(action.raw_payload or {})
-            source_name = "+".join(dict.fromkeys(filter(None, (current.source, action.source))))
-            merged[key] = replace(current, source=source_name, raw_payload=raw, **updates)
-    actions = tuple(sorted(merged.values(), key=lambda item: (item.instrument, item.ex_date, item.action_type)))
-    return actions, tuple(conflicts)
+    payload = json.dumps(
+        [[asdict(action) for action in source] for source in sources],
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_safe,
+    )
+    result = json.loads(native.reconcile_corporate_actions(payload))
+    actions = tuple(AshareCorporateAction(**item) for item in result["actions"])
+    conflicts = tuple(AshareActionConflict(**item) for item in result["conflicts"])
+    return actions, conflicts
 
 
 class AshareDataProvider(Protocol):
@@ -799,12 +728,12 @@ def _scaled(value: Any, field: str) -> int:
     if value is None or str(value).strip() in {"", "-", "--", "nan", "NaN"}:
         raise AshareProviderError(f"empty {field} value")
     try:
-        number = Decimal(str(value).replace(",", "").strip())
-    except (InvalidOperation, ValueError) as exc:
+        raw = native.decimal_to_raw(str(value).replace(",", "").strip())
+    except (ValueError, RuntimeError) as exc:
         raise AshareProviderError(f"invalid {field} value: {value!r}") from exc
-    if not number.is_finite() or (field == "volume" and number < 0) or (field != "volume" and number <= 0):
+    if (field == "volume" and raw < 0) or (field != "volume" and raw <= 0):
         raise AshareProviderError(f"invalid {field} value: {value!r}")
-    return int((number * SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+    return raw
 
 
 def normalize_bar_rows(
@@ -869,7 +798,7 @@ def _manifest(query: AshareQuery, frame: BarFrame, provider: str, version: str) 
         start=query.start,
         end=query.end,
         row_count=len(frame.ts),
-        source_hash=f"{frame.digest():016x}",
+        source_hash=native.fingerprint_bars(frame.to_json()),
         received_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -894,7 +823,7 @@ def _actions_manifest(
         start=query.start_date,
         end=query.end_date,
         row_count=len(actions),
-        source_hash=hashlib.sha256(payload).hexdigest(),
+        source_hash=native.sha256_hex_bytes(payload),
         received_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -937,14 +866,11 @@ def normalize_corporate_action_rows(
         transfer = _optional_pick(row, "转增", "转增比例", "capital_transfer", "transfer_ratio")
         bonus_num, bonus_den = _ratio_scaled(bonus, "bonus_ratio")
         transfer_num, transfer_den = _ratio_scaled(transfer, "transfer_ratio")
-        ratio_num, ratio_den = SCALE, SCALE
-        for part_num, part_den in ((bonus_num, bonus_den), (transfer_num, transfer_den)):
-            if part_num:
-                ratio_num = ratio_num * (part_den + part_num) // part_den
-        if not bonus_num and not transfer_num:
-            direct = _ratio_pair_pick(row, "share_ratio")
-            if direct is not None:
-                ratio_num, ratio_den = direct
+        direct_share_ratio = (
+            _ratio_pair_pick(row, "share_ratio")
+            if not bonus_num and not transfer_num
+            else None
+        )
 
         rights_price = _amount_pick(
             row,
@@ -959,10 +885,7 @@ def normalize_corporate_action_rows(
             _optional_pick(row, "配股比例", "配股数", "peigu", "rights_issue_ratio", "rights_ratio"),
             "rights_issue_ratio",
         )
-        if not rights_num:
-            direct = _ratio_pair_pick(row, "rights_issue_ratio")
-            if direct is not None:
-                rights_num, rights_den = direct
+        direct_rights_ratio = _ratio_pair_pick(row, "rights_issue_ratio") if not rights_num else None
         issue_price = _amount_pick(
             row, "issue_price", "增发价", "发行价", "增发价格", "issue_price", "new_issue_price"
         )
@@ -970,10 +893,53 @@ def normalize_corporate_action_rows(
         conversion_num, conversion_den = _ratio_scaled(
             _optional_pick(row, "转股比例", "转股数", "conversion_ratio"), "conversion_ratio"
         )
-        if not conversion_num:
-            direct = _ratio_pair_pick(row, "conversion_ratio")
-            if direct is not None:
-                conversion_num, conversion_den = direct
+        direct_conversion_ratio = (
+            _ratio_pair_pick(row, "conversion_ratio") if not conversion_num else None
+        )
+        ratio_input = {
+            "bonus": {"numerator": str(bonus_num), "denominator": str(bonus_den)},
+            "transfer": {"numerator": str(transfer_num), "denominator": str(transfer_den)},
+            "share_ratio": (
+                {
+                    "numerator": str(direct_share_ratio[0]),
+                    "denominator": str(direct_share_ratio[1]),
+                }
+                if direct_share_ratio is not None
+                else None
+            ),
+            "rights_issue": {"numerator": str(rights_num), "denominator": str(rights_den)},
+            "rights_issue_ratio": (
+                {
+                    "numerator": str(direct_rights_ratio[0]),
+                    "denominator": str(direct_rights_ratio[1]),
+                }
+                if direct_rights_ratio is not None
+                else None
+            ),
+            "conversion": {
+                "numerator": str(conversion_num),
+                "denominator": str(conversion_den),
+            },
+            "conversion_ratio": (
+                {
+                    "numerator": str(direct_conversion_ratio[0]),
+                    "denominator": str(direct_conversion_ratio[1]),
+                }
+                if direct_conversion_ratio is not None
+                else None
+            ),
+        }
+        resolved_ratios = json.loads(
+            native.resolve_corporate_action_ratios(
+                json.dumps(ratio_input, ensure_ascii=False, separators=(",", ":"))
+            )
+        )
+        ratio_num = int(resolved_ratios["share_ratio_num"])
+        ratio_den = int(resolved_ratios["share_ratio_den"])
+        rights_num = int(resolved_ratios["rights_issue_ratio_num"])
+        rights_den = int(resolved_ratios["rights_issue_ratio_den"])
+        conversion_num = int(resolved_ratios["conversion_ratio_num"])
+        conversion_den = int(resolved_ratios["conversion_ratio_den"])
         rights_instrument = _optional_pick(
             row, "rights_instrument", "配股权代码", "配股代码", "rights_symbol"
         )
@@ -1455,20 +1421,23 @@ class AshareTradingCalendar:
     source: str = ""
 
     def validate(self) -> None:
-        if not self.calendar_id.strip() or not self.trading_days:
-            raise ValueError("calendar_id and trading_days are required")
-        if any(left >= right for left, right in zip(self.trading_days, self.trading_days[1:])):
-            raise ValueError("trading_days must be strictly sorted")
-        for start, end in self.sessions:
-            if start >= end:
-                raise ValueError("calendar session start must be before end")
+        payload = json.dumps(
+            {
+                "calendar_id": self.calendar_id,
+                "trading_days": list(self.trading_days),
+                "sessions": [[start, end] for start, end in self.sessions],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        native.validate_ashare_calendar_json(payload)
 
     def contains(self, trading_day: str) -> bool:
         self.validate()
         return trading_day in self.trading_days
 
     def component_fingerprint(self) -> str:
-        """复现 Rust `dataset_component_file_fingerprint("calendar")` 的字节。
+        """委托 Rust 生成日历组件的规范指纹。
 
         DatasetBundle 只绑定 ``calendar_id/trading_days/sessions`` 的规范字节，
         所以顶层新增 ``schema_version``/``source`` 不会让已登记的 bundle
@@ -1485,7 +1454,7 @@ class AshareTradingCalendar:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return native.calendar_component_fingerprint(canonical)[0]
 
     def to_json(self) -> str:
         self.validate()
@@ -1560,92 +1529,15 @@ class AshareCorporateAction:
     raw_payload: dict[str, Any] | None = None
 
     def validate(self) -> None:
-        normalize_instrument(self.instrument)
-        if (
-            not self.ex_date
-            or not self.published_at
-            or self.share_ratio_num <= 0
-            or self.share_ratio_den <= 0
-            or self.rights_issue_price_raw < 0
-            or self.rights_issue_ratio_num < 0
-            or self.rights_issue_ratio_den <= 0
-            or self.issue_price_raw < 0
-            or self.conversion_price_raw < 0
-            or self.conversion_ratio_num < 0
-            or self.conversion_ratio_den <= 0
-            or self.subscription_qty_raw < 0
-            or self.rights_expiry_qty_raw < 0
-            or self.repurchase_qty_raw < 0
-            or self.repurchase_price_raw < 0
-            or self.conversion_qty_raw < 0
-            or self.conversion_target_qty_raw < 0
-            or self.interest_per_bond_raw < 0
-            or self.settlement_qty_raw < 0
-            or self.settlement_price_raw < 0
-            or self.issuer_total_shares_raw < 0
-            or (self.issuer_free_float_shares_raw is not None and self.issuer_free_float_shares_raw < 0)
-        ):
+        instrument = normalize_instrument(self.instrument)
+        if not self.ex_date or not self.published_at:
             raise ValueError("invalid corporate action date or ratio")
-        if self.action_type not in _CORPORATE_ACTION_TYPES:
-            raise ValueError(f"unsupported corporate action type: {self.action_type}")
-        if self.action_type == "rights_issue":
-            if (
-                not self.rights_instrument
-                or self.rights_issue_price_raw <= 0
-                or self.rights_issue_ratio_num <= 0
-            ):
-                raise ValueError("rights_issue requires instrument, price and ratio")
-        elif self.action_type == "rights_issue_expiry":
-            if not self.rights_instrument or self.rights_expiry_qty_raw <= 0:
-                raise ValueError("rights_issue_expiry requires instrument and quantity")
-        elif self.action_type == "new_share_issue":
-            if self.issue_price_raw <= 0 or self.subscription_qty_raw <= 0:
-                raise ValueError("new_share_issue requires price and subscription quantity")
-        elif self.action_type == "convertible_bond_issue":
-            if (
-                not self.convertible_bond_instrument
-                or self.issue_price_raw <= 0
-                or self.subscription_qty_raw <= 0
-            ):
-                raise ValueError("convertible_bond_issue requires bond, price and subscription quantity")
-        elif self.action_type == "convertible_bond_interest":
-            if not self.convertible_bond_instrument or self.interest_per_bond_raw <= 0:
-                raise ValueError("convertible_bond_interest requires bond and interest")
-        elif self.action_type in {"convertible_bond_redemption", "convertible_bond_put"}:
-            if (
-                not self.convertible_bond_instrument
-                or self.settlement_qty_raw <= 0
-                or self.settlement_price_raw <= 0
-            ):
-                raise ValueError("convertible bond settlement requires bond, quantity and price")
-        elif self.action_type == "convertible_bond_call":
-            if not self.convertible_bond_instrument or self.settlement_price_raw <= 0:
-                raise ValueError("convertible_bond_call requires bond and price")
-        elif self.action_type == "repurchase":
-            if self.repurchase_qty_raw <= 0 or self.repurchase_price_raw <= 0:
-                raise ValueError("repurchase requires quantity and price")
-        elif self.action_type == "convertible_bond_conversion":
-            if (
-                not self.convertible_bond_instrument
-                or not self.conversion_target_instrument
-                or self.conversion_qty_raw <= 0
-                or self.conversion_target_qty_raw <= 0
-                or self.conversion_price_raw <= 0
-            ):
-                raise ValueError("convertible_bond_conversion requires explicit conversion facts")
-        elif self.action_type == "capital_change":
-            if self.issuer_total_shares_raw <= 0:
-                raise ValueError("capital_change requires issuer_total_shares_raw")
-            if (
-                self.issuer_free_float_shares_raw is not None
-                and (
-                    self.issuer_free_float_shares_raw <= 0
-                    or self.issuer_free_float_shares_raw > self.issuer_total_shares_raw
-                )
-            ):
-                raise ValueError("capital_change free float cannot exceed total shares")
-        if self.cash_dividend_raw < 0:
-            raise ValueError("cash_dividend_raw cannot be negative")
+        if self.raw_payload is not None and not isinstance(self.raw_payload, dict):
+            raise ValueError("raw_payload must be a dict")
+
+        action = asdict(self)
+        action["instrument"] = instrument
+        action["ex_date"] = _date_text(self.ex_date)
         for field_name in (
             "ex_date",
             "announcement_date",
@@ -1657,8 +1549,26 @@ class AshareCorporateAction:
             value = getattr(self, field_name)
             if value is not None and _date_text(value) is None:
                 raise ValueError(f"invalid corporate action date: {field_name}")
-        if self.raw_payload is not None and not isinstance(self.raw_payload, dict):
-            raise ValueError("raw_payload must be a dict")
+            if field_name != "ex_date":
+                action[field_name] = None
+        action["raw_payload"] = None
+        for field_name, value in action.items():
+            if value is not None and field_name.endswith(("_raw", "_num", "_den")):
+                action[field_name] = str(value)
+        # The Rust rule loader owns action-type requirements and numeric bounds.
+        # Date spelling and instrument aliases stay in this source-adapter layer.
+        action["published_at"] = None
+        envelope = {
+            "schema_version": 0,
+            "instrument": instrument,
+            "actions": [action],
+        }
+        try:
+            native.validate_corporate_actions_json(
+                json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise ValueError(str(exc)) from exc
 
     def visible_at(self, as_of: str) -> bool:
         self.validate()
@@ -1870,6 +1780,12 @@ class AsharePITRecord:
     def visible_at(self, as_of: str) -> bool:
         self.validate()
         return self.published_at <= as_of
+
+
+def __getattr__(name: str) -> Any:
+    if name == "SCALE":
+        return native.raw_scale()
+    raise AttributeError(name)
 
 
 __all__ = [

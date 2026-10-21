@@ -1,159 +1,46 @@
 //! Shared-account Bar execution across instruments.
 //!
-//! All market callbacks at one timestamp form a deterministic batch: strategies
-//! decide from completed bars, orders pass the common admission path, then each
-//! market matcher runs in stable priority/instrument order and all fills update
-//! one OMS, Ledger, budget state, and EventLog.
+//! Same-timestamp callbacks form deterministic batches; strategies decide from
+//! completed bars, then shared OMS, Ledger, budget, and EventLog state advances.
 
 use super::{
     fill_application::{self, FillApplicationInput},
     order_admission::{self, OrderAdmissionInput},
     BarStrategy, PortfolioBarSeries, PortfolioBarTimeline, PortfolioBudgetState,
 };
-use crate::{
-    cost::{LatencyModel, MarginRule},
-    fill::{DataTier, FillModel},
-};
+use crate::cost::MarginRule;
 use qx_core::{
-    Event, EventKind, EventLog, FeeModel, Fill, FundingRateEvent, InstrumentId, Ledger, Money,
-    Price, ReplayVerifier, TradingInstrumentSpec, ValuationContext,
+    Event, EventKind, EventLog, FundingRateEvent, InstrumentId, Ledger, Money, Price,
+    TradingInstrumentSpec, ValuationContext,
 };
-use qx_guanxing::{Bar, QualityGate, Verdict};
-use qx_zhenlu::{Oms, RiskGate};
+use qx_guanxing::Bar;
+use qx_zhenlu::Oms;
 use std::collections::BTreeMap;
 
+mod construction;
 mod funding;
 mod margin;
+mod model;
+mod report;
 mod runtime;
-use funding::{apply_settlements, prepare_timeline, PreparedTimeline};
-use margin::other_market_margin;
-use runtime::{build_runtime, initialize_ledger};
-
-pub struct PortfolioBarMarket<'a> {
-    pub instrument: InstrumentId,
-    pub priority: u32,
-    pub bars: &'a [Bar],
-    pub spec: TradingInstrumentSpec,
-    pub fill: Box<dyn FillModel>,
-    pub fee: Box<dyn FeeModel>,
-    pub latency: Box<dyn LatencyModel>,
-    pub margin: Box<dyn MarginRule>,
-    pub seed: u64,
-}
-
-pub struct PortfolioBarSessionConfig {
-    pub account_id: String,
-    pub currency: String,
-    pub initial_cash: Money,
-    pub risk: RiskGate,
-    /// Constant funding rate in basis points per UTC 8-hour settlement, keyed by derivative.
-    pub funding_bps: BTreeMap<InstrumentId, i64>,
-    /// Optional variable historical funding rates at explicit UTC 8-hour settlements.
-    pub funding_events: Vec<FundingRateEvent>,
-}
-
-pub struct PortfolioBarSessionReport {
-    pub fills: Vec<Fill>,
-    pub fills_by_instrument: BTreeMap<InstrumentId, Vec<Fill>>,
-    pub rejections_by_instrument: BTreeMap<InstrumentId, EventLog>,
-    pub equity: Vec<(u64, i128)>,
-    pub ledger: Ledger,
-    pub event_log: EventLog,
-    pub market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
-    pub funding_by_instrument_raw: BTreeMap<InstrumentId, i128>,
-    pub funding_events_by_instrument: BTreeMap<InstrumentId, Vec<(u64, i128)>>,
-    pub clock_start: u64,
-    pub clock_end: u64,
-}
-
-impl PortfolioBarSessionReport {
-    pub fn result_hash(&self) -> u64 {
-        self.event_log.digest()
-    }
-
-    pub fn verify(&self) -> Result<(), qx_core::QxError> {
-        self.event_log.validate()?;
-        ReplayVerifier::verify(self.event_log.events(), &self.ledger)?;
-        Ok(())
-    }
-}
-
-pub struct PortfolioBarEngine<'a> {
-    config: PortfolioBarSessionConfig,
-    markets: Vec<PortfolioBarMarket<'a>>,
-}
-
+use funding::{apply_settlements, prepare_timeline, PreparedTimeline, SettlementContext};
+use margin::{
+    cached_or_other_market_margin, CachedPortfolioMarginSnapshot, OtherMarketMarginQuery,
+};
+pub use model::{
+    PortfolioBarEngine, PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarSessionReport,
+};
+use runtime::{
+    bar_at_or_before, build_runtime, initialize_ledger, invariant, pending_funding_reservation_raw,
+    sum_pending_funding_reservations,
+};
 struct OwnedTimelineEvent {
-    instrument: InstrumentId,
-    bar: Bar,
+    market_index: usize,
+    bar_index: usize,
+    ts: u64,
 }
 
 impl<'a> PortfolioBarEngine<'a> {
-    pub fn new(
-        config: PortfolioBarSessionConfig,
-        markets: Vec<PortfolioBarMarket<'a>>,
-    ) -> Result<Self, qx_core::QxError> {
-        if markets.len() < 2 {
-            return Err(qx_core::QxError::BusinessViolation(
-                "共享 Bar session 至少需要两个市场".into(),
-            ));
-        }
-        if config.account_id.trim().is_empty() || config.initial_cash.raw() <= 0 {
-            return Err(qx_core::QxError::BusinessViolation(
-                "共享 Bar session 账户身份和初始资金必须有效".into(),
-            ));
-        }
-        let currency = config.currency.trim().to_ascii_uppercase();
-        if currency.is_empty() {
-            return Err(qx_core::QxError::BusinessViolation(
-                "共享 Bar session 结算币种不能为空".into(),
-            ));
-        }
-        let mut seen = std::collections::BTreeSet::new();
-        for market in &markets {
-            if !seen.insert(market.instrument.clone()) {
-                return Err(qx_core::QxError::BusinessViolation(format!(
-                    "共享 Bar session 存在重复标的 {}",
-                    market.instrument
-                )));
-            }
-            if market.spec.instrument != market.instrument {
-                return Err(qx_core::QxError::BusinessViolation(
-                    "共享 Bar session 的 market spec 与标的不一致".into(),
-                ));
-            }
-            market.spec.validate()?;
-            market.fee.validate()?;
-            if market.spec.product == qx_core::TradingProduct::Option {
-                return Err(qx_core::QxError::BusinessViolation(
-                    "共享 Bar session 不支持期权：期权合约身份与估值语义尚未建模".into(),
-                ));
-            }
-            super::currency::normalize_and_validate(
-                currency.clone(),
-                &market.instrument,
-                Some(&market.spec),
-            )?;
-            if !DataTier::Bar.supports(market.fill.tier()) {
-                return Err(qx_core::QxError::BusinessViolation(format!(
-                    "市场 {} 的撮合模型需要 {:?} 数据，当前 session 仅接收 Bar",
-                    market.instrument,
-                    market.fill.tier()
-                )));
-            }
-            let quality = QualityGate::check(market.bars);
-            if matches!(quality.verdict(), Verdict::Fail | Verdict::Quarantine) {
-                return Err(qx_core::QxError::Permanent(format!(
-                    "共享 Bar session 输入未通过质量门 {}: {:?}",
-                    market.instrument, quality.issues
-                )));
-            }
-        }
-        let mut config = config;
-        config.currency = currency;
-        Ok(Self { config, markets })
-    }
-
     pub fn run(
         self,
         strategy: &mut dyn BarStrategy,
@@ -180,7 +67,6 @@ impl<'a> PortfolioBarEngine<'a> {
             end,
             events,
             settlements,
-            timestamps,
         } = prepare_timeline(
             &markets,
             &config.funding_bps,
@@ -197,48 +83,65 @@ impl<'a> PortfolioBarEngine<'a> {
         let mut oms = Oms::new();
         let mut budget = PortfolioBudgetState::default();
         let mut next_id = 1_u64;
-        let mut processed = BTreeMap::<InstrumentId, usize>::new();
+        let mut processed = vec![0_usize; runtime.by_index.len()];
+        let mut pending_funding_reservations = Some(0_u128);
         let mut marks = BTreeMap::<InstrumentId, Price>::new();
         let mut mark_timestamps = BTreeMap::<InstrumentId, u64>::new();
         let mut fills = Vec::new();
         let mut fills_by_instrument = runtime
-            .keys()
-            .cloned()
-            .map(|instrument| (instrument, Vec::new()))
+            .by_index
+            .iter()
+            .map(|market| (market.instrument.clone(), Vec::new()))
             .collect::<BTreeMap<_, _>>();
         let mut rejections_by_instrument = runtime
-            .keys()
-            .cloned()
-            .map(|instrument| (instrument, EventLog::new()))
+            .by_index
+            .iter()
+            .map(|market| (market.instrument.clone(), EventLog::new()))
             .collect::<BTreeMap<_, _>>();
         let mut equity = Vec::new();
         let mut funding_by_instrument_raw = BTreeMap::<InstrumentId, i128>::new();
         let mut funding_events_by_instrument = BTreeMap::<InstrumentId, Vec<(u64, i128)>>::new();
 
         let mut event_cursor = 0;
-        for ts in timestamps {
+        let mut settlement_times = settlements.keys().copied().peekable();
+        let mut pending_by_market = Vec::<(usize, u64, Vec<qx_core::Order>)>::new();
+        let mut pending_batch_count;
+        let mut aligned_batch_by_market = vec![usize::MAX; runtime.by_index.len()];
+        let mut touched_batch_markets = Vec::new();
+        loop {
+            let event_ts = events.get(event_cursor).map(|event| event.ts);
+            let settlement_ts = settlement_times.peek().copied();
+            let ts = match (event_ts, settlement_ts) {
+                (None, None) => break,
+                (Some(event_ts), Some(settlement_ts)) => event_ts.min(settlement_ts),
+                (Some(event_ts), None) => event_ts,
+                (None, Some(settlement_ts)) => settlement_ts,
+            };
+            if settlement_ts == Some(ts) {
+                settlement_times.next();
+            }
             if is_cancelled() {
                 return Ok(None);
             }
             let batch_start = event_cursor;
-            while event_cursor < events.len() && events[event_cursor].bar.ts == ts {
+            while event_cursor < events.len() && events[event_cursor].ts == ts {
                 event_cursor += 1;
             }
             let timestamp_events = &events[batch_start..event_cursor];
             if let Some(scheduled) = settlements.get(&ts) {
-                apply_settlements(
+                apply_settlements(SettlementContext {
                     ts,
-                    scheduled,
-                    &config.account_id,
-                    &config.currency,
-                    &specs,
-                    &marks,
-                    &mark_timestamps,
-                    &mut ledger,
-                    &mut log,
-                    &mut funding_by_instrument_raw,
-                    &mut funding_events_by_instrument,
-                )?;
+                    settlements: scheduled,
+                    account_id: &config.account_id,
+                    currency: &config.currency,
+                    specs: &specs,
+                    marks: &marks,
+                    mark_timestamps: &mark_timestamps,
+                    ledger: &mut ledger,
+                    log: &mut log,
+                    totals: &mut funding_by_instrument_raw,
+                    cashflows: &mut funding_events_by_instrument,
+                })?;
             }
             if timestamp_events.is_empty() {
                 let marked_equity = ledger
@@ -251,69 +154,139 @@ impl<'a> PortfolioBarEngine<'a> {
                 equity.push((ts, marked_equity));
                 continue;
             }
-            let mut pending_by_market = BTreeMap::<(InstrumentId, u64), Vec<qx_core::Order>>::new();
+            // Aligned callbacks all share one visible timestamp, so the common case can address
+            // a batch directly by market index. Crossed/unaligned visibility retains the ordered
+            // fallback because one market may then need multiple batches.
+            let mut common_visible_ts = None;
+            let mut aligned_visible_ts = true;
             for event in timestamp_events {
-                let instrument = event.instrument.clone();
-                let market = runtime.get(&instrument).ok_or_else(|| {
-                    qx_core::QxError::Invariant("时间线标的不在 session 配置中".into())
-                })?;
-                let previous_count = processed.get(&instrument).copied().unwrap_or_default();
+                let previous_count = processed[event.market_index];
+                if previous_count == 0 {
+                    continue;
+                }
+                let visible_ts = runtime.by_index[event.market_index].bars[previous_count - 1].ts;
+                if common_visible_ts.is_some_and(|common| common != visible_ts) {
+                    aligned_visible_ts = false;
+                    break;
+                }
+                common_visible_ts = Some(visible_ts);
+            }
+            pending_batch_count = 0;
+            touched_batch_markets.clear();
+            let mut unaligned_pending = BTreeMap::<(usize, u64), Vec<qx_core::Order>>::new();
+            for event in timestamp_events {
+                let market = runtime
+                    .by_index
+                    .get(event.market_index)
+                    .ok_or_else(|| invariant("timeline market missing"))?;
+                let instrument = &market.instrument;
+                let bar = market
+                    .bars
+                    .get(event.bar_index)
+                    .ok_or_else(|| invariant("timeline Bar index missing"))?;
+                let previous_count = processed[event.market_index];
                 if previous_count > 0 {
                     let history = &market.bars[..previous_count];
-                    let visible_ts = history.last().expect("previous_count is positive").ts;
-                    let cash = ledger.cash_balances_for(&config.account_id);
-                    let reserved = runtime.values().fold(0_i128, |total, market| {
-                        total.saturating_add(market.matcher.pending_funding_reservation_raw())
-                    });
+                    let visible_ts = history
+                        .last()
+                        .ok_or_else(|| invariant("processed Bar history missing"))?
+                        .ts;
+                    let cash = ledger.cash_balances_for_ref(&config.account_id);
+                    let reserved =
+                        pending_funding_reservation_raw(&runtime, pending_funding_reservations);
                     let free_cash = ledger
                         .cash_for(&config.account_id, &config.currency)
                         .saturating_sub(reserved)
                         .max(0);
-                    strategy.update_account_state(&cash, Some(free_cash));
+                    strategy.update_account_state(cash, Some(free_cash));
                     let position = ledger
-                        .position_for(&config.account_id, &instrument)
+                        .position_for(&config.account_id, instrument)
                         .quantity
                         .raw();
                     let orders = strategy.on_bar_orders_with_margin_checked(
                         history,
-                        &instrument,
-                        event.bar.ts,
+                        instrument,
+                        bar.ts,
                         position,
                         Some(free_cash),
                     )?;
                     for order in orders {
-                        if !runtime.contains_key(&order.instrument) {
+                        let Some(&order_market_index) =
+                            runtime.index_by_instrument.get(&order.instrument)
+                        else {
                             return Err(qx_core::QxError::BusinessViolation(format!(
                                 "策略订单标的 {} 不属于共享 Bar session",
                                 order.instrument
                             )));
+                        };
+                        if aligned_visible_ts {
+                            let batch_index = aligned_batch_by_market[order_market_index];
+                            let batch_index = if batch_index == usize::MAX {
+                                if pending_batch_count == pending_by_market.len() {
+                                    pending_by_market.push((
+                                        order_market_index,
+                                        visible_ts,
+                                        Vec::new(),
+                                    ));
+                                }
+                                let batch = &mut pending_by_market[pending_batch_count];
+                                batch.0 = order_market_index;
+                                batch.1 = visible_ts;
+                                batch.2.clear();
+                                aligned_batch_by_market[order_market_index] = pending_batch_count;
+                                touched_batch_markets.push(order_market_index);
+                                pending_batch_count += 1;
+                                pending_batch_count - 1
+                            } else {
+                                batch_index
+                            };
+                            pending_by_market[batch_index].2.push(order);
+                        } else {
+                            unaligned_pending
+                                .entry((order_market_index, visible_ts))
+                                .or_default()
+                                .push(order);
                         }
-                        pending_by_market
-                            .entry((order.instrument.clone(), visible_ts))
-                            .or_default()
-                            .push(order);
                     }
                 }
             }
 
-            let mut admission_batches = pending_by_market.into_iter().collect::<Vec<_>>();
-            admission_batches.sort_by(|left, right| {
-                let left_priority = runtime[&left.0 .0].priority;
-                let right_priority = runtime[&right.0 .0].priority;
-                left_priority
-                    .cmp(&right_priority)
-                    .then_with(|| left.0 .0.cmp(&right.0 .0))
-                    .then_with(|| left.0 .1.cmp(&right.0 .1))
+            if !aligned_visible_ts {
+                for ((market_index, visible_ts), orders) in unaligned_pending {
+                    if pending_batch_count == pending_by_market.len() {
+                        pending_by_market.push((market_index, visible_ts, orders));
+                    } else {
+                        let batch = &mut pending_by_market[pending_batch_count];
+                        batch.0 = market_index;
+                        batch.1 = visible_ts;
+                        batch.2 = orders;
+                    }
+                    pending_batch_count += 1;
+                }
+            }
+            for market_index in touched_batch_markets.drain(..) {
+                aligned_batch_by_market[market_index] = usize::MAX;
+            }
+
+            pending_by_market[..pending_batch_count].sort_by(|left, right| {
+                let left_market = &runtime.by_index[left.0];
+                let right_market = &runtime.by_index[right.0];
+                left_market
+                    .priority
+                    .cmp(&right_market.priority)
+                    .then_with(|| left_market.instrument.cmp(&right_market.instrument))
+                    .then_with(|| left.1.cmp(&right.1))
             });
             let mut admitted = Vec::new();
             let mut batch_reserved_raw = 0_i128;
-            for ((instrument, visible_ts), orders) in admission_batches {
-                let market = runtime.get(&instrument).expect("market validated");
-                let visible_close = market
-                    .bars
-                    .iter()
-                    .rev()
-                    .find(|bar| bar.ts <= visible_ts)
+            let mut visible_marks_cache: Option<(u64, BTreeMap<InstrumentId, Price>)> = None;
+            let mut visible_margin_cache: Option<CachedPortfolioMarginSnapshot> = None;
+            for (market_index, visible_ts, orders) in
+                pending_by_market.iter_mut().take(pending_batch_count)
+            {
+                let market = &runtime.by_index[*market_index];
+                let instrument = &market.instrument;
+                let visible_close = bar_at_or_before(market.bars, *visible_ts)
                     .map(|bar| bar.close)
                     .ok_or_else(|| {
                         qx_core::QxError::BusinessViolation(format!(
@@ -321,31 +294,53 @@ impl<'a> PortfolioBarEngine<'a> {
                             instrument
                         ))
                     })?;
-                let visible_marks = runtime
-                    .iter()
-                    .filter_map(|(candidate_id, candidate)| {
-                        candidate
-                            .bars
-                            .iter()
-                            .rev()
-                            .find(|bar| bar.ts <= visible_ts)
-                            .map(|bar| (candidate_id.clone(), Price::from_raw(bar.close)))
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                let other_pending = runtime
-                    .iter()
-                    .filter(|(key, _)| **key != instrument)
-                    .fold(0_i128, |total, (_, market)| {
-                        total.saturating_add(market.matcher.pending_funding_reservation_raw())
-                    })
-                    .saturating_add(batch_reserved_raw);
-                let other_margin = other_market_margin(
-                    &ledger,
-                    &config.account_id,
-                    &instrument,
-                    &specs,
-                    &visible_marks,
-                    &runtime,
+                if visible_marks_cache
+                    .as_ref()
+                    .map(|(cached_ts, _)| *cached_ts)
+                    != Some(*visible_ts)
+                {
+                    let visible_marks = runtime
+                        .by_index
+                        .iter()
+                        .filter_map(|candidate| {
+                            bar_at_or_before(candidate.bars, *visible_ts).map(|bar| {
+                                (candidate.instrument.clone(), Price::from_raw(bar.close))
+                            })
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    visible_marks_cache = Some((*visible_ts, visible_marks));
+                }
+                let visible_marks = &visible_marks_cache
+                    .as_ref()
+                    .ok_or_else(|| invariant("visible marks cache missing"))?
+                    .1;
+                let own_pending = market.matcher.pending_funding_reservation_sum_raw_exact();
+                let other_pending = match (pending_funding_reservations, own_pending) {
+                    (Some(total), Some(own)) => {
+                        total.saturating_sub(own).min(i128::MAX as u128) as i128
+                    }
+                    _ => runtime
+                        .by_index
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != *market_index)
+                        .fold(0_i128, |total, (_, candidate)| {
+                            total
+                                .saturating_add(candidate.matcher.pending_funding_reservation_raw())
+                        }),
+                }
+                .saturating_add(batch_reserved_raw);
+                let other_margin = cached_or_other_market_margin(
+                    &mut visible_margin_cache,
+                    OtherMarketMarginQuery {
+                        visible_ts: *visible_ts,
+                        ledger: &ledger,
+                        account_id: &config.account_id,
+                        target: instrument,
+                        specs: &specs,
+                        marks: visible_marks,
+                        markets: &runtime,
+                    },
                 )?;
                 let derivative_spec = market
                     .spec
@@ -353,14 +348,14 @@ impl<'a> PortfolioBarEngine<'a> {
                     .supports_leverage()
                     .then_some(&market.spec);
                 let position = ledger
-                    .position_for(&config.account_id, &instrument)
+                    .position_for(&config.account_id, instrument)
                     .quantity
                     .raw();
                 let previous_log_len = log.events().len();
                 let accepted = order_admission::admit_orders(OrderAdmissionInput {
                     orders,
                     account_id: &config.account_id,
-                    instrument: &instrument,
+                    instrument,
                     currency: &config.currency,
                     ts,
                     position,
@@ -376,7 +371,7 @@ impl<'a> PortfolioBarEngine<'a> {
                     matcher: &market.matcher,
                     other_pending_funding_raw: other_pending,
                     other_market_margin_raw: other_margin,
-                    portfolio_marks: Some(&visible_marks),
+                    portfolio_marks: Some(visible_marks),
                     portfolio_specs: Some(&specs),
                     risk: &config.risk,
                     fx_rates: &BTreeMap::new(),
@@ -386,8 +381,8 @@ impl<'a> PortfolioBarEngine<'a> {
                     log: &mut log,
                 })?;
                 let projection = rejections_by_instrument
-                    .get_mut(&instrument)
-                    .expect("rejection projection exists");
+                    .get_mut(instrument)
+                    .ok_or_else(|| invariant("rejection projection missing"))?;
                 for event in log.events()[previous_log_len..].iter() {
                     if matches!(event.kind, EventKind::Rejected { .. }) {
                         let seq = projection.alloc_seq();
@@ -402,10 +397,10 @@ impl<'a> PortfolioBarEngine<'a> {
                 for order in accepted {
                     batch_reserved_raw =
                         batch_reserved_raw.saturating_add(order.funding_reservation_raw);
-                    admitted.push((instrument.clone(), order));
+                    admitted.push((*market_index, order));
                 }
             }
-            for (instrument, accepted) in admitted {
+            for (market_index, accepted) in admitted {
                 let accepted_seq = log.alloc_seq();
                 log.append(Event::new(
                     accepted_seq,
@@ -416,9 +411,10 @@ impl<'a> PortfolioBarEngine<'a> {
                         venue_order_id: None,
                     },
                 ));
-                runtime
-                    .get_mut(&instrument)
-                    .expect("matcher exists")
+                pending_funding_reservations = pending_funding_reservations.and_then(|total| {
+                    total.checked_add(accepted.funding_reservation_raw.max(0) as u128)
+                });
+                runtime.by_index[market_index]
                     .matcher
                     .submit_with_funding_reservation_at(
                         accepted.order,
@@ -426,13 +422,31 @@ impl<'a> PortfolioBarEngine<'a> {
                         accepted.funding_reservation_raw,
                     );
             }
+            if pending_funding_reservations.is_none() {
+                pending_funding_reservations = sum_pending_funding_reservations(&runtime);
+            }
 
             for event in timestamp_events {
-                let instrument = event.instrument.clone();
-                let market = runtime.get_mut(&instrument).expect("market validated");
-                let market_fills = market.matcher.on_bar(&event.bar, ts);
+                let market = runtime
+                    .by_index
+                    .get_mut(event.market_index)
+                    .ok_or_else(|| invariant("timeline market missing"))?;
+                let before_pending = market.matcher.pending_funding_reservation_sum_raw_exact();
+                let bar = market
+                    .bars
+                    .get(event.bar_index)
+                    .ok_or_else(|| invariant("timeline Bar index missing"))?;
+                let market_fills = market.matcher.on_bar(bar, ts);
+                let after_pending = market.matcher.pending_funding_reservation_sum_raw_exact();
+                pending_funding_reservations =
+                    match (pending_funding_reservations, before_pending, after_pending) {
+                        (Some(total), Some(before), Some(after)) => total
+                            .checked_sub(before)
+                            .and_then(|value| value.checked_add(after)),
+                        _ => None,
+                    };
                 for fill in market_fills {
-                    fill_application::apply(FillApplicationInput {
+                    let (_, stored) = fill_application::apply(FillApplicationInput {
                         fill,
                         instrument_spec: Some(&market.spec),
                         cash_account: !market.spec.product.supports_leverage(),
@@ -447,16 +461,23 @@ impl<'a> PortfolioBarEngine<'a> {
                         log: &mut log,
                         fills: &mut fills,
                     })?;
-                    let stored = fills.last().expect("fill reducer appended fill").clone();
-                    fills_by_instrument
-                        .get_mut(&instrument)
-                        .expect("market fill projection exists")
-                        .push(stored);
+                    let fills_for_market = fills_by_instrument
+                        .get_mut(&market.instrument)
+                        .ok_or_else(|| invariant("fill projection missing"))?;
+                    fills_for_market.push(stored);
                 }
-                let previous_count = processed.get(&instrument).copied().unwrap_or_default();
-                processed.insert(instrument.clone(), previous_count + 1);
-                marks.insert(instrument, Price::from_raw(event.bar.close));
-                mark_timestamps.insert(event.instrument.clone(), event.bar.ts);
+                processed[event.market_index] += 1;
+                let mark = Price::from_raw(bar.close);
+                if let Some(current) = marks.get_mut(&market.instrument) {
+                    *current = mark;
+                } else {
+                    marks.insert(market.instrument.clone(), mark);
+                }
+                if let Some(current) = mark_timestamps.get_mut(&market.instrument) {
+                    *current = bar.ts;
+                } else {
+                    mark_timestamps.insert(market.instrument.clone(), bar.ts);
+                }
                 let marked_equity = ledger
                     .valuate(
                         &ValuationContext::spot(&config.account_id, &marks, &config.currency)
@@ -465,6 +486,9 @@ impl<'a> PortfolioBarEngine<'a> {
                     .equity
                     .raw();
                 equity.push((ts, marked_equity));
+                if pending_funding_reservations.is_none() {
+                    pending_funding_reservations = sum_pending_funding_reservations(&runtime);
+                }
             }
         }
         log.validate()?;

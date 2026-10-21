@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 pub enum RegistryError {
     Duplicate(String),
     NoProvider,
+    Invariant(String),
     Provider(ProviderError),
 }
 
@@ -210,7 +211,11 @@ impl ProviderRegistry {
         let mut last_error = None;
         for id in candidates {
             retry_chain.push(id.clone());
-            let registered = self.providers.get(&id).expect("candidate is registered");
+            let registered = self.providers.get(&id).ok_or_else(|| {
+                RegistryError::Invariant(format!(
+                    "candidate provider {id} disappeared from registry"
+                ))
+            })?;
             if let Err(error) = registered.rate_gate.wait_turn() {
                 last_error = Some(error);
                 continue;

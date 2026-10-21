@@ -5,7 +5,7 @@
 
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::retry;
-use qx_core::{Event, EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
+use qx_core::{EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
 use qx_scheduler::{JobRun, JobSpec, JobStatus, Scheduler};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,26 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
+mod audit_sync;
+mod consumer_cursor;
+mod consumer_state_store;
+mod control_queue;
+mod event_log_rules;
+mod job_queue;
+mod lease_rules;
+mod outbox_page;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod schema_migrations;
+mod segmented_event_log;
 mod state_envelope;
+use audit_sync::audit_sync_prefix_len;
+use consumer_cursor::validate_consumer_cursor_advance;
+pub use consumer_state_store::{ConsumerStateStore, TransactionalConsumerStateStore};
+pub use control_queue::ControlCommandQueueBackend;
+use event_log_rules::validate_event_log_name as validate_segment_name;
+use event_log_rules::{validate_event_log, validate_event_log_name};
+pub use job_queue::JobQueueBackend;
+pub use segmented_event_log::SegmentedEventLogStore;
 pub(crate) use state_envelope::JsonStateEnvelope;
 use state_envelope::{
     acquire_storage_lock, encode_state_json, read_json_file, read_state_json,
@@ -27,22 +46,22 @@ use state_envelope::{
 // 公开路径逐字不变（其它 crate 依赖该路径）。
 mod file;
 pub use file::{FileConsumerStateStore, FileJobQueue, FileOutboxStore, JsonStateStore};
-
 #[cfg(feature = "sqlite")]
 mod sqlite;
 #[cfg(feature = "sqlite")]
 pub use sqlite::{
-    SqliteAuditStore, SqliteConsumerStateStore, SqliteControlCommandQueue, SqliteControlStore,
-    SqliteEventLogStore, SqliteJobQueue, SqliteOutboxStore, SqliteSnapshotStore, SqliteTokenBucket,
+    adopt_legacy_sqlite_schema, SqliteAuditStore, SqliteConsumerStateStore,
+    SqliteControlCommandQueue, SqliteControlStore, SqliteEventLogStore, SqliteJobQueue,
+    SqliteOutboxStore, SqliteSnapshotStore, SqliteTokenBucket,
 };
 
 #[cfg(feature = "postgres")]
 mod postgres;
 #[cfg(feature = "postgres")]
 pub use postgres::{
-    PostgresAuditStore, PostgresConsumerStateStore, PostgresControlCommandQueue,
-    PostgresControlStore, PostgresEventLogStore, PostgresJobQueue, PostgresOutboxStore,
-    PostgresSnapshotStore, PostgresStorage,
+    adopt_legacy_postgres_schema, PostgresAuditStore, PostgresConsumerStateStore,
+    PostgresControlCommandQueue, PostgresControlStore, PostgresEventLogStore, PostgresJobQueue,
+    PostgresOutboxStore, PostgresSnapshotStore, PostgresStorage,
 };
 
 mod wait_budget;
@@ -166,200 +185,43 @@ impl EventLogFileStore {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct SegmentedEventLogStore {
-    root: PathBuf,
-    max_events_per_segment: usize,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-struct SegmentManifest {
-    schema_version: u32,
-    name: String,
-    event_count: usize,
-    next_seq: u64,
-    digest: u64,
-    segments: Vec<String>,
-}
-
-impl SegmentedEventLogStore {
-    pub fn new(
-        root: impl Into<PathBuf>,
-        max_events_per_segment: usize,
-    ) -> Result<Self, StorageError> {
-        if max_events_per_segment == 0 {
-            return Err(StorageError::Conflict(
-                "事件日志 segment 大小必须为正".into(),
-            ));
-        }
-        Ok(Self {
-            root: root.into(),
-            max_events_per_segment,
-        })
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
-        validate_segment_name(name)?;
-        log.validate().map_err(StorageError::Core)?;
-        std::fs::create_dir_all(self.root.join("segments"))
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(format!(".{name}.segments.lock")))?;
-        if let Some(existing) = self.read_if_exists(name)? {
-            if existing.len() > log.len()
-                || existing
-                    .events()
-                    .iter()
-                    .zip(log.events())
-                    .any(|(old, new)| old != new)
-            {
-                return Err(StorageError::NonAppendOnly(name.into()));
-            }
-        }
-
-        let mut segments = Vec::new();
-        for (index, chunk) in log.events().chunks(self.max_events_per_segment).enumerate() {
-            let segment_name = format!("{name}-{index:016}.jsonl");
-            let segment_path = self.root.join("segments").join(&segment_name);
-            let content = chunk
-                .iter()
-                .map(|event| {
-                    serde_json::to_string(event)
-                        .map(|json| format!("{json}\n"))
-                        .map_err(|error| StorageError::Io(error.to_string()))
-                })
-                .collect::<Result<String, _>>()?;
-            if segment_path.exists() {
-                let old = std::fs::read_to_string(&segment_path)
-                    .map_err(|error| StorageError::Io(error.to_string()))?;
-                if old != content {
-                    let active_segment_can_extend = old.len() < content.len()
-                        && old.lines().count() < self.max_events_per_segment
-                        && content.starts_with(&old);
-                    if !active_segment_can_extend {
-                        return Err(StorageError::NonAppendOnly(name.into()));
-                    }
-                    // Only the last, not-yet-full segment may grow. The
-                    // manifest lock makes this a single-writer append
-                    // boundary; full segments remain immutable forever.
-                    write_atomic_path(&segment_path, &self.root, &content)?;
-                }
-            } else {
-                write_atomic_path(&segment_path, &self.root, &content)?;
-            }
-            segments.push(segment_name);
-        }
-        let manifest = SegmentManifest {
-            schema_version: 1,
-            name: name.into(),
-            event_count: log.len(),
-            next_seq: log.next_seq(),
-            digest: log.digest(),
-            segments,
-        };
-        let manifest_path = self.manifest_path(name)?;
-        write_atomic_path(
-            &manifest_path,
-            &self.root,
-            &serde_json::to_string_pretty(&manifest)
-                .map_err(|error| StorageError::Io(error.to_string()))?,
-        )?;
-        Ok(manifest_path)
-    }
-
-    pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
-        self.read_if_exists(name)?
-            .ok_or_else(|| StorageError::NotFound(format!("segmented event log {name} 不存在")))
-    }
-
-    pub fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
-        validate_segment_name(name)?;
-        let path = self.manifest_path(name)?;
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        let manifest: SegmentManifest = serde_json::from_str(&content)
-            .map_err(|error| StorageError::Io(format!("segment manifest 无效: {error}")))?;
-        if manifest.schema_version != 1
-            || manifest.name != name
-            || manifest.segments.is_empty() != (manifest.event_count == 0)
-        {
-            return Err(StorageError::Conflict(
-                "segment manifest 身份或版本非法".into(),
-            ));
-        }
-        let mut log = EventLog::new();
-        for segment_name in &manifest.segments {
-            if !segment_name.starts_with(&format!("{name}-")) || !segment_name.ends_with(".jsonl") {
-                return Err(StorageError::InvalidName(segment_name.clone()));
-            }
-            let segment = std::fs::read_to_string(self.root.join("segments").join(segment_name))
-                .map_err(|error| StorageError::Io(error.to_string()))?;
-            for line in segment.lines().filter(|line| !line.trim().is_empty()) {
-                let event: Event = serde_json::from_str(line)
-                    .map_err(|error| StorageError::Io(format!("segment event 无效: {error}")))?;
-                log.append(event);
-            }
-        }
-        log.validate().map_err(StorageError::Core)?;
-        if log.len() != manifest.event_count
-            || log.next_seq() != manifest.next_seq
-            || log.digest() != manifest.digest
-        {
-            return Err(StorageError::Conflict(
-                "segment manifest 与事件内容摘要不一致".into(),
-            ));
-        }
-        Ok(Some(log))
-    }
-
-    fn manifest_path(&self, name: &str) -> Result<PathBuf, StorageError> {
-        validate_segment_name(name)?;
-        Ok(self.root.join(format!("{name}.manifest.json")))
-    }
-}
-
 impl EventLogStore for SegmentedEventLogStore {
     fn save(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        self.validate_save_request(name, log)?;
         self.write(name, log).map(|_| ()).map_err(Into::into)
     }
 
     fn load(&self, name: &str) -> QxResult<EventLog> {
+        self.validate_load_request(name)?;
         self.read(name).map_err(Into::into)
     }
 }
 
-fn validate_segment_name(name: &str) -> Result<(), StorageError> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || !name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        return Err(StorageError::InvalidName(name.into()));
-    }
-    Ok(())
-}
-
 /// 给恢复编排器用的轻量接口，隐藏具体文件目录。
 pub trait EventLogStore {
+    fn validate_save_request(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        validate_event_log_name(name)?;
+        validate_event_log(log)?;
+        Ok(())
+    }
+
+    fn validate_load_request(&self, name: &str) -> QxResult<()> {
+        validate_event_log_name(name)?;
+        Ok(())
+    }
+
     fn save(&self, name: &str, log: &EventLog) -> QxResult<()>;
     fn load(&self, name: &str) -> QxResult<EventLog>;
 }
 
 impl EventLogStore for EventLogFileStore {
     fn save(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        self.validate_save_request(name, log)?;
         self.write(name, log).map(|_| ()).map_err(Into::into)
     }
 
     fn load(&self, name: &str) -> QxResult<EventLog> {
+        self.validate_load_request(name)?;
         self.read(name).map_err(Into::into)
     }
 }
@@ -423,6 +285,10 @@ impl OutboxEvent {
 }
 
 /// 把 EventLog 的 `[projection_cursor, +∞)` 区间投影成 Outbox 事件。
+/// `partition_key` 是稳定的来源日志名，`sequence` 携带 EventLog 事件序号；
+/// correlation id 只作为 trace id，不参与消息分区。EventLog 当前按时间/优先级/序号排序，
+/// 尚未承诺 append 顺序上的序号严格单调。已持久化的旧 Outbox 仍可按旧分区消费，
+/// consumer 的全局 `event_id` 集合在过渡期间继续保护跨分区重复。
 /// 游标前先在序号上过滤再序列化：先全量序列化后按游标丢弃会让每笔追加都为已投递的事实
 /// 付一遍 serde 与 `validate`，代价随日志长度线性增长。
 pub fn project_event_log_to_outbox(
@@ -439,11 +305,7 @@ pub fn project_event_log_to_outbox(
             let outbox = OutboxEvent {
                 event_id: format!("{log_name}:{}", event.seq),
                 topic: "qx.eventlog".into(),
-                partition_key: if event.correlation_id.is_empty() {
-                    log_name.into()
-                } else {
-                    event.correlation_id.clone()
-                },
+                partition_key: log_name.into(),
                 sequence: event.seq,
                 schema_version: OutboxEvent::LATEST_SCHEMA_VERSION,
                 trace_id: event.correlation_id.clone(),
@@ -488,6 +350,44 @@ pub const fn outbox_exhausted(attempts: u32) -> bool {
 
 /// 文件、SQLite、PostgreSQL 和 MQ relay 共用的出站事件语义。
 pub trait OutboxStore: Send + Sync {
+    /// 追加前的协议无关事实校验；后端在进入各自事务/锁之前调用此默认步骤。
+    fn validate_append_request(&self, event: &OutboxEvent) -> Result<(), StorageError> {
+        event.validate()
+    }
+
+    fn validate_existing_event(
+        existing: &OutboxEvent,
+        incoming: &OutboxEvent,
+    ) -> Result<(), StorageError> {
+        if existing.same_fact(incoming) {
+            return Ok(());
+        }
+        Err(StorageError::Conflict(format!(
+            "event_id {} 已被不同 Outbox 事件占用",
+            incoming.event_id
+        )))
+    }
+
+    /// Claim 的协议无关参数校验；事件存在性仍由各后端按自身存储执行。
+    fn validate_claim_request(
+        &self,
+        event_id: &str,
+        owner: &str,
+        lease_seconds: u64,
+    ) -> Result<(), StorageError> {
+        validate_outbox_name(event_id, "event_id")?;
+        if owner.trim().is_empty() || lease_seconds == 0 {
+            return Err(StorageError::Conflict(
+                "Outbox worker 和租约时长不能为空".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_finish_request(&self, event_id: &str) -> Result<(), StorageError> {
+        validate_outbox_name(event_id, "event_id")
+    }
+
     fn append_outbox(&self, event: OutboxEvent) -> Result<(), StorageError>;
     /// 端出至多 `limit` 条可投递的事件：已持有有效租约的、以及**已用尽投递预算的**都排到最后，
     /// 后者仍留在候选集里等人工 `claim`/`ack`（K2 的出口），只是不再占住页首。
@@ -694,23 +594,6 @@ impl DeadLetterRecord {
     }
 }
 
-pub trait ConsumerStateStore: Send + Sync {
-    fn load_checkpoint(
-        &self,
-        group_id: &str,
-        topic: &str,
-        partition_key: &str,
-    ) -> Result<Option<ConsumerCheckpoint>, StorageError>;
-    fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError>;
-    fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError>;
-    fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError>;
-    fn dead_letters(
-        &self,
-        group_id: &str,
-        limit: usize,
-    ) -> Result<Vec<DeadLetterRecord>, StorageError>;
-}
-
 /// A deterministic projection produced by an in-process consumer reducer.
 ///
 /// The projection is deliberately a durable JSON value rather than an
@@ -787,26 +670,6 @@ impl ConsumerProjection {
 /// consumer checkpoint to commit atomically. The read method is intentionally
 /// small: domain reducers can deserialize the projection into their own model
 /// without coupling qx-storage to business tables.
-pub trait TransactionalConsumerStateStore: ConsumerStateStore {
-    fn commit_processed_with_projection(
-        &self,
-        checkpoint: ConsumerCheckpoint,
-        projection: ConsumerProjection,
-    ) -> Result<(), StorageError>;
-
-    fn append_dead_letter_and_commit(
-        &self,
-        record: DeadLetterRecord,
-        checkpoint: ConsumerCheckpoint,
-    ) -> Result<(), StorageError>;
-
-    fn load_projection(
-        &self,
-        group_id: &str,
-        projection_key: &str,
-    ) -> Result<Option<ConsumerProjection>, StorageError>;
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ConsumerOutcome {
     Applied,
@@ -1116,35 +979,6 @@ pub struct ControlCommandQueue {
     root: PathBuf,
 }
 
-/// 文件/SQLite/MQ 控制命令队列必须共同实现的语义边界。
-pub trait ControlCommandQueueBackend: Send + Sync {
-    fn enqueue_command(
-        &self,
-        command: ControlCommand,
-        enqueued_ts: u64,
-    ) -> Result<PathBuf, StorageError>;
-    fn available_commands(&self, now: u64) -> Result<Vec<QueuedControlCommand>, StorageError>;
-    fn claim_command(
-        &self,
-        command_id: u64,
-        owner: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<ControlCommandLease, StorageError>;
-    fn ack_command_at(
-        &self,
-        command_id: u64,
-        owner: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<PathBuf, StorageError>;
-    /// 尚未确认（未 ack）的全部命令，忽略活跃租约。默认实现把 `available`
-    /// 的时间推到上限，使文件/SQLite/PostgreSQL 后端共享同一“待清理”语义。
-    fn pending_commands(&self) -> Result<Vec<QueuedControlCommand>, StorageError> {
-        self.available_commands(u64::MAX)
-    }
-}
-
 impl ControlCommandQueue {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -1159,9 +993,7 @@ impl ControlCommandQueue {
         command: ControlCommand,
         enqueued_ts: u64,
     ) -> Result<PathBuf, StorageError> {
-        command
-            .validate()
-            .map_err(|error| StorageError::Conflict(format!("控制命令非法: {error:?}")))?;
+        self.validate_enqueue_request(&command)?;
         let queued = QueuedControlCommand {
             command,
             enqueued_ts,
@@ -1175,13 +1007,8 @@ impl ControlCommandQueue {
         )?;
         if path.exists() {
             let existing = self.read_json::<QueuedControlCommand>(&path)?;
-            if existing.command == queued.command {
-                return Ok(path);
-            }
-            return Err(StorageError::Conflict(format!(
-                "command_id {} 已被不同命令占用",
-                queued.command.command_id
-            )));
+            self.validate_existing_command(&existing.command, &queued.command)?;
+            return Ok(path);
         }
         write_atomic_path(
             &path,
@@ -1217,7 +1044,7 @@ impl ControlCommandQueue {
                 commands.push(queued);
             }
         }
-        commands.sort_by_key(|queued| (queued.enqueued_ts, queued.command.command_id));
+        commands.sort_by(crate::control_queue::compare_control_command_order);
         Ok(commands)
     }
 
@@ -1246,11 +1073,7 @@ impl ControlCommandQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<ControlCommandLease, StorageError> {
-        if command_id == 0 || owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "command_id、worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(command_id, owner, lease_seconds)?;
         self.ensure_dirs()?;
         let _claim_lock = self.acquire_claim_lock(command_id)?;
         let command_path = self.command_path(command_id)?;
@@ -1258,41 +1081,37 @@ impl ControlCommandQueue {
             return Err(StorageError::NotFound(format!("command_id {command_id}")));
         }
         let lease_path = self.lease_path(command_id)?;
-        let mut fencing_token = 1;
-        if lease_path.exists() {
+        let current = if lease_path.exists() {
             let current: ControlCommandLease = self.read_json(&lease_path)?;
-            if current.expires_ts > now && current.owner != owner {
-                return Err(StorageError::LeaseHeld {
-                    run_id: command_id,
-                    owner: current.owner,
-                });
-            }
             if current.expires_ts <= now {
-                fencing_token = current.fencing_token.saturating_add(1).max(1);
                 std::fs::remove_file(&lease_path)
                     .map_err(|error| StorageError::Io(error.to_string()))?;
-            } else if current.owner == owner {
-                let lease = ControlCommandLease {
-                    command_id,
-                    owner: owner.into(),
-                    expires_ts: now.saturating_add(lease_seconds),
-                    fencing_token: current.fencing_token.max(1),
-                };
-                write_atomic_path(
-                    &lease_path,
-                    &self.root,
-                    &serde_json::to_string(&lease)
-                        .map_err(|error| StorageError::Io(error.to_string()))?,
-                )?;
-                return Ok(lease);
             }
-        }
+            Some(crate::lease_rules::LeaseSnapshot {
+                owner: current.owner,
+                expires_ts: current.expires_ts,
+                fencing_token: current.fencing_token,
+            })
+        } else {
+            None
+        };
+        let fencing_token =
+            crate::lease_rules::claim_fencing_token(current.as_ref(), owner, now, command_id)?;
         let lease = ControlCommandLease {
             command_id,
             owner: owner.into(),
             expires_ts: now.saturating_add(lease_seconds),
             fencing_token,
         };
+        if current.as_ref().is_some_and(|lease| lease.expires_ts > now) {
+            write_atomic_path(
+                &lease_path,
+                &self.root,
+                &serde_json::to_string(&lease)
+                    .map_err(|error| StorageError::Io(error.to_string()))?,
+            )?;
+            return Ok(lease);
+        }
         let mut file = std::fs::OpenOptions::new();
         file.write(true).create_new(true);
         let mut handle = file.open(&lease_path).map_err(|error| match error.kind() {
@@ -1426,6 +1245,9 @@ pub struct AuditEntry {
     pub entry_hash: u64,
 }
 
+/// Return the durable prefix shared by a backend audit chain and the control-plane snapshot.
+/// A longer durable chain is valid when the complete common prefix still matches: another
+/// process may have committed first, so length alone is never evidence of a fork.
 #[derive(Clone, Debug)]
 pub struct AuditFileStore {
     root: PathBuf,
@@ -1468,21 +1290,7 @@ impl AuditFileStore {
         let _lock = acquire_storage_lock(self.root.join("audit.append.lock"))?;
         let existing = self.read()?;
         let records = plane.audit();
-        // 只校验公共前缀，不能拦"链比请求更长"。file 后端持锁全程串行，理论上碰不到
-        // 并发交错；但 sqlite/postgres 在控制面事务 commit 之后才调本方法，两进程并发时
-        // 持久化链可能已经比本地那份 plane 更长，那种情况要按幂等空操作收口而不是报
-        // Conflict。三后端这里必须同一口径，否则同一份配置换后端会得到不同结论。
-        let common = existing.len().min(records.len());
-        if existing
-            .iter()
-            .take(common)
-            .zip(records.iter().take(common))
-            .any(|(entry, record)| entry.record != *record)
-        {
-            return Err(StorageError::Conflict(
-                "控制面审计与持久化审计前缀不一致".into(),
-            ));
-        }
+        let common = audit_sync_prefix_len(&existing, records, "控制面审计与持久化审计前缀不一致")?;
         let mut appended = 0;
         for record in records.iter().skip(common) {
             self.append_unlocked(record.clone())?;
@@ -1543,34 +1351,6 @@ fn validate_audit_chain(entries: &[AuditEntry]) -> Result<(), StorageError> {
         previous_hash = entry.entry_hash;
     }
     Ok(())
-}
-
-/// 可替换任务队列契约。数据库/消息队列实现必须保留幂等键、租约、过期接管和确认语义。
-pub trait JobQueueBackend {
-    fn enqueue_job(
-        &self,
-        job: JobSpec,
-        run: JobRun,
-        enqueued_ts: u64,
-    ) -> Result<PathBuf, StorageError>;
-    fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError>;
-    fn claim_job(
-        &self,
-        run_id: u64,
-        worker: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<JobLease, StorageError>;
-    /// 带 fencing token 的 ack 是唯一入口：租约被抢占后拿不到当前 token 就 ack 不掉，
-    /// 旧持有者不能把一个已经不属于自己的 run 标成已完成。无 token 的旧形已删（V13 R6-B）。
-    fn ack_job_at(
-        &self,
-        run_id: u64,
-        worker: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<PathBuf, StorageError>;
-    fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1656,6 +1436,13 @@ impl FileTokenBucket {
 }
 
 #[cfg(test)]
+pub(crate) fn test_temp_dir() -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-temp");
+    std::fs::create_dir_all(&path).expect("create isolated qx-storage test directory");
+    path
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use qx_control::{CommandKind, ControlCommand, Permission};
@@ -1665,7 +1452,7 @@ mod tests {
 
     #[test]
     fn file_store_round_trips_and_rejects_path_escape() {
-        let root = std::env::temp_dir().join(format!("qianxing-storage-{}", std::process::id()));
+        let root = crate::test_temp_dir().join(format!("qianxing-storage-{}", std::process::id()));
         let store = EventLogFileStore::new(&root);
         let mut log = EventLog::new();
         let seq = log.alloc_seq();
@@ -1690,7 +1477,7 @@ mod tests {
 
     #[test]
     fn segmented_event_store_is_append_only_and_manifest_verified() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-segmented-storage-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1729,7 +1516,7 @@ mod tests {
 
     #[test]
     fn event_log_store_does_not_silently_overwrite_concurrent_extensions() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-event-concurrent-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1777,7 +1564,7 @@ mod tests {
 
     #[test]
     fn control_state_round_trips_after_restart() {
-        let root = std::env::temp_dir().join(format!("qianxing-state-{}", std::process::id()));
+        let root = crate::test_temp_dir().join(format!("qianxing-state-{}", std::process::id()));
         let store = JsonStateStore::new(&root);
         store
             .transact_control(|plane| plane.submit(queued_control(1), 1))
@@ -1791,7 +1578,7 @@ mod tests {
 
     #[test]
     fn json_state_store_round_trips_nested_report_atomically() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-json-state-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1814,7 +1601,7 @@ mod tests {
     #[test]
     fn scheduler_state_round_trips_after_restart() {
         let root =
-            std::env::temp_dir().join(format!("qianxing-scheduler-state-{}", std::process::id()));
+            crate::test_temp_dir().join(format!("qianxing-scheduler-state-{}", std::process::id()));
         let store = JsonStateStore::new(&root);
         let mut scheduler = Scheduler::default();
         scheduler
@@ -1881,7 +1668,7 @@ mod tests {
 
     #[test]
     fn file_job_queue_is_idempotent_and_recoverable() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-job-queue-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1946,7 +1733,7 @@ mod tests {
 
     #[test]
     fn control_command_queue_is_idempotent_and_fenced() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-control-queue-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1981,7 +1768,7 @@ mod tests {
 
     #[test]
     fn control_state_update_is_atomic_and_restores() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-control-state-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2020,7 +1807,7 @@ mod tests {
 
     #[test]
     fn audit_file_store_is_append_only_queryable_and_tamper_evident() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-audit-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2084,7 +1871,7 @@ mod tests {
 
     #[test]
     fn audit_sync_control_treats_a_longer_chain_as_idempotent_not_conflict() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-audit-sync-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2135,7 +1922,7 @@ mod tests {
 
     #[test]
     fn audit_file_store_serializes_concurrent_appends_without_losing_tail() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-audit-concurrent-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2190,7 +1977,7 @@ mod tests {
 
     #[test]
     fn file_job_queue_revalidates_forged_payload_before_claim() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-job-forge-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2222,7 +2009,7 @@ mod tests {
 
     #[test]
     fn file_job_queue_serializes_concurrent_claims_on_shared_filesystem() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-job-concurrent-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2261,7 +2048,7 @@ mod tests {
 
     #[test]
     fn file_outbox_is_idempotent_fenced_and_retryable() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-outbox-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2323,7 +2110,7 @@ mod tests {
             }
         }
 
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-outbox-relay-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2376,7 +2163,7 @@ mod tests {
 
     #[test]
     fn file_consumer_checkpoint_is_idempotent_and_dead_letters_after_retries() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-consumer-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2440,7 +2227,7 @@ mod tests {
 
     #[test]
     fn file_token_bucket_is_persistent_and_serializes_concurrent_consumers() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qianxing-rate-limit-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

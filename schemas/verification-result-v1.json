@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/verification-result-v1.json",
+  "title": "Qianxing VerificationResult v1",
+  "description": "Bar or depth artifact verification verdict. verified must equal mismatches.isEmpty(); that cross-field invariant is enforced by the Rust producer.",
+  "type": "object",
+  "required": ["run_id", "result_hash", "data_fingerprint", "verified", "checks", "mismatches"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "data_fingerprint": {"type": "string", "minLength": 1},
+    "verified": {"type": "boolean"},
+    "checks": {"type": "array", "items": {"type": "string"}},
+    "mismatches": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

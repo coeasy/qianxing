@@ -73,57 +73,33 @@ fn v1_summary_without_those_blocks() -> serde_json::Value {
 }
 
 #[test]
-fn report_prints_absent_for_keys_this_generation_never_declared() {
+fn report_refuses_legacy_summary_before_printing_undeclared_fields() {
     let root = temp_root("v1");
     let summary = write_summary(&root, "v1.summary.json", &v1_summary_without_those_blocks());
     let (code, stdout, stderr) = run(&["report", &summary.to_string_lossy()]);
-    assert_eq!(code, 0, "report 读一份旧世代摘要应当成功: {stderr}");
+    assert_eq!(code, 2, "report 不得读取旧世代摘要: {stdout}");
+    assert!(stderr.contains("schema_version=1 已拒绝"), "{stderr}");
     assert!(
-        stdout.contains("schema_version=1 input=not_declared_before_v3"),
-        "报告要先说清产物世代与该世代的块: {stdout}"
-    );
-    for needle in [
-        "fills=absent",
-        "return_bps=absent",
-        "max_drawdown_bps=absent",
-        "final_equity_raw=absent",
-        "account_initial_cash_raw=absent",
-        "replay_events=absent",
-    ] {
-        assert!(
-            stdout.contains(needle),
-            "缺键仍被印成合法值: {needle}\n{stdout}"
-        );
-    }
-    // 写过的值照原样念，包括字符串型数字与显式 0。
-    assert!(
-        stdout.contains("bars=120") && stdout.contains("fees_raw=0"),
-        "报告把已经写过的格子也抹掉了: {stdout}"
+        stderr.contains("qx-cli backtest <runtime.json>"),
+        "{stderr}"
     );
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
-fn report_prints_the_recompute_verdict_as_its_own_field() {
+fn report_refuses_legacy_summary_before_printing_recompute_verdict() {
     // 真命令那一格的原文：没有 input 块的产物必须被念成"未经核对"，而不是整栏消失。
     // 排版函数里删掉这一行不会让上面任何断言变红，所以这条单独问一次。
     let root = temp_root("verdict");
     let summary = write_summary(&root, "v1.summary.json", &v1_summary_without_those_blocks());
     let (code, stdout, stderr) = run(&["report", &summary.to_string_lossy()]);
-    assert_eq!(code, 0, "report 读一份旧世代摘要应当成功: {stderr}");
-    assert!(
-        stdout.contains("input_verified=not_declared"),
-        "报告少了复核结论那一格: {stdout}"
-    );
-    assert!(
-        stdout.contains("输入身份未经核对"),
-        "复核结论要点名为什么未经核对: {stdout}"
-    );
+    assert_eq!(code, 2, "report 不得读取旧世代摘要: {stdout}");
+    assert!(stderr.contains("schema_version=1 已拒绝"), "{stderr}");
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
-fn report_reads_a_declared_zero_as_zero_not_absent() {
+fn report_refuses_v4_summary_even_when_it_declares_zero_values() {
     let root = temp_root("v4");
     let summary = write_summary(
         &root,
@@ -140,18 +116,8 @@ fn report_reads_a_declared_zero_as_zero_not_absent() {
         }),
     );
     let (code, stdout, stderr) = run(&["report", &summary.to_string_lossy()]);
-    assert_eq!(code, 0, "report 读 v4 摘要失败: {stderr}");
-    assert!(
-        stdout.contains("fills=0")
-            && stdout.contains("return_bps=0")
-            && stdout.contains("account_initial_cash_raw=100000000000000")
-            && stdout.contains("account_source=config"),
-        "声明过的零与本金被当成缺席念出: {stdout}"
-    );
-    assert!(
-        stdout.contains("input=MISSING_IN_THIS_GENERATION"),
-        "v4 产物没有 input 块时要点名缺块，而不是只说没声明: {stdout}"
-    );
+    assert_eq!(code, 2, "report 不得读取旧世代摘要: {stdout}");
+    assert!(stderr.contains("schema_version=4 已拒绝"), "{stderr}");
     let _ = std::fs::remove_dir_all(root);
 }
 

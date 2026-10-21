@@ -17,6 +17,8 @@ mod fill_feedback;
 mod funding;
 #[path = "tests/pending_risk.rs"]
 mod pending_risk;
+#[path = "tests/queue_position.rs"]
+mod queue_position;
 
 struct NativeBuy;
 
@@ -117,6 +119,42 @@ impl OrderBookStrategy for DerivativeBuy {
     }
 }
 
+struct DerivativeDoubleBuy {
+    emitted: u8,
+}
+
+impl OrderBookStrategy for DerivativeDoubleBuy {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _position: i128,
+    ) -> Result<Vec<Order>, String> {
+        if self.emitted >= 2 {
+            return Ok(Vec::new());
+        }
+        self.emitted += 1;
+        let client_id = if self.emitted == 1 { 101 } else { 102 };
+        Ok(vec![Order {
+            client_id,
+            instrument: snapshot.instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(6),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                margin_mode: MarginMode::Cross,
+                position_mode: PositionMode::OneWay,
+                position_side: PositionSide::Net,
+                leverage: 10,
+                ..OrderPolicy::default()
+            }),
+        }])
+    }
+}
+
 fn snapshot(ts: u64, ask: i64) -> OrderBookSnapshot {
     OrderBookSnapshot {
         instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
@@ -169,6 +207,15 @@ fn order_book_backtest_is_causal_and_replays_fill() {
     let facts = ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
     assert_eq!(facts.events, report.event_log.events().len());
     assert_eq!(facts.ledger_entries, report.ledger.entries().len());
+    let mut explicit_default_strategy = BuyOnce { emitted: false };
+    let explicit_default = OrderBookBacktestEngine::new(l2_config(1))
+        .with_execution_model(OrderBookExecutionModel::new(1).unwrap())
+        .run(
+            &[snapshot(1, 100), snapshot(2, 101)],
+            &mut explicit_default_strategy,
+        )
+        .unwrap();
+    assert_eq!(report.result_hash(), explicit_default.result_hash());
 }
 
 /// 名义额远超可用现金的现货买单：用来验证深度链不会把账簿现金透支成负数。
@@ -298,6 +345,63 @@ fn derivative_order_book_uses_margin_ledger_semantics() {
     );
 }
 
+#[test]
+fn derivative_orders_share_one_projected_portfolio_margin_budget() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let spec = TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: TradingProduct::Perpetual,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: true,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 100,
+        maintenance_margin_bps: 500,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let config = OrderBookBacktestConfig {
+        instrument,
+        account_id: "main".into(),
+        currency: "USDT".into(),
+        initial_cash: Money::from_i64(100),
+        fee_bps: 0,
+        instrument_spec: Some(spec),
+        risk: RiskGate::conservative_default(),
+        data_tier: DataTier::L2L3,
+    };
+    let mut strategy = DerivativeDoubleBuy { emitted: 0 };
+    let report = OrderBookBacktestEngine::new(config)
+        .run(&[snapshot(1, 100), snapshot(2, 101)], &mut strategy)
+        .unwrap();
+    let submitted = report
+        .event_log
+        .events()
+        .iter()
+        .filter(|event| matches!(&event.kind, EventKind::OrderSubmitted { .. }))
+        .count();
+    assert_eq!(submitted, 1, "只应提交账户可承受的第一笔订单");
+    let rejected = report
+        .event_log
+        .events()
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::Rejected {
+                client_order_id: 102,
+                reason,
+            } => Some(reason),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rejected.len(), 1);
+    assert!(rejected[0].contains("初始保证金超过账户可用保证金"));
+}
+
 /// 小额合约乘数的盘口回测必须按真实名义额计费：Ledger 用
 /// `spec.notional` 记账，若费用仍按 `qty * price` 计，0.001 合约的
 /// 手续费会被高估 1000 倍。
@@ -422,18 +526,19 @@ fn order_book_report_is_deterministic_and_carries_unified_metrics() {
     // 缺省口径要逐字写进描述子，非缺省口径要同时改变描述子与结果哈希：命令面那条
     // 断言挡住"配了却不生效"，这一条挡住"生效了却没写进产物"。
     assert!(first.model_descriptors.iter().any(|descriptor| descriptor
-        == "orderbook-matching@v1 fee_bps=1 latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"));
+        .starts_with("orderbook-matching@v2 fee_bps=1 latency_snapshots=0 queue_position_bps=0 queue_position=disabled market_impact_bps=0")));
     let modeled = OrderBookBacktestEngine::new(l2_config(1))
         .with_execution_model(OrderBookExecutionModel {
             fee_bps: 1,
             latency_snapshots: 2,
             queue_position_bps: 500,
+            queue_position_model: crate::QueuePositionModel::Disabled,
             market_impact_bps: 10,
         })
         .run(&snapshots, &mut BuyOnce { emitted: false })
         .unwrap();
     assert!(modeled.model_descriptors.iter().any(|descriptor| descriptor
-        == "orderbook-matching@v1 fee_bps=1 latency_snapshots=2 queue_position_bps=500 market_impact_bps=10"));
+        .starts_with("orderbook-matching@v2 fee_bps=1 latency_snapshots=2 queue_position_bps=500 queue_position=disabled market_impact_bps=10")));
     assert_ne!(
         modeled.result_hash(),
         first.result_hash(),

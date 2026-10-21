@@ -137,6 +137,76 @@ impl Retryability {
     }
 }
 
+/// CCXT adapter error classification is derived from the canonical error code and retry policy.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CcxtErrorClassification {
+    pub category: &'static str,
+    pub code: ErrorCode,
+    pub retryability: Retryability,
+}
+
+/// Classify a CCXT exception class name once for Python and Rust adapter consumers.
+pub fn classify_ccxt_exception(class_name: &str) -> CcxtErrorClassification {
+    let name = class_name.to_ascii_lowercase();
+    let category = if ["ratelimit", "ddos", "throttle"]
+        .iter()
+        .any(|token| name.contains(token))
+    {
+        "rate_limited"
+    } else if ["timeout", "network", "connection", "unavailable"]
+        .iter()
+        .any(|token| name.contains(token))
+    {
+        "retryable"
+    } else if ["authentication", "permission", "credential", "nonce"]
+        .iter()
+        .any(|token| name.contains(token))
+    {
+        "authentication"
+    } else if ["badrequest", "invalidorder", "arguments", "symbol"]
+        .iter()
+        .any(|token| name.contains(token))
+    {
+        "invalid"
+    } else if name.contains("notsupported")
+        || name.contains("notupported")
+        || name.contains("notimplemented")
+    {
+        "unsupported"
+    } else if name.contains("exchange") || name.contains("order") {
+        "exchange"
+    } else {
+        "unknown"
+    };
+    classify_ccxt_category(category)
+}
+
+/// Resolve a stable CCXT category emitted by the Python worker to its retry contract.
+pub fn classify_ccxt_category(category: &str) -> CcxtErrorClassification {
+    let (code, retryability) = match category {
+        "retryable" => (ErrorCode::Transient, Retryability::Allowed),
+        "rate_limited" => (ErrorCode::ResourceExhausted, Retryability::AfterBackoff),
+        "authentication" => (ErrorCode::Permanent, Retryability::Never),
+        "invalid" => (ErrorCode::BusinessViolation, Retryability::Never),
+        "unsupported" => (ErrorCode::Permanent, Retryability::Never),
+        "exchange" => (ErrorCode::Permanent, Retryability::Never),
+        _ => (ErrorCode::Permanent, Retryability::Never),
+    };
+    CcxtErrorClassification {
+        category: match category {
+            "retryable" => "retryable",
+            "rate_limited" => "rate_limited",
+            "authentication" => "authentication",
+            "invalid" => "invalid",
+            "unsupported" => "unsupported",
+            "exchange" => "exchange",
+            _ => "unknown",
+        },
+        code,
+        retryability,
+    }
+}
+
 /// 错误码五元契约（DD-5 / P1-11）：错误跨 crate 传递时只认这五个字段。
 ///
 /// `user_message` 是展示层（中文），`code` 是机器可读层——调用方按码分支，
@@ -262,6 +332,24 @@ mod tests {
             QxError::Ambiguous("timeout".into()).to_string(),
             "[AMBIGUOUS] timeout"
         );
+    }
+
+    #[test]
+    fn ccxt_names_and_worker_categories_share_the_error_retry_contract() {
+        let rate_limit = classify_ccxt_exception("DDoSProtection");
+        assert_eq!(rate_limit.category, "rate_limited");
+        assert_eq!(rate_limit.code, ErrorCode::ResourceExhausted);
+        assert_eq!(rate_limit.retryability, Retryability::AfterBackoff);
+
+        let timeout = classify_ccxt_exception("RequestTimeout");
+        assert_eq!(timeout.category, "retryable");
+        assert_eq!(timeout.code, ErrorCode::Transient);
+        assert_eq!(timeout.retryability, Retryability::Allowed);
+
+        let invalid = classify_ccxt_category("invalid");
+        assert_eq!(invalid.code, ErrorCode::BusinessViolation);
+        assert_eq!(invalid.retryability, Retryability::Never);
+        assert_eq!(classify_ccxt_category("unrecognized").category, "unknown");
     }
 
     #[test]

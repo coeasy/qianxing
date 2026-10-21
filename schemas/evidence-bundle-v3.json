@@ -1,0 +1,713 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/evidence-bundle-v3.json",
+  "title": "Qianxing Evidence Bundle v3",
+  "description": "统一证据包 v3。generation 区分 venue 与 run；run 数据身份可登记有序的多个组件输入。venue/run v1 与统一包 v2 由 Rust 读侧迁移，写侧只产 v3。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 3
+    },
+    "generation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "venue"
+          ],
+          "properties": {
+            "venue": {
+              "$ref": "#/$defs/venue"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "run"
+          ],
+          "properties": {
+            "run": {
+              "$ref": "#/$defs/run"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "venue": {
+      "title": "Venue Evidence Payload",
+      "description": "把测试网、故障演练与性能结果变成可复核证据。schema_version 与 crates/qx-spec/src/evidence.rs 的 EVIDENCE_BUNDLE_SCHEMA_VERSION 同源。只保存脱敏摘要、计数与指针，不保存密钥或订单敏感原文；L4 证据必须来自 mainnet 窗口，L3 证据不得来自 mainnet。",
+      "type": "object",
+      "required": [
+        "claim",
+        "venue_id",
+        "window",
+        "environment",
+        "redacted_config_digest",
+        "logs",
+        "fact_count",
+        "result_digest",
+        "operator"
+      ],
+      "properties": {
+        "claim": {
+          "type": "object",
+          "required": [
+            "summary",
+            "capability_level"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capability_level": {
+              "enum": [
+                "L0",
+                "L1",
+                "L2",
+                "L3",
+                "L4"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "venue_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "window": {
+          "type": "object",
+          "required": [
+            "start_ms",
+            "end_ms"
+          ],
+          "properties": {
+            "start_ms": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_ms": {
+              "type": "integer",
+              "minimum": 2
+            }
+          },
+          "additionalProperties": false
+        },
+        "environment": {
+          "type": "object",
+          "required": [
+            "host",
+            "runtime_version",
+            "network"
+          ],
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtime_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "network": {
+              "enum": [
+                "testnet",
+                "sandbox",
+                "mainnet"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "redacted_config_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fact_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "result_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "title": "Run Evidence Payload",
+          "description": "一次回测/Paper 运行的全部可复核事实聚合：RunManifest 身份、产物指针、数据身份与（可能缺席的）质量报告、配置与策略身份、模型假设、软件构建身份、验证级别、未验证清单与离线复算指引。schema_version 与 crates/qx-spec/src/run_evidence.rs 的 RUN_EVIDENCE_SCHEMA_VERSION 同源。只聚合与校验，不重算指标。对象层硬约束（不是文档承诺）：artifacts 必须含 run_manifest/summary/equity/fills 四件套；dataset.composed_fingerprint / identity.config_digest / identity.strategy_version / build.code_commit / build.runtime_version 必须与 run 块逐字相等；unverified 必须非空（空清单等于盖单一 verified 标签）；capability_level 不得高于 L2（L3/L4 由带真实 venue 窗口的 EvidenceBundle 承担）。两处刻意分开：dataset.content_fingerprint 是输入文件的内容哈希，dataset.composed_fingerprint 是这次运行认的合成数据身份（= run.data_fingerprint）；dataset.quality_report 允许为 null（这一档输入没有质量报告），但不许是一份空报告。v3 支持 multi-barframe 与多市场 BarFrame/DepthFrame，组合输入必须逐项登记 dataset.components。",
+      "type": "object",
+      "required": [
+        "run",
+        "artifacts",
+        "dataset",
+        "identity",
+        "assumptions",
+        "build",
+        "verification",
+        "unverified",
+        "recompute",
+        "operator"
+      ],
+      "properties": {
+        "run": {
+          "type": "object",
+          "required": [
+            "run_id",
+            "code_commit",
+            "runtime_version",
+            "config_hash",
+            "data_fingerprint",
+            "input_components",
+            "clock_start",
+            "clock_end",
+            "global_seed",
+            "determinism_mode",
+            "result_hash",
+            "strategy_version",
+            "instrument_spec_version",
+            "model_fingerprint",
+            "input_event_hash",
+            "output_event_hash"
+          ],
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "code_commit": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtime_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "config_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "data_fingerprint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input_components": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "clock_start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clock_end": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "global_seed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "determinism_mode": {
+              "type": "boolean"
+            },
+            "result_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "strategy_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instrument_spec_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model_fingerprint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input_event_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "output_event_hash": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "path",
+              "digest"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "digest": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "dataset": {
+          "type": "object",
+          "required": [
+            "kind",
+            "dataset_id",
+            "version",
+            "content_fingerprint",
+            "composed_fingerprint",
+            "row_count",
+            "path",
+            "quality_report"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dataset_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content_fingerprint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "manifest_fingerprint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quality_manifest_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quality_manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "composed_fingerprint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quality_report": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "duplicate_rows",
+                    "out_of_order_rows",
+                    "missing_intervals",
+                    "timezone",
+                    "corporate_action_coverage",
+                    "usable_tiers"
+                  ],
+                  "properties": {
+                    "duplicate_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "out_of_order_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "missing_intervals": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "interval_ms": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "timezone": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "corporate_action_coverage": {
+                      "type": "boolean"
+                    },
+                    "usable_tiers": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "components": {
+              "type": "array",
+              "description": "多输入运行的有序组成项；multi-barframe 必须为 primary、reference 两项，多市场 BarFrame/DepthFrame 按唯一 market:<instrument> 登记，普通输入省略。",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "required": [
+                  "role",
+                  "dataset_id",
+                  "version",
+                  "content_fingerprint",
+                  "row_count",
+                  "path"
+                ],
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "primary",
+                          "reference"
+                        ]
+                      },
+                      {
+                        "pattern": "^market:.+"
+                      }
+                    ]
+                  },
+                  "dataset_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "content_fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "row_count": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "manifest_fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "quality_manifest_path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "quality_manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "quality_report": {
+                    "type": "object",
+                    "required": [
+                      "duplicate_rows",
+                      "out_of_order_rows",
+                      "missing_intervals",
+                      "timezone",
+                      "corporate_action_coverage",
+                      "usable_tiers"
+                    ],
+                    "properties": {
+                      "duplicate_rows": { "type": "integer", "minimum": 0 },
+                      "out_of_order_rows": { "type": "integer", "minimum": 0 },
+                      "missing_intervals": { "type": "integer", "minimum": 0 },
+                      "interval_ms": { "type": "integer", "minimum": 1 },
+                      "timezone": { "type": "string", "minLength": 1 },
+                      "corporate_action_coverage": { "type": "boolean" },
+                      "usable_tiers": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "multi-market-barframe"
+                  }
+                },
+                "required": ["kind"]
+              },
+              "then": {
+                "properties": {
+                  "components": {
+                    "minItems": 3
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": { "kind": { "const": "multi-market-depthframe" } },
+                "required": ["kind"]
+              },
+              "then": {
+                "properties": { "components": { "minItems": 2 } }
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "report_analysis": {
+          "type": "object",
+          "description": "Optional post-run report analysis input; independent of the backtest result hash.",
+          "required": ["kind", "input_path", "input_sha256", "input_fingerprint", "instrument", "analysis"],
+          "properties": {
+            "kind": {"type": "string", "const": "benchmark"},
+            "input_path": {"type": "string", "minLength": 1},
+            "input_sha256": {"type": "string", "minLength": 1},
+            "input_fingerprint": {"type": "string", "minLength": 1},
+            "instrument": {"type": "string", "minLength": 1},
+            "calendar_input_path": {"type": "string", "minLength": 1},
+            "calendar_input_sha256": {"type": "string", "minLength": 1},
+            "analysis": {"type": "string", "minLength": 2, "description": "Serialized JSON snapshot; verifier recomputes it from input_path and optional calendar_input_path."}
+          },
+          "additionalProperties": false
+        },
+        "identity": {
+          "type": "object",
+          "required": [
+            "strategy_id",
+            "strategy_version",
+            "instrument",
+            "config_digest"
+          ],
+          "properties": {
+            "strategy_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "strategy_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instrument": {
+              "type": "string",
+              "minLength": 1
+            },
+            "config_digest": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "assumptions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "value",
+              "source"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "fidelity": {
+          "type": "object",
+          "description": "对 source_artifact 所指 JSON 根中的 JSON Pointer 做来源分类；仅说明输入观测、运行配置、模型估计、计算结果或缺失状态，不重算指标，也不证明模型准确性。旧 run 包可省略。",
+          "required": ["source_artifact", "observed", "configured", "estimated", "computed", "absent"],
+          "properties": {
+            "source_artifact": {"type": "string", "enum": ["summary", "run"], "description": "JSON Pointer 根；summary 指摘要工件，run 指当前 RunEvidencePayload。"},
+            "observed": {"type": "array", "items": {"type": "string", "minLength": 2, "pattern": "^/"}},
+            "configured": {"type": "array", "items": {"type": "string", "minLength": 2, "pattern": "^/"}},
+            "estimated": {"type": "array", "items": {"type": "string", "minLength": 2, "pattern": "^/"}},
+            "computed": {"type": "array", "items": {"type": "string", "minLength": 2, "pattern": "^/"}},
+            "absent": {"type": "array", "items": {"type": "string", "minLength": 2, "pattern": "^/"}}
+          },
+          "additionalProperties": false
+        },
+        "build": {
+          "type": "object",
+          "required": [
+            "runtime_version",
+            "code_commit",
+            "profile",
+            "target_triple"
+          ],
+          "properties": {
+            "runtime_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "code_commit": {
+              "type": "string",
+              "minLength": 1
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_triple": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "verification": {
+          "type": "object",
+          "required": [
+            "capability_level",
+            "replay_verdict",
+            "artifact_digests_verified",
+            "verified_artifact_count"
+          ],
+          "properties": {
+            "capability_level": {
+              "enum": [
+                "L0",
+                "L1",
+                "L2"
+              ]
+            },
+            "replay_verdict": {
+              "enum": [
+                "verified",
+                "mismatch",
+                "not_run"
+              ]
+            },
+            "artifact_digests_verified": {
+              "const": true
+            },
+            "verified_artifact_count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "unverified": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recompute": {
+          "type": "object",
+          "required": [
+            "steps",
+            "inputs",
+            "expected_result_hash"
+          ],
+          "properties": {
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "inputs": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "expected_result_hash": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

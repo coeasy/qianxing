@@ -1,0 +1,17 @@
+{
+  "exchange_id": "okx",
+  "account_id": "main",
+  "sandbox": true,
+  "enable_rate_limit": true,
+  "timeout_ms": 30000,
+  "ws_max_retries": 3,
+  "ws_retry_backoff_ms": 250,
+  "default_type": "spot",
+  "credential_env": {
+    "api_key": "QX_CCXT_OKX_API_KEY",
+    "secret": "QX_CCXT_OKX_SECRET",
+    "password": "QX_CCXT_OKX_PASSWORD"
+  },
+  "options": {},
+  "instruments": ["BTC/USDT.OKX", "ETH/USDT.OKX", "BTC/USDT:USDT.OKX"]
+}

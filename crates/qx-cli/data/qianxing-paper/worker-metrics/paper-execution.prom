@@ -1,0 +1,12 @@
+qx_worker_up{worker="paper-execution",account="paper-main-paper-events"} 0
+qx_worker_heartbeat_timestamp_seconds{worker="paper-execution",account="paper-main-paper-events"} 1792342961
+qx_pipeline_ingest_attempts_total{worker="paper-execution",account="paper-main-paper-events"} 1
+qx_pipeline_ingested_events_total{worker="paper-execution",account="paper-main-paper-events"} 0
+qx_pipeline_deduplicated_events_total{worker="paper-execution",account="paper-main-paper-events"} 1
+qx_pipeline_transient_retries_total{worker="paper-execution",account="paper-main-paper-events"} 0
+qx_pipeline_refreshes_total{worker="paper-execution",account="paper-main-paper-events"} 1
+qx_pipeline_failures_total{worker="paper-execution",account="paper-main-paper-events"} 0
+qx_pipeline_ingest_duration_seconds_total{worker="paper-execution",account="paper-main-paper-events"} 0.000731500
+qx_pipeline_ingest_duration_seconds_max{worker="paper-execution",account="paper-main-paper-events"} 0.000731500
+qx_pipeline_ingest_warning_budget_seconds{worker="paper-execution",account="paper-main-paper-events"} 0.100000000
+qx_pipeline_ingest_budget_exceeded{worker="paper-execution",account="paper-main-paper-events"} 0

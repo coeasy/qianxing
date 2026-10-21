@@ -1,0 +1,106 @@
+# Cross-crate and cross-language inventory for WP-7.1.
+# A `mirror` is reserved for the same serialized contract, not merely related workflow data.
+schema_version: 1
+kind: foundation-spec-pairings
+updated_at: "2026-10-16"
+source_of_truth: qx-spec
+pairs:
+  - source: project document family
+    types:
+      - qx-spec::ProjectManifest
+      - qx-spec::DatasetRef
+      - qx-spec::StrategyRef
+    counterparts: []
+    relation: no_mirror
+    rationale: Project identity and strategy/dataset references are persisted foundation documents; qx-app and Python have no matching serialized project document.
+  - source: dataset document family
+    types:
+      - qx-data::DatasetManifestV2
+    counterparts:
+      - qx-app::DatasetManifestValidationResult
+    relation: different_role
+    rationale: The app type is a validation outcome, not a dataset manifest mirror. qx-spec dispatches DatasetManifestV2 without depending on qx-data in reverse.
+  - source: experiment declaration family
+    types:
+      - qx-spec::ExperimentSpec
+    counterparts:
+      - qx-app::RunExperimentSpec
+      - python.qianxing.app::RunExperimentSpec
+    relation: different_role
+    rationale: ExperimentSpec is a persisted foundation declaration; RunExperimentSpec is an executable use-case request with BacktestSpec and candidate grid.
+  - source: generic parameter space
+    types:
+      - qx-spec::ParameterSpace
+    related_types:
+      - qx-app::ExperimentParameterSpace
+      - python.qianxing.app::ExperimentParameterSpace
+    relation: different_shape_and_role
+    rationale: qx-spec stores generic string candidates; app and Python describe integer strategy-parameter grids.
+  - source: experiment execution split
+    types:
+      - qx-spec::SplitPlan
+    mirrors:
+      - qx-app::ExperimentSplitPlan
+      - python.qianxing.app::ExperimentSplitPlan
+    relation: exact_mirror
+    status: generated_and_checked
+    rationale: The Rust app type is generated from qx-spec build inputs; the Python serializer fields and validation vocabulary are guarded by the architecture check.
+  - source: foundation document dispatch
+    types:
+      - qx-spec::FoundationKind
+      - qx-spec::FoundationDocument
+      - qx-spec::DocumentReadout
+    counterparts: []
+    relation: no_mirror
+    rationale: These types describe qx-spec's document-reading API, not app or Python domain data.
+  - source: run record family
+    types:
+      - qx-spec::RunRecord
+      - qx-spec::ArtifactRef
+      - qx-spec::ReplayVerdict
+      - qx-spec::RunStatus
+    counterparts: []
+    relation: no_mirror
+    rationale: RunRecord is a persisted output contract assembled by the CLI; app outcomes are execution results with different ownership and fields.
+  - source: run evidence generation family
+    types:
+      - qx-spec::RunEvidencePayload
+      - qx-spec::RunEvidenceRun
+      - qx-spec::RunEvidenceQualityReport
+      - qx-spec::RunEvidenceDataset
+      - qx-spec::RunEvidenceIdentity
+      - qx-spec::RunEvidenceAssumption
+      - qx-spec::RunEvidenceBuild
+      - qx-spec::RunEvidenceVerification
+      - qx-spec::RunEvidenceRecompute
+    counterparts:
+      - qx-spec::EvidenceBundle
+    relation: nested_generation
+    rationale: RunEvidencePayload is the run generation inside EvidenceBundle, not a second top-level bundle schema. Python report readers use mappings and define no typed mirror.
+  - source: evidence bundle family
+    types:
+      - qx-spec::EvidenceBundle
+      - qx-spec::EvidenceClaim
+      - qx-spec::EvidenceWindow
+      - qx-spec::EvidenceEnvironment
+      - qx-spec::VenueEvidencePayload
+      - qx-spec::EvidenceGeneration
+    counterparts: []
+    relation: no_mirror
+    rationale: The unified venue/run evidence document is owned and validated by qx-spec; CLI constructs it and Python has no typed schema copy.
+  - source: capability family
+    types:
+      - qx-spec::CapabilityManifest
+      - qx-spec::CapabilityLevel
+    counterparts:
+      - maturity/capabilities.yaml
+    relation: different_format_and_role
+    rationale: The maturity registry is a repository governance source, not a serialized mirror of the capability manifest document.
+  - source: schema registry family
+    types:
+      - qx-spec::SchemaRegistry
+      - qx-spec::SchemaEntry
+      - qx-spec::SchemaCompatibility
+    counterparts: []
+    relation: no_mirror
+    rationale: This is the schema compatibility registry itself; there is no matching qx-app or Python data type.

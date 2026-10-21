@@ -1,10 +1,10 @@
 //! 外部消费者通过 `qx-sdk` 走 Rust 共享 Provider 注册与确定性 failover。
 
 use qx_sdk::{
-    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DataKind,
-    DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId, ProviderCapability,
-    ProviderError, ProviderErrorClass, ProviderPayload, ProviderRegistry, ProviderResult,
-    RawRecord,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
+    Client, DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
+    ProviderCapability, ProviderError, ProviderErrorClass, ProviderPayload, ProviderRegistry,
+    ProviderResult, RawRecord,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ fn capability(provider_id: &str, priority: u32) -> ProviderCapability {
         provider_id: provider_id.into(),
         version: "v1".into(),
         data_kinds: [DataKind::Bar].into_iter().collect(),
+        data_tiers: [qx_provider::MarketDataTier::Bar].into_iter().collect(),
         asset_classes: ["crypto".into()].into_iter().collect(),
         frequencies: ["1m".into()].into_iter().collect(),
         auth_scope: "public".into(),
@@ -150,6 +151,7 @@ mod tests {
         let request = DataRequest::new(
             query.clone(),
             DataRequirements {
+                required_data_tier: None,
                 required_auth_scope: Some("public".into()),
                 require_realtime: false,
                 max_staleness_ms: None,
@@ -224,7 +226,6 @@ mod tests {
         assert_eq!(manifest.source_lineage.primary_source, "fixture-bars");
         assert_eq!(manifest.provider_version, "v1");
         let result = fetched.result.clone();
-        let frame = fetched.frame.clone();
         let root = TestDirectory::new("qx-sdk-provider-backtest");
         let bars_path = root.0.join("provider-bars.json");
 
@@ -233,9 +234,11 @@ mod tests {
         strategy.slow_window = 3;
         let output_dir = root.0.join("run");
         let spec = BacktestSpec::new(
-            "provider-bars-run",
-            "BTCUSDT.BINANCE",
-            bars_path.to_string_lossy(),
+            BacktestDatasetInput {
+                run_id: "provider-bars-run".into(),
+                instrument: "BTCUSDT.BINANCE".into(),
+                bars_path: bars_path.to_string_lossy().into_owned(),
+            },
             "USDT",
             100_000 * 1_000_000_000,
             20261012,
@@ -265,7 +268,7 @@ mod tests {
         let outcome = provider_run.outcome;
         assert_eq!(
             outcome.data_fingerprint,
-            format!("barframe:{:016x}", frame.digest())
+            format!("barframe:{}", manifest.dataset.fingerprint)
         );
         assert!(
             outcome.fills > 0,

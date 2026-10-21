@@ -13,14 +13,16 @@ use qx_storage::{PostgresControlCommandQueue, PostgresJobQueue};
 use qx_storage::{SqliteControlCommandQueue, SqliteJobQueue};
 
 fn temp_root(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-storage-contract-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock must be after unix epoch")
-            .as_nanos()
-    ))
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-storage-contract-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after unix epoch")
+                .as_nanos()
+        ))
 }
 
 fn command(command_id: u64) -> ControlCommand {
@@ -71,11 +73,37 @@ fn job_and_run(run_id: u64) -> (JobSpec, JobRun) {
     (job, run)
 }
 
+fn job_and_run_on_day(seed: u64, trading_day: &str) -> (JobSpec, JobRun) {
+    let (mut job, mut run) = job_and_run(seed);
+    job.job_id = format!("storage-job-order-{seed}");
+    job.idempotency_key = format!("storage-job-order-{seed}-daily");
+    run.job_id = job.job_id.clone();
+    run.trading_day = trading_day.into();
+    run.run_id = job.stable_key(trading_day);
+    (job, run)
+}
+
 fn assert_control_queue_semantics(queue: &dyn ControlCommandQueueBackend) {
     let control = command(101);
     queue.enqueue_command(control.clone(), 10).unwrap();
     queue.enqueue_command(control, 10).unwrap();
-    assert_eq!(queue.available_commands(10).unwrap().len(), 1);
+    queue.enqueue_command(command(10), 2).unwrap();
+    queue.enqueue_command(command(102), 10).unwrap();
+
+    let mut conflicting = command(101);
+    conflicting.request_id = "different-request".into();
+    assert!(matches!(
+        queue.enqueue_command(conflicting, 10),
+        Err(StorageError::Conflict(_))
+    ));
+    let available = queue.available_commands(10).unwrap();
+    assert_eq!(
+        available
+            .iter()
+            .map(|queued| (queued.enqueued_ts, queued.command.command_id))
+            .collect::<Vec<_>>(),
+        vec![(2, 10), (10, 101), (10, 102)]
+    );
 
     let first = queue.claim_command(101, "worker-a", 10, 10).unwrap();
     assert_eq!(first.fencing_token, 1);
@@ -92,10 +120,44 @@ fn assert_control_queue_semantics(queue: &dyn ControlCommandQueueBackend) {
     queue
         .ack_command_at(101, "worker-b", takeover.fencing_token, 21)
         .unwrap();
+    for command_id in [10, 102] {
+        let lease = queue.claim_command(command_id, "worker-c", 22, 10).unwrap();
+        queue
+            .ack_command_at(command_id, "worker-c", lease.fencing_token, 23)
+            .unwrap();
+    }
     assert!(queue.available_commands(22).unwrap().is_empty());
 }
 
 fn assert_job_queue_semantics(queue: &dyn JobQueueBackend) {
+    let ordered = [
+        job_and_run_on_day(301, "20260911"),
+        job_and_run_on_day(302, "20260910"),
+        job_and_run_on_day(303, "20260910"),
+    ];
+    let mut expected: Vec<_> = ordered
+        .iter()
+        .map(|(_, run)| (run.trading_day.clone(), run.run_id))
+        .collect();
+    expected.sort();
+    for (job, run) in ordered {
+        queue.enqueue_job(job, run, 10).unwrap();
+    }
+    let available = queue.available_jobs(10).unwrap();
+    assert_eq!(
+        available
+            .iter()
+            .map(|queued| (queued.run.trading_day.clone(), queued.run.run_id))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    for (_, run_id) in expected {
+        let lease = queue.claim_job(run_id, "ordering-worker", 11, 10).unwrap();
+        queue
+            .ack_job_at(run_id, "ordering-worker", lease.fencing_token, 12)
+            .unwrap();
+    }
+
     let (job, run) = job_and_run(202);
     let run_id = run.run_id;
     queue.enqueue_job(job.clone(), run.clone(), 10).unwrap();

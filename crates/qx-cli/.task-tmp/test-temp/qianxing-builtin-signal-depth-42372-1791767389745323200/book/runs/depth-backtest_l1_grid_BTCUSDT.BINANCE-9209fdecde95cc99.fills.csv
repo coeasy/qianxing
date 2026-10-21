@@ -1,0 +1,2 @@
+order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id
+1,2000,1000000000,64982000000000,32491000000,main,builtin-grid,2,1,,

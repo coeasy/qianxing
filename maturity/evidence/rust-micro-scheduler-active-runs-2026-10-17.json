@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "benchmark": "scheduler_active_run_selection",
+  "date": "2026-10-17",
+  "command": "cargo bench -p qx-cli --bench criterion_performance -- scheduler_active_run_selection --noplot",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)"
+  },
+  "workload": {
+    "terminal_retention_limit": 4096,
+    "terminal_runs": 4096,
+    "active_runs": 1,
+    "comparison": "clone all Scheduler::runs and filter Running versus collect derived active_run_ids index",
+    "equivalence_checked_before_measurement": true
+  },
+  "results": {
+    "clone_and_scan_median_us": 270.04,
+    "indexed_active_ids_median_ns": 37.199,
+    "median_ratio_clone_scan_over_indexed": 7259.6
+  },
+  "limitations": [
+    "Measures timeout candidate selection only; scheduler state load, JSON persistence, due-job calculation and queue writes are excluded.",
+    "Synthetic scheduler with one job and retained terminal history; not an end-to-end scheduler tick or product profile."
+  ]
+}

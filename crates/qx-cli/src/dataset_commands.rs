@@ -8,7 +8,6 @@ use crate::contract_adapters;
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
-use qx_runtime::StrategyRuntimeConfig;
 use std::path::Path;
 
 pub(crate) fn run_dataset_ingest(
@@ -124,27 +123,11 @@ pub(crate) fn verify_dataset_bundle_manifest(
     bars_manifest: &qx_data::DatasetManifest,
     bars_len: usize,
 ) -> Result<String, String> {
-    bundle
-        .validate()
-        .map_err(|error| format!("策略 DatasetBundleManifest 校验失败: {error}"))?;
-    let bars = bundle
-        .component("bars")
-        .ok_or_else(|| "策略 DatasetBundleManifest 缺少 bars 组件".to_string())?;
-    if bars.dataset.fingerprint != bars_manifest.fingerprint {
-        return Err(format!(
-            "策略 DatasetBundleManifest bars fingerprint 不匹配: bundle={} input={}",
-            bars.dataset.fingerprint, bars_manifest.fingerprint
-        ));
-    }
-    if bars.row_count != bars_len as u64 {
-        return Err(format!(
-            "策略 DatasetBundleManifest bars row_count 不匹配: bundle={} input={bars_len}",
-            bars.row_count
-        ));
-    }
-    bundle.fingerprint()
+    qx_app::dataset_bundle::verify_dataset_bundle_bars(bundle, bars_manifest, bars_len)
+        .map_err(|error| error.message().to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn verify_dataset_bundle_binding(
     bundle_path: &Path,
     bars_manifest: &qx_data::DatasetManifest,
@@ -161,53 +144,6 @@ pub(crate) fn verify_dataset_bundle_binding(
     verify_dataset_bundle_manifest(&bundle, bars_manifest, bars_len)
 }
 
-pub(crate) fn verify_dataset_bundle_component_bindings(
-    bundle: &qx_data::DatasetBundleManifest,
-    strategy: &StrategyRuntimeConfig,
-    strategy_id: &str,
-) -> Result<(), String> {
-    for (kind, component) in &bundle.components {
-        if kind == "bars" {
-            continue;
-        }
-        let path = strategy
-            .dataset_component_paths
-            .get(kind)
-            .map(String::as_str)
-            .or(match kind.as_str() {
-                "corporate_actions" => strategy.ashare_actions_path.as_deref(),
-                "calendar" => strategy.ashare_calendar_path.as_deref(),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                format!(
-                    "策略 {strategy_id} 的 DatasetBundle 组件 {kind} 没有对应输入文件；请配置 dataset_component_paths.{kind}"
-                )
-            })?;
-        let (fingerprint, row_count) = match component.format {
-            qx_data::DatasetComponentFormat::Json => {
-                dataset_component_file_fingerprint(Path::new(path), kind)?
-            }
-            qx_data::DatasetComponentFormat::Arrow => {
-                arrow_dataset_manifest_fingerprint(Path::new(path), kind)?
-            }
-        };
-        if fingerprint != component.dataset.fingerprint {
-            return Err(format!(
-                "策略 {strategy_id} 的 DatasetBundle 组件 {kind} 指纹不匹配: bundle={} input={fingerprint}",
-                component.dataset.fingerprint
-            ));
-        }
-        if row_count != component.row_count {
-            return Err(format!(
-                "策略 {strategy_id} 的 DatasetBundle 组件 {kind} 行数不匹配: bundle={} input={row_count}",
-                component.row_count
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Arrow IPC/C Data Interface 的生产者通过一个小型、可审计的 JSON manifest
 /// 把 schema、行数、时间范围和数据 fingerprint 绑定到 DatasetBundle。这里不
 /// 在 CLI 内自行实现 Arrow IPC 解码；真正的 Arrow reader 仍属于数据提供方，
@@ -217,101 +153,16 @@ pub(crate) fn arrow_dataset_manifest_fingerprint(
     kind: &str,
 ) -> Result<(String, u64), String> {
     let payload = read_example_json(path, " Arrow DatasetBundle 组件 manifest ")?;
-    let manifest = qx_data::ArrowDatasetManifest::from_json(&payload).map_err(|error| {
-        format!(
-            "Arrow DatasetBundle 组件 manifest 非法 {}: {error}",
-            path.display()
-        )
-    })?;
-    if manifest.kind != kind {
-        return Err(format!(
-            "Arrow DatasetBundle 组件 kind 不匹配: expected={kind} actual={}",
-            manifest.kind
-        ));
-    }
-    Ok((manifest.dataset.fingerprint, manifest.row_count))
+    qx_app::dataset_bundle::arrow_dataset_manifest_fingerprint_from_json(&payload, kind, path)
+        .map_err(|error| error.message().to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn dataset_component_file_fingerprint(
     path: &Path,
     kind: &str,
 ) -> Result<(String, u64), String> {
     let payload = read_example_json(path, " DatasetBundle 组件")?;
-    let value: serde_json::Value = serde_json::from_str(&payload)
-        .map_err(|error| format!("DatasetBundle 组件 JSON 无效 {}: {error}", path.display()))?;
-    match kind {
-        "corporate_actions" => {
-            let actions = value
-                .as_array()
-                .or_else(|| value.get("actions").and_then(serde_json::Value::as_array))
-                .ok_or_else(|| "corporate_actions 组件必须是数组或包含 actions 数组".to_string())?;
-            let canonical = serde_json::to_vec(actions)
-                .map_err(|error| format!("规范化 corporate_actions 组件失败: {error}"))?;
-            Ok((qx_strategy::sha256_hex(&canonical), actions.len() as u64))
-        }
-        "calendar" => {
-            let calendar_id = value
-                .get("calendar_id")
-                .ok_or_else(|| "calendar 组件缺少 calendar_id".to_string())?;
-            let trading_days = value
-                .get("trading_days")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| "calendar 组件缺少 trading_days 数组".to_string())?;
-            let sessions: &[serde_json::Value] = match value.get("sessions") {
-                // 旧版日历（顶层没有 `schema_version`）可以不写 sessions：Python 的
-                // `AshareTradingCalendar.from_json` 与本 crate 的 `apply_calendar_json` 都把它
-                // 读成"没有时段"。指纹侧此前直接报错，于是 Python 登记好的 bundle 会在回测
-                // 启动前被判成组件非法而拒启，两份读法对同一份文档一宽一严（V11 R17）。
-                None => &[],
-                Some(value) => value
-                    .as_array()
-                    .ok_or_else(|| "calendar 组件的 sessions 必须是数组".to_string())?,
-            };
-            // 与 Python AshareTradingCalendar.to_json 的 dataclass 字段顺序保持一致。
-            let canonical = format!(
-                "{{\"calendar_id\":{},\"trading_days\":{},\"sessions\":{}}}",
-                serde_json::to_string(calendar_id).map_err(|error| error.to_string())?,
-                serde_json::to_string(trading_days).map_err(|error| error.to_string())?,
-                serde_json::to_string(sessions).map_err(|error| error.to_string())?
-            )
-            .into_bytes();
-            Ok((
-                qx_strategy::sha256_hex(&canonical),
-                trading_days.len() as u64,
-            ))
-        }
-        _ => {
-            let rows = value
-                .as_array()
-                .or_else(|| value.get("rows").and_then(serde_json::Value::as_array))
-                .or_else(|| value.get("data").and_then(serde_json::Value::as_array))
-                .ok_or_else(|| {
-                    format!("DatasetBundle 组件 {kind} 必须是数组，或包含 rows/data 数组")
-                })?;
-            let canonical = canonicalize_json(&value);
-            let bytes = serde_json::to_vec(&canonical)
-                .map_err(|error| format!("规范化 DatasetBundle 组件 {kind} 失败: {error}"))?;
-            Ok((qx_strategy::sha256_hex(&bytes), rows.len() as u64))
-        }
-    }
-}
-
-/// 将通用组件 JSON 递归规范化，确保字段顺序差异不会改变 Bundle 指纹。
-/// 数组顺序仍然保留，因为停牌、限价规则和因子快照通常具有时间/优先级语义。
-fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(object) => {
-            let mut sorted = serde_json::Map::new();
-            let mut entries = object.iter().collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.0.cmp(right.0));
-            for (key, value) in entries {
-                sorted.insert(key.clone(), canonicalize_json(value));
-            }
-            serde_json::Value::Object(sorted)
-        }
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(canonicalize_json).collect())
-        }
-        _ => value.clone(),
-    }
+    qx_app::dataset_bundle::dataset_component_fingerprint_from_json(&payload, kind, path)
+        .map_err(|error| error.message().to_string())
 }

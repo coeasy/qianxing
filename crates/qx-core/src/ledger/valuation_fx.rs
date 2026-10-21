@@ -11,16 +11,14 @@ impl Ledger {
         instrument: &crate::InstrumentId,
     ) -> QxResult<()> {
         let has_uncovered_position =
-            self.positions
-                .iter()
+            self.iter_positions()
                 .any(|((account, held_instrument), position)| {
                     account == account_id
                         && held_instrument != instrument
                         && !position.quantity.is_zero()
                 })
                 || self
-                    .hedge_positions
-                    .iter()
+                    .iter_hedge_positions()
                     .any(|((account, held_instrument, _), position)| {
                         account == account_id
                             && held_instrument != instrument

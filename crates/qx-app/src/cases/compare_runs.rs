@@ -223,4 +223,27 @@ mod tests {
             AppErrorCategory::InvalidInput
         );
     }
+
+    #[test]
+    fn rejects_whitespace_only_identity_and_lineage_fields() {
+        let mut spec = CompareRunsSpec {
+            schema_version: 1,
+            runs: vec![run("a", 1, 1), run("b", 2, 2)],
+        };
+        for field in ["run_id", "instrument", "data_fingerprint", "result_hash"] {
+            spec.runs[0] = run("a", 1, 1);
+            match field {
+                "run_id" => spec.runs[0].run_id = "   ".into(),
+                "instrument" => spec.runs[0].instrument = "   ".into(),
+                "data_fingerprint" => spec.runs[0].data_fingerprint = "   ".into(),
+                "result_hash" => spec.runs[0].result_hash = "   ".into(),
+                _ => unreachable!("enumerated field"),
+            }
+            assert_eq!(
+                compare_runs(&spec, &ctx()).unwrap_err().category(),
+                AppErrorCategory::InvalidInput,
+                "whitespace-only {field} must be rejected"
+            );
+        }
+    }
 }

@@ -72,8 +72,8 @@ fn uncomputed_money_is_not_the_same_state_as_computed_zero() {
         uncomputed.validate().expect("未算快照封存后仍须自洽");
         computed_zero.validate().expect("已算快照封存后仍须自洽");
 
-        let absent = uncomputed.to_json();
-        let settled = computed_zero.to_json();
+        let absent = uncomputed.to_json().expect("protocol JSON serializes");
+        let settled = computed_zero.to_json().expect("protocol JSON serializes");
         assert!(
             absent.contains(&format!("\"{name}\":null")),
             "{name} 未算时稳定 JSON 必须印 null: {absent}"
@@ -217,8 +217,8 @@ fn uncomputed_position_money_is_not_the_same_state_as_computed_zero() {
         uncomputed.validate().expect("未算持仓行封存后仍须自洽");
         computed_zero.validate().expect("已算持仓行封存后仍须自洽");
 
-        let absent = uncomputed.to_json();
-        let settled = computed_zero.to_json();
+        let absent = uncomputed.to_json().expect("protocol JSON serializes");
+        let settled = computed_zero.to_json().expect("protocol JSON serializes");
         assert!(
             absent.contains(&format!("\"{name}\":null"))
                 && absent.contains(&format!("\"{name}\":7")),

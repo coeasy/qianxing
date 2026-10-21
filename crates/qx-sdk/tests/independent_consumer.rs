@@ -12,10 +12,10 @@
 
 use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
-    AlgoParentOrder, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
-    Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope,
-    ExecutionGateway, ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId,
-    MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
+    AlgoParentOrder, BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
+    CallerCapability, Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent,
+    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterSpace, ExperimentSplitPlan,
+    InstrumentId, MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
     MultiMarketBacktestSpec, Order, OrderStatus, OrderStore, PortfolioBacktestConfig,
     PortfolioStrategySpec, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
     RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
@@ -23,6 +23,7 @@ use qx_sdk::{
     VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "consumer/custom_strategy.rs"]
 mod custom_strategy_consumer;
@@ -51,7 +52,13 @@ fn sample_bars() -> PathBuf {
 
 /// 本用例独享的产物目录（并发跑不互相踩）。
 fn scratch(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("qx-sdk-consumer/{label}-{}", std::process::id()));
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after the Unix epoch")
+        .as_nanos();
+    let root = repo_root()
+        .join(".tmp-test/qx-sdk-consumer")
+        .join(format!("{label}-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&root).expect("建临时目录");
     root
 }
@@ -61,9 +68,11 @@ fn spec(run_id: &str, output_dir: &Path) -> BacktestSpec {
     strategy.fast_window = 2;
     strategy.slow_window = 3;
     BacktestSpec::new(
-        run_id,
-        "BTCUSDT.BINANCE",
-        sample_bars().to_string_lossy().into_owned(),
+        BacktestDatasetInput {
+            run_id: run_id.into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: sample_bars().to_string_lossy().into_owned(),
+        },
         "USDT",
         // 10 万 USDT 本金（定点 1e9）。写死标度而不是引内部常量：这一份是**独立消费者的输入**，
         // 它只承诺与三个门面同形的 JSON，不承诺与某个内部常量同源。
@@ -359,6 +368,10 @@ struct ConsumerVenue;
 impl VenuePort for ConsumerVenue {
     fn venue_id(&self) -> &str {
         "consumer-paper"
+    }
+
+    fn capabilities(&self) -> qx_sdk::VenueCapabilities {
+        qx_sdk::PAPER_VENUE_CAPABILITIES
     }
 
     fn submit_order(&mut self, order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {

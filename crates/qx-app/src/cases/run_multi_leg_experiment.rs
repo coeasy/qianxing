@@ -4,6 +4,9 @@ use super::artifacts::write_text;
 use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
 };
+use super::experiment_spec_artifact::{
+    serialize_experiment_input, verify_spec_artifact, write_spec_artifact,
+};
 use super::guard::guard_panics;
 use super::run_multi_leg_backtest::custom_strategy::{self, InjectedMultiLegStrategy};
 use super::run_multi_leg_backtest::run_inner;
@@ -250,14 +253,21 @@ fn run_inner_experiment(
         fingerprint.write_text(&identity.source_sha256);
     }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
+    let persisted_input = serialize_experiment_input(&spec_json, context.code_commit(), identity)?;
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
     let artifact_path = root
         .join(format!("{}.multi-leg-experiment.json", spec.experiment_id))
         .to_string_lossy()
         .into_owned();
+    let spec_path = artifact_path.replace(
+        ".multi-leg-experiment.json",
+        ".multi-leg-experiment.spec.json",
+    );
     match std::fs::read_to_string(&artifact_path) {
         Ok(existing) => {
-            return existing_result(&existing, &spec_fingerprint, &spec.experiment_id).map(Some)
+            let result = existing_result(&existing, &spec_fingerprint, &spec.experiment_id)?;
+            verify_spec_artifact(&spec_path, &persisted_input, "多腿实验")?;
+            return Ok(Some(result));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有多腿实验报告", &error)),
@@ -400,6 +410,7 @@ fn run_inner_experiment(
     let report_json = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建多腿实验产物目录", &error))?;
+    write_spec_artifact(&spec_path, &persisted_input, "多腿实验")?;
     if let Err(write_error) = write_text(&artifact_path, &report_json) {
         if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
             return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)

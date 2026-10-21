@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_portfolio_margin_snapshot_indexed",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "-j",
+    "1",
+    "--",
+    "portfolio_margin_admission_snapshot"
+  ],
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "EC6B4FF9863AB398E99EF9AF518C969EA6DCABA6F9A6CA0172CEFA661BAF600C",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "market_counts_and_admission_batches": [2, 8, 32, 64],
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "input": "Synthetic net/long/short quantities and marks; every market is admitted once, with fixed margin arithmetic per contribution.",
+    "parity": "Before timing, per-target exclusion scans and one-pass aggregate-minus-target results are compared for every market count.",
+    "baseline": "For every target admission, iterate all other markets and recompute the quantity-based margin contribution.",
+    "candidate": "Compute each market contribution once for the visible timestamp into a Vec indexed by runtime market index, build the portfolio total, then read total minus the target contribution for each admission.",
+    "timing_scope": "Synthetic position aggregation and integer margin arithmetic only; excludes BTreeMap/ledger access costs, actual margin engine, order admission, matching, I/O, and full backtest orchestration."
+  },
+  "results": [
+    {
+      "market_count": 2,
+      "baseline_mean_ns": 24.896,
+      "baseline_ci95_ns": [24.523, 25.284],
+      "snapshot_mean_ns": 43.827,
+      "snapshot_ci95_ns": [43.049, 45.013],
+      "snapshot_elapsed_change_pct": 76.04
+    },
+    {
+      "market_count": 8,
+      "baseline_mean_ns": 483.97,
+      "baseline_ci95_ns": [479.73, 487.5],
+      "snapshot_mean_ns": 102.2,
+      "snapshot_ci95_ns": [100.54, 103.92],
+      "snapshot_elapsed_change_pct": -78.88
+    },
+    {
+      "market_count": 32,
+      "baseline_mean_ns": 8198.1,
+      "baseline_ci95_ns": [8156.4, 8235.6],
+      "snapshot_mean_ns": 312.82,
+      "snapshot_ci95_ns": [308.87, 316.73],
+      "snapshot_elapsed_change_pct": -96.19
+    },
+    {
+      "market_count": 64,
+      "baseline_mean_ns": 33572.0,
+      "baseline_ci95_ns": [33082.0, 33866.0],
+      "snapshot_mean_ns": 617.29,
+      "snapshot_ci95_ns": [605.48, 627.27],
+      "snapshot_elapsed_change_pct": -98.16
+    }
+  ],
+  "limitations": [
+    "The snapshot algorithm is slower for two markets in this synthetic microbenchmark. Production therefore only builds the snapshot with at least four configured specs; smaller portfolios retain the original per-target calculation.",
+    "The candidate and production both use indexed Vec contribution storage, but the benchmark uses fixed synthetic arithmetic instead of production Ledger lookups, margin rules, and order admission; timings remain directional and not directly transferable.",
+    "The benchmark is not end-to-end A-share or portfolio backtest evidence, and the nine product profile measurement statuses are unchanged."
+  ]
+}

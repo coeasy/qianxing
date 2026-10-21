@@ -4,7 +4,7 @@
 //! 定点运算表达。CCXT 只负责把交易所 market/position/funding 映射到这些
 //! 契约，回测和实盘不得各自重新实现一套保证金规则。
 
-use crate::{InstrumentId, Money, QxError, QxResult, SCALE};
+use crate::{InstrumentId, Money, QxError, QxResult, DEFAULT_SETTLEMENT_CURRENCY, SCALE};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -74,6 +74,13 @@ pub struct TradingInstrumentSpec {
     pub maintenance_margin_bps: u32,
     pub valid_from: u64,
     pub valid_to: Option<u64>,
+}
+
+/// Resolve the ledger currency for a backtest from its declared instrument spec,
+/// using the core default only when the spec is absent.
+pub fn resolve_settlement_currency(spec: Option<&TradingInstrumentSpec>) -> String {
+    spec.map(|spec| spec.settlement_currency.clone())
+        .unwrap_or_else(|| DEFAULT_SETTLEMENT_CURRENCY.into())
 }
 
 impl TradingInstrumentSpec {
@@ -335,6 +342,17 @@ mod tests {
             valid_from: 1,
             valid_to: None,
         }
+    }
+
+    #[test]
+    fn settlement_currency_comes_from_the_spec_or_the_core_default() {
+        assert_eq!(
+            resolve_settlement_currency(None),
+            DEFAULT_SETTLEMENT_CURRENCY
+        );
+        let mut market = spec(TradingProduct::Spot);
+        market.settlement_currency = "CNY".into();
+        assert_eq!(resolve_settlement_currency(Some(&market)), "CNY");
     }
 
     #[test]

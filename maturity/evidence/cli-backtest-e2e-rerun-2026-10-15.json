@@ -1,0 +1,102 @@
+{
+  "binary": "target\\release\\qx-cli.exe",
+  "hardware": {
+    "arch": "AMD64",
+    "logical_cpu_count": 16,
+    "os": "Windows",
+    "physical_core_count": 8,
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "total_ram_bytes": 65911173120
+  },
+  "linear_scaling_curve": {
+    "candidate_knee_threshold_pct": 20.0,
+    "candidate_positive_knee_at_bars": null,
+    "candidate_positive_knee_is_not_a_statistical_claim": true,
+    "interpretation": "positive knee means marginal wall-time per Bar increased beyond the threshold; a decreasing slope is reported as economies of scale, not a knee",
+    "method": "adjacent p50 wall-time differences; includes process startup and JSON parsing",
+    "points": [
+      {
+        "amortized_p50_ms_per_bar": 0.239754,
+        "bars": 1000,
+        "p50_ms": 239.754
+      },
+      {
+        "amortized_p50_ms_per_bar": 0.03379275,
+        "bars": 8000,
+        "p50_ms": 270.342
+      },
+      {
+        "amortized_p50_ms_per_bar": 0.007321281,
+        "bars": 64000,
+        "p50_ms": 468.562
+      }
+    ],
+    "segments": [
+      {
+        "delta_p50_ms": 30.588,
+        "from_bars": 1000,
+        "marginal_p50_ms_per_bar": 0.004369714,
+        "marginal_p50_us_per_bar": 4.37,
+        "slope_change_pct_vs_previous_segment": null,
+        "to_bars": 8000
+      },
+      {
+        "delta_p50_ms": 198.22,
+        "from_bars": 8000,
+        "marginal_p50_ms_per_bar": 0.003539643,
+        "marginal_p50_us_per_bar": 3.54,
+        "slope_change_pct_vs_previous_segment": -18.996,
+        "to_bars": 64000
+      }
+    ]
+  },
+  "measured": "end-to-end wall clock (parse + validate + event-driven backtest + summary)",
+  "not_measured": [
+    "kernel append/refresh/replay/read-model/recovery per-stage p50/p95"
+  ],
+  "repeats": 7,
+  "rows": [
+    {
+      "bars": 1000,
+      "deterministic_across_repeats": true,
+      "max_ms": 258.978,
+      "mean_ms": 242.468,
+      "min_ms": 235.251,
+      "p50_ms": 239.754,
+      "p95_ms": 258.978,
+      "repeats": 7,
+      "result_hash": "850ac3d252a146ce"
+    },
+    {
+      "bars": 8000,
+      "deterministic_across_repeats": true,
+      "max_ms": 287.524,
+      "mean_ms": 272.214,
+      "min_ms": 261.97,
+      "p50_ms": 270.342,
+      "p95_ms": 287.524,
+      "repeats": 7,
+      "result_hash": "a0448d085ae576e2"
+    },
+    {
+      "bars": 64000,
+      "deterministic_across_repeats": true,
+      "max_ms": 473.591,
+      "mean_ms": 465.578,
+      "min_ms": 452.785,
+      "p50_ms": 468.562,
+      "p95_ms": 473.591,
+      "repeats": 7,
+      "result_hash": "57e9b5cc43cd650c"
+    }
+  ],
+  "scenario": "backtest builtin sma_cross <frame_N>",
+  "schema_version": 1,
+  "sizes": [
+    1000,
+    8000,
+    64000
+  ]
+}

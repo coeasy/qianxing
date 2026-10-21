@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-market-depth-backtest-result-v1.json",
+  "title": "Qianxing MultiMarketDepthBacktestOutcome v1",
+  "description": "Shared-account multi-market L1/L2 result, pending-order state, per-market effective execution assumptions and replay artifact.",
+  "type": "object",
+  "required": ["run_id", "account_id", "spec_fingerprint", "data_fingerprint", "shared_result_hash", "markets_total", "successful_fills", "pending_orders", "equity_points", "final_equity_raw", "return_bps", "max_drawdown_bps", "artifact_path"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "data_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "shared_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "markets_total": {"type": "integer", "minimum": 2, "maximum": 32},
+    "successful_fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "pending_orders": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "equity_points": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "final_equity_raw": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+    "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+    "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "execution_models": {
+      "type": "object",
+      "propertyNames": {"minLength": 1},
+      "additionalProperties": {"$ref": "#/$defs/OrderBookExecutionDescriptor"}
+    },
+    "artifact_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "OrderBookExecutionDescriptor": {
+      "type": "object",
+      "required": ["schema_version", "kernel", "version", "fee_bps", "latency_snapshots", "queue_position", "market_impact_bps", "assumption"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "kernel": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "fee_bps": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+        "latency_snapshots": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "queue_position": {"$ref": "#/$defs/QueuePositionDescriptor"},
+        "market_impact_bps": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+        "assumption": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "QueuePositionDescriptor": {
+      "type": "object",
+      "required": ["name", "version", "initial_queue_bps", "volume_advance_bps", "assumption", "limitations"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "initial_queue_bps": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727},
+        "volume_advance_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},
+        "assumption": {"type": "string", "minLength": 1},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -101,6 +101,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
         .map(Some)
     }
@@ -134,6 +136,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })
         .map(Some)
     }
@@ -214,6 +218,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         let position_id = staged.append(LedgerEntry {
             id: 0,
@@ -228,6 +234,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         *self = staged;
         Ok(vec![cash_id, position_id])
@@ -277,6 +285,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         let target_id = staged.append(LedgerEntry {
             id: 0,
@@ -291,6 +301,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         *self = staged;
         Ok(vec![bond_id, target_id])
@@ -347,6 +359,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         let position_id = self.append(LedgerEntry {
             id: 0,
@@ -361,6 +375,8 @@ impl Ledger {
             ts,
             multiplier: 1,
             position_side: None,
+
+            leverage: None,
         })?;
         Ok(vec![cash_id, position_id])
     }

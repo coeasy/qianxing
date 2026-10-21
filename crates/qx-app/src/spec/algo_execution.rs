@@ -3,6 +3,7 @@ use qx_zhenlu::VwapVolumeBucket;
 use serde::{Deserialize, Serialize};
 
 pub const ALGO_EXECUTION_SPEC_SCHEMA_VERSION: u32 = 1;
+pub const ALGO_EXECUTION_PLAN_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

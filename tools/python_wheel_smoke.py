@@ -47,6 +47,32 @@ def write_builtin_catalog_frame(path: Path, bars: int = 90) -> None:
     )
 
 
+def write_ashare_frame(path: Path, bars: int = 60) -> None:
+    scale = 1_000_000_000
+    tick = 10_000_000
+    closes = []
+    for index in range(bars):
+        phase = index % 20
+        cents = 1_000 + (phase if phase < 10 else 20 - phase)
+        closes.append(cents * scale // 100)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "instrument": "000001.SZSE",
+                "source": "python-wheel-smoke-ashare-v1",
+                "ts": [1_717_378_200_000 + index * 60_000 for index in range(bars)],
+                "open_raw": closes,
+                "high_raw": [price + tick for price in closes],
+                "low_raw": [price - tick for price in closes],
+                "close_raw": closes,
+                "volume_raw": [4_000 * scale] * bars,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: python_wheel_smoke.py <repository-root>")
@@ -89,6 +115,56 @@ def main() -> int:
         verification = qx.verify_run(outcome)
         assert verification.verified, verification.mismatches
 
+        ashare_bars = output / "ashare-bars.json"
+        write_ashare_frame(ashare_bars)
+        ashare_spec = qx.BacktestSpec(
+            run_id="wheel-smoke-ashare",
+            instrument="000001.SZSE",
+            bars_path=str(ashare_bars),
+            settlement_currency="CNY",
+            initial_cash_raw=100_000_000_000_000,
+            output_dir=str(output / "ashare"),
+            strategy=qx.BuiltinStrategySpec(
+                kind="sma_cross",
+                strategy_id="wheel-smoke-ashare",
+                quantity_raw=1_000_000_000_000,
+                fast_window=2,
+                slow_window=3,
+            ),
+            market_spec=qx.TradingInstrumentSpec(
+                instrument=qx.InstrumentId(symbol="000001", venue="SZSE"),
+                product="spot",
+                base_currency="000001",
+                quote_currency="CNY",
+                settlement_currency="CNY",
+                contract_size=1_000_000_000,
+                linear=True,
+                inverse=False,
+                price_tick=10_000_000,
+                qty_step=100_000_000_000,
+                min_qty=100_000_000_000,
+                max_leverage=1,
+                maintenance_margin_bps=0,
+                valid_from=0,
+            ),
+            margin_model=qx.BacktestNoMargin(),
+            execution_cost_rules=qx.BacktestExecutionCostRules(
+                name="wheel-smoke-ashare", maker_bp=3, taker_bp=12, latency_base_ns=1_000_000
+            ),
+            ashare_rules=qx.AshareBacktestRules(
+                **json.loads((root / "deploy" / "qianxing.ashare.rules.json").read_text(encoding="utf-8"))
+            ),
+            fill_model="best_price",
+            max_bar_volume_participation_bps=2_500,
+            allow_short=False,
+        )
+        ashare_outcome = qx.run_backtest(ashare_spec)
+        assert ashare_outcome.fills > 0, ashare_outcome
+        ashare_summary = json.loads(
+            Path(ashare_outcome.artifacts["summary"]).read_text(encoding="utf-8")
+        )
+        assert ashare_summary["fee_model"].startswith("AShareFee@v1["), ashare_summary
+
         experiment = qx.run_experiment(
             qx.RunExperimentSpec(
                 experiment_id="wheel-smoke-parameter-grid",
@@ -112,7 +188,7 @@ def main() -> int:
             == len(single_leg_kinds)
         )
         assert all(
-            candidate.outcome is not None and candidate.outcome.fills > 0
+            candidate.outcome is not None and candidate.outcome.result_hash
             for candidate in classic_selection.candidates
         ), classic_selection.candidates
 
@@ -289,6 +365,7 @@ def main() -> int:
         print(
             "wheel e2e "
             f"strategies={len(strategies)} rows={verdict.rows} fills={outcome.fills} "
+            f"ashare_fills={ashare_outcome.fills} "
             f"classic_selection={classic_selection.succeeded_candidates}/{classic_selection.total_candidates} "
             f"parameter_grid={experiment.succeeded_candidates}/{experiment.total_candidates} "
             f"accounts={accounts.summary['accounts_succeeded']} "

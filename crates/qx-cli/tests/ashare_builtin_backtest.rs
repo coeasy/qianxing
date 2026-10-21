@@ -17,7 +17,11 @@ fn deploy(name: &str) -> PathBuf {
 }
 
 fn temp_dir(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("仓库根目录");
+    let root = workspace.join("target").join(format!(
         "qianxing-ashare-builtin-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
@@ -41,23 +45,29 @@ fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
     )
 }
 
-/// 从 `[Builtin · Backtest]` 行取 `fills=`，从 `[Builtin · Integrity]` 行取 `rejected_orders=`。
-fn field(stdout: &str, marker: &str, key: &str) -> String {
-    stdout
-        .lines()
-        .find(|line| line.starts_with(marker))
-        .and_then(|line| line.split(&format!("{key}=")).nth(1))
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_default()
-        .to_string()
+fn run_from<A: AsRef<OsStr>>(working_directory: &Path, args: &[A]) -> (i32, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(working_directory)
+        .args(args)
+        .output()
+        .expect("启动 qx-cli 失败");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
 }
 
-fn line_with(stdout: &str, marker: &str) -> String {
-    stdout
+fn summary(stdout: &str) -> serde_json::Value {
+    let path = stdout
         .lines()
-        .find(|line| line.starts_with(marker))
-        .unwrap_or("")
-        .to_string()
+        .find_map(|line| {
+            line.strip_prefix("[Artifacts] summary=")
+                .and_then(|value| value.split_once(" equity=").map(|(path, _)| path))
+        })
+        .expect("builtin must expose its durable summary path");
+    serde_json::from_slice(&std::fs::read(path).expect("read builtin summary"))
+        .expect("builtin summary is JSON")
 }
 
 const FRAME: &str = "qianxing.ashare.bar-frame.example.json";
@@ -66,6 +76,7 @@ const RUNTIME: &str = "qianxing.runtime.ashare.example.json";
 
 /// 把示例运行时配置里的路径改成绝对路径，写进临时目录，并按 `edit` 改动 JSON。
 fn config_with(root: &Path, edit: impl FnOnce(&mut serde_json::Value)) -> PathBuf {
+    std::fs::create_dir_all(root).expect("创建用例配置目录失败");
     let template = std::fs::read_to_string(deploy(RUNTIME)).expect("读取示例运行时配置失败");
     let mut value: serde_json::Value = serde_json::from_str(&template).unwrap();
     absolutize_paths(&mut value, root);
@@ -84,6 +95,17 @@ fn config_with(root: &Path, edit: impl FnOnce(&mut serde_json::Value)) -> PathBu
     let path = root.join("runtime.ashare.case.json");
     std::fs::write(&path, serde_json::to_string(&value).unwrap()).expect("写入用例配置失败");
     path
+}
+
+fn config_without_ashare(root: &Path) -> PathBuf {
+    config_with(root, |value| {
+        value["strategy"]
+            .as_object_mut()
+            .unwrap()
+            .retain(|key, _| !key.starts_with("ashare_"));
+        value["storage"]["data_dir"] =
+            serde_json::Value::String(root.join("plain-data").to_string_lossy().into_owned());
+    })
 }
 
 /// 把配置里指向 deploy 资产的路径改成绝对路径（数据集目录改到用例临时目录）。
@@ -132,7 +154,8 @@ fn builtin_args_with_spec(config: Option<&Path>, quantity: &str, spec: &Path) ->
 #[test]
 fn builtin_entry_binds_the_declared_ashare_rules() {
     let root = temp_dir("bind");
-    let config = config_with(&root, |_| {});
+    let config = config_with(&root.join("bound"), |_| {});
+    let plain_config = config_without_ashare(&root.join("plain"));
     // 这条用例只比较 A 股交易规则快照是否接入。为使 150 股成为合法的基线订单，
     // 使用一股步长的市场规格；绑定配置后的整手拒单来自 A 股规则快照。
     let generic_spec = root.join("generic-qty-step.spec.json");
@@ -142,72 +165,132 @@ fn builtin_entry_binds_the_declared_ashare_rules() {
     spec["min_qty_raw"] = serde_json::Value::from(1_000_000_000_i64);
     std::fs::write(&generic_spec, serde_json::to_vec(&spec).unwrap()).unwrap();
 
-    let (plain_code, plain, plain_err) = run(&builtin_args_with_spec(None, "150", &generic_spec));
-    assert_eq!(plain_code, 0, "不读配置的基线必须跑通: {plain_err}");
-    assert_eq!(field(&plain, "[Builtin · Backtest]", "fills"), "2");
-    assert_eq!(
-        field(&plain, "[Builtin · Integrity]", "rejected_orders"),
-        "0"
-    );
-    assert_eq!(line_with(&plain, "[Builtin · A 股规则]"), "");
+    let (plain_code, plain, plain_err) = run(&builtin_args_with_spec(
+        Some(&plain_config),
+        "150",
+        &generic_spec,
+    ));
+    assert_eq!(plain_code, 0, "不绑定 A 股规则的基线必须跑通: {plain_err}");
+    let plain_summary = summary(&plain);
+    assert_eq!(plain_summary["fills"], 2);
+    assert_eq!(plain_summary["rejected_orders"], 0);
+    assert!(!plain_summary["model_descriptors"]
+        .as_array()
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str().is_some_and(|v| v.starts_with("AshareRules@")))));
 
     let (code, bound, bound_err) =
         run(&builtin_args_with_spec(Some(&config), "150", &generic_spec));
     assert_eq!(code, 0, "同一份配置在内置链必须跑通: {bound_err}");
+    let bound_summary = summary(&bound);
     assert_eq!(
-        field(&bound, "[Builtin · Integrity]", "rejected_orders"),
-        "2",
+        bound_summary["rejected_orders"], 2,
         "整手规则必须真的挡下买入"
     );
     assert!(
-        line_with(&bound, "[Builtin · Integrity]").contains("整手"),
-        "拒单理由要说明是整手: {}",
-        line_with(&bound, "[Builtin · Integrity]")
+        bound_summary["rejection_reasons"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item["reason"].as_str().is_some_and(|v| v.contains("整手")))),
+        "summary 拒单原因必须说明整手规则: {bound_summary}"
     );
-    assert_eq!(field(&bound, "[Builtin · Backtest]", "fills"), "0");
+    assert_eq!(bound_summary["fills"], 0);
     assert!(
-        line_with(&bound, "[Builtin · Cost]").contains("source=ashare-rules:"),
-        "费用被 A 股规则顶掉时成本来源要改口: {}",
-        line_with(&bound, "[Builtin · Cost]")
+        bound_summary["execution_costs"]["source"]
+            .as_str()
+            .is_some_and(|value| value.contains("ashare-rules:")),
+        "持久摘要要说明 A 股费率来源: {bound_summary}"
     );
     assert!(
-        line_with(&bound, "[Builtin · A 股规则]").contains("t_plus_one=true"),
-        "绑定了哪份规则快照要印出来"
+        bound_summary["model_descriptors"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item.as_str().is_some_and(|v| v.starts_with("AshareRules@")))),
+        "持久摘要要记录绑定的 A 股规则模型"
     );
     assert_ne!(
-        field(&plain, "[Builtin · Backtest]", "result_hash"),
-        field(&bound, "[Builtin · Backtest]", "result_hash"),
+        plain_summary["result_hash"], bound_summary["result_hash"],
         "同一份配置在两条链上必须给出同一个 A 股口径"
     );
+}
+
+/// A bare runtime filename must resolve asset paths from the config directory before snapshotting.
+#[test]
+fn builtin_entry_resolves_bare_relative_runtime_config_before_snapshotting() {
+    let root = temp_dir("relative-runtime-config");
+    let working_directory = root.join("cwd");
+    std::fs::create_dir_all(&working_directory).expect("create isolated working directory");
+
+    let template = std::fs::read_to_string(deploy(RUNTIME)).expect("read runtime example");
+    let mut config: serde_json::Value = serde_json::from_str(&template).unwrap();
+    absolutize_paths(&mut config, &root);
+    let config_path = working_directory.join("runtime.json");
+    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+        .expect("write isolated runtime config");
+
+    let args = [
+        "backtest",
+        "builtin",
+        "ema_cross",
+        FRAME,
+        SPEC,
+        "100",
+        "--config",
+        "runtime.json",
+    ];
+    let args = args
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match index {
+            3 => deploy(FRAME).to_string_lossy().into_owned(),
+            4 => deploy(SPEC).to_string_lossy().into_owned(),
+            _ => (*value).to_string(),
+        })
+        .collect::<Vec<_>>();
+    let (code, stdout, stderr) = run_from(&working_directory, &args);
+    assert_eq!(code, 0, "bare relative runtime config must work: {stderr}");
+    let summary = summary(&stdout);
+    assert_eq!(summary["schema_version"], 7);
+    assert_eq!(summary["instrument"], "000001.SZSE");
+    assert_eq!(summary["fills"], 1);
+    assert_eq!(summary["rejected_orders"], 0);
+    assert!(summary["metrics"]["fees_raw"].as_i64().unwrap_or_default() > 0);
+    assert!(summary["model_descriptors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|model| model.as_str().unwrap().starts_with("AShareFee@v1[")));
 }
 
 /// 成交数量合法时规则照样改结果：A 股佣金模型顶掉内置 2/5bp，费用与收益都不同。
 #[test]
 fn ashare_fee_model_replaces_the_builtin_cost_rates() {
     let root = temp_dir("fee");
-    let config = config_with(&root, |_| {});
-    let (_, plain, plain_err) = run(&builtin_args(None, "100"));
-    assert_eq!(
-        field(&plain, "[Builtin · Backtest]", "fills"),
-        "2",
-        "{plain_err}"
-    );
-    let (_, bound, bound_err) = run(&builtin_args(Some(&config), "100"));
-    assert_eq!(
-        field(&bound, "[Builtin · Backtest]", "fills"),
-        "2",
-        "{bound_err}"
-    );
+    let config = config_with(&root.join("bound"), |_| {});
+    let plain_config = config_without_ashare(&root.join("plain"));
+    let (plain_code, plain, plain_err) = run(&builtin_args(Some(&plain_config), "100"));
+    assert_eq!(plain_code, 0, "fee baseline must run: {plain_err}");
+    assert_eq!(summary(&plain)["fills"], 2, "{plain_err}");
+    let (bound_code, bound, bound_err) = run(&builtin_args(Some(&config), "100"));
+    assert_eq!(bound_code, 0, "A-share fee run must run: {bound_err}");
+    assert_eq!(summary(&bound)["fills"], 2, "{bound_err}");
     assert_ne!(
-        field(&plain, "[Builtin · Backtest]", "result_hash"),
-        field(&bound, "[Builtin · Backtest]", "result_hash"),
+        summary(&plain)["result_hash"],
+        summary(&bound)["result_hash"],
         "费率口径换了结果却没换，说明费用模型没接上"
     );
-    assert!(line_with(&plain, "[Builtin · Cost]").contains("maker_bp=2"));
+    assert_eq!(
+        summary(&plain)["execution_costs"]["source"],
+        "runtime-config-default"
+    );
     assert!(
-        !line_with(&bound, "[Builtin · Cost]").contains("maker_bp="),
-        "A 股规则生效时不能再报成本文件的 maker/taker: {}",
-        line_with(&bound, "[Builtin · Cost]")
+        summary(&bound)["execution_costs"]["source"]
+            .as_str()
+            .is_some_and(|source| source.starts_with("ashare-rules:")),
+        "A 股规则生效时持久摘要应改用 A 股费率来源: {bound_err}"
     );
 }
 
@@ -215,6 +298,19 @@ fn ashare_fee_model_replaces_the_builtin_cost_rates() {
 #[test]
 fn broken_ashare_sections_fail_closed_on_the_builtin_entry() {
     let root = temp_dir("fail-closed");
+    let missing_calendar = config_with(&root.join("missing-calendar"), |value| {
+        value["strategy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ashare_calendar_path");
+    });
+    let (code, _, stderr) = run(&builtin_args(Some(&missing_calendar), "150"));
+    assert_eq!(code, 2, "A 股规则缺交易日历必须在 CLI 回测入口拒绝");
+    assert!(
+        stderr.contains("必须提供交易日历"),
+        "错误要说明缺少有界交易日清单: {stderr}"
+    );
+
     let mut rules: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(deploy("qianxing.ashare.rules.json")).unwrap(),
     )
@@ -270,7 +366,7 @@ fn entries_without_ashare_hooks_reject_the_config() {
     ]);
     assert_eq!(code, 2, "深度档没有 A 股挂钩点，收下配置就该拒");
     assert!(
-        stderr.contains("backtest book 不接受 strategy.ashare_rules_path")
+        stderr.contains("深度档位回测不接受 strategy.ashare_rules_path")
             && stderr.contains("盘口引擎"),
         "拒绝要说明是哪条链、为什么: {stderr}"
     );

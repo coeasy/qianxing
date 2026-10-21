@@ -4,6 +4,130 @@
 //! 留在父模块，这里是下单/成交前的市场约束侧。
 
 use super::*;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+#[path = "trading/previous_close.rs"]
+mod previous_close;
+
+/// Timestamp index for A-share actions used by the Bar loop. Each action is stored once per
+/// trigger timestamp, in source order, so the engine can preserve its original event ordering.
+pub(crate) struct AshareCorporateActionSchedule {
+    by_timestamp: HashMap<u64, Vec<usize>>,
+    bar_timestamp_by_action_timestamp: HashMap<u64, u64>,
+    explicit_rights_expiries: BTreeMap<u64, BTreeSet<String>>,
+}
+
+impl AshareCorporateActionSchedule {
+    #[cfg(test)]
+    pub(crate) fn new(actions: &[AshareCorporateActionEvent]) -> Self {
+        Self::build(actions, None)
+    }
+
+    pub(crate) fn for_bars(actions: &[AshareCorporateActionEvent], bars: &[Bar]) -> Self {
+        Self::build(actions, Some(bars))
+    }
+
+    fn build(actions: &[AshareCorporateActionEvent], bars: Option<&[Bar]>) -> Self {
+        let mut explicit_rights_expiries = BTreeMap::<u64, BTreeSet<String>>::new();
+        let mut by_timestamp = HashMap::<u64, Vec<usize>>::new();
+        let mut bar_timestamp_by_action_timestamp = HashMap::new();
+        for (index, event) in actions.iter().enumerate() {
+            let mut timestamps = [None; 5];
+            let mut timestamp_count = 0;
+            let mut scheduled_bar_timestamps = [None; 5];
+            let mut scheduled_bar_timestamp_count = 0;
+            for ts in [
+                Some(event.ts),
+                event.record_ts,
+                event.payment_ts,
+                event.subscription_start_ts,
+                event.subscription_end_ts,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !timestamps[..timestamp_count].contains(&Some(ts)) {
+                    timestamps[timestamp_count] = Some(ts);
+                    timestamp_count += 1;
+                }
+            }
+            for ts in timestamps.into_iter().take(timestamp_count).flatten() {
+                let bar_ts = match bars {
+                    Some(bars) => Self::first_bar_on_action_day(bars, ts),
+                    None => Some(ts),
+                };
+                let Some(bar_ts) = bar_ts else {
+                    continue;
+                };
+                bar_timestamp_by_action_timestamp
+                    .entry(ts)
+                    .or_insert(bar_ts);
+                if !scheduled_bar_timestamps[..scheduled_bar_timestamp_count]
+                    .contains(&Some(bar_ts))
+                {
+                    scheduled_bar_timestamps[scheduled_bar_timestamp_count] = Some(bar_ts);
+                    scheduled_bar_timestamp_count += 1;
+                    by_timestamp.entry(bar_ts).or_default().push(index);
+                }
+            }
+            if event.action_type == AshareCorporateActionType::RightsIssueExpiry {
+                if let (Some(bar_ts), Some(instrument)) = (
+                    bar_timestamp_by_action_timestamp.get(&event.ts).copied(),
+                    event.rights_instrument.as_ref(),
+                ) {
+                    explicit_rights_expiries
+                        .entry(bar_ts)
+                        .or_default()
+                        .insert(instrument.clone());
+                }
+            }
+        }
+        Self {
+            by_timestamp,
+            bar_timestamp_by_action_timestamp,
+            explicit_rights_expiries,
+        }
+    }
+
+    fn first_bar_on_action_day(bars: &[Bar], action_ts: u64) -> Option<u64> {
+        let index = bars.partition_point(|bar| bar.ts < action_ts);
+        let bar = bars.get(index)?;
+        (AshareRuleConfig::day_key(bar.ts) == AshareRuleConfig::day_key(action_ts))
+            .then_some(bar.ts)
+    }
+
+    pub(crate) fn trigger_ts(&self, action_ts: Option<u64>) -> Option<u64> {
+        action_ts.and_then(|ts| self.bar_timestamp_by_action_timestamp.get(&ts).copied())
+    }
+
+    pub(crate) fn events_at<'a>(
+        &'a self,
+        actions: &'a [AshareCorporateActionEvent],
+        ts: u64,
+    ) -> impl Iterator<Item = &'a AshareCorporateActionEvent> + 'a {
+        self.by_timestamp
+            .get(&ts)
+            .into_iter()
+            .flatten()
+            .map(move |index| &actions[*index])
+    }
+
+    pub(crate) fn has_explicit_rights_expiry(
+        &self,
+        ts: u64,
+        rights_instrument: Option<&str>,
+    ) -> bool {
+        rights_instrument.is_some_and(|instrument| {
+            self.explicit_rights_expiries
+                .get(&ts)
+                .is_some_and(|instruments| instruments.contains(instrument))
+        })
+    }
+}
+
+/// Per-run union of calendar sessions, sorted and merged for logarithmic membership checks.
+pub(crate) struct AshareSessionIndex {
+    windows: Vec<[u64; 2]>,
+}
 
 /// 未声明涨跌停带时的 serde 默认。0 是"按板块推导"的哨兵，生效值见
 /// [`Self::effective_limit_up_bp`]。这里曾直接返回 1_000，于是 `board: ChiNext` 而省略
@@ -14,108 +138,44 @@ pub(crate) fn unspecified_limit_bp() -> i64 {
 
 impl AshareRuleConfig {
     pub fn is_trading(&self, ts: u64) -> bool {
+        let in_session = self
+            .session_windows
+            .iter()
+            .any(|window| window[0] <= ts && ts < window[1]);
+        self.is_trading_with_session(ts, in_session)
+    }
+
+    fn is_trading_with_session(&self, ts: u64, in_session: bool) -> bool {
         let day_start = Self::day_key(ts)
             .saturating_mul(DAY_MS)
             .saturating_sub(SHANGHAI_OFFSET_MS);
         (self.trading_timestamps.is_empty() || self.trading_timestamps.binary_search(&ts).is_ok())
             && (self.trading_days.is_empty() || self.trading_days.binary_search(&day_start).is_ok())
-            && (self.session_windows.is_empty()
-                || ts == day_start
-                || self
-                    .session_windows
-                    .iter()
-                    .any(|window| window[0] <= ts && ts < window[1]))
+            && (self.session_windows.is_empty() || ts == day_start || in_session)
             && self.halted_timestamps.binary_search(&ts).is_err()
+    }
+
+    pub(crate) fn bar_restrictions(
+        &self,
+        sessions: &AshareSessionIndex,
+        bar: &Bar,
+        previous_close: Option<i128>,
+    ) -> (bool, bool, bool) {
+        let trading = self.is_trading_with_session(bar.ts, sessions.contains(bar.ts));
+        let block_buy = if self.session_windows.is_empty() {
+            self.blocks_fill(Side::Buy, bar, previous_close)
+        } else {
+            self.blocks_fill_with_trading(Side::Buy, bar, previous_close, trading)
+        };
+        (
+            trading,
+            block_buy,
+            self.blocks_fill_with_trading(Side::Sell, bar, previous_close, trading),
+        )
     }
 
     pub fn day_key(ts: u64) -> u64 {
         ts.saturating_add(SHANGHAI_OFFSET_MS) / DAY_MS
-    }
-
-    /// 涨跌停的锚：**上一交易日**的收盘价，不是上一根 Bar 的收盘价。
-    ///
-    /// 日线数据上两者重合，分钟线上"上一根 5 分钟的收价"与昨收差着一整个交易日 —— 拿它当锚
-    /// 会把 ±10% 的板窄化成"最近 5 分钟 ±10%"，于是涨停封死的分钟线照样成交、跌停封死的照样卖。
-    /// 因此这里向前找到第一根跨日的 Bar：行情按时间升序进来时，它就是上一交易日的最后一根。
-    ///
-    /// 找不到（该标的第一个交易日）时返回 `None`，`blocks_fill` 因此不判板 —— 宁可不判，也不能
-    /// 拿当天的价格当昨收，那会把板算成 ±0%。
-    ///
-    /// `previous_close_raw` 按当前 Bar 的 ts 覆盖这一推导，它是数据侧手工指定锚点的出口。
-    /// 没有覆盖时，除权除息日的锚由**已装载的公司行为**折算（[`Self::ex_rights_reference`]）；
-    /// 当日没有可折算的事实时，这里给的就是**不复权**的原始昨收。
-    pub fn previous_close(&self, bars: &[Bar], index: usize) -> Option<i128> {
-        let current = bars.get(index)?;
-        if let Some(close) = self.previous_close_raw.get(&current.ts).copied() {
-            return Some(close);
-        }
-        let day = Self::day_key(current.ts);
-        let raw = bars[..index]
-            .iter()
-            .rev()
-            .find(|bar| Self::day_key(bar.ts) != day)
-            .map(|bar| bar.close)?;
-        Some(self.ex_rights_reference(raw, current.ts))
-    }
-
-    /// 除权除息参考价（沪深口径）：
-    /// `(昨收 + 配股价×配股比例 − 每股现金红利) ÷ (1 + 送转比例 + 配股比例)`，再落到最小报价单位。
-    ///
-    /// 折算只读账本会记账的那批事实：现金红利与送转股比例取
-    /// [`crate::backtest::is_cash_dividend_action`] 覆盖的动作（与 `apply_corporate_action`
-    /// 的入账口径同一份名单），配股取 `RightsIssue` 的价格与比例。因此板锚不会和现金流
-    /// 因为"同一个事件两种读法"而分叉。
-    ///
-    /// 当日没有相关事件、或数据把参考价压到非正（脏数据）时，原样返回昨收 —— 宁可不折算，
-    /// 也不能把板算成 ±0%。
-    fn ex_rights_reference(&self, previous_close: i128, anchor_ts: u64) -> i128 {
-        let ex_date = Self::day_key(anchor_ts)
-            .saturating_mul(DAY_MS)
-            .saturating_sub(SHANGHAI_OFFSET_MS);
-        let mut cash_out = 0_i128;
-        let mut cash_in = 0_i128;
-        // 定点 SCALE 的"1 股折算成多少股"，即 1 + 送转比例 + 配股比例。
-        let mut share_factor = SCALE;
-        for event in self
-            .corporate_actions
-            .iter()
-            .filter(|event| event.ts == ex_date)
-        {
-            if crate::backtest::is_cash_dividend_action(event.action_type) {
-                cash_out = cash_out.saturating_add(event.cash_dividend_raw);
-                if event.split_num != event.split_den {
-                    share_factor = share_factor.saturating_add(
-                        event
-                            .split_num
-                            .saturating_sub(event.split_den)
-                            .saturating_mul(SCALE)
-                            .saturating_div(event.split_den),
-                    );
-                }
-            } else if event.action_type == AshareCorporateActionType::RightsIssue
-                && event.rights_issue_ratio_num > 0
-            {
-                let ratio_scaled = event
-                    .rights_issue_ratio_num
-                    .saturating_mul(SCALE)
-                    .saturating_div(event.rights_issue_ratio_den);
-                share_factor = share_factor.saturating_add(ratio_scaled);
-                cash_in = cash_in.saturating_add(
-                    event.rights_issue_price_raw.saturating_mul(ratio_scaled) / SCALE,
-                );
-            }
-        }
-        if cash_out == 0 && cash_in == 0 && share_factor == SCALE {
-            return previous_close;
-        }
-        let numerator = previous_close
-            .saturating_add(cash_in)
-            .saturating_sub(cash_out);
-        if numerator <= 0 || share_factor <= 0 {
-            return previous_close;
-        }
-        let adjusted = numerator.saturating_mul(SCALE).saturating_div(share_factor);
-        (adjusted + self.price_tick / 2) / self.price_tick * self.price_tick
     }
 
     /// 生效涨停带：配置未声明（0）时按板块表推导，声明值优先。
@@ -193,7 +253,17 @@ impl AshareRuleConfig {
     /// 只有在当前 bar 以涨停/跌停封死时阻止对应方向成交；触及但有成交路径时，
     /// 仍允许按 bar 级保守模型成交。
     pub fn blocks_fill(&self, side: Side, bar: &Bar, previous_close: Option<i128>) -> bool {
-        if !self.is_trading(bar.ts) {
+        self.blocks_fill_with_trading(side, bar, previous_close, self.is_trading(bar.ts))
+    }
+
+    fn blocks_fill_with_trading(
+        &self,
+        side: Side,
+        bar: &Bar,
+        previous_close: Option<i128>,
+        trading: bool,
+    ) -> bool {
+        if !trading {
             return true;
         }
         let Some(previous_close) = previous_close else {
@@ -229,6 +299,38 @@ impl AshareRuleConfig {
             self.corporate_actions.len(),
             action_hash.finish()
         )
+    }
+}
+
+#[cfg(test)]
+mod corporate_action_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn date_only_actions_resolve_to_the_first_bar_of_the_same_shanghai_day() {
+        let midnight = super::super::date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+        let first_bar_ts = midnight + 9 * 60 * 60 * 1_000 + 30 * 60 * 1_000;
+        let later_bar_ts = first_bar_ts + 60_000;
+        let actions = [AshareCorporateActionEvent {
+            ts: midnight,
+            record_ts: Some(midnight),
+            action_type: AshareCorporateActionType::CashDividend,
+            ..AshareCorporateActionEvent::default()
+        }];
+        let bars = [
+            Bar::new(first_bar_ts, 1, 1, 1, 1, 1),
+            Bar::new(later_bar_ts, 1, 1, 1, 1, 1),
+        ];
+        let schedule = AshareCorporateActionSchedule::for_bars(&actions, &bars);
+
+        assert_eq!(schedule.trigger_ts(Some(midnight)), Some(first_bar_ts));
+        assert_eq!(schedule.events_at(&actions, first_bar_ts).count(), 1);
+        assert_eq!(schedule.events_at(&actions, later_bar_ts).count(), 0);
+        assert_eq!(
+            schedule.trigger_ts(Some(midnight + 10 * 60 * 60 * 1_000)),
+            None,
+            "an intraday action after the final bar must not be pulled backward"
+        );
     }
 }
 

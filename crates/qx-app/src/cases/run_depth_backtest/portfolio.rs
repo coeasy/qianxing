@@ -8,64 +8,30 @@ use qx_xingban::{
 };
 use std::collections::BTreeMap;
 
+pub(super) fn strategy_specs(
+    spec: &DepthBacktestSpec,
+) -> impl Iterator<Item = &crate::BuiltinStrategySpec> {
+    std::iter::once(&spec.strategy).chain(
+        spec.portfolio
+            .iter()
+            .flat_map(|portfolio| portfolio.additional_strategies.iter())
+            .map(|member| &member.strategy),
+    )
+}
+
+pub(super) fn has_builtin_sizing(strategy: &crate::BuiltinStrategySpec) -> bool {
+    strategy.target_notional_raw.is_some()
+        || strategy.target_available_margin_bps.is_some()
+        || strategy.target_volatility_bps.is_some()
+        || strategy.target_kelly_fraction_bps.is_some()
+}
+
 struct DepthPortfolioBuildContext<'a> {
     spec: &'a DepthBacktestSpec,
     instrument: &'a InstrumentId,
     account_id: &'a str,
     data_fingerprint: &'a str,
     as_of: u64,
-}
-
-pub(super) fn attach_portfolio_summary(
-    summary: &mut serde_json::Value,
-    spec: &DepthBacktestSpec,
-    fills: &[qx_core::Fill],
-) -> Result<(), AppError> {
-    let Some(portfolio) = &spec.portfolio else {
-        return Ok(());
-    };
-    let mut members = vec![(
-        portfolio.primary_priority,
-        spec.strategy.strategy_id.clone(),
-    )];
-    members.extend(
-        portfolio
-            .additional_strategies
-            .iter()
-            .map(|member| (member.priority, member.strategy.strategy_id.clone())),
-    );
-    members.sort();
-    let mut fill_counts = members
-        .iter()
-        .map(|(_, strategy_id)| (strategy_id.clone(), 0_u64))
-        .collect::<BTreeMap<_, _>>();
-    for fill in fills {
-        let strategy_id = fill.strategy_id.as_deref().ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                "Tick/OrderBook 组合成交缺少 strategy_id 归属",
-            )
-        })?;
-        let count = fill_counts.get_mut(strategy_id).ok_or_else(|| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("Tick/OrderBook 组合成交归属未知策略: {strategy_id}"),
-            )
-        })?;
-        *count += 1;
-    }
-    let object = summary.as_object_mut().ok_or_else(|| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            "Tick/OrderBook 组合摘要不是 JSON 对象",
-        )
-    })?;
-    object.insert(
-        "strategy_ids".into(),
-        serde_json::json!(members.iter().map(|(_, id)| id).collect::<Vec<_>>()),
-    );
-    object.insert("strategy_fills".into(), serde_json::json!(fill_counts));
-    Ok(())
 }
 
 pub(super) fn build_portfolio_strategy(
@@ -149,6 +115,7 @@ fn build_member(
     reserved_capital_raw: i128,
     injected: Option<InjectedDepthStrategy>,
 ) -> Result<Box<dyn OrderBookStrategy>, AppError> {
+    let cash = BTreeMap::from([(build.spec.settlement_currency.clone(), reserved_capital_raw)]);
     let context = StrategyContext {
         strategy_id: member.strategy_id.clone(),
         strategy_version: injected
@@ -160,8 +127,11 @@ fn build_member(
         data_fingerprint: build.data_fingerprint.to_string(),
         as_of: build.as_of,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(build.spec.settlement_currency.clone(), reserved_capital_raw)]),
-        available_margin_raw: Some(reserved_capital_raw),
+        available_margin_raw: crate::cases::strategy_available_margin_raw(
+            &cash,
+            &build.spec.settlement_currency,
+        ),
+        cash,
         risk_state: "backtest".into(),
     };
     if let Some(injected) = injected {
