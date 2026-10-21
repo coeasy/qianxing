@@ -170,6 +170,7 @@ Live 余额快照后的同账户、同 Venue 在途订单现在按其冻结 mark
 - 新增 Python 动量、SMA 与均值回归策略实例，整理 Rust、Python、C++ 策略入口和跨语言回测说明。
 - Rust workspace、Python wheel、C++ CMake SDK 与发布基线统一为 0.2.1。
 - 发布流水线为 Linux、Windows、macOS 构建 CLI 二进制和 Python wheel，并构建 C++ SDK 包。
+- 修正性能采样源码指纹：Rust workspace 版本号不再伪装成实现变化；旧指纹格式先写入兼容基线，后续仍按原 10% 阈值比较。
 
 ### 复核并固定交易所用户流空闲节奏（2026-10-21）
 

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hardware import hardware_fingerprint
-from source_fingerprint import measurement_source_fingerprint
+from source_fingerprint import MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA, measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 ACCEPTANCE = ROOT / "tools" / "paper_acceptance.py"
@@ -96,6 +96,7 @@ def main() -> int:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "hardware": hardware_fingerprint(),
         "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
+        "measurement_source_fingerprint_schema": MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA,
         "binary": binary.name,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "scenario": "tools/paper_acceptance.py: scheduler -> strategy -> Paper execution -> Ledger/EventLog/audit, same-root idempotent rerun, and independent-root parity",

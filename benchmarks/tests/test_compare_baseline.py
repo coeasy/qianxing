@@ -177,6 +177,27 @@ class CompareBaselineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Measured source is unchanged", result.stdout)
 
+    def test_fingerprint_schema_change_seeds_compatible_first_sample(self) -> None:
+        result = self.compare_reports(
+            {
+                "schema_version": 1,
+                "measurement_source_fingerprint_schema": 1,
+                "hardware": {"cpu": "same"},
+                "measurement_source_fingerprint": "legacy-source",
+                "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+            },
+            {
+                "schema_version": 1,
+                "measurement_source_fingerprint_schema": 2,
+                "hardware": {"cpu": "same"},
+                "measurement_source_fingerprint": "normalized-source",
+                "rows": [{"bars": 1000, "p50_ms": 20.0, "p95_ms": 40.0}],
+            },
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("fingerprint format changed", result.stdout)
+
     def test_legacy_baseline_without_source_fingerprint_seeds_current_sample(self) -> None:
         result = self.compare_reports(
             {

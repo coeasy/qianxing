@@ -131,6 +131,11 @@ def main() -> int:
         thresholds = {group: args.threshold for group in thresholds}
 
     baseline, current = load(args.baseline), load(args.current)
+    old_schema = baseline.get("measurement_source_fingerprint_schema", 1)
+    new_schema = current.get("measurement_source_fingerprint_schema", 1)
+    if old_schema != new_schema:
+        print("[SKIP] Measurement source fingerprint format changed; recording a compatible first sample.")
+        return 0
     old_source = baseline.get("measurement_source_fingerprint")
     new_source = current.get("measurement_source_fingerprint")
     if old_source is None or new_source is None:
