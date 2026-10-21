@@ -23,11 +23,35 @@ def load(path: Path) -> dict:
     return value
 
 
+def same_benchmark_machine(baseline: dict, current: dict) -> bool:
+    """Allow small container memory-reporting noise, but require the same runner shape."""
+    old = baseline.get("hardware")
+    new = current.get("hardware")
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return old == new
+
+    volatile = {"total_ram_bytes"}
+    if {key: value for key, value in old.items() if key not in volatile} != {
+        key: value for key, value in new.items() if key not in volatile
+    }:
+        return False
+
+    old_ram = old.get("total_ram_bytes")
+    new_ram = new.get("total_ram_bytes")
+    if old_ram is None or new_ram is None:
+        return old_ram == new_ram
+    if not isinstance(old_ram, (int, float)) or not isinstance(new_ram, (int, float)):
+        return old_ram == new_ram
+    if old_ram <= 0 or new_ram <= 0:
+        return old_ram == new_ram
+    return abs(old_ram - new_ram) / max(old_ram, new_ram) <= 0.01
+
+
 def series(report: dict) -> dict[tuple[str, str], dict[str, float]]:
     result = {}
     for row in report.get("rows", []):
         key = ("end_to_end", str(row["bars"]))
-        result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms")}
+        result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms") if name in row}
     for row in report.get("records", []):
         size = row.get("operations", row.get("events", "all"))
         key = (str(row["benchmark"]), str(size))
@@ -50,7 +74,7 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float]]:
     if report.get("evidence_kind") == "ashare_rules_on_cli_backtest_throughput":
         for row in report.get("workloads", []):
             key = ("ashare_rules_on_cli_backtest", str(row["bars"]))
-            result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms")}
+            result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms") if name in row}
     return result
 
 
@@ -107,7 +131,7 @@ def main() -> int:
         thresholds = {group: args.threshold for group in thresholds}
 
     baseline, current = load(args.baseline), load(args.current)
-    if baseline.get("hardware") != current.get("hardware"):
+    if not same_benchmark_machine(baseline, current):
         print("[SKIP] Hardware fingerprint differs; cross-machine trend is not comparable.")
         return 0
     old_rows, new_rows = series(baseline), series(current)
@@ -125,16 +149,23 @@ def main() -> int:
             continue
         shared_metrics = old_rows[key].keys() & new_rows[key].keys()
         for metric in sorted(shared_metrics):
+            if metric == "p95_ms":
+                # With 5–7 independent process runs, nearest-rank p95 is effectively
+                # the maximum and is too noisy to block a release candidate.
+                continue
             before = old_rows[key][metric]
             after = new_rows[key][metric]
             if before <= 0:
                 continue
             ratio = after / before
-            if ratio > 1 + threshold:
+            higher_is_better = metric == "operations_per_second"
+            regressed = ratio < 1 - threshold if higher_is_better else ratio > 1 + threshold
+            if regressed:
                 failed = True
+                change_pct = (1 - ratio) * 100 if higher_is_better else (ratio - 1) * 100
                 note = (
                     f"[FAIL] {key[0]}[{key[1]}] {metric}: {before:.3f} -> {after:.3f} "
-                    f"({(ratio - 1) * 100:+.1f}%, registered limit +{threshold * 100:.0f}%)"
+                    f"({change_pct:+.1f}% regression, registered limit +{threshold * 100:.0f}%)"
                 )
                 print(note)
                 print(f"::error title=Qianxing benchmark regression::{note}")

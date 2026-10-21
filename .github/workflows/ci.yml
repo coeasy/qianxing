@@ -121,15 +121,15 @@ jobs:
         run: |
           python3 benchmarks/run_baseline.py \
             --binary target/release/qx-cli \
-            --out benchmarks/results/end-to-end.json --json
+            --out benchmarks/results/end-to-end.json --json --repeats 21
           python3 benchmarks/run_rust_bench.py \
             --out benchmarks/results/rust-micro.json
           python3 benchmarks/run_ashare_profile_backtest.py \
             --binary target/release/qx-cli \
-            --out benchmarks/results/ashare-rules-on.json
+            --out benchmarks/results/ashare-rules-on.json --repeats 21
           python3 benchmarks/run_crypto_paper_e2e.py \
             --binary target/release/qx-cli \
-            --out benchmarks/results/crypto-paper-e2e.json
+            --out benchmarks/results/crypto-paper-e2e.json --repeats 21
       - name: Find the latest successful main benchmark artifact
         id: previous
         env:

@@ -231,10 +231,14 @@ python benchmarks/compare_multi_market_visible_lookup.py \
 `maturity/evidence/multi-market-visible-lookup-ab-2026-10-16.json`。这不否定查询从 O(B) 降到 O(log B)，
 但该场景尚未测出端到端收益，也不代表生产多市场 profile。
 
-`compare_baseline.py` 只在硬件指纹一致且 workload size 重叠时比较 p50/p95。只有
+`compare_baseline.py` 只在 runner 形状一致且 workload size 重叠时比较 p50 与 median 延迟；
+吞吐指标按「数值下降为回归」处理。p95 保留在报告中作观察，不作为阻断指标：此前只有
+5–7 次独立进程采样，nearest-rank p95 实际接近最大值，容易被一次 runner 抢占放大。
+CI 将端到端、A 股规则及 Crypto Paper E2E 提高到 21 次采样，以降低 p50/median 的采样波动。只有
 `maturity/targets.yaml` 登记的性能组参与阻断；回归超过登记阈值会输出 error annotation 并非零退出，
-性能提升不会导致失败。首次采样、没有匹配 workload 或硬件指纹不同仍明确跳过比较。CI 下载上一份
-成功主分支的基准 artifact；一旦找到该运行，artifact 下载失败会阻断当前 job，避免把漏取历史误判为首次采样。
+性能提升不会导致失败。硬件的系统、架构、处理器和逻辑核数必须一致；Linux 容器可用 RAM 读数允许 1% 内波动。
+首次采样、没有匹配 workload 或 runner 形状不同仍明确跳过比较。CI 优先下载主分支最近成功运行的基准，
+没有可用工件时回退到当前候选分支；找到工件的运行若下载失败会阻断当前 job。
 
 当前 Rust target 不采集内存峰值、分配次数或逐阶段 p99；这些指标没有测量钩子，不在报告里
 伪造。`maturity/targets.yaml` 仍只将真实具备 profile 对应证据的场景标为 measured。

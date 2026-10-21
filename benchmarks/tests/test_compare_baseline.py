@@ -69,6 +69,98 @@ class CompareBaselineTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_small_container_memory_variation_still_blocks_regression(self) -> None:
+        old = {
+            "schema_version": 1,
+            "hardware": {
+                "os": "Linux",
+                "arch": "x86_64",
+                "processor": "x86_64",
+                "logical_cpu_count": 4,
+                "physical_core_count": None,
+                "total_ram_bytes": 16_760_344_576,
+            },
+            "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+        }
+        new = {
+            **old,
+            "hardware": {**old["hardware"], "total_ram_bytes": 16_766_414_848},
+            "rows": [{"bars": 1000, "p50_ms": 11.1, "p95_ms": 20.0}],
+        }
+        result = self.compare_reports(
+            old,
+            new,
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("registered limit +10%", result.stdout)
+
+    def test_different_runner_shape_skips_trend_comparison(self) -> None:
+        old = {
+            "schema_version": 1,
+            "hardware": {"os": "Linux", "arch": "x86_64", "logical_cpu_count": 4},
+            "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+        }
+        new = {
+            **old,
+            "hardware": {**old["hardware"], "logical_cpu_count": 8},
+            "rows": [{"bars": 1000, "p50_ms": 20.0, "p95_ms": 30.0}],
+        }
+        result = self.compare_reports(
+            old,
+            new,
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Hardware fingerprint differs", result.stdout)
+
+    def test_throughput_improvement_does_not_fail(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [
+                    {"benchmark": "append_batch", "operations": 1000, "operations_per_second": 100.0}
+                ],
+            },
+            {
+                **base,
+                "records": [
+                    {"benchmark": "append_batch", "operations": 1000, "operations_per_second": 150.0}
+                ],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_throughput_regression_over_threshold_fails(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [
+                    {"benchmark": "append_batch", "operations": 1000, "operations_per_second": 100.0}
+                ],
+            },
+            {
+                **base,
+                "records": [
+                    {"benchmark": "append_batch", "operations": 1000, "operations_per_second": 89.0}
+                ],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("11.0% regression", result.stdout)
+
+    def test_small_sample_p95_spike_is_reported_but_not_blocking(self) -> None:
+        result = self.compare(
+            [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+            [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 200.0}],
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_unmatched_workload_is_a_first_sample(self) -> None:
         result = self.compare(
             [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
