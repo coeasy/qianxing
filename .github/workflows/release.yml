@@ -20,6 +20,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Strategy backtest fixtures can exceed Win32's default path limit.
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: 'true'
 
 jobs:
   version-consistency:
