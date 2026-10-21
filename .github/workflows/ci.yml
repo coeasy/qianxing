@@ -135,10 +135,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run_id=$(gh run list --branch main --workflow ci.yml --limit 20 \
+          run_ids=$(gh run list --branch main --workflow ci.yml --limit 20 \
             --json databaseId,conclusion \
-            --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty')
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            --jq '.[] | select(.conclusion == "success") | .databaseId')
+          for run_id in $run_ids; do
+            artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+              --jq '[.artifacts[] | select(.name == "performance-baseline" and .expired == false)][0].id // empty')
+            if [[ -n "$artifact_id" ]]; then
+              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "run_id=" >> "$GITHUB_OUTPUT"
+          echo "No successful main run has a retained performance-baseline artifact; this run will seed one."
       - name: Download the previous benchmark artifact
         if: steps.previous.outputs.run_id != ''
         env:
