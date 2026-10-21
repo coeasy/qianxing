@@ -165,6 +165,12 @@ Live 余额快照后的同账户、同 Venue 在途订单现在按其冻结 mark
 
 # Changelog
 
+### 0.2.1 多语言策略样例与安装包（2026-10-21）
+
+- 新增 Python 动量、SMA 与均值回归策略实例，整理 Rust、Python、C++ 策略入口和跨语言回测说明。
+- Rust workspace、Python wheel、C++ CMake SDK 与发布基线统一为 0.2.1。
+- 发布流水线为 Linux、Windows、macOS 构建 CLI 二进制和 Python wheel，并构建 C++ SDK 包。
+
 ### 复核并固定交易所用户流空闲节奏（2026-10-21）
 
 清除能力台账中已过期的“用户流空闲可能忙轮询”限制：CCXT 的秒回 idle 有至少 100ms 本地让步，Binance 用户流 idle 来自有界 WebSocket 读窗，分片与控制帧循环有明确上限。新增架构合同核对两种节奏来源及行为回归，并更正 CCXT 对本地节流的旧注释。

@@ -71,6 +71,8 @@
 
 模块职责与 crate 边界见[模块地图](docs/module-map.md)。
 
+Rust、Python 与 C++ 策略入口以及动量、SMA 和均值回归示例见[多语言策略示例](docs/multi-language-strategies.md)。
+
 ## 安装
 
 详细安装、发布环境与 Python wheel 步骤见[安装指南](docs/installation.md)。最短安装路径与 wheel 构建命令仍列在本页「快速开始」。
@@ -88,7 +90,7 @@
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.2.0 qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.2.1 qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
