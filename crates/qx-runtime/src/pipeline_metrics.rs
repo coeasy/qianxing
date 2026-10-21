@@ -36,11 +36,19 @@ pub(super) struct PipelineMetrics {
 
 impl PipelineMetrics {
     pub(super) fn record_ingest_duration(&self, elapsed_ns: u64) {
-        let _ = self.ingest_duration_ns_total.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |total| Some(total.saturating_add(elapsed_ns)),
-        );
+        let mut total = self.ingest_duration_ns_total.load(Ordering::Relaxed);
+        loop {
+            let next = total.saturating_add(elapsed_ns);
+            match self.ingest_duration_ns_total.compare_exchange_weak(
+                total,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => total = observed,
+            }
+        }
         self.ingest_duration_ns_max
             .fetch_max(elapsed_ns, Ordering::Relaxed);
     }
