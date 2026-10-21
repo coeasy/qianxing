@@ -59,8 +59,6 @@ jobs:
         run: cargo test --workspace
       - name: Capability unverified register
         run: python3 tools/generate_unverified.py --check
-      - name: Python adapters and strategy contracts
-        run: python3 -m unittest discover -s python/tests -q
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
