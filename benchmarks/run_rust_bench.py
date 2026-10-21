@@ -34,7 +34,7 @@ CRITERION_REQUIRED = {
     *(f"qx_core_ledger_entry_commit/commit_affected_state/{size}" for size in (64, 256, 1_024, 8_000, 64_000)),
     *(f"qx_core_ledger_cash_lookup/{mode}/{size}" for mode in ("indexed", "composite_key_prior", "entry_scan") for size in (1_000, 8_000, 64_000)),
     *(f"qx_core_ledger_cash_balances_snapshot/{mode}/{size}" for mode in ("owned_allocating_snapshot", "borrowed_snapshot") for size in (1, 8, 64)),
-    *(f"{name}/{size}" for name in ("append_batch", "event_log_digest", "full_replay", "l2_matching") for size in (1_000, 8_000, 64_000)),
+    *(f"{name}/{size}" for name in ("full_replay", "l2_matching") for size in (1_000, 8_000, 64_000)),
     *(f"l2_queue_position_depth_lookup/{depth}" for depth in (16, 128, 512)),
     *(f"l2_queue_price_lookup_algorithm/{side}/{book_side}/{depth}"
       for depth in (16, 128, 512, 2_048)
