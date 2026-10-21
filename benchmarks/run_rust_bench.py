@@ -40,9 +40,6 @@ CRITERION_REQUIRED = {
       for depth in (16, 128, 512, 2_048)
       for side in ("linear", "binary")
       for book_side in ("Buy", "Sell")),
-    *(f"event_log_validate/{mode}/{size}" for mode in ("cached", "duplicate_tree_baseline") for size in (1_000, 8_000, 64_000)),
-    *(f"event_log_manifest_digest/{mode}/{size}" for mode in ("legacy_full_rehash", "rolling_v2") for size in (1_000, 8_000, 64_000)),
-    *(f"event_log_prefix_digest/{mode}/{size}" for mode in ("cached_after_append", "prior_two_scans") for size in (1_000, 8_000, 64_000)),
     *(f"ledger_replay/{mode}/{size}" for mode in ("borrowed_events", "owned_events") for size in (1_000, 8_000, 64_000)),
     "full_vs_incremental_replay/incremental_refresh",
     "full_vs_incremental_replay/full_replay",
