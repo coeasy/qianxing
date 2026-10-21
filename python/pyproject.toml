@@ -68,6 +68,7 @@ a-share = [
 
 [tool.maturin]
 manifest-path = "../crates/qx-python/Cargo.toml"
+cargo-extra-args = "--features extension-module"
 python-source = "."
 module-name = "qianxing_bridge._qianxing_native"
 python-packages = ["qianxing", "qianxing_ashare", "qianxing_ccxt", "qianxing_strategy"]

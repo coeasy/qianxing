@@ -28,6 +28,9 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
     let result = (|| -> Result<(), StorageError> {
         let mut transaction = client.transaction().map_err(pg_error)?;
         transaction
+            .batch_execute(super::super::schema_migrations::CREATE_SCHEMA_MIGRATIONS_SQL)
+            .map_err(pg_error)?;
+        transaction
             .batch_execute(super::super::schema_migrations::POSTGRES_V1_SCHEMA)
             .map_err(pg_error)?;
         transaction
