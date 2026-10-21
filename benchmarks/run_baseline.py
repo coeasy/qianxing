@@ -80,15 +80,37 @@ def generate_frame(size: int, destination: Path) -> None:
 
 
 def run_once(binary: Path, frame: Path) -> tuple[float, str, int]:
+    runtime_config = frame.with_suffix(".runtime.json")
+    if not runtime_config.exists():
+        config = json.loads(
+            (REPO_ROOT / "deploy" / "qianxing.runtime.builtin-strategy.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        # A benchmark sample owns its data directory: different bar counts must
+        # not register different manifests under the same persistent dataset key.
+        config["storage"]["data_dir"] = str(frame.parent / f"data-{frame.stem}")
+        runtime_config.write_text(json.dumps(config), encoding="utf-8")
     started = time.perf_counter()
     proc = subprocess.run(
-        [str(binary), "backtest", "builtin", "sma_cross", str(frame)],
+        [
+            str(binary),
+            "backtest",
+            "builtin",
+            "sma_cross",
+            str(frame),
+            "--config",
+            str(runtime_config),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
     elapsed_ms = (time.perf_counter() - started) * 1000.0
+    if proc.returncode != 0:
+        diagnostic = proc.stderr.strip() or proc.stdout.strip() or "no CLI diagnostic"
+        print(f"[benchmark] qx-cli failed ({proc.returncode}): {diagnostic}", file=sys.stderr)
     result_hash = ""
     for line in proc.stdout.splitlines():
         if "result_hash=" in line:
