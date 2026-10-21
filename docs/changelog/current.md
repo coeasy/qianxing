@@ -6,6 +6,7 @@
 
 - 验证：`cargo metadata --offline` 成功；29 个 workspace 包版本均为 0.2.0；Rust workspace 165 个测试目标合计 1,941 passed、0 failed、2 ignored；默认与无 backend feature 的全目标严格 Clippy `-D warnings`、feature-off `cargo check`、Rust fmt、Python 199/199、架构 `--fast` 四片完整覆盖 221 个具名检查且无重复、成熟度生成检查、Markdown 链接和 `git diff --check` 均通过。
 - 本机 Release CLI 输出 `qianxing 0.2.0 (build 343d405-dirty, target x86_64-pc-windows-msvc, profile release)`，SHA-256 `D737F1EAE554B2169643C39FC0767B4BFC3DA7E921C31E33EAAD52616334C9D7`。用该二进制重新执行 Crypto/A 股确定性验收，result_hash 为 `26fdd6b52d020700` / `6be034a4cb0760fa`，并通过 Paper E2E（提交 1 单、成交 1 单、账簿 4 条）；三份本机验收记录已刷新。工作树仍有未提交改动，该二进制不是干净发布候选，性能证据仍需与干净候选二进制重新绑定。
+- 干净提交 `5db568f2` 的 Release CLI 输出 `qianxing 0.2.0 (build 5db568f, target x86_64-pc-windows-msvc, profile release)`，SHA-256 `044DC5647DE5B9791B55F1E95CA2D4E018A9E49CF10C13CB55E18A27221F57BF`；同二进制执行 Crypto/A 股与 Paper dry-run 均通过，结果 hash 不变，Paper 为 1 单提交、1 单成交、4 条账簿事实。该干净构建取代上一条 dirty 二进制的本机候选核验；远端矩阵尚待 PR CI。
 
 ### 0.1.0 本机全量回归与历史快照门禁清理记录（2026-10-21）
 
