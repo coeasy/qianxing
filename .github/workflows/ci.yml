@@ -342,11 +342,11 @@ jobs:
       # V13 R28 按登记补上：本机四条腿现跑各 rc 0 / 诊断 0 行。
       - name: Clippy with no backend features
         run: >-
-          cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli
+          cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli -p qx-python
           --no-default-features --all-targets -- -D warnings
       - name: Check with no backend features
         run: >-
-          cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli
+          cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli -p qx-python
           --no-default-features --all-targets
 
   service-backends:
