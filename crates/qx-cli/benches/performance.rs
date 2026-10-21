@@ -16,7 +16,6 @@ use qx_storage::SegmentedEventLogStore;
 use qx_storage::SqliteEventLogStore;
 use qx_xingban::{BookLevel, OrderBookMatchingEngine, OrderBookSnapshot};
 use std::hint::black_box;
-#[cfg(feature = "sqlite")]
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -24,6 +23,12 @@ const SIZES: [usize; 3] = [1_000, 8_000, 64_000];
 const REPEATS: usize = 5;
 const MIN_MEASURE_WINDOW: Duration = Duration::from_millis(10);
 const MAX_ITERATIONS_PER_SAMPLE: usize = 16 * 1024 * 1024;
+
+fn workspace_target_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(name)
+}
 
 fn events(size: usize) -> Vec<Event> {
     (0..size)
@@ -127,14 +132,11 @@ fn bench_segmented_event_log_append(n: usize) {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock after Unix epoch")
             .as_nanos();
-        let root = std::env::current_dir()
-            .expect("read benchmark working directory")
-            .join("target")
-            .join(format!(
-                ".codex-tmp-segmented-{stamp}-{id}-{}",
-                std::process::id()
-            ));
-        std::fs::create_dir(&root).expect("create segmented benchmark directory");
+        let root = workspace_target_path(&format!(
+            ".codex-tmp-segmented-{stamp}-{id}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create segmented benchmark directory");
         let mut base = EventLog::new();
         base.append_batch(&events(n)).expect("build valid history");
         let warm_store = SegmentedEventLogStore::new(root.join("warm"), 1_024)
@@ -202,10 +204,8 @@ fn bench_full_replay(n: usize) {
 fn bench_full_vs_incremental_replay() {
     const EVENT_COUNT: usize = 1_000;
     const CHUNK: usize = 100;
-    let root = std::env::current_dir()
-        .expect("read benchmark working directory")
-        .join(format!(".codex-tmp-bench-{}", std::process::id()));
-    std::fs::create_dir(&root).expect("create benchmark directory");
+    let root = workspace_target_path(&format!(".codex-tmp-bench-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create benchmark directory");
     let database = root.join("events.sqlite");
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
     let mut writer =
@@ -320,12 +320,10 @@ struct TickFixture {
 #[cfg(feature = "sqlite")]
 impl TickFixture {
     fn new(size: usize) -> Self {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .join(format!(
-                ".codex-tmp-steady-tick-{}-{size}",
-                std::process::id()
-            ));
+        let root = workspace_target_path(&format!(
+            ".codex-tmp-steady-tick-{}-{size}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).expect("create steady tick fixture directory");
         let database = root.join("events.sqlite");
         let store = SqliteEventLogStore::new(&database).expect("open fixture store");
