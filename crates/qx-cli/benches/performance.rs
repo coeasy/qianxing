@@ -320,14 +320,13 @@ struct TickFixture {
 #[cfg(feature = "sqlite")]
 impl TickFixture {
     fn new(size: usize) -> Self {
-        let root = std::env::current_dir()
-            .expect("read benchmark working directory")
-            .join("target")
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
             .join(format!(
                 ".codex-tmp-steady-tick-{}-{size}",
                 std::process::id()
             ));
-        std::fs::create_dir(&root).expect("create steady tick fixture directory");
+        std::fs::create_dir_all(&root).expect("create steady tick fixture directory");
         let database = root.join("events.sqlite");
         let store = SqliteEventLogStore::new(&database).expect("open fixture store");
         let mut log = EventLog::new();
