@@ -72,16 +72,23 @@ MARGINAL_KNEE_THRESHOLD_PCT = 20.0
 
 
 def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) -> Path:
-    """Resolve nested ids and Windows-flattened sub-identifiers within a group."""
+    """Resolve Criterion IDs independent of case and path flattening."""
     root = criterion_root or ROOT / "target" / "criterion"
     parts = benchmark.split("/")
     nested = root.joinpath(*parts, "new", "estimates.json")
     if nested.is_file():
         return nested
     if len(parts) > 1:
-        flattened_id = root / parts[0] / ("_".join(parts[1:]).lower()) / "new" / "estimates.json"
-        if flattened_id.is_file():
-            return flattened_id
+        group_root = root / parts[0]
+        expected_id = "_".join(parts[1:]).casefold()
+        if group_root.is_dir():
+            for candidate in group_root.rglob("estimates.json"):
+                if candidate.parent.name != "new":
+                    continue
+                actual_parts = candidate.parent.parent.relative_to(group_root).parts
+                actual_id = "_".join(actual_parts).casefold()
+                if actual_id == expected_id:
+                    return candidate
     return nested
 
 
@@ -91,7 +98,10 @@ def criterion_estimates() -> list[dict]:
         # Workspace Criterion groups share target/criterion; crate-owned groups use
         # distinct benchmark ids so one package cannot overwrite another package's sample.
         path = criterion_estimate_path(benchmark)
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as error:
+            raise OSError(f"{benchmark}: {path}: {error}") from error
         records.append(
             {
                 "benchmark": benchmark,
@@ -212,7 +222,18 @@ def main() -> int:
     try:
         criterion_records = criterion_estimates()
     except (OSError, KeyError, json.JSONDecodeError) as error:
-        print(f"Criterion estimate output is incomplete: {error}", file=sys.stderr)
+        benchmark = str(error).split(":", 1)[0]
+        group = benchmark.split("/", 1)[0]
+        group_root = ROOT / "target" / "criterion" / group
+        found = sorted(
+            str(path.relative_to(ROOT / "target" / "criterion"))
+            for path in group_root.rglob("estimates.json")
+            if path.parent.name == "new"
+        ) if group_root.is_dir() else []
+        print(
+            f"Criterion estimate output is incomplete: {error}; available in group: {found[:40]}",
+            file=sys.stderr,
+        )
         return 1
 
     command = [
