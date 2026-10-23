@@ -29,8 +29,8 @@ pub use self::ashare::{
     AshareRuleConfig, AshareSettlementState, ASHARE_SCHEMA_VERSION,
 };
 pub use self::backtest::{
-    BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
-    InterestEvent, MarketRoutedBarStrategy, NativeBarStrategy, PortfolioBarEngine,
+    BacktestConfig, BacktestEngine, BacktestReport, BacktestRunStatus, BarStrategy, DeliveryEvent,
+    FundingEvent, InterestEvent, MarketRoutedBarStrategy, NativeBarStrategy, PortfolioBarEngine,
     PortfolioBarEvent, PortfolioBarMarket, PortfolioBarSeries, PortfolioBarSessionConfig,
     PortfolioBarSessionReport, PortfolioBarStrategy, PortfolioBarTimeline, PortfolioStrategySlot,
     ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,

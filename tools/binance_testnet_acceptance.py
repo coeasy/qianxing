@@ -56,7 +56,7 @@ EXIT_SKIPPED = 3
 # 而被测进程链上挂着若干"连得上但不回话"的形状（NATS ack、WS 帧滴答、DB 持锁）——没有这颗
 # 预算时验收会一直阻塞而不是失败，那正是验收门禁最坏的失效：它替挂死作保。
 LEG_BUDGET_SECONDS = 180
-FLIP_RULE = "outcome=pass 且全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
+FLIP_RULE = "outcome=pass、credentials_present=true 且 send_orders=true；全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
 
 # V10 §6 P3：每段验收都必须留下**带时间戳的结果包**，否则 `sandbox_tested` 永远
 # 没有可核对的证据来源。默认落在仓库内的证据目录，而不是跑完就删的临时目录。
@@ -68,6 +68,11 @@ STAGE_RECORDS: list[dict[str, Any]] = []
 
 def utc_stamp() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def sandbox_tested_flip_allowed(outcome: str, credentials_present: bool, send_orders: bool) -> bool:
+    """只有带凭据的真实沙盒下单验收通过，才具备翻转资格。"""
+    return outcome == "pass" and credentials_present and send_orders
 
 
 def write_result_package(
@@ -100,7 +105,7 @@ def write_result_package(
         "stages": STAGE_RECORDS,
         "detail": detail,
         "sandbox_tested_flip": {
-            "allowed": outcome == "pass",
+            "allowed": sandbox_tested_flip_allowed(outcome, credentials_present, send_orders),
             "rule": FLIP_RULE,
             "archive_required": True,
         },
@@ -118,6 +123,19 @@ for stream in (sys.stdout, sys.stderr):
 
 def log(message: str) -> None:
     print(f"[testnet-acceptance] {message}", flush=True)
+
+
+def redact_credentials(text: str, secrets: list[str] | None = None) -> str:
+    """Remove configured credentials before text reaches logs or evidence packages."""
+    if secrets is None:
+        secrets = [
+            os.environ.get(name, "")
+            for name in (KEY_ENV, SECRET_ENV, OKX_KEY_ENV, OKX_SECRET_ENV, OKX_PASS_ENV)
+        ]
+    redacted = text
+    for secret in sorted((value for value in secrets if len(value) >= 4), key=len, reverse=True):
+        redacted = redacted.replace(secret, "[REDACTED]")
+    return redacted
 
 
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -148,7 +166,7 @@ def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
             f"验收步骤 `{stage}` 在 {LEG_BUDGET_SECONDS}s 内没有退出：挂住按失败收，"
             "不能让验收门禁替一次阻塞作保"
         ) from expired
-    output = (result.stdout + result.stderr).strip().splitlines()
+    output = redact_credentials(result.stdout + result.stderr).strip().splitlines()
     STAGE_RECORDS.append(
         {
             "stage": args[0] if args else "unknown",
@@ -162,7 +180,7 @@ def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def fail(step: str, result: subprocess.CompletedProcess[str]) -> None:
-    detail = (result.stderr or result.stdout).strip()
+    detail = redact_credentials(result.stderr or result.stdout).strip()
     raise SystemExit(f"验收步骤 `{step}` 失败（退出码 {result.returncode}）：{detail}")
 
 
@@ -178,7 +196,11 @@ def from_workspace(value: str) -> str:
     return str(path if path.is_absolute() else (WORKSPACE / path).resolve())
 
 
-def build_acceptance_config(workdir: Path, base_config: Path) -> Path:
+def build_acceptance_config(
+    workdir: Path,
+    base_config: Path,
+    ccxt_config: Path | None = None,
+) -> Path:
     """复制验收配置到工作目录，只改写状态路径以把运行事实隔离在验收目录内。"""
     payload: dict[str, Any] = copy.deepcopy(
         json.loads(base_config.read_text(encoding="utf-8"))
@@ -199,6 +221,16 @@ def build_acceptance_config(workdir: Path, base_config: Path) -> Path:
         strategy["target_snapshot_path"] = str(workdir / strategy["target_snapshot_path"])
     path = workdir / "qianxing.runtime.acceptance.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if ccxt_config is not None:
+        ccxt_payload = json.loads(ccxt_config.read_text(encoding="utf-8"))
+        if ccxt_payload.get("exchange_id") != "okx" or ccxt_payload.get("sandbox") is not True:
+            raise ValueError("OKX 沙盒验收配置必须显式声明 exchange_id=okx 且 sandbox=true")
+        # Runtime worker endpoint paths resolve relative to the copied runtime file.
+        # Keep the example filename so every endpoint resolves inside this isolated run.
+        (workdir / ccxt_config.name).write_text(
+            json.dumps(ccxt_payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
     return path
 
 
@@ -325,6 +357,7 @@ def main() -> int:
     parser.add_argument("--send-orders", action="store_true", help="允许向测试网络发送真实订单")
     args = parser.parse_args()
     started_at = time.time()
+    STAGE_RECORDS.clear()
 
     # 运行时示例里的 scheduler.jobs_path 等按进程工作目录解析，统一切到仓库根。
     os.chdir(WORKSPACE)
@@ -379,7 +412,11 @@ def main() -> int:
         scope = "orders" if args.send_orders else "dryrun"
         workdir = args.evidence_root / f"{utc_stamp()}-{args.venue}-{scope}"
     workdir.mkdir(parents=True, exist_ok=True)
-    config = build_acceptance_config(workdir, spec["base_config"])
+    config = build_acceptance_config(
+        workdir,
+        spec["base_config"],
+        ccxt_config=spec.get("ccxt_config"),
+    )
     missing = [name for name in spec["cred_envs"] if not os.environ.get(name)]
     outcome, detail = "fail", "未到达终态"
     try:
@@ -441,7 +478,10 @@ def main() -> int:
             )
         if submit.returncode != 0:
             fail(f"{spec['kind']}-submit-order", submit)
-        log(f"下单步骤完成（dry_run={dry_run}）：{submit.stdout.strip().splitlines()[-1:]}")
+        log(
+            f"下单步骤完成（dry_run={dry_run}）："
+            f"{redact_credentials(submit.stdout).strip().splitlines()[-1:]}"
+        )
 
         duplicate = (
             run(
@@ -459,7 +499,7 @@ def main() -> int:
         if duplicate.returncode == 0 or "幂等" not in combined:
             raise SystemExit(
                 "重复提交同一 request_id 必须被控制面拒绝（未知结果不得二次发单）："
-                f"退出码 {duplicate.returncode} 输出 {combined.strip()}"
+                f"退出码 {duplicate.returncode} 输出 {redact_credentials(combined).strip()}"
             )
         # 这一个非零退出码是预期事实：控制面拒绝了重复 request_id。
         # 将其显式分类，后续 pass 判定不会把预期拒单与失败阶段混为一谈。
@@ -505,7 +545,7 @@ def main() -> int:
         if isinstance(error.code, int):
             outcome, detail = "fail", f"子进程以退出码 {error.code} 结束"
         else:
-            outcome, detail = "fail", str(error.code)
+            outcome, detail = "fail", redact_credentials(str(error.code))
         raise
     finally:
         package = write_result_package(

@@ -90,6 +90,12 @@ pub trait BarStrategy {
         let _ = available_margin_raw;
         self.on_bar_orders_checked(history, instrument, ts, position)
     }
+
+    /// Drain the native strategy decisions produced at the most recent callback.
+    /// Legacy order-only adapters keep the default empty audit surface.
+    fn drain_decision_facts(&mut self) -> Vec<qx_core::StrategyDecisionFact> {
+        Vec::new()
+    }
 }
 
 /// 将统一 `qx-strategy::Strategy` 接入 Bar 回测。
@@ -102,6 +108,7 @@ pub struct NativeBarStrategy<S: Strategy> {
     pub context: StrategyContext,
     virtual_position: bool,
     pending_order_updates: Vec<qx_strategy::StrategyDecision>,
+    emitted_decisions: Vec<qx_core::StrategyDecisionFact>,
 }
 
 impl<S: Strategy> NativeBarStrategy<S> {
@@ -111,6 +118,7 @@ impl<S: Strategy> NativeBarStrategy<S> {
             context,
             virtual_position: false,
             pending_order_updates: Vec::new(),
+            emitted_decisions: Vec::new(),
         }
     }
 
@@ -129,6 +137,32 @@ impl<S: Strategy> NativeBarStrategy<S> {
 }
 
 impl<S: Strategy> NativeBarStrategy<S> {
+    fn decision_fact(decision: &qx_strategy::StrategyDecision) -> qx_core::StrategyDecisionFact {
+        qx_core::StrategyDecisionFact {
+            schema_version: decision.schema_version,
+            request_id: decision.request_id.clone(),
+            strategy_id: decision.strategy_id.clone(),
+            signal_id: decision.signal_id,
+            confidence: decision.confidence,
+            priority: decision.priority,
+            expires_at: decision.expires_at,
+            intents: decision
+                .intents
+                .iter()
+                .map(|intent| qx_core::StrategyIntentFact {
+                    intent_id: intent.intent_id,
+                    instrument: intent.instrument.clone(),
+                    side: intent.side,
+                    qty: intent.qty,
+                    limit: intent.limit,
+                    policy: intent.policy,
+                    reduce_only: intent.reduce_only,
+                    post_only: intent.post_only,
+                })
+                .collect(),
+        }
+    }
+
     fn apply_strategy_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
         let Some(owner) = order
             .trace
@@ -236,6 +270,10 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
         Ok(())
     }
 
+    fn drain_decision_facts(&mut self) -> Vec<qx_core::StrategyDecisionFact> {
+        std::mem::take(&mut self.emitted_decisions)
+    }
+
     fn on_bar_orders_checked(
         &mut self,
         history: &[Bar],
@@ -278,10 +316,13 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             update_decision
                 .append_orders(&self.context, &mut orders)
                 .map_err(qx_core::QxError::BusinessViolation)?;
+            self.emitted_decisions
+                .push(Self::decision_fact(&update_decision));
         }
         decision
             .append_orders(&self.context, &mut orders)
             .map_err(qx_core::QxError::BusinessViolation)?;
+        self.emitted_decisions.push(Self::decision_fact(&decision));
         Ok(orders)
     }
 

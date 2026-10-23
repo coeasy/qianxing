@@ -97,7 +97,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         "instrument=BTCUSDT.BINANCE",
         "bars=70",
         "fills=",
-        "result_hash=55a91efd8bfb7254",
+        "result_hash=c3d92708bceb2ecb",
     ] {
         assert!(metrics.contains(field), "missing {field} in {metrics}");
     }

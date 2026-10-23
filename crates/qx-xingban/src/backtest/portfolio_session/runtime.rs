@@ -88,6 +88,7 @@ pub(super) fn initialize_ledger(
     currency: &str,
     initial_cash: Money,
     start: u64,
+    has_start_settlement: bool,
 ) -> Result<(Ledger, EventLog), qx_core::QxError> {
     let mut ledger = Ledger::new();
     let deposit_id = ledger.deposit(account_id, currency, initial_cash, start)?;
@@ -100,7 +101,11 @@ pub(super) fn initialize_ledger(
     log.append(Event::new(
         seq,
         start,
-        qx_core::Priority::APPLY,
+        if has_start_settlement {
+            qx_core::Priority::TIMER
+        } else {
+            qx_core::Priority::APPLY
+        },
         EventKind::LedgerApplied {
             entry: deposit_entry,
         },

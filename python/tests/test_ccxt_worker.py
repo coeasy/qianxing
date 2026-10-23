@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,11 +12,64 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from qianxing_ccxt import CcxtConfig, CcxtConnectorError, CcxtErrorClass, CcxtExchangeClient
-from qianxing_ccxt.worker import CcxtJsonWorker, _config_from_file, serve
+from qianxing_ccxt.worker import CcxtJsonWorker, _config_from_file, serve, serve_startup_error
 from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_startup_failures_keep_jsonl_response_contract_for_each_request(self):
+        output_stream = StringIO()
+        serve_startup_error(
+            CcxtErrorClass.UNSUPPORTED,
+            "未安装公共 ccxt；请安装 qianxing[ccxt] 或 ccxt 包",
+            StringIO('{"op":"fetch_ohlcv"}\n\n{"op":"fetch_ticker"}\n'),
+            output_stream,
+        )
+        rows = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(not row["ok"] for row in rows))
+        self.assertTrue(all(row["error"]["class"] == "unsupported" for row in rows))
+        self.assertTrue(all("qianxing[ccxt]" in row["error"]["message"] for row in rows))
+
+    def test_jsonl_protocol_stays_utf8_under_legacy_windows_console_encoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "public.json"
+            config_path.write_text(
+                json.dumps({"exchange_id": "binance", "sandbox": True, "credential_env": None}),
+                encoding="utf-8",
+            )
+            ccxt_package = Path(directory) / "ccxt"
+            ccxt_package.mkdir()
+            (ccxt_package / "__init__.py").write_text(
+                "class binance:\n"
+                "    def __init__(self, params): pass\n"
+                "    def set_sandbox_mode(self, enabled): pass\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "cp1252"
+            python_root = str(Path(__file__).resolve().parents[1])
+            env["PYTHONPATH"] = (
+                str(Path(directory))
+                + os.pathsep
+                + python_root
+                + os.pathsep
+                + env.get("PYTHONPATH", "")
+            )
+            result = subprocess.run(
+                [sys.executable, "-m", "qianxing_ccxt.worker", "--config", str(config_path)],
+                input=b'{"op":"not-supported"}\n',
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                check=False,
+                timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        response = json.loads(result.stdout.decode("utf-8"))
+        self.assertFalse(response["ok"])
+        self.assertIn("不支持的 CCXT Worker 操作", response["error"]["message"])
+
     def test_config_file_allows_public_exchange_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "public.json"

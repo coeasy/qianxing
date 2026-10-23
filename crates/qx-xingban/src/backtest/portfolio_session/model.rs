@@ -35,6 +35,10 @@ pub struct PortfolioBarSessionReport {
     pub fills_by_instrument: BTreeMap<InstrumentId, Vec<Fill>>,
     pub rejections_by_instrument: BTreeMap<InstrumentId, EventLog>,
     pub equity: Vec<(u64, i128)>,
+    /// Bounded samples of each instrument's marked P&L contribution above initial cash.
+    /// Each point is `(equity_index, timestamp, contribution_raw)`; all curves share one axis.
+    pub instrument_equity_contributions: BTreeMap<InstrumentId, Vec<(u64, u64, i128)>>,
+    pub initial_cash_raw: i128,
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,

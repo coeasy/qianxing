@@ -20,9 +20,30 @@ pub fn barframe_dataset_identity(
     frame_path: &Path,
     frame: &BarFrame,
 ) -> Result<(Vec<Bar>, qx_data::DatasetManifest), String> {
+    barframe_dataset_identity_with_version(
+        frame_path,
+        frame,
+        qx_data::barframe_registry_version(frame),
+    )
+}
+
+/// Reconstruct the pre-content-addressed identity for already-published summaries. New
+/// backtests always use `barframe_dataset_identity`; this compatibility reader is only used
+/// when a verified artifact explicitly declares the former provider-wide version.
+pub fn legacy_barframe_dataset_identity(
+    frame_path: &Path,
+    frame: &BarFrame,
+) -> Result<(Vec<Bar>, qx_data::DatasetManifest), String> {
+    barframe_dataset_identity_with_version(frame_path, frame, BARFRAME_DATASET_VERSION.to_owned())
+}
+
+fn barframe_dataset_identity_with_version(
+    frame_path: &Path,
+    frame: &BarFrame,
+    dataset_version: String,
+) -> Result<(Vec<Bar>, qx_data::DatasetManifest), String> {
     let bars: Vec<Bar> = frame.into();
-    let provider =
-        JsonBarFrameProvider::new(frame.source.0.clone(), BARFRAME_DATASET_VERSION, frame_path);
+    let provider = JsonBarFrameProvider::new(frame.source.0.clone(), dataset_version, frame_path);
     let (provider_bars, manifest) = provider.load_bars_with_manifest(
         &format!("strategy-bars:{}", frame.instrument),
         &frame.instrument.to_string(),
@@ -78,9 +99,13 @@ pub fn depth_frame_input_provenance(
 
 #[cfg(test)]
 mod tests {
-    use super::ingest_bar_matches_market_bar;
+    use super::{
+        barframe_dataset_identity, ingest_bar_matches_market_bar, legacy_barframe_dataset_identity,
+    };
     use qx_data::Bar as IngestBar;
+    use qx_datastruct::BarFrame;
     use qx_guanxing::Bar as MarketBar;
+    use std::path::Path;
 
     #[test]
     fn provider_parity_checks_timestamp_and_every_ohlcv_cell() {
@@ -107,5 +132,36 @@ mod tests {
             }
             assert!(!ingest_bar_matches_market_bar(&row, &market));
         }
+    }
+
+    #[test]
+    fn ccxt_refreshes_get_content_addressed_versions_and_legacy_frames_stay_compatible() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join(format!("qx-ccxt-registry-version-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated identity directory");
+        let path = root.join("bars.json");
+        let first = BarFrame::from_json(
+            r#"{"schema_version":1,"instrument":"BTCUSDT.BINANCE","source":"ccxt:binance:BTC/USDT:1m","ts":[60000,120000],"open_raw":[10,11],"high_raw":[12,13],"low_raw":[9,10],"close_raw":[11,12],"volume_raw":[1,2]}"#,
+        )
+        .unwrap();
+        std::fs::write(&path, first.to_json()).expect("write first provider frame");
+        let (_, original) = barframe_dataset_identity(&path, &first).unwrap();
+        let (_, identical) = barframe_dataset_identity(&path, &first).unwrap();
+        assert_eq!(original, identical);
+
+        let mut revised = first.clone();
+        revised.close_raw[1] += 1;
+        std::fs::write(&path, revised.to_json()).expect("write revised provider frame");
+        let (_, refreshed) = barframe_dataset_identity(&path, &revised).unwrap();
+        assert_eq!(refreshed.dataset_id, original.dataset_id);
+        assert_ne!(refreshed.version, original.version);
+        assert_ne!(refreshed.fingerprint, original.fingerprint);
+
+        let (_, legacy) = legacy_barframe_dataset_identity(&path, &revised).unwrap();
+        assert_eq!(legacy.version, super::BARFRAME_DATASET_VERSION);
+        std::fs::remove_dir_all(root).expect("remove isolated identity directory");
     }
 }

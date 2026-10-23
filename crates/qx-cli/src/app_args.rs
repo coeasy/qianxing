@@ -145,4 +145,10 @@ pub(crate) enum AppCommand {
         /// `MultiAccountBacktestSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 多交易所多账户分别保留账本并生成汇总权益曲线的 Bar 联合回测。
+    #[command(name = "multi-account-joint-backtest")]
+    MultiAccountJointBacktest {
+        /// `MultiAccountJointBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
 }

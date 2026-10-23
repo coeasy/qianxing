@@ -188,6 +188,135 @@ fn momentum_emits_a_target_order_after_warmup() {
 }
 
 #[test]
+fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::SmaCross,
+        "sma-rolling-reference",
+        instrument.clone(),
+        qx_core::Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.fast_window = 3;
+    config.slow_window = 7;
+    let mut strategy = BuiltinStrategy::new(config).unwrap();
+    let mut context = context(&instrument);
+    let mut closes = Vec::<i128>::new();
+
+    let tail_sum = |values: &[i128], window: usize| -> Option<i128> {
+        if values.len() < window {
+            return None;
+        }
+        values[values.len() - window..]
+            .iter()
+            .try_fold(0_i128, |sum, value| sum.checked_add(*value))
+    };
+    let tail_average = |values: &[i128], window: usize| -> Option<i128> {
+        tail_sum(values, window)?.checked_div(window as i128)
+    };
+
+    for index in 0..80 {
+        let close = 100 + ((index * 7) % 23) as i128 + (index / 5) as i128;
+        let previous = closes.clone();
+        closes.push(close);
+        context.as_of = index as u64 + 1;
+        let decision = strategy
+            .on_event(
+                &context,
+                &MarketEvent::Bar {
+                    instrument: instrument.clone(),
+                    ts: context.as_of,
+                    open_raw: close,
+                    high_raw: close,
+                    low_raw: close,
+                    close_raw: close,
+                    volume_raw: 1,
+                },
+            )
+            .unwrap();
+
+        if strategy.sma_sums_ready {
+            assert_eq!(strategy.fast_sma_sum, tail_sum(&closes, 3).unwrap());
+            assert_eq!(strategy.slow_sma_sum, tail_sum(&closes, 7).unwrap());
+            assert_eq!(
+                strategy.previous_fast_sma_sum,
+                tail_sum(&previous, 3).unwrap()
+            );
+            assert_eq!(
+                strategy.previous_slow_sma_sum,
+                tail_sum(&previous, 7).unwrap()
+            );
+        } else {
+            assert_eq!(strategy.fast_sma_sum, 0);
+            assert_eq!(strategy.slow_sma_sum, 0);
+        }
+
+        let expected_signal = if previous.len() >= 7 {
+            let fast_previous = tail_average(&previous, 3).unwrap();
+            let slow_previous = tail_average(&previous, 7).unwrap();
+            let fast_current = tail_average(&closes, 3).unwrap();
+            let slow_current = tail_average(&closes, 7).unwrap();
+            if fast_previous <= slow_previous && fast_current > slow_current {
+                Some(1)
+            } else if fast_previous >= slow_previous && fast_current < slow_current {
+                Some(-1)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let actual_side = decision.intents.first().map(|intent| intent.side);
+        let expected_side =
+            expected_signal.map(|signal| if signal > 0 { Side::Buy } else { Side::Sell });
+        assert_eq!(actual_side, expected_side, "bar index {index}");
+    }
+
+    let mut overflow_config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::SmaCross,
+        "sma-warmup-overflow",
+        instrument.clone(),
+        qx_core::Quantity::from_i64(1),
+    )
+    .unwrap();
+    overflow_config.fast_window = 1;
+    overflow_config.slow_window = 2;
+    let mut overflow = BuiltinStrategy::new(overflow_config).unwrap();
+    for (index, close) in [i128::MAX, i128::MAX].into_iter().enumerate() {
+        context.as_of = index as u64 + 1;
+        overflow
+            .on_event(
+                &context,
+                &MarketEvent::Bar {
+                    instrument: instrument.clone(),
+                    ts: context.as_of,
+                    open_raw: close,
+                    high_raw: close,
+                    low_raw: close,
+                    close_raw: close,
+                    volume_raw: 1,
+                },
+            )
+            .expect("warmup bars do not calculate SMA sums early");
+    }
+    context.as_of = 3;
+    assert!(overflow
+        .on_event(
+            &context,
+            &MarketEvent::Bar {
+                instrument,
+                ts: 3,
+                open_raw: 1,
+                high_raw: 1,
+                low_raw: 1,
+                close_raw: 1,
+                volume_raw: 1,
+            },
+        )
+        .is_err());
+}
+
+#[test]
 fn fixed_notional_sizing_uses_visible_price_and_emits_scaled_quantity() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let notional_raw = 100 * qx_core::SCALE;

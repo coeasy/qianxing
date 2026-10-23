@@ -8,9 +8,10 @@ use qx_app::{
     run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
     run_multi_market_depth_backtest, validate_dataset, verify_depth_run, verify_run,
     AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestSpec, MultiLegBacktestSpec, MultiMarketBacktestSpec,
-    MultiMarketDepthBacktestSpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
+    DatasetSpec, DepthBacktestSpec, MultiAccountJointBacktestSpec, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec,
+    RunMultiMarketExperimentSpec,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -131,7 +132,7 @@ fn app_start_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
     let spec = RunExperimentSpec::from_json(spec_json).map_err(app_error)?;
     let context = research_context(&spec.experiment_id);
     Ok(PyRunHandle {
-        inner: NativeRun::Experiment(spec.start(context)),
+        inner: NativeRun::Experiment(Box::new(spec.start(context))),
     })
 }
 
@@ -192,6 +193,23 @@ fn app_run_multi_market_backtest(spec_json: &str) -> PyResult<String> {
     run_multi_market_backtest(&spec, &research_context(&spec.run_id))
         .and_then(|outcome| outcome.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_run_multi_account_joint_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = MultiAccountJointBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    qx_app::run_multi_account_joint_backtest(&spec, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_account_joint_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = MultiAccountJointBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiAccountJoint(spec.start(context)),
+    })
 }
 
 #[pyfunction]
@@ -467,6 +485,14 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_run_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_market_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_run_multi_account_joint_backtest,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_start_multi_account_joint_backtest,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_market_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(
         app_run_multi_market_depth_backtest,

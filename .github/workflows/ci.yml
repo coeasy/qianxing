@@ -59,6 +59,8 @@ jobs:
         run: cargo test --workspace
       - name: Capability unverified register
         run: python3 tools/generate_unverified.py --check
+      - name: Sandbox evidence gate tests
+        run: python3 -m unittest tools.test_binance_testnet_acceptance
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

@@ -1,0 +1,982 @@
+{
+  "facts": [
+    {
+      "effective_at": 1792709280000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:a45525bce63da834858ae0b5c25755e4206a3eefae864ab8283f34c564bddbac",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1569d01710f87f827baf79bfb46787fcda99100c811f5f301fddddb0b5c4a4ba"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709280000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:6c44a64e64c87c9325699be12667d9e8ed9684a874da82e1975b7c6ce4992a54",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1569d01710f87f827baf79bfb46787fcda99100c811f5f301fddddb0b5c4a4ba"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709280000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:afb9338ddad66dd70854812cc3892402f28455ea570a9a5ab076b38052c01af1",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "d54453aa7a8f58f4e9a31cb404c27f33c79fceb9bd4c5e3f41da7f1e13ddd588"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709280000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:e91e5f8a424a8c32107a6d08e5d7e56a9d961e88ce56706615cd2ab2f278f71a",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "15ed7b61c683401e789d743dc1fb859cbe3bee864d4a72e0896c63c8cb8f4318"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709280000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:8ee364123fb8e1095827e2658a29b248d3a7d6ae7beaa8f996785b4e824c3a39",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "dcc3a94a11c1f89c5880b1952150fcdb88b479d958a722782b26e1e1c2b0bbf6"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709340000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:3e154c746cb1e9a378c37aa7d6b86cc61f93dec487aafcd54e8efa9a712eb920",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1569d01710f87f827baf79bfb46787fcda99100c811f5f301fddddb0b5c4a4ba"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709340000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:66e8aa7a1a4bcd624671869133957941e44ba5a757eda9a07561595cb69b1571",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1569d01710f87f827baf79bfb46787fcda99100c811f5f301fddddb0b5c4a4ba"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709340000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:ea0a76bf22063a0361aecc94aa2a8407f284460c8c32daed7e196bf2671ce395",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "3560b8458577407eed9329685f769a004368af9c96f388dc45131353ad3e877d"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709340000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:58549ef2183936861eb1f32f7c21214161ad3c92cf4f0b832b651128ad39df08",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "3560b8458577407eed9329685f769a004368af9c96f388dc45131353ad3e877d"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709340000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:b223d5e0af14525823e505858468dfbfc94bd0f71d51e9e63dc5d996aa2bde48",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "7073f2d3406222601ad8320c88d78de49e2133ba2710e969758456478ebbfbc7"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709400000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:3e5573c960f58d80657a69caf101addfdf11112b766193aff29d3555ca8feb4f",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "d00411d72256ba93eada2636db303283bd421df190d6f62070b23a5d0e4c2c78"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709400000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:1c970429fb701ed0f4dc3bec9efa807f819349b5029e5bd1f6b05aa6f6bef662",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "74a87cdbf53dbf6448cbce500876a343a9e92558754fafda291764e6d220ad90"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709400000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:b606cb773be98c12e8635f4cdfbc73dd8d9f21610cf8a0419c3cbf693ea7f880",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "3560b8458577407eed9329685f769a004368af9c96f388dc45131353ad3e877d"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709400000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:6d52d3009c7f17335e929240b12494e4ddca5f8506c542d969fb532323fb560d",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1569d01710f87f827baf79bfb46787fcda99100c811f5f301fddddb0b5c4a4ba"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709400000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:c12aa09d17bb37bb044667feae6aebf0e1144cb570a7585800430e56cd9016ab",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "78a063910bef7fe367bfe0323d95dcb07039ccbaf0f650e55f9ec8e02f584359"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709460000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:91975c3011b90417f5ee2bfa9eeb055abfb85bab70fb88d257f413ebd5b3eea5",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "e2e4f448d8ff3782aa1c0952bf9e51c34078f0c9d8605e82dbfae666a4064e45"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709460000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:2626b9d4be4dda05b19bac3cdedfe0eb4221a2eec4295c6d01a35143be9a0429",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "a8c2b5cb96990a7f95852b2a5df5752dcdd37a8c9a163389fd11d570cfceed09"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709460000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:c1be9b6428b7e07c3654905a776e61dbd0a62fec504bb33b6324cec6d099003b",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "e2e4f448d8ff3782aa1c0952bf9e51c34078f0c9d8605e82dbfae666a4064e45"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709460000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9ded8608ed012e2c653d87fb17483f95a094bae885802ebda22e3ac959a89c78",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "74a87cdbf53dbf6448cbce500876a343a9e92558754fafda291764e6d220ad90"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709460000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:1bcf088b55ec955e8e729c5a548b52aae74c3ccd12d3e70ae5bdd43414c8579d",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "bc24aa8305edd3c2fd173524b59a7e6fae5e5847f20b5e1fb51f4aa0391927c7"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709520000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:3c72747ec63188f4edbf2d1bd1e34c5c920a3f0ca20ab074a7f4454e7c26c9d8",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "de5a3dc55d7846916676d49df897735f3c90d54311cb6dca1516934b66fb6593"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709520000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:3d45a4a86231bd4bea915a1e55167b6adb740198a79d1b102c6012ffc3a89a51",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "d378500af06729b8fc3730bd676d68711908715a7db1646b8cbad31a7a3bc299"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709520000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:12cfa69a04fb9b2b580689f78b173e5e27e0d956fc45e301951e49bc030a29bd",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "326cdc714602e02f6e3167f0b4eab2253da9125d89a44e6affa41ed33b5c5d89"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709520000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:46c470500ed7685ebf375abf2b0665ba91de04144cd61a4b1a49fec0b0540d74",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "d378500af06729b8fc3730bd676d68711908715a7db1646b8cbad31a7a3bc299"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709520000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:edd5b589a23890f3b6ae7f24e708d131a1b796c0bbc39923f17a49e642692e96",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "d66153efc0646e1b22a71fbaf2cc77dad6857f4ae2b19e1d32518187d356677b"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709580000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:f8024a0a9dd3c83fc67bb711aa4d8d2cf31890b36156bd2f4f6a670ee082e7ec",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709580000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:582a077fab4ebe133e9e8a236882136ab33508e399ba44dedd64500b3a4172e3",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "de5a3dc55d7846916676d49df897735f3c90d54311cb6dca1516934b66fb6593"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709580000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:5169d93baa82f1490c78cb6746642220bc4d6411b764e06b2e04195e1068c942",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709580000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:50756c8b61aaddf17417b4221e14432068fe432c2608c7d860621258bec65316",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "de5a3dc55d7846916676d49df897735f3c90d54311cb6dca1516934b66fb6593"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709580000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:1bc7762fee29a896280d3633d05d31da9e2fca1151004bd8fbb3a4c0817ea378",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "0b05889659090cb6f1e0bbcb410dee8c99722d73dd4032eaef472ed10365e034"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709640000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:fa671f76b5e63268e8fa601ffce0f6c39bd4baa47d08567943d85b5d618fe25b",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "45202e8f9aca3523e86ed790ac040de67ce623ddef756cbb52ce50f227a6f008"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709640000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:05e142e998197a4ecd67c8050d486a171023d82f93f6841ed84beff5c6c5404b",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "c28b4af3598140696097fa367b74b54f4f52550c4badfee5a68717e5f4869a67"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709640000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:c200952de8710c07e6f6fcc3185529348dc6d3046eb9dd04e30f5bcdcadc136f",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709640000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9db1ca28c925ff4a2b9e6cc6030e9f17f576b8ccecb5f6a3f636b12c81ec8e18",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "de5a3dc55d7846916676d49df897735f3c90d54311cb6dca1516934b66fb6593"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709640000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:a8f2079b721b21eb99b93c3dbdd04e15668876ffd5abaa8405c03f8996b5f556",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "bf52ed5e884378aee2696612e7933aeee187ebe63cbb1c3c62881f03d68d089c"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709700000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:1362f7f82f81976accfa1a183c2bbf962a2ab9c0f479e22ff956442e98245f50",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709700000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:32333f58d67744c554968f965d09133e61654a955a3ac5178276c349fe33fd9d",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "b643b8f5456766a680a6c7fcd56d140dd2984a783ba756927cd42d394d919d67"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709700000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:41af22eba88d7356f155ef731bb706509ae35bbb32617c22b6544db8538fb825",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "8d7494afe30e5bff503d4b9e6592e3bbcb96bf2204fbd10cac0a65ed1bf7a604"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709700000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9150b136133395f9f9b957b807a34cec6c26aac5a1599f84c3863dff84ace47e",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "572732011b7592e62defef32e52b70a9f57e81a7af423c9da1056536d8505282"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709700000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:0e79399ad95152ad9908f0fb4e81473a537d08e490ab43014b3670ea876012bb",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "74c2b756b231db3c3ded4b53e321a8f855205da2e252693fd786a7b9a75579ed"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709760000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:4058455c60628b44d42566276834ee92cb1697fd0015f24ded358ace90b499ad",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "4a8a63bcf1473eae4060ab43759e0f548fedbe3676d35a74ff2101854e2ed946"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709760000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:b9a3d54f9bb9431d258f9dcf7eab0ca79fcfee95cbbd167b139767128101ab74",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709760000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:4ecc6b0d2b324adf5a5bfbc1248f702caaca1e64de26703daa86c6aa8a8c31dc",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "452e2a45408bc0e48ba8bb6968fb8b13ef6998d3893f2368f46ef3c7089881d1"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709760000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:74390e10053a8044ceba7e21c19d3ff9d5f138c5c0cb0dd23bcc58a1272c96e1",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "469cd4b5162f1f0fb35f72489eaf20c86772a2fc192c0f7ae922e6cdaf6da1c2"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709760000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:53733f31d8f27c35942cd5bffe5fdff9381c65ccef091eec0583765421b54814",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "aec5bf028b3a4e422e4e95b39949bb65d4ce227abb6e09853ac1a37349645085"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709820000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:030588527dbd55d483c7e25fa851ed3454a57beb8282a0a9729736236e2c7115",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1f90d177ea1c53e8241b48ff972732547841e004f19092f3b2077103b262a03f"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709820000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:86e8cb953806ade23cb2362f3c33ab45b95b7e31ab544f0c06817c1435b5a42b",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "4a8a63bcf1473eae4060ab43759e0f548fedbe3676d35a74ff2101854e2ed946"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709820000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:33d339e63f4aba4dc88683d01d82dc38ca5f771256da11e11483ff69142eeef1",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1f90d177ea1c53e8241b48ff972732547841e004f19092f3b2077103b262a03f"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709820000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:a9f979c99bedc00d485c1d21f9a7c07296b090b11f009e649a30326c4c38bddb",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "4a8a63bcf1473eae4060ab43759e0f548fedbe3676d35a74ff2101854e2ed946"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709820000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:3386677e5cca2cfe8e23618727a364a9f0994f2452ee655dc5bf56537877083d",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "fb18e93e6ad55e8cdaebe989a4806a5dd8c05f87f71725be83ebc1802188014c"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709880000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:36fbb24a23359d3cc30f2f4bf1475de9e8afb62ca28f2ff4258f2825893d46ba",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "2d79ac99e2a63fb594c64bf417b98d20e6962397ae23fb40eb49ab78c8116272"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709880000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:506907abd435e2031308d34d7bed3fc87dbc0bee6e814ec4cbd470345f6637cf",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "2d79ac99e2a63fb594c64bf417b98d20e6962397ae23fb40eb49ab78c8116272"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709880000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:d67a0460e8e35c242949d4aa6b97678eaf05cfa0be0fb9777300de311a3a4419",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1f90d177ea1c53e8241b48ff972732547841e004f19092f3b2077103b262a03f"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709880000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:2ad88fca927d82618be47b1899f5acf54baac40c3dad135a331fd280e2fff4d1",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "1f90d177ea1c53e8241b48ff972732547841e004f19092f3b2077103b262a03f"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709880000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:700166ee100afc35233426c17c0fddbf320d6e8429c4c92a0650ad587ba7f254",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "7c19109df58d02716f24cb7f465a26094b8e1bf61c82dd4edffe139b39f268da"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709940000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:5cbc185c4e7e1bf31252acf1cf956dbbc47ff2fde048e9d6681e7e66a91a4382",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "8f5ccfb6cf0e039d143183904ed9882a5f901af02d5652ca490725a96aed5f33"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709940000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:93ef6cefcde914804951a64504eff99f1d3f7b8852468b9d9ca1107e9ed338cb",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "5778139646a56faf17083472a8d6dc6f5962f212245e09789f53e75c74a29e60"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709940000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:4043614441f021975ee8d3cdb4be08020c2fd32921d26d3f998626d37487a31c",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "2d79ac99e2a63fb594c64bf417b98d20e6962397ae23fb40eb49ab78c8116272"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709940000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:d5bf27d3f5b09218c09cf6c51a711a870b8ed7177491f784f192b7eed3173cac",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "2d79ac99e2a63fb594c64bf417b98d20e6962397ae23fb40eb49ab78c8116272"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792709940000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:4659196edba8a3672092bae280aa94ed7bdd6545e4952511adb2152a69962449",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "b816a29ae3c9e4863d815f1c44dccb2708f8c62ea9e0b7937c5e975b440e92db"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710000000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:5e1480040326f6934947b152789b835568225a6965deacd546063347695ff6f8",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "9073dbece052023dabacbf4beb086bb094590057fa318f49f8b1b21a7ade7ad8"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710000000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9cf9618998c39c1bc0e9635ad46260e3d782af8f3895c25bd28bee784f516b53",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "9073dbece052023dabacbf4beb086bb094590057fa318f49f8b1b21a7ade7ad8"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710000000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:7d9ee698d72400299b1df753e6b99d659b133ef6053d3ff1f97ce3765427a991",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "8f5ccfb6cf0e039d143183904ed9882a5f901af02d5652ca490725a96aed5f33"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710000000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:c18a37dfa7403c05c2fb610f88b58f9df5c15f07bc9646ce21f5cf47bb19797f",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "5778139646a56faf17083472a8d6dc6f5962f212245e09789f53e75c74a29e60"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710000000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9f53e84d4784d4ab421bed18cede2c55d556b8fa5f785ed570e12a6acc205002",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "2890ddd66ca55f5e75cd18886dee5f7d5b632a9ec8da8edd2f3c2fe5167f29da"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710060000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:87f61bf9fcced7c1267182821eb4f1773dac3e83e96a473dba83f82cf26299e0",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "a9a088dce88470a1073c4f2b428efc465c1fb42dc8035d3dc0a1f075b9310240"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710060000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:9ae481a868bd75119c22df5b77e15c6a9a79e93ad4a3fdd94e86f0a733bba44f",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "9073dbece052023dabacbf4beb086bb094590057fa318f49f8b1b21a7ade7ad8"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710060000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:d3e08da3b55a35c8c2ae87d17e04c37e05d5229bb525c5868a871188f0754fec",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "56640a3ada1049b6d9f321e3f0557acc8f717f286099f88ac62c4386773cf571"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710060000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:ab4cae1d5cc63b21132a622577921ac5da34e3221a6c04b80005fcde1dc79328",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "c36ffb1f8d00a7ab797ac675c7b04eee52b5b064d0f967438ad0f51ed4b197b9"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710060000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:186b431e426b1cb033f53c9b63bc60c77f21e08ef1fc9f4cc76f44ebfb572044",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "dbc42cfd2a09879004b471ffa71b409ea7b576aa150034dbdc4a2b25171593b3"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710120000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:957bff764c70b07b423bc756847d3825441b17f2a7678c6b7fb168eefb7dd3d1",
+      "field": "bar.close_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "a9a088dce88470a1073c4f2b428efc465c1fb42dc8035d3dc0a1f075b9310240"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710120000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:d1cd38901221ce582c2019eb35c95e0765edf0c17147e4ace531334d400640e7",
+      "field": "bar.high_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "c8b5750cb3e954d856e68672405a7c76bdd75eeb6b0164c63dcf6c500ef8cd37"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710120000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:66d71ef2afb9731f37a475d44971f8f5e92450d3a6d185be7134d7f1c5195388",
+      "field": "bar.low_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "56640a3ada1049b6d9f321e3f0557acc8f717f286099f88ac62c4386773cf571"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710120000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:205791841489cce464cd0029feda9c6f114560002236ba8d6ef4c579943977df",
+      "field": "bar.open_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "671b44567ec646c23e0f562539df24142b8719615ba0402d985ba8ce7f71d357"
+        }
+      ]
+    },
+    {
+      "effective_at": 1792710120000,
+      "entity_id": "BTC/USDT.BINANCE",
+      "fact_id": "ohlcv:949b944f8a5eba0a30d2432075aa77f52ef04fe3883700d12127425e1060bc85",
+      "field": "bar.volume_raw",
+      "versions": [
+        {
+          "available_at": 1792710280759,
+          "revision": "capture:1792710280759:sha256:68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+          "value_fingerprint": "37867de72c64190f70e44dc8b56d6a5d040a3c6489139640606cbe463657d23a"
+        }
+      ]
+    }
+  ],
+  "kind": "qianxing-pit-ledger",
+  "schema_version": 1,
+  "source": "ccxt:binance:BTC/USDT:1m; availability=first-captured-by-qianxing; capture time is not the exchange publication timestamp"
+}

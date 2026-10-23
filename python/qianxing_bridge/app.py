@@ -472,6 +472,14 @@ def run_multi_market_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_multi_market_backtest(_payload(spec)))
 
 
+def run_multi_account_joint_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    return json.loads(native.app_run_multi_account_joint_backtest(_payload(spec)))
+
+
+def start_multi_account_joint_backtest(spec: "str | dict[str, Any]") -> Any:
+    return native.app_start_multi_account_joint_backtest(_payload(spec))
+
+
 def start_multi_market_backtest(spec: "str | dict[str, Any]") -> Any:
     """Start a cancellable Rust N-market run."""
     return native.app_start_multi_market_backtest(_payload(spec))

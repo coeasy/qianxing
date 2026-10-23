@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "maturity/capabilities.yaml",
-  "source_updated_at": "2026-10-21",
+  "source_updated_at": "2026-10-23",
   "interpretation": "Statuses and limitations are copied from the register. A false or non-true value is listed as unverified; this report does not infer whether a stage applies.",
   "capabilities": {
     "deterministic_kernel": {
@@ -81,7 +81,7 @@
       "limitations": [
         "RiskGate remains a thin facade over RuleSet for legacy call sites （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "live_cross_currency_collateral_and_portfolio_valuation_unclosed：Bar、单市场 OrderBook 与多市场 OrderBook 准入现已通过 `RiskGate::check_with_context` 进入统一 `RuleSet::evaluate`，生产调用不再使用 `check_with_spec`；`RuleSet::evaluate_rules_only` 已删除。Bar 使用账户预算模型提供的未预留资金与组合投影初始保证金。OrderBook 衍生品资金预检已移交规范 `OrderRiskContext`：按标记权益扣除未终结订单和候选订单的预计手续费后，校验当前持仓、同标的未终结订单与候选订单的组合初始保证金，避免单笔检查分别放行后合计超限；现货仍由 `funding::preflight_order` 执行现金/库存预留。Ledger 现按衍生成交事实持久化加权开仓杠杆，Paper 保证金估值使用该比例，缺失历史杠杆时拒绝估值；OrderBook 组合保证金现使用 Ledger 持久化的逐仓开仓杠杆，未知杠杆时 fail-closed；`margin::settled_cash_margin` 对杠杆产品仍返回 `None`，因此结果仍不是交易所认证的 free-margin 快照。CLI 策略意图构造阶段只做前置轻量规则检查，最终订单仍由 `worker_risk` 使用执行侧账户余额、规格和价格作权威准入；Paper 最终 worker 风控现按同账户文件锁串行准入，并在锁内刷新 EventLog；它按 OMS 中同账户未终结订单预留衍生品初始保证金与现货买单报价币名义额、从现货可卖库存扣除在途卖单。现货买单购买力只取报价币现金，不把已有现货市值重复当作可用现金；衍生品权益与保证金支持配置的跨币种 FX。Paper 现货新单直接按报价币现金构造购买力，报价币不同于账簿报告币种时仍可准入；候选订单与同币种在途预留均保持报价币计量，并通过已配置的直接/反向 Spot FX 标记价完成跨币种预留换算。Live 现货买单按报价币余额快照资产的 free 减 borrowed 计算购买力；快照后其它报价币现货买单占用独立余额桶，候选单只扣减同报价币现货预留；衍生品遇到异结算币在途单仍 fail-closed，不做跨币种抵押品折算。Live 使用最近交易所余额快照；按余额事件 seq 只预留快照之后提交且仍未终结的同币种订单，账户级文件锁串行并刷新 EventLog；跨市场订单按同账户同 Venue 启用 Execution worker 的唯一冻结规格计算剩余名义额/初始保证金；快照之后若发生成交/现金流、规格缺失/冲突或在途订单资金币种与余额资产不一致，则拒绝新单等待下一份余额快照。已确认 Strategy 命令进入 Binance、CCXT、Paper 的最终提交入口均调用 worker 风控，缺规格/缺余额时 fail-closed。Live 跨币种抵押品及跨市场持仓统一估值仍未关闭 (发布审计风控链复核) （状态：未收口；收口门：Bar、OrderBook、Paper/Live worker 与策略入口对持仓、在途订单、产品规格和账户可用资金使用一致的组合判定，并有跨 worker 行为回归；未排期原因：Live 跨币种抵押品和跨市场持仓统一估值尚未收口）",
-        "order_risk_projection_fields_have_no_production_reader：`OrderRiskDecision` 的三格投影 （`projected_position_raw` / `projected_margin_raw` / `reference_price_raw`）每笔订单都算， 但生产消费者只有 `qx-execution` 的两个 `RiskPort` 实现，它们只读 `allowed` / `violations` / `rule_set_version`；三格目前只有 `crates/contract-tests/tests/risk_parity.rs` 与 qx-risk 用例读者， 充当「三条入口判定一致」的对照面，不进任何回测产物、运行清单或 API 读模型， 所以「这一单成交后仓位与保证金会变成多少」今天读不到产物（V13 §9.12 #171） （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
+        "order_risk_projection_fields_are_only_exposed_for_bar_research：Bar 回测现将每笔规范风险裁决连同 `projected_position_raw`、`projected_margin_raw` 与 `reference_price_raw` 写入可重放 EventLog，并由 `/app/research-artifacts` 以原始定点字符串提供交互读取；Paper/Live 的 RiskPort 结果仍只向上返回允许/拒绝、违规和规则版本，尚未接入运行产物或统一研究读模型（V13 §9.12 #171） （状态：未收口；收口门：Paper/Live 风险裁决也进入身份绑定的运行产物/API 并有回放或供应商证据）",
         "signal_confidence_is_computed_forwarded_then_dropped_at_merge：策略侧真在算这一格——`crates/qx-strategy/src/builtin.rs` 按成交量累加、`crates/qx-strategy/src/lib.rs` 按均线差绝对值、`crates/qx-strategy/src/c_api.rs` 把 FFI 决策里的原值带出，`crates/qx-strategy/src/contract.rs` 写进契约输出，`crates/qx-cli/src/strategy_contract.rs` 再读进 `Signal.confidence`；可是 `SignalMerger::merge`（`crates/qx-zhenlu/src/lib.rs`）产出的 `TargetPosition` 没有这一格，合并即丢，全仓也没有任何阈值、缩放或排序读它（排序只读 `priority`）。标度还是三套口径：契约用例写 500/800/1_000 当千分制，`crates/qx-runtime/tests/strategy_contract_schema.rs` 的样例写定点原始量纲，内置策略写裸成交量。而 `schemas/strategy_api_v1.schema.json` 把 confidence 列进 required，外部读者必须给值、给了又什么都不影响——这是「必填但无读者」的形状，比纯粹的冗余更容易骗过对接方。要接上它得先定标度与阈值归谁，再决定它进 `TargetPosition`（进而在仓位与产物里可见）还是就地删掉声明 (V13 R7 扫描B) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "risk_snapshot_carries_fields_no_decision_reads：`RiskSnapshot`（`crates/qx-risk/src/lib.rs`）的七格里，`RiskEngine::evaluate` 只读 `portfolio_id`（非空校验）、`gross_exposure`（对上 `max_exposure`）、`drawdown_bps`（对上 `max_drawdown_bps`）与 `factor_exposure`（键非空校验）；`timestamp` / `net_exposure` / `volatility_bps` 三格既不被判定读、也不进任何回测产物或 API 读模型，其中 `volatility_bps` 在仓库内唯一的构造点（订单级 `evaluate_order` 的投影分支，`crates/qx-risk/src/lib.rs`）恒写 0。按 #118/#171 先例保留不删（删面等于把缺口藏起来）：要接上它们得先给组合级快照定出「谁算波动率、谁消费净敞口、时间戳按谁的表」的归属 (发布审计 第2轮) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
@@ -485,7 +485,7 @@
       ],
       "limitations": [
         "report_html_only_renders_what_the_summary_already_declares：报告和可信度面板只读持久 summary，不计算第二套指标；strategy、builtin、CCXT builtin、depth、双腿与多市场 Bar/Depth 的质量字段均由回测入口核验后进入摘要并复用 HTML/XLSX/EvidenceBundle 读面。固定输入 CLI 回归覆盖 A 股多文档/同输入比较、多腿便携 EvidenceBundle 离线复算、多市场 Bar/Depth，以及 CCXT builtin JSON/HTML/XLSX、EvidenceBundle 本地与便携离线复算。真实 CCXT 交易所行情画像仍未运行，不能据离线 worker 合同推断供应商字段映射、历史边界或真实行情稳定性 （状态：未收口；收口门：完成授权的真实行情 profile 验收；未排期原因：当前只验证离线 worker 合同）",
-        "report_html_is_opt_in_and_not_wired_into_quickstart：--html 是显式旗标，quickstart 与逐条首跑链默认不产出报告，产物份数仍是「init 10 + 回测 6」；把它并进首跑会改变既有的份数不变量与用例，属后续工作 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
+        "interactive_comparison_is_not_yet_a_unified_portfolio_workbench：单回测、多账户 Bar/深度批次、多市场 Bar/Depth 与多腿 Bar 均支持产物复核和交互钻取；同一输入的多账户曲线可带账户身份加入比较，多账户事件可按各账户游标稳定合并分页并按标的跨页过滤。多腿报告复核两份输入、共享 EventLog/账簿、权益曲线与逐腿成交/收益/成本，并把事件按订单身份关联到对应 Bar；双腿策略决策同时显示两边可见行情。Web Console 支持同输入比较、跨输入样本进度归一化，以及基于重叠权益样本时戳的 UTC 对齐；UTC 模式按共同时间区间起点归一，并在无新样本时保持该曲线最近观测权益，显示每条曲线结算币种但不做 FX 换算或组合净值合并。多市场 Bar 支持市场与成交筛选以及策略/风险/费用配置查看。最多八份已复核报告的事件页可独立重放复核、按时间稳定合并，并逐批加载或显式加载最多 50,000 条；已证明前缀支持报告/拓扑/账户/标的/事件类型筛选、全文搜索、本地分页和当前筛选 CSV 导出，达到上限时显示剩余量，需清空对照并选较小报告集后继续。各报告序号仍独立，分页仍会重放完整日志。深度事件表可重放校验与分页显示，不使用 Bar 因果时间线；旧版订单适配器不产生独立策略决策事实。原生统一跨拓扑服务端查询/游标、超过 50,000 条缓存后的全量事件访问、按历史时点定位策略中间态、跨币种 FX 净值归一及完整组合风控视图仍未实现（状态：未收口；收口门：完成统一跨拓扑实体查询、全量时间/币种口径和组合分析端到端验收）",
         "grafana_dashboard_is_a_deploy_file_not_an_embedded_template：deploy/grafana/qianxing-overview.json 已落盘且有指标名用例，但它不在 qx-cli 内嵌的 DEPLOY_TEMPLATES 登记表里，所以 `qx-cli init` 不会把它拷进项目目录，要用手动或部署脚本单独铺 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
@@ -530,7 +530,33 @@
         "production_approved"
       ],
       "limitations": [
-        "profile_measurement_evidence_is_not_complete：此门禁只比较已有同机匹配基准；A 股规则吞吐证据只覆盖合成分钟线、规则/费率/weekday 日历与 PIT-visible 公司行为，不覆盖假日、所有 T+1/整手/涨跌停/停牌分支或 Paper 生命周期，因此不构成完整 ashare-research 验收。ashare-research、crypto-paper、multi-venue-arb 三档仍保持 unmeasured，直到各自完整场景证据实际生成并登记"
+        "profile_measurement_evidence_is_not_complete：已有独立 CLI 并发代理、多账户 64k Bar 批次矩阵、单标的报告及诊断附件报告生成画像、单市场和共享账户多市场 L2 回测、共享账户多市场 Bar 策略诊断/离线 HTML（3/4/8 市场 × 1k/8k/64k 每格三次）以及单次 Debug/Release 活服务 watcher 饱和证据；单次采样不能代表 Release 的稳定容量分布。仍未覆盖框架内部并行参数实验、长时间内存稳定性、跨拓扑完整链路分配数、完整 Paper/live profile 工作流和真实数据供应商；A 股规则吞吐证据只覆盖合成分钟线、规则/费率/交易日历与 PIT-visible 公司行为，不覆盖全部制度分支或 Paper 生命周期。九档 profile 继续保持 unmeasured，直到各自完整场景证据实际生成并登记"
+      ]
+    },
+    "strategy_bias_diagnostics": {
+      "implementation": true,
+      "code_tested": true,
+      "sandbox_tested": false,
+      "production_approved": false,
+      "unverified_fields": [
+        "sandbox_tested",
+        "production_approved"
+      ],
+      "limitations": [
+        "black_box_future_perturbation_is_not_a_proof：诊断检查有限决策时点和确定性扰动；未发现变化不证明不存在所有未来数据路径。中间态需要 Python/Rust/C ABI 策略显式导出；外部 JSONL worker 可选择在响应顶层导出 diagnostic_state 参与同一比较，未导出时只比较决策；Rust warmup 与可选导出 qx_strategy_diagnostic_state 的 C ABI adapter 支持 opt-in Strategy::diagnostic_state，C ABI JSON 输出限制为 64 KiB。Rust 事件策略接口不会接收未来 Bar，插件未显式导出的私有状态与指标值不能自动采集。预热窗口结果只说明本次数据和窗口。PIT 检查依赖调用方提供可信的供应商版本账本，不验证外部时间戳真实性，也不自动修复源行情；新增 CCXT BarFrame PIT 导入器把 `available_at` 明确设为牵星首次采集时间，不等于交易所发布时间；本机三次同一窗口 Binance Testnet 捕获内容相同，尚无真实修订样本或精确供应商发布时间证据。新增复权链提示只关联账本中的 OHLC 修订与公司行为时间；它不证明因果、复权因子、供应商调整规则或真实公告可见性，未声明/未知口径及缺失历史均不能当作安全通过。单次 Bar 报告支持离线 HTML/JSON/XLSX，XLSX 保存诊断摘要与可分段还原的完整 JSON；Web/API 可在复核回测产物后接收本地预计算诊断 JSON，并按策略 ID、标的与数据指纹绑定，服务端不执行策略或重算诊断；API 可分别附带最多 1,000 个数据目录内、来源身份复核通过的 Bar 采样点或深度快照，盘口每侧最多 20 档；深度事件现可重放校验和分页展示，但不适用 Bar 行情因果上下文，多市场报告 API 已提供每市场不超过 1000 点的复核 Bar 采样，并可附加一份按策略 ID、标的策略槽和逐市场数据指纹绑定的客户端预计算诊断；多账户 Bar/深度批次也可通过 request-v4 附加最多 32 个按账户身份分别绑定的诊断集合。服务端不执行策略或重算诊断；多市场深度外部策略/动态 sizing 的自动诊断、真实供应商 PIT 修订证据、外部策略未来扰动和统一跨拓扑账户—标的查询/归因、全币种净值归一与完整组合风控视图仍未实现，任意远程策略代码仍不通过 API 执行。"
+      ]
+    },
+    "adaptive_parameter_search": {
+      "implementation": true,
+      "code_tested": true,
+      "sandbox_tested": false,
+      "production_approved": false,
+      "unverified_fields": [
+        "sandbox_tested",
+        "production_approved"
+      ],
+      "limitations": [
+        "categorical_tpe_is_not_full_hyperopt：random/分类 TPE/有限网格自适应高斯 Parzen tpe_kde、有界非负步进整数范围 TPE/Parzen 提议、收益/训练最大回撤双目标 pareto_tpe、首训窗硬回撤预算、训练子窗最差收益目标、按折风险过滤、purge/embargo、有限网格及步进整数范围的可配置半径 1..=8 单维邻域覆盖与训练选参分数符号分级（全局与逐折），显式通用/A股费用/延迟/撮合敏感性情景已实现；每情景可分别配置选中候选训练窗阈值和邻域训练窗阈值，邻域门对理论邻居覆盖、基线/压力回测成功及逐折退化作 fail-closed 判定，并返回逐邻居结果，未搜索邻居不会误报通过；连续模式当前仅接受内置策略整数参数，不支持浮点范围；基于部分训练窗进度的早停剪枝和跨折诊断摘要已实现；连续浮点域邻域稳定性仍未实现。训练邻域分级不声明 OOS 稳健。成本门不参与候选排序；样本外收益/回撤变化单独列示。成本情景通过标准回测重算，并记录相对基线收益/回撤变化及逐折训练窗/OOS 变化。显式 fold_local_search 已按每折切片、重跑和独立 TPE 状态实现，折内外候选及成本情景总数上限为 4096；全局与折内成功候选及成功成本情景均可由规格/完整数据/候选轨迹/选中参数/回测产物复核后检查点续跑；存在失败的既有实验报告在同规格重跑时会重新执行没有成功检查点的候选/成本情景，并复用其余经过复核的成功检查点，测试覆盖全局瞬时失败恢复；失败原因不作为成功检查点缓存。有限网格和步进整数 TPE-KDE 均有 8k/64k Bar × 8/32/64 候选的本机容量证据，早停剪枝另有 8k/64k × 8/32 Release 配对证据；SMA 滚动和优化使指定整数范围负载的 64k 搜索耗时降低约 1.40×–1.57×。这些合成样本不代表浮点范围、并行搜索、完整 profile 或生产容量。传统全样本比较排名仍不能替代 OOS 结论。"
       ]
     }
   },
@@ -872,6 +898,26 @@
     },
     {
       "capability": "performance_regression_gate",
+      "field": "production_approved",
+      "registered_value": false
+    },
+    {
+      "capability": "strategy_bias_diagnostics",
+      "field": "sandbox_tested",
+      "registered_value": false
+    },
+    {
+      "capability": "strategy_bias_diagnostics",
+      "field": "production_approved",
+      "registered_value": false
+    },
+    {
+      "capability": "adaptive_parameter_search",
+      "field": "sandbox_tested",
+      "registered_value": false
+    },
+    {
+      "capability": "adaptive_parameter_search",
       "field": "production_approved",
       "registered_value": false
     }

@@ -20,6 +20,7 @@ type RunReportArguments = (
     Option<PathBuf>,
     Option<PathBuf>,
     Option<PathBuf>,
+    Option<PathBuf>,
 );
 
 /// 读一条单配置文件入口的参数：`(配置文件路径, 是否要机器可读输出)`。
@@ -54,7 +55,7 @@ pub(crate) fn run_entry_arguments(
     Ok((path.map(PathBuf::from).unwrap_or_else(default), json))
 }
 
-/// 读 `run report` 的专属旗标；此入口额外支持 `--html --output <path>` 与 `--evidence`。
+/// 读 `run report` 的专属旗标；额外支持 HTML 落点、证据与策略诊断绑定。
 pub(crate) fn run_report_entry_arguments(
     arguments: &[String],
     default: impl FnOnce() -> PathBuf,
@@ -69,6 +70,7 @@ pub(crate) fn run_report_entry_arguments(
     let mut benchmark_calendar = None;
     let mut benchmark_csv = None;
     let mut xlsx = None;
+    let mut strategy_diagnostics = None;
     let mut values = arguments.iter().skip(1);
     while let Some(value) = values.next() {
         match value.as_str() {
@@ -121,6 +123,17 @@ pub(crate) fn run_report_entry_arguments(
                     return Err(run_usage("report --xlsx 需要一个 .xlsx 路径"));
                 };
                 xlsx = Some(PathBuf::from(value));
+            }
+            "--strategy-diagnostics" => {
+                if strategy_diagnostics.is_some() {
+                    return Err(run_usage("report 的 --strategy-diagnostics 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage(
+                        "report --strategy-diagnostics 需要一个 JSON 路径",
+                    ));
+                };
+                strategy_diagnostics = Some(PathBuf::from(value));
             }
             "--output" | "-o" => {
                 if output.is_some() {
@@ -200,6 +213,18 @@ pub(crate) fn run_report_entry_arguments(
                 }
                 xlsx = Some(PathBuf::from(path));
             }
+            value if value.starts_with("--strategy-diagnostics=") => {
+                if strategy_diagnostics.is_some() {
+                    return Err(run_usage("report 的 --strategy-diagnostics 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--strategy-diagnostics=");
+                if path.is_empty() {
+                    return Err(run_usage(
+                        "report --strategy-diagnostics 需要一个 JSON 路径",
+                    ));
+                }
+                strategy_diagnostics = Some(PathBuf::from(path));
+            }
             value if value.starts_with('-') => {
                 return Err(run_usage(&format!("report 不接受旗标 {value}")));
             }
@@ -235,6 +260,7 @@ pub(crate) fn run_report_entry_arguments(
         benchmark_calendar,
         benchmark_csv,
         xlsx,
+        strategy_diagnostics,
     ))
 }
 

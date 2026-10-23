@@ -36,7 +36,7 @@ fn observe_failure(args: &[&str], cwd: &Path) -> FailureObservation {
 
 #[test]
 fn evidence_subcommands_replay_missing_input_failures_without_side_effects() {
-    let cases: [(&str, &[&str]); 14] = [
+    let cases: [(&str, &[&str]); 16] = [
         (
             "sign",
             &[
@@ -91,6 +91,26 @@ fn evidence_subcommands_replay_missing_input_failures_without_side_effects() {
                 "evidence",
                 "pack-multi-market-run",
                 "missing-market-run.json",
+            ],
+        ),
+        (
+            "pack-multi-account-run",
+            &[
+                "evidence",
+                "pack-multi-account-run",
+                "missing-multi-account-result.json",
+                "--spec",
+                "missing-multi-account-spec.json",
+                "--output-dir",
+                "portable-output",
+            ],
+        ),
+        (
+            "verify-multi-account-run",
+            &[
+                "evidence",
+                "verify-multi-account-run",
+                "missing-portable-multi-account-dir",
             ],
         ),
         (

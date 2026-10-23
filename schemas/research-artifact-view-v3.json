@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-view-v3.json",
+  "title": "Qianxing ResearchArtifactView v3",
+  "description": "Replay-verified shared-account multi-market Bar drilldown with bounded shared equity, fills, events, and per-market input samples.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_kind",
+    "run_id",
+    "instrument",
+    "verification",
+    "summary",
+    "equity",
+    "fills",
+    "events",
+    "bars",
+    "event_trace_available",
+    "markets"
+  ],
+  "properties": {
+    "schema_version": { "const": 3 },
+    "run_kind": { "const": "multi_market" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "instrument": { "type": "string", "minLength": 1 },
+    "verification": { "$ref": "verification-result-v1.json" },
+    "summary": { "type": "object", "additionalProperties": true },
+    "equity": { "$ref": "research-artifact-view-v2.json#/$defs/equityRows" },
+    "fills": { "$ref": "research-artifact-view-v2.json#/$defs/rows" },
+    "events": { "$ref": "research-artifact-view-v2.json#/$defs/events" },
+    "bars": { "$ref": "#/$defs/emptyBars" },
+    "event_trace_available": { "const": true },
+    "markets": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/market" }
+    }
+  },
+  "$defs": {
+    "emptyBars": {
+      "type": "object",
+      "required": ["source_status", "total", "truncated", "rows"],
+      "properties": {
+        "source_status": { "const": "unsupported_input_kind" },
+        "total": { "const": 0 },
+        "truncated": { "const": false },
+        "rows": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "market": {
+      "type": "object",
+      "required": ["instrument", "data_fingerprint", "fill_count", "quality_status", "bars"],
+      "properties": {
+        "instrument": { "type": "string", "minLength": 1 },
+        "data_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "fill_count": { "type": "integer", "minimum": 0 },
+        "quality_status": { "enum": ["verified", "not_provided"] },
+        "bars": { "$ref": "#/$defs/barView" }
+      },
+      "additionalProperties": false
+    },
+    "barView": {
+      "type": "object",
+      "required": ["source_status", "total", "truncated", "rows"],
+      "properties": {
+        "source_status": { "const": "verified" },
+        "total": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "rows": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "research-artifact-view-v2.json#/$defs/barPoint" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

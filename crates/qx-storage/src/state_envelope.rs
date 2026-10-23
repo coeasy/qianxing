@@ -320,9 +320,16 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
 #[cfg(windows)]
 fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
+    use std::thread;
+    use std::time::Duration;
 
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+    const REPLACE_WAIT_ATTEMPTS: u32 = 100;
+    const REPLACE_WAIT_INTERVAL: Duration = Duration::from_millis(1);
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
 
     #[link(name = "Kernel32")]
     extern "system" {
@@ -337,19 +344,32 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         .collect();
     // Windows `std::fs::rename` refuses to replace an existing destination;
     // EventLog commits repeatedly replace the same file, so use the native
-    // replace-existing atomic move primitive on this platform.
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
+    // replace-existing atomic move primitive on this platform. Filesystem filters
+    // can briefly hold either path after a successful read/write; retry only those
+    // transient Windows sharing/locking errors with a fixed budget, preserving the
+    // old destination and atomic visibility if replacement remains unavailable.
+    for attempt in 0..REPLACE_WAIT_ATTEMPTS {
+        let succeeded = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if succeeded != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if !matches!(
+            error.raw_os_error(),
+            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+        ) || attempt + 1 == REPLACE_WAIT_ATTEMPTS
+        {
+            return Err(error);
+        }
+        thread::sleep(REPLACE_WAIT_INTERVAL);
     }
+    unreachable!("bounded replace retry always returns on success or final failure")
 }
 
 #[cfg(test)]

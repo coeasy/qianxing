@@ -10,6 +10,16 @@ pub(crate) use run_evidence_multi_market_pack::write_multi_market_run_evidence;
 #[path = "run_evidence_multi_market_depth.rs"]
 mod run_evidence_multi_market_depth;
 
+pub(crate) fn write_multi_market_depth_run_evidence(
+    artifact_path: &Path,
+    diagnostics: Option<(&Path, &serde_json::Value)>,
+) -> Result<PathBuf, String> {
+    run_evidence_multi_market_depth::write_multi_market_depth_run_evidence(
+        artifact_path,
+        diagnostics,
+    )
+}
+
 #[path = "run_evidence_multi_market_depth_recompute.rs"]
 mod run_evidence_multi_market_depth_recompute;
 pub(crate) use run_evidence_multi_market_depth_recompute::{
@@ -20,6 +30,7 @@ pub(crate) fn recompute_multi_market_barframe_identity(
     root: &Path,
     dataset: &qx_spec::RunEvidenceDataset,
     manifest_components: &BTreeMap<String, String>,
+    summary_path: &Path,
 ) -> Result<(BacktestInputProvenance, u64), String> {
     if dataset.components.len() < 3 {
         return Err("multi-market-barframe 至少要有三个市场输入".into());
@@ -181,8 +192,37 @@ pub(crate) fn recompute_multi_market_barframe_identity(
     let dataset_id = format!("multi-market:{}", instruments.join("+"));
     let content_fingerprint = qx_strategy::sha256_hex(component_fingerprints.join("|").as_bytes());
     let composed_fingerprint = format!("{:016x}", input_hasher.finish());
+    let mut expected_input_components = manifest_components.clone();
+    let derived_equity_hash =
+        expected_input_components.remove("derived:instrument-equity-contributions");
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(summary_path).map_err(|error| {
+            format!(
+                "读取多市场 EvidenceBundle 摘要失败 {}: {error}",
+                summary_path.display()
+            )
+        })?)
+        .map_err(|error| format!("多市场 EvidenceBundle 摘要 JSON 无效: {error}"))?;
+    let derived_equity_path = summary
+        .get("instrument_equity_contributions_path")
+        .and_then(serde_json::Value::as_str)
+        .map(|reference| resolve_reference(root, reference))
+        .transpose()?;
+    match (derived_equity_path, derived_equity_hash) {
+        (Some(path), Some(expected)) => {
+            let bytes = std::fs::read(&path).map_err(|error| {
+                format!("读取多市场按标的权益贡献失败 {}: {error}", path.display())
+            })?;
+            let actual = qx_data::sha256_hex_bytes(&bytes);
+            if actual != expected {
+                return Err("EvidenceBundle 按标的权益贡献与 RunManifest SHA-256 不一致".into());
+            }
+        }
+        (None, None) => {}
+        _ => return Err("EvidenceBundle 按标的权益贡献路径与 RunManifest 组件不成对".into()),
+    }
     let version = "multi-market-barframe-v1";
-    if &recomputed_components != manifest_components
+    if recomputed_components != expected_input_components
         || dataset.dataset_id != dataset_id
         || dataset.version != version
         || dataset.content_fingerprint != content_fingerprint

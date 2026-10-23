@@ -144,13 +144,11 @@ fn assert_unknown_submit_fact_contract<V: VenuePort, F: FnOnce() -> V>(
 }
 
 #[test]
-fn paper_ccxt_and_binance_share_unknown_submit_fact_contract() {
+fn unknown_submit_results_share_the_reconcile_fact_contract() {
     let order = port_order(41);
     assert_unknown_submit_fact_contract(
-        || {
-            let mut venue = PaperVenue::new("paper", zero_fee());
-            venue.disconnect();
-            VenuePortAdapter::new_for_any_venue(venue)
+        || PortVenue {
+            result: Err("simulated remote timeout".into()),
         },
         &order,
     );
@@ -296,6 +294,7 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
             price_tick,
             qty_step: STEP,
             min_qty: STEP,
+            min_notional_raw: 0,
             max_leverage: 1,
             maintenance_margin_bps: 0,
             valid_from: 0,

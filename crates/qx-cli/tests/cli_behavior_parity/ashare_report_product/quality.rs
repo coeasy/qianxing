@@ -58,9 +58,11 @@ pub(super) fn assert_html_and_evidence_quality(report: &Value) {
             && html.contains("<section class=\"charts\">")
             && html.matches("<svg").count() >= 3
             && html.contains("<style>")
-            && !html.contains("<script")
+            && html.contains("<script>")
+            && !html.contains("<script src=")
+            && html.contains("position_raw")
             && !html.contains("src=\"http"),
-        "single-run HTML must remain a self-contained, mobile-aware report with inline charts"
+        "single-run HTML must keep inline interactive charts and raw position data without external resources"
     );
     assert!(
         html.contains("间隔 60000 ms · 缺口 0") && html.contains("24 行"),

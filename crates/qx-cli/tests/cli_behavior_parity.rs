@@ -270,6 +270,126 @@ fn pure_local_entrypoints_replay_the_same_process_contract() {
 }
 
 #[test]
+fn strategy_diagnose_depth_rejects_non_run_input() {
+    let cwd = temp_dir("strategy-diagnose-depth-invalid", 1);
+    let output_path = cwd.join("diagnostics.json");
+    let output = Command::new(binary())
+        .current_dir(&cwd)
+        .env_remove("QX_DEPLOY_DIR")
+        .env_remove("QX_PYTHON")
+        .args([
+            "strategy",
+            "diagnose-depth",
+            "missing.multi-market-depth.json",
+            "--output",
+            "diagnostics.json",
+        ])
+        .output()
+        .expect("run strategy diagnose-depth with a missing artifact");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("strategy diagnose-depth 只接受多市场深度运行产物"));
+    assert!(!output_path.exists());
+    assert!(artifact_files(&cwd).is_empty());
+    let _ = std::fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn strategy_diagnose_bar_replays_verified_run_and_attaches_to_html_report() {
+    let cwd = temp_dir("strategy-diagnose-bar-e2e", 1);
+    let frame_path = cwd.join("bars.json");
+    let spec_path = cwd.join("backtest-spec.json");
+    let diagnostics_path = cwd.join("diagnostics.json");
+    let output_dir = cwd.join("runs");
+    let timestamps = (0..48)
+        .map(|index| 1_000 + index * 1_000)
+        .collect::<Vec<_>>();
+    let closes = (0..48)
+        .map(|index| (100 + ((index % 12) as i128 - 6) * 2) * 1_000_000_000_i128)
+        .collect::<Vec<_>>();
+    let frame = serde_json::json!({
+        "schema_version": 1,
+        "instrument": "BTCUSDT.BINANCE",
+        "source": "diagnose-bar-e2e-v1",
+        "ts": timestamps,
+        "open_raw": closes,
+        "high_raw": closes.iter().map(|price| price + 1_000_000_000).collect::<Vec<_>>(),
+        "low_raw": closes.iter().map(|price| price - 1_000_000_000).collect::<Vec<_>>(),
+        "close_raw": closes,
+        "volume_raw": vec![10_000_000_000_i128; 48],
+    });
+    std::fs::write(&frame_path, serde_json::to_vec(&frame).unwrap()).unwrap();
+    let spec = serde_json::json!({
+        "schema_version": 1,
+        "run_id": "diagnose-bar-e2e",
+        "instrument": "BTCUSDT.BINANCE",
+        "bars_path": frame_path.to_string_lossy(),
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 100_000_000_000_000_i128,
+        "seed": 19,
+        "output_dir": output_dir.to_string_lossy(),
+        "strategy": {
+            "kind": "sma_cross",
+            "strategy_id": "diagnose-bar-sma",
+            "quantity_raw": 1_000_000_000_i128,
+            "fast_window": 2,
+            "slow_window": 5,
+        },
+    });
+    std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
+
+    let run = Command::new(binary())
+        .current_dir(&cwd)
+        .args(["app", "backtest", spec_path.to_str().unwrap()])
+        .output()
+        .expect("run a real Rust Bar backtest");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let summary_path = outcome["artifacts"]["summary"].as_str().unwrap();
+
+    let diagnosis = Command::new(binary())
+        .current_dir(&cwd)
+        .args([
+            "strategy",
+            "diagnose-bar",
+            summary_path,
+            "--spec",
+            spec_path.to_str().unwrap(),
+            "--output",
+            diagnostics_path.to_str().unwrap(),
+            "--html",
+        ])
+        .output()
+        .expect("generate and attach bounded Bar strategy diagnostics");
+    assert_eq!(
+        diagnosis.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&diagnosis.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&diagnostics_path).unwrap()).unwrap();
+    assert_eq!(report["run_id"], "diagnose-bar-e2e");
+    assert_eq!(report["strategy_id"], "diagnose-bar-sma");
+    assert_eq!(report["input_kind"], "bar");
+    assert_eq!(report["input_bars"], 48);
+    assert_eq!(report["data_visibility"]["status"], "visibility_unknown");
+    assert!(report.pointer("/startup/trajectory").is_some());
+    assert!(report.pointer("/lookahead/checks").is_some());
+
+    let html_path = Path::new(summary_path).with_file_name("diagnose-bar-e2e.report.html");
+    let html = std::fs::read_to_string(&html_path).expect("diagnostics are attached to HTML");
+    assert!(html.contains("diagnose-bar-sma"));
+    assert!(html.contains("visibility_unknown"));
+    let _ = std::fs::remove_dir_all(cwd);
+}
+
+#[test]
 fn doctor_and_status_json_replay_the_same_fixed_runtime_contract() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

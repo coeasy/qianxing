@@ -421,7 +421,11 @@ impl OrderBookBacktestEngine {
                     }
                     let policy = order.policy.unwrap_or_default();
                     if let Err(error) = policy.validate_for(spec).and_then(|_| {
-                        spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))
+                        spec.validate_order_with_reference(
+                            order.qty.raw().checked_abs().unwrap_or(0),
+                            order.limit.map(|price| price.raw()),
+                            current_reference_price.map(|price| price.raw()),
+                        )
                     }) {
                         append_event(
                             &mut log,

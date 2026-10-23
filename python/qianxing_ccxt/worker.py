@@ -315,11 +315,70 @@ def serve(worker: CcxtJsonWorker, input_stream: TextIO, output_stream: TextIO) -
     asyncio.run(run())
 
 
+def serve_startup_error(
+    error_class: CcxtErrorClass,
+    message: str,
+    input_stream: TextIO,
+    output_stream: TextIO,
+) -> None:
+    """Keep the JSONL contract intact when the worker cannot initialize.
+
+    Rust starts the process before sending an RPC. If optional dependencies are missing (or the
+    config is invalid), an uncaught startup exception used to close stdout without a protocol
+    response. That made a local packaging error look like a venue timeout or a dead worker.
+    Respond once for each request until the owner closes stdin so pooled callers receive the same
+    actionable startup diagnostic on every call.
+    """
+    response = json.dumps(
+        {
+            "ok": False,
+            "error": {"class": error_class.value, "message": message},
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    for line in input_stream:
+        if not line.strip():
+            continue
+        output_stream.write(response)
+        output_stream.write("\n")
+        output_stream.flush()
+
+
 def main() -> int:
+    # The Rust side consumes a UTF-8 JSONL protocol. Windows console defaults can
+    # be a legacy code page (for example CP1252), so bind both protocol streams
+    # explicitly before reading requests or emitting responses.
+    for stream in (sys.stdin, sys.stdout):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
     parser = argparse.ArgumentParser(description="Qianxing public CCXT JSONL worker")
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args()
-    worker = CcxtJsonWorker(CcxtExchangeClient(_config_from_file(args.config)))
+    try:
+        worker = CcxtJsonWorker(CcxtExchangeClient(_config_from_file(args.config)))
+    except CcxtConnectorError as error:
+        serve_startup_error(error.error_class, str(error), sys.stdin, sys.stdout)
+        return 2
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        serve_startup_error(
+            CcxtErrorClass.INVALID,
+            f"CCXT Worker 配置读取或解析失败: {error}",
+            sys.stdin,
+            sys.stdout,
+        )
+        return 2
+    except Exception as error:
+        # Initialization errors can originate in third-party exchange constructors. Avoid
+        # forwarding their full messages because some libraries include credential-shaped data.
+        serve_startup_error(
+            CcxtErrorClass.UNKNOWN,
+            f"CCXT Worker 初始化失败: {type(error).__name__}",
+            sys.stdin,
+            sys.stdout,
+        )
+        return 2
     serve(worker, sys.stdin, sys.stdout)
     return 0
 

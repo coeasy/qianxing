@@ -4,6 +4,7 @@
 //! completed bars, then shared OMS, Ledger, budget, and EventLog state advances.
 
 use super::{
+    append_strategy_decision_facts,
     fill_application::{self, FillApplicationInput},
     order_admission::{self, OrderAdmissionInput},
     BarStrategy, PortfolioBarSeries, PortfolioBarTimeline, PortfolioBudgetState,
@@ -16,6 +17,8 @@ use qx_core::{
 use qx_guanxing::Bar;
 use qx_zhenlu::Oms;
 use std::collections::BTreeMap;
+
+const MAX_INSTRUMENT_EQUITY_SAMPLES: usize = 1_000;
 
 mod construction;
 mod funding;
@@ -62,6 +65,7 @@ impl<'a> PortfolioBarEngine<'a> {
             .iter()
             .map(|market| (market.instrument.clone(), market.spec.clone()))
             .collect::<BTreeMap<_, _>>();
+        let initial_cash_raw = config.initial_cash.raw();
         let PreparedTimeline {
             start,
             end,
@@ -79,6 +83,7 @@ impl<'a> PortfolioBarEngine<'a> {
             &config.currency,
             config.initial_cash,
             start,
+            settlements.contains_key(&start),
         )?;
         let mut oms = Oms::new();
         let mut budget = PortfolioBudgetState::default();
@@ -99,6 +104,14 @@ impl<'a> PortfolioBarEngine<'a> {
             .map(|market| (market.instrument.clone(), EventLog::new()))
             .collect::<BTreeMap<_, _>>();
         let mut equity = Vec::new();
+        let mut instrument_equity_contributions = specs
+            .keys()
+            .cloned()
+            .map(|instrument| (instrument, Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        let mut instrument_cash_by_currency =
+            BTreeMap::<InstrumentId, BTreeMap<String, i128>>::new();
+        let mut instrument_cash_entry_cursor = 0_usize;
         let mut funding_by_instrument_raw = BTreeMap::<InstrumentId, i128>::new();
         let mut funding_events_by_instrument = BTreeMap::<InstrumentId, Vec<(u64, i128)>>::new();
 
@@ -151,6 +164,23 @@ impl<'a> PortfolioBarEngine<'a> {
                     )?
                     .equity
                     .raw();
+                append_instrument_equity_contributions(
+                    &mut instrument_equity_contributions,
+                    &mut instrument_cash_by_currency,
+                    &mut instrument_cash_entry_cursor,
+                    InstrumentContributionInput {
+                        equity_index: u64::try_from(equity.len())
+                            .map_err(|_| invariant("权益曲线点数超出 u64"))?,
+                        ts,
+                        ledger: &ledger,
+                        account_id: &config.account_id,
+                        reporting_currency: &config.currency,
+                        specs: &specs,
+                        marks: &marks,
+                        initial_cash_raw,
+                        marked_equity_raw: marked_equity,
+                    },
+                )?;
                 equity.push((ts, marked_equity));
                 continue;
             }
@@ -209,6 +239,12 @@ impl<'a> PortfolioBarEngine<'a> {
                         bar.ts,
                         position,
                         Some(free_cash),
+                    )?;
+                    append_strategy_decision_facts(
+                        &mut log,
+                        bar.ts,
+                        &config.account_id,
+                        strategy.drain_decision_facts(),
                     )?;
                     for order in orders {
                         let Some(&order_market_index) =
@@ -485,6 +521,23 @@ impl<'a> PortfolioBarEngine<'a> {
                     )?
                     .equity
                     .raw();
+                append_instrument_equity_contributions(
+                    &mut instrument_equity_contributions,
+                    &mut instrument_cash_by_currency,
+                    &mut instrument_cash_entry_cursor,
+                    InstrumentContributionInput {
+                        equity_index: u64::try_from(equity.len())
+                            .map_err(|_| invariant("权益曲线点数超出 u64"))?,
+                        ts,
+                        ledger: &ledger,
+                        account_id: &config.account_id,
+                        reporting_currency: &config.currency,
+                        specs: &specs,
+                        marks: &marks,
+                        initial_cash_raw,
+                        marked_equity_raw: marked_equity,
+                    },
+                )?;
                 equity.push((ts, marked_equity));
                 if pending_funding_reservations.is_none() {
                     pending_funding_reservations = sum_pending_funding_reservations(&runtime);
@@ -497,6 +550,8 @@ impl<'a> PortfolioBarEngine<'a> {
             fills_by_instrument,
             rejections_by_instrument,
             equity,
+            instrument_equity_contributions,
+            initial_cash_raw,
             ledger,
             event_log: log,
             market_specs: specs,
@@ -508,4 +563,90 @@ impl<'a> PortfolioBarEngine<'a> {
         report.verify()?;
         Ok(Some(report))
     }
+}
+
+fn append_instrument_equity_contributions(
+    curves: &mut BTreeMap<InstrumentId, Vec<(u64, u64, i128)>>,
+    cash_by_instrument: &mut BTreeMap<InstrumentId, BTreeMap<String, i128>>,
+    ledger_entry_cursor: &mut usize,
+    input: InstrumentContributionInput<'_>,
+) -> Result<(), qx_core::QxError> {
+    for entry in input
+        .ledger
+        .entries()
+        .get(*ledger_entry_cursor..)
+        .ok_or_else(|| invariant("多市场归因账簿游标超出范围"))?
+    {
+        if entry.account_id != input.account_id {
+            continue;
+        }
+        let Some(instrument) = entry.instrument.as_ref() else {
+            continue;
+        };
+        let amount = cash_by_instrument
+            .entry(instrument.clone())
+            .or_default()
+            .entry(entry.currency.clone())
+            .or_default();
+        *amount = amount
+            .checked_add(entry.amount.raw())
+            .ok_or_else(|| invariant("多市场标的现金归因累计溢出"))?;
+    }
+    *ledger_entry_cursor = input.ledger.entries().len();
+
+    let mut reconstructed_equity = input.initial_cash_raw;
+    let empty_cash_projection = BTreeMap::new();
+    for (instrument, spec) in input.specs {
+        let valuation = qx_core::ValuationContext::spot(
+            input.account_id,
+            input.marks,
+            input.reporting_currency,
+        )
+        .with_spec(Some(spec));
+        let contribution = input.ledger.instrument_equity_contribution_from_cash(
+            &valuation,
+            cash_by_instrument
+                .get(instrument)
+                .unwrap_or(&empty_cash_projection),
+        )?;
+        reconstructed_equity = reconstructed_equity
+            .checked_add(contribution)
+            .ok_or_else(|| invariant("多市场标的归因权益溢出"))?;
+        curves
+            .get_mut(instrument)
+            .ok_or_else(|| invariant("多市场标的归因曲线缺失"))?
+            .push((input.equity_index, input.ts, contribution));
+    }
+    if reconstructed_equity != input.marked_equity_raw {
+        return Err(invariant("多市场逐标的权益贡献之和与共享账户权益不一致"));
+    }
+    if curves
+        .values()
+        .next()
+        .is_some_and(|curve| curve.len() > MAX_INSTRUMENT_EQUITY_SAMPLES)
+    {
+        for curve in curves.values_mut() {
+            let last = curve.len().saturating_sub(1);
+            let mut compacted = Vec::with_capacity(curve.len().div_ceil(2) + 1);
+            for (index, point) in curve.drain(..).enumerate() {
+                if index % 2 == 0 || index == last {
+                    compacted.push(point);
+                }
+            }
+            *curve = compacted;
+        }
+    }
+    Ok(())
+}
+
+struct InstrumentContributionInput<'a> {
+    equity_index: u64,
+    ts: u64,
+    ledger: &'a Ledger,
+    account_id: &'a str,
+    reporting_currency: &'a str,
+    specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    marks: &'a BTreeMap<InstrumentId, Price>,
+    initial_cash_raw: i128,
+    marked_equity_raw: i128,
 }

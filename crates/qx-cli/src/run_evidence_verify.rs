@@ -40,6 +40,18 @@ fn report_json_equivalent(left: &serde_json::Value, right: &serde_json::Value) -
 }
 
 pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(), String> {
+    verify_run_bundle_impl(bundle_path, recompute, true)
+}
+
+pub(crate) fn verify_run_bundle_quiet(bundle_path: &Path, recompute: bool) -> Result<(), String> {
+    verify_run_bundle_impl(bundle_path, recompute, false)
+}
+
+fn verify_run_bundle_impl(
+    bundle_path: &Path,
+    recompute: bool,
+    emit_result: bool,
+) -> Result<(), String> {
     let payload = std::fs::read_to_string(bundle_path).map_err(|error| {
         format!(
             "读取运行 EvidenceBundle 失败 {}: {error}",
@@ -59,6 +71,7 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
     let mut market_spec_primary_path = None;
     let mut market_spec_reference_path = None;
     let mut verified = 0usize;
+    let mut strategy_diagnostics_verified = false;
     for artifact in &run.artifacts {
         let path = resolve_reference(root, &artifact.path)?;
         let digest = qx_strategy::file_digest::sha256_file_hex(&path)?;
@@ -165,7 +178,14 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
     let (recomputed, input_rows) = match run.dataset.kind.as_str() {
         "barframe" => {
             let frame = read_bar_frame_for_backtest(&input_path)?;
-            let (_, manifest) = barframe_dataset_identity(&input_path, &frame)?;
+            let (_, manifest) = if run.dataset.version == qx_data::BARFRAME_DATASET_VERSION {
+                qx_app::backtest_input_identity::legacy_barframe_dataset_identity(
+                    &input_path,
+                    &frame,
+                )?
+            } else {
+                barframe_dataset_identity(&input_path, &frame)?
+            };
             if let Some(quality_path) = quality_manifest_path.as_deref() {
                 let quality = qx_app::artifact_store::verify_barframe_dataset_quality(
                     quality_path,
@@ -213,6 +233,9 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
             root,
             &run.dataset,
             &manifest.input_components,
+            summary_path
+                .as_deref()
+                .ok_or("多市场 EvidenceBundle 缺少 summary 产物")?,
         )?,
         "multi-market-depthframe" => {
             recompute_multi_market_depth_identity(root, &run.dataset, &manifest)?
@@ -238,6 +261,65 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
             "EvidenceBundle 输入行数与文件不一致: 声明={} 实际={input_rows}",
             run.dataset.row_count
         ));
+    }
+    if let Some(diagnostics) = &run.strategy_diagnostics {
+        let diagnostics_path = resolve_reference(root, &diagnostics.input_path)?;
+        let diagnostic_bytes = std::fs::read(&diagnostics_path).map_err(|error| {
+            format!(
+                "读取策略诊断附件失败 {}: {error}",
+                diagnostics_path.display()
+            )
+        })?;
+        if matches!(
+            diagnostics.kind.as_str(),
+            "strategy-bias-diagnostics-array" | "strategy-bias-diagnostics-depth-array"
+        ) && diagnostic_bytes.len() > 1024 * 1024
+        {
+            return Err("EvidenceBundle 多市场策略诊断附件超过 1 MiB 上限".into());
+        }
+        let digest = qx_strategy::sha256_hex(&diagnostic_bytes);
+        if digest != diagnostics.input_sha256 {
+            return Err(format!(
+                "EvidenceBundle 策略诊断 SHA-256 不匹配: {} 声明={} 实际={digest}",
+                diagnostics.input_path, diagnostics.input_sha256
+            ));
+        }
+        let diagnostic_report: serde_json::Value = serde_json::from_slice(&diagnostic_bytes)
+            .map_err(|error| format!("EvidenceBundle 策略诊断 JSON 无效: {error}"))?;
+        match diagnostics.kind.as_str() {
+            "strategy-bias-diagnostics" if run.dataset.kind == "barframe" => {
+                crate::report_command::validate_strategy_diagnostics_identity(
+                    &diagnostic_report,
+                    &run.identity.strategy_id,
+                    &run.identity.instrument,
+                    &run.dataset.content_fingerprint,
+                )?;
+            }
+            "strategy-bias-diagnostics-array" if run.dataset.kind == "multi-market-barframe" => {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("多市场策略诊断证据缺少原始运行摘要")?;
+                verify_multi_market_strategy_diagnostic_array(
+                    root,
+                    summary_path,
+                    &run.dataset,
+                    &diagnostic_report,
+                )?;
+            }
+            "strategy-bias-diagnostics-depth-array"
+                if run.dataset.kind == "multi-market-depthframe" =>
+            {
+                let summary_path = summary_path
+                    .as_deref()
+                    .ok_or("多市场深度策略诊断证据缺少原始运行摘要")?;
+                crate::report_multi_market_depth::verify_strategy_diagnostics_for_evidence(
+                    summary_path,
+                    &diagnostic_report,
+                )?;
+            }
+            _ => return Err("EvidenceBundle 策略诊断 kind 与输入形态不匹配".into()),
+        }
+        strategy_diagnostics_verified = true;
     }
     if run.recompute.expected_result_hash != run.run.result_hash {
         return Err("recompute.expected_result_hash 与 run.result_hash 不一致".into());
@@ -401,18 +483,109 @@ pub(crate) fn verify_run_bundle(bundle_path: &Path, recompute: bool) -> Result<(
             kind => return Err(format!("当前离线复算不支持输入类型: {kind}")),
         }
     }
-    print_machine_json(&serde_json::json!({
+    if emit_result {
+        print_machine_json(&serde_json::json!({
         "ok": true,
         "operation": "run-evidence-input-and-artifact-verified",
         "generation": "run",
         "run_id": run.run.run_id,
         "verified_artifact_count": verified,
+        "verified_attachment_count": usize::from(strategy_diagnostics_verified),
+        "strategy_diagnostics_verified": strategy_diagnostics_verified,
         "input_identity_recomputed": true,
         "input_row_count_recomputed": input_rows,
         "result_hash": run.run.result_hash,
         "result_recomputed": recompute,
         "runtime_config_fingerprint_matches_run_hash": runtime_config_fingerprint_matches_run_hash,
         "limitation": if recompute { "策略回测（含证据包内可执行的外部策略发布物）、单标的 L1/L2 深度回测、双腿 multi-builtin、多市场 builtin Bar 与多市场 builtin 深度回测已使用匹配 code_commit 的当前构建重跑；策略回测按目标 RunManifest.run_id 选取 result_hash。运行配置文件及其依赖摘要已核验，但路径搬运后的绝对路径配置指纹可能不等于来源运行的 path-resolved config_hash；--recompute 通过结果摘要补足行为核对。复算子进程会移除敏感凭据和代理环境变量，但这不构成操作系统级断网，也不验证第三方构建可重现性；实验入口尚不支持完整复算。" } else { "此命令核验工件摘要、RunManifest 身份与输入数据指纹；未启用 --recompute 时不声称独立复算 result_hash。运行配置 SHA-256 已核验；策略运行的路径解析可能使搬运后的配置指纹无法直接与来源 config_hash 对比。" }
-    }))?;
+        }))?;
+    }
+    Ok(())
+}
+
+fn verify_multi_market_strategy_diagnostic_array(
+    root: &Path,
+    summary_path: &Path,
+    dataset: &qx_spec::RunEvidenceDataset,
+    diagnostics: &serde_json::Value,
+) -> Result<(), String> {
+    let items = diagnostics
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 512)
+        .ok_or("多市场 EvidenceBundle 策略诊断必须是 1..=512 项 JSON 数组")?;
+    let summary: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(summary_path)
+            .map_err(|error| format!("读取多市场诊断绑定摘要失败: {error}"))?,
+    )
+    .map_err(|error| format!("多市场诊断绑定摘要 JSON 无效: {error}"))?;
+    let markets = summary
+        .pointer("/spec/markets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("多市场诊断绑定摘要缺少 spec.markets")?;
+    if markets.len() != dataset.components.len() {
+        return Err("多市场诊断 spec 市场数与 EvidenceBundle 组件数不一致".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for diagnostic in items {
+        let strategy_id = diagnostic
+            .get("strategy_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("多市场 EvidenceBundle 策略诊断缺少 strategy_id")?;
+        let instrument = diagnostic
+            .get("instrument")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("多市场 EvidenceBundle 策略诊断缺少 instrument")?;
+        if !seen.insert((instrument, strategy_id)) {
+            return Err("多市场 EvidenceBundle 策略诊断包含重复策略/标的身份".into());
+        }
+        let configured = markets
+            .iter()
+            .find(|market| market["instrument"].as_str() == Some(instrument))
+            .ok_or_else(|| format!("多市场诊断标的不在运行 spec 中: {instrument}"))?;
+        let declared = configured["strategies"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|member| member["strategy"]["strategy_id"].as_str() == Some(strategy_id));
+        if !declared {
+            return Err(format!(
+                "{instrument} EvidenceBundle 诊断不属于声明的策略槽"
+            ));
+        }
+        let component = dataset
+            .components
+            .iter()
+            .find(|component| component.role == format!("market:{instrument}"))
+            .ok_or_else(|| format!("EvidenceBundle 缺少 {instrument} BarFrame 组件"))?;
+        let frame_path = resolve_reference(root, &component.path)?;
+        let frame = read_bar_frame_for_backtest(&frame_path)?;
+        let fingerprint = qx_data::fingerprint_bar_frame(&frame)
+            .map_err(|error| format!("重算 {instrument} BarFrame 指纹失败: {error}"))?;
+        if frame.instrument.to_string() != instrument
+            || frame.ts.len() as u64 != component.row_count
+            || fingerprint != component.content_fingerprint
+        {
+            return Err(format!(
+                "{instrument} EvidenceBundle BarFrame 组件身份不一致"
+            ));
+        }
+        crate::report_command::validate_strategy_diagnostics_identity(
+            diagnostic,
+            strategy_id,
+            instrument,
+            &fingerprint,
+        )?;
+        if diagnostic["input_bars"].as_u64() != Some(component.row_count)
+            || diagnostic.get("input_events").is_some()
+            || !diagnostic
+                .get("input_kind")
+                .is_none_or(|kind| kind == "bar")
+            || diagnostic["as_of"].as_u64() != frame.ts.last().copied()
+        {
+            return Err(format!(
+                "{instrument} EvidenceBundle 诊断的 Bar 数量、输入形态或结束时点不匹配"
+            ));
+        }
+    }
     Ok(())
 }

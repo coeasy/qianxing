@@ -333,6 +333,7 @@ fn risk_context_refuses_a_spec_currency_that_is_not_the_ledger_book() {
         price_tick: 1,
         qty_step: SCALE,
         min_qty: SCALE,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,

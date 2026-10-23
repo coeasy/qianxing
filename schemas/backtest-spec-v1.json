@@ -275,6 +275,10 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

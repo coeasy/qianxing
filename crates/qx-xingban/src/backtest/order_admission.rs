@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{ashare::AshareRuleConfig, cost::MarginRule, venue::BarMatchingEngine};
 use qx_core::{
-    Event, EventKind, EventLog, InstrumentId, Ledger, Order, OrderStatus, PositionSide, Price,
-    Priority, Side, TradingInstrumentSpec,
+    Event, EventContext, EventKind, EventLog, EventMetadata, InstrumentId, Ledger, Order,
+    OrderRiskDecisionFact, OrderStatus, PositionSide, Price, Priority, Side, TradingInstrumentSpec,
 };
 use qx_risk::{OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
@@ -156,8 +156,13 @@ pub(crate) fn admit_orders(
         }
 
         let product_policy = order.policy.unwrap_or_default();
-        let leverage = if let Some(spec) = derivative_spec {
-            product_policy.validate_for(spec)?;
+        if let Some(spec) = instrument_spec {
+            if let Err(error) = product_policy.validate_for(spec) {
+                append_rejection(log, ts, order.client_id, &error.to_string());
+                continue;
+            }
+        }
+        let leverage = if derivative_spec.is_some() {
             product_policy.leverage
         } else {
             1
@@ -168,7 +173,20 @@ pub(crate) fn admit_orders(
             .limit
             .map(|price| price.raw())
             .unwrap_or(visible_close);
-        let order_qty = checked_abs(order.qty.raw())?;
+        let Some(order_qty) = order.qty.raw().checked_abs().filter(|qty| *qty > 0) else {
+            append_rejection(log, ts, order.client_id, "订单数量必须是可表示的正数");
+            continue;
+        };
+        if let Some(spec) = instrument_spec {
+            if let Err(error) = spec.validate_order_with_reference(
+                order_qty,
+                order.limit.map(|price| price.raw()),
+                Some(reference_price),
+            ) {
+                append_rejection(log, ts, order.client_id, &error.to_string());
+                continue;
+            }
+        }
         let strategy_budget_check = portfolio_budget.order_budget_check(
             |strategy_id| strategy.strategy_budget_raw(strategy_id),
             &order,
@@ -399,8 +417,52 @@ pub(crate) fn admit_orders(
             position: risk_position,
             ..OrderRiskContext::default()
         };
-        if let Err(error) = risk.check_with_context(&order, &risk_context) {
-            append_rejection(log, ts, order.client_id, &error.to_string());
+        let decision = risk.rule_set().evaluate(&risk_context, &order);
+        let trace = order.trace.as_ref();
+        let strategy_id = trace.and_then(|trace| trace.strategy_id.clone());
+        let signal_id = trace.and_then(|trace| trace.signal_id);
+        let intent_id = trace.and_then(|trace| trace.intent_id);
+        let metadata = EventMetadata {
+            source_id: "qx-zhenlu::RiskGate".into(),
+            source_kind: "risk".into(),
+            rule_version: decision.rule_set_version.clone(),
+            context: EventContext {
+                account_id: account_id.into(),
+                strategy_id: strategy_id.clone().unwrap_or_default(),
+                signal_id: signal_id.map(|value| value.to_string()).unwrap_or_default(),
+                intent_id: intent_id.map(|value| value.to_string()).unwrap_or_default(),
+                ..EventContext::default()
+            },
+            ..EventMetadata::default()
+        };
+        let risk_fact = OrderRiskDecisionFact {
+            client_order_id: order.client_id,
+            instrument: order.instrument.clone(),
+            strategy_id,
+            signal_id,
+            intent_id,
+            allowed: decision.allowed,
+            violations: decision.violations.clone(),
+            projected_position_raw: decision.projected_position_raw,
+            projected_margin_raw: decision.projected_margin_raw,
+            reference_price_raw: decision.reference_price_raw,
+            rule_set_version: decision.rule_set_version,
+        };
+        let seq = log.alloc_seq();
+        log.append_checked(
+            Event::new(
+                seq,
+                ts,
+                Priority::COMMAND,
+                EventKind::OrderRiskDecision {
+                    decision: risk_fact,
+                },
+            )
+            .correlated(order.client_id.to_string())
+            .with_metadata(metadata),
+        )?;
+        if !decision.allowed {
+            append_rejection(log, ts, order.client_id, &decision.violations.join("; "));
             continue;
         }
         if let Err(error) = oms.submit(order.clone()) {

@@ -36,6 +36,8 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "provider_depth_backtest": "/app/provider-depth-backtest",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
+    "multi_account_joint_backtest": "/app/multi-account-joint-backtest",
+    "multi_account_joint_backtest_start": "/app/multi-account-joint-backtest/start",
     "multi_account_depth_backtest": "/app/multi-account-depth-backtest",
     "multi_account_depth_backtest_start": "/app/multi-account-depth-backtest/start",
     "multi_market_backtest": "/app/multi-market-backtest",
@@ -49,6 +51,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
+    "research_artifacts": "/app/research-artifacts",
     "compare_runs": "/app/compare-runs",
     "plan_risk_parity": "/app/plan-risk-parity",
     "plan_algo_execution": "/app/plan-algo-execution",
@@ -320,6 +323,10 @@ class MultiMarketBacktestMarket:
     dataset_manifest_path: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     fee_schedule: MakerTakerFeeSchedule | dict[str, Any] | None = None
+    order_policy: OrderPolicy | dict[str, Any] | None = None
+    margin_model: BacktestMarginConfig | dict[str, Any] | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -330,10 +337,17 @@ class MultiMarketBacktestMarket:
         }
         if self.dataset_manifest_path is not None:
             value["dataset_manifest_path"] = self.dataset_manifest_path
-        for key in ("market_spec", "fee_schedule"):
+        for key in ("market_spec", "fee_schedule", "order_policy", "margin_model"):
             item = getattr(self, key)
             if item is not None:
                 value[key] = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        if self.funding_bps:
+            value["funding_bps"] = self.funding_bps
+        if self.funding_events:
+            value["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
         return value
 
 
@@ -358,6 +372,42 @@ class MultiMarketBacktestSpec:
             "seed": self.seed,
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
+        }
+
+
+@dataclass(frozen=True)
+class JointBacktestAccount:
+    exchange_id: str
+    account_id: str
+    initial_cash_raw: int
+    markets: tuple[MultiMarketBacktestMarket, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "exchange_id": self.exchange_id,
+            "account_id": self.account_id,
+            "initial_cash_raw": self.initial_cash_raw,
+            "markets": [market.to_dict() for market in self.markets],
+        }
+
+
+@dataclass(frozen=True)
+class MultiAccountJointBacktestSpec:
+    run_id: str
+    settlement_currency: str
+    output_dir: str
+    accounts: tuple[JointBacktestAccount, ...]
+    seed: int = 0
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "settlement_currency": self.settlement_currency,
+            "seed": self.seed,
+            "output_dir": self.output_dir,
+            "accounts": [account.to_dict() for account in self.accounts],
         }
 
 
@@ -869,6 +919,9 @@ class ExperimentParameterSpace:
         "period",
         "threshold_bps",
         "quantity_raw",
+        "target_notional_raw",
+        "target_available_margin_bps",
+        "target_volatility_bps",
         "target_kelly_fraction_bps",
         "market_making_spread_bps",
         "market_making_quote_qty_raw",
@@ -883,13 +936,38 @@ class ExperimentParameterSpace:
 
 
 @dataclass(frozen=True)
+class ExperimentParameterRange:
+    """Inclusive stepped integer domain used by adaptive single-strategy search."""
+
+    name: Literal[
+        "fast_window",
+        "slow_window",
+        "period",
+        "threshold_bps",
+        "quantity_raw",
+        "target_notional_raw",
+        "target_available_margin_bps",
+        "target_volatility_bps",
+        "target_kelly_fraction_bps",
+    ]
+    min: int
+    max: int
+    step: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "min": self.min, "max": self.max, "step": self.step}
+
+
+@dataclass(frozen=True)
 class ExperimentSplitPlan:
-    """Training/test split in bar indices; walk-forward windows are bounded by Rust."""
+    """Training/test split in bar indices with optional purge/embargo gaps."""
 
     train_bars: int
     test_bars: int
     walk_forward: bool = False
     step_bars: int = 0
+    purge_bars: int = 0
+    embargo_bars: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -897,7 +975,193 @@ class ExperimentSplitPlan:
             "test_bars": self.test_bars,
             "walk_forward": self.walk_forward,
             "step_bars": self.step_bars,
+            **({"purge_bars": self.purge_bars} if self.purge_bars else {}),
+            **({"embargo_bars": self.embargo_bars} if self.embargo_bars else {}),
         }
+
+
+@dataclass(frozen=True)
+class ExperimentEarlyPruningPlan:
+    min_training_bars: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"min_training_bars": self.min_training_bars}
+
+
+@dataclass(frozen=True)
+class ExperimentSearchPlan:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    seed: int
+    budget: int
+    max_training_drawdown_bps: int | None = None
+    fold_local_search: bool = False
+    continuous_parameter_space: tuple[ExperimentParameterRange, ...] = ()
+    early_pruning: ExperimentEarlyPruningPlan | None = None
+    robustness_subwindows: int | None = None
+    minimum_training_robustness_score_bps: int | None = None
+    neighborhood_radius: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value = {"algorithm": self.algorithm, "seed": self.seed, "budget": self.budget}
+        if self.max_training_drawdown_bps is not None:
+            value["max_training_drawdown_bps"] = self.max_training_drawdown_bps
+        if self.fold_local_search:
+            value["fold_local_search"] = True
+        if self.neighborhood_radius is not None:
+            value["neighborhood_radius"] = self.neighborhood_radius
+        if self.continuous_parameter_space:
+            value["continuous_parameter_space"] = [
+                dimension.to_dict() for dimension in self.continuous_parameter_space
+            ]
+        if self.early_pruning is not None:
+            value["early_pruning"] = self.early_pruning.to_dict()
+        if self.robustness_subwindows is not None:
+            value["robustness_subwindows"] = self.robustness_subwindows
+        if self.minimum_training_robustness_score_bps is not None:
+            value["minimum_training_robustness_score_bps"] = self.minimum_training_robustness_score_bps
+        return value
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityScenario:
+    name: str
+    fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"]
+    execution_cost_rules: BacktestExecutionCostRules | dict[str, Any] | None = None
+    ashare_rules: AshareBacktestRules | dict[str, Any] | None = None
+    max_training_return_degradation_bps: int | None = None
+    max_neighborhood_training_return_degradation_bps: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        rules = self.execution_cost_rules
+        value = {"name": self.name, "fill_model": self.fill_model}
+        if rules is not None:
+            value["execution_cost_rules"] = rules.to_dict() if hasattr(rules, "to_dict") else dict(rules)
+        if self.ashare_rules is not None:
+            value["ashare_rules"] = dict(self.ashare_rules)
+        if self.max_training_return_degradation_bps is not None:
+            value["max_training_return_degradation_bps"] = self.max_training_return_degradation_bps
+        if self.max_neighborhood_training_return_degradation_bps is not None:
+            value["max_neighborhood_training_return_degradation_bps"] = (
+                self.max_neighborhood_training_return_degradation_bps
+            )
+        return value
+
+
+@dataclass(frozen=True)
+class ExperimentSearchTrial:
+    ordinal: int
+    proposal: str
+    parameters: dict[str, int]
+    training_score_bps: int | None
+    training_max_drawdown_bps: int | None = None
+    training_robustness_score_bps: int | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentSearchTrial":
+        return cls(
+            ordinal=value["ordinal"],
+            proposal=value["proposal"],
+            parameters={key: int(item) for key, item in value["parameters"].items()},
+            training_score_bps=value.get("training_score_bps"),
+            training_max_drawdown_bps=value.get("training_max_drawdown_bps"),
+            training_robustness_score_bps=value.get("training_robustness_score_bps"),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentSearchReport:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    seed: int
+    budget: int
+    trials: tuple[ExperimentSearchTrial, ...]
+    objective: Literal["return", "pareto_return_drawdown"] = "return"
+    neighborhood: "ExperimentNeighborhoodReport | None" = None
+    max_training_drawdown_bps: int | None = None
+    early_pruning: ExperimentEarlyPruningPlan | None = None
+    robustness_subwindows: int | None = None
+    minimum_training_robustness_score_bps: int | None = None
+    cost_robustness_passed: bool | None = None
+    neighborhood_cost_robustness_passed: bool | None = None
+    fold_searches: tuple["ExperimentFoldSearchReport", ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentSearchReport":
+        return cls(
+            algorithm=value["algorithm"],
+            seed=value["seed"],
+            budget=value["budget"],
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+            objective=value.get("objective", "return"),
+            neighborhood=(
+                ExperimentNeighborhoodReport.from_dict(value["neighborhood"])
+                if value.get("neighborhood") is not None
+                else None
+            ),
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
+            early_pruning=(
+                ExperimentEarlyPruningPlan(**value["early_pruning"])
+                if value.get("early_pruning") is not None
+                else None
+            ),
+            robustness_subwindows=value.get("robustness_subwindows"),
+            minimum_training_robustness_score_bps=value.get("minimum_training_robustness_score_bps"),
+            cost_robustness_passed=value.get("cost_robustness_passed"),
+            neighborhood_cost_robustness_passed=value.get("neighborhood_cost_robustness_passed"),
+            fold_searches=tuple(
+                ExperimentFoldSearchReport.from_dict(item)
+                for item in value.get("fold_searches", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentNeighborhoodReport:
+    center_ordinal: int
+    center_parameters: dict[str, int]
+    radius: int
+    possible_neighbors: int
+    evaluated_neighbors: int
+    successful_neighbors: int
+    failed_neighbors: int
+    mean_training_score_bps: int | None
+    min_training_score_bps: int | None
+    max_training_score_bps: int | None
+    assessment: Literal[
+        "incomplete_neighborhood",
+        "no_neighbors",
+        "no_successful_neighbors",
+        "stable_positive",
+        "fragile_positive",
+        "drawdown_budget_exceeded",
+        "drawdown_budget_unverified",
+        "no_positive_training_edge",
+    ] | None = None
+    drawdown_budget_bps: int | None = None
+    center_drawdown_bps: int | None = None
+    max_neighbor_drawdown_bps: int | None = None
+    drawdown_budget_exceeded_neighbors: int = 0
+    drawdown_budget_unverified_neighbors: int = 0
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentNeighborhoodReport":
+        return cls(
+            center_ordinal=value["center_ordinal"],
+            center_parameters={key: int(item) for key, item in value["center_parameters"].items()},
+            radius=value["radius"],
+            possible_neighbors=value["possible_neighbors"],
+            evaluated_neighbors=value["evaluated_neighbors"],
+            successful_neighbors=value["successful_neighbors"],
+            failed_neighbors=value["failed_neighbors"],
+            mean_training_score_bps=value.get("mean_training_score_bps"),
+            min_training_score_bps=value.get("min_training_score_bps"),
+            max_training_score_bps=value.get("max_training_score_bps"),
+            assessment=value.get("assessment"),
+            drawdown_budget_bps=value.get("drawdown_budget_bps"),
+            center_drawdown_bps=value.get("center_drawdown_bps"),
+            max_neighbor_drawdown_bps=value.get("max_neighbor_drawdown_bps"),
+            drawdown_budget_exceeded_neighbors=value.get("drawdown_budget_exceeded_neighbors", 0),
+            drawdown_budget_unverified_neighbors=value.get("drawdown_budget_unverified_neighbors", 0),
+        )
 
 
 @dataclass(frozen=True)
@@ -909,6 +1173,8 @@ class RunExperimentSpec:
     split_plan: ExperimentSplitPlan | None = None
     baselines: tuple[Literal["buy-and-hold", "zero-signal", "none"], ...] = ()
     strategy_kinds: tuple[str, ...] = ()
+    search: ExperimentSearchPlan | None = None
+    cost_sensitivity: tuple[ExecutionCostSensitivityScenario, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -925,6 +1191,10 @@ class RunExperimentSpec:
             value["baselines"] = list(self.baselines)
         if self.strategy_kinds:
             value["strategy_kinds"] = sorted(self.strategy_kinds)
+        if self.search is not None:
+            value["search"] = self.search.to_dict()
+        if self.cost_sensitivity:
+            value["cost_sensitivity"] = [scenario.to_dict() for scenario in self.cost_sensitivity]
         return value
 
 
@@ -1062,12 +1332,28 @@ class RunDepthExperimentSpec:
 
 
 @dataclass(frozen=True)
+class ExperimentCandidatePruning:
+    processed_bars: int
+    observed_max_drawdown_bps: int
+    max_training_drawdown_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidatePruning":
+        return cls(
+            processed_bars=value["processed_bars"],
+            observed_max_drawdown_bps=value["observed_max_drawdown_bps"],
+            max_training_drawdown_bps=value["max_training_drawdown_bps"],
+        )
+
+
+@dataclass(frozen=True)
 class ExperimentCandidateResult:
     ordinal: int
     parameters: dict[str, int]
     outcome: BacktestOutcome | None
     error: str | None
     strategy_kind: str | None = None
+    pruning: ExperimentCandidatePruning | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidateResult":
@@ -1078,6 +1364,172 @@ class ExperimentCandidateResult:
             outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
             error=value.get("error"),
             strategy_kind=value.get("strategy_kind"),
+            pruning=(
+                ExperimentCandidatePruning.from_dict(value["pruning"])
+                if value.get("pruning") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentFoldSearchReport:
+    fold: int
+    seed: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    trials: tuple[ExperimentSearchTrial, ...]
+    candidates: tuple[ExperimentCandidateResult, ...]
+    selected_ordinal: int | None
+    selected_run_manifest: str | None
+    neighborhood: ExperimentNeighborhoodReport | None = None
+    cost_sensitivity: tuple["ExecutionCostSensitivityResult", ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentFoldSearchReport":
+        return cls(
+            fold=value["fold"],
+            seed=value["seed"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+            candidates=tuple(ExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
+            selected_ordinal=value.get("selected_ordinal"),
+            selected_run_manifest=value.get("selected_run_manifest"),
+            neighborhood=(
+                ExperimentNeighborhoodReport.from_dict(value["neighborhood"])
+                if value.get("neighborhood") is not None
+                else None
+            ),
+            cost_sensitivity=tuple(
+                ExecutionCostSensitivityResult.from_dict(item)
+                for item in value.get("cost_sensitivity", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityFoldDelta:
+    fold: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    training_return_delta_bps: int
+    training_drawdown_delta_bps: int
+    out_of_sample_return_delta_bps: int
+    out_of_sample_drawdown_delta_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityFoldDelta":
+        return cls(
+            fold=value["fold"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            training_return_delta_bps=value["training_return_delta_bps"],
+            training_drawdown_delta_bps=value["training_drawdown_delta_bps"],
+            out_of_sample_return_delta_bps=value["out_of_sample_return_delta_bps"],
+            out_of_sample_drawdown_delta_bps=value["out_of_sample_drawdown_delta_bps"],
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityNeighborResult:
+    ordinal: int
+    parameters: dict[str, int]
+    fold_deltas: tuple[ExecutionCostSensitivityFoldDelta, ...]
+    cost_robustness_passed: bool
+    outcome: BacktestOutcome | None
+    error: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityNeighborResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters={key: int(item) for key, item in value["parameters"].items()},
+            fold_deltas=tuple(
+                ExecutionCostSensitivityFoldDelta.from_dict(item)
+                for item in value.get("fold_deltas", ())
+            ),
+            cost_robustness_passed=value["cost_robustness_passed"],
+            outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
+            error=value.get("error"),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityNeighborhoodResult:
+    radius: int
+    possible_neighbors: int
+    evaluated_neighbors: int
+    successful_neighbors: int
+    passed_neighbors: int
+    complete: bool
+    passed: bool
+    candidates: tuple[ExecutionCostSensitivityNeighborResult, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityNeighborhoodResult":
+        return cls(
+            radius=value["radius"],
+            possible_neighbors=value["possible_neighbors"],
+            evaluated_neighbors=value["evaluated_neighbors"],
+            successful_neighbors=value["successful_neighbors"],
+            passed_neighbors=value["passed_neighbors"],
+            complete=value["complete"],
+            passed=value["passed"],
+            candidates=tuple(
+                ExecutionCostSensitivityNeighborResult.from_dict(item)
+                for item in value.get("candidates", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityResult:
+    selected_ordinal: int
+    name: str
+    fill_model: str
+    return_delta_bps: int | None
+    drawdown_delta_bps: int | None
+    outcome: BacktestOutcome | None
+    error: str | None
+    execution_cost_rules: dict[str, Any] | None = None
+    ashare_rules: dict[str, Any] | None = None
+    fold_deltas: tuple[ExecutionCostSensitivityFoldDelta, ...] = ()
+    max_training_return_degradation_bps: int | None = None
+    cost_robustness_passed: bool | None = None
+    max_neighborhood_training_return_degradation_bps: int | None = None
+    neighborhood_cost_robustness: ExecutionCostSensitivityNeighborhoodResult | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            selected_ordinal=value["selected_ordinal"],
+            name=value["name"],
+            fill_model=value["fill_model"],
+            return_delta_bps=value.get("return_delta_bps"),
+            drawdown_delta_bps=value.get("drawdown_delta_bps"),
+            outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
+            error=value.get("error"),
+            execution_cost_rules=value.get("execution_cost_rules"),
+            ashare_rules=value.get("ashare_rules"),
+            fold_deltas=tuple(
+                ExecutionCostSensitivityFoldDelta.from_dict(item)
+                for item in value.get("fold_deltas", ())
+            ),
+            max_training_return_degradation_bps=value.get("max_training_return_degradation_bps"),
+            cost_robustness_passed=value.get("cost_robustness_passed"),
+            max_neighborhood_training_return_degradation_bps=value.get(
+                "max_neighborhood_training_return_degradation_bps"
+            ),
+            neighborhood_cost_robustness=(
+                ExecutionCostSensitivityNeighborhoodResult.from_dict(
+                    value["neighborhood_cost_robustness"]
+                )
+                if value.get("neighborhood_cost_robustness") is not None
+                else None
+            ),
         )
 
 
@@ -1090,7 +1542,10 @@ class ExperimentFoldReport:
     selected_parameters: dict[str, int]
     in_sample_return_bps: int
     out_of_sample_return_bps: int
+    selected_training_robustness_score_bps: int | None = None
     selected_strategy_kind: str | None = None
+    purge_range: tuple[int, int] | None = None
+    embargo_range: tuple[int, int] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentFoldReport":
@@ -1102,8 +1557,25 @@ class ExperimentFoldReport:
             selected_parameters=value["selected_parameters"],
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
+            selected_training_robustness_score_bps=value.get("selected_training_robustness_score_bps"),
             selected_strategy_kind=value.get("selected_strategy_kind"),
+            purge_range=tuple(value["purge_range"]) if value.get("purge_range") else None,
+            embargo_range=tuple(value["embargo_range"]) if value.get("embargo_range") else None,
         )
+
+
+@dataclass(frozen=True)
+class ExperimentCrossFoldRobustness:
+    folds_evaluated: int
+    positive_training_folds: int
+    minimum_training_return_bps: int
+    worst_training_drawdown_bps: int
+    positive_out_of_sample_folds: int
+    minimum_out_of_sample_return_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentCrossFoldRobustness":
+        return cls(**value)
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1584,7 @@ class ExperimentOutOfSampleReport:
     in_sample_return_bps: int
     out_of_sample_return_bps: int
     degradation_bps: int
+    cross_fold_robustness: ExperimentCrossFoldRobustness | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentOutOfSampleReport":
@@ -1120,6 +1593,11 @@ class ExperimentOutOfSampleReport:
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
             degradation_bps=value["degradation_bps"],
+            cross_fold_robustness=(
+                ExperimentCrossFoldRobustness.from_dict(value["cross_fold_robustness"])
+                if value.get("cross_fold_robustness") is not None
+                else None
+            ),
         )
 
 
@@ -1150,8 +1628,12 @@ class RunExperimentResult:
     candidates: tuple[ExperimentCandidateResult, ...]
     comparison: CompareRunsResult | None
     artifact_path: str
+    input_data_fingerprint: str | None = None
+    pruned_candidates: int = 0
     out_of_sample: ExperimentOutOfSampleReport | None = None
     baselines: tuple[ExperimentBaselineReport, ...] = ()
+    search: ExperimentSearchReport | None = None
+    cost_sensitivity: tuple[ExecutionCostSensitivityResult, ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunExperimentResult":
@@ -1164,6 +1646,8 @@ class RunExperimentResult:
             succeeded_candidates=value["succeeded_candidates"],
             failed_candidates=value["failed_candidates"],
             spec_fingerprint=value["spec_fingerprint"],
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            pruned_candidates=value.get("pruned_candidates", 0),
             candidates=tuple(
                 ExperimentCandidateResult.from_dict(item) for item in value["candidates"]
             ),
@@ -1176,6 +1660,15 @@ class RunExperimentResult:
             ),
             baselines=tuple(
                 ExperimentBaselineReport.from_dict(item) for item in value.get("baselines", ())
+            ),
+            search=(
+                ExperimentSearchReport.from_dict(value["search"])
+                if value.get("search") is not None
+                else None
+            ),
+            cost_sensitivity=tuple(
+                ExecutionCostSensitivityResult.from_dict(item)
+                for item in value.get("cost_sensitivity", ())
             ),
         )
 
@@ -2330,6 +2823,16 @@ class AsyncCoreClient:
     ) -> MultiAccountBacktestResult:
         return await asyncio.to_thread(run_multi_account_backtest, spec)
 
+    async def async_run_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.run_multi_account_joint_backtest, spec)
+
+    async def async_start_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> AsyncRunHandle[MultiAccountJointBacktestOutcome]:
+        return await self._async_start(self.start_multi_account_joint_backtest, spec)
+
     async def async_start_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> AsyncRunHandle[MultiAccountBacktestResult]:
@@ -2587,6 +3090,15 @@ class AppClient(_HttpJsonClient):
     def verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
         return VerificationResult.from_dict(self._post(APP_ROUTE_TEMPLATES["verify"], outcome))
 
+    def research_artifacts(self, outcome: BacktestOutcome | Mapping[str, Any]) -> dict[str, Any]:
+        """Load replay-verified bounded research details for a completed backtest."""
+        return self._post(APP_ROUTE_TEMPLATES["research_artifacts"], outcome)
+
+    async def async_research_artifacts(
+        self, outcome: BacktestOutcome | Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.research_artifacts, outcome)
+
     def compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
         return CompareRunsResult.from_dict(self._post(APP_ROUTE_TEMPLATES["compare_runs"], spec))
 
@@ -2718,6 +3230,22 @@ class AppClient(_HttpJsonClient):
             self._post(APP_ROUTE_TEMPLATES["multi_account_backtest"], spec)
         )
 
+    def run_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> MultiAccountJointBacktestOutcome:
+        return MultiAccountJointBacktestOutcome.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_account_joint_backtest"], spec)
+        )
+
+    def start_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountJointBacktestOutcome]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_account_joint_backtest_start"],
+            spec,
+            MultiAccountJointBacktestOutcome,
+        )
+
     def start_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> RemoteRunHandle[MultiAccountBacktestResult]:
@@ -2844,6 +3372,16 @@ class AppClient(_HttpJsonClient):
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> MultiAccountBacktestResult:
         return await asyncio.to_thread(self.run_multi_account_backtest, spec)
+
+    async def async_run_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> MultiAccountJointBacktestOutcome:
+        return await asyncio.to_thread(self.run_multi_account_joint_backtest, spec)
+
+    async def async_start_multi_account_joint_backtest(
+        self, spec: MultiAccountJointBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountJointBacktestOutcome]:
+        return await self._async_start(self.start_multi_account_joint_backtest, spec)
 
     async def async_start_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
@@ -3277,10 +3815,53 @@ class MultiMarketBacktestOutcome:
         return cls(**value)
 
 
+@dataclass(frozen=True)
+class JointAccountBacktestResult:
+    exchange_id: str
+    account_id: str
+    initial_cash_raw: int
+    outcome: MultiMarketBacktestOutcome
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "JointAccountBacktestResult":
+        return cls(
+            exchange_id=value["exchange_id"],
+            account_id=value["account_id"],
+            initial_cash_raw=value["initial_cash_raw"],
+            outcome=MultiMarketBacktestOutcome.from_dict(value["outcome"]),
+        )
+
+
+@dataclass(frozen=True)
+class MultiAccountJointBacktestOutcome:
+    run_id: str
+    settlement_currency: str
+    spec_fingerprint: str
+    accounts_total: int
+    markets_total: int
+    initial_cash_raw: int
+    final_equity_raw: int
+    return_bps: int
+    max_drawdown_bps: int
+    successful_fills: int
+    equity_path: str
+    fills_path: str
+    artifact_path: str
+    accounts: tuple[JointAccountBacktestResult, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountJointBacktestOutcome":
+        payload = dict(value)
+        payload["accounts"] = tuple(
+            JointAccountBacktestResult.from_dict(item) for item in value["accounts"]
+        )
+        return cls(**payload)
+
+
 def run_multi_market_backtest(
     spec: MultiMarketBacktestSpec | dict[str, Any],
 ) -> MultiMarketBacktestOutcome:
-    """Run 3..32 markets through one deterministic Rust account ledger and event engine."""
+    """Run 1..32 markets through one deterministic Rust account ledger and event engine."""
     return MultiMarketBacktestOutcome.from_dict(
         _invoke(native.app_run_multi_market_backtest, spec)
     )
@@ -3482,6 +4063,25 @@ def run_multi_account_backtest(
     return MultiAccountBacktestResult.from_dict(
         _invoke(native.app_run_multi_account_backtest, spec)
     )
+
+
+def run_multi_account_joint_backtest(
+    spec: MultiAccountJointBacktestSpec | dict[str, Any],
+) -> MultiAccountJointBacktestOutcome:
+    """Run independently funded exchange portfolios and publish combined research artifacts."""
+    return MultiAccountJointBacktestOutcome.from_dict(
+        _invoke(native.app_run_multi_account_joint_backtest, spec)
+    )
+
+
+def start_multi_account_joint_backtest(
+    spec: MultiAccountJointBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiAccountJointBacktestOutcome]:
+    try:
+        native_handle = native.app_start_multi_account_joint_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiAccountJointBacktestOutcome)
 
 
 def start_multi_account_backtest(

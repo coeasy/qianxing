@@ -50,6 +50,14 @@ fn loads_and_runs_cpp_strategy_through_the_rust_c_abi_host() {
     assert_eq!(decision.signal_id, 10);
     assert_eq!(decision.confidence, 500);
     assert!(decision.intents.is_empty());
+    assert_eq!(
+        strategy.diagnostic_state(),
+        Some(serde_json::json!({
+            "next_intent_id": 1,
+            "has_request": true
+        })),
+        "the optional C++ diagnostic export exposes a bounded read-only warmup snapshot"
+    );
     decision
         .validate_for(&context, event.ts())
         .expect("C++ decision passes the shared Rust strategy contract");

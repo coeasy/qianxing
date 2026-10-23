@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-acceptance",
+  "venue": "binance",
+  "outcome": "skipped",
+  "started_at_utc": "2026-10-22T16:10:10Z",
+  "finished_at_utc": "2026-10-22T16:10:11Z",
+  "started_at_unix_ms": 1792685410701,
+  "finished_at_unix_ms": 1792685411255,
+  "duration_ms": 553,
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "instrument": "BTCUSDT.BINANCE",
+  "send_orders": false,
+  "credentials_present": false,
+  "stages": [
+    {
+      "stage": "runtime-check",
+      "argv": [
+        "runtime-check",
+        "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-binance-dryrun\\qianxing.runtime.acceptance.json",
+        "--json"
+      ],
+      "exit_code": 0,
+      "duration_ms": 277,
+      "output_tail": [
+        "    \"storage.data_dir 尚不存在，将在首次运行时创建: D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-binance-dryrun\\\\acceptance-data\"",
+        "  ]",
+        "}"
+      ]
+    },
+    {
+      "stage": "live-check",
+      "argv": [
+        "live-check",
+        "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-binance-dryrun\\qianxing.runtime.acceptance.json",
+        "--json"
+      ],
+      "exit_code": 2,
+      "duration_ms": 272,
+      "output_tail": [
+        "  ]",
+        "}",
+        "[qx-cli · CLI] 实盘前置检查失败: 实盘前置检查未通过"
+      ]
+    }
+  ],
+  "detail": "缺少凭据 QX_BINANCE_TESTNET_API_KEY, QX_BINANCE_TESTNET_API_SECRET：只执行了离线前两段",
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "rule": "outcome=pass、credentials_present=true 且 send_orders=true；全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交",
+    "archive_required": true
+  }
+}

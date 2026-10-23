@@ -44,7 +44,8 @@ pub use self::error::{
 };
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
-    EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
+    EventKind, EventMetadata, FundingRateSnapshot, OrderRiskDecisionFact, Priority,
+    StrategyDecisionFact, StrategyIntentFact, EVENT_METADATA_SCHEMA_VERSION,
 };
 pub use self::fee::{
     bp_amount, bp_amount_checked, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel,

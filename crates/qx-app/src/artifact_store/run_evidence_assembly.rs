@@ -4,7 +4,8 @@ use qx_core::RunManifest;
 use qx_spec::{
     ArtifactRef, CapabilityLevel, EvidenceBundle, RunEvidenceBuild, RunEvidenceDataset,
     RunEvidenceDatasetComponent, RunEvidenceIdentity, RunEvidencePayload, RunEvidenceRecompute,
-    RunEvidenceReportAnalysis, RunEvidenceRun, RunEvidenceVerification, RunRecord,
+    RunEvidenceReportAnalysis, RunEvidenceRun, RunEvidenceStrategyDiagnostics,
+    RunEvidenceVerification, RunRecord,
 };
 use std::path::{Path, PathBuf};
 
@@ -13,6 +14,7 @@ pub struct RunEvidencePreparation<'a> {
     pub summary_path: &'a Path,
     pub summary: &'a serde_json::Value,
     pub report_analysis: Option<&'a serde_json::Value>,
+    pub strategy_diagnostics: Option<(&'a Path, &'a serde_json::Value)>,
     pub components: Vec<qx_spec::RunEvidenceDatasetComponent>,
     pub build_profile: &'a str,
     pub target_triple: &'a str,
@@ -30,6 +32,7 @@ pub struct RunEvidenceAssembly {
     pub quality_manifest_sha256: Option<String>,
     pub components: Vec<RunEvidenceDatasetComponent>,
     pub report_analysis: Option<RunEvidenceReportAnalysis>,
+    pub strategy_diagnostics: Option<RunEvidenceStrategyDiagnostics>,
     pub artifacts: Vec<ArtifactRef>,
     pub recompute_inputs: Vec<String>,
     pub build_profile: String,
@@ -45,17 +48,19 @@ pub struct RunEvidenceAssembly {
 /// here with the bundle contract.
 pub fn prepare_run_evidence_assembly(
     input: RunEvidencePreparation<'_>,
-) -> Result<(bool, RunEvidenceAssembly), String> {
+) -> Result<(bool, bool, RunEvidenceAssembly), String> {
     let RunEvidencePreparation {
         summary_path,
         summary,
         report_analysis,
+        strategy_diagnostics,
         components,
         build_profile,
         target_triple,
         operator,
     } = input;
     let has_report_analysis = report_analysis.is_some();
+    let has_strategy_diagnostics = strategy_diagnostics.is_some();
     let run_files = crate::artifact_store::load_run_evidence_identity_files(summary)?;
     let artifacts =
         crate::artifact_store::run_evidence_artifact_references(summary, &run_files.record)?;
@@ -64,6 +69,8 @@ pub fn prepare_run_evidence_assembly(
     let (quality_manifest_path, quality_manifest_sha256) =
         crate::artifact_store::run_evidence_quality_manifest_reference(summary)?;
     let report_analysis = crate::artifact_store::run_evidence_report_analysis(report_analysis)?;
+    let strategy_diagnostics =
+        crate::artifact_store::run_evidence_strategy_diagnostics(summary, strategy_diagnostics)?;
     let mut recompute_inputs = vec![
         run_files.manifest_path.clone(),
         crate::artifact_store::canonical_run_evidence_path(
@@ -82,6 +89,12 @@ pub fn prepare_run_evidence_assembly(
     {
         recompute_inputs.push(calendar_path.to_string());
     }
+    if let Some(path) = strategy_diagnostics
+        .as_ref()
+        .map(|diagnostics| diagnostics.input_path.as_str())
+    {
+        recompute_inputs.push(path.to_string());
+    }
     let input_path = crate::artifact_store::run_evidence_summary_str(summary, &["input", "path"])?;
     let dataset_path = if dataset_kind == "multi-barframe" {
         input_path
@@ -90,6 +103,7 @@ pub fn prepare_run_evidence_assembly(
     };
     Ok((
         has_report_analysis,
+        has_strategy_diagnostics,
         RunEvidenceAssembly {
             summary: summary.clone(),
             manifest: run_files.manifest,
@@ -100,6 +114,7 @@ pub fn prepare_run_evidence_assembly(
             quality_manifest_sha256,
             components,
             report_analysis,
+            strategy_diagnostics,
             artifacts,
             recompute_inputs,
             build_profile: build_profile.to_string(),
@@ -116,13 +131,15 @@ pub fn prepare_run_evidence_assembly(
 pub fn persist_run_evidence_bundle(
     summary_path: &Path,
     has_report_analysis: bool,
+    has_strategy_diagnostics: bool,
     facts: RunEvidenceAssembly,
 ) -> Result<PathBuf, String> {
     let bundle = EvidenceBundle::run(assemble_run_evidence_payload(facts)?);
-    let payload =
-        crate::artifact_store::serialize_verified_evidence_bundle(&bundle, |written, decoded| {
+    let payload = crate::artifact_store::serialize_verified_evidence_bundle(
+        &bundle,
+        |written, decoded| {
             format!(
-                "运行证据包规范化读回与写入对象不一致: report_analysis input={:?} decoded={:?}",
+                "运行证据包规范化读回与写入对象不一致: report_analysis input={:?} decoded={:?}; strategy_diagnostics input={:?} decoded={:?}",
                 match &written.generation {
                     qx_spec::EvidenceGeneration::Run(run) => run.report_analysis.clone(),
                     _ => None,
@@ -130,21 +147,30 @@ pub fn persist_run_evidence_bundle(
                 match &decoded.generation {
                     qx_spec::EvidenceGeneration::Run(run) => run.report_analysis.clone(),
                     _ => None,
+                },
+                match &written.generation {
+                    qx_spec::EvidenceGeneration::Run(run) => run.strategy_diagnostics.clone(),
+                    _ => None,
+                },
+                match &decoded.generation {
+                    qx_spec::EvidenceGeneration::Run(run) => run.strategy_diagnostics.clone(),
+                    _ => None,
                 }
             )
-        })?;
+        },
+    )?;
     let path = summary_path.with_file_name(
         summary_path
             .file_name()
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_suffix(".summary.json"))
-            .map(|stem| {
-                if has_report_analysis {
-                    format!("{stem}.report-analysis.evidence.json")
-                } else {
-                    format!("{stem}.evidence.json")
-                }
-            })
+            .map(
+                |stem| match (has_report_analysis, has_strategy_diagnostics) {
+                    (true, _) => format!("{stem}.report-analysis.evidence.json"),
+                    (false, true) => format!("{stem}.strategy-diagnostics.evidence.json"),
+                    (false, false) => format!("{stem}.evidence.json"),
+                },
+            )
             .ok_or_else(|| format!("回测摘要文件名无效: {}", summary_path.display()))?,
     );
     super::write_backtest_artifact(&path, &payload, "EvidenceBundle")?;
@@ -223,6 +249,7 @@ pub fn assemble_run_evidence_payload(
             components: facts.components,
         },
         report_analysis: facts.report_analysis,
+        strategy_diagnostics: facts.strategy_diagnostics,
         identity: RunEvidenceIdentity {
             strategy_id: crate::artifact_store::run_evidence_summary_str(
                 summary,

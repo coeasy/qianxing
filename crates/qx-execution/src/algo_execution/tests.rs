@@ -92,6 +92,10 @@ impl VenuePort for TestVenue {
         qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         self.submits += 1;
         if matches!(self.mode, VenueMode::Unknown) {
@@ -185,6 +189,7 @@ fn market_spec(qty_step: i128, min_qty: i128) -> qx_core::TradingInstrumentSpec 
         price_tick: 1,
         qty_step,
         min_qty,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,

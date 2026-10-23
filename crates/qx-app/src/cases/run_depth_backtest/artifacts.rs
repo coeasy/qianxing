@@ -8,9 +8,11 @@
 use super::super::kernels::{ORDER_BOOK_MATCHING_KERNEL, TICK_MATCHING_KERNEL};
 use crate::artifact_store::{
     account_base_source_label, persist_backtest_artifacts_with_summary, persist_run_manifest,
-    BacktestAccountBase, BacktestArtifacts as BacktestArtifactInput, BacktestInputProvenance,
-    BacktestSampleTimestamps, BacktestSignalParams, PortfolioFillAttribution,
+    write_backtest_artifact, BacktestAccountBase, BacktestArtifacts as BacktestArtifactInput,
+    BacktestInputProvenance, BacktestSampleTimestamps, BacktestSignalParams,
+    PortfolioFillAttribution,
 };
+use crate::cases::artifacts::event_trace_jsonl;
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::BacktestArtifacts;
 use crate::trade_facts::rejection_facts;
@@ -236,7 +238,7 @@ pub(super) struct DepthArtifactInput<'a> {
     pub context: &'a crate::RunContext,
 }
 
-/// 落盘结果：清单路径 + 四份产物路径 + 清单摘要（stdout 与证据包核对共用）。
+/// 落盘结果：清单路径 + 四份核心产物及事件轨迹路径 + 清单摘要（stdout 与证据包核对共用）。
 pub(super) struct PersistedDepthRun {
     pub manifest: RunManifest,
     pub artifacts: BacktestArtifacts,
@@ -283,6 +285,16 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
         })?;
     let root = PathBuf::from(&spec.output_dir);
     let manifest_path = persist_run_manifest(&root, &manifest)?;
+    let manifest_stem = manifest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("depth.run.json")
+        .strip_suffix(".run.json")
+        .unwrap_or("depth");
+    let event_trace_path = manifest_path.with_file_name(format!("{manifest_stem}.events.jsonl"));
+    let event_trace = event_trace_jsonl(report.event_log.events())?;
+    write_backtest_artifact(&event_trace_path, &event_trace, "深度事件轨迹")
+        .map_err(|error| AppError::new(AppErrorCategory::StorageFailure, error))?;
     let strategy_id = input.strategy_id.to_string();
     let run_id = spec.run_id.clone();
     let tier = spec.tier.clone();
@@ -354,6 +366,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
         summary: summary_path.to_string_lossy().into_owned(),
         equity: equity_path.to_string_lossy().into_owned(),
         fills: fills_path.to_string_lossy().into_owned(),
+        event_trace: Some(event_trace_path.to_string_lossy().into_owned()),
     };
     Ok(PersistedDepthRun {
         manifest,

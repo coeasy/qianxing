@@ -20,7 +20,7 @@ pub struct BacktestSpec {
     /// 压在一个调用方毫不知情的常数上。
     pub initial_cash_raw: i128,
     pub seed: u64,
-    /// 产物目录。四份产物（`*.run.json` / `*.summary.json` / `*.equity.csv` / `*.fills.csv`）
+    /// 产物目录。四份核心产物（`*.run.json` / `*.summary.json` / `*.equity.csv` / `*.fills.csv`）
     /// 都落在它下面。
     pub output_dir: String,
     /// Ledger/account ownership for this run. Omitted legacy specs use `app`.

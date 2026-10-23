@@ -19,7 +19,7 @@ pub fn persist_ccxt_backtest_snapshot(
     let manifest = qx_data::manifest_from_bar_frame(
         frame,
         &format!("strategy-bars:{}", frame.instrument),
-        qx_data::BARFRAME_DATASET_VERSION,
+        &qx_data::barframe_snapshot_version(frame),
         interval_ms,
         "UTC",
         qx_data::BARFRAME_DATASET_VERSION,
@@ -76,11 +76,16 @@ mod tests {
 
     #[test]
     fn ccxt_snapshot_is_content_addressed_and_idempotently_published() {
-        let root = std::env::temp_dir().join(format!(
-            "qx-ccxt-snapshot-{}-{}",
-            std::process::id(),
-            SNAPSHOT_TEST_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("qx-app-test-tmp")
+            .join(format!(
+                "qx-ccxt-snapshot-{}-{}",
+                std::process::id(),
+                SNAPSHOT_TEST_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
         let first = persist_ccxt_backtest_snapshot(
             &frame(),
             60_000,

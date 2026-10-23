@@ -32,6 +32,7 @@ pub(crate) fn spec() -> TradingInstrumentSpec {
         price_tick: STEP,
         qty_step: STEP,
         min_qty: STEP,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,

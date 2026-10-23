@@ -7,7 +7,10 @@ use qx_spec::{
 };
 use std::path::{Path, PathBuf};
 
-pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn write_multi_market_run_evidence(
+    artifact_path: &Path,
+    strategy_diagnostics: Option<(&Path, &serde_json::Value)>,
+) -> Result<PathBuf, String> {
     let artifact_payload = std::fs::read_to_string(artifact_path).map_err(|error| {
         format!(
             "读取多市场运行产物失败 {}: {error}",
@@ -17,9 +20,7 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
     let artifact: serde_json::Value = serde_json::from_str(&artifact_payload)
         .map_err(|error| format!("多市场运行产物 JSON 无效: {error}"))?;
     if artifact.pointer("/spec/markets/0/depth_path").is_some() {
-        return super::run_evidence_multi_market_depth::write_multi_market_depth_run_evidence(
-            artifact_path,
-        );
+        return super::write_multi_market_depth_run_evidence(artifact_path, strategy_diagnostics);
     }
     let spec: qx_app::MultiMarketBacktestSpec = serde_json::from_value(
         artifact
@@ -89,6 +90,26 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
             .and_then(serde_json::Value::as_str)
             .ok_or("多市场运行产物缺少 fills_path")?,
     )?;
+    let instrument_equity_path = artifact
+        .get("instrument_equity_contributions_path")
+        .and_then(serde_json::Value::as_str)
+        .map(resolve_artifact_path)
+        .transpose()?;
+    match (
+        instrument_equity_path.as_ref(),
+        manifest
+            .input_components
+            .get("derived:instrument-equity-contributions"),
+    ) {
+        (Some(path), Some(expected)) => {
+            let actual = qx_strategy::file_digest::sha256_file_hex(path)?;
+            if &actual != expected {
+                return Err("按标的权益贡献 SHA-256 与 RunManifest 不一致".into());
+            }
+        }
+        (None, None) => {}
+        _ => return Err("按标的权益贡献路径与 RunManifest 组件必须成对存在".into()),
+    }
     let mut components = Vec::with_capacity(spec.markets.len());
     let mut identities = Vec::with_capacity(spec.markets.len());
     let mut input_paths = Vec::with_capacity(spec.markets.len());
@@ -201,7 +222,7 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
     }
     let composed_content_fingerprint = qx_strategy::sha256_hex(identities.join("|").as_bytes());
     let input_paths_joined = input_paths.join("|");
-    let mut artifact_refs = vec![
+    let mut artifact_paths = vec![
         ("run_manifest", manifest_path.clone()),
         (
             "summary",
@@ -211,16 +232,20 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
         ),
         ("equity", equity_path),
         ("fills", fills_path),
-    ]
-    .into_iter()
-    .map(|(name, path)| {
-        Ok(ArtifactRef {
-            name: name.to_string(),
-            path: path.to_string_lossy().to_string(),
-            digest: qx_strategy::file_digest::sha256_file_hex(&path)?,
+    ];
+    if let Some(path) = instrument_equity_path {
+        artifact_paths.push(("instrument_equity_contributions", path));
+    }
+    let mut artifact_refs = artifact_paths
+        .into_iter()
+        .map(|(name, path)| {
+            Ok(ArtifactRef {
+                name: name.to_string(),
+                path: path.to_string_lossy().to_string(),
+                digest: qx_strategy::file_digest::sha256_file_hex(&path)?,
+            })
         })
-    })
-    .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     for component in &components {
         if let (Some(path), Some(digest)) = (
             component.quality_manifest_path.as_ref(),
@@ -268,6 +293,19 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
             source: "MultiMarketBacktestSpec.markets".into(),
         },
     ];
+    let strategy_diagnostics = strategy_diagnostics
+        .map(|(path, report)| {
+            qx_app::artifact_store::run_evidence_strategy_diagnostics_array(path, report)
+        })
+        .transpose()?;
+    let has_strategy_diagnostics = strategy_diagnostics.is_some();
+    let mut recompute_inputs = std::iter::once(manifest_path.to_string_lossy().to_string())
+        .chain(std::iter::once(artifact_path.to_string_lossy().to_string()))
+        .chain(input_paths)
+        .collect::<Vec<_>>();
+    if let Some(diagnostics) = &strategy_diagnostics {
+        recompute_inputs.push(diagnostics.input_path.clone());
+    }
     let run = RunEvidenceRun {
         run_id: manifest.run_id.clone(),
         code_commit: manifest.code_commit.clone(),
@@ -308,6 +346,7 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
             ..RunEvidenceDataset::default()
         },
         report_analysis: None,
+        strategy_diagnostics,
         identity: RunEvidenceIdentity {
             strategy_id,
             strategy_version: manifest.strategy_version.clone(),
@@ -372,10 +411,7 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
                 "使用匹配 code_commit 的构建与隔离输出目录重跑 multi-market-backtest".into(),
                 "逐字段比较重跑 RunManifest，并比对 result_hash".into(),
             ],
-            inputs: std::iter::once(manifest_path.to_string_lossy().to_string())
-                .chain(std::iter::once(artifact_path.to_string_lossy().to_string()))
-                .chain(input_paths)
-                .collect(),
+            inputs: recompute_inputs,
             expected_result_hash: manifest.result_hash.clone(),
         },
         operator: std::env::var("QX_OPERATOR").unwrap_or_else(|_| "local".into()),
@@ -384,8 +420,13 @@ pub(crate) fn write_multi_market_run_evidence(artifact_path: &Path) -> Result<Pa
     let payload = qx_app::artifact_store::serialize_verified_evidence_bundle(&bundle, |_, _| {
         "多市场 EvidenceBundle 规范化读回与写入对象不一致".into()
     })?;
+    let evidence_suffix = if has_strategy_diagnostics {
+        ".strategy-diagnostics.evidence.json"
+    } else {
+        ".evidence.json"
+    };
     let output_path = artifact_path.with_file_name(format!(
-        "{}.evidence.json",
+        "{}{evidence_suffix}",
         artifact_path
             .file_name()
             .and_then(|name| name.to_str())

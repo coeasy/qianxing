@@ -77,6 +77,16 @@ fn ccxt_market_to_spec(
     instrument: &InstrumentId,
     market: &Value,
 ) -> Result<TradingInstrumentSpec, AppError> {
+    if let Some(exchange_id) = market.get("exchange_id").and_then(Value::as_str) {
+        if !exchange_id.trim().is_empty()
+            && !exchange_id.eq_ignore_ascii_case(instrument.venue.as_str())
+        {
+            return Err(invalid(format!(
+                "CCXT market exchange_id {exchange_id} 与 InstrumentId venue {} 不一致",
+                instrument.venue
+            )));
+        }
+    }
     let market_type = market
         .get("market_type")
         .and_then(Value::as_str)
@@ -161,11 +171,26 @@ fn ccxt_market_to_spec(
         price_tick: declared_raw_number(market, "price_tick_raw", "一档价格精度")?,
         qty_step: declared_raw_number(market, "qty_step_raw", "数量步长")?,
         min_qty: declared_raw_number(market, "min_qty_raw", "最小下单量")?,
+        min_notional_raw: optional_nonnegative_raw(market, "min_notional_raw")?.unwrap_or(0),
         max_leverage,
         maintenance_margin_bps,
         valid_from: 0,
         valid_to: market.get("expiry_ms").and_then(Value::as_u64),
     })
+}
+
+fn optional_nonnegative_raw(market: &Value, key: &str) -> Result<Option<i128>, AppError> {
+    let Some(value) = market.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let raw = raw_i128(market, key)?;
+    if raw < 0 {
+        return Err(invalid(format!("CCXT market {key} 不能为负数")));
+    }
+    Ok(Some(raw))
 }
 
 fn declared_raw_number(market: &Value, key: &str, what: &str) -> Result<i128, AppError> {
@@ -299,5 +324,67 @@ mod binding_tests {
             Some(BacktestMarginConfig::NoMargin)
         );
         assert_eq!(binding.source, PRODUCT_MARKET_SPEC_VERSION);
+    }
+
+    #[test]
+    fn ccxt_snapshot_preserves_small_ticks_tiers_and_exchange_identity() {
+        let instrument = InstrumentId::parse("BTC/USDT:USDT.OKX").expect("valid instrument");
+        let market = serde_json::json!({
+            "exchange_id": "okx",
+            "symbol": "BTC/USDT:USDT",
+            "market_id": "BTC-USDT-SWAP",
+            "base": "BTC",
+            "quote": "USDT",
+            "market_type": "swap",
+            "active": true,
+            "contract": true,
+            "linear": true,
+            "inverse": false,
+            "contract_size_raw": 1_000_000_000_i64,
+            "settle": "USDT",
+            "expiry_ms": null,
+            "price_tick_raw": 1,
+            "qty_step_raw": 1_000,
+            "min_qty_raw": 1_000,
+            "min_notional_raw": 5_000_000_000_i64,
+            "max_qty_raw": null,
+            "max_leverage": 20,
+            "maintenance_margin_bps": 50,
+            "leverage_tiers": [{
+                "symbol": "BTC/USDT:USDT",
+                "tier": 1,
+                "min_notional_raw": 0,
+                "max_notional_raw": 100_000_000_000_000_i64,
+                "initial_margin_bps": 1_000,
+                "maintenance_margin_bps": 50,
+                "max_leverage": 20
+            }]
+        });
+
+        let binding = backtest_market_spec_binding(&instrument, Some(&market))
+            .expect("normalized CCXT snapshot binds into the product contract");
+        let spec = binding.spec.expect("product spec");
+        assert_eq!(spec.price_tick, 1);
+        assert_eq!(spec.qty_step, 1_000);
+        assert_eq!(spec.min_notional_raw, 5_000_000_000);
+        assert_eq!(spec.product, TradingProduct::Perpetual);
+        assert!(matches!(
+            binding.app_margin_model,
+            Some(BacktestMarginConfig::Tiers { .. })
+        ));
+
+        let mut wrong_venue = market.clone();
+        wrong_venue["exchange_id"] = serde_json::Value::String("bitget".into());
+        assert!(market_spec_from_value(&instrument, &wrong_venue)
+            .unwrap_err()
+            .message()
+            .contains("venue OKX 不一致"));
+
+        let mut negative_minimum = market;
+        negative_minimum["min_notional_raw"] = serde_json::json!(-1);
+        assert!(market_spec_from_value(&instrument, &negative_minimum)
+            .unwrap_err()
+            .message()
+            .contains("不能为负数"));
     }
 }

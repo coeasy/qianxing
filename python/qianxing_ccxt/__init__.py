@@ -67,6 +67,13 @@ def _raw_decimal(value: Any, *, field: str) -> int:
         raise CcxtConnectorError(CcxtErrorClass.INVALID, message) from error
 
 
+def _market_order_notional_raw(market: "CcxtMarket", amount_raw: int, price_raw: int) -> int:
+    scale = native.raw_scale()
+    if market.inverse:
+        return amount_raw * market.contract_size_raw // scale
+    return amount_raw * market.contract_size_raw * price_raw // (scale * scale)
+
+
 def _signed_raw_decimal(value: Any, *, field: str) -> int:
     """把允许正负号的账单金额转成定点整数。"""
     try:
@@ -141,6 +148,7 @@ class CcxtMarket:
     price_tick_raw: int | None
     qty_step_raw: int | None
     min_qty_raw: int | None
+    min_notional_raw: int | None
     max_qty_raw: int | None
     max_leverage: int | None
     maintenance_margin_bps: int | None
@@ -558,6 +566,13 @@ class CcxtExchangeClient:
             if amount_limits.get("min") is None
             else _raw_decimal(amount_limits["min"], field="limits.amount.min")
         )
+        cost_limits = limits.get("cost")
+        cost_limits = cost_limits if isinstance(cost_limits, Mapping) else {}
+        min_notional_raw = (
+            None
+            if cost_limits.get("min") is None
+            else _raw_decimal(cost_limits["min"], field="limits.cost.min")
+        )
         max_qty_raw = (
             None
             if amount_limits.get("max") is None
@@ -592,6 +607,7 @@ class CcxtExchangeClient:
             price_tick_raw=price_tick_raw,
             qty_step_raw=qty_step_raw,
             min_qty_raw=min_qty_raw,
+            min_notional_raw=min_notional_raw,
             max_qty_raw=max_qty_raw,
             max_leverage=max_leverage,
             maintenance_margin_bps=maintenance_margin_bps,
@@ -803,6 +819,16 @@ class CcxtExchangeClient:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "限价单必须提供正 price")
         if price_raw is not None and market.price_tick_raw and price_raw % market.price_tick_raw != 0:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "订单价格不符合交易所 price tick")
+        if market.min_notional_raw is not None:
+            reference_price_raw = price_raw
+            if reference_price_raw is None:
+                ticker = self.fetch_ticker(instrument)
+                reference_price_raw = ticker.ask_raw if side == "buy" else ticker.bid_raw
+            if reference_price_raw <= 0:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, "缺少有效参考价，无法校验最小名义金额")
+            notional_raw = _market_order_notional_raw(market, amount_raw, reference_price_raw)
+            if notional_raw < market.min_notional_raw:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, "订单名义金额低于交易所最小限制")
         call_params = dict(params or {})
         if client_order_id:
             call_params.setdefault("clientOrderId", client_order_id)

@@ -184,6 +184,7 @@ fn multi_leg_manifests_are_bound_reported_and_rechecked() {
             .replace(".summary.json", ".report.html"),
     );
     let html = std::fs::read_to_string(html_path).expect("read multi-leg HTML");
+    assert!(html.contains("组合腿") && html.contains("primary") && html.contains("reference"));
     assert!(
         html.contains(primary_fingerprint),
         "HTML omits primary manifest identity"
@@ -209,6 +210,7 @@ fn multi_leg_manifests_are_bound_reported_and_rechecked() {
         workbook_xml.contains(reference_fingerprint),
         "XLSX omits reference manifest identity"
     );
+    assert!(workbook_xml.contains("primary") && workbook_xml.contains("reference"));
 
     let evidence_path = summary_path.with_file_name(
         summary_path

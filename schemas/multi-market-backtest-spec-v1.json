@@ -51,7 +51,7 @@
     },
     "markets": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 1,
       "maxItems": 32,
       "items": {
         "$ref": "#/$defs/MultiMarketBacktestMarket"
@@ -161,6 +161,10 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -192,6 +196,198 @@
             "null"
           ],
           "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "CcxtMarketSpecSnapshot": {
+      "type": "object",
+      "required": [
+        "exchange_id",
+        "symbol",
+        "market_id",
+        "base",
+        "quote",
+        "market_type",
+        "active",
+        "contract",
+        "linear",
+        "inverse",
+        "contract_size_raw",
+        "settle",
+        "expiry_ms",
+        "price_tick_raw",
+        "qty_step_raw",
+        "min_qty_raw",
+        "max_qty_raw",
+        "max_leverage",
+        "maintenance_margin_bps"
+      ],
+      "properties": {
+        "exchange_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "market_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "market_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "contract": {
+          "type": "boolean"
+        },
+        "linear": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "inverse": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "contract_size_raw": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "settle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiry_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "price_tick_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "qty_step_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "min_qty_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_qty_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_leverage": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "maintenance_margin_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "leverage_tiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "symbol",
+              "tier",
+              "min_notional_raw",
+              "max_notional_raw",
+              "initial_margin_bps",
+              "maintenance_margin_bps",
+              "max_leverage"
+            ],
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "tier": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "min_notional_raw": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_notional_raw": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "initial_margin_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "maintenance_margin_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "max_leverage": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "min_notional_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -254,6 +450,50 @@
           "additionalProperties": false
         }
       ]
+    },
+    "OrderPolicy": {
+      "type": "object",
+      "required": [
+        "reduce_only",
+        "position_side",
+        "margin_mode",
+        "position_mode",
+        "leverage",
+        "post_only"
+      ],
+      "properties": {
+        "reduce_only": {
+          "type": "boolean"
+        },
+        "position_side": {
+          "enum": [
+            "net",
+            "long",
+            "short"
+          ]
+        },
+        "margin_mode": {
+          "enum": [
+            "cash",
+            "cross",
+            "isolated"
+          ]
+        },
+        "position_mode": {
+          "enum": [
+            "one_way",
+            "hedge"
+          ]
+        },
+        "leverage": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "post_only": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     },
     "MakerTakerFeeSchedule": {
       "type": "object",
@@ -937,6 +1177,9 @@
               "$ref": "#/$defs/TradingInstrumentSpec"
             },
             {
+              "$ref": "#/$defs/CcxtMarketSpecSnapshot"
+            },
+            {
               "type": "null"
             }
           ]
@@ -950,6 +1193,38 @@
               "type": "null"
             }
           ]
+        },
+        "order_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "margin_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BacktestMarginConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "funding_bps": {
+          "type": "integer",
+          "minimum": -10000,
+          "maximum": 10000
+        },
+        "funding_events": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "$ref": "multi-leg-backtest-spec-v1.json#/$defs/FundingRateEvent"
+          }
         },
         "strategies": {
           "type": "array",

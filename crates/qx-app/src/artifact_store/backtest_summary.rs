@@ -31,14 +31,21 @@ pub struct BacktestInputProvenance {
     pub fingerprint: String,
 }
 
+impl BacktestInputProvenance {
+    /// Canonical wire representation shared by API/SDK and CLI summary writers.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": self.kind,
+            "path": self.path,
+            "dataset_id": self.dataset_id,
+            "dataset_version": self.dataset_version,
+            "fingerprint": self.fingerprint,
+        })
+    }
+}
+
 fn input_provenance_json(input: &BacktestInputProvenance) -> serde_json::Value {
-    serde_json::json!({
-        "kind": input.kind,
-        "path": input.path,
-        "dataset_id": input.dataset_id,
-        "dataset_version": input.dataset_version,
-        "fingerprint": input.fingerprint,
-    })
+    input.to_json()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

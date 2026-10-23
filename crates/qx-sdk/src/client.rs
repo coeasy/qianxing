@@ -15,20 +15,20 @@ use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
-    run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
-    run_multi_market_backtest, run_multi_market_experiment, start_depth_backtest_with_strategy,
-    start_depth_backtest_with_strategy_slots, validate_dataset, verify_depth_run, verify_run,
-    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
-    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec,
-    DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
+    run_multi_account_joint_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_experiment,
+    start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
+    CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
+    CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
-    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, MultiMarketDepthBacktestOutcome,
-    MultiMarketDepthBacktestSpec, RiskParityResult, RiskParitySpec, RunContext,
-    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
-    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
-    RunMultiMarketExperimentResult, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
-    VerificationResult,
+    MultiAccountDepthBacktestSpec, MultiAccountJointBacktestOutcome, MultiAccountJointBacktestSpec,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiMarketBacktestOutcome,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
+    RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
+    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunMultiMarketExperimentResult, RunMultiMarketExperimentSpec,
+    StrategyArtifactIdentity, VerificationResult,
 };
 use qx_strategy::Strategy;
 
@@ -77,6 +77,22 @@ impl Client {
         spec: &MultiMarketBacktestSpec,
     ) -> Result<MultiMarketBacktestOutcome, AppError> {
         run_multi_market_backtest(spec, &self.context)
+    }
+
+    /// Run multiple exchange accounts independently and aggregate their joint portfolio report.
+    pub fn run_multi_account_joint_backtest(
+        &self,
+        spec: &MultiAccountJointBacktestSpec,
+    ) -> Result<MultiAccountJointBacktestOutcome, AppError> {
+        run_multi_account_joint_backtest(spec, &self.context)
+    }
+
+    /// Start a cancellable joint report while keeping each exchange account's ledger isolated.
+    pub fn start_multi_account_joint_backtest(
+        &self,
+        spec: MultiAccountJointBacktestSpec,
+    ) -> RunHandle<MultiAccountJointBacktestOutcome> {
+        spec.start(self.context.clone())
     }
 
     /// Run caller-authored strategies in selected N-market slots using the Rust portfolio engine.

@@ -103,7 +103,7 @@ fn a_frame_with_unordered_timestamps_is_rejected_by_the_frame_reader() {
 }
 
 #[test]
-fn a_backtest_run_writes_four_artifacts_and_verifies() {
+fn a_backtest_run_writes_four_core_artifacts_and_replay_verified_event_trace() {
     let root = scratch("bt-run");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
     let output_dir = root.join("out");
@@ -135,6 +135,18 @@ fn a_backtest_run_writes_four_artifacts_and_verifies() {
     ] {
         assert!(PathBuf::from(path).is_file(), "产物缺失: {path}");
     }
+    let trace_path = outcome
+        .artifacts
+        .event_trace
+        .as_ref()
+        .expect("Bar backtest exposes event trace path");
+    let trace = std::fs::read_to_string(trace_path).expect("event trace file");
+    let mut log = qx_core::EventLog::new();
+    for line in trace.lines() {
+        log.append_checked(serde_json::from_str(line).expect("event jsonl line"))
+            .expect("ordered event trace");
+    }
+    assert_eq!(format!("{:016x}", log.digest()), outcome.result_hash);
     let verification = verify_run(&outcome, &research("run-1")).expect("复核跑得起来");
     assert!(
         verification.verified,
@@ -368,13 +380,15 @@ fn parameter_experiment_reuses_backtest_and_comparison_use_cases() {
 fn parameter_experiment_isolates_invalid_candidates_and_bounds_the_grid() {
     let root = scratch("experiment-failure-isolation");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
-    let spec = experiment_spec("fast-grid", &bars, &root.join("out"), vec![0, 2]);
+    // Candidate-level failure isolation only applies after the whole grid has
+    // passed domain validation. With slow_window=3, 2 is valid and 4 is not.
+    let spec = experiment_spec("fast-grid", &bars, &root.join("out"), vec![2, 4]);
     let result = run_experiment(&spec, &research("fast-grid")).expect("单候选失败不阻断整组");
     assert_eq!(result.completed_candidates, 2);
     assert_eq!(result.succeeded_candidates, 1);
     assert_eq!(result.failed_candidates, 1);
-    assert!(result.candidates[0].error.is_some());
-    assert!(result.candidates[1].outcome.is_some());
+    assert!(result.candidates[0].outcome.is_some());
+    assert!(result.candidates[1].error.is_some());
     assert!(result.comparison.is_none());
 
     let oversized = RunExperimentSpec {
@@ -485,6 +499,7 @@ fn every_use_case_failure_carries_the_callers_correlation_id() {
             summary: "summary.json".into(),
             equity: "equity.csv".into(),
             fills: "fills.csv".into(),
+            event_trace: None,
         },
         account_id: None,
     };

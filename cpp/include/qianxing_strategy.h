@@ -159,6 +159,13 @@ typedef struct qx_strategy_vtable {
 /* Plugin entry point exported by a C++ strategy shared library. */
 QX_STRATEGY_EXPORT const qx_strategy_vtable* qx_strategy_get_vtable(void);
 
+/* Optional diagnostics-only export. The host supplies the bounded output buffer;
+   the function returns compact UTF-8 JSON through output_len and transfers no memory. */
+QX_STRATEGY_EXPORT int qx_strategy_diagnostic_state(qx_strategy_handle strategy,
+                                                    char* output,
+                                                    size_t output_capacity,
+                                                    size_t* output_len);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

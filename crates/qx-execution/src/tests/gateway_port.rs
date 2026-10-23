@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_effects() {
+    let mut state = PortState::default();
+    let mut source_seq = 0;
+    let mut paper = PaperVenue::new("paper", zero_fee());
+    paper.disconnect();
+    let mut paper = VenuePortAdapter::new_for_any_venue(paper);
+    let error = PortExecutionService::new(
+        &mut paper,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(port_order(80))
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert!(state.orders.is_empty() && state.events.is_empty());
+    assert_eq!(source_seq, 0);
+
+    // Cancel uses the same readiness gate and leaves the existing local order untouched.
+    state.orders.push(port_order(81));
+    let error = PortExecutionService::new(
+        &mut paper,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .cancel(81)
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert_eq!(state.events.len(), 0);
+    assert_eq!(state.orders[0].status, OrderStatus::PendingSubmit);
+    assert_eq!(source_seq, 0);
+
+    struct NoNetwork;
+    impl HttpTransport for NoNetwork {
+        fn send(&self, _request: HttpRequest) -> Result<HttpResponse, String> {
+            panic!("snapshotting venue must be rejected before network I/O")
+        }
+    }
+    let auth = BinanceSpotAuth::with_clock("key", b"secret", || 100).unwrap();
+    let mut binance = BinanceSpotVenue::testnet("binance", auth, Arc::new(NoNetwork));
+    binance.reconnect(); // Transport reconnect completes before the private snapshot/reconcile.
+    let mut binance = VenuePortAdapter::new(binance);
+    let error = PortExecutionService::new(
+        &mut binance,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(port_order(82))
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert_eq!(state.orders.len(), 1);
+    assert_eq!(state.events.len(), 0);
+    assert_eq!(source_seq, 0);
+    let router_error = VenueRouterPort::execution_readiness_for(&binance, "binance").unwrap_err();
+    assert!(router_error.contains("尚未就绪"), "{router_error}");
+    assert!(VenueRouterPort::execution_readiness_for(&binance, "okx").is_err());
+}
+
+#[test]
 fn port_execution_service_registers_and_appends_standard_facts() {
     let mut state = PortState::default();
     let mut venue = PortVenue {
@@ -103,6 +167,9 @@ fn undeclared_order_type_is_rejected_before_registration_or_venue_side_effect() 
                 idempotent_client_order_id: false,
             }
         }
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
+        }
         fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
             self.submits += 1;
             Ok(Vec::new())
@@ -166,6 +233,9 @@ fn venue_market_query_and_reconciliation_capabilities_are_enforced() {
         }
         fn capabilities(&self) -> VenueCapabilities {
             BINANCE_SPOT_VENUE_CAPABILITIES
+        }
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
         }
         fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
             panic!("out-of-scope market must be rejected before submission")

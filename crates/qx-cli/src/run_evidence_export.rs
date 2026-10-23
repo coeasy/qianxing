@@ -145,6 +145,28 @@ pub(crate) fn export_run_bundle(
     market_spec_path: Option<&Path>,
     build_attestation_path: Option<&Path>,
 ) -> Result<(), String> {
+    export_run_bundle_impl(
+        bundle_path,
+        output_dir,
+        runtime_config_path,
+        market_spec_path,
+        build_attestation_path,
+        true,
+    )
+}
+
+pub(crate) fn export_run_bundle_quiet(bundle_path: &Path, output_dir: &Path) -> Result<(), String> {
+    export_run_bundle_impl(bundle_path, output_dir, None, None, None, false)
+}
+
+fn export_run_bundle_impl(
+    bundle_path: &Path,
+    output_dir: &Path,
+    runtime_config_path: Option<&Path>,
+    market_spec_path: Option<&Path>,
+    build_attestation_path: Option<&Path>,
+    emit_result: bool,
+) -> Result<(), String> {
     if output_dir.exists() {
         return Err(format!("导出目录已存在，不覆盖: {}", output_dir.display()));
     }
@@ -266,7 +288,8 @@ pub(crate) fn export_run_bundle(
         output_dir,
         generated_files,
     )?;
-    print_machine_json(&serde_json::json!({
+    if emit_result {
+        print_machine_json(&serde_json::json!({
         "ok": true,
         "operation": "run-evidence-exported",
         "bundle": output_dir.join("evidence.json").display().to_string(),
@@ -277,6 +300,7 @@ pub(crate) fn export_run_bundle(
         "runtime_config_fingerprint_matches_run_hash": runtime_config_fingerprint_matches_run_hash,
         "market_spec_included": market_spec_path.is_some(),
         "full_result_recompute": false
-    }))?;
+        }))?;
+    }
     Ok(())
 }

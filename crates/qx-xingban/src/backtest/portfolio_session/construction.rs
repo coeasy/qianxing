@@ -8,9 +8,9 @@ impl<'a> PortfolioBarEngine<'a> {
         config: PortfolioBarSessionConfig,
         markets: Vec<PortfolioBarMarket<'a>>,
     ) -> Result<Self, qx_core::QxError> {
-        if markets.len() < 2 {
+        if markets.is_empty() {
             return Err(qx_core::QxError::BusinessViolation(
-                "共享 Bar session 至少需要两个市场".into(),
+                "共享 Bar session 至少需要一个市场".into(),
             ));
         }
         if config.account_id.trim().is_empty() || config.initial_cash.raw() <= 0 {

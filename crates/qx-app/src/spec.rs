@@ -368,6 +368,8 @@ mod dataset_manifest;
 pub use dataset_manifest::*;
 mod multi_account;
 pub use multi_account::*;
+mod multi_account_joint;
+pub use multi_account_joint::*;
 pub mod market_spec;
 pub mod multi_market;
 mod multi_market_depth;

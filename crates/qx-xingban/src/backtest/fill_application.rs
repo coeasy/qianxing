@@ -47,7 +47,13 @@ pub(crate) fn apply(input: FillApplicationInput<'_>) -> Result<(Order, Fill), Qx
         &order,
         &fill,
     )?;
-    append_virtual_fill(input.log, input.ledger, &fill, &entry_ids)?;
+    append_virtual_fill(
+        input.log,
+        input.ledger,
+        &fill,
+        &entry_ids,
+        qx_core::Priority::APPLY,
+    )?;
     let _ = input.strategy.refresh(
         input.ledger,
         input.account_id,

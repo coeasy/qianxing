@@ -27,6 +27,9 @@ pub(crate) struct ReportArgs {
     /// 将逐 Bar 组合/基准/主动收益序列导出为 CSV。
     #[arg(long = "benchmark-csv", value_name = "PATH")]
     pub(crate) benchmark_csv: Option<PathBuf>,
+    /// 将身份匹配的策略未来数据/预热/PIT 诊断嵌入报告；深度 --against 使用按 run_id 分组的 v1 JSON 对照清单。
+    #[arg(long = "strategy-diagnostics", value_name = "JSON")]
+    pub(crate) strategy_diagnostics: Option<PathBuf>,
     /// 输出包含摘要、权益、成交、月度收益和可选基准序列的 Excel 工作簿。
     #[arg(long = "xlsx", value_name = "PATH")]
     pub(crate) xlsx: Option<PathBuf>,

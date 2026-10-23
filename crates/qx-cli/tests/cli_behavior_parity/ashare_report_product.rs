@@ -437,16 +437,31 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
     assert!(
         html.contains("lang=\"zh-CN\"")
             && html.contains("name=\"viewport\"")
-            && html.contains(".scroll{overflow-x:auto}")
-            && html.contains("<div class=\"scroll\"><table>")
+            && html.contains(".scroll{overflow:auto;max-height:72vh}")
+            && html.contains("<div class=\"scroll\"><table id=\"qx-runs\">")
+            && html.contains("id=\"qx-search\"")
+            && html.contains("id=\"qx-strategy\"")
+            && html.contains("id=\"qx-min-return\"")
+            && html.contains("id=\"qx-equity-chart\"")
+            && html.contains("id=\"qx-equity-legend\"")
+            && html.contains("const equityData=[")
+            && html.contains("\"equity_raw\"")
+            && html.contains("按时间戳对齐并以各自首个权益点归一化")
+            && html.contains("2,000 个抽样点")
+            && html.contains("canvas.addEventListener('pointermove'")
+            && html.contains("function update()")
+            && html.contains("row.hidden=")
+            && html.contains("header.addEventListener('click'")
             && html.contains("原始收益排名")
             && html.contains("主动收益排名")
             && html.contains("模型假设")
             && html.contains("结果哈希")
             && html.contains("</table>")
-            && !html.contains("<script")
+            && html.contains("<script>")
+            && html.contains("</script>")
+            && !html.contains("https://cdn")
             && !html.contains("src=\"http"),
-        "comparison HTML must be a self-contained, mobile-aware analysis table"
+        "comparison HTML must provide offline filtering/sorting and remain self-contained"
     );
     benchmark::assert_comparison_benchmark_product(&cwd, &summaries);
 

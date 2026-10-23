@@ -37,6 +37,28 @@ pub(crate) fn summary_text(summary: &Value, pointer: &str) -> Option<String> {
     qx_app::report_analysis::summary_text(summary, pointer)
 }
 
+/// Sum the app-backtest rejection facts with overflow and malformed rows reported explicitly.
+pub(crate) fn summary_rejected_orders(summary: &Value) -> Result<u64, String> {
+    let Some(facts) = summary.pointer("/rejection_facts") else {
+        return Ok(0);
+    };
+    let facts = facts
+        .as_array()
+        .ok_or("回测摘要 rejection_facts 格式无效")?;
+    facts
+        .iter()
+        .enumerate()
+        .try_fold(0_u64, |total, (index, fact)| {
+            let count = fact
+                .get(1)
+                .and_then(Value::as_u64)
+                .ok_or_else(|| format!("回测摘要 rejection_facts[{index}] 缺少有效计数"))?;
+            total
+                .checked_add(count)
+                .ok_or_else(|| "回测摘要拒单总数溢出".to_string())
+        })
+}
+
 /// 缺席的统一排版：`None` 一律印 [`READOUT_ABSENT`]，绝不落回任何合法取值。
 pub(crate) fn render_number(value: Option<i128>) -> String {
     value.map_or_else(|| READOUT_ABSENT.to_string(), |number| number.to_string())
@@ -142,4 +164,31 @@ pub(crate) fn latest_backtest_readout_lines(summary: &Value) -> Vec<String> {
             render_text(summary_text(summary, "/result_hash"))
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summary_rejected_orders;
+    use serde_json::json;
+
+    #[test]
+    fn rejected_order_total_is_checked_and_rejects_malformed_facts() {
+        assert_eq!(
+            summary_rejected_orders(&json!({
+                "rejection_facts": [["cash", 2], ["risk", 3]]
+            }))
+            .unwrap(),
+            5
+        );
+        assert!(summary_rejected_orders(&json!({
+            "rejection_facts": [["cash", u64::MAX], ["risk", 1]]
+        }))
+        .unwrap_err()
+        .contains("溢出"));
+        assert!(summary_rejected_orders(&json!({
+            "rejection_facts": [["cash", "three"]]
+        }))
+        .unwrap_err()
+        .contains("缺少有效计数"));
+    }
 }

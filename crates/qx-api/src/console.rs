@@ -48,8 +48,13 @@ pub const CONSOLE_CSRF_HEADER: &str = "x-qx-csrf";
 pub const CONSOLE_TOKEN_QUERY: &str = "token";
 /// 会话有效期缺省值（秒）。配置可覆盖。
 pub const DEFAULT_CONSOLE_SESSION_TTL_SECONDS: u64 = 3600;
-/// 这一层只发这三份静态资源；不在册的名字一律 404，路径穿越因此不可表达。
-pub const CONSOLE_ASSETS: [&str; 3] = ["index.html", "app.js", "styles.css"];
+/// 这一层只发这四份静态资源；不在册的名字一律 404，路径穿越因此不可表达。
+pub const CONSOLE_ASSETS: [&str; 4] = [
+    "index.html",
+    "app.js",
+    "styles.css",
+    "research-comparison.js",
+];
 
 /// 同时存在的会话数上限。超出按**签发顺序**退掉最老的一条（不是按字典序挑一个）。
 const MAX_CONSOLE_SESSIONS: usize = 64;
@@ -403,7 +408,7 @@ fn parse_console_request(request: &str) -> Result<ConsoleRequest<'_>, String> {
     })
 }
 
-/// 静态路由只认这三份资源（`/` 等价于 `/index.html`）。名字逐个相等，不做路径拼接，
+/// 静态路由只认这四份资源（`/` 等价于 `/index.html`）。名字逐个相等，不做路径拼接，
 /// 所以 `../` 这类穿越在这张表上不可表达。
 fn static_asset(path: &str) -> Option<&'static str> {
     let name = path.strip_prefix('/')?;
@@ -705,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_three_registered_assets_are_reachable() {
+    fn only_the_four_registered_assets_are_reachable() {
         let front = front();
         let (_, extra) = front.handle(&request("GET", &format!("/?token={TOKEN}"), ""), 1_000);
         let cookies = set_cookies(&extra);

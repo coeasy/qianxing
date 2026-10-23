@@ -879,6 +879,8 @@ impl LiveEventPipeline {
             }
             EventKind::AccountCashflow { .. }
             | EventKind::LedgerApplied { .. }
+            | EventKind::StrategyDecision { .. }
+            | EventKind::OrderRiskDecision { .. }
             | EventKind::Submit { .. }
             | EventKind::Rejected { .. }
             | EventKind::Settle => {}

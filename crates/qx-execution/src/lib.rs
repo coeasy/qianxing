@@ -165,6 +165,12 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
         *self.venue.capabilities()
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        self.venue
+            .execution_readiness()
+            .map_err(|error| format!("Venue {} 尚未就绪: {error:?}", self.venue_id()))
+    }
+
     fn submit_order(
         &mut self,
         order: qx_core::Order,
@@ -197,6 +203,12 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
 
     fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
         *self.venue.capabilities()
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        self.venue
+            .execution_readiness()
+            .map_err(|error| format!("Venue {} 尚未就绪: {error:?}", self.venue_id()))
     }
 
     fn submit_order(
@@ -233,6 +245,20 @@ impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
             || venue_id.trim().is_empty()
             || venue_id.eq_ignore_ascii_case(self.venue_id()))
         .then(|| self.capabilities())
+    }
+
+    fn execution_readiness_for(&self, venue_id: &str) -> Result<(), String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::execution_readiness(self)
+        } else {
+            Err(format!(
+                "Venue readiness 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
     }
 
     fn submit_order(
@@ -283,6 +309,20 @@ impl<V: Venue> VenueRouterPort for VenuePortAdapter<V> {
             || venue_id.trim().is_empty()
             || venue_id.eq_ignore_ascii_case(self.venue_id()))
         .then(|| self.capabilities())
+    }
+
+    fn execution_readiness_for(&self, venue_id: &str) -> Result<(), String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::execution_readiness(self)
+        } else {
+            Err(format!(
+                "Venue readiness 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
     }
 
     fn submit_order(
@@ -452,12 +492,12 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
         self.validate_order(&order)?;
         self.venue.validate_submit_capabilities(&order)?;
-        if let Some(existing) = self
+        let existing_order = self
             .events
             .orders()
             .into_iter()
-            .find(|existing| existing.client_id == order.client_id)
-        {
+            .find(|existing| existing.client_id == order.client_id);
+        if let Some(existing) = existing_order.as_ref() {
             if existing.status.is_terminal()
                 || matches!(
                     existing.status,
@@ -499,7 +539,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     existing.client_id, existing.status
                 ));
             }
-        } else {
+        }
+        if existing_order.is_none() {
+            // A known disconnected/snapshotting venue is a safe local refusal. Check it before
+            // creating a PendingSubmit record so callers can retry after the connector recovers.
+            self.venue.execution_readiness()?;
             self.events.register_order(
                 order.clone(),
                 self.now,
@@ -509,6 +553,10 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     }),
                 ),
             )?;
+        } else {
+            // Existing PendingSubmit orders may be resumed, but only while the connector is
+            // ready; other existing states returned or failed closed above.
+            self.venue.execution_readiness()?;
         }
 
         let registered = self
@@ -638,6 +686,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         {
             return Err(format!("订单不存在: {client_order_id}"));
         }
+        self.venue.execution_readiness()?;
         let facts = match self.venue.cancel_order(client_order_id, self.now) {
             Ok(facts) if facts.is_empty() => {
                 self.mark_reconcile(client_order_id, "empty-cancel-response")?;
@@ -960,6 +1009,11 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
             };
             if let Err(error) = capabilities.validate_submit(&order, &source_leg.venue_id) {
                 errors.push(format!("补偿腿 {} 能力校验失败: {error}", target.leg_id));
+                all_filled = false;
+                continue;
+            }
+            if let Err(error) = self.router.execution_readiness_for(&source_leg.venue_id) {
+                errors.push(format!("补偿腿 {} Venue 尚未就绪: {error}", target.leg_id));
                 all_filled = false;
                 continue;
             }

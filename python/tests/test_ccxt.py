@@ -51,7 +51,17 @@ class FakeExchange:
                 "precision": {"price": "0.1", "amount": "1"},
                 "limits": {"amount": {"min": "1"}, "leverage": {"max": 50}},
                 "maintenanceMarginRate": "0.005",
-            }
+            },
+            "PEPE/USDT": {
+                "symbol": "PEPE/USDT",
+                "id": "PEPEUSDT",
+                "base": "PEPE",
+                "quote": "USDT",
+                "type": "spot",
+                "active": True,
+                "precision": {"price": "0.000000001", "amount": "0.000001"},
+                "limits": {"amount": {"min": "0.000001"}},
+            },
         }
         self.calls = []
 
@@ -295,6 +305,53 @@ class CcxtTest(unittest.TestCase):
         self.exchange.markets["BTC/USDT"]["contractSize"] = None
         market = self.client.resolve_market("BTC/USDT.BINANCE")
         self.assertEqual(market.contract_size_raw, 1_000_000_000)
+
+    def test_low_price_spot_market_preserves_nine_decimal_ticks_and_lot_steps(self):
+        market = self.client.resolve_market("PEPEUSDT.BINANCE")
+        self.assertEqual(market.price_tick_raw, 1)
+        self.assertEqual(market.qty_step_raw, 1_000)
+        self.assertEqual(market.min_qty_raw, 1_000)
+        order = self.client.create_order(
+            "PEPE/USDT.BINANCE",
+            side="buy",
+            order_type="limit",
+            amount_raw=1_000,
+            price_raw=1_000,
+        )
+        self.assertEqual(order.amount_raw, 1_000)
+        self.assertEqual(order.price_raw, 1_000)
+
+    def test_create_order_enforces_cost_minimum_with_exact_raw_arithmetic(self):
+        self.exchange.markets["BTC/USDT"]["limits"]["cost"] = {"min": "11"}
+        market = self.client.resolve_market("BTCUSDT.BINANCE")
+        self.assertEqual(market.min_notional_raw, 11 * SCALE)
+        with self.assertRaises(CcxtConnectorError) as raised:
+            self.client.create_order(
+                "BTCUSDT.BINANCE",
+                side="buy",
+                order_type="limit",
+                amount_raw=100_000_000,
+                price_raw=100 * SCALE,
+            )
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
+        accepted = self.client.create_order(
+            "BTCUSDT.BINANCE",
+            side="buy",
+            order_type="limit",
+            amount_raw=100_000_000,
+            price_raw=110 * SCALE,
+        )
+        self.assertEqual(accepted.amount_raw, 100_000_000)
+
+    def test_market_order_uses_side_aware_ticker_price_for_cost_minimum(self):
+        self.exchange.markets["BTC/USDT"]["limits"]["cost"] = {"min": "11"}
+        accepted = self.client.create_order(
+            "BTCUSDT.BINANCE",
+            side="buy",
+            order_type="market",
+            amount_raw=110_000_000,
+        )
+        self.assertEqual(accepted.amount_raw, 110_000_000)
 
     def test_symbol_mapping_and_paginated_ohlcv_preserve_fixed_point_columns(self):
         frame = self.client.fetch_ohlcv(

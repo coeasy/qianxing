@@ -24,10 +24,11 @@ use qx_app::{
     run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
     validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory,
     BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
-    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, ProviderBacktestSpec,
-    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec,
+    MultiAccountJointBacktestSpec, MultiLegBacktestSpec, MultiMarketBacktestSpec,
+    MultiMarketDepthBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
+    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    RunMultiMarketExperimentSpec,
 };
 use qx_runtime::RuntimeConfig;
 use std::path::Path;
@@ -78,6 +79,7 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::VerifyDepth { outcome } => verify_depth(outcome),
         AppCommand::MultiLegBacktest { spec } => multi_leg_backtest(spec),
         AppCommand::MultiAccountBacktest { spec } => multi_account_backtest(spec),
+        AppCommand::MultiAccountJointBacktest { spec } => multi_account_joint_backtest(spec),
     };
     match result {
         Ok(payload) => println!("{payload}"),
@@ -138,6 +140,11 @@ fn multi_leg_backtest(spec_path: &Path) -> Result<String, AppError> {
 fn multi_account_backtest(spec_path: &Path) -> Result<String, AppError> {
     let spec = MultiAccountBacktestSpec::from_json(&read_document(spec_path)?)?;
     run_multi_account_backtest(&spec, &context(&spec.batch_id))?.to_json()
+}
+
+fn multi_account_joint_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = MultiAccountJointBacktestSpec::from_json(&read_document(spec_path)?)?;
+    qx_app::run_multi_account_joint_backtest(&spec, &context(&spec.run_id))?.to_json()
 }
 
 fn multi_market_backtest(spec_path: &Path) -> Result<String, AppError> {

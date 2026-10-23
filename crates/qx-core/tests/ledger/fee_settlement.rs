@@ -52,6 +52,7 @@ fn derivative_fill_with_foreign_fee_currency_is_rejected() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 100,
         maintenance_margin_bps: 500,
         valid_from: 1,

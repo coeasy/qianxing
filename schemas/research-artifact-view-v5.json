@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-view-v5.json",
+  "title": "Qianxing ResearchArtifactView v5",
+  "description": "Replay-verified shared-account multi-market depth drilldown with bounded per-market L1/L2 input samples.",
+  "type": "object",
+  "required": ["schema_version", "run_kind", "run_id", "instrument", "verification", "summary", "equity", "fills", "events", "bars", "event_trace_available", "markets"],
+  "properties": {
+    "schema_version": {"const": 5},
+    "run_kind": {"const": "multi_market_depth"},
+    "run_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "verification": {"$ref": "verification-result-v1.json"},
+    "summary": {"type": "object", "additionalProperties": true},
+    "equity": {"$ref": "research-artifact-view-v2.json#/$defs/equityRows"},
+    "fills": {"$ref": "research-artifact-view-v2.json#/$defs/rows"},
+    "events": {"$ref": "research-artifact-view-v2.json#/$defs/events"},
+    "bars": {
+      "type": "object",
+      "required": ["source_status", "total", "truncated", "rows"],
+      "properties": {
+        "source_status": {"const": "not_applicable_depth"},
+        "total": {"const": 0},
+        "truncated": {"const": false},
+        "rows": {"type": "array", "maxItems": 0}
+      },
+      "additionalProperties": false
+    },
+    "event_trace_available": {"const": true},
+    "markets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/market"}
+    }
+  },
+  "$defs": {
+    "market": {
+      "type": "object",
+      "required": ["instrument", "data_fingerprint", "fill_count", "quality_status", "bars", "data_tier", "depth"],
+      "properties": {
+        "instrument": {"type": "string", "minLength": 1},
+        "data_fingerprint": {"type": "string", "minLength": 1},
+        "fill_count": {"type": "integer", "minimum": 0},
+        "quality_status": {"enum": ["verified", "not_provided"]},
+        "bars": {
+          "type": "object",
+          "required": ["source_status", "total", "truncated", "rows"],
+          "properties": {
+            "source_status": {"const": "not_applicable_depth"},
+            "total": {"const": 0},
+            "truncated": {"const": false},
+            "rows": {"type": "array", "maxItems": 0}
+          },
+          "additionalProperties": false
+        },
+        "data_tier": {"enum": ["l1", "l2"]},
+        "depth": {
+          "type": "object",
+          "required": ["source_status", "total", "truncated", "rows"],
+          "properties": {
+            "source_status": {"const": "verified"},
+            "total": {"type": "integer", "minimum": 1},
+            "truncated": {"type": "boolean"},
+            "rows": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {"$ref": "research-artifact-view-v2.json#/$defs/depthPoint"}
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

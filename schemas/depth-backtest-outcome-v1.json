@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/depth-backtest-outcome-v1.json",
   "title": "Qianxing DepthBacktestOutcome v1",
-  "description": "Stable depth backtest identity, L1/L2 result summary, manifest digest and four persisted artifact paths. account_id and manifest_digest may be omitted by serde.",
+  "description": "Stable depth backtest identity, L1/L2 result summary, manifest digest and four core artifact paths, with an optional replay event trace. account_id and manifest_digest may be omitted by serde.",
   "type": "object",
   "required": [
     "run_id",
@@ -103,6 +103,10 @@
           "minLength": 1
         },
         "fills": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_trace": {
           "type": "string",
           "minLength": 1
         }

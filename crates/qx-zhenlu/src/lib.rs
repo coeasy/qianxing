@@ -365,6 +365,18 @@ pub enum VenueReconcileIssue {
 pub trait Venue {
     fn id(&self) -> &str;
     fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities;
+    /// Reject execution while the connector is disconnected or still recovering.
+    /// Adapters with richer synchronization state should override this check.
+    fn execution_readiness(&self) -> QxResult<()> {
+        if self.connected() {
+            Ok(())
+        } else {
+            Err(QxError::VenueState(format!(
+                "Venue {} is disconnected",
+                self.id()
+            )))
+        }
+    }
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn snapshot(&self) -> Vec<VenueOrderSnapshot>;
@@ -2164,6 +2176,7 @@ mod tests {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 20,
             maintenance_margin_bps: 500,
             valid_from: 1,

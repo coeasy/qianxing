@@ -60,7 +60,7 @@ fn require(label: &str, command: &str, retry: &str, outcome: Result<(), String>)
 /// 预算是为了让收尾陈述能在符号链接目录环上终止：`is_dir()` 跟随符号链接，一个指回祖先的
 /// 链接就能让这里永不返回——五步产品全部跑完之后卡在「共 N 份文件」这一行上。同一份预算
 /// 也给一次误指向大目录树的首跑兜底。
-/// 文档口径是 9 份（`init`）+ 5 份（首跑回测）= 14 份。读不动的目录只少计一份，不让一次
+/// 文档口径是 10 份（`init`）+ 6 份（首跑回测与数据集清单）= 16 份。读不动的目录只少计一份，不让一次
 /// 已经成功的首跑改口——这格计数是收尾陈述，不是判据，所以截断如实印出来而不是报错。
 pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     let mut stack = vec![dir.to_path_buf()];
@@ -86,18 +86,21 @@ pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     (files, false)
 }
 
-/// `qx-cli quickstart [目录] [--force]` 的实现体：失败自行以 2 退出，成功印收尾指引后返回。
-pub(crate) fn run(project: Option<PathBuf>, force: bool) {
+/// `qx-cli quickstart [目录] [--html] [--force]` 的实现体：失败自行以 2 退出，成功印收尾指引后返回。
+pub(crate) fn run(project: Option<PathBuf>, html: bool, force: bool) {
     let root = project.unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_DIR));
     let absolute = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
     let runtime = absolute.join(RUNTIME_FILE_NAME);
     let runtime_text = runtime.to_string_lossy().into_owned();
     let root_text = absolute.to_string_lossy().into_owned();
-    let retry = if force {
-        command_line(&["quickstart", &root_text, "--force"])
-    } else {
-        command_line(&["quickstart", &root_text])
-    };
+    let mut retry_arguments = vec!["quickstart", root_text.as_str()];
+    if html {
+        retry_arguments.push("--html");
+    }
+    if force {
+        retry_arguments.push("--force");
+    }
+    let retry = command_line(&retry_arguments);
     println!(
         "quickstart 依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 {}：",
         absolute.display()
@@ -129,11 +132,20 @@ pub(crate) fn run(project: Option<PathBuf>, force: bool) {
         &retry,
         run_unified_backtest(Some(&runtime), None, None),
     );
+    let report_command = if html {
+        command_line(&["report", &runtime_text, "--html"])
+    } else {
+        command_line(&["report", &runtime_text])
+    };
     require(
-        "读回摘要",
-        &command_line(&["report", &runtime_text]),
+        if html {
+            "复核摘要并生成 HTML 报告"
+        } else {
+            "读回摘要"
+        },
+        &report_command,
         &retry,
-        run_report(&runtime, false, false),
+        run_report(&runtime, false, html),
     );
     require(
         "看安全状态",

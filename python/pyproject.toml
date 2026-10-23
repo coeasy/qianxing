@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "qianxing"
-version = "0.2.1"
+version = "0.2.2"
 description = "Qianxing quantitative research and trading platform SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,7 @@ dependencies = []
 
 [project.scripts]
 qianxing = "qianxing.cli:main"
+qianxing-strategy-diagnose = "qianxing_strategy.diagnostics:main"
 
 [project.optional-dependencies]
 # 交易所适配：公共 ccxt（REST/交易）；实时 watch_* 另需 ccxt Pro。

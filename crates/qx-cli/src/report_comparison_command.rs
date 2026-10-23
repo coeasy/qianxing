@@ -37,6 +37,7 @@ pub(crate) fn run_comparison_report(
         return Err("横向对照至少需要两份回测摘要".into());
     }
     let mut entries = Vec::with_capacity(paths.len());
+    let mut equity_series = Vec::with_capacity(paths.len());
     let mut seen_paths = BTreeSet::new();
     let mut seen_run_ids = BTreeSet::new();
     let mut identity: Option<qx_app::report_analysis::ComparisonInputIdentity> = None;
@@ -63,6 +64,21 @@ pub(crate) fn run_comparison_report(
         )?;
         identity.get_or_insert(current);
         let entry = comparison_entry(path, &current_summary)?;
+        let artifacts = report_artifact_paths(path)?;
+        let points = if artifacts.equity_csv.is_file() {
+            let series = crate::report_html::read_equity_csv(&artifacts.equity_csv)?;
+            downsample_equity(&series, 2_000)?
+        } else {
+            Vec::new()
+        };
+        equity_series.push(serde_json::json!({
+            "run_id": &entry.run_id,
+            "points": points.iter().map(|(ts, value)| serde_json::json!({
+                "ts": ts,
+                "equity_raw": value.to_string(),
+            })).collect::<Vec<_>>(),
+            "available": points.first().is_some_and(|(_, value)| *value > 0),
+        }));
         if !seen_run_ids.insert(entry.run_id.clone()) {
             return Err(format!(
                 "横向对照 RunManifest.run_id 重复: {}",
@@ -151,6 +167,7 @@ pub(crate) fn run_comparison_report(
             &instrument,
             &fingerprint,
             &entries,
+            &equity_series,
             output,
         )?)
     } else {
@@ -217,4 +234,19 @@ pub(crate) fn run_comparison_report(
         }
     }
     Ok(())
+}
+
+fn downsample_equity(points: &[(i64, i128)], limit: usize) -> Result<Vec<(i64, i128)>, String> {
+    if points.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        return Err("回测权益时间戳必须严格递增，无法生成可对齐对比曲线".into());
+    }
+    if points.len() <= limit || limit < 2 {
+        return Ok(points.to_vec());
+    }
+    Ok((0..limit)
+        .map(|sample| {
+            let index = sample * (points.len() - 1) / (limit - 1);
+            points[index]
+        })
+        .collect())
 }

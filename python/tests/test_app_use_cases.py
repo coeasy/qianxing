@@ -81,6 +81,8 @@ def _load_native():
                 "app_start_depth_backtest_with_strategy_slots",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
+                "app_run_multi_account_joint_backtest",
+                "app_start_multi_account_joint_backtest",
                 "app_run_multi_account_depth_backtest",
                 "app_start_multi_account_depth_backtest",
                 "app_start_backtest",
@@ -119,6 +121,8 @@ def _load_native():
                 "app_start_multi_market_experiment",
                 "app_run_multi_market_experiment_with_strategy",
                 "app_start_multi_market_experiment_with_strategy",
+                "app_run_multi_account_joint_backtest",
+                "app_start_multi_account_joint_backtest",
                 "app_verify_depth_run",
             )
         ):
@@ -158,6 +162,7 @@ class AppUseCaseTests(unittest.TestCase):
         for wrapper, entrypoint in (
             ("start_backtest", "app_start_backtest"),
             ("start_multi_account_backtest", "app_start_multi_account_backtest"),
+            ("start_multi_account_joint_backtest", "app_start_multi_account_joint_backtest"),
             ("start_multi_account_depth_backtest", "app_start_multi_account_depth_backtest"),
             ("start_experiment", "app_start_experiment"),
             ("start_depth_backtest", "app_start_depth_backtest"),
@@ -170,6 +175,20 @@ class AppUseCaseTests(unittest.TestCase):
             ) as invoke:
                 self.assertIs(getattr(app, wrapper)(spec), handle)
                 invoke.assert_called_once_with(json.dumps(spec, ensure_ascii=False))
+
+    def test_multi_account_joint_bridge_delegates_sync_and_async_to_rust(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing_bridge import app, native
+
+        spec = {"schema_version": 1, "run_id": "python-joint"}
+        result = {"run_id": "python-joint", "accounts": []}
+        with patch.object(
+            native,
+            "app_run_multi_account_joint_backtest",
+            return_value=json.dumps(result),
+        ) as run:
+            self.assertEqual(app.run_multi_account_joint_backtest(spec), result)
+            run.assert_called_once_with(json.dumps(spec, ensure_ascii=False))
 
     def test_strategy_experiment_bridge_connects_sync_and_async_native_entries(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -547,6 +566,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("provider_preflight", "/app/capabilities/providers/preflight", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
+            ("run_multi_account_joint_backtest", "/app/multi-account-joint-backtest", False),
+            ("start_multi_account_joint_backtest", "/app/multi-account-joint-backtest/start", True),
             ("run_multi_account_depth_backtest", "/app/multi-account-depth-backtest", False),
             ("start_multi_account_depth_backtest", "/app/multi-account-depth-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
@@ -632,6 +653,23 @@ class AppUseCaseTests(unittest.TestCase):
                 },
             },
             "start_multi_account_backtest": {"run_id": "batch", "status": "starting"},
+            "run_multi_account_joint_backtest": {
+                "run_id": "joint",
+                "settlement_currency": "USDT",
+                "spec_fingerprint": "0123456789abcdef",
+                "accounts_total": 2,
+                "markets_total": 2,
+                "initial_cash_raw": 200,
+                "final_equity_raw": 200,
+                "return_bps": 0,
+                "max_drawdown_bps": 0,
+                "successful_fills": 0,
+                "equity_path": "joint-equity.json",
+                "fills_path": "joint-fills.json",
+                "artifact_path": "joint-portfolio.json",
+                "accounts": [],
+            },
+            "start_multi_account_joint_backtest": {"run_id": "joint", "status": "starting"},
             "run_multi_account_depth_backtest": {
                 "batch_id": "depth-batch",
                 "settlement_currency": "USDT",
@@ -822,6 +860,46 @@ class AppUseCaseTests(unittest.TestCase):
         ):
             payload = json.loads(open_url.call_args_list[index].args[0].data)
             self.assertEqual(payload["strategy_kinds"], ["ema_cross", "sma_cross"])
+
+    def test_research_artifacts_posts_completed_outcome_to_detail_route(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"verified":true,"equity":[],"fills":[],"events":[]}'
+
+        outcome = {
+            "run_id": "run-1",
+            "instrument": "BTCUSDT.BINANCE",
+            "result_hash": "result",
+            "data_fingerprint": "data",
+            "fills": 0,
+            "equity_points": 1,
+            "return_bps": 0,
+            "max_drawdown_bps": 0,
+            "artifacts": {
+                "run_manifest": "manifest.json",
+                "summary": "summary.json",
+                "equity": "equity.csv",
+                "fills": "fills.csv",
+                "event_trace": "events.jsonl",
+            },
+        }
+        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+            client = AppClient("https://localhost")
+            result = client.research_artifacts(outcome)
+        self.assertTrue(result["verified"])
+        sent = open_url.call_args.args[0]
+        self.assertEqual(sent.full_url, "https://localhost/app/research-artifacts")
+        self.assertEqual(sent.method, "POST")
+        self.assertEqual(json.loads(sent.data), outcome)
 
     def test_async_provider_preflight_delegates_to_the_same_remote_route(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1716,7 +1794,10 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             BacktestSpec,
             BuiltinStrategySpec,
+            ExperimentParameterRange,
             ExperimentParameterSpace,
+            ExperimentSearchPlan,
+            ExperimentSplitPlan,
             RunExperimentSpec,
             run_experiment,
             run_backtest,
@@ -1772,10 +1853,48 @@ class AppUseCaseTests(unittest.TestCase):
                     name="target_kelly_fraction_bps", values=(2_500, 5_000)
                 ),
             ),
+            split_plan=ExperimentSplitPlan(
+                train_bars=40, test_bars=10, walk_forward=True, step_bars=10
+            ),
+            search=ExperimentSearchPlan(algorithm="random", seed=17, budget=2),
         )
         result = run_experiment(experiment)
         self.assertEqual(result.succeeded_candidates, 2)
         self.assertEqual(len({candidate.outcome.result_hash for candidate in result.candidates}), 2)
+        self.assertEqual(result.search.algorithm, "random")
+        self.assertEqual([trial.proposal for trial in result.search.trials], ["random", "random"])
+
+        continuous_experiment = RunExperimentSpec(
+            experiment_id="py-kelly-continuous",
+            base=base,
+            parameter_space=(),
+            split_plan=ExperimentSplitPlan(
+                train_bars=40, test_bars=10, walk_forward=True, step_bars=10
+            ),
+            search=ExperimentSearchPlan(
+                algorithm="tpe_kde",
+                seed=18,
+                budget=5,
+                continuous_parameter_space=(
+                    ExperimentParameterRange(
+                        "target_kelly_fraction_bps", 1_000, 9_000, 1_000
+                    ),
+                ),
+            ),
+        )
+        continuous_result = run_experiment(continuous_experiment)
+        self.assertEqual(continuous_result.succeeded_candidates, 5)
+        self.assertEqual(
+            [trial.proposal for trial in continuous_result.search.trials[:4]],
+            ["tpe_kde_continuous_random_startup"] * 4,
+        )
+        self.assertEqual(
+            continuous_result.search.trials[4].proposal, "tpe_kde_continuous"
+        )
+        self.assertEqual(
+            len({trial.parameters["target_kelly_fraction_bps"] for trial in continuous_result.search.trials}),
+            5,
+        )
 
     def test_run_handle_starts_waits_and_takes_result_from_rust(self):
         self._require()
@@ -1859,7 +1978,9 @@ class AppUseCaseTests(unittest.TestCase):
                     train_bars=20,
                     test_bars=10,
                     walk_forward=True,
-                    step_bars=10,
+                    step_bars=20,
+                    purge_bars=1,
+                    embargo_bars=10,
                 ),
                 baselines=("buy-and-hold", "zero-signal"),
             )
@@ -1870,6 +1991,11 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(len(typed.comparison.runs), 2)
         self.assertIsNotNone(typed.out_of_sample)
         self.assertGreaterEqual(len(typed.out_of_sample.folds), 1)
+        self.assertEqual(typed.out_of_sample.folds[0].purge_range, (20, 21))
+        self.assertEqual(typed.out_of_sample.folds[0].test_range, (21, 31))
+        self.assertEqual(typed.out_of_sample.folds[0].embargo_range, (31, 41))
+        with Path(typed.artifact_path).open(encoding="utf-8") as report_file:
+            Draft202012Validator(result_schema, registry=schema_registry).validate(json.load(report_file))
         self.assertEqual(
             [row.name for row in typed.baselines], ["buy-and-hold", "zero-signal"]
         )
@@ -2258,12 +2384,12 @@ class AppUseCaseTests(unittest.TestCase):
             "schema_version": 1,
             "experiment_id": "python-tick-grid",
             "base": {**payload, "run_id": "unused-python-tick-grid"},
-            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+            "parameter_space": [{"name": "quantity_raw", "values": [1_000_000_000, 2_000_000_000]}],
         }
         depth_experiment = self.bridge.run_depth_experiment(depth_experiment_payload)
         self.assertEqual(depth_experiment["completed_candidates"], 2)
-        self.assertEqual(depth_experiment["failed_candidates"], 1)
-        self.assertEqual(depth_experiment["succeeded_candidates"], 1)
+        self.assertEqual(depth_experiment["failed_candidates"], 0)
+        self.assertEqual(depth_experiment["succeeded_candidates"], 2)
         self.assertTrue(Path(depth_experiment["artifact_path"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
@@ -3247,12 +3373,12 @@ class AppUseCaseTests(unittest.TestCase):
             "schema_version": 1,
             "experiment_id": "python-multi-leg-grid",
             "base": {**payload, "run_id": "unused-multi-leg-grid"},
-            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+            "parameter_space": [{"name": "quantity_raw", "values": [500_000_000, 1_000_000_000]}],
         }
         experiment = self.bridge.run_multi_leg_experiment(experiment_payload)
         self.assertEqual(experiment["completed_candidates"], 2)
-        self.assertEqual(experiment["failed_candidates"], 1)
-        self.assertEqual(experiment["succeeded_candidates"], 1)
+        self.assertEqual(experiment["failed_candidates"], 0)
+        self.assertEqual(experiment["succeeded_candidates"], 2)
         self.assertTrue(Path(experiment["artifact_path"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource

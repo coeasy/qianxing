@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "kind": "supplier-public-readonly-market-data-attempt",
+  "observed_at_utc": "2026-10-22T18:32:20Z",
+  "venue": "binance",
+  "network": "mainnet",
+  "instrument": "BTC/USDT.BINANCE",
+  "timeframe": "1m",
+  "requested_rows": 2,
+  "request": "GET /api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2",
+  "outcome": "timeout",
+  "timeout_seconds": 10,
+  "credentials_present": false,
+  "orders_sent": false,
+  "market_data_received": false,
+  "market_data_persisted": false,
+  "sandbox_tested_flip_allowed": false,
+  "error_type": "URLError",
+  "detail": "<urlopen error timed out>"
+}

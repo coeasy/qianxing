@@ -96,6 +96,25 @@
         { "expr": "sum(rate(qx_pipeline_transient_retries_total[5m]))", "legendFormat": "瞬时重试" },
         { "expr": "sum(rate(qx_pipeline_refreshes_total[5m]))", "legendFormat": "刷新" }
       ]
+    },
+    {
+      "id": 10,
+      "title": "持久运行 watcher 活跃量 / 上限",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        { "expr": "max(qx_app_run_watchers_active)", "legendFormat": "活跃 watcher" },
+        { "expr": "max(qx_app_run_watcher_capacity)", "legendFormat": "容量上限" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "持久运行 watcher 容量拒绝速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "targets": [
+        { "expr": "sum(rate(qx_app_run_watcher_rejections_total[5m]))", "legendFormat": "拒绝/秒" }
+      ]
     }
   ]
 }

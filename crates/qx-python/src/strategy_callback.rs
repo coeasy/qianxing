@@ -317,7 +317,7 @@ fn app_start_experiment_with_strategy(
         .start_with_strategy_factory(identity, python_bar_strategy_factory(factory), context)
         .map_err(app_error)?;
     Ok(PyRunHandle {
-        inner: NativeRun::Experiment(handle),
+        inner: NativeRun::Experiment(Box::new(handle)),
     })
 }
 

@@ -14,13 +14,14 @@ use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
     AlgoParentOrder, BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
     CallerCapability, Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent,
-    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterSpace, ExperimentSplitPlan,
-    InstrumentId, MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
-    MultiMarketBacktestSpec, Order, OrderStatus, OrderStore, PortfolioBacktestConfig,
-    PortfolioStrategySpec, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
-    RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
-    RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec, RunStatus, Side, VenuePort,
-    VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
+    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterSpace, ExperimentSearchAlgorithm,
+    ExperimentSearchPlan, ExperimentSplitPlan, InstrumentId, MakerTakerFeeSchedule,
+    MultiLegBacktestSpec, MultiMarketBacktestMarket, MultiMarketBacktestSpec, Order, OrderStatus,
+    OrderStore, PortfolioBacktestConfig, PortfolioStrategySpec, Price, Quantity,
+    RiskParityAssetSpec, RiskParitySpec, RiskPort, RiskVerdict, RunDepthExperimentSpec,
+    RunEventKind, RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
+    RunStatus, Side, VenuePort, VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -374,6 +375,10 @@ impl VenuePort for ConsumerVenue {
         qx_sdk::PAPER_VENUE_CAPABILITIES
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn submit_order(&mut self, order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         Ok(vec![ExecutionEvent::Accepted {
             client_order_id: order.client_id,
@@ -496,8 +501,23 @@ fn the_rust_sdk_facade_executes_walk_forward_and_baseline_comparison() {
             test_bars: 10,
             walk_forward: true,
             step_bars: 10,
+            purge_bars: 0,
+            embargo_bars: 0,
         }),
         baselines: vec!["buy-and-hold".into(), "zero-signal".into()],
+        search: Some(ExperimentSearchPlan {
+            algorithm: ExperimentSearchAlgorithm::Random,
+            seed: 2026,
+            budget: 2,
+            max_training_drawdown_bps: None,
+            fold_local_search: false,
+            continuous_parameter_space: Vec::new(),
+            early_pruning: None,
+            robustness_subwindows: None,
+            minimum_training_robustness_score_bps: None,
+            neighborhood_radius: None,
+        }),
+        cost_sensitivity: Vec::new(),
     };
     let result = client.run_experiment(&spec).expect("Rust SDK experiment");
     let oos = result
@@ -506,4 +526,15 @@ fn the_rust_sdk_facade_executes_walk_forward_and_baseline_comparison() {
     assert_eq!(oos.folds.len(), 4);
     assert_eq!(result.baselines.len(), 2);
     assert_eq!(result.baselines[1].return_bps, 0);
+    let search = result
+        .search
+        .expect("adaptive search report through the Rust SDK");
+    assert_eq!(search.seed, 2026);
+    assert_eq!(search.trials.len(), 2);
+    assert!(search.trials.iter().all(|trial| trial.proposal == "random"));
+    assert!(search
+        .neighborhood
+        .as_ref()
+        .and_then(|neighborhood| neighborhood.assessment)
+        .is_some());
 }

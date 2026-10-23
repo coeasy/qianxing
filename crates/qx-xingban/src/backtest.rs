@@ -1,9 +1,9 @@
 //! 可复用的 Bar 事件回测驱动器；CLI 只是入口，闭环固定为 as_of → 风控 → OMS → 下一根 bar 撮合 → Fill → Ledger → EventLog。
 
 use qx_core::{
-    Event, EventKind, EventLog, FeeModel, Fill, Fnv1a, InstrumentId, Ledger, Money, Order,
-    OrderStatus, Price, Priority, Quantity, QxError, ReplayVerifier, RunManifest, Side,
-    TradingInstrumentSpec, ValuationContext, SCALE,
+    Event, EventContext, EventKind, EventLog, EventMetadata, FeeModel, Fill, Fnv1a, InstrumentId,
+    Ledger, Money, Order, OrderStatus, Price, Priority, Quantity, QxError, ReplayVerifier,
+    RunManifest, Side, TradingInstrumentSpec, ValuationContext, SCALE,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView};
 use qx_zhenlu::{Oms, RiskGate};
@@ -215,6 +215,19 @@ pub struct BacktestEngine {
     config: BacktestConfig,
     protective_exits: Option<ProtectiveExitPolicy>,
 }
+
+/// A bounded Bar run can finish, be cancelled, or be deliberately pruned by a monotone
+/// maximum-drawdown constraint. Pruned runs have no report and must never publish artifacts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BacktestRunStatus {
+    Completed,
+    Cancelled,
+    Pruned {
+        processed_bars: usize,
+        max_drawdown_bps: u32,
+    },
+}
+
 impl BacktestEngine {
     pub fn new(config: BacktestConfig) -> Self {
         Self {
@@ -248,8 +261,60 @@ impl BacktestEngine {
         self,
         bars: &[Bar],
         strategy: &mut dyn BarStrategy,
-        mut is_cancelled: F,
+        is_cancelled: F,
     ) -> Result<Option<BacktestReport>, qx_core::QxError>
+    where
+        F: FnMut() -> bool,
+    {
+        match self.run_controlled(bars, strategy, is_cancelled, None)? {
+            (BacktestRunStatus::Completed, Some(report)) => Ok(Some(report)),
+            (BacktestRunStatus::Cancelled, None) => Ok(None),
+            _ => Err(qx_core::QxError::Invariant(
+                "Bar 回测停止状态与报告载荷不一致".into(),
+            )),
+        }
+    }
+
+    /// Run while enforcing a maximum-drawdown budget on a bounded prefix. The engine checks
+    /// after each completed bar, beginning at `min_bars`, and only through `training_bars`.
+    /// Because the maximum drawdown is accumulated against each historical peak, a breached
+    /// budget cannot recover later in the training window. A pruned run returns no partial report.
+    pub fn run_with_drawdown_pruning<F>(
+        self,
+        bars: &[Bar],
+        strategy: &mut dyn BarStrategy,
+        min_bars: usize,
+        training_bars: usize,
+        max_drawdown_bps: u32,
+        is_cancelled: F,
+    ) -> Result<(BacktestRunStatus, Option<BacktestReport>), qx_core::QxError>
+    where
+        F: FnMut() -> bool,
+    {
+        if min_bars == 0
+            || training_bars < min_bars
+            || training_bars > bars.len()
+            || max_drawdown_bps > 10_000
+        {
+            return Err(qx_core::QxError::BusinessViolation(
+                "Bar 回测早停边界或最大回撤预算非法".into(),
+            ));
+        }
+        self.run_controlled(
+            bars,
+            strategy,
+            is_cancelled,
+            Some((min_bars, training_bars, max_drawdown_bps)),
+        )
+    }
+
+    fn run_controlled<F>(
+        self,
+        bars: &[Bar],
+        strategy: &mut dyn BarStrategy,
+        mut is_cancelled: F,
+        drawdown_pruning: Option<(usize, usize, u32)>,
+    ) -> Result<(BacktestRunStatus, Option<BacktestReport>), qx_core::QxError>
     where
         F: FnMut() -> bool,
     {
@@ -347,8 +412,12 @@ impl BacktestEngine {
         let [mut equity, mut benchmark_equity, mut positions] =
             std::array::from_fn(|_| Vec::with_capacity(bars.len()));
         let mut marks = BTreeMap::from([(instrument.clone(), Price::from_raw(0))]);
-        let mut peak_equity = initial_cash.raw();
+        // Drawdown is measured against the first published equity point, matching the report
+        // curve and experiment training-window metrics. The unobserved cash state before the
+        // first Bar is not an extra curve sample.
+        let mut peak_equity = None::<i128>;
         let mut max_drawdown_raw = 0_i128;
+        let mut max_drawdown_bps = 0_u32;
         let mut next_id = 1_u64;
         validate_virtual_events(&virtual_trading)?;
         if let Some(rules) = virtual_trading.ashare_rules.as_ref() {
@@ -383,11 +452,34 @@ impl BacktestEngine {
             .entry(deposit_id)
             .cloned()
             .ok_or_else(|| qx_core::QxError::Invariant("找不到初始入金 entry".into()))?;
+        let start_ts = bars.first().map(|bar| bar.ts).unwrap_or(0);
+        let has_pre_decision_start_event = virtual_trading
+            .funding
+            .iter()
+            .any(|event| event.ts == start_ts)
+            || virtual_trading
+                .interest
+                .iter()
+                .any(|event| event.ts == start_ts)
+            || virtual_trading
+                .delivery
+                .iter()
+                .any(|event| event.ts == start_ts)
+            || ashare_action_schedule
+                .as_ref()
+                .is_some_and(|schedule| schedule.has_events_at(start_ts));
+        let initial_state_priority = if has_pre_decision_start_event {
+            Priority::TIMER
+        } else {
+            // Keep the legacy event identity unchanged when there is no earlier same-timestamp
+            // market/funding fact to order ahead of the initial account state.
+            Priority::APPLY
+        };
         let deposit_seq = log.alloc_seq();
         log.append(Event::new(
             deposit_seq,
             deposit_entry.ts,
-            Priority::APPLY,
+            initial_state_priority,
             EventKind::LedgerApplied {
                 entry: deposit_entry,
             },
@@ -407,7 +499,7 @@ impl BacktestEngine {
             log.append(Event::new(
                 collateral_seq,
                 collateral_entry.ts,
-                Priority::APPLY,
+                initial_state_priority,
                 EventKind::LedgerApplied {
                     entry: collateral_entry,
                 },
@@ -416,7 +508,7 @@ impl BacktestEngine {
 
         for (i, bar) in bars.iter().enumerate() {
             if is_cancelled() {
-                return Ok(None);
+                return Ok((BacktestRunStatus::Cancelled, None));
             }
             if let Some(rules) = ashare_rules {
                 ashare_state.prepare(bar.ts);
@@ -531,6 +623,12 @@ impl BacktestEngine {
                         bar.ts,
                         position,
                         available_margin_raw,
+                    )?;
+                    append_strategy_decision_facts(
+                        &mut log,
+                        bar.ts,
+                        &account_id,
+                        strategy.drain_decision_facts(),
                     )?;
                 }
                 let accepted_orders = order_admission::admit_orders(OrderAdmissionInput {
@@ -720,6 +818,7 @@ impl BacktestEngine {
                                 bar.ts,
                                 Some(virtual_trading.liquidation_fee_bp),
                                 Some(position_side),
+                                Priority::APPLY,
                             )?;
                         }
                     } else {
@@ -730,6 +829,7 @@ impl BacktestEngine {
                             bar.ts,
                             Some(virtual_trading.liquidation_fee_bp),
                             None,
+                            Priority::APPLY,
                         )?;
                     }
                     marked_equity = equity_for(
@@ -743,11 +843,36 @@ impl BacktestEngine {
                     )?;
                 }
             }
-            peak_equity = peak_equity.max(marked_equity);
-            max_drawdown_raw = max_drawdown_raw.max(peak_equity.saturating_sub(marked_equity));
+            let current_peak = peak_equity.map_or(marked_equity, |peak| peak.max(marked_equity));
+            peak_equity = Some(current_peak);
+            let drawdown_raw = current_peak.saturating_sub(marked_equity);
+            max_drawdown_raw = max_drawdown_raw.max(drawdown_raw);
+            if current_peak > 0 {
+                let drawdown_bps = drawdown_raw
+                    .saturating_mul(10_000)
+                    .checked_div(current_peak)
+                    .unwrap_or(0)
+                    .clamp(0, 10_000) as u32;
+                max_drawdown_bps = max_drawdown_bps.max(drawdown_bps);
+            }
             equity.push(marked_equity);
             benchmark_equity.push(initial_cash.raw());
             positions.push(ledger.position_for(&account_id, &instrument).quantity.raw());
+            if let Some((min_bars, training_bars, drawdown_limit_bps)) = drawdown_pruning {
+                let processed_bars = i + 1;
+                if processed_bars >= min_bars
+                    && processed_bars <= training_bars
+                    && max_drawdown_bps > drawdown_limit_bps
+                {
+                    return Ok((
+                        BacktestRunStatus::Pruned {
+                            processed_bars,
+                            max_drawdown_bps,
+                        },
+                        None,
+                    ));
+                }
+            }
         }
         log.validate()?;
         // 费用与换手按成交事实汇总；虚拟事件成交不经过撮合循环，循环累加会让统计与账本不符。
@@ -774,15 +899,6 @@ impl BacktestEngine {
                 .checked_div(initial_cash.raw())
                 .unwrap_or(0)
                 .clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
-        } else {
-            0
-        };
-        let max_drawdown_bps = if peak_equity > 0 {
-            max_drawdown_raw
-                .saturating_mul(10_000)
-                .checked_div(peak_equity)
-                .unwrap_or(0)
-                .clamp(0, 10_000) as u32
         } else {
             0
         };
@@ -822,7 +938,7 @@ impl BacktestEngine {
         };
         // 事实必须能重新驱动账户：就地改了账簿而没有对应事实事件，报告在这里就出不去（V11 Q62）。
         ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
-        Ok(Some(report))
+        Ok((BacktestRunStatus::Completed, Some(report)))
     }
 }
 
@@ -857,11 +973,21 @@ fn equity_for(
     Ok(ledger.valuate(&context)?.equity.raw())
 }
 
-fn append_ledger_entry(
+pub(crate) fn append_pre_decision_ledger_entry(
     log: &mut EventLog,
     ledger: &Ledger,
     entry_id: u64,
     ts: u64,
+) -> Result<(), qx_core::QxError> {
+    append_ledger_entry_at(log, ledger, entry_id, ts, Priority::FEEDBACK)
+}
+
+fn append_ledger_entry_at(
+    log: &mut EventLog,
+    ledger: &Ledger,
+    entry_id: u64,
+    ts: u64,
+    priority: u8,
 ) -> Result<(), qx_core::QxError> {
     let entry = ledger
         .entry(entry_id)
@@ -871,7 +997,7 @@ fn append_ledger_entry(
     log.append(Event::new(
         seq,
         ts,
-        Priority::APPLY,
+        priority,
         EventKind::LedgerApplied { entry },
     ));
     Ok(())
@@ -905,16 +1031,17 @@ fn append_virtual_fill(
     ledger: &Ledger,
     fill: &Fill,
     entry_ids: &[u64],
+    priority: u8,
 ) -> Result<(), qx_core::QxError> {
     let fill_seq = log.alloc_seq();
     log.append(Event::new(
         fill_seq,
         fill.ts,
-        Priority::APPLY,
+        priority,
         EventKind::Filled { fill: fill.clone() },
     ));
     for entry_id in entry_ids {
-        append_ledger_entry(log, ledger, *entry_id, fill.ts)?;
+        append_ledger_entry_at(log, ledger, *entry_id, fill.ts, priority)?;
     }
     Ok(())
 }
@@ -963,6 +1090,7 @@ fn close_virtual_position(
     ts: u64,
     liquidation_fee_bp: Option<i64>,
     position_side: Option<qx_core::PositionSide>,
+    event_priority: u8,
 ) -> Result<(), qx_core::QxError> {
     if position == 0 {
         return Ok(());
@@ -1007,7 +1135,7 @@ fn close_virtual_position(
     };
     let terms = qx_core::FillTerms::resolve(state.spec, state.multiplier);
     let entry_ids = qx_core::apply_ledger_fill(state.ledger, &order, state.currency, &fill, terms)?;
-    append_virtual_fill(state.log, state.ledger, &fill, &entry_ids)?;
+    append_virtual_fill(state.log, state.ledger, &fill, &entry_ids, event_priority)?;
     state.fills.push(fill);
     if let Some(fee_bp) = liquidation_fee_bp {
         let notional = notional_for(state.spec, qty, checked_abs(price.raw())?, state.multiplier)?;
@@ -1019,7 +1147,7 @@ fn close_virtual_position(
                 Money::from_raw(-penalty),
                 ts,
             )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, ts)?;
+            append_ledger_entry_at(state.log, state.ledger, entry_id, ts, event_priority)?;
         }
     }
     Ok(())
@@ -1042,6 +1170,41 @@ fn append_rejection(log: &mut EventLog, ts: u64, client_order_id: u64, reason: &
             reason: reason.into(),
         },
     ));
+}
+
+// Keep this wire-event constructor explicit for the event-kind producer coverage contract.
+#[allow(clippy::redundant_field_names)]
+pub(crate) fn append_strategy_decision_facts(
+    log: &mut EventLog,
+    ts: u64,
+    account_id: &str,
+    decisions: Vec<qx_core::StrategyDecisionFact>,
+) -> Result<(), qx_core::QxError> {
+    for decision in decisions {
+        let mut metadata = EventMetadata::default();
+        metadata.source_id.clone_from(&decision.strategy_id);
+        metadata.source_kind = "strategy".into();
+        metadata.rule_version = format!("strategy-api-v{}", decision.schema_version);
+        metadata.context = EventContext {
+            account_id: account_id.into(),
+            strategy_id: decision.strategy_id.clone(),
+            signal_id: decision.signal_id.to_string(),
+            ..EventContext::default()
+        };
+        let request_id = decision.request_id.clone();
+        let seq = log.alloc_seq();
+        log.append_checked(
+            Event::new(
+                seq,
+                ts,
+                Priority::COMMAND,
+                EventKind::StrategyDecision { decision: decision },
+            )
+            .correlated(request_id)
+            .with_metadata(metadata),
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

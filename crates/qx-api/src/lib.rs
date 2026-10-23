@@ -817,6 +817,9 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
         EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
         EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
+        EventKind::StrategyDecision { .. } | EventKind::OrderRiskDecision { .. } => {
+            Some((event.metadata.context.account_id.as_str(), None))
+        }
         EventKind::MarketQuote { .. }
         | EventKind::FundingRateSnapshot { .. }
         | EventKind::Submit { .. }
@@ -839,6 +842,32 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
                 event.seq
             ));
         }
+    }
+    let event_venue = match &event.kind {
+        EventKind::OrderRiskDecision { decision } => Some(decision.instrument.venue.to_string()),
+        EventKind::StrategyDecision { decision } => {
+            let mut venues = decision
+                .intents
+                .iter()
+                .map(|intent| intent.instrument.venue.to_string());
+            venues
+                .next()
+                .filter(|first| venues.all(|venue| venue == *first))
+        }
+        _ => None,
+    };
+    if event_venue
+        .as_deref()
+        .is_some_and(|venue_id| !venue_id.eq_ignore_ascii_case(&key.venue_id))
+    {
+        return Err(format!(
+            "事件身份与 API 投影 Venue 不匹配: expected={}/{} actual={}/{} seq={}",
+            key.account_id,
+            key.venue_id,
+            event.metadata.context.account_id,
+            event_venue.as_deref().unwrap_or("unknown"),
+            event.seq
+        ));
     }
     Ok(())
 }
@@ -1564,6 +1593,7 @@ qx_control_retired_commands_total {}\n\
 qx_control_retired_audit_records_total {}\n",
                     retirement.retired_commands, retirement.retired_audit_records
                 ));
+                body.push_str(&self.app_runs.watcher_metrics_prometheus());
                 if let Some(provider) = &self.worker_metrics_provider {
                     body.push_str(&provider());
                 }
@@ -1749,6 +1779,9 @@ qx_control_retired_audit_records_total {}\n",
                 app::multi_market_depth_experiment(body, &self.app_paths)
             }
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
+            ("POST", "/app/multi-account-joint-backtest") => {
+                app_surface::multi_account_joint(body, &self.app_paths)
+            }
             ("POST", "/app/multi-account-depth-backtest") => app::depth_batch(body, app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             ("POST", "/app/run-multi-market-experiment") => app::multi_market_grid(body, app_paths),
@@ -2145,6 +2178,17 @@ fn event_venue_id(event: &Event) -> String {
             .as_ref()
             .map(|instrument| instrument.venue.to_string())
             .unwrap_or_default(),
+        EventKind::StrategyDecision { decision } => {
+            let mut venues = decision
+                .intents
+                .iter()
+                .map(|intent| intent.instrument.venue.to_string());
+            venues
+                .next()
+                .filter(|first| venues.all(|venue| venue == *first))
+                .unwrap_or_default()
+        }
+        EventKind::OrderRiskDecision { decision } => decision.instrument.venue.to_string(),
         _ => event.metadata.context.account_id.clone(),
     }
 }

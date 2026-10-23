@@ -1,17 +1,19 @@
 //! `RunBacktest` 用例（T2-2，方案 §5 阶段 2、§15.3-A）。
 //!
 //! 先校验 spec 与输入，再用具名模型装配唯一的 `BacktestEngine`；运行后校验 replay hash，
-//! 冲突检查通过后写四份产物。数据不足返回 `FidelityInsufficient`，无效或缺失输入不落产物。
+//! 冲突检查通过后写四份核心产物和重放校验事件流 sidecar。数据不足返回 `FidelityInsufficient`，无效或缺失输入不落产物。
 //!
 //! ## 为什么冲突检查排在写之前
 //!
 //! 同一 `run_id` 仅当 `config_hash` 与 `data_fingerprint` 都相同才允许幂等重跑；否则
 //! 返回 `Conflict`，避免两个不同运行共用一个身份。
 use crate::cases::artifacts::{
-    artifact_paths, ensure_output_dir, equity_csv, existing_manifest, fills_csv, read_text,
-    summary_json, write_text, ProtectiveExitSummary, RunSummary, DATA_TIER, SUMMARY_SCHEMA_VERSION,
+    artifact_paths, ensure_output_dir, equity_csv, event_trace_jsonl, existing_manifest, fills_csv,
+    read_text, summary_json, write_text, ProtectiveExitSummary, RunReplaySummary, RunSummary,
+    DATA_TIER, SUMMARY_SCHEMA_VERSION,
 };
 use crate::cases::attach;
+use crate::cases::experiment_search::{DrawdownPruningWindow, SearchBacktestAttempt};
 use crate::cases::guard::guard_panics;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
@@ -24,6 +26,7 @@ use qx_xingban::{
     ProtectiveExitPolicy, ProtectiveExitReason,
 };
 use std::collections::BTreeMap;
+use std::path::Path;
 
 mod bar_strategy;
 mod cancellation;
@@ -33,7 +36,7 @@ pub(in crate::cases) mod strategy_slot;
 use crate::cases::risk_gate::backtest_risk_gate;
 pub(in crate::cases) use bar_strategy::run_backtest_inner_with_bar_strategy;
 pub(super) use bar_strategy::BacktestRunDetails;
-use cancellation::run_engine;
+use cancellation::run_candidate_engine;
 pub(in crate::cases) use custom_strategy::run_backtest_inner_with_experiment_strategy;
 pub use custom_strategy::StrategyArtifactIdentity;
 use custom_strategy::{strategy_slots_config_hash, InjectedStrategy};
@@ -110,7 +113,8 @@ fn run_backtest_inner_unchecked_with_details(
     cancellation: Option<&CancellationToken>,
     injected: Vec<InjectedStrategy>,
     bar_strategy: Option<Box<dyn BarStrategy>>,
-) -> Result<Option<BacktestRunDetails>, AppError> {
+    drawdown_pruning: Option<DrawdownPruningWindow>,
+) -> Result<SearchBacktestAttempt<BacktestRunDetails>, AppError> {
     spec.validate()?;
     let identities = injected
         .iter()
@@ -170,15 +174,31 @@ fn run_backtest_inner_unchecked_with_details(
             ),
         ));
     }
-    let data_fingerprint = format!(
-        "barframe:{}",
-        qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BarFrame 内容指纹计算失败：{error}"),
-            )
-        })?
-    );
+    let frame_path = Path::new(&spec.bars_path);
+    let (_, input_manifest) = crate::backtest_input_identity::barframe_dataset_identity(
+        frame_path, &frame,
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame Provider 输入身份复核失败：{error}"),
+        )
+    })?;
+    let content_fingerprint = qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 规范内容指纹计算失败：{error}"),
+        )
+    })?;
+    if content_fingerprint != input_manifest.fingerprint {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            "BarFrame Provider 清单指纹与规范内容指纹不一致",
+        ));
+    }
+    let input_provenance =
+        crate::backtest_input_identity::barframe_input_provenance(frame_path, &input_manifest);
+    let data_fingerprint = format!("barframe:{}", input_manifest.fingerprint);
     let risk = backtest_risk_gate(spec);
     let risk_rule_set_version = risk.rule_set().version().to_string();
     let execution = bind_execution(spec)?;
@@ -244,8 +264,14 @@ fn run_backtest_inner_unchecked_with_details(
             .map_err(|error| AppError::from_qx_error(&error))?,
         None => BacktestEngine::new(config),
     };
-    let report = if let Some(mut strategy) = bar_strategy {
-        run_engine(engine, &bars, strategy.as_mut(), cancellation)?
+    let (report, pruning) = if let Some(mut strategy) = bar_strategy {
+        run_candidate_engine(
+            engine,
+            &bars,
+            strategy.as_mut(),
+            cancellation,
+            drawdown_pruning,
+        )?
     } else if spec.portfolio.is_none() && injected.is_empty() {
         let mut strategy = build_single_native_strategy(
             &spec.strategy,
@@ -260,7 +286,7 @@ fn run_backtest_inner_unchecked_with_details(
                 strategy_version: injected_version.as_deref(),
             },
         )?;
-        run_engine(engine, &bars, &mut strategy, cancellation)?
+        run_candidate_engine(engine, &bars, &mut strategy, cancellation, drawdown_pruning)?
     } else {
         let mut strategy_slots = vec![build_strategy_slot(
             &spec.strategy,
@@ -300,10 +326,13 @@ fn run_backtest_inner_unchecked_with_details(
         }
         let mut strategy = PortfolioBarStrategy::new(strategy_slots)
             .map_err(|error| AppError::from_qx_error(&error))?;
-        run_engine(engine, &bars, &mut strategy, cancellation)?
+        run_candidate_engine(engine, &bars, &mut strategy, cancellation, drawdown_pruning)?
     };
+    if let Some(pruning) = pruning {
+        return Ok(SearchBacktestAttempt::Pruned(pruning));
+    }
     let Some(report) = report else {
-        return Ok(None);
+        return Ok(SearchBacktestAttempt::Completed(None));
     };
 
     // 重放自检：与 CLI 回测同一道闸——跑不过重放的那一轮没有资格往产物里写一个"看起来校验过"的哈希。
@@ -325,12 +354,13 @@ fn run_backtest_inner_unchecked_with_details(
         ));
     }
     let timestamps: Vec<u64> = bars.iter().map(|bar| bar.ts).collect();
-    if timestamps.len() != report.equity.len() {
+    if timestamps.len() != report.equity.len() || timestamps.len() != report.positions.len() {
         return Err(AppError::new(
             AppErrorCategory::InternalInvariant,
             format!(
-                "权益曲线点数 {} 与样本根数 {} 不一致——权益曲线必须与样本逐根对应",
+                "权益/持仓曲线点数 ({}/{}) 与样本根数 {} 不一致——研究曲线必须逐根对齐",
                 report.equity.len(),
+                report.positions.len(),
                 timestamps.len()
             ),
         ));
@@ -363,6 +393,19 @@ fn run_backtest_inner_unchecked_with_details(
         )
     })?;
     ensure_output_dir(spec)?;
+    let run_record_path = artifacts
+        .summary
+        .strip_suffix(".summary.json")
+        .map(|stem| format!("{stem}.record.json"))
+        .ok_or_else(|| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!(
+                    "回测摘要文件名无效，不能登记 RunRecord: {}",
+                    artifacts.summary
+                ),
+            )
+        })?;
     let summary = RunSummary {
         schema_version: SUMMARY_SCHEMA_VERSION,
         run_id: spec.run_id.clone(),
@@ -376,13 +419,43 @@ fn run_backtest_inner_unchecked_with_details(
         equity_points: report.equity.len() as u64,
         result_hash: format!("{:016x}", report.result_hash()),
         data_fingerprint: data_fingerprint.clone(),
+        input: Some(input_provenance.to_json()),
+        input_data_hash: Some(manifest.input_event_hash.clone()),
+        run_manifest: Some(artifacts.run_manifest.clone()),
+        run_record: Some(run_record_path.clone()),
         config_hash: config_hash.clone(),
+        matching_kernel: Some(crate::cases::kernels::BAR_MATCHING_KERNEL.to_string()),
+        account: Some(serde_json::json!({
+            "initial_cash_raw": spec.initial_cash_raw.to_string(),
+            "source": "backtest-spec",
+        })),
+        risk_rules: Some(serde_json::json!({
+            "rule_set_version": risk_rule_set_version.clone(),
+            "source": if spec.risk_rules.is_some() { "runtime-config" } else { "conservative-default" },
+        })),
+        execution_costs: Some(serde_json::json!({
+            "source": if spec.ashare_rules.is_some() {
+                "ashare-rules"
+            } else if spec.execution_cost_rules.is_some() {
+                "execution-cost-rules"
+            } else if spec.fee_schedule.is_some() {
+                "fee-schedule"
+            } else {
+                "built-in-default"
+            },
+        })),
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         final_equity_raw: report.final_equity(),
         fees_raw: report.fees_raw,
         turnover_raw: report.turnover_raw,
         replay_events: replay.events as u64,
+        replay: Some(RunReplaySummary {
+            log_digest: format!("{:016x}", replay.log_digest),
+            events: replay.events as u64,
+            ledger_entries: replay.ledger_entries as u64,
+            run_ledger_entries: report.ledger.entries().len() as u64,
+        }),
         replay_ledger_entries: replay.ledger_entries as u64,
         ledger_entries: report.ledger.entries().len() as u64,
         clock_start: report.clock_start,
@@ -413,9 +486,19 @@ fn run_backtest_inner_unchecked_with_details(
             .collect(),
     };
     write_text(&artifacts.summary, &summary_json(&summary)?)?;
-    write_text(&artifacts.equity, &equity_csv(&timestamps, &report.equity))?;
+    write_text(
+        &artifacts.equity,
+        &equity_csv(&timestamps, &report.equity, &report.positions),
+    )?;
     write_text(&artifacts.fills, &fills_csv(&report.fills))?;
-    // 最后发布 manifest，避免 verify 把首次写入中途失败的半套产物当成已完成运行。
+    write_text(
+        artifacts
+            .event_trace
+            .as_deref()
+            .expect("Bar backtest trace path"),
+        &event_trace_jsonl(report.event_log.events())?,
+    )?;
+    // 核心文件先写完，再发布 manifest 和 RunRecord；RunRecord 是这套身份文件的完成标记。
     write_text(
         &artifacts.run_manifest,
         &manifest.to_json().map_err(|error| {
@@ -425,6 +508,24 @@ fn run_backtest_inner_unchecked_with_details(
             )
         })?,
     )?;
+    let persisted_record_path = crate::artifact_store::persist_verified_run_record(
+        Path::new(&artifacts.run_manifest),
+        Path::new(&artifacts.summary),
+        Path::new(&artifacts.equity),
+        Path::new(&artifacts.fills),
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("RunRecord 落盘失败: {error}"),
+        )
+    })?;
+    if persisted_record_path.to_string_lossy() != run_record_path {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            "RunRecord 实际落点与 summary 声明路径不一致",
+        ));
+    }
 
     let outcome = BacktestOutcome {
         run_id: spec.run_id.clone(),
@@ -438,11 +539,35 @@ fn run_backtest_inner_unchecked_with_details(
         artifacts,
         account_id: spec.account_id.clone(),
     };
-    Ok(Some(BacktestRunDetails {
+    Ok(SearchBacktestAttempt::Completed(Some(BacktestRunDetails {
         outcome,
         report,
         risk_rule_set_version,
-    }))
+    })))
+}
+
+pub(super) fn run_backtest_inner_for_experiment(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    injected: Vec<InjectedStrategy>,
+    pruning: Option<DrawdownPruningWindow>,
+) -> Result<SearchBacktestAttempt<BacktestOutcome>, AppError> {
+    Ok(
+        match run_backtest_inner_unchecked_with_details(
+            spec,
+            context,
+            cancellation,
+            injected,
+            None,
+            pruning,
+        )? {
+            SearchBacktestAttempt::Completed(details) => {
+                SearchBacktestAttempt::Completed(details.map(|details| details.outcome))
+            }
+            SearchBacktestAttempt::Pruned(pruning) => SearchBacktestAttempt::Pruned(pruning),
+        },
+    )
 }
 
 /// 规格摘要：`BacktestSpec` 的规范化 JSON 过一遍 FNV-1a。

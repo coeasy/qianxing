@@ -70,7 +70,7 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
         .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
     let payload = serde_json::to_string(frame)
         .map_err(|error| format!("编码 CCXT BarFrame 失败: {error}"))?;
-    let normalized = qx_datastruct::BarFrame::from_json(&payload)
+    let mut normalized = qx_datastruct::BarFrame::from_json(&payload)
         .map_err(|error| format!("CCXT BarFrame 校验失败: {error:?}"))?;
     if normalized.instrument.to_string() != instrument {
         return Err(format!(
@@ -96,10 +96,17 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
             "CCXT OHLCV timeframe 与返回 Bar 间隔不符: timeframe={timeframe} interval_ms={interval_ms}"
         ));
     }
-    let query_source = format!(
-        "{};requested_range={start_ms}..{end_ms}",
-        normalized.source.0
-    );
+    let provider_source = normalized
+        .source
+        .0
+        .strip_prefix("ccxt:")
+        .unwrap_or(&normalized.source.0);
+    let query_source = format!("ccxt:{provider_source};requested_range={start_ms}..{end_ms}");
+    // The frozen BarFrame is later reopened by the shared identity verifier. Persist the
+    // provider and requested window in its own source field as well as the quality manifest,
+    // so its registry version remains content-addressed even when a worker returns a fixture
+    // or adapter-specific source label.
+    normalized.source = qx_guanxing::DataSourceId::new(query_source.clone());
     // 复用 BarFrame 唯一的数据集身份版本；供应源、交易对、周期和请求窗口写入清单 lineage，
     // 精确内容 hash 与 canonical fingerprint 则区分交易所后续修订的历史数据。
     let snapshot = qx_app::ccxt_backtest_snapshot::persist_ccxt_backtest_snapshot(

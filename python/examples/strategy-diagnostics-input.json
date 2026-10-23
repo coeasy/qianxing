@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "request_id": "strategy-diagnostics-example",
+  "strategy_id": "momentum-example",
+  "strategy_version": "1.0.0",
+  "data_fingerprint": "example-bars-v1",
+  "as_of": 6,
+  "instrument": "TEST.SIM",
+  "positions": {},
+  "cash": {"USD": 1000000000000},
+  "available_margin_raw": null,
+  "risk_state": "ok",
+  "research_targets": {},
+  "bars": {
+    "source": "synthetic-diagnostics-example",
+    "ts": [1, 2, 3, 4, 5],
+    "open_raw": [100, 101, 99, 103, 102],
+    "high_raw": [102, 103, 104, 105, 106],
+    "low_raw": [98, 99, 98, 100, 100],
+    "close_raw": [100, 102, 99, 104, 106],
+    "volume_raw": [1000, 1100, 1200, 1300, 1400]
+  }
+}

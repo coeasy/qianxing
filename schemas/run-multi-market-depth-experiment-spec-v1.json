@@ -167,6 +167,10 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -1090,6 +1094,10 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -1289,7 +1297,15 @@
             "period",
             "threshold_bps",
             "quantity_raw",
-            "target_kelly_fraction_bps"
+            "target_notional_raw",
+            "target_available_margin_bps",
+            "target_volatility_bps",
+            "target_kelly_fraction_bps",
+            "market_making_spread_bps",
+            "market_making_quote_qty_raw",
+            "market_making_max_inventory_raw",
+            "market_making_tick_size_raw",
+            "market_making_inventory_skew_bps"
           ]
         },
         "values": {

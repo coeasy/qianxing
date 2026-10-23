@@ -72,6 +72,8 @@
 模块职责与 crate 边界见[模块地图](docs/module-map.md)。
 
 Rust、Python 与 C++ 策略入口以及动量、SMA 和均值回归示例见[多语言策略示例](docs/multi-language-strategies.md)。
+Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差诊断说明](docs/策略未来数据与预热偏差诊断.md)，命令为 `qianxing-strategy-diagnose`。
+参数实验支持固定种子的随机搜索、分类 TPE 与有限网格核密度 TPE 候选提议，入口和训练/OOS 边界见[自适应参数搜索说明](docs/自适应参数搜索.md)。
 
 ## 安装
 
@@ -90,7 +92,7 @@ Rust、Python 与 C++ 策略入口以及动量、SMA 和均值回归示例见[�
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.2.1 qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.2.2 qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -180,7 +182,8 @@ cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.pape
 三条由轻到重的读法，共同边界是"读面只读投影、写面只有控制面那一条"：
 
 1. **离线 HTML**：`qx-cli report <runtime> --html` 写一份可离线打开的 HTML 与三张独立 SVG，无外链。
-   需要对照指数时，可加 `--benchmark-bars <index-bars.json>`；基准与权益曲线必须逐时间戳精确对齐，当前使用未复权收盘价并输出每 Bar 跟踪误差/信息比率，不年化。`--benchmark-csv <path>` 导出逐 Bar 组合、基准与主动收益序列；`--xlsx <path>` 导出摘要、权益/持仓、成交、月度收益及可选基准序列工作簿。`--against <summary>` 可重复指定同输入运行做横向比较，也可与 `--benchmark-bars`、`--benchmark-calendar`、`--benchmark-csv` 一起使用，逐轮分析并按主动收益排名；横向对比不接受 `--evidence`，需分别为每轮生成运行证据包。单轮 `--evidence` 会把基准输入与分析结果登记、导出并在验签时重算。
+   需要对照指数时，可加 `--benchmark-bars <index-bars.json>`；基准与权益曲线必须逐时间戳精确对齐，当前使用未复权收盘价并输出每 Bar 跟踪误差/信息比率，不年化。`--benchmark-csv <path>` 导出逐 Bar 组合、基准与主动收益序列；`--xlsx <path>` 导出摘要、权益/持仓、成交、月度收益及可选基准序列工作簿。`--against <summary>` 可重复指定同输入运行做横向比较，也可与 `--benchmark-bars`、`--benchmark-calendar`、`--benchmark-csv` 一起使用，逐轮分析并按主动收益排名；HTML 比较页可按运行/策略/最低收益筛选，并按收益或回撤排序，还可叠加已校验权益 CSV 的归一化时间曲线、切换曲线并查看时间提示。每条曲线最多抽样展示 2,000 点，完整数据保留在 CSV。横向对比不接受 `--evidence`，需分别为每轮生成运行证据包。单轮 `--evidence` 会把基准输入与分析结果登记、导出并在验签时重算。
+   多账户批次结果 JSON 可直接交给 `qx-cli report <multi-account-result.json> --html`；报告逐账户核对运行产物，并提供账户、标的、状态与收益筛选。展开成交可查看时间、订单、数量/价格/费用 raw 值、strategy_id 和 fills CSV 来源。Fill 契约不含 side，因此方向明确标记为缺席。不同账户的现金、持仓、风险与收益仍保持隔离，不合并为资金池。
 2. **静态页面**：`web/console/` 是只读面板加一条写面（`POST /control/commands`）。它自己没有浏览器会话、
    CSRF token 或权限代理层，单独部署时与 API 不同源，因此不能当作生产交易控制台。
 3. **同源 BFF**：`qx-cli console` 把上面那三件静态资产与 API 代理挂在同一个监听口上，会话 cookie、

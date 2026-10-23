@@ -32,6 +32,10 @@ fn experiment(root: &std::path::Path) -> RunMultiMarketExperimentSpec {
                 priority: index as u32,
                 market_spec: None,
                 fee_schedule: None,
+                order_policy: None,
+                margin_model: None,
+                funding_bps: 0,
+                funding_events: Vec::new(),
                 strategies: vec![PortfolioStrategySpec {
                     priority: 0,
                     reserved_capital_raw: 20_000 * SCALE,

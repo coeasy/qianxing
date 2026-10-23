@@ -133,6 +133,7 @@
         <option value="appMultiLegExperiment">多腿参数实验 · /app/run-multi-leg-experiment</option>
         <option value="appMultiAccountBacktest">多账户 Bar 回测 · /app/multi-account-backtest</option>
         <option value="appMultiAccountDepthBacktest">多账户深度回测 · /app/multi-account-depth-backtest</option>
+        <option value="appMultiAccountJointBacktest">OKX/Binance/Bitget 联合账户 Bar 回测 · /app/multi-account-joint-backtest</option>
         <option value="appMultiMarketBacktest">多市场 Bar 回测 · /app/multi-market-backtest</option>
         <option value="appMultiMarketDepthBacktest">多市场深度回测 · /app/multi-market-depth-backtest</option>
         <option value="appMultiMarketExperiment">多市场 Bar 参数实验 · /app/run-multi-market-experiment</option>
@@ -149,6 +150,215 @@
         <button id="extended-research-cancel" type="button" class="ghost" disabled>取消运行</button>
       </div>
       <pre id="extended-research-output" class="result" aria-live="polite">未运行</pre>
+    </section>
+
+    <section class="card wide" id="card-research-report" hidden>
+      <h2>交互式研究结果 <span class="hint">服务端指标与排名 · 本地筛选和查看</span></h2>
+      <p class="foot" id="research-report-identity"></p>
+      <div id="research-report-metrics" class="research-metrics"></div>
+      <div class="research-controls" id="research-report-controls" hidden>
+        <label>筛选运行、策略或参数
+          <input id="research-report-filter" type="text" autocomplete="off" placeholder="输入关键词">
+        </label>
+        <label>表格排序
+          <select id="research-report-sort">
+            <option value="server">服务端顺序</option>
+            <option value="return">全样本收益</option>
+            <option value="drawdown">最大回撤</option>
+            <option value="training">训练窗分数</option>
+            <option value="robustness">训练子窗稳健分数</option>
+          </select>
+        </label>
+      </div>
+      <p id="research-report-plot-label" class="foot"></p>
+      <div id="research-report-plot" class="research-plot" role="img" aria-label="候选收益或训练分数分布"></div>
+      <p id="research-report-count" class="foot"></p>
+      <div class="tablewrap research-tablewrap"><table id="research-report-table">
+        <thead><tr><th>序号</th><th>运行 / 策略</th><th>参数</th><th>全样本收益</th><th>最大回撤</th><th>训练窗收益</th><th>训练子窗稳健分数</th><th>状态</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div id="research-report-folds" hidden>
+        <h3>逐折样本外结果</h3>
+        <div class="tablewrap"><table id="research-report-fold-table">
+          <thead><tr><th>折</th><th>训练区间</th><th>测试区间</th><th>选中候选</th><th>训练收益</th><th>训练稳健分数</th><th>测试收益</th><th>训练邻域覆盖</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+      <div id="research-report-costs" hidden>
+        <h3>执行成本压力情景</h3>
+        <p class="foot">变化量按压力情景减去基线计算；收益下降或回撤上升表示成本压力变差。训练窗与样本外分列，折数较多时展示逐折算术均值。邻域门逐个复跑半径内已搜索邻居；未搜索邻居会使门控失败，点击情景行可查看各邻居及其回测产物。</p>
+        <div class="tablewrap"><table id="research-report-cost-table">
+          <thead><tr><th>情景</th><th>选中候选</th><th>训练窗变化（收益/回撤）</th><th>样本外变化（收益/回撤）</th><th>整段收益/回撤变化</th><th>选中候选稳健门</th><th>邻域稳健门</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+      <details><summary>选中项与原始字段</summary><pre id="research-report-detail" class="result">选择表格行查看</pre></details>
+      <section id="research-artifact-drilldown" class="research-drilldown" hidden>
+        <h3>复核后的运行明细</h3>
+        <p id="research-artifact-status" class="foot" aria-live="polite"></p>
+        <div id="research-account-detail" hidden>
+          <h4>多账户批次</h4>
+          <p id="research-account-status" class="foot" aria-live="polite"></p>
+          <div class="tablewrap"><table id="research-account-table">
+            <thead><tr></tr></thead><tbody></tbody>
+          </table></div>
+          <p class="foot">选择账户行可切换到独立复核的净值、成交、事件与行情明细；各账户仍独立核算。</p>
+          <details id="research-account-events">
+            <summary>跨账户合并事件时间线</summary>
+            <p id="research-account-event-status" class="foot" aria-live="polite"></p>
+            <div class="row">
+              <button id="research-account-event-prev" type="button" class="ghost" disabled>上一页</button>
+              <span id="research-account-event-page-status" class="foot" aria-live="polite"></span>
+              <button id="research-account-event-next" type="button" class="ghost" disabled>下一页</button>
+            </div>
+            <div class="row"><label>事件标的 <select id="research-account-event-instrument"><option value="">全部标的</option></select></label><label>筛选跨账户事件 <input id="research-account-event-filter" type="search" autocomplete="off" placeholder="账户、事件、时间、订单"></label><span id="research-account-event-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-account-event-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <div id="research-artifact-metrics" class="research-metrics" aria-label="已复核回测指标"></div>
+        <div id="research-diagnostic-import" class="research-diagnostic-import">
+          <label>附加本地策略偏差诊断 JSON
+            <input id="research-diagnostic-file" type="file" accept="application/json,.json">
+          </label>
+          <button id="research-diagnostic-attach" type="button">校验身份并加入当前报告</button>
+          <p class="foot">多市场 Bar 与深度报告可导入按标的组织的诊断数组；深度诊断还须声明 input_kind 与 input_events，并与 L1/L2 策略输入和完整快照数相符。多账户批次可导入按账户身份组织的 JSON 数组。服务端会复核策略槽、标的、输入类型、数量和数据指纹，不执行策略代码或重算诊断。</p>
+        </div>
+        <div id="research-diagnostic-result" hidden>
+          <h4>策略偏差诊断</h4>
+          <div id="research-diagnostic-select-row" class="row" hidden>
+            <label>当前诊断 <select id="research-diagnostic-select"></select></label>
+          </div>
+          <p id="research-diagnostic-status" class="foot"></p>
+          <div class="tablewrap"><table id="research-diagnostic-table"><thead><tr><th>检查</th><th>结果</th></tr></thead><tbody></tbody></table></div>
+          <details>
+            <summary>诊断证据明细</summary>
+            <h4>预热轨迹逐时点分歧</h4>
+            <p id="research-diagnostic-trajectory-status" class="foot" aria-live="polite"></p>
+            <label>筛选轨迹分歧 <input id="research-diagnostic-trajectory-filter" type="search" autocomplete="off" placeholder="决策时点、窗口或变化字段"></label>
+            <div class="row"><span id="research-diagnostic-trajectory-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-trajectory-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">选择一行查看该时点相对参考预热窗口发生变化的决策字段和中间态字段。</p>
+            <pre id="research-diagnostic-trajectory-detail" class="result">选择一条轨迹分歧查看详情</pre>
+            <p id="research-diagnostic-evidence-status" class="foot" aria-live="polite"></p>
+            <label>筛选诊断样本 <input id="research-diagnostic-evidence-filter" type="search" autocomplete="off" placeholder="扰动类型、预热窗口、变化字段"></label>
+            <div class="row"><span id="research-diagnostic-evidence-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-evidence-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">选择一行查看该样本的完整基线与反事实策略输出。</p>
+            <pre id="research-diagnostic-evidence-detail" class="result">选择一条诊断样本查看详情</pre>
+            <h4>PIT 事实版本与可见时间</h4>
+            <p id="research-diagnostic-pit-status" class="foot" aria-live="polite"></p>
+            <label>筛选 PIT 事实 <input id="research-diagnostic-pit-filter" type="search" autocomplete="off" placeholder="事实、实体、字段、决策或发布时间"></label>
+            <div class="row"><span id="research-diagnostic-pit-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-pit-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">每行展示某个历史决策时点观察到的事实版本；发布时间未知会保留为未知，不视为安全。</p>
+            <pre id="research-diagnostic-pit-detail" class="result">选择一条 PIT 样本查看账本版本</pre>
+          </details>
+        </div>
+        <h4>净值变化曲线</h4>
+        <div class="research-compare-actions">
+          <button id="research-add-equity-curve" type="button">加入曲线对比</button>
+          <button id="research-clear-equity-curves" type="button" class="ghost">清空对比</button>
+          <label class="inline-check"><input id="research-cross-input-comparison" type="checkbox"> 跨标的/输入归一化比较（按样本进度）</label>
+          <label class="inline-check"><input id="research-utc-time-alignment" type="checkbox"> 按重叠 UTC 时间区间对齐</label>
+          <span id="research-equity-comparison-status" class="foot" aria-live="polite"></span>
+        </div>
+        <div id="research-equity-legend" class="research-equity-legend" aria-label="净值曲线图例"></div>
+        <div id="research-equity-plot" class="research-plot" role="img" aria-label="经复核净值变化曲线"></div>
+        <details id="research-unified-compare">
+          <summary>跨拓扑研究对照</summary>
+          <p class="foot">把已复核的单标的、深度、多账户选定账户、多市场或多腿结果加入同一对照表。匹配标记以首条为基准；净值曲线可按各自样本进度或共同 UTC 时间区间归一化，UTC 模式在新样本到来前保持最近观测权益。手续费和期末权益保留 raw 值，不能跨结算币种直接比较；曲线对比也不做 FX 换算或组合净值合并。</p>
+          <div class="research-compare-actions">
+            <button id="research-add-unified-report" type="button">加入当前复核结果</button>
+            <button id="research-export-unified-reports" type="button" class="ghost">导出当前对照 CSV</button>
+            <button id="research-clear-unified-reports" type="button" class="ghost">清空对照表</button>
+            <label>筛选
+              <select id="research-unified-filter">
+                <option value="all">全部结果</option>
+                <option value="same_input_range">相同输入与样本区间</option>
+                <option value="same_execution">相同执行假设</option>
+                <option value="same_input_range_execution">输入、区间与执行假设都相同</option>
+                <option value="cross_topology">不同回测拓扑</option>
+              </select>
+            </label>
+            <span id="research-unified-status" class="foot" aria-live="polite"></span>
+          </div>
+          <div class="tablewrap"><table id="research-unified-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <details id="research-unified-events">
+            <summary>跨报告事件时间线</summary>
+              <p class="foot">按报告分别请求并重放校验事件页，再按时间、优先级、报告 ID、账户 ID 和本地序号合并。仅显示所有事件源游标都能证明全局顺序的前缀；缺少事件轨迹的报告会阻止合并时间线显示。可逐批浏览，或显式加载剩余事件（浏览器最多缓存 50,000 条）；支持按报告、拓扑、账户、标的和事件类型筛选、全文搜索、分页，并导出当前筛选的已复核事件 CSV。达到上限后，清空对照并选择较小报告集继续。各报告序号彼此独立，Bar 因果上下文仅在原报告范围内有效。</p>
+            <div class="row">
+              <button id="research-unified-events-load" type="button">加载首批事件</button>
+              <button id="research-unified-events-all" type="button" class="ghost">加载全部事件（最多 50,000 条）</button>
+              <button id="research-unified-events-next" type="button" class="ghost" disabled>继续加载下一批</button>
+              <label>筛选 <input id="research-unified-events-filter" type="search" autocomplete="off" placeholder="报告、标的、策略、事件、订单"></label>
+              <button id="research-unified-events-export" type="button" class="ghost">导出已复核事件 CSV</button>
+              <span id="research-unified-events-status" class="foot" aria-live="polite"></span>
+            </div>
+            <div class="row" aria-label="事件时间线筛选">
+              <label>报告 <select id="research-unified-events-report"><option value="">全部</option></select></label>
+              <label>拓扑 <select id="research-unified-events-topology"><option value="">全部</option></select></label>
+              <label>账户 <select id="research-unified-events-account"><option value="">全部</option></select></label>
+              <label>标的 <select id="research-unified-events-instrument"><option value="">全部</option></select></label>
+              <label>事件类型 <select id="research-unified-events-kind"><option value="">全部</option></select></label>
+            </div>
+            <div class="row">
+              <button id="research-unified-events-page-prev" type="button" class="ghost" disabled>上一页事件</button>
+              <span id="research-unified-events-page-status" class="foot" aria-live="polite"></span>
+              <button id="research-unified-events-page-next" type="button" class="ghost" disabled>下一页事件</button>
+            </div>
+            <div class="tablewrap"><table id="research-unified-events-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </details>
+        <h4 id="research-position-heading">持仓变化</h4>
+        <p id="research-position-status" class="foot" aria-live="polite"></p>
+        <div id="research-position-plot" class="research-plot" role="img" aria-label="经复核持仓变化曲线"></div>
+        <div id="research-markets-detail" hidden>
+          <h4>共享账户市场输入与成交</h4>
+          <p id="research-markets-status" class="foot" aria-live="polite"></p>
+          <div class="tablewrap"><table id="research-market-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-pnl-status" class="foot" aria-live="polite" hidden></p>
+          <div id="research-market-pnl-plot" class="research-plot" role="img" aria-label="所选标的盈亏贡献曲线"></div>
+          <div class="tablewrap"><table id="research-market-pnl-table" hidden><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-bars-status" class="foot" aria-live="polite">选择一个市场查看已核验的 Bar 采样。</p>
+          <div class="tablewrap"><table id="research-market-bar-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-depth-status" class="foot" aria-live="polite" hidden></p>
+          <details id="research-market-depth-detail" hidden>
+            <summary>已校验的盘口档位采样</summary>
+            <div class="tablewrap"><table id="research-market-depth-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <h4 id="research-bars-heading">原始行情 Bar</h4>
+        <p id="research-bars-status" class="foot" aria-live="polite"></p>
+        <details id="research-bars-detail"><summary>已校验的 Bar 采样</summary>
+          <div class="tablewrap"><table id="research-bar-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <div id="research-depth-detail" hidden>
+          <h4>原始盘口快照</h4>
+          <p id="research-depth-status" class="foot" aria-live="polite"></p>
+          <details><summary>已校验的盘口档位采样</summary>
+            <div class="tablewrap"><table id="research-depth-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <details><summary>净值采样点</summary>
+          <div class="tablewrap"><table id="research-equity-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <details><summary>成交明细</summary>
+          <div class="tablewrap"><table id="research-fill-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <details id="research-events-detail"><summary>完整事件轨迹</summary>
+          <div class="row">
+            <button id="research-event-prev" type="button" class="ghost" disabled>较早事件</button>
+            <span id="research-event-page-status" class="foot" aria-live="polite"></span>
+            <button id="research-event-next" type="button" class="ghost" disabled>较新事件</button>
+          </div>
+          <div class="tablewrap"><table id="research-event-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+          <details id="research-timeline-detail"><summary>行情与执行因果时间线</summary>
+            <p id="research-timeline-status" class="foot" aria-live="polite"></p>
+            <div class="row"><label>筛选本页事件或身份 <input id="research-timeline-filter" type="search" autocomplete="off" placeholder="事件、时间、策略、信号、订单"></label><span id="research-timeline-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-timeline-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+      </section>
     </section>
 
     <section class="card wide" id="card-control">
@@ -212,6 +422,7 @@
     <span id="last-refresh" class="muted">—</span>
   </footer>
 
+  <script src="research-comparison.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -96,6 +96,8 @@ pub trait RiskPort {
 pub trait VenuePort {
     fn venue_id(&self) -> &str;
     fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities;
+    /// Dynamic connector/reconciliation gate, checked before the gateway registers an order.
+    fn execution_readiness(&self) -> Result<(), String>;
     fn validate_submit_capabilities(&self, order: &Order) -> Result<(), String> {
         self.capabilities().validate_submit(order, self.venue_id())
     }
@@ -114,6 +116,8 @@ pub trait VenueRouterPort {
         &self,
         venue_id: &str,
     ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities>;
+
+    fn execution_readiness_for(&self, venue_id: &str) -> Result<(), String>;
 
     fn submit_order(
         &mut self,

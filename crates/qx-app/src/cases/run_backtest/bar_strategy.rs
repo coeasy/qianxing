@@ -1,4 +1,5 @@
 use super::{run_backtest_inner_unchecked_with_details, InjectedStrategy};
+use crate::cases::experiment_search::SearchBacktestAttempt;
 use crate::context::RunContext;
 use crate::error::AppError;
 use crate::run_handle::CancellationToken;
@@ -17,13 +18,20 @@ pub(in crate::cases) fn run_backtest_inner_with_bar_strategy(
     cancellation: Option<&CancellationToken>,
     strategy: Box<dyn BarStrategy>,
 ) -> Result<Option<BacktestRunDetails>, AppError> {
-    run_backtest_inner_unchecked_with_details(
+    match run_backtest_inner_unchecked_with_details(
         spec,
         context,
         cancellation,
         Vec::new(),
         Some(strategy),
-    )
+        None,
+    )? {
+        SearchBacktestAttempt::Completed(details) => Ok(details),
+        SearchBacktestAttempt::Pruned(_) => Err(AppError::new(
+            crate::error::AppErrorCategory::InternalInvariant,
+            "未配置参数搜索剪枝的 Bar 策略意外被剪枝",
+        )),
+    }
 }
 
 pub(super) fn run_backtest_inner_unchecked(
@@ -32,8 +40,18 @@ pub(super) fn run_backtest_inner_unchecked(
     cancellation: Option<&CancellationToken>,
     injected: Vec<InjectedStrategy>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
-    Ok(
-        run_backtest_inner_unchecked_with_details(spec, context, cancellation, injected, None)?
-            .map(|details| details.outcome),
-    )
+    match run_backtest_inner_unchecked_with_details(
+        spec,
+        context,
+        cancellation,
+        injected,
+        None,
+        None,
+    )? {
+        SearchBacktestAttempt::Completed(details) => Ok(details.map(|details| details.outcome)),
+        SearchBacktestAttempt::Pruned(_) => Err(AppError::new(
+            crate::error::AppErrorCategory::InternalInvariant,
+            "未配置参数搜索剪枝的 Bar 回测意外被剪枝",
+        )),
+    }
 }

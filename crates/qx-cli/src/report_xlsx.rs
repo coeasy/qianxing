@@ -23,6 +23,7 @@ pub(crate) fn write_multi_market_depth_xlsx(
     output: &Path,
     overview: Vec<Vec<String>>,
     quality: Vec<Vec<String>>,
+    strategy_diagnostics: Option<&Value>,
 ) -> Result<PathBuf, String> {
     validate_xlsx_path(output)?;
     let convert = |rows: Vec<Vec<String>>| {
@@ -36,13 +37,182 @@ pub(crate) fn write_multi_market_depth_xlsx(
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("创建 XLSX 报告目录失败 {}: {error}", parent.display()))?;
-    write_workbook(
-        output,
-        &[
-            ("Overview", convert(overview)),
-            ("DataQuality", convert(quality)),
-        ],
-    )?;
+    let mut sheets = vec![
+        ("Overview", convert(overview)),
+        ("DataQuality", convert(quality)),
+    ];
+    if let Some(diagnostics) = strategy_diagnostics {
+        sheets.extend(strategy_diagnostics_sheets(diagnostics)?);
+    }
+    write_workbook(output, &sheets)?;
+    Ok(output.to_path_buf())
+}
+
+pub(crate) fn write_multi_account_report_xlsx(
+    report: &Value,
+    output: &Path,
+) -> Result<PathBuf, String> {
+    validate_xlsx_path(output)?;
+    let accounts = report
+        .get("accounts")
+        .and_then(Value::as_array)
+        .ok_or("多账户 XLSX 报告缺少 accounts 数组")?;
+    if accounts.len() < 2 || accounts.len() > 32 {
+        return Err("多账户 XLSX 报告的账户数必须为 2..=32".into());
+    }
+    let mut overview = vec![vec![t("Field"), t("Value")]];
+    for (label, pointer) in [
+        ("Batch ID", "/batch_id"),
+        ("Settlement currency", "/settlement_currency"),
+        ("Spec fingerprint", "/spec_fingerprint"),
+        ("Account count", "/summary/accounts_total"),
+        ("Succeeded", "/summary/accounts_succeeded"),
+        ("Failed", "/summary/accounts_failed"),
+        ("Weighted return bps", "/summary/weighted_return_bps"),
+        ("Successful fills", "/summary/successful_fills"),
+        ("Complete", "/summary/complete"),
+    ] {
+        if let Some(value) = report.pointer(pointer) {
+            overview.push(vec![t(label), report_cell(value)]);
+        }
+    }
+    overview.push(vec![
+        t("Account semantics"),
+        t(report
+            .get("account_semantics")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")),
+    ]);
+
+    let mut account_rows = vec![vec![
+        t("account_id"),
+        t("status"),
+        t("instrument"),
+        t("strategy_id"),
+        t("return_bps"),
+        t("max_drawdown_bps"),
+        t("fills"),
+        t("equity_points"),
+        t("run_id"),
+        t("result_hash"),
+        t("data_fingerprint"),
+    ]];
+    let mut equity_rows = vec![vec![t("account_id"), t("timestamp_ms"), t("equity_raw")]];
+    let mut fill_rows = vec![vec![
+        t("account_id"),
+        t("timestamp_ms"),
+        t("order_id"),
+        t("qty_raw"),
+        t("price_raw"),
+        t("fee_raw"),
+        t("strategy_id"),
+        t("event_id"),
+        t("event_seq"),
+    ]];
+    let mut event_rows = vec![vec![
+        t("account_id"),
+        t("seq"),
+        t("timestamp_ms"),
+        t("priority"),
+        t("source_seq"),
+        t("kind"),
+        t("order_id"),
+        t("payload"),
+    ]];
+    let mut diagnostics = Vec::new();
+    for account in accounts {
+        let account_id = account
+            .get("account_id")
+            .and_then(Value::as_str)
+            .ok_or("多账户 XLSX 报告含缺少 account_id 的条目")?;
+        account_rows.push(vec![
+            t(account_id),
+            report_cell(&account["status"]),
+            report_cell(&account["instrument"]),
+            report_cell(&account["strategy_id"]),
+            report_cell(&account["return_bps"]),
+            report_cell(&account["max_drawdown_bps"]),
+            report_cell(&account["fills"]),
+            report_cell(&account["equity_points"]),
+            report_cell(&account["run_id"]),
+            report_cell(&account["result_hash"]),
+            report_cell(&account["data_fingerprint"]),
+        ]);
+        for point in account
+            .get("equity_series")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            equity_rows.push(vec![
+                t(account_id),
+                report_cell(&point["timestamp_ms"]),
+                report_cell(&point["equity_raw"]),
+            ]);
+        }
+        for fill in account
+            .get("fill_rows")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            fill_rows.push(vec![
+                t(account_id),
+                report_cell(&fill["timestamp_ms"]),
+                report_cell(&fill["order_id"]),
+                report_cell(&fill["qty_raw"]),
+                report_cell(&fill["price_raw"]),
+                report_cell(&fill["fee_raw"]),
+                report_cell(&fill["strategy_id"]),
+                report_cell(&fill["event_id"]),
+                report_cell(&fill["event_seq"]),
+            ]);
+        }
+        for event in account
+            .get("event_rows")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            event_rows.push(vec![
+                t(account_id),
+                report_cell(&event["seq"]),
+                report_cell(&event["timestamp_ms"]),
+                report_cell(&event["priority"]),
+                report_cell(&event["source_seq"]),
+                report_cell(&event["kind"]),
+                report_cell(&event["order_id"]),
+                report_cell(&event["payload"]),
+            ]);
+        }
+        if let Some(diagnostic) = account
+            .get("strategy_bias_diagnostics")
+            .filter(|value| value.get("identity_bound").and_then(Value::as_bool) == Some(true))
+            .and_then(|value| value.get("report"))
+        {
+            diagnostics.push(serde_json::json!({
+                "run_id": account_id,
+                "report": diagnostic,
+            }));
+        }
+    }
+    let mut sheets: Vec<Sheet> = vec![
+        ("Overview", overview),
+        ("Accounts", account_rows),
+        ("Equity", equity_rows),
+        ("Fills", fill_rows),
+        ("Events", event_rows),
+    ];
+    if !diagnostics.is_empty() {
+        sheets.extend(strategy_diagnostics_sheets(&Value::Array(diagnostics))?);
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("创建多账户 XLSX 报告目录失败 {}: {error}", parent.display()))?;
+    write_workbook(output, &sheets)?;
     Ok(output.to_path_buf())
 }
 
@@ -50,6 +220,7 @@ pub(crate) fn write_multi_market_depth_comparison_xlsx(
     output: &Path,
     overview: Vec<Vec<String>>,
     ranking: Vec<Vec<String>>,
+    diagnostic_runs: Option<&Value>,
 ) -> Result<PathBuf, String> {
     validate_xlsx_path(output)?;
     let convert = |rows: Vec<Vec<String>>| {
@@ -63,13 +234,32 @@ pub(crate) fn write_multi_market_depth_comparison_xlsx(
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("创建 XLSX 报告目录失败 {}: {error}", parent.display()))?;
-    write_workbook(
-        output,
-        &[
-            ("Overview", convert(overview)),
-            ("Ranking", convert(ranking)),
-        ],
-    )?;
+    let mut sheets = vec![
+        ("Overview", convert(overview)),
+        ("Ranking", convert(ranking)),
+    ];
+    if let Some(runs) = diagnostic_runs.and_then(Value::as_array) {
+        let mut records = Vec::new();
+        for run in runs {
+            let Some(run_id) = run.get("run_id").and_then(Value::as_str) else {
+                continue;
+            };
+            for diagnostic in run
+                .get("market_strategy_diagnostics")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let mut record = diagnostic.clone();
+                record["run_id"] = Value::String(run_id.to_owned());
+                records.push(record);
+            }
+        }
+        if !records.is_empty() {
+            sheets.extend(strategy_diagnostics_sheets(&Value::Array(records))?);
+        }
+    }
+    write_workbook(output, &sheets)?;
     Ok(output.to_path_buf())
 }
 
@@ -77,6 +267,7 @@ pub(crate) fn write_report_xlsx(
     summary_path: &Path,
     summary: &Value,
     benchmark: Option<&Value>,
+    strategy_diagnostics: Option<&Value>,
     output: &Path,
 ) -> Result<PathBuf, String> {
     if !output
@@ -150,8 +341,142 @@ pub(crate) fn write_report_xlsx(
     if let Some(attempts) = summary.get("execution_attempts").and_then(Value::as_array) {
         sheets.push(("Execution", execution::execution_attempt_rows(attempts)));
     }
+    if let Some(diagnostics) = strategy_diagnostics {
+        sheets.extend(strategy_diagnostics_sheets(diagnostics)?);
+    }
     write_workbook(output, &sheets)?;
     Ok(output.to_path_buf())
+}
+
+/// Add a compact, filterable diagnostic summary and lossless JSON evidence to a workbook.
+/// The evidence is split into UTF-16-safe chunks below Excel's 32,767-character cell limit.
+fn strategy_diagnostics_sheets(diagnostics: &Value) -> Result<Vec<Sheet>, String> {
+    const MAX_CELL_UTF16_UNITS: usize = 30_000;
+    let records: Vec<&Value> = match diagnostics {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(_) => vec![diagnostics],
+        _ => return Err("策略诊断 XLSX 输入必须是对象或对象数组".into()),
+    };
+    if records.is_empty() {
+        return Err("策略诊断 XLSX 输入不能为空".into());
+    }
+
+    let has_run_id = records
+        .iter()
+        .any(|record| record.get("run_id").and_then(Value::as_str).is_some());
+    let mut summary_header = vec![
+        t("diagnostic_id"),
+        t("instrument"),
+        t("strategy_id"),
+        t("data_fingerprint"),
+        t("input_kind"),
+        t("input_points"),
+        t("as_of"),
+        t("lookahead_status"),
+        t("startup_status"),
+        t("pit_visibility_status"),
+    ];
+    if has_run_id {
+        summary_header.insert(0, t("run_id"));
+    }
+    let mut summary_rows = vec![summary_header];
+    let mut evidence_rows = vec![vec![
+        t("diagnostic_id"),
+        t("chunk_index"),
+        t("chunk_count"),
+        t("json_utf8_fragment"),
+    ]];
+
+    for (index, record) in records.iter().enumerate() {
+        if !record.is_object() {
+            return Err(format!("策略诊断 XLSX 第 {} 项必须是对象", index + 1));
+        }
+        let detail = record
+            .get("report")
+            .filter(|value| value.is_object())
+            .unwrap_or(record);
+        let text = |key: &str| -> String {
+            record
+                .get(key)
+                .and_then(Value::as_str)
+                .or_else(|| detail.get(key).and_then(Value::as_str))
+                .unwrap_or("—")
+                .to_owned()
+        };
+        let points = record
+            .get("input_points")
+            .or_else(|| record.get("input_bars"))
+            .or_else(|| record.get("input_events"))
+            .or_else(|| detail.get("input_bars"))
+            .or_else(|| detail.get("input_events"))
+            .map(Value::to_string)
+            .unwrap_or_else(|| "—".into());
+        let as_of = record
+            .get("as_of")
+            .or_else(|| detail.get("as_of"))
+            .map(Value::to_string)
+            .unwrap_or_else(|| "—".into());
+        let status = |pointer: &str| {
+            detail
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .unwrap_or("missing")
+                .to_owned()
+        };
+        let diagnostic_id = (index + 1).to_string();
+        let mut row = vec![
+            t(&diagnostic_id),
+            t(text("instrument")),
+            t(text("strategy_id")),
+            t(text("data_fingerprint")),
+            t(text("input_kind")),
+            t(&points),
+            t(&as_of),
+            t(status("/lookahead/status")),
+            t(status("/startup/status")),
+            t(status("/data_visibility/status")),
+        ];
+        if has_run_id {
+            row.insert(0, t(text("run_id")));
+        }
+        summary_rows.push(row);
+
+        let json = serde_json::to_string(record)
+            .map_err(|error| format!("策略诊断 XLSX JSON 序列化失败: {error}"))?;
+        let fragments = split_utf16_chunks(&json, MAX_CELL_UTF16_UNITS);
+        let chunk_count = fragments.len().to_string();
+        for (chunk_index, fragment) in fragments.into_iter().enumerate() {
+            evidence_rows.push(vec![
+                t(&diagnostic_id),
+                t((chunk_index + 1).to_string()),
+                t(&chunk_count),
+                t(&fragment),
+            ]);
+        }
+    }
+    Ok(vec![
+        ("StrategyDiagnostics", summary_rows),
+        ("DiagnosticEvidence", evidence_rows),
+    ])
+}
+
+fn split_utf16_chunks(value: &str, max_units: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_units = 0;
+    for character in value.chars() {
+        let units = character.len_utf16();
+        if current_units > 0 && current_units + units > max_units {
+            chunks.push(std::mem::take(&mut current));
+            current_units = 0;
+        }
+        current.push(character);
+        current_units += units;
+    }
+    if !current.is_empty() || chunks.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 fn optional_text(value: Option<&str>) -> Cell {
@@ -166,7 +491,7 @@ fn optional_float(value: Option<f64>) -> Cell {
     value.map_or_else(|| t("—"), |value| n(value.to_string()))
 }
 
-fn validate_xlsx_path(output: &Path) -> Result<(), String> {
+pub(crate) fn validate_xlsx_path(output: &Path) -> Result<(), String> {
     if !output
         .extension()
         .and_then(|ext| ext.to_str())
@@ -318,12 +643,34 @@ fn equity_rows(equity: &[(i64, i128, Option<i128>)]) -> Vec<Vec<Cell>> {
 }
 
 fn fill_rows(fills: &[crate::report_html::FillPoint]) -> Vec<Vec<Cell>> {
-    let mut rows = vec![vec![t("timestamp"), t("quantity_raw"), t("price_raw")]];
+    let mut rows = vec![vec![
+        t("timestamp"),
+        t("order_id"),
+        t("leg"),
+        t("account_id"),
+        t("strategy_id"),
+        t("signal_id"),
+        t("intent_id"),
+        t("venue_id"),
+        t("venue_order_id"),
+        t("quantity_raw"),
+        t("price_raw"),
+        t("fee_raw"),
+    ]];
     rows.extend(fills.iter().map(|fill| {
         vec![
             n(fill.ts.to_string()),
+            n(fill.order_id.to_string()),
+            optional_text(fill.leg.as_deref()),
+            optional_text(fill.account_id.as_deref()),
+            t(fill.strategy_id.clone()),
+            optional_text(fill.signal_id.as_deref()),
+            optional_text(fill.intent_id.as_deref()),
+            optional_text(fill.venue_id.as_deref()),
+            optional_text(fill.venue_order_id.as_deref()),
             t(fill.qty_raw.to_string()),
             t(fill.price_raw.to_string()),
+            optional_text(fill.fee_raw.map(|value| value.to_string()).as_deref()),
         ]
     }));
     rows
@@ -407,4 +754,106 @@ fn t(value: impl Into<String>) -> Cell {
 }
 fn n(value: impl Into<String>) -> Cell {
     Cell::Number(value.into())
+}
+
+fn report_cell(value: &Value) -> Cell {
+    match value {
+        Value::Null => t("—"),
+        Value::Bool(value) => t(value.to_string()),
+        Value::Number(value) => n(value.to_string()),
+        Value::String(value) => t(value),
+        Value::Array(_) | Value::Object(_) => t(value.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod strategy_diagnostics_xlsx_tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_json_chunks_obey_excel_cell_limit_and_reassemble_losslessly() {
+        let payload = "行情📈诊断".repeat(12_000);
+        let chunks = split_utf16_chunks(&payload, 30_000);
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.encode_utf16().count() <= 30_000));
+        assert_eq!(chunks.concat(), payload);
+    }
+
+    #[test]
+    fn diagnostics_workbook_has_summary_and_complete_evidence_sheets() {
+        let diagnostic = serde_json::json!({
+            "instrument": "BTCUSDT.BINANCE",
+            "strategy_id": "momentum",
+            "data_fingerprint": "sha256:test",
+            "input_kind": "bar",
+            "input_bars": 10,
+            "as_of": 9,
+            "lookahead": {"status": "potential_lookahead_detected"},
+            "startup": {"status": "startup_sensitive"},
+            "data_visibility": {"status": "visibility_unknown"},
+            "details": "corporate_action.cash_dividend"
+        });
+        let sheets = strategy_diagnostics_sheets(&diagnostic).unwrap();
+        assert_eq!(sheets.len(), 2);
+        assert_eq!(sheets[0].0, "StrategyDiagnostics");
+        assert_eq!(sheets[1].0, "DiagnosticEvidence");
+        assert!(matches!(
+            &sheets[0].1[1][7],
+            Cell::Text(status) if status == "potential_lookahead_detected"
+        ));
+        let evidence = sheets[1]
+            .1
+            .iter()
+            .skip(1)
+            .filter_map(|row| match row.get(3) {
+                Some(Cell::Text(fragment)) => Some(fragment.as_str()),
+                _ => None,
+            })
+            .fold(String::new(), |mut output, fragment| {
+                output.push_str(fragment);
+                output
+            });
+        let restored: Value = serde_json::from_str(&evidence).unwrap();
+        assert_eq!(restored, diagnostic);
+    }
+
+    #[test]
+    fn comparison_diagnostic_workbook_rows_keep_the_run_id() {
+        let diagnostic = serde_json::json!({
+            "run_id": "run-alpha",
+            "instrument": "BTCUSDT.BINANCE",
+            "strategy_id": "momentum",
+            "report": {
+                "data_fingerprint": "sha256:test",
+                "input_kind": "depth_midpoint_bar",
+                "input_events": 10,
+                "as_of": 9,
+                "lookahead": {"status": "causal_event_contract"},
+                "startup": {"status": "stable_across_requested_windows"},
+                "data_visibility": {"status": "visibility_unknown"}
+            }
+        });
+        let sheets = strategy_diagnostics_sheets(&Value::Array(vec![diagnostic])).unwrap();
+        assert!(matches!(
+            &sheets[0].1[0][0],
+            Cell::Text(name) if name == "run_id"
+        ));
+        assert!(matches!(
+            &sheets[0].1[1][0],
+            Cell::Text(run_id) if run_id == "run-alpha"
+        ));
+        let evidence = sheets[1]
+            .1
+            .iter()
+            .skip(1)
+            .filter_map(|row| match row.get(3) {
+                Some(Cell::Text(fragment)) => Some(fragment.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        let restored: Value = serde_json::from_str(&evidence).unwrap();
+        assert_eq!(restored["run_id"], "run-alpha");
+    }
 }

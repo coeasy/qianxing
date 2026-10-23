@@ -540,6 +540,7 @@ class TopLevelStabilityTest(unittest.TestCase):
 
     def test_multi_account_backtest_schemas_match_rust_python_and_bound_batches(self):
         import json
+        from jsonschema import Draft202012Validator
 
         from qianxing import (
             BacktestOutcome,
@@ -550,6 +551,10 @@ class TopLevelStabilityTest(unittest.TestCase):
             MultiAccountDepthBacktestSpec,
             MultiAccountDepthRunResult,
             MultiAccountRunResult,
+            JointAccountBacktestResult,
+            JointBacktestAccount,
+            MultiAccountJointBacktestOutcome,
+            MultiAccountJointBacktestSpec,
             VerificationResult,
         )
 
@@ -582,6 +587,25 @@ class TopLevelStabilityTest(unittest.TestCase):
             self.assertEqual(entry["golden_fixtures"], [fixture_path])
             self.assertEqual(entry["producer"], "qx-app")
             self.assertEqual(entry["consumers"], ["qx-cli", "qx-api", "qx-python"])
+
+        joint_source = (root / "crates" / "qx-app" / "src" / "spec" / "multi_account_joint.rs").read_text(encoding="utf-8")
+        joint_contracts = (
+            ("JointBacktestAccount", JointBacktestAccount, "#/$defs/JointBacktestAccount"),
+            ("MultiAccountJointBacktestSpec", MultiAccountJointBacktestSpec, None),
+        )
+        joint_schema = json.loads((root / "schemas" / "multi-account-joint-backtest-spec-v1.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(joint_schema)
+        for name, python_type, nested_path in joint_contracts:
+            with self.subTest(joint_spec=name):
+                properties = joint_schema["properties"] if nested_path is None else joint_schema["$defs"]["JointBacktestAccount"]["properties"]
+                rust_field_set = rust_fields(joint_source, name)
+                self.assertEqual({field.name for field in fields(python_type)}, rust_field_set)
+                self.assertEqual(set(properties), rust_field_set)
+        self.assertEqual((joint_schema["properties"]["accounts"]["minItems"], joint_schema["properties"]["accounts"]["maxItems"]), (2, 32))
+        self.assertEqual(joint_schema["$defs"]["JointBacktestAccount"]["properties"]["markets"]["maxItems"], 32)
+        joint_entry = next(item for item in registry["entries"] if item["schema_id"] == "multi-account-joint-backtest-spec-v1")
+        self.assertEqual(joint_entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk", "cpp"])
+        self.assertIn("python/tests/test_sdk_layering.py", joint_entry["golden_fixtures"])
 
         result_contracts = (
             (
@@ -618,6 +642,16 @@ class TopLevelStabilityTest(unittest.TestCase):
                 self.assertEqual(entry["producer"], "qx-app")
                 self.assertIn("qx-sdk", entry["consumers"])
                 self.assertIn("python/tests/test_sdk_layering.py", entry["golden_fixtures"])
+
+        joint_result_schema = json.loads((root / "schemas" / "multi-account-joint-backtest-result-v1.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(joint_result_schema)
+        self.assertEqual({field.name for field in fields(MultiAccountJointBacktestOutcome)}, rust_fields(joint_source, "MultiAccountJointBacktestOutcome"))
+        self.assertEqual(set(joint_result_schema["properties"]), rust_fields(joint_source, "MultiAccountJointBacktestOutcome"))
+        self.assertEqual({field.name for field in fields(JointAccountBacktestResult)}, rust_fields(joint_source, "JointAccountBacktestResult"))
+        self.assertEqual(set(joint_result_schema["$defs"]["JointAccountBacktestResult"]["properties"]), rust_fields(joint_source, "JointAccountBacktestResult"))
+        joint_result_entry = next(item for item in registry["entries"] if item["schema_id"] == "multi-account-joint-backtest-result-v1")
+        self.assertEqual(joint_result_entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk", "cpp"])
+        self.assertIn("python/tests/test_sdk_layering.py", joint_result_entry["golden_fixtures"])
 
         backtest_source = (root / "crates" / "qx-app" / "src" / "spec" / "results.rs").read_text(encoding="utf-8")
         backtest_fields = rust_fields(backtest_source, "BacktestOutcome")
@@ -677,7 +711,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertEqual(set(depth_schema["$defs"]["DepthBacktestOutcome"]["properties"]), depth_fields)
         self.assertEqual({field.name for field in fields(DepthBacktestOutcome)}, depth_fields)
 
-        from jsonschema import Draft202012Validator
+        from jsonschema import Draft202012Validator, ValidationError
 
         summary = {
             "accounts_total": 2,
@@ -744,7 +778,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         root = PYTHON_DIR.parent
         registry = json.loads((root / "maturity" / "schema-registry.json").read_text(encoding="utf-8"))
         contracts = (
-            ("MultiMarketBacktestSpec", MultiMarketBacktestSpec, "multi-market-backtest-spec-v1", "crates/qx-app/src/spec/multi_market.rs", "MultiMarketBacktestMarket", MultiMarketBacktestMarket, "crates/qx-app/tests/multi_market_backtest.rs", 3),
+            ("MultiMarketBacktestSpec", MultiMarketBacktestSpec, "multi-market-backtest-spec-v1", "crates/qx-app/src/spec/multi_market.rs", "MultiMarketBacktestMarket", MultiMarketBacktestMarket, "crates/qx-app/tests/multi_market_backtest.rs", 1),
             ("MultiMarketDepthBacktestSpec", MultiMarketDepthBacktestSpec, "multi-market-depth-backtest-spec-v1", "crates/qx-app/src/spec/multi_market_depth.rs", "MultiMarketDepthBacktestMarket", MultiMarketDepthBacktestMarket, "crates/qx-app/tests/multi_market_depth_backtest.rs", 2),
         )
         forbidden = {"pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage"}
@@ -817,8 +851,21 @@ class TopLevelStabilityTest(unittest.TestCase):
 
     def test_experiment_input_schemas_match_rust_python_and_bound_candidates(self):
         import json
+        from jsonschema import Draft202012Validator, ValidationError
 
         from qianxing import (
+            ExperimentFoldSearchReport,
+            ExperimentCandidatePruning,
+            ExperimentEarlyPruningPlan,
+            ExecutionCostSensitivityResult,
+            ExecutionCostSensitivityScenario,
+            ExecutionCostSensitivityNeighborResult,
+            ExecutionCostSensitivityNeighborhoodResult,
+            ExperimentNeighborhoodReport,
+            ExperimentParameterRange,
+            ExperimentParameterSpace,
+            ExperimentSearchPlan,
+            ExperimentSearchReport,
             RunDepthExperimentSpec,
             RunExperimentSpec,
             RunMultiLegExperimentSpec,
@@ -864,8 +911,318 @@ class TopLevelStabilityTest(unittest.TestCase):
             schema = json.loads((root / "schemas" / f"{schema_id}.json").read_text(encoding="utf-8"))
             self.assertEqual(set(schema["$defs"]["ExperimentParameterSpace"]["properties"]), parameter_fields)
         bar_schema = json.loads((root / "schemas" / "run-experiment-spec-v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(bar_schema["$defs"]["ExperimentSplitPlan"]["properties"]), {"train_bars", "test_bars", "walk_forward", "step_bars"})
+        bar_parameters = {
+            "fast_window",
+            "slow_window",
+            "period",
+            "threshold_bps",
+            "quantity_raw",
+            "target_notional_raw",
+            "target_available_margin_bps",
+            "target_volatility_bps",
+            "target_kelly_fraction_bps",
+        }
+        maker_parameters = {
+            "market_making_spread_bps",
+            "market_making_quote_qty_raw",
+            "market_making_max_inventory_raw",
+            "market_making_tick_size_raw",
+            "market_making_inventory_skew_bps",
+        }
+        for _, _, schema_id, *_ in contracts:
+            schema = json.loads((root / "schemas" / f"{schema_id}.json").read_text(encoding="utf-8"))
+            actual = set(schema["$defs"]["ExperimentParameterSpace"]["properties"]["name"]["enum"])
+            expected = bar_parameters | maker_parameters if "depth" in schema_id else bar_parameters
+            self.assertEqual(actual, expected, f"{schema_id} parameter names must match Rust's applicable dimensions")
+        self.assertEqual(
+            set(bar_schema["$defs"]["ExperimentParameterRange"]["properties"]["name"]["enum"]),
+            bar_parameters,
+        )
+        for name in ("target_notional_raw", "target_available_margin_bps", "target_volatility_bps"):
+            Draft202012Validator(bar_schema["$defs"]["ExperimentParameterSpace"]).validate(
+                ExperimentParameterSpace(name, (1_000, 2_000)).to_dict()
+            )
+        self.assertEqual(set(bar_schema["$defs"]["ExperimentSplitPlan"]["properties"]), {"train_bars", "test_bars", "walk_forward", "step_bars", "purge_bars", "embargo_bars"})
         self.assertEqual(set(bar_schema["properties"]["baselines"]["items"]["enum"]), {"buy-and-hold", "zero-signal", "none"})
+        cost_scenario = ExecutionCostSensitivityScenario(
+            name="higher-fees",
+            fill_model="best_price",
+            execution_cost_rules={
+                "name": "stress", "maker_bp": 10, "taker_bp": 20,
+                "latency_base_ns": 0, "latency_insert_ns": 0,
+            },
+            max_training_return_degradation_bps=25,
+            max_neighborhood_training_return_degradation_bps=40,
+        )
+        cost_scenario_payload = cost_scenario.to_dict()
+        self.assertEqual(cost_scenario_payload["max_training_return_degradation_bps"], 25)
+        self.assertEqual(cost_scenario_payload["max_neighborhood_training_return_degradation_bps"], 40)
+        Draft202012Validator(bar_schema["$defs"]["ExecutionCostSensitivityScenario"]).validate(cost_scenario_payload)
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(bar_schema["$defs"]["ExecutionCostSensitivityScenario"]).validate(
+                {**cost_scenario_payload, "max_training_return_degradation_bps": 10001}
+            )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(bar_schema["$defs"]["ExecutionCostSensitivityScenario"]).validate(
+                {**cost_scenario_payload, "max_neighborhood_training_return_degradation_bps": 10001}
+            )
+        scenario_source = (root / "crates" / "qx-app" / "src" / "cases" / "run_experiment.rs").read_text(encoding="utf-8")
+        scenario_match = re.search(r"pub struct ExecutionCostSensitivityScenario \{([\s\S]*?)\n\}", scenario_source)
+        self.assertIsNotNone(scenario_match, "Rust cost scenario definition must remain discoverable")
+        rust_scenario_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", scenario_match.group(1), re.MULTILINE))
+        self.assertEqual({field.name for field in fields(ExecutionCostSensitivityScenario)}, rust_scenario_fields)
+        self.assertEqual(set(bar_schema["$defs"]["ExecutionCostSensitivityScenario"]["properties"]), rust_scenario_fields)
+        search_plan = ExperimentSearchPlan(algorithm="tpe", seed=2026, budget=8)
+        self.assertEqual(search_plan.to_dict(), {"algorithm": "tpe", "seed": 2026, "budget": 8})
+        self.assertEqual(
+            ExperimentSearchPlan(algorithm="tpe_kde", seed=2026, budget=8).to_dict(),
+            {"algorithm": "tpe_kde", "seed": 2026, "budget": 8},
+        )
+        Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(search_plan.to_dict())
+        constrained_search = ExperimentSearchPlan(algorithm="tpe", seed=2026, budget=8, max_training_drawdown_bps=1800)
+        self.assertEqual(constrained_search.to_dict()["max_training_drawdown_bps"], 1800)
+        Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(constrained_search.to_dict())
+        early_search = ExperimentSearchPlan(
+            algorithm="tpe", seed=2026, budget=8, max_training_drawdown_bps=1800,
+            early_pruning=ExperimentEarlyPruningPlan(min_training_bars=25),
+            robustness_subwindows=3,
+            minimum_training_robustness_score_bps=25,
+            neighborhood_radius=2,
+        )
+        self.assertEqual(
+            early_search.to_dict()["early_pruning"], {"min_training_bars": 25}
+        )
+        self.assertEqual(early_search.to_dict()["robustness_subwindows"], 3)
+        self.assertEqual(early_search.to_dict()["minimum_training_robustness_score_bps"], 25)
+        self.assertEqual(early_search.to_dict()["neighborhood_radius"], 2)
+        Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(early_search.to_dict())
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(
+                {
+                    "algorithm": "tpe",
+                    "seed": 2026,
+                    "budget": 8,
+                    "minimum_training_robustness_score_bps": 25,
+                }
+            )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(
+                {**early_search.to_dict(), "neighborhood_radius": 0}
+            )
+        fold_search = ExperimentSearchPlan(algorithm="tpe", seed=2026, budget=8, fold_local_search=True)
+        self.assertIs(fold_search.to_dict()["fold_local_search"], True)
+        Draft202012Validator(bar_schema["$defs"]["ExperimentSearchPlan"]).validate(fold_search.to_dict())
+        continuous_search = ExperimentSearchPlan(
+            algorithm="tpe_kde",
+            seed=2026,
+            budget=8,
+            continuous_parameter_space=(
+                ExperimentParameterRange("period", 2, 60, 2),
+                ExperimentParameterRange("target_notional_raw", 1_000, 2_000, 1_000),
+                ExperimentParameterRange("target_available_margin_bps", 1_000, 2_000, 1_000),
+                ExperimentParameterRange("target_volatility_bps", 1_000, 2_000, 1_000),
+            ),
+        )
+        self.assertEqual(
+            continuous_search.to_dict()["continuous_parameter_space"],
+            [
+                {"name": "period", "min": 2, "max": 60, "step": 2},
+                {"name": "target_notional_raw", "min": 1_000, "max": 2_000, "step": 1_000},
+                {"name": "target_available_margin_bps", "min": 1_000, "max": 2_000, "step": 1_000},
+                {"name": "target_volatility_bps", "min": 1_000, "max": 2_000, "step": 1_000},
+            ],
+        )
+        search_contract = {
+            "$schema": bar_schema["$schema"],
+            "$defs": bar_schema["$defs"],
+            "$ref": "#/$defs/ExperimentSearchPlan",
+        }
+        Draft202012Validator(search_contract).validate(continuous_search.to_dict())
+        report = {
+            "algorithm": "tpe",
+            "seed": 2026,
+            "budget": 5,
+            "early_pruning": {"min_training_bars": 25},
+            "robustness_subwindows": 2,
+            "minimum_training_robustness_score_bps": 25,
+            "cost_robustness_passed": False,
+            "neighborhood_cost_robustness_passed": False,
+            "trials": [{
+                "ordinal": 1,
+                "proposal": "tpe_random_startup",
+                "parameters": {"period": 8},
+                "training_score_bps": 120,
+                "training_robustness_score_bps": 40,
+            }],
+            "neighborhood": {
+                "center_ordinal": 1,
+                "center_parameters": {"period": 8},
+                "radius": 2,
+                "possible_neighbors": 2,
+                "evaluated_neighbors": 2,
+                "successful_neighbors": 2,
+                "failed_neighbors": 0,
+                "mean_training_score_bps": 80,
+                "min_training_score_bps": 40,
+                "max_training_score_bps": 120,
+                "assessment": "stable_positive",
+            },
+        }
+        result_schema = json.loads((root / "schemas" / "run-experiment-result-v1.json").read_text(encoding="utf-8"))
+        from referencing import Registry, Resource
+
+        local_schemas = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (root / "schemas").glob("*.json")
+        ]
+        local_registry = Registry().with_resources(
+            (schema["$id"], Resource.from_contents(schema))
+            for schema in local_schemas if "$id" in schema
+        )
+        search_schema = {
+            "$schema": result_schema["$schema"],
+            "$id": result_schema["$id"],
+            "$defs": result_schema["$defs"],
+            **result_schema["$defs"]["SearchReport"],
+        }
+        search_validator = Draft202012Validator(search_schema, registry=local_registry)
+        search_validator.validate(report)
+        parsed = ExperimentSearchReport.from_dict(report)
+        self.assertEqual(parsed.trials[0].parameters, {"period": 8})
+        self.assertEqual(parsed.trials[0].training_score_bps, 120)
+        self.assertEqual(parsed.trials[0].training_robustness_score_bps, 40)
+        self.assertEqual(parsed.neighborhood.assessment, "stable_positive")
+        self.assertEqual(parsed.neighborhood.radius, 2)
+        self.assertEqual(parsed.early_pruning.min_training_bars, 25)
+        self.assertEqual(parsed.robustness_subwindows, 2)
+        self.assertEqual(parsed.minimum_training_robustness_score_bps, 25)
+        self.assertIs(parsed.cost_robustness_passed, False)
+        self.assertIs(parsed.neighborhood_cost_robustness_passed, False)
+        search_source = (root / "crates" / "qx-app" / "src" / "cases" / "experiment_search.rs").read_text(encoding="utf-8")
+        search_match = re.search(r"pub struct ExperimentSearchReport \{([\s\S]*?)\n\}", search_source)
+        self.assertIsNotNone(search_match, "Rust ExperimentSearchReport must remain discoverable")
+        rust_search_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", search_match.group(1), re.MULTILINE))
+        self.assertEqual({field.name for field in fields(ExperimentSearchReport)}, rust_search_fields)
+        self.assertEqual(set(result_schema["$defs"]["SearchReport"]["properties"]), rust_search_fields)
+        pruned_candidate = {
+            "ordinal": 1,
+            "parameters": {"period": 8},
+            "outcome": None,
+            "error": None,
+            "pruning": {
+                "processed_bars": 25,
+                "observed_max_drawdown_bps": 1801,
+                "max_training_drawdown_bps": 1800,
+            },
+        }
+        candidate_schema = {
+            "$schema": result_schema["$schema"],
+            "$id": result_schema["$id"],
+            "$defs": result_schema["$defs"],
+            "$ref": "#/$defs/Candidate",
+        }
+        Draft202012Validator(candidate_schema, registry=local_registry).validate(pruned_candidate)
+        self.assertEqual(
+            ExperimentCandidatePruning.from_dict(pruned_candidate["pruning"]).processed_bars,
+            25,
+        )
+        report["fold_searches"] = [{
+            "fold": 1, "seed": 2026, "train_range": [0, 20], "test_range": [20, 30],
+            "trials": report["trials"],
+            "candidates": [{"ordinal": 1, "parameters": {"period": 8}, "outcome": None, "error": None}],
+            "selected_ordinal": 1, "selected_run_manifest": "fold-0001/trial-0001.run.json",
+            "neighborhood": report["neighborhood"],
+            "cost_sensitivity": [{
+                "selected_ordinal": 1, "name": "higher-fees", "fill_model": "best_price",
+                "return_delta_bps": -25, "drawdown_delta_bps": 10,
+                "max_training_return_degradation_bps": 12,
+                "cost_robustness_passed": False,
+                "max_neighborhood_training_return_degradation_bps": 40,
+                "neighborhood_cost_robustness": {
+                    "radius": 1, "possible_neighbors": 1, "evaluated_neighbors": 1,
+                    "successful_neighbors": 0, "passed_neighbors": 0,
+                    "complete": True, "passed": False,
+                    "candidates": [{
+                        "ordinal": 2, "parameters": {"period": 10},
+                        "fold_deltas": [], "cost_robustness_passed": False,
+                        "outcome": None, "error": "baseline candidate failed",
+                    }],
+                },
+                "fold_deltas": [{"fold": 1, "train_range": [0, 20], "test_range": [20, 30],
+                    "training_return_delta_bps": -12, "training_drawdown_delta_bps": 3,
+                    "out_of_sample_return_delta_bps": -25, "out_of_sample_drawdown_delta_bps": 10}],
+                "outcome": None, "error": None,
+                "execution_cost_rules": {"name": "stress", "maker_bp": 10, "taker_bp": 20,
+                    "latency_base_ns": 0, "latency_insert_ns": 0},
+            }],
+        }]
+        search_validator.validate(report)
+        parsed_fold = ExperimentSearchReport.from_dict(report).fold_searches[0]
+        self.assertEqual(parsed_fold.trials[0].training_score_bps, 120)
+        self.assertEqual(parsed_fold.selected_run_manifest, "fold-0001/trial-0001.run.json")
+        self.assertEqual(parsed_fold.neighborhood.assessment, "stable_positive")
+        self.assertEqual(parsed_fold.cost_sensitivity[0].return_delta_bps, -25)
+        self.assertEqual(parsed_fold.cost_sensitivity[0].max_training_return_degradation_bps, 12)
+        self.assertIs(parsed_fold.cost_sensitivity[0].cost_robustness_passed, False)
+        neighborhood = parsed_fold.cost_sensitivity[0].neighborhood_cost_robustness
+        self.assertIsNotNone(neighborhood)
+        self.assertEqual(neighborhood.possible_neighbors, 1)
+        self.assertFalse(neighborhood.passed)
+        self.assertEqual(neighborhood.candidates[0].ordinal, 2)
+        self.assertEqual(neighborhood.candidates[0].parameters, {"period": 10})
+        result_source = (root / "crates" / "qx-app" / "src" / "cases" / "run_experiment.rs").read_text(encoding="utf-8")
+        result_match = re.search(r"pub struct ExecutionCostSensitivityResult \{([\s\S]*?)\n\}", result_source)
+        self.assertIsNotNone(result_match, "Rust cost result definition must remain discoverable")
+        rust_result_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", result_match.group(1), re.MULTILINE))
+        self.assertEqual({field.name for field in fields(ExecutionCostSensitivityResult)}, rust_result_fields)
+        self.assertEqual(set(result_schema["$defs"]["CostSensitivityResult"]["properties"]), rust_result_fields)
+        for python_type, rust_name, schema_name in (
+            (ExecutionCostSensitivityNeighborResult, "ExecutionCostSensitivityNeighborResult", "CostSensitivityNeighborResult"),
+            (ExecutionCostSensitivityNeighborhoodResult, "ExecutionCostSensitivityNeighborhoodResult", "CostSensitivityNeighborhood"),
+        ):
+            source = (root / "crates" / "qx-app" / "src" / "cases" / "run_experiment.rs").read_text(encoding="utf-8")
+            match = re.search(re.escape(f"pub struct {rust_name} {{") + r"([\s\S]*?)\n\}", source)
+            self.assertIsNotNone(match, f"Rust {rust_name} must remain discoverable")
+            rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
+            self.assertEqual({field.name for field in fields(python_type)}, rust_fields)
+            self.assertEqual(set(result_schema["$defs"][schema_name]["properties"]), rust_fields)
+        delta = parsed_fold.cost_sensitivity[0].fold_deltas[0]
+        self.assertEqual(delta.train_range, (0, 20))
+        self.assertEqual(delta.training_return_delta_bps, -12)
+        self.assertEqual(delta.out_of_sample_drawdown_delta_bps, 10)
+        fold_source = (root / "crates" / "qx-app" / "src" / "cases" / "experiment_search.rs").read_text(encoding="utf-8")
+        fold_match = re.search(r"pub struct ExperimentFoldSearchReport \{([\s\S]*?)\n\}", fold_source)
+        self.assertIsNotNone(fold_match, "Rust ExperimentFoldSearchReport must remain discoverable")
+        rust_fold_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", fold_match.group(1), re.MULTILINE))
+        self.assertEqual({field.name for field in fields(ExperimentFoldSearchReport)}, rust_fold_fields)
+        self.assertEqual(set(result_schema["$defs"]["FoldSearchReport"]["properties"]), rust_fold_fields)
+        self.assertEqual(
+            set(result_schema["$defs"]["SearchNeighborhood"]["properties"]["assessment"]["enum"]),
+            {
+                "incomplete_neighborhood",
+                "no_neighbors",
+                "no_successful_neighbors",
+                "stable_positive",
+                "fragile_positive",
+                "drawdown_budget_exceeded",
+                "drawdown_budget_unverified",
+                "no_positive_training_edge",
+            },
+        )
+        neighborhood_source = (root / "crates" / "qx-app" / "src" / "cases" / "experiment_search.rs").read_text(encoding="utf-8")
+        neighborhood_match = re.search(r"pub struct ExperimentNeighborhoodReport \{([\s\S]*?)\n\}", neighborhood_source)
+        self.assertIsNotNone(neighborhood_match, "Rust ExperimentNeighborhoodReport must remain discoverable")
+        rust_neighborhood_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", neighborhood_match.group(1), re.MULTILINE))
+        schema_neighborhood = result_schema["$defs"]["SearchNeighborhood"]
+        self.assertEqual({field.name for field in fields(ExperimentNeighborhoodReport)}, rust_neighborhood_fields)
+        self.assertEqual(set(schema_neighborhood["properties"]), rust_neighborhood_fields)
+        legacy_report = {key: value for key, value in report.items() if key not in {"neighborhood", "fold_searches", "early_pruning"}}
+        legacy_report["neighborhood"] = {
+            key: value for key, value in report["neighborhood"].items() if key != "assessment"
+        }
+        search_validator.validate(legacy_report)
+        self.assertIsNone(ExperimentSearchReport.from_dict(legacy_report).neighborhood.assessment)
+        self.assertEqual(ExperimentSearchReport.from_dict(legacy_report).fold_searches, ())
 
     def test_multi_leg_manifest_fields_match_rust_and_preserve_legacy_payload(self):
         from qianxing import BuiltinStrategySpec, MultiLegBacktestSpec
@@ -976,6 +1333,11 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertEqual(set(schema["properties"]), rust_fields)
         self.assertEqual(set(schema["required"]), {"schema_version", "experiment_id", "spec_fingerprint", "total_candidates", "completed_candidates", "succeeded_candidates", "failed_candidates", "candidates", "comparison", "artifact_path"})
         self.assertFalse(schema["additionalProperties"])
+        fold_properties = schema["$defs"]["FoldReport"]["properties"]
+        self.assertEqual(fold_properties["purge_range"]["$ref"], "#/$defs/TimeRange")
+        self.assertEqual(fold_properties["embargo_range"]["$ref"], "#/$defs/TimeRange")
+        self.assertNotIn("purge_range", schema["$defs"]["FoldReport"]["required"])
+        self.assertNotIn("embargo_range", schema["$defs"]["FoldReport"]["required"])
         entry = next(item for item in registry["entries"] if item["schema_id"] == "run-experiment-result-v1")
         self.assertEqual(entry["producer"], "qx-app")
         self.assertEqual(entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk"])
@@ -1439,6 +1801,7 @@ class TopLevelStabilityTest(unittest.TestCase):
                 "succeeded_candidates": 1,
                 "failed_candidates": 0,
                 "spec_fingerprint": "abc",
+                "input_data_fingerprint": "barframe:0123456789abcdef",
                 "candidates": [
                     {
                         "ordinal": 1,
@@ -1473,6 +1836,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             }
         )
         self.assertIsInstance(result.out_of_sample, ExperimentOutOfSampleReport)
+        self.assertEqual(result.input_data_fingerprint, "barframe:0123456789abcdef")
         self.assertEqual(result.candidates[0].strategy_kind, "ema_cross")
         self.assertEqual(result.out_of_sample.folds[0].test_range, (20, 30))
         self.assertEqual(result.out_of_sample.folds[0].selected_strategy_kind, "ema_cross")

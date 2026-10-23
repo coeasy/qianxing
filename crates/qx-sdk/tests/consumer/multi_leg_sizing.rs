@@ -20,6 +20,7 @@ fn rust_sdk_sizes_multi_leg_linear_contracts_from_frozen_market_specs() {
             price_tick: 1_000,
             qty_step: 10_000_000,
             min_qty: 10_000_000,
+            min_notional_raw: 0,
             max_leverage: 20,
             maintenance_margin_bps: 500,
             valid_from: 0,

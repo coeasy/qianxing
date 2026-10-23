@@ -8,7 +8,10 @@ use qx_spec::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn write_multi_market_depth_run_evidence(
+    path: &Path,
+    diagnostics: Option<(&Path, &serde_json::Value)>,
+) -> Result<PathBuf, String> {
     let artifact: serde_json::Value = serde_json::from_slice(
         &std::fs::read(path).map_err(|error| format!("读取多市场深度产物失败: {error}"))?,
     )
@@ -340,6 +343,14 @@ pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathB
             });
         }
     }
+    let strategy_diagnostics = diagnostics
+        .map(|(diagnostics_path, report)| {
+            qx_app::artifact_store::run_evidence_depth_strategy_diagnostics_array(
+                diagnostics_path,
+                report,
+            )
+        })
+        .transpose()?;
     let strategy_ids = spec
         .markets
         .iter()
@@ -421,6 +432,7 @@ pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathB
             ..RunEvidenceDataset::default()
         },
         report_analysis: None,
+        strategy_diagnostics: strategy_diagnostics.clone(),
         identity: RunEvidenceIdentity {
             strategy_id: format!("multi-market-depth:{}", strategy_ids.join("+")),
             strategy_version: manifest.strategy_version.clone(),
@@ -479,6 +491,11 @@ pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathB
                 .chain(std::iter::once(summary_path.to_string_lossy().to_string()))
                 .chain(paths)
                 .chain(quality_paths)
+                .chain(
+                    strategy_diagnostics
+                        .iter()
+                        .map(|item| item.input_path.clone()),
+                )
                 .collect(),
             expected_result_hash: manifest.result_hash.clone(),
         },
@@ -492,7 +509,12 @@ pub(crate) fn write_multi_market_depth_run_evidence(path: &Path) -> Result<PathB
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(".multi-market-depth.json"))
         .ok_or("多市场深度产物文件名无效")?;
-    let output = path.with_file_name(format!("{name}.evidence.json"));
+    let suffix = if strategy_diagnostics.is_some() {
+        ".strategy-diagnostics.evidence.json"
+    } else {
+        ".evidence.json"
+    };
+    let output = path.with_file_name(format!("{name}{suffix}"));
     qx_app::artifact_store::write_backtest_artifact(&output, &json, "EvidenceBundle")?;
     Ok(output)
 }

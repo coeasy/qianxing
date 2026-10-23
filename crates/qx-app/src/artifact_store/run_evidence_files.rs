@@ -3,7 +3,7 @@
 use qx_core::RunManifest;
 use qx_spec::{
     ArtifactRef, FoundationDocument, RunEvidenceDatasetComponent, RunEvidenceReportAnalysis,
-    RunRecord,
+    RunEvidenceStrategyDiagnostics, RunRecord,
 };
 use std::path::Path;
 
@@ -160,6 +160,109 @@ pub fn run_evidence_report_analysis(
             })
         })
         .transpose()
+}
+
+/// Resolve and hash the exact strategy-diagnostic snapshot after the CLI has validated its
+/// strategy, instrument, data fingerprint, and diagnostic contract.
+pub fn run_evidence_strategy_diagnostics(
+    summary: &serde_json::Value,
+    diagnostics: Option<(&Path, &serde_json::Value)>,
+) -> Result<Option<RunEvidenceStrategyDiagnostics>, String> {
+    diagnostics
+        .map(|(path, report)| {
+            let path = path
+                .canonicalize()
+                .map_err(|error| format!("解析策略诊断路径失败 {}: {error}", path.display()))?;
+            let metadata = std::fs::metadata(&path)
+                .map_err(|error| format!("读取策略诊断文件属性失败 {}: {error}", path.display()))?;
+            if metadata.len() > 20 * 1024 * 1024 {
+                return Err("策略诊断文件在打包前超过 20 MiB 上限".into());
+            }
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("读取策略诊断文件失败 {}: {error}", path.display()))?;
+            let persisted_report: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("策略诊断文件在打包前变成无效 JSON: {error}"))?;
+            if &persisted_report != report {
+                return Err("策略诊断文件在报告校验后发生变化；拒绝写入不一致证据包".into());
+            }
+            let strategy_id =
+                crate::artifact_store::run_evidence_summary_str(summary, &["strategy_id"])?;
+            let instrument =
+                crate::artifact_store::run_evidence_summary_str(summary, &["instrument"])?;
+            let fingerprint = crate::artifact_store::run_evidence_summary_str(
+                summary,
+                &["input", "fingerprint"],
+            )?;
+            for (field, expected) in [
+                ("strategy_id", strategy_id),
+                ("instrument", instrument),
+                ("data_fingerprint", fingerprint),
+            ] {
+                if report.get(field).and_then(serde_json::Value::as_str) != Some(expected.as_str())
+                {
+                    return Err(format!("策略诊断 {field} 与已验证回测摘要不一致"));
+                }
+            }
+            Ok(RunEvidenceStrategyDiagnostics {
+                kind: "strategy-bias-diagnostics".into(),
+                input_path: path.to_string_lossy().into_owned(),
+                input_sha256: qx_strategy::sha256_hex(&bytes),
+            })
+        })
+        .transpose()
+}
+
+/// Bind a multi-market diagnostic array to its exact source bytes after the report adapter has
+/// validated every strategy slot, instrument, component fingerprint, row count and end timestamp.
+pub fn run_evidence_strategy_diagnostics_array(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    run_evidence_strategy_diagnostics_array_with_kind(
+        path,
+        diagnostics,
+        "strategy-bias-diagnostics-array",
+    )
+}
+
+/// Bind a multi-market depth diagnostic array after the report adapter has validated each
+/// strategy slot against its DepthFrame identity and event coverage.
+pub fn run_evidence_depth_strategy_diagnostics_array(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    run_evidence_strategy_diagnostics_array_with_kind(
+        path,
+        diagnostics,
+        "strategy-bias-diagnostics-depth-array",
+    )
+}
+
+fn run_evidence_strategy_diagnostics_array_with_kind(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+    kind: &str,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("解析多市场策略诊断路径失败 {}: {error}", path.display()))?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("读取多市场策略诊断文件属性失败 {}: {error}", path.display()))?;
+    if metadata.len() > 1024 * 1024 {
+        return Err("多市场策略诊断集合在打包前超过 1 MiB 上限".into());
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("读取多市场策略诊断文件失败 {}: {error}", path.display()))?;
+    let persisted: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("多市场策略诊断文件在打包前变成无效 JSON: {error}"))?;
+    if &persisted != diagnostics {
+        return Err("多市场策略诊断文件在报告校验后发生变化；拒绝写入不一致证据包".into());
+    }
+    Ok(RunEvidenceStrategyDiagnostics {
+        kind: kind.into(),
+        input_path: path.to_string_lossy().into_owned(),
+        input_sha256: qx_strategy::sha256_hex(&bytes),
+    })
 }
 
 /// Project one multi-input dataset component after the adapter has decoded its BarFrame.

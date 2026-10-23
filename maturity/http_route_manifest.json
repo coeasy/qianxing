@@ -130,6 +130,10 @@
     },
     {
       "method": "POST",
+      "path": "/app/multi-account-joint-backtest"
+    },
+    {
+      "method": "POST",
       "path": "/app/multi-leg-backtest"
     },
     {
@@ -191,6 +195,10 @@
     {
       "method": "POST",
       "path": "/app/provider-depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/research-artifacts"
     },
     {
       "method": "POST",

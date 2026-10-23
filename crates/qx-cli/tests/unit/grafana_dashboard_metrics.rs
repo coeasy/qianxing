@@ -1,7 +1,7 @@
 //! Grafana 概览面板（易用性 P3 / 工业级 §17 可观测）只引用**真实存在**的 Prometheus 指标。
 //!
 //! `qx-api` 的 `/metrics` 与 `worker-metrics/*.prom` 实际暴露的指标名以 `qx_api_` /
-//! `qx_control_retired_` / `qx_worker_` / `qx_pipeline_` 四族前缀存在（见
+//! `qx_app_run_` / `qx_control_retired_` / `qx_worker_` / `qx_pipeline_` 五族前缀存在（见
 //! `crates/qx-api/tests/prometheus_exposition.rs` 与 `crates/qx-service/src/pipeline_metrics_report.rs`）。
 //! 面板里一旦出现拼写错或引用尚未接线的指标，监控就会「看着在跑实际是瞎的」——这条用例把
 //! 所有 `expr` 抽出来，逐个要求指标名落在已知前缀内，避免 dashboard 与真实出口悄悄分叉。
@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 /// 仓库真实存在的指标前缀；与 Prometheus 出口源码保持一致。
 const KNOWN_PREFIXES: &[&str] = &[
     "qx_api_",
+    "qx_app_run_",
     "qx_control_retired_",
     "qx_worker_",
     "qx_pipeline_",

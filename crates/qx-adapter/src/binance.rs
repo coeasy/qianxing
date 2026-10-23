@@ -1433,6 +1433,19 @@ impl Venue for BinanceSpotVenue {
         &qx_zhenlu::venue_capabilities::BINANCE_SPOT_VENUE_CAPABILITIES
     }
 
+    fn execution_readiness(&self) -> QxResult<()> {
+        if !self.connected {
+            return Err(QxError::VenueState("Binance Spot 连接中断".into()));
+        }
+        if !matches!(self.state, ConnectorState::Live) {
+            return Err(QxError::VenueState(format!(
+                "Binance Spot 连接器状态为 {:?}，尚未完成恢复对账",
+                self.state
+            )));
+        }
+        Ok(())
+    }
+
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
         self.capabilities()
             .validate_submit(&order, self.id())

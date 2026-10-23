@@ -409,6 +409,45 @@ fn run_evidence_refuses_a_cross_reference_mismatch() {
     );
 }
 
+#[test]
+fn run_evidence_accepts_a_bound_strategy_diagnostic_reference_and_rejects_unknown_kind() {
+    let mut value: serde_json::Value = serde_json::from_str(&run_evidence_json()).unwrap();
+    value["strategy_diagnostics"] = serde_json::json!({
+        "kind": "strategy-bias-diagnostics",
+        "input_path": "inputs/strategy-diagnostics.json",
+        "input_sha256": "a".repeat(64)
+    });
+    EvidenceBundle::from_json(&value.to_string())
+        .expect("single-Bar evidence may carry a digest-bound diagnostic snapshot");
+
+    value = serde_json::from_str(&run_evidence_json()).unwrap();
+    value["dataset"]["kind"] = serde_json::json!("multi-market-barframe");
+    value["dataset"]["row_count"] = serde_json::json!(30);
+    value["dataset"]["components"] = serde_json::json!([
+        {"role":"market:BTCUSDT.BINANCE","dataset_id":"btc","version":"v1","content_fingerprint":"btc-fp","row_count":10,"path":"btc.json"},
+        {"role":"market:ETHUSDT.BINANCE","dataset_id":"eth","version":"v1","content_fingerprint":"eth-fp","row_count":10,"path":"eth.json"},
+        {"role":"market:SOLUSDT.BINANCE","dataset_id":"sol","version":"v1","content_fingerprint":"sol-fp","row_count":10,"path":"sol.json"}
+    ]);
+    value["strategy_diagnostics"] = serde_json::json!({
+        "kind": "strategy-bias-diagnostics-array",
+        "input_path": "inputs/strategy-diagnostics.json",
+        "input_sha256": "b".repeat(64)
+    });
+    EvidenceBundle::from_json(&value.to_string())
+        .expect("multi-market Bar evidence may carry a digest-bound diagnostic array");
+
+    value["dataset"]["kind"] = serde_json::json!("multi-market-depthframe");
+    value["strategy_diagnostics"]["kind"] =
+        serde_json::json!("strategy-bias-diagnostics-depth-array");
+    EvidenceBundle::from_json(&value.to_string())
+        .expect("multi-market depth evidence may carry a digest-bound diagnostic array");
+
+    value["strategy_diagnostics"]["kind"] = serde_json::json!("untyped-diagnostics");
+    let error = EvidenceBundle::from_json(&value.to_string())
+        .expect_err("unknown diagnostic kind must not be admitted into run evidence");
+    assert!(error.contains("strategy_diagnostics"), "actual {error}");
+}
+
 /// 质量报告缺席是合法的（这一档输入没有报告），但**带一份空报告**不合法。
 ///
 /// 这两种形态在 JSON 里只差一个 `[]`，含义却相反：`null` 是「没有这份报告」，

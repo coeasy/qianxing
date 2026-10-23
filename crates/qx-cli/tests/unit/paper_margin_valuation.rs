@@ -20,6 +20,7 @@ pub(super) fn margin_valuation_spec(
         price_tick: 1,
         qty_step: SCALE,
         min_qty: SCALE,
+        min_notional_raw: 0,
         max_leverage: if product.is_derivative() { 100 } else { 1 },
         maintenance_margin_bps: 500,
         valid_from: 1,

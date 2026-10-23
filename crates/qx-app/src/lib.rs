@@ -27,7 +27,7 @@
 //!
 //! ## 公共面
 //!
-//! - 用例：[`validate_dataset`]、[`validate_dataset_manifest`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_multi_account_depth_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`screen_bar_frames`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
+//! - 用例：[`validate_dataset`]、[`validate_dataset_manifest`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_multi_account_depth_backtest`]、[`run_multi_account_joint_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`screen_bar_frames`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
 //! - 输入/输出：[`DatasetSpec`]、[`DatasetVerdict`]、[`DatasetManifestValidationSpec`]、[`DatasetManifestValidationResult`]、[`BacktestSpec`]、[`BacktestOutcome`]、
 //!   [`VerificationResult`]、[`CompareRunsSpec`]、[`CompareRunsResult`]
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
@@ -76,7 +76,8 @@ pub use cases::{
     plan_capital_allocation, plan_risk_parity, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
-    run_multi_builtin_backtest, run_multi_builtin_backtest_with_inputs, run_multi_leg_backtest,
+    run_multi_account_joint_backtest, run_multi_builtin_backtest,
+    run_multi_builtin_backtest_with_inputs, run_multi_leg_backtest,
     run_multi_leg_backtest_with_strategy, run_multi_leg_experiment, run_multi_market_backtest,
     run_multi_market_depth_backtest, run_multi_market_depth_experiment,
     run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
@@ -85,8 +86,14 @@ pub use cases::{
     validate_trade_control, verify_depth_run, verify_run, AshareBacktestBinding, CompareRunsResult,
     CompareRunsSpec, ComparedRun, ComparedRunResult, DatasetManifestValidationResult,
     DepthDatasetManifestValidationResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
-    ExperimentCandidateResult, ExperimentParameterSpace, MultiBuiltinBacktestInputs,
-    MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
+    ExecutionCostSensitivityFoldDelta, ExecutionCostSensitivityNeighborResult,
+    ExecutionCostSensitivityNeighborhoodResult, ExecutionCostSensitivityResult,
+    ExecutionCostSensitivityScenario, ExperimentCandidatePruning, ExperimentCandidateResult,
+    ExperimentCrossFoldRobustness, ExperimentEarlyPruningPlan, ExperimentFoldSearchReport,
+    ExperimentNeighborhoodAssessment, ExperimentNeighborhoodReport, ExperimentParameterRange,
+    ExperimentParameterSpace, ExperimentSearchAlgorithm, ExperimentSearchObjective,
+    ExperimentSearchPlan, ExperimentSearchReport, ExperimentSearchTrial,
+    MultiBuiltinBacktestInputs, MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
     MultiMarketDepthExperimentCandidate, MultiMarketDepthExperimentRankedCandidate,
     MultiMarketExperimentCandidate, MultiMarketExperimentRankedCandidate, ProviderBacktestOutcome,
     ProviderBacktestSpec, ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec,
@@ -140,9 +147,10 @@ pub use spec::{
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, DatasetManifestValidationSpec, DatasetSpec, DatasetVerdict,
     DepthBacktestOutcome, DepthBacktestSpec, DepthDatasetManifestValidationSpec,
-    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountBacktestSummary,
-    MultiAccountDepthBacktestResult, MultiAccountDepthBacktestSpec,
-    MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
+    JointAccountBacktestResult, JointBacktestAccount, MultiAccountBacktestResult,
+    MultiAccountBacktestSpec, MultiAccountBacktestSummary, MultiAccountDepthBacktestResult,
+    MultiAccountDepthBacktestSpec, MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult,
+    MultiAccountJointBacktestOutcome, MultiAccountJointBacktestSpec, MultiAccountRunResult,
     MultiBuiltinAttribution, MultiBuiltinBacktestRun, MultiBuiltinBacktestSpec, MultiBuiltinLegRun,
     MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
     MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
@@ -151,9 +159,10 @@ pub use spec::{
     ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
     CAPITAL_ALLOCATION_RESULT_SCHEMA_VERSION, DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION,
     DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    DEPTH_DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION, MAX_MULTI_ACCOUNT_RUNS,
-    MAX_MULTI_MARKET_DEPTH_MARKETS, MIN_BACKTEST_BARS, MIN_MULTI_MARKET_DEPTH_MARKETS,
-    MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION, MULTI_BUILTIN_BACKTEST_SCHEMA_VERSION,
+    DEPTH_DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION, MAX_JOINT_ACCOUNTS, MAX_JOINT_MARKETS,
+    MAX_MULTI_ACCOUNT_RUNS, MAX_MULTI_MARKET_DEPTH_MARKETS, MIN_BACKTEST_BARS,
+    MIN_MULTI_MARKET_DEPTH_MARKETS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
+    MULTI_ACCOUNT_JOINT_BACKTEST_SCHEMA_VERSION, MULTI_BUILTIN_BACKTEST_SCHEMA_VERSION,
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, MULTI_MARKET_DEPTH_BACKTEST_SCHEMA_VERSION,
     RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
 };

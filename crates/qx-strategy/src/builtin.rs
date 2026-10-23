@@ -37,6 +37,11 @@ pub struct BuiltinStrategy {
     bars: VecDeque<BarPoint>,
     reference_bars: VecDeque<BarPoint>,
     close_scratch: Vec<i128>,
+    fast_sma_sum: i128,
+    slow_sma_sum: i128,
+    previous_fast_sma_sum: i128,
+    previous_slow_sma_sum: i128,
+    sma_sums_ready: bool,
     next_signal_id: u64,
     next_intent_id: u64,
 }
@@ -49,6 +54,11 @@ impl BuiltinStrategy {
             bars: VecDeque::new(),
             reference_bars: VecDeque::new(),
             close_scratch: Vec::new(),
+            fast_sma_sum: 0,
+            slow_sma_sum: 0,
+            previous_fast_sma_sum: 0,
+            previous_slow_sma_sum: 0,
+            sma_sums_ready: false,
             next_signal_id: 1,
             next_intent_id: 1,
         })
@@ -206,6 +216,80 @@ impl BuiltinStrategy {
             intents: Vec::new(),
         }
     }
+
+    fn advance_sma_sums(&mut self, close: i128) -> Result<(), String> {
+        if self.sma_sums_ready {
+            self.previous_fast_sma_sum = self.fast_sma_sum;
+            self.previous_slow_sma_sum = self.slow_sma_sum;
+            self.fast_sma_sum = rolling_sum_after_append(
+                self.fast_sma_sum,
+                self.config.fast_window,
+                close,
+                &self.bars,
+            )
+            .ok_or_else(|| "SMA 快线滚动求和溢出".to_string())?;
+            self.slow_sma_sum = rolling_sum_after_append(
+                self.slow_sma_sum,
+                self.config.slow_window,
+                close,
+                &self.bars,
+            )
+            .ok_or_else(|| "SMA 慢线滚动求和溢出".to_string())?;
+        } else {
+            let previous_fast = checked_tail_sum(&self.bars, self.config.fast_window)
+                .ok_or_else(|| "SMA 快线前值计算溢出".to_string())?;
+            let previous_slow = checked_tail_sum(&self.bars, self.config.slow_window)
+                .ok_or_else(|| "SMA 慢线前值计算溢出".to_string())?;
+            self.previous_fast_sma_sum = previous_fast;
+            self.previous_slow_sma_sum = previous_slow;
+            self.fast_sma_sum =
+                rolling_sum_after_append(previous_fast, self.config.fast_window, close, &self.bars)
+                    .ok_or_else(|| "SMA 快线滚动求和溢出".to_string())?;
+            self.slow_sma_sum =
+                rolling_sum_after_append(previous_slow, self.config.slow_window, close, &self.bars)
+                    .ok_or_else(|| "SMA 慢线滚动求和溢出".to_string())?;
+            self.sma_sums_ready = true;
+        }
+        Ok(())
+    }
+}
+
+fn checked_tail_sum(history: &VecDeque<BarPoint>, window: usize) -> Option<i128> {
+    if history.len() < window {
+        return None;
+    }
+    history
+        .iter()
+        .rev()
+        .take(window)
+        .try_fold(0_i128, |sum, bar| sum.checked_add(bar.close))
+}
+
+fn rolling_sum_after_append(
+    current_sum: i128,
+    window: usize,
+    close: i128,
+    history: &VecDeque<BarPoint>,
+) -> Option<i128> {
+    let rolling = if history.len() >= window {
+        let expired_index = history.len().checked_sub(window)?;
+        current_sum
+            .checked_sub(history.get(expired_index)?.close)
+            .and_then(|sum| sum.checked_add(close))
+    } else {
+        current_sum.checked_add(close)
+    };
+    rolling.or_else(|| {
+        // Subtract/add ordering can overflow even when the new window's exact sum is valid.
+        // Recompute only on that rare path, preserving the checked left-to-right semantics.
+        let start = history.len().saturating_sub(window.saturating_sub(1));
+        history
+            .iter()
+            .skip(start)
+            .map(|bar| bar.close)
+            .chain(std::iter::once(close))
+            .try_fold(0_i128, |sum, value| sum.checked_add(value))
+    })
 }
 
 impl Strategy for BuiltinStrategy {
@@ -257,6 +341,15 @@ impl Strategy for BuiltinStrategy {
                 return Ok(self.empty_decision(context, *ts));
             }
         } else {
+            if self.config.kind == BuiltinStrategyKind::SmaCross
+                && self
+                    .bars
+                    .len()
+                    .checked_add(1)
+                    .is_some_and(|next_len| next_len >= self.required_bars())
+            {
+                self.advance_sma_sums(point.close)?;
+            }
             self.bars.push_back(point);
             while self.bars.len() > self.max_history() {
                 self.bars.pop_front();

@@ -27,14 +27,15 @@
 use crate::ApiResponse;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
-    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_leg_backtest,
-    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_experiment,
-    run_multi_market_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
-    AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability,
-    CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiLegBacktestSpec, MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec,
-    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
+    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_joint_backtest,
+    run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
+    run_multi_market_depth_experiment, run_multi_market_experiment, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
+    BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
+    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -43,6 +44,8 @@ use std::path::PathBuf;
 mod capabilities;
 #[path = "app_surface/multi_market_depth.rs"]
 mod multi_market_depth;
+#[path = "app_surface/research_artifacts.rs"]
+mod research_artifacts;
 pub(crate) use multi_market_depth::multi_market_depth;
 #[path = "app_surface/multi_account.rs"]
 mod multi_account;
@@ -356,6 +359,17 @@ pub(crate) fn multi_leg_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
             return respond(Err(error));
         }
     }
+    for input in [
+        &mut spec.primary_dataset_manifest_path,
+        &mut spec.reference_dataset_manifest_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Err(error) = resolve_input_path(input, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
     let run_id = spec.run_id.clone();
     spec.output_dir = paths
         .artifact_root
@@ -383,6 +397,30 @@ pub(crate) fn multi_market(body: &str, paths: &AppPaths) -> ApiResponse {
         .into_owned();
     respond(
         run_multi_market_backtest(&spec, &context(&run_id)).and_then(|outcome| outcome.to_json()),
+    )
+}
+
+pub(crate) fn multi_account_joint(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match MultiAccountJointBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for account in &mut spec.accounts {
+        for market in &mut account.markets {
+            if let Err(error) = resolve_input_path(&mut market.bars_path, &paths.data_root) {
+                return respond(Err(error));
+            }
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(
+        run_multi_account_joint_backtest(&spec, &context(&run_id))
+            .and_then(|outcome| outcome.to_json()),
     )
 }
 
@@ -463,6 +501,9 @@ pub(crate) fn route_app_run(
     }
     if let ("POST", "/app/capabilities/providers/preflight") = (method, route) {
         return Some(capabilities::provider_preflight(body, provider_registry));
+    }
+    if let ("POST", "/app/research-artifacts") = (method, route) {
+        return Some(research_artifacts::route(body, paths));
     }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)

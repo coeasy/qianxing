@@ -89,7 +89,7 @@ pub(super) fn start_experiment(
         return respond(Err(error));
     }
     let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::Experiment(handle)) {
+    match registry.attach(&run_id, AppRun::Experiment(Box::new(handle))) {
         Ok(()) => registry.status(&run_id),
         Err(error) => respond(Err(error)),
     }
@@ -108,6 +108,17 @@ pub(super) fn start_multi_leg_backtest(
         return respond(Err(error));
     }
     for input in [&mut spec.primary_bars_path, &mut spec.reference_bars_path] {
+        if let Err(error) = resolve_input_path(input, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    for input in [
+        &mut spec.primary_dataset_manifest_path,
+        &mut spec.reference_dataset_manifest_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
         if let Err(error) = resolve_input_path(input, &paths.data_root) {
             return respond(Err(error));
         }
@@ -217,6 +228,38 @@ pub(super) fn start_multi_market_backtest(
     }
     let handle = spec.start(context(&run_id));
     match registry.attach(&run_id, AppRun::MultiMarket(handle)) {
+        Ok(()) => registry.status(&run_id),
+        Err(error) => respond(Err(error)),
+    }
+}
+
+pub(super) fn start_multi_account_joint_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> ApiResponse {
+    let mut spec = match qx_app::MultiAccountJointBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for account in &mut spec.accounts {
+        for market in &mut account.markets {
+            if let Err(error) = resolve_input_path(&mut market.bars_path, &paths.data_root) {
+                return respond(Err(error));
+            }
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    if let Err(error) = registry.reserve(run_id.clone()) {
+        return respond(Err(error));
+    }
+    let handle = spec.start(context(&run_id));
+    match registry.attach(&run_id, AppRun::MultiAccountJoint(handle)) {
         Ok(()) => registry.status(&run_id),
         Err(error) => respond(Err(error)),
     }

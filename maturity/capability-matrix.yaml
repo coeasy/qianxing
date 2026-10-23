@@ -84,7 +84,7 @@ domains:
   - name: data_and_venues
     level: implemented-unverified
     evidence: [crates/qx-provider, crates/qx-adapter, crates/qx-service/src/provider_registry.rs, crates/qx-cli/src/app_commands.rs, crates/qx-cli/tests/command_surface.rs, maturity/capabilities.yaml]
-    limitations: ["Rust/Python 高层 Bar BacktestSpec 现要求冻结 TradingInstrumentSpec 同时显式提供固定 MakerTakerFeeSchedule，并校验标的/结算币种/有效期及成交 tick/lot；费用尚不由 Provider/Venue 自动解析，不含分层费率、返佣、税费或按时间生效的规则", "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
+    limitations: ["Rust/Python 高层 Bar BacktestSpec 现要求冻结 TradingInstrumentSpec 同时显式提供固定 MakerTakerFeeSchedule，并校验标的/结算币种/有效期、订单 tick/step/最小数量/quote 最小名义金额及成交 tick/lot；费用尚不由 Provider/Venue 自动解析，不含分层费率、返佣、税费或按时间生效的规则", "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
     next_gate: "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
 
   - name: accounts_and_strategies

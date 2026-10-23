@@ -9,27 +9,105 @@
     "schema_version": {"const": 1},
     "experiment_id": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._-]+$"},
     "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "input_data_fingerprint": {"type": "string", "pattern": "^barframe:[0-9a-f]{16}$"},
     "total_candidates": {"type": "integer", "minimum": 1, "maximum": 256},
     "completed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "succeeded_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "failed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
+    "pruned_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
     "comparison": {"anyOf": [{"$ref": "compare-runs-result-v1.json"}, {"type": "null"}]},
     "out_of_sample": {"$ref": "#/$defs/OutOfSampleReport"},
     "baselines": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/BaselineReport"}},
+    "search": {"$ref": "#/$defs/SearchReport"},
+    "cost_sensitivity": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/CostSensitivityResult"}},
     "artifact_path": {"type": "string", "minLength": 1}
   },
   "additionalProperties": false,
   "$defs": {
+    "CostSensitivityResult": {
+      "type": "object",
+      "required": ["selected_ordinal", "name", "fill_model", "return_delta_bps", "drawdown_delta_bps", "outcome", "error"],
+      "properties": {
+        "selected_ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
+        "name": {"type": "string", "minLength": 1, "maxLength": 64},
+        "execution_cost_rules": {"type": "object"},
+        "ashare_rules": {"type": "object"},
+        "fill_model": {"enum": ["next_bar_open", "best_price", "one_tick_slippage"]},
+        "return_delta_bps": {"type": ["integer", "null"], "minimum": -4294967295, "maximum": 4294967295},
+        "drawdown_delta_bps": {"type": ["integer", "null"], "minimum": -4294967295, "maximum": 4294967295},
+        "max_training_return_degradation_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "cost_robustness_passed": {"type": "boolean"},
+        "max_neighborhood_training_return_degradation_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "neighborhood_cost_robustness": {"$ref": "#/$defs/CostSensitivityNeighborhood"},
+        "fold_deltas": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/CostSensitivityFoldDelta"}},
+        "outcome": {"anyOf": [{"$ref": "backtest-outcome-v1.json"}, {"type": "null"}]},
+        "error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "CostSensitivityFoldDelta": {
+      "type": "object",
+      "required": ["fold", "train_range", "test_range", "training_return_delta_bps", "training_drawdown_delta_bps", "out_of_sample_return_delta_bps", "out_of_sample_drawdown_delta_bps"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "train_range": {"$ref": "#/$defs/TimeRange"},
+        "test_range": {"$ref": "#/$defs/TimeRange"},
+        "training_return_delta_bps": {"type": "integer", "minimum": -4294967295, "maximum": 4294967295},
+        "training_drawdown_delta_bps": {"type": "integer", "minimum": -4294967295, "maximum": 4294967295},
+        "out_of_sample_return_delta_bps": {"type": "integer", "minimum": -4294967295, "maximum": 4294967295},
+        "out_of_sample_drawdown_delta_bps": {"type": "integer", "minimum": -4294967295, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
+    "CostSensitivityNeighborhood": {
+      "type": "object",
+      "required": ["radius", "possible_neighbors", "evaluated_neighbors", "successful_neighbors", "passed_neighbors", "complete", "passed", "candidates"],
+      "properties": {
+        "radius": {"type": "integer", "minimum": 1, "maximum": 8},
+        "possible_neighbors": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "evaluated_neighbors": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "successful_neighbors": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "passed_neighbors": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "complete": {"type": "boolean"},
+        "passed": {"type": "boolean"},
+        "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/CostSensitivityNeighborResult"}}
+      },
+      "additionalProperties": false
+    },
+    "CostSensitivityNeighborResult": {
+      "type": "object",
+      "required": ["ordinal", "parameters", "fold_deltas", "cost_robustness_passed", "outcome", "error"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
+        "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "fold_deltas": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/CostSensitivityFoldDelta"}},
+        "cost_robustness_passed": {"type": "boolean"},
+        "outcome": {"anyOf": [{"$ref": "backtest-outcome-v1.json"}, {"type": "null"}]},
+        "error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
     "Candidate": {
       "type": "object",
       "required": ["ordinal", "parameters", "outcome", "error"],
       "properties": {
-        "ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
         "strategy_kind": {"enum": ["sma_cross", "ema_cross", "macd", "rsi", "bollinger", "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend", "keltner_trend", "vwap_reversion", "volatility_breakout"]},
         "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
         "outcome": {"anyOf": [{"$ref": "backtest-outcome-v1.json"}, {"type": "null"}]},
-        "error": {"type": ["string", "null"]}
+        "error": {"type": ["string", "null"]},
+        "pruning": {"$ref": "#/$defs/CandidatePruning"}
+      },
+      "additionalProperties": false
+    },
+    "CandidatePruning": {
+      "type": "object",
+      "required": ["processed_bars", "observed_max_drawdown_bps", "max_training_drawdown_bps"],
+      "properties": {
+        "processed_bars": {"type": "integer", "minimum": 0},
+        "observed_max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "max_training_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000}
       },
       "additionalProperties": false
     },
@@ -40,9 +118,14 @@
         "fold": {"type": "integer", "minimum": 0},
         "train_range": {"$ref": "#/$defs/TimeRange"},
         "test_range": {"$ref": "#/$defs/TimeRange"},
-        "selected_ordinal": {"type": "integer", "minimum": 0, "maximum": 255},
+        "purge_range": {"$ref": "#/$defs/TimeRange"},
+        "embargo_range": {"$ref": "#/$defs/TimeRange"},
+        "selected_ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
         "selected_parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
         "in_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "selected_training_robustness_score_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "selected_training_max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "max_training_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
         "out_of_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
         "selected_strategy_kind": {"enum": ["sma_cross", "ema_cross", "macd", "rsi", "bollinger", "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend", "keltner_trend", "vwap_reversion", "volatility_breakout"]}
       },
@@ -53,10 +136,24 @@
       "type": "object",
       "required": ["folds", "in_sample_return_bps", "out_of_sample_return_bps", "degradation_bps"],
       "properties": {
-        "folds": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/FoldReport"}},
+        "folds": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/FoldReport"}},
         "in_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
         "out_of_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
-        "degradation_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
+        "degradation_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "cross_fold_robustness": {"$ref": "#/$defs/CrossFoldRobustness"}
+      },
+      "additionalProperties": false
+    },
+    "CrossFoldRobustness": {
+      "type": "object",
+      "required": ["folds_evaluated", "positive_training_folds", "minimum_training_return_bps", "worst_training_drawdown_bps", "positive_out_of_sample_folds", "minimum_out_of_sample_return_bps"],
+      "properties": {
+        "folds_evaluated": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "positive_training_folds": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "minimum_training_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "worst_training_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "positive_out_of_sample_folds": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "minimum_out_of_sample_return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
       },
       "additionalProperties": false
     },
@@ -67,6 +164,92 @@
         "name": {"enum": ["buy-and-hold", "zero-signal", "none"]},
         "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
         "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
+    "SearchReport": {
+      "type": "object",
+      "required": ["algorithm", "seed", "budget", "trials"],
+      "properties": {
+        "algorithm": {"enum": ["random", "tpe", "tpe_kde", "pareto_tpe"]},
+        "objective": {"enum": ["return", "pareto_return_drawdown"]},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "budget": {"type": "integer", "minimum": 1, "maximum": 256},
+        "max_training_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "early_pruning": {
+          "type": "object",
+          "required": ["min_training_bars"],
+          "properties": {
+            "min_training_bars": {"type": "integer", "minimum": 2, "maximum": 18446744073709551615}
+          },
+          "additionalProperties": false
+        },
+        "robustness_subwindows": {"type": "integer", "minimum": 2, "maximum": 8},
+        "minimum_training_robustness_score_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "cost_robustness_passed": {"type": "boolean"},
+        "neighborhood_cost_robustness_passed": {"type": "boolean"},
+        "trials": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/SearchTrial"}},
+        "neighborhood": {"$ref": "#/$defs/SearchNeighborhood"},
+        "fold_searches": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/FoldSearchReport"}}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["minimum_training_robustness_score_bps"]},
+          "then": {"required": ["robustness_subwindows"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "FoldSearchReport": {
+      "type": "object",
+      "required": ["fold", "seed", "train_range", "test_range", "trials", "candidates", "selected_ordinal", "selected_run_manifest"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "train_range": {"$ref": "#/$defs/TimeRange"},
+        "test_range": {"$ref": "#/$defs/TimeRange"},
+        "trials": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/SearchTrial"}},
+        "candidates": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
+        "selected_ordinal": {"type": ["integer", "null"], "minimum": 1, "maximum": 256},
+        "selected_run_manifest": {"type": ["string", "null"], "minLength": 1},
+        "neighborhood": {"$ref": "#/$defs/SearchNeighborhood"},
+        "cost_sensitivity": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/CostSensitivityResult"}}
+      },
+      "additionalProperties": false
+    },
+    "SearchTrial": {
+      "type": "object",
+      "required": ["ordinal", "proposal", "parameters", "training_score_bps"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
+        "proposal": {"enum": ["random", "tpe_random_startup", "tpe", "tpe_kde_random_startup", "tpe_kde", "pareto_tpe_random_startup", "pareto_tpe"]},
+        "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "training_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "training_max_drawdown_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},
+        "training_robustness_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647}
+      },
+      "additionalProperties": false
+    },
+    "SearchNeighborhood": {
+      "type": "object",
+      "required": ["center_ordinal", "center_parameters", "radius", "possible_neighbors", "evaluated_neighbors", "successful_neighbors", "failed_neighbors", "mean_training_score_bps", "min_training_score_bps", "max_training_score_bps"],
+      "properties": {
+        "center_ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
+        "center_parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
+        "radius": {"type": "integer", "minimum": 1, "maximum": 8},
+        "possible_neighbors": {"type": "integer", "minimum": 0, "maximum": 256},
+        "evaluated_neighbors": {"type": "integer", "minimum": 0, "maximum": 256},
+        "successful_neighbors": {"type": "integer", "minimum": 0, "maximum": 256},
+        "failed_neighbors": {"type": "integer", "minimum": 0, "maximum": 256},
+        "mean_training_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "min_training_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "max_training_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "assessment": {"enum": ["incomplete_neighborhood", "no_neighbors", "no_successful_neighbors", "stable_positive", "fragile_positive", "drawdown_budget_exceeded", "drawdown_budget_unverified", "no_positive_training_edge"]},
+        "drawdown_budget_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+        "center_drawdown_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},
+        "max_neighbor_drawdown_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},
+        "drawdown_budget_exceeded_neighbors": {"type": "integer", "minimum": 0, "maximum": 256},
+        "drawdown_budget_unverified_neighbors": {"type": "integer", "minimum": 0, "maximum": 256}
       },
       "additionalProperties": false
     }

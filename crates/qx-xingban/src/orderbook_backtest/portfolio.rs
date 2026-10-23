@@ -411,9 +411,10 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     }
                     let policy = local_order.policy.unwrap_or_default();
                     if let Err(error) = policy.validate_for(&market.spec).and_then(|_| {
-                        market.spec.validate_order(
-                            local_order.qty.raw(),
+                        market.spec.validate_order_with_reference(
+                            local_order.qty.raw().checked_abs().unwrap_or(0),
                             local_order.limit.map(|price| price.raw()),
+                            reference_price.map(|price| price.raw()),
                         )
                     }) {
                         append_event(

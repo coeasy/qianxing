@@ -87,6 +87,18 @@ fn run_report_entry_arguments_accept_html_output_and_reject_ignored_paths() {
     assert!(with_evidence.3, "--evidence 必须被读到");
     assert!(!with_evidence.2, "--evidence 不该顺手打开 --html");
 
+    let with_diagnostics = run_report_entry_arguments(
+        &arguments(&[
+            "report",
+            "--html",
+            "--strategy-diagnostics=diagnostics.json",
+            "summary.json",
+        ]),
+        default_path,
+    )
+    .unwrap();
+    assert_eq!(with_diagnostics.10, Some(PathBuf::from("diagnostics.json")));
+
     for given in [
         vec!["report", "--output", "report.html"],
         vec!["report", "--html", "--output"],
@@ -94,6 +106,13 @@ fn run_report_entry_arguments_accept_html_output_and_reject_ignored_paths() {
         vec!["report", "--html", "--json", "--json"],
         vec!["report", "--html", "--html"],
         vec!["report", "--evidence", "--evidence"],
+        vec!["report", "--html", "--strategy-diagnostics"],
+        vec![
+            "report",
+            "--html",
+            "--strategy-diagnostics=x.json",
+            "--strategy-diagnostics=y.json",
+        ],
         vec!["report", "--html", "summary.json", "extra.json"],
     ] {
         let error = run_report_entry_arguments(&arguments(&given), default_path).unwrap_err();

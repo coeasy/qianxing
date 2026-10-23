@@ -15,7 +15,6 @@ import hashlib
 import json
 import re
 import statistics
-import subprocess
 import sys
 import tempfile
 import time
@@ -23,6 +22,7 @@ from datetime import date, datetime, time as day_time, timedelta, timezone
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from process_metrics import run_measured
 from source_fingerprint import MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA, measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -133,9 +133,18 @@ def generate_workload(
     return frame_path, spec_path, config_path, actions_path
 
 
-def run_once(binary: Path, frame: Path, spec: Path, config: Path) -> tuple[float, str, int, str, str]:
-    started = time.perf_counter()
-    process = subprocess.run(
+def run_once(
+    binary: Path, frame: Path, spec: Path, config: Path
+) -> tuple[float, str, int, str, str, int | None, int | None, int]:
+    (
+        elapsed_ms,
+        stdout,
+        stderr,
+        return_code,
+        peak_rss_bytes,
+        peak_tree_rss_bytes,
+        peak_process_count,
+    ) = run_measured(
         [
             str(binary),
             "backtest",
@@ -148,14 +157,18 @@ def run_once(binary: Path, frame: Path, spec: Path, config: Path) -> tuple[float
             str(config),
         ],
         cwd=frame.parent,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
     )
-    elapsed_ms = (time.perf_counter() - started) * 1_000
-    match = re.search(r"result_hash=([0-9a-f]{16})", process.stdout)
-    return elapsed_ms, match.group(1) if match else "", process.returncode, process.stderr[-2_000:], process.stdout
+    match = re.search(r"result_hash=([0-9a-f]{16})", stdout)
+    return (
+        elapsed_ms,
+        match.group(1) if match else "",
+        return_code,
+        stderr[-2_000:],
+        stdout,
+        peak_rss_bytes,
+        peak_tree_rss_bytes,
+        peak_process_count,
+    )
 
 
 def find_binary(value: str | None) -> Path:
@@ -209,6 +222,13 @@ def main() -> int:
         "binary_sha256": sha256(binary),
         "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, published SSE/SZSE 2024-2025 calendar, and PIT-visible corporate action",
         "profile_coverage_claim": False,
+        "resource_measurement": {
+            "peak_rss_field": "peak_rss_bytes",
+            "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+            "method": "Windows process PeakWorkingSetSize; Linux VmHWM; macOS 10ms RSS sampling",
+            "process_tree_method": "optional psutil 10ms aggregate RSS sampling across qx-cli and descendants",
+            "scope": "process tree excludes shared-system cache; tree RSS may miss short spikes",
+        },
         "profile_target_status_updated": False,
         "limitations": [
             "synthetic deterministic minute bars; not market-data quality evidence",
@@ -224,17 +244,34 @@ def main() -> int:
             frame, spec, config, action_path = generate_workload(
                 size, directory, args.actions
             )
-            _, warm_hash, code, error, warm_stdout = run_once(binary, frame, spec, config)
+            _, warm_hash, code, error, warm_stdout, _, _, _ = run_once(binary, frame, spec, config)
             if code or not warm_hash:
                 raise SystemExit(f"A-share warmup failed (N={size}, exit={code}): {error}\n{warm_stdout[-2000:]}")
             samples: list[float] = []
+            peak_rss_values: list[int] = []
+            peak_tree_rss_values: list[int] = []
+            peak_process_count = 1
             hashes: list[str] = []
             sample_stdout = ""
             for _ in range(args.repeats):
-                elapsed, digest, code, error, sample_stdout = run_once(binary, frame, spec, config)
+                (
+                    elapsed,
+                    digest,
+                    code,
+                    error,
+                    sample_stdout,
+                    peak_rss_bytes,
+                    tree_rss_bytes,
+                    process_count,
+                ) = run_once(binary, frame, spec, config)
                 if code or not digest:
                     raise SystemExit(f"A-share run failed (N={size}, exit={code}): {error}\n{sample_stdout[-2000:]}")
                 samples.append(elapsed)
+                if peak_rss_bytes is not None:
+                    peak_rss_values.append(peak_rss_bytes)
+                if tree_rss_bytes is not None:
+                    peak_tree_rss_values.append(tree_rss_bytes)
+                peak_process_count = max(peak_process_count, process_count)
                 hashes.append(digest)
             if len(set(hashes)) != 1 or hashes[0] != warm_hash:
                 raise SystemExit(f"A-share result hash changed across repeats (N={size})")
@@ -246,7 +283,7 @@ def main() -> int:
                 control_frame, control_spec, control_config, _ = generate_workload(
                     size, control_directory, action_count=1
                 )
-                _, control_hash, control_code, control_error, control_stdout = run_once(
+                _, control_hash, control_code, control_error, control_stdout, _, _, _ = run_once(
                     binary, control_frame, control_spec, control_config
                 )
                 if control_code or not control_hash:
@@ -279,6 +316,11 @@ def main() -> int:
                     "action_effect_verified": action_effect_verified,
                     "p50_ms": round(statistics.median(samples), 3),
                     "p95_ms": round(ordered[min(len(ordered) - 1, round(0.95 * (len(ordered) - 1)))], 3),
+                    "peak_rss_bytes_max": max(peak_rss_values) if peak_rss_values else None,
+                    "peak_rss_samples": len(peak_rss_values),
+                    "process_tree_peak_rss_bytes_max": max(peak_tree_rss_values) if peak_tree_rss_values else None,
+                    "process_tree_peak_rss_samples": len(peak_tree_rss_values),
+                    "peak_process_count": peak_process_count,
                     "bars_per_second_at_p50": round(size / (statistics.median(samples) / 1_000), 2),
                     "rejected_orders_last_repeat": int(rejected.group(1)) if rejected else None,
                     "rules_binding_observed": "ashare-rules:" in cost_source,

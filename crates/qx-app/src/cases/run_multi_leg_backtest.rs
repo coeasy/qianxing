@@ -414,10 +414,35 @@ pub(super) fn run_inner(
     })?;
     let primary_result_hash = fill_result_hash(&primary.instrument, primary_fills)?;
     let reference_result_hash = fill_result_hash(&reference.instrument, reference_fills)?;
+    let spec_artifact = serde_json::to_value(spec)
+        .map_err(|error| invariant(format!("多腿规格产物序列化失败: {error}")))?;
+    let market_data = serde_json::json!([
+        {
+            "instrument": primary.instrument.to_string(),
+            "path": spec.primary_bars_path,
+            "content_hash": primary_fingerprint,
+            "row_count": primary.ts.len(),
+            "dataset_manifest_path": spec.primary_dataset_manifest_path,
+        },
+        {
+            "instrument": reference.instrument.to_string(),
+            "path": spec.reference_bars_path,
+            "content_hash": reference_fingerprint,
+            "row_count": reference.ts.len(),
+            "dataset_manifest_path": spec.reference_dataset_manifest_path,
+        }
+    ]);
+    let ledger_entries = serde_json::to_value(portfolio_report.ledger.entries())
+        .map_err(|error| invariant(format!("多腿重放账簿产物序列化失败: {error}")))?;
+    let equity_curve = portfolio_report
+        .equity
+        .iter()
+        .map(|(ts, equity)| serde_json::json!([ts, equity.to_string()]))
+        .collect::<Vec<_>>();
 
     let artifact = PathBuf::from(&spec.output_dir).join(format!("{}.multi-leg.json", spec.run_id));
     let mut payload = serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": spec.run_id,
         "strategy_id": strategy_id,
         "strategy_version": strategy_version,
@@ -488,6 +513,16 @@ pub(super) fn run_inner(
         "leg_return_basis": "leg pnl divided by declared leg initial cash; execution uses the shared account and does not enforce leg capital reservations",
         "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "signed funding settles at UTC 8-hour boundaries on the last observed mark using the open derivative position and is applied to the shared Ledger before callbacks at that timestamp", "funding settlement fails closed if its latest mark is more than one funding interval old", "funding debit or receipt is included exactly once in ending equity and each settlement is present in replay facts", "funding input is caller-supplied constant bps or timestamped historical events; event inputs are recorded in this artifact and do not imply an exchange history provider", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
     });
+    let payload_object = payload
+        .as_object_mut()
+        .ok_or_else(|| invariant("多腿产物 JSON 根节点必须是对象"))?;
+    payload_object.insert("spec".into(), spec_artifact);
+    payload_object.insert("market_data".into(), market_data);
+    payload_object.insert("ledger_entries".into(), ledger_entries);
+    payload_object.insert(
+        "equity_curve".into(),
+        serde_json::Value::Array(equity_curve),
+    );
     funding::apply_artifact_metadata(&mut payload, spec, funding_provider)?;
     let payload = serde_json::to_string(&payload)
         .map_err(|error| invariant(format!("多腿产物序列化失败: {error}")))?;
@@ -500,7 +535,7 @@ pub(super) fn run_inner(
             return Err(AppError::new(
                 AppErrorCategory::Conflict,
                 "相同 run_id 的多腿产物已存在且内容不同",
-            ))
+            ));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             write_text(&artifact_path, &payload)?

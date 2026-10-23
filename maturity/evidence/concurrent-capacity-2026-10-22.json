@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "concurrent_synthetic_bar_backtest_capacity_proxy",
+  "generated_at_utc": "2026-10-22T03:30:54Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "5819a464f5acdb22dcf008d4a3f13e44d15d22db8c07a285617449b6a9b0f3a9",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "1d56616840ab6bcc5c540d61713f5ac84bf7c732d6ea22898f2c9d3747ee7388",
+  "fixture": "crypto-spot",
+  "bars_per_worker": 256000,
+  "repeats": 3,
+  "method": "one Python orchestrator launches isolated qx-cli backtest processes; process_metrics samples orchestrator plus descendants",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "workloads": [
+    {
+      "concurrent_backtests": 1,
+      "bars_total": 256000,
+      "warmup_wall_ms": 1685.246,
+      "p50_wall_ms": 1344.86,
+      "p95_wall_ms": 1385.137,
+      "aggregate_peak_process_tree_rss_bytes_max": 174030848,
+      "peak_process_count": 2,
+      "throughput_bars_per_second_p50": 190354.44,
+      "result_hashes_by_worker": [
+        "6eee2b0009b8600f"
+      ],
+      "deterministic_across_repeats": true,
+      "scope_limitations": [
+        "synthetic crypto spot Bars",
+        "separate qx-cli processes and storage roots",
+        "not an internal multi-job scheduler or full crypto-paper profile"
+      ]
+    },
+    {
+      "concurrent_backtests": 2,
+      "bars_total": 512000,
+      "warmup_wall_ms": 1661.21,
+      "p50_wall_ms": 1590.062,
+      "p95_wall_ms": 1643.985,
+      "aggregate_peak_process_tree_rss_bytes_max": 244793344,
+      "peak_process_count": 3,
+      "throughput_bars_per_second_p50": 322000.08,
+      "result_hashes_by_worker": [
+        "6eee2b0009b8600f",
+        "6eee2b0009b8600f"
+      ],
+      "deterministic_across_repeats": true,
+      "scope_limitations": [
+        "synthetic crypto spot Bars",
+        "separate qx-cli processes and storage roots",
+        "not an internal multi-job scheduler or full crypto-paper profile"
+      ]
+    },
+    {
+      "concurrent_backtests": 4,
+      "bars_total": 1024000,
+      "warmup_wall_ms": 2291.317,
+      "p50_wall_ms": 2210.233,
+      "p95_wall_ms": 2273.437,
+      "aggregate_peak_process_tree_rss_bytes_max": 336105472,
+      "peak_process_count": 5,
+      "throughput_bars_per_second_p50": 463299.57,
+      "result_hashes_by_worker": [
+        "6eee2b0009b8600f",
+        "6eee2b0009b8600f",
+        "6eee2b0009b8600f",
+        "6eee2b0009b8600f"
+      ],
+      "deterministic_across_repeats": true,
+      "scope_limitations": [
+        "synthetic crypto spot Bars",
+        "separate qx-cli processes and storage roots",
+        "not an internal multi-job scheduler or full crypto-paper profile"
+      ]
+    }
+  ]
+}

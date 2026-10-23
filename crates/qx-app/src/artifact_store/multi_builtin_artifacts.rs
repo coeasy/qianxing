@@ -149,18 +149,21 @@ pub fn publish_multi_builtin_backtest_artifacts(
         )
     })
     .collect::<Result<Vec<_>, String>>()?;
-    let (has_report_analysis, assembly) = prepare_run_evidence_assembly(RunEvidencePreparation {
-        summary_path: &artifacts.composition_summary,
-        summary: &artifacts.composition_summary_json,
-        report_analysis: None,
-        components,
-        build_profile,
-        target_triple,
-        operator,
-    })?;
+    let (has_report_analysis, has_strategy_diagnostics, assembly) =
+        prepare_run_evidence_assembly(RunEvidencePreparation {
+            summary_path: &artifacts.composition_summary,
+            summary: &artifacts.composition_summary_json,
+            report_analysis: None,
+            strategy_diagnostics: None,
+            components,
+            build_profile,
+            target_triple,
+            operator,
+        })?;
     let evidence_bundle = persist_run_evidence_bundle(
         &artifacts.composition_summary,
         has_report_analysis,
+        has_strategy_diagnostics,
         assembly,
     )?;
     Ok(MultiBuiltinPublishedArtifacts {

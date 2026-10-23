@@ -13,13 +13,14 @@ import copy
 import hashlib
 import json
 import statistics
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from process_metrics import run_measured
+from source_fingerprint import MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA, measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "maturity" / "fixtures" / "scenarios"
@@ -68,12 +69,38 @@ def load_fixture(name: str) -> tuple[dict, dict]:
     return spec, {"instrument": f"{symbol}.{venue}", "start_ms": spec["valid_from"]}
 
 
-def generate_frame(size: int, fixture: str, spec: dict, identity: dict, path: Path) -> None:
+def generate_frame(
+    size: int,
+    fixture: str,
+    spec: dict,
+    identity: dict,
+    path: Path,
+    drawdown_stress: bool = False,
+) -> None:
     tick = int(spec["price_tick"])
     base = BASE_PRICE[fixture]
     if tick <= 0 or base <= 8 * tick or base % tick:
         raise ValueError(f"fixture {fixture} has incompatible benchmark price/tick: {base}/{tick}")
-    prices = [base + ((index % 17) - 8) * tick for index in range(size)]
+    if drawdown_stress:
+        warmup_end = max(2, size // 5)
+        peak_index = max(warmup_end + 2, size // 2)
+        peak_gain_ticks = max(1, base // tick // 20)
+        decline_ticks = max(1, base // tick // 4)
+        prices = [
+            base
+            + tick
+            * (
+                0
+                if index < warmup_end
+                else peak_gain_ticks * (index - warmup_end) // (peak_index - warmup_end)
+                if index < peak_index
+                else peak_gain_ticks
+                - decline_ticks * (index - peak_index) // max(1, size - peak_index)
+            )
+            for index in range(size)
+        ]
+    else:
+        prices = [base + ((index % 17) - 8) * tick for index in range(size)]
     volume_unit = max(int(spec["qty_step"]), int(spec["min_qty"]))
     ts = [int(identity["start_ms"]) + index * 60_000 for index in range(size)]
     document = {
@@ -108,9 +135,8 @@ def runtime_config(fixture: str, size: int, identity: dict, workdir: Path) -> Pa
 
 def run_once(
     binary: Path, frame: Path, market_spec: Path, quantity: int, config: Path
-) -> tuple[float, str, int, str]:
-    started = time.perf_counter()
-    proc = subprocess.run(
+) -> tuple[float, str, int, str, int | None, int | None, int, float | None, int | None, int | None]:
+    measured = run_measured(
         [
             str(binary),
             "backtest",
@@ -123,17 +149,29 @@ def run_once(
             str(config),
         ],
         cwd=frame.parent,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
     )
-    elapsed_ms = (time.perf_counter() - started) * 1_000.0
     digest = ""
-    for line in proc.stdout.splitlines():
+    for line in measured.stdout.splitlines():
         if "result_hash=" in line:
             digest = line.split("result_hash=", 1)[1].split()[0]
-    return elapsed_ms, digest, proc.returncode, proc.stderr[-2_000:]
+    return (
+        measured.elapsed_ms,
+        digest,
+        measured.return_code,
+        measured.stderr[-2_000:],
+        measured.peak_rss_bytes,
+        measured.peak_tree_rss_bytes,
+        measured.peak_process_count,
+        measured.tree_cpu_seconds,
+        measured.tree_io_read_bytes,
+        measured.tree_io_write_bytes,
+    )
+
+
+def directory_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
 def find_binary(value: str | None) -> Path:
@@ -166,7 +204,17 @@ def main() -> int:
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "hardware": hardware_fingerprint(),
         "binary": str(binary),
+        "binary_sha256": sha256(binary),
+        "measurement_source_fingerprint_schema": MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA,
+        "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
         "scenario": "qx-cli backtest builtin sma_cross with fixture instrument + TradingInstrumentSpec",
+        "resource_measurement": {
+            "peak_rss_field": "peak_rss_bytes",
+            "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+            "method": "Windows process PeakWorkingSetSize; Linux VmHWM; macOS 10ms RSS sampling",
+            "process_tree_method": "optional psutil 10ms aggregate RSS sampling across qx-cli and descendants",
+            "scope": "process tree excludes shared-system cache; tree RSS may miss short spikes",
+        },
         "profile_coverage_claim": False,
         "market_workloads": [],
         "unmeasured_profile_targets": UNMEASURED_PROFILE_TARGETS,
@@ -175,7 +223,9 @@ def main() -> int:
     }
     temporary_root: Path | None = None
     with tempfile.TemporaryDirectory(
-        prefix="qx-profile-bench-",
+        # Keep generated run-artifact paths below the Windows legacy MAX_PATH
+        # boundary so TemporaryDirectory can remove the complete workload tree.
+        prefix="b-",
         dir=ROOT / "target",
         ignore_cleanup_errors=True,
     ) as workdir:
@@ -199,22 +249,42 @@ def main() -> int:
             profile_rows = []
             for size in sizes:
                 frame_path = temp_root / f"{fixture}-{size}.json"
+                generation_started = time.perf_counter()
                 generate_frame(size, fixture, spec, identity, frame_path)
                 config_path = runtime_config(fixture, size, identity, temp_root)
-                _, warm_hash, warm_code, warm_error = run_once(
+                generation_ms = (time.perf_counter() - generation_started) * 1_000
+                input_bytes = frame_path.stat().st_size + market_path.stat().st_size + config_path.stat().st_size
+                _, warm_hash, warm_code, warm_error, _, _, _, _, _, _ = run_once(
                     binary, frame_path, market_path, quantity, config_path
                 )
                 if warm_code != 0 or not warm_hash:
                     raise SystemExit(f"{fixture} warmup failed (N={size}, exit={warm_code}): {warm_error}")
-                samples, hashes = [], []
+                output_bytes = directory_bytes(temp_root / f"storage-{fixture}-{size}")
+                samples, hashes, peak_rss_values, peak_tree_rss_values = [], [], [], []
+                peak_process_count = 1
+                cpu_seconds, io_read_bytes, io_write_bytes = [], [], []
                 for _ in range(args.repeats):
-                    elapsed, result_hash, return_code, stderr = run_once(
+                    (
+                        elapsed, result_hash, return_code, stderr, peak_rss_bytes, tree_rss_bytes,
+                        process_count, cpu_seconds_value, io_read_bytes_value, io_write_bytes_value,
+                    ) = run_once(
                         binary, frame_path, market_path, quantity, config_path
                     )
                     if return_code != 0 or not result_hash:
                         raise SystemExit(f"{fixture} failed (N={size}, exit={return_code}): {stderr}")
                     samples.append(elapsed)
                     hashes.append(result_hash)
+                    if peak_rss_bytes is not None:
+                        peak_rss_values.append(peak_rss_bytes)
+                    if tree_rss_bytes is not None:
+                        peak_tree_rss_values.append(tree_rss_bytes)
+                    peak_process_count = max(peak_process_count, process_count)
+                    if cpu_seconds_value is not None:
+                        cpu_seconds.append(cpu_seconds_value)
+                    if io_read_bytes_value is not None:
+                        io_read_bytes.append(io_read_bytes_value)
+                    if io_write_bytes_value is not None:
+                        io_write_bytes.append(io_write_bytes_value)
                 if len(set(hashes)) != 1 or hashes[0] != warm_hash:
                     raise SystemExit(f"{fixture} result hash changed across repeats (N={size})")
                 ordered = sorted(samples)
@@ -222,8 +292,19 @@ def main() -> int:
                     {
                         "bars": size,
                         "repeats": args.repeats,
+                        "input_generation_ms": round(generation_ms, 3),
+                        "input_bytes": input_bytes,
+                        "persisted_output_bytes": output_bytes,
                         "p50_ms": round(statistics.median(samples), 3),
                         "p95_ms": round(ordered[min(len(ordered) - 1, round(0.95 * (len(ordered) - 1)))], 3),
+                        "peak_rss_bytes_max": max(peak_rss_values) if peak_rss_values else None,
+                        "peak_rss_samples": len(peak_rss_values),
+                        "process_tree_peak_rss_bytes_max": max(peak_tree_rss_values) if peak_tree_rss_values else None,
+                        "process_tree_peak_rss_samples": len(peak_tree_rss_values),
+                        "peak_process_count": peak_process_count,
+                        "process_tree_cpu_seconds_p50": round(statistics.median(cpu_seconds), 3) if cpu_seconds else None,
+                        "process_tree_io_read_bytes_max": max(io_read_bytes) if io_read_bytes else None,
+                        "process_tree_io_write_bytes_max": max(io_write_bytes) if io_write_bytes else None,
                         "result_hash": hashes[0],
                         "deterministic_across_repeats": True,
                     }

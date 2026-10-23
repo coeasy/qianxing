@@ -15,6 +15,11 @@ pub(crate) fn insert_static_app_routes(pairs: &mut BTreeSet<(String, String)>) {
             "/app/capabilities/providers/preflight",
             "capabilities::provider_preflight(body, provider_registry)",
         ),
+        (
+            "POST",
+            "/app/research-artifacts",
+            "research_artifacts::route(body, paths)",
+        ),
     ] {
         let branch = format!("if let (\"{method}\", \"{route}\")");
         assert!(

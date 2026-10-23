@@ -52,6 +52,7 @@ fn paper_venue_order_lifecycle(c: &mut Criterion) {
         price_tick: SCALE,
         qty_step: SCALE,
         min_qty: SCALE,
+        min_notional_raw: 0,
         max_leverage: 20,
         maintenance_margin_bps: 500,
         valid_from: 1,

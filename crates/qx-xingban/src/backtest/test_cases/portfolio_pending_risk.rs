@@ -48,6 +48,7 @@ fn spot_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,

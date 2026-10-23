@@ -533,6 +533,17 @@
           },
           "additionalProperties": false
         },
+        "strategy_diagnostics": {
+          "type": "object",
+          "description": "Optional strategy-bias diagnostic input. A single Bar run carries one object; a multi-market Bar or depth run may carry a validated per-market JSON array. Offline verification checks the exact file digest and binds every diagnostic to its strategy, instrument, input identity and coverage; it does not reproduce the diagnostic calculation.",
+          "required": ["kind", "input_path", "input_sha256"],
+          "properties": {
+            "kind": {"type": "string", "enum": ["strategy-bias-diagnostics", "strategy-bias-diagnostics-array", "strategy-bias-diagnostics-depth-array"]},
+            "input_path": {"type": "string", "minLength": 1},
+            "input_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+          },
+          "additionalProperties": false
+        },
         "identity": {
           "type": "object",
           "required": [

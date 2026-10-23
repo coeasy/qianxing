@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-joint-backtest-result-v1.json",
+  "title": "Qianxing MultiAccountJointBacktestOutcome v1",
+  "type": "object",
+  "required": ["run_id", "settlement_currency", "spec_fingerprint", "accounts_total", "markets_total", "initial_cash_raw", "final_equity_raw", "return_bps", "max_drawdown_bps", "successful_fills", "equity_path", "fills_path", "artifact_path", "accounts"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "settlement_currency": {"type": "string"},
+    "spec_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{16}$"},
+    "accounts_total": {"type": "integer", "minimum": 2, "maximum": 32},
+    "markets_total": {"type": "integer", "minimum": 2},
+    "initial_cash_raw": {"type": "integer"},
+    "final_equity_raw": {"type": "integer"},
+    "return_bps": {"type": "integer"},
+    "max_drawdown_bps": {"type": "integer", "minimum": 0},
+    "successful_fills": {"type": "integer", "minimum": 0},
+    "equity_path": {"type": "string", "minLength": 1},
+    "fills_path": {"type": "string", "minLength": 1},
+    "artifact_path": {"type": "string", "minLength": 1},
+    "accounts": {"type": "array", "minItems": 2, "maxItems": 32, "items": {"$ref": "#/$defs/JointAccountBacktestResult"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "JointAccountBacktestResult": {
+      "type": "object",
+      "required": ["exchange_id", "account_id", "initial_cash_raw", "outcome"],
+      "properties": {
+        "exchange_id": {"enum": ["okx", "binance", "bitget"]},
+        "account_id": {"type": "string"},
+        "initial_cash_raw": {"type": "integer", "minimum": 1},
+        "outcome": {"$ref": "multi-market-backtest-result-v1.json"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

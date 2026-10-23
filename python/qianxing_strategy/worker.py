@@ -26,7 +26,7 @@ from .frame import REQUEST, RESPONSE, encode_frame, read_frame
 from .ring import RingEmpty, SharedMemoryRing
 
 
-def _load_handler(reference: str) -> Callable[[StrategyInput], Any]:
+def _load_strategy_module(reference: str):
     path = Path(reference)
     if path.exists() and path.suffix == ".py":
         spec = importlib.util.spec_from_file_location("qianxing_user_strategy", path)
@@ -51,6 +51,14 @@ def _load_handler(reference: str) -> Callable[[StrategyInput], Any]:
             raise ValueError(
                 f"strategy artifact SHA-256 mismatch: expected={expected} actual={actual}"
             )
+    return module
+
+
+def _load_handler(reference: str) -> Callable[[StrategyInput], Any]:
+    return _handler_from_module(_load_strategy_module(reference))
+
+
+def _handler_from_module(module: Any) -> Callable[[StrategyInput], Any]:
     handler = getattr(module, "on_event", None)
     if not callable(handler):
         handler = getattr(module, "on_decision", None)
@@ -59,7 +67,11 @@ def _load_handler(reference: str) -> Callable[[StrategyInput], Any]:
     return handler
 
 
-def _handle_line(handler: Callable[[StrategyInput], Any], line: str) -> str:
+def _handle_line(
+    handler: Callable[[StrategyInput], Any], line: str,
+    diagnostic_handler: Callable[[StrategyInput], Any] | None = None,
+    include_diagnostics: bool = False,
+) -> str:
     try:
         request = StrategyInput.from_json(line)
         value = handler(request)
@@ -69,10 +81,20 @@ def _handle_line(handler: Callable[[StrategyInput], Any], line: str) -> str:
             output = StrategyOutput.from_dict(value, request)
         else:
             raise ValueError("on_decision must return StrategyOutput or dict")
+        response = {"ok": True, "output": output.to_dict(request)}
+        if include_diagnostics:
+            if diagnostic_handler is None:
+                response["diagnostic_state"] = None
+            else:
+                state = diagnostic_handler(request)
+                if not isinstance(state, dict) or any(not isinstance(key, str) for key in state):
+                    raise ValueError("diagnostic_state(request) must return a string-keyed dict")
+                response["diagnostic_state"] = state
         return json.dumps(
-            {"ok": True, "output": output.to_dict(request)},
+            response,
             separators=(",", ":"),
             ensure_ascii=False,
+            allow_nan=False,
         )
     except Exception as error:  # keep one response per request for supervisor recovery
         return json.dumps(
@@ -82,10 +104,14 @@ def _handle_line(handler: Callable[[StrategyInput], Any], line: str) -> str:
         )
 
 
-def serve(handler: Callable[[StrategyInput], Any]) -> None:
+def serve(
+    handler: Callable[[StrategyInput], Any],
+    diagnostic_handler: Callable[[StrategyInput], Any] | None = None,
+    include_diagnostics: bool = False,
+) -> None:
     for line in sys.stdin:
         if line.strip():
-            sys.stdout.write(_handle_line(handler, line))
+            sys.stdout.write(_handle_line(handler, line, diagnostic_handler, include_diagnostics))
             sys.stdout.write("\n")
             sys.stdout.flush()
 
@@ -194,6 +220,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Qianxing Python strategy JSONL worker")
     parser.add_argument("--module", required=True, help="module name or .py file")
     parser.add_argument(
+        "--include-diagnostics", action="store_true",
+        help="include optional diagnostic_state(request) output in JSONL responses",
+    )
+    parser.add_argument(
         "--protocol",
         choices=("jsonl", "framed_json", "shared_memory_json", "shared_memory_columnar"),
         default="jsonl",
@@ -210,7 +240,13 @@ def main() -> int:
         help="spawned-by process id; the shared-memory loop exits when it is gone (0 disables the check)",
     )
     args = parser.parse_args()
-    handler = _load_handler(args.module)
+    if args.include_diagnostics and args.protocol != "jsonl":
+        parser.error("--include-diagnostics is supported only with the JSONL protocol")
+    module = _load_strategy_module(args.module)
+    handler = _handler_from_module(module)
+    diagnostic_handler = getattr(module, "diagnostic_state", None) if args.include_diagnostics else None
+    if diagnostic_handler is not None and not callable(diagnostic_handler):
+        parser.error("diagnostic_state must be callable when provided")
     if args.protocol == "framed_json":
         serve_framed(handler)
     elif args.protocol in ("shared_memory_json", "shared_memory_columnar"):
@@ -226,7 +262,7 @@ def main() -> int:
             parent_pid=args.parent_pid,
         )
     else:
-        serve(handler)
+        serve(handler, diagnostic_handler, args.include_diagnostics)
     return 0
 
 

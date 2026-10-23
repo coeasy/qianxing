@@ -189,6 +189,7 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
             price_tick: qx_core::SCALE,
             qty_step: STEP,
             min_qty: STEP,
+            min_notional_raw: 0,
             max_leverage: 1,
             maintenance_margin_bps: 0,
             valid_from: 0,
@@ -208,6 +209,10 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
             _venue_id: &str,
         ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities> {
             Some(qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES)
+        }
+
+        fn execution_readiness_for(&self, _venue_id: &str) -> Result<(), String> {
+            Ok(())
         }
 
         fn submit_order(

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-23T01:15:48+08:00",
+  "scope": "optional C ABI strategy diagnostic state snapshot",
+  "environment": {
+    "os": "Windows",
+    "cmake": "cmake version 4.4.4",
+    "compiler": "MSVC 19.44.35227.0",
+    "plugin_sha256": "f49080dae808dc2c8054c79c9d58186f78a849e030374befc15717b9b1ec0d46"
+  },
+  "checks": [
+    {
+      "name": "C++ SDK configure and build",
+      "result": "passed",
+      "target": "qianxing_strategy_example"
+    },
+    {
+      "name": "C++ SDK contract tests",
+      "result": "passed",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "name": "Rust C ABI bounded JSON unit test",
+      "result": "passed",
+      "test": "c_abi_optional_diagnostic_state_is_bounded_json_and_read_only"
+    },
+    {
+      "name": "Rust loads C++ plugin and reads optional state export",
+      "result": "passed",
+      "test": "loads_and_runs_cpp_strategy_through_the_rust_c_abi_host",
+      "ignored_test_enabled_for_run": true
+    },
+    {
+      "name": "Python strategy diagnostics suite",
+      "result": "passed",
+      "passed": 14,
+      "failed": 0
+    },
+    {
+      "name": "Rust workspace compile check",
+      "result": "passed",
+      "offline": true
+    }
+  ],
+  "limitations": [
+    "Native plugin code must honor the host-owned output buffer contract; the host validates reported length, UTF-8 and JSON after callback return.",
+    "Plugins without qx_strategy_diagnostic_state remain supported and provide decision-only startup comparisons."
+  ]
+}

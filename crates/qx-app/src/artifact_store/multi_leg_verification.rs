@@ -30,12 +30,31 @@ pub(super) fn barframe_dataset_identity(
     frame_path: &Path,
     frame: &BarFrame,
 ) -> Result<qx_data::DatasetManifest, String> {
-    let bars: Vec<qx_guanxing::Bar> = frame.into();
-    let provider = JsonBarFrameProvider::new(
-        frame.source.0.clone(),
-        qx_data::BARFRAME_DATASET_VERSION,
+    barframe_dataset_identity_with_version(
         frame_path,
-    );
+        frame,
+        qx_data::barframe_registry_version(frame),
+    )
+}
+
+pub(super) fn legacy_barframe_dataset_identity(
+    frame_path: &Path,
+    frame: &BarFrame,
+) -> Result<qx_data::DatasetManifest, String> {
+    barframe_dataset_identity_with_version(
+        frame_path,
+        frame,
+        qx_data::BARFRAME_DATASET_VERSION.to_owned(),
+    )
+}
+
+fn barframe_dataset_identity_with_version(
+    frame_path: &Path,
+    frame: &BarFrame,
+    version: String,
+) -> Result<qx_data::DatasetManifest, String> {
+    let bars: Vec<qx_guanxing::Bar> = frame.into();
+    let provider = JsonBarFrameProvider::new(frame.source.0.clone(), version, frame_path);
     let (provider_bars, manifest) = provider.load_bars_with_manifest(
         &format!("strategy-bars:{}", frame.instrument),
         &frame.instrument.to_string(),
@@ -75,7 +94,11 @@ fn recompute_single_barframe_input(
     let path = field("path")?;
     let frame_path = Path::new(path);
     let frame = read_bar_frame(frame_path)?;
-    let manifest = barframe_dataset_identity(frame_path, &frame)?;
+    let manifest = if field("dataset_version")? == qx_data::BARFRAME_DATASET_VERSION {
+        legacy_barframe_dataset_identity(frame_path, &frame)?
+    } else {
+        barframe_dataset_identity(frame_path, &frame)?
+    };
     for (name, actual) in [
         ("dataset_id", manifest.dataset_id.as_str()),
         ("dataset_version", manifest.version.as_str()),

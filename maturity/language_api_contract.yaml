@@ -69,6 +69,8 @@ python_remote_helpers:
     note: "Python 远端能力目录查询的 asyncio 委托入口"
   - name: provider_preflight
     note: "Python 远端按 DataRequest 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
+  - name: research_artifacts
+    note: "Python 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
   - name: async_provider_preflight
     note: "Python Provider 预检的 asyncio 委托入口"
   - name: list_builtin_strategies
@@ -83,12 +85,16 @@ cpp_remote_helpers:
     note: "C++ 远端按 DataRequest JSON 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: builtin_strategy_catalog
     note: "C++ 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
+  - name: research_artifacts
+    note: "C++ 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
 
 rust_remote_lifecycle_methods:
   - name: get_run_events
     note: "Rust 远端门面按单次 Run 读取持久化生命周期事件"
   - name: provider_preflight
     note: "Rust 远端按 DataRequest 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
+  - name: research_artifacts
+    note: "Rust 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
   - name: start_paper_algo_execution
     note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 持久化启动入口"
   - name: get_paper_algo_execution
@@ -213,6 +219,12 @@ contracts:
     python_remote: ["run_multi_market_backtest", "start_multi_market_backtest"]
     cpp_remote: ["run_multi_market_backtest", "start_multi_market_backtest"]
     http: ["/app/multi-market-backtest", "/app/multi-market-backtest/start"]
+  - use_case: run_multi_account_joint_backtest
+    rust: ["run_multi_account_joint_backtest", "Client.run_multi_account_joint_backtest", "Client.start_multi_account_joint_backtest"]
+    python_native: ["run_multi_account_joint_backtest", "start_multi_account_joint_backtest"]
+    python_remote: ["run_multi_account_joint_backtest", "start_multi_account_joint_backtest"]
+    cpp_remote: ["run_multi_account_joint_backtest", "start_multi_account_joint_backtest"]
+    http: ["/app/multi-account-joint-backtest", "/app/multi-account-joint-backtest/start"]
   - use_case: run_multi_market_depth_backtest
     rust: ["run_multi_market_depth_backtest", "Client.run_multi_market_depth_backtest", "Client.run_multi_market_depth_backtest_with_strategy_slots", "Client.start_multi_market_depth_backtest", "Client.start_multi_market_depth_backtest_with_strategy_slots"]
     python_native: ["run_multi_market_depth_backtest", "start_multi_market_depth_backtest", "run_multi_market_depth_backtest_with_strategy_slots", "start_multi_market_depth_backtest_with_strategy_slots"]

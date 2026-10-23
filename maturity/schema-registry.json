@@ -100,6 +100,21 @@
       ]
     },
     {
+      "schema_id": "strategy-pit-ledger-v1",
+      "version": 1,
+      "path": "schemas/strategy-pit-ledger-v1.json",
+      "producer": "provider importers / research data preparation",
+      "consumers": [
+        "python/qianxing_strategy.diagnostics",
+        "qianxing-strategy-diagnose"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "python/examples/strategy-pit-ledger.json",
+        "python/tests/test_strategy_diagnostics.py"
+      ]
+    },
+    {
       "schema_id": "project-manifest-v1",
       "version": 1,
       "path": "schemas/project-manifest-v1.json",
@@ -359,6 +374,34 @@
       ]
     },
     {
+      "schema_id": "multi-account-joint-backtest-spec-v1",
+      "version": 1,
+      "path": "schemas/multi-account-joint-backtest-spec-v1.json",
+      "producer": "qx-app",
+      "consumers": ["qx-cli", "qx-api", "qx-python", "qx-sdk", "cpp"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_joint_backtest.rs",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "multi-account-joint-backtest-result-v1",
+      "version": 1,
+      "path": "schemas/multi-account-joint-backtest-result-v1.json",
+      "producer": "qx-app",
+      "consumers": ["qx-cli", "qx-api", "qx-python", "qx-sdk", "cpp"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/tests/multi_account_joint_backtest.rs",
+        "crates/qx-api/src/app_multi_market_tests.rs",
+        "crates/qx-sdk/src/remote/tests.rs",
+        "cpp/tests/app_client_smoke.cpp",
+        "python/tests/test_app_use_cases.py",
+        "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
       "schema_id": "multi-market-depth-backtest-spec-v1",
       "version": 1,
       "path": "schemas/multi-market-depth-backtest-spec-v1.json",
@@ -484,6 +527,36 @@
       ]
     },
     {
+      "schema_id": "multi-market-backtest-outcome-v1",
+      "version": 1,
+      "path": "schemas/multi-market-backtest-outcome-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-api",
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "crates/qx-api/src/app_multi_market_tests.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-market-depth-backtest-outcome-v1",
+      "version": 1,
+      "path": "schemas/multi-market-depth-backtest-outcome-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-api",
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "crates/qx-api/src/app_multi_market_tests.rs"
+      ]
+    },
+    {
       "schema_id": "provider-backtest-spec-v1",
       "version": 1,
       "path": "schemas/provider-backtest-spec-v1.json",
@@ -526,7 +599,8 @@
       "consumers": [
         "qx-cli",
         "qx-api",
-        "qx-python"
+        "qx-python",
+        "qx-sdk"
       ],
       "compatibility": "backward",
       "golden_fixtures": [
@@ -880,6 +954,300 @@
         "crates/qx-app/tests/multi_market_depth_backtest.rs",
         "crates/qx-cli/tests/cli_behavior_parity/depth_dataset_validate.rs",
         "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-request-v1",
+      "version": 1,
+      "path": "schemas/research-artifact-request-v1.json",
+      "producer": "web/console",
+      "consumers": [
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v1",
+      "version": 1,
+      "path": "schemas/research-artifact-view-v1.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v2",
+      "version": 2,
+      "path": "schemas/research-artifact-view-v2.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v3",
+      "version": 3,
+      "path": "schemas/research-artifact-view-v3.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v4",
+      "version": 4,
+      "path": "schemas/research-artifact-view-v4.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v5",
+      "version": 5,
+      "path": "schemas/research-artifact-view-v5.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v6",
+      "version": 6,
+      "path": "schemas/research-artifact-view-v6.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v7",
+      "version": 7,
+      "path": "schemas/research-artifact-view-v7.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v8",
+      "version": 8,
+      "path": "schemas/research-artifact-view-v8.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-request-v2",
+      "version": 2,
+      "path": "schemas/research-artifact-request-v2.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-request-v3",
+      "version": 3,
+      "path": "schemas/research-artifact-request-v3.json",
+      "producer": "web/console",
+      "consumers": [
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-request-v4",
+      "version": 4,
+      "path": "schemas/research-artifact-request-v4.json",
+      "producer": "web/console",
+      "consumers": [
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v9",
+      "version": 9,
+      "path": "schemas/research-artifact-view-v9.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v10",
+      "version": 10,
+      "path": "schemas/research-artifact-view-v10.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-request-v5",
+      "version": 5,
+      "path": "schemas/research-artifact-request-v5.json",
+      "producer": "web/console",
+      "consumers": [
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v11",
+      "version": 11,
+      "path": "schemas/research-artifact-view-v11.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "research-artifact-view-v12",
+      "version": 12,
+      "path": "schemas/research-artifact-view-v12.json",
+      "producer": "qx-api",
+      "consumers": [
+        "web/console"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/app_surface/research_artifacts.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "multi-market-depth-diagnostic-comparison-v1",
+      "version": 1,
+      "path": "schemas/multi-market-depth-diagnostic-comparison-v1.json",
+      "producer": "qx-cli",
+      "consumers": [
+        "qx-cli report"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/src/report_multi_market_depth.rs",
+        "crates/qx-cli/src/report_multi_market_depth_render.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-market-bar-diagnostic-comparison-v1",
+      "version": 1,
+      "path": "schemas/multi-market-bar-diagnostic-comparison-v1.json",
+      "producer": "qx-cli",
+      "consumers": [
+        "qx-cli report"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/src/report_multi_market.rs",
+        "crates/qx-cli/tests/multi_market_quality_manifest.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-account-strategy-bias-diagnostics-v1",
+      "version": 1,
+      "path": "schemas/multi-account-strategy-bias-diagnostics-v1.json",
+      "producer": "qx-cli report input",
+      "consumers": [
+        "qx-cli report"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/src/report_multi_account.rs",
+        "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"
+      ]
+    },
+    {
+      "schema_id": "multi-account-run-evidence-v1",
+      "version": 1,
+      "path": "schemas/multi-account-run-evidence-v1.json",
+      "producer": "qx-cli evidence pack-multi-account-run",
+      "consumers": [
+        "qx-cli evidence verify-multi-account-run",
+        "operators using offline run evidence"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/src/run_evidence_multi_account.rs",
+        "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"
       ]
     }
   ]

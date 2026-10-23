@@ -82,6 +82,16 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/provider-backtest", &request)
     }
 
+    /// Load replay-verified bounded artifacts for a completed Bar backtest.
+    pub fn research_artifacts(
+        &self,
+        outcome: &qx_app::BacktestOutcome,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(outcome)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/research-artifacts", &request)
+    }
+
     /// Run Provider Quote selection, immutable depth freezing and the shared Rust depth engine.
     pub fn run_provider_depth_backtest(
         &self,
@@ -110,6 +120,26 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         let request = serde_json::to_value(spec)
             .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
         self.post("/app/multi-market-backtest/start", &request)
+    }
+
+    /// Run a joint multi-exchange portfolio while preserving each account's independent ledger.
+    pub fn run_multi_account_joint_backtest(
+        &self,
+        spec: &qx_app::MultiAccountJointBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/multi-account-joint-backtest", &request)
+    }
+
+    /// Start a cancellable joint multi-exchange portfolio run on the Rust application server.
+    pub fn start_multi_account_joint_backtest(
+        &self,
+        spec: &qx_app::MultiAccountJointBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/multi-account-joint-backtest/start", &request)
     }
 
     /// Run a shared-account multi-market L2 backtest on the Rust application server.

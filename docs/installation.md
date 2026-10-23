@@ -103,7 +103,7 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.2.1-cp310-abi3-win_amd64.whl
+uv pip install --offline dist/qianxing-0.2.2-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
 # 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
 uv pip install --offline "qianxing[ccxt]"     # CCXT 行情/交易 worker

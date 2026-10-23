@@ -97,6 +97,10 @@ impl BarStrategy for SubmitBoth {
     }
 }
 
+struct NoopStrategy;
+
+impl BarStrategy for NoopStrategy {}
+
 fn spot_spec(instrument: &InstrumentId, base: &str) -> TradingInstrumentSpec {
     TradingInstrumentSpec {
         instrument: instrument.clone(),
@@ -110,6 +114,7 @@ fn spot_spec(instrument: &InstrumentId, base: &str) -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,
@@ -219,6 +224,50 @@ fn shared_session_routes_cross_market_orders_through_one_cash_ledger_and_replay(
         .events()
         .iter()
         .any(|event| matches!(event.kind, EventKind::Rejected { .. })));
+    report.verify().unwrap();
+}
+
+#[test]
+fn shared_session_bounds_instrument_equity_samples_and_keeps_terminal_points() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let reference = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let bars = (1..=2_005)
+        .map(|ts| {
+            Bar::new(
+                ts,
+                100 * SCALE,
+                101 * SCALE,
+                99 * SCALE,
+                100 * SCALE,
+                100 * SCALE,
+            )
+        })
+        .collect::<Vec<_>>();
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            market(instrument.clone(), 0, &bars, "BTC"),
+            market(reference, 1, &bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let report = engine.run(&mut NoopStrategy).unwrap();
+    let curve = &report.instrument_equity_contributions[&instrument];
+    assert_eq!(report.equity.len(), bars.len() * 2);
+    assert!(curve.len() <= 1_000);
+    assert_eq!(curve.first().map(|point| point.0), Some(0));
+    assert_eq!(
+        curve.last().map(|point| point.0),
+        Some(report.equity.len() as u64 - 1)
+    );
+    assert!(curve.windows(2).all(|pair| pair[0].0 < pair[1].0));
     report.verify().unwrap();
 }
 

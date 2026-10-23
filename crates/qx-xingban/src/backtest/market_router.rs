@@ -1,28 +1,55 @@
 //! Route a shared-account Bar portfolio to the strategy basket for each market.
 
 use super::BarStrategy;
-use qx_core::{Fill, InstrumentId, Order};
+use qx_core::{Fill, InstrumentId, Order, OrderPolicy};
 use qx_guanxing::Bar;
 use std::collections::BTreeMap;
 
 /// Dispatches each market event only to that market's strategy basket while keeping
 /// fills and account-state refreshes on one shared portfolio boundary.
 pub struct MarketRoutedBarStrategy {
-    strategies: BTreeMap<InstrumentId, Box<dyn BarStrategy>>,
+    strategies: BTreeMap<InstrumentId, RoutedMarketStrategy>,
+}
+
+struct RoutedMarketStrategy {
+    strategy: Box<dyn BarStrategy>,
+    default_order_policy: Option<OrderPolicy>,
 }
 
 impl MarketRoutedBarStrategy {
     pub fn new(
         strategies: Vec<(InstrumentId, Box<dyn BarStrategy>)>,
     ) -> Result<Self, qx_core::QxError> {
-        if strategies.len() < 2 {
+        Self::new_with_order_policies(
+            strategies
+                .into_iter()
+                .map(|(instrument, strategy)| (instrument, strategy, None))
+                .collect(),
+        )
+    }
+
+    /// Route each market to its strategy basket and attach its product policy to
+    /// generated orders that do not already carry an explicit per-order policy.
+    pub fn new_with_order_policies(
+        strategies: Vec<(InstrumentId, Box<dyn BarStrategy>, Option<OrderPolicy>)>,
+    ) -> Result<Self, qx_core::QxError> {
+        if strategies.is_empty() {
             return Err(qx_core::QxError::BusinessViolation(
-                "多市场策略路由至少需要两个市场".into(),
+                "市场策略路由至少需要一个市场".into(),
             ));
         }
         let mut routed = BTreeMap::new();
-        for (instrument, strategy) in strategies {
-            if routed.insert(instrument.clone(), strategy).is_some() {
+        for (instrument, strategy, default_order_policy) in strategies {
+            if routed
+                .insert(
+                    instrument.clone(),
+                    RoutedMarketStrategy {
+                        strategy,
+                        default_order_policy,
+                    },
+                )
+                .is_some()
+            {
                 return Err(qx_core::QxError::BusinessViolation(format!(
                     "多市场策略路由存在重复标的 {instrument}"
                 )));
@@ -38,15 +65,17 @@ impl BarStrategy for MarketRoutedBarStrategy {
         cash: &BTreeMap<String, i128>,
         available_margin_raw: Option<i128>,
     ) {
-        for strategy in self.strategies.values_mut() {
-            strategy.update_account_state(cash, available_margin_raw);
+        for route in self.strategies.values_mut() {
+            route
+                .strategy
+                .update_account_state(cash, available_margin_raw);
         }
     }
 
     fn strategy_budget_raw(&self, strategy_id: &str) -> Option<i128> {
         self.strategies
             .values()
-            .find_map(|strategy| strategy.strategy_budget_raw(strategy_id))
+            .find_map(|route| route.strategy.strategy_budget_raw(strategy_id))
     }
 
     fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
@@ -56,7 +85,7 @@ impl BarStrategy for MarketRoutedBarStrategy {
                 order.instrument
             ))
         })?;
-        strategy.on_fill(order, fill)
+        strategy.strategy.on_fill(order, fill)
     }
 
     fn on_bar_orders_checked(
@@ -82,13 +111,19 @@ impl BarStrategy for MarketRoutedBarStrategy {
                 "Bar 事件标的 {instrument} 不属于多市场策略路由"
             ))
         })?;
-        strategy.on_bar_orders_with_margin_checked(
+        let mut orders = strategy.strategy.on_bar_orders_with_margin_checked(
             history,
             instrument,
             ts,
             position,
             available_margin_raw,
-        )
+        )?;
+        if let Some(policy) = strategy.default_order_policy {
+            for order in &mut orders {
+                order.policy.get_or_insert(policy);
+            }
+        }
+        Ok(orders)
     }
 }
 
@@ -101,6 +136,31 @@ mod tests {
     };
 
     struct Counter(Arc<AtomicUsize>);
+
+    struct OneOrder;
+
+    impl BarStrategy for OneOrder {
+        fn on_bar_orders_checked(
+            &mut self,
+            _history: &[Bar],
+            instrument: &InstrumentId,
+            _ts: u64,
+            _position: i128,
+        ) -> Result<Vec<Order>, qx_core::QxError> {
+            Ok(vec![Order {
+                client_id: 1,
+                instrument: instrument.clone(),
+                side: qx_core::Side::Buy,
+                qty: qx_core::Quantity::from_raw(1_000),
+                limit: None,
+                status: qx_core::OrderStatus::PendingSubmit,
+                filled: qx_core::Quantity::from_raw(0),
+                account_id: "test-account".into(),
+                trace: None,
+                policy: None,
+            }])
+        }
+    }
 
     impl BarStrategy for Counter {
         fn on_bar_orders_checked(
@@ -161,5 +221,27 @@ mod tests {
                 0,
             )
             .is_err());
+    }
+
+    #[test]
+    fn market_route_applies_default_product_policy_to_strategy_orders() {
+        let btc = instrument("BTCUSDT.BINANCE");
+        let policy = OrderPolicy {
+            margin_mode: qx_core::MarginMode::Isolated,
+            leverage: 5,
+            ..OrderPolicy::default()
+        };
+        let make = || Box::new(Counter(Arc::new(AtomicUsize::new(0)))) as Box<dyn BarStrategy>;
+        let mut router = MarketRoutedBarStrategy::new_with_order_policies(vec![
+            (btc.clone(), Box::new(OneOrder), Some(policy)),
+            (instrument("ETHUSDT.BINANCE"), make(), None),
+        ])
+        .unwrap();
+
+        let orders = router
+            .on_bar_orders_checked(&[Bar::new(10, 100, 101, 99, 100, 1)], &btc, 20, 0)
+            .unwrap();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].policy, Some(policy));
     }
 }

@@ -8,6 +8,7 @@ pub mod builtin_signal;
 pub mod c_api;
 pub mod contract;
 mod decision;
+pub mod diagnostics;
 pub mod file_digest;
 pub mod frame;
 pub mod ring;
@@ -15,7 +16,8 @@ pub mod transport;
 pub use builtin::{BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind};
 pub use c_api::{
     sha256_hex, verify_file_sha256, CAbiStrategy, DynamicCAbiLoadPolicy, DynamicCAbiStrategy,
-    QxStrategyVTable, QX_C_STRATEGY_ABI_VERSION, QX_C_STRATEGY_API_VERSION,
+    QxStrategyDiagnosticState, QxStrategyVTable, QX_C_STRATEGY_ABI_VERSION,
+    QX_C_STRATEGY_API_VERSION,
 };
 pub use frame::{
     StrategyFrame, StrategyFrameKind, DEFAULT_MAX_FRAME_BYTES, STRATEGY_FRAME_HEADER_LEN,
@@ -271,6 +273,12 @@ pub trait Strategy: Send {
     fn on_stop(&mut self) -> Result<(), String> {
         Ok(())
     }
+
+    /// Optional, read-only state snapshot for explicit strategy-bias diagnostics.
+    /// Implementations should return deterministic JSON and omit secrets or large buffers.
+    fn diagnostic_state(&self) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 /// 一个不依赖浮点的内置 Rust 策略示例，可被回测/Paper/实盘适配器复用。
@@ -311,6 +319,14 @@ impl SmaCrossStrategy {
 }
 
 impl Strategy for SmaCrossStrategy {
+    fn diagnostic_state(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "closes": self.closes.iter().copied().collect::<Vec<_>>(),
+            "next_signal_id": self.next_signal_id,
+            "next_intent_id": self.next_intent_id,
+        }))
+    }
+
     fn on_event(
         &mut self,
         context: &StrategyContext,

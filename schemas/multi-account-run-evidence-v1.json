@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-run-evidence-v1.json",
+  "title": "Qianxing portable multi-account run evidence v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "batch_id",
+    "settlement_currency",
+    "spec_fingerprint",
+    "result",
+    "spec",
+    "accounts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "qianxing-multi-account-run-evidence" },
+    "batch_id": { "type": "string", "minLength": 1 },
+    "settlement_currency": { "type": "string", "minLength": 1 },
+    "spec_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "result": { "$ref": "#/$defs/fileDigest" },
+    "spec": { "$ref": "#/$defs/fileDigest" },
+    "accounts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/account" }
+    }
+  },
+  "$defs": {
+    "fileDigest": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "account_id",
+        "run_id",
+        "result_hash",
+        "instrument",
+        "strategy_id",
+        "data_fingerprint",
+        "evidence_dir",
+        "evidence_sha256"
+      ],
+      "properties": {
+        "account_id": { "type": "string", "minLength": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "result_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "instrument": { "type": "string", "minLength": 1 },
+        "strategy_id": { "type": "string", "minLength": 1 },
+        "data_fingerprint": { "type": "string", "minLength": 1 },
+        "evidence_dir": { "type": "string", "pattern": "^accounts/[0-9a-f]{64}$" },
+        "evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

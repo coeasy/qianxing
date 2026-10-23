@@ -400,9 +400,11 @@ fn prometheus_exposition_is_line_separated_at_both_ends() {
             "qx_api_command_enqueue_failures_total",
             "qx_control_retired_commands_total",
             "qx_control_retired_audit_records_total",
+            "qx_app_run_watchers_active",
+            "qx_app_run_watcher_capacity",
+            "qx_app_run_watcher_rejections_total",
         ],
-        "`/metrics` 的自身样本必须是六条可解析的样本行：四条 API 计数 + 两条控制面退场计数。\
-         退场计数一旦没人读，「内存工作集有界」就只是写法，运维面看不出它有没有真发生过"
+        "`/metrics` 的自身样本必须包含四条 API 计数、两条控制面退场计数和三条持久运行 watcher 容量样本"
     );
 
     // 源码侧看的是三个字符的 `\\n`：那是"渲染出字面反斜杠 + n"的写法。两个字符的 `\n` 在源码里

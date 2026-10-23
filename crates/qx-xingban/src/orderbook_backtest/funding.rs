@@ -498,6 +498,7 @@ mod tests {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 10,
             maintenance_margin_bps: 500,
             valid_from: 1,

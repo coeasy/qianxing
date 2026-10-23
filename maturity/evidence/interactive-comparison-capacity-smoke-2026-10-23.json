@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "verified_interactive_comparison_report_capacity",
+  "generated_at_utc": "2026-10-23T04:52:26Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "f555cbae14d56e4d0a45f31aff5339bd49d44993bb2e4f636632c5bdef074619",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "8606b827003d08710f32356f326534a6725f78b78315d650db9c60a338a994e3",
+  "benchmark_script_sha256": "1309de14afd31d742b74896a274e7f5ec45460f9c305cd32018e289f3cbd5d9e",
+  "scenario": "qx-cli report --against verified same-input summaries with interactive local HTML equity chart, filtering and ranking",
+  "input_is_shared_and_fingerprint_verified": true,
+  "browser_rendering_measured": false,
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "limitations": [
+    "synthetic crypto spot Bar input and built-in SMA strategies",
+    "report generation is measured; the browser's initial render and pointer interaction are not",
+    "each run contributes at most 2000 sampled equity points to the interactive chart",
+    "does not measure multi-market/depth reports, long-running stability, or full product profiles"
+  ],
+  "workloads": [
+    {
+      "bars_per_run": 1000,
+      "compared_runs": 2,
+      "repeats": 2,
+      "input_fingerprint": "1f2d59b185eaf783",
+      "summary_source_bytes": 7929,
+      "equity_points_upper_bound": 4000,
+      "wall_ms_p50": 343.918,
+      "wall_ms_p95": 351.009,
+      "process_tree_peak_rss_bytes_max": 9580544,
+      "process_tree_cpu_seconds_p50": 0.016,
+      "output_bytes": 118193,
+      "output_sha256": "9836bb30556fe79f0e6f57006ab06b5ef21c318ca0c04e5dbccd4bc52d78889d",
+      "reported_run_count": 2
+    }
+  ]
+}

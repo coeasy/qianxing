@@ -28,8 +28,8 @@ pub struct PortfolioBarTimeline<'a> {
 
 impl<'a> PortfolioBarTimeline<'a> {
     pub fn new(series: &[PortfolioBarSeries<'a>]) -> Result<Self, String> {
-        if series.len() < 2 {
-            return Err("组合 Bar 时间线至少需要两个不同标的".into());
+        if series.is_empty() {
+            return Err("组合 Bar 时间线至少需要一个标的".into());
         }
         let event_count = series
             .iter()
@@ -64,7 +64,16 @@ impl<'a> PortfolioBarTimeline<'a> {
                 }
             }
         }
-        if series.len() == 2 {
+        if series.len() == 1 {
+            for (bar_index, bar) in series[0].bars.iter().enumerate() {
+                events.push(PortfolioBarEvent {
+                    instrument: series[0].instrument,
+                    priority: series[0].priority,
+                    bar,
+                });
+                event_indexes.push((0, bar_index));
+            }
+        } else if series.len() == 2 {
             let (mut left_index, mut right_index) = (0_usize, 0_usize);
             while left_index < series[0].bars.len() && right_index < series[1].bars.len() {
                 let left = &series[0];

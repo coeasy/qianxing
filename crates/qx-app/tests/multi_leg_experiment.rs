@@ -133,7 +133,7 @@ fn multi_leg_experiment_isolates_bad_candidates_and_supports_run_handle() {
         base: base(&root),
         parameter_space: vec![ExperimentParameterSpace {
             name: "quantity_raw".into(),
-            values: vec![0, SCALE],
+            values: vec![i128::MAX, SCALE],
         }],
         strategy_kinds: Vec::new(),
     };

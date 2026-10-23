@@ -77,9 +77,9 @@ pub(crate) fn print_cli_help() {
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
-  quickstart [项目目录] [--force]
+  quickstart [项目目录] [--html] [--force]
       一条命令跑完首跑链条：建 macd 项目 → doctor → backtest → report → status；
-      只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
+      --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
   guide [researcher|strategy-author|operator|integrator]
       按角色打印可复制的上手步骤；不传角色时列出四条路径。
   doctor [runtime.json] [--json]
@@ -97,15 +97,17 @@ pub(crate) fn print_cli_help() {
       统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
   status [runtime.json] [--json]
       查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
-  report [runtime.json|summary.json|run.multi-market-depth.json] [--json] [--html] [--evidence] [--against SUMMARY]... [--benchmark-bars BAR_FRAME] [--benchmark-calendar JSON] [--benchmark-csv PATH] [--xlsx PATH] [-o|--output PATH]
+  report [runtime.json|summary.json|run.multi-market-depth.json] [--json] [--html] [--evidence] [--against SUMMARY]... [--benchmark-bars BAR_FRAME] [--benchmark-calendar JSON] [--benchmark-csv PATH] [--strategy-diagnostics JSON] [--xlsx PATH] [-o|--output PATH]
       查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
       --html 写出 <stem>.report.html 与三张 SVG；-o/--output 可改输出前缀，需与 --html 同用。
       --against 可重复指定其他 summary，生成同标的、同数据指纹的横向指标排名；与 --html 同用时输出离线对照表。
       --benchmark-bars 输入基准 BarFrame，要求与权益曲线时间戳逐项精确对齐；按原始未复权 close 计算每 Bar 相对指标，不年化；可与 --evidence 同用并纳入可搬运证据包，也可与 --against 同用为每轮比较结果绑定同一基准。
       --benchmark-calendar 可选传入带来源与 calendar_id 的 A 股交易日历；严格验证基准/组合日线覆盖日历范围内每个交易日，拒绝缺日、非交易日或日内多条记录。
       --benchmark-csv 与 --benchmark-bars 同用时，导出逐 Bar 组合/基准收益序列及主动收益 CSV；结合 --against 时合并输出各轮序列并附 run_id。
+      --strategy-diagnostics 绑定诊断 JSON；核对策略、标的与数据身份，可导出到 HTML、JSON、XLSX；与 --evidence 同用时进入单次 Bar/多市场 Bar/多市场深度证据包。
       --xlsx 导出 Excel 工作簿；单轮报告含摘要、权益/持仓、成交、月度收益及可选基准序列，同输入对照另含排序与指标明细。
-      多市场深度运行摘要可直接导出逐市场质量 HTML/XLSX；--against 接受相同市场顺序和数据指纹的深度运行，输出排序对照。
+      多市场 Bar/深度报告可将已预计算诊断绑定到 HTML/JSON/XLSX 报告并筛选查看；XLSX 包含诊断摘要和可分段还原的完整 JSON。多市场 Bar 与深度 --against 的 --strategy-diagnostics 分别使用 schemas/multi-market-bar-diagnostic-comparison-v1.json 和 schemas/multi-market-depth-diagnostic-comparison-v1.json，按 run_id 为每次运行提供诊断数组；报告会重开摘要并重验输入身份。
+      单次 Bar、多市场 Bar 与多市场深度可将诊断附件随 EvidenceBundle 导出并离线校验；该校验验证文件摘要和身份，不重算诊断。多市场深度运行摘要可导出逐市场质量 HTML/XLSX；--against 接受相同市场顺序和数据指纹的深度运行，输出排序和可筛选诊断对照。
       --evidence 在复核链通过后再聚一份 <stem>.evidence.json（EvidenceBundle，generation=run）：把 RunManifest
       身份、四份产物指针、数据身份、配置与策略身份、模型假设、构建身份、验证级别、未验证清单与
       离线复算指引收进同一份文档，供「同一运行由 RunManifest 离线复算」用；只聚合不重算指标。
@@ -119,6 +121,10 @@ pub(crate) fn print_cli_help() {
       要求匹配代码版本，并逐字段核对重跑得到的 RunManifest。
   evidence pack-multi-market-run <run.multi-market.json>
       从已完成的多市场 Bar 回测产物、RunManifest、权益/成交副件与各市场输入生成 run EvidenceBundle。
+  evidence pack-multi-account-run <multi-account-result.json> --spec <multi-account-spec.json> --output-dir <DIR>
+      先对每个成功账户执行 report --evidence，再将批次结果、规格及所有账户便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-run <DIR>
+      离线验真批次规格/结果身份、全部账户 EvidenceBundle、输入指纹与账户归属；不重算回测结果。
   evidence recompute-multi-market-experiment <experiment.multi-market-experiment.json>
       在匹配代码构建上复算 Bar 参数网格中的全部候选，并逐项比较结果与 RunManifest。
   evidence recompute-multi-market-depth-experiment <experiment.multi-market-depth-experiment.json>
@@ -155,6 +161,19 @@ pub(crate) fn print_cli_help() {
       并印进 [Strategy · Signal] 行；同一份配置在 backtest builtin 上必须给出同一套信号。
       可选数据质量清单须由 data-validate 针对同一文件生成，dataset-id/version 分别为
       strategy-bars:<instrument> 与 barframe-json-v1；运行前会核对内容 SHA-256 和数据身份。
+  strategy diagnose-depth <run.multi-market-depth.json> --output <diagnostics.json> [--html]
+      复验深度输入、质量清单和 RunManifest 后，从 Rust 内置策略配置生成多标的预热窗口与历史轨迹诊断。
+      --html 会继续复核并生成交互式 HTML 研究报告。外部策略和动态账户 sizing 暂不支持自动重建；
+      未来扰动明确标注为未执行，供应商 PIT 可见性标记未知。
+  strategy diagnose-multi-bar <run.multi-market.json> --output <diagnostics.json> [--html]
+      复验多市场 Bar 输入、质量清单和 RunManifest 后，为全部 Rust 内置策略槽生成未来扰动、预热轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入交互式研究报告；外部策略和动态账户 sizing 失败关闭，并受总 Bar 数和重放预算限制。
+  strategy diagnose-multi-account <multi-account-result.json> --spec <multi-account-spec.json> --output <diagnostics.json> [--html]
+      按账户身份重验并为成功的 Rust 内置 Bar 策略生成未来扰动、预热轨迹与 PIT 可见性诊断；失败账户不生成诊断。
+      所有成功账户诊断会合并成可复核附件，最多 32 个账户、累计 262,144 根 Bar、1 MiB 输出；--html 接入多账户交互报告。
+  strategy diagnose-bar <run.summary.json> --spec <backtest-spec.json> --output <diagnostics.json> [--html]
+      复验摘要、RunManifest、完整规格和 BarFrame 指纹，再重建 Rust 内置策略，生成未来扰动、预热窗口/轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入现有交互式回测研究报告；动态账户 sizing 与多策略组合明确拒绝自动重建。
   backtest [runtime.json] [bar-frame.json] [market-spec.json]
       使用统一 Rust 撮合引擎运行跨语言策略回测。
   backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity] [--config <runtime.json>]

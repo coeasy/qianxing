@@ -47,6 +47,9 @@ inline constexpr std::string_view kApplicationCapabilities = "/app/capabilities"
 inline constexpr std::string_view kProviderPreflight = "/app/capabilities/providers/preflight";
 inline constexpr std::string_view kMultiAccountBacktest = "/app/multi-account-backtest";
 inline constexpr std::string_view kMultiAccountBacktestStart = "/app/multi-account-backtest/start";
+inline constexpr std::string_view kMultiAccountJointBacktest = "/app/multi-account-joint-backtest";
+inline constexpr std::string_view kMultiAccountJointBacktestStart =
+    "/app/multi-account-joint-backtest/start";
 inline constexpr std::string_view kMultiAccountDepthBacktest = "/app/multi-account-depth-backtest";
 inline constexpr std::string_view kMultiAccountDepthBacktestStart =
     "/app/multi-account-depth-backtest/start";
@@ -57,6 +60,7 @@ inline constexpr std::string_view kMultiMarketDepthBacktestStart = "/app/multi-m
 inline constexpr std::string_view kBacktestStart = "/app/backtest/start";
 inline constexpr std::string_view kVerify = "/app/verify";
 inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
+inline constexpr std::string_view kResearchArtifacts = "/app/research-artifacts";
 inline constexpr std::string_view kCompareRuns = "/app/compare-runs";
 inline constexpr std::string_view kPlanRiskParity = "/app/plan-risk-parity";
 inline constexpr std::string_view kPlanAlgoExecution = "/app/plan-algo-execution";
@@ -92,9 +96,10 @@ inline constexpr std::string_view kLiveEvents = "/events/live";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 46> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 49> kDeclaredRoutes = {
     kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
     kMultiAccountBacktest,  kMultiAccountBacktestStart,
+    kMultiAccountJointBacktest, kMultiAccountJointBacktestStart,
     kMultiAccountDepthBacktest, kMultiAccountDepthBacktestStart,
     kMultiMarketBacktest,   kMultiMarketBacktestStart, kBuiltinStrategyCatalog,
     kMultiMarketDepthBacktest, kMultiMarketDepthBacktestStart,
@@ -103,7 +108,7 @@ inline constexpr std::array<std::string_view, 46> kDeclaredRoutes = {
     kMultiMarketExperiment, kMultiMarketExperimentStart,
     kMultiMarketDepthExperiment, kMultiMarketDepthExperimentStart,
     kBacktestStart,         kVerify,
-    kVerifyDepth,           kCompareRuns,
+    kVerifyDepth,           kResearchArtifacts, kCompareRuns,
     kPlanRiskParity,
     kPlanAlgoExecution,
     kPlanCapitalAllocation,
@@ -190,6 +195,14 @@ public:
 
     AppResponse start_multi_account_backtest(std::string_view spec_json) const {
         return post(routes::kMultiAccountBacktestStart, spec_json);
+    }
+
+    AppResponse run_multi_account_joint_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountJointBacktest, spec_json);
+    }
+
+    AppResponse start_multi_account_joint_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountJointBacktestStart, spec_json);
     }
 
     AppResponse run_multi_account_depth_backtest(std::string_view spec_json) const {
@@ -337,6 +350,10 @@ public:
 
     AppResponse verify_depth_run(std::string_view outcome_json) const {
         return post(routes::kVerifyDepth, outcome_json);
+    }
+
+    AppResponse research_artifacts(std::string_view outcome_json) const {
+        return post(routes::kResearchArtifacts, outcome_json);
     }
 
     // The body is a versioned TradeControlSpec. The Rust API authenticates the

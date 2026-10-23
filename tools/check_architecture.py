@@ -3770,7 +3770,7 @@ def replay_kernel_check() -> None:
     )
     bar_cases = (ROOT / REPLAY_BAR_CASE_FILE).read_text(encoding="utf-8")
     check(
-        bar_cases.count("assert_replay_matches(") == 4
+        bar_cases.count("assert_replay_matches(") == 5
         and "assert_eq!(replayed.entries(), report.ledger.entries());" in bar_cases
         and "ReplayVerifier::verify(report.event_log.events(), &unbacked)" in bar_cases,
         "Bar 链逐条比对重放账簿，并留有一条「凭空多记」的反向证据",
@@ -10850,6 +10850,20 @@ def external_acceptance_check() -> None:
             "okx 验收脚本点名的 worker 在 okx 验收配置里存在且已启用",
             f"禁用或缺失 {okx_orphan}",
         )
+    acceptance_tests = _text_or_empty(ROOT / "tools/test_binance_testnet_acceptance.py")
+    okx_sandbox_preflight = (
+        "ccxt_config: Path | None = None" in script
+        and 'ccxt_payload.get("exchange_id") != "okx"' in script
+        and 'ccxt_payload.get("sandbox") is not True' in script
+        and "workdir / ccxt_config.name" in script
+        and "test_okx_acceptance_copies_sandbox_config_next_to_runtime_config" in acceptance_tests
+        and "test_okx_acceptance_rejects_non_sandbox_ccxt_config" in acceptance_tests
+    )
+    check(
+        okx_sandbox_preflight,
+        "OKX 离线预检把 CCXT 沙盒配置复制到隔离运行目录并强制 sandbox=true",
+        f"配置闭包与安全测试 {'齐备' if okx_sandbox_preflight else '缺失'}",
+    )
 
 
 # —— T0-3：外部链路（实盘轨）的边界登记 ——
@@ -10882,10 +10896,10 @@ EXTERNAL_CHAIN_TIERS = (
 # 由源码 / 本地测试翻真的两档：它们的翻真依据里出现证据记录，就等于把"代码在盘"读成了"已批准"。
 EXTERNAL_CHAIN_CODE_TIERS = ("implementation", "code_tested")
 # 翻转规则的唯一措辞（方案里给关键词加了反引号，比对前先剥掉）。
-EXTERNAL_CHAIN_FLIP_RULE = "outcome=pass 且全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
+EXTERNAL_CHAIN_FLIP_RULE = "outcome=pass、credentials_present=true 且 send_orders=true；全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
 # 脚本里那几处**代码**：live-check 只读断言、重复提交已确认分类、只有 pass 才 allowed。
 EXTERNAL_CHAIN_FLIP_GUARD = 'record.get("expected_idempotent_rejection") is True'
-EXTERNAL_CHAIN_FLIP_ALLOWED = '"allowed": outcome == "pass",'
+EXTERNAL_CHAIN_FLIP_ALLOWED = '"allowed": sandbox_tested_flip_allowed(outcome, credentials_present, send_orders),'
 EXTERNAL_CHAIN_SECOND_ENTRY = "ccxt-submit-order"
 
 
@@ -10948,6 +10962,26 @@ def _evidence_outcome_tally(root: str) -> dict[str, int]:
         key = str(outcome)
         tally[key] = tally.get(key, 0) + 1
     return tally
+
+
+def _evidence_flip_allowed(root: str) -> bool:
+    """仅凭据齐全且明确发送沙盒订单的成功验收，才允许登记 sandbox_tested。"""
+    base = ROOT / root
+    if not base.is_dir():
+        return False
+    for path in sorted(base.rglob("result.json")):
+        try:
+            record = json.loads(_read_text(path))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if (
+            record.get("outcome") == "pass"
+            and record.get("credentials_present") is True
+            and record.get("send_orders") is True
+            and record.get("sandbox_tested_flip", {}).get("allowed") is True
+        ):
+            return True
+    return False
 
 
 def _plan_segment_names(plan: str) -> list[str]:
@@ -11032,14 +11066,14 @@ def external_chain_check() -> None:
     tally = _evidence_outcome_tally(root)
     recorded = ",".join(f"{name}:{count}" for name, count in sorted(tally.items()))
     total = sum(tally.values())
-    allowed = tally.get("pass", 0) > 0
+    allowed = _evidence_flip_allowed(root)
     check(
         bool(root)
         and (ROOT / root).is_dir()
         and scalars.get("current_status.evidence_records") == str(total)
         and scalars.get("current_status.outcomes") == recorded
         and scalars.get("current_status.sandbox_tested_flip_allowed") == str(allowed).lower(),
-        "证据根现状与盘上逐份 result.json 一致，且 flip_allowed 恰等于「存在 outcome=pass」",
+        "证据根现状与盘上逐份 result.json 一致，flip_allowed 只认凭据齐全且真实沙盒下单通过",
         f"盘上 {total} 份 / {recorded}（flip_allowed={allowed}）vs 登记 "
         f"{scalars.get('current_status.evidence_records')} 份 / "
         f"{scalars.get('current_status.outcomes')} / "
@@ -14615,6 +14649,295 @@ def performance_baseline_check() -> None:
     )
 
 
+def report_generation_capacity_check() -> None:
+    """报告生成必须有复现驱动器和绑定同一回测结果的实测证据。"""
+    driver = ROOT / "benchmarks" / "run_report_capacity.py"
+    evidence_path = ROOT / "maturity/evidence/report-generation-capacity-2026-10-23.json"
+    source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
+    has_driver_contract = all(
+        token in source
+        for token in (
+            'FORMATS = ("json", "html", "xlsx")',
+            "profile_coverage_claim",
+            "run_measured",
+        )
+    )
+    check(
+        driver.is_file() and has_driver_contract,
+        "研究报告容量驱动器覆盖 JSON/HTML/XLSX 并分别测量报告进程",
+        f"驱动器存在={driver.is_file()}，格式与进程测量声明完整={has_driver_contract}",
+    )
+    evidence_valid = False
+    detail = f"缺少 {evidence_path.relative_to(ROOT)}"
+    if evidence_path.is_file():
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            workloads = evidence.get("workloads", [])
+            expected = {(bars, fmt) for bars in (1_000, 8_000, 64_000) for fmt in ("json", "html", "xlsx")}
+            identities = {
+                (row.get("bars"), row.get("report_format"))
+                for row in workloads
+                if isinstance(row, dict)
+            }
+            by_size: dict[int, list[dict[str, object]]] = {}
+            for row in workloads:
+                if isinstance(row, dict):
+                    by_size.setdefault(int(row["bars"]), []).append(row)
+            same_backtest = all(
+                len(rows) == 3
+                and len({row.get("replay_verified_backtest_result_hash") for row in rows}) == 1
+                and len({row.get("summary_sha256") for row in rows}) == 1
+                for rows in by_size.values()
+            )
+            measurements_complete = all(
+                row.get("repeats", 0) >= 2
+                and row.get("wall_p50_ms", 0) > 0
+                and row.get("output_bytes_max", 0) > 0
+                and row.get("output_sha256_unique_count") == 1
+                and row.get("scope_claim") == "report_generation_only"
+                for row in workloads
+            )
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            evidence_valid = (
+                evidence.get("evidence_kind") == "verified_research_report_generation_capacity"
+                and bool(evidence.get("binary_sha256"))
+                and evidence.get("profile_coverage_claim") is False
+                and evidence.get("profile_target_statuses_updated") is False
+                and script_hash_matches
+                and identities == expected
+                and same_backtest
+                and measurements_complete
+            )
+            detail = (
+                f"workloads={len(workloads)}，矩阵={len(identities)}/9，same_backtest={same_backtest}，"
+                f"measurements={measurements_complete}，driver_sha_match={script_hash_matches}，"
+                f"profile_claim={evidence.get('profile_coverage_claim')}"
+            )
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+            detail = f"证据 JSON 或字段无效：{error}"
+    capabilities = ROOT / "maturity/capabilities.yaml"
+    capabilities_text = capabilities.read_text(encoding="utf-8") if capabilities.is_file() else ""
+    benchmark_readme = ROOT / "benchmarks/README.md"
+    readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
+    evidence_registered = (
+        "report-generation-capacity-2026-10-23.json" in capabilities_text
+        and "run_report_capacity.py" in capabilities_text
+        and "run_report_capacity.py" in readme_text
+    )
+    check(
+        evidence_valid and evidence_registered,
+        "研究报告容量证据覆盖 1k/8k/64k × JSON/HTML/XLSX，绑定同一回测且不冒充完整 profile",
+        f"{detail}，成熟度与操作文档登记={evidence_registered}",
+    )
+
+
+def adaptive_search_capacity_check() -> None:
+    """Adaptive-search capacity evidence must cover multiple sizes/budgets reproducibly."""
+    driver = ROOT / "benchmarks" / "run_adaptive_search_capacity.py"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-capacity-2026-10-23.json"
+    source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
+    has_driver_contract = all(
+        token in source
+        for token in (
+            '"algorithm": "tpe_kde"',
+            "candidate_result_hashes",
+            "proposal_trace_sha256",
+            "run_measured",
+            "profile_target_statuses_updated",
+        )
+    )
+    check(
+        driver.is_file() and has_driver_contract,
+        "自适应搜索容量驱动器走正式 run-experiment 并记录候选轨迹与资源计数",
+        f"驱动器存在={driver.is_file()}，搜索与资源契约完整={has_driver_contract}",
+    )
+    evidence_valid = False
+    detail = f"缺少 {evidence_path.relative_to(ROOT)}"
+    if evidence_path.is_file():
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            workloads = evidence.get("workloads", [])
+            identities = {
+                (row.get("bars"), row.get("candidate_budget"))
+                for row in workloads
+                if isinstance(row, dict)
+            }
+            complete = all(
+                row.get("repeats", 0) >= 2
+                and row.get("candidate_count_per_repeat") == row.get("candidate_budget")
+                and row.get("succeeded_candidates", 0) + row.get("failed_candidates", 0)
+                == row.get("candidate_budget")
+                and row.get("wall_p50_ms", 0) > 0
+                and bool(row.get("proposal_trace_sha256"))
+                and row.get("candidate_result_hashes_unique_count", 0) > 0
+                and row.get("scope_claim") == "adaptive_search_only"
+                for row in workloads
+                if isinstance(row, dict)
+            )
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            evidence_valid = (
+                evidence.get("evidence_kind") == "verified_adaptive_search_capacity"
+                and evidence.get("replay_verified") is True
+                and bool(evidence.get("binary_sha256"))
+                and bool(evidence.get("measurement_source_fingerprint"))
+                and evidence.get("profile_coverage_claim") is False
+                and evidence.get("profile_target_statuses_updated") is False
+                and script_hash_matches
+                and len(identities) >= 6
+                and complete
+            )
+            detail = (
+                f"workloads={len(workloads)}，矩阵={len(identities)}，complete={complete}，"
+                f"driver_sha_match={script_hash_matches}，profile_claim={evidence.get('profile_coverage_claim')}"
+            )
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+            detail = f"搜索容量证据 JSON 或字段无效：{error}"
+    capabilities = ROOT / "maturity/capabilities.yaml"
+    capabilities_text = capabilities.read_text(encoding="utf-8") if capabilities.is_file() else ""
+    benchmark_readme = ROOT / "benchmarks/README.md"
+    readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
+    registered = (
+        "adaptive-search-capacity-2026-10-23.json" in capabilities_text
+        and "run_adaptive_search_capacity.py" in capabilities_text
+        and "run_adaptive_search_capacity.py" in readme_text
+    )
+    check(
+        evidence_valid and registered,
+        "自适应搜索容量证据跨 Bar 规模与候选预算且要求重复结果确定",
+        f"证据有效={evidence_valid}；文档/能力台账登记={registered}；{detail}",
+    )
+
+
+def adaptive_search_cost_neighborhood_capacity_check() -> None:
+    """Fee-neighborhood capacity evidence must measure complete, deterministic stress replays."""
+    driver = ROOT / "benchmarks" / "run_cost_neighborhood_capacity.py"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-10-23.json"
+    source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
+    driver_valid = all(
+        token in source
+        for token in (
+            '"app", "run-experiment"',
+            '"max_neighborhood_training_return_degradation_bps": 10_000',
+            '"total_backtest_replays_per_repeat"',
+            '"profile_target_statuses_updated": False',
+        )
+    )
+    check(
+        driver.is_file() and driver_valid,
+        "费用邻域容量驱动器走真实 run-experiment 并核验完整邻居重放",
+        f"驱动器存在={driver.is_file()}，入口与约束完整={driver_valid}",
+    )
+    evidence_valid = False
+    detail = f"缺少 {evidence_path.relative_to(ROOT)}"
+    if evidence_path.is_file():
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            workloads = evidence.get("workloads", [])
+            bars = {row.get("bars") for row in workloads if isinstance(row, dict)}
+            complete = all(
+                row.get("repeats", 0) >= 2
+                and row.get("candidate_count") == row.get("candidate_budget")
+                and row.get("fee_scenario_count") == 1
+                and row.get("total_backtest_replays_per_repeat")
+                == row.get("candidate_count") + row.get("neighborhood", {}).get("possible_neighbors", 0) + 1
+                and row.get("neighborhood", {}).get("radius") == 1
+                and row.get("neighborhood", {}).get("complete") is True
+                and row.get("neighborhood", {}).get("possible_neighbors", 0) > 0
+                and row.get("neighborhood", {}).get("evaluated_neighbors")
+                == row.get("neighborhood", {}).get("possible_neighbors")
+                and row.get("neighborhood", {}).get("successful_neighbors")
+                == row.get("neighborhood", {}).get("possible_neighbors")
+                and row.get("repeat_proposals_stable") is True
+                and row.get("repeat_baseline_results_stable") is True
+                and row.get("repeat_stress_results_stable") is True
+                and row.get("wall_p50_ms", 0) > 0
+                and row.get("scope_claim") == "adaptive_search_fee_neighborhood_only"
+                for row in workloads
+                if isinstance(row, dict)
+            )
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            evidence_valid = (
+                evidence.get("evidence_kind") == "verified_adaptive_search_cost_neighborhood_capacity"
+                and bool(evidence.get("binary_sha256"))
+                and bool(evidence.get("measurement_source_fingerprint"))
+                and evidence.get("profile_coverage_claim") is False
+                and evidence.get("profile_target_statuses_updated") is False
+                and script_hash_matches
+                and len(bars) >= 2
+                and complete
+            )
+            detail = (
+                f"workloads={len(workloads)}，Bar规模={len(bars)}，complete={complete}，"
+                f"driver_sha_match={script_hash_matches}，profile_claim={evidence.get('profile_coverage_claim')}"
+            )
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+            detail = f"费用邻域容量证据 JSON 或字段无效：{error}"
+    capabilities = ROOT / "maturity/capabilities.yaml"
+    capabilities_text = capabilities.read_text(encoding="utf-8") if capabilities.is_file() else ""
+    benchmark_readme = ROOT / "benchmarks/README.md"
+    readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
+    registered = (
+        "adaptive-search-cost-neighborhood-capacity-2026-10-23.json" in capabilities_text
+        and "run_cost_neighborhood_capacity.py" in capabilities_text
+        and "run_cost_neighborhood_capacity.py" in readme_text
+    )
+    check(
+        evidence_valid and registered,
+        "费用压力邻域容量证据包含完整邻居复放、重复哈希与资源数据",
+        f"证据有效={evidence_valid}；文档/能力台账登记={registered}；{detail}",
+    )
+
+
+def research_diagnostics_and_retry_check() -> None:
+    experiment = ROOT / "crates/qx-app/src/cases/run_experiment.rs"
+    experiment_tests = ROOT / "crates/qx-app/tests/strategy_selection.rs"
+    diagnostics = ROOT / "crates/qx-strategy/src/diagnostics.rs"
+    strategy = ROOT / "crates/qx-strategy/src/lib.rs"
+    research_console = ROOT / "web/console/app.js"
+    experiment_source = experiment.read_text(encoding="utf-8") if experiment.is_file() else ""
+    test_source = experiment_tests.read_text(encoding="utf-8") if experiment_tests.is_file() else ""
+    diagnostic_source = diagnostics.read_text(encoding="utf-8") if diagnostics.is_file() else ""
+    strategy_source = strategy.read_text(encoding="utf-8") if strategy.is_file() else ""
+    research_console_source = research_console.read_text(encoding="utf-8") if research_console.is_file() else ""
+    check(
+        "has_retryable_search_failures(&previous)" in experiment_source
+        and "search-trial-0001.checkpoint.json" in test_source
+        and "search-trial-0002.checkpoint.json" in test_source
+        and "failed_search_candidate_and_cost_scenario_are_retried_on_resume" in test_source
+        and "factory_calls.load(Ordering::SeqCst), 7" in test_source,
+        "同规格自适应搜索续跑会重试失败候选/成本情景并复用成功检查点",
+        "缺少失败报告续跑判定、候选/成本瞬时失败行为用例或成功检查点复用断言",
+    )
+    check(
+        "fn diagnostic_state(&self) -> Option<serde_json::Value>" in strategy_source
+        and "changed_intermediate_fields" in diagnostic_source
+        and '"events_seen"' in diagnostic_source
+        and "startup_sensitive" in diagnostic_source,
+        "Rust warmup 诊断比较可选策略中间态并在终点决策不变时识别状态漂移",
+        "缺少 opt-in Strategy state hook、字段级比较或中间态行为用例",
+    )
+    check(
+        "const sampleLimit = 200;" in research_console_source
+        and 'research-diagnostic-evidence-table' in research_console_source
+        and "detail.textContent = JSON.stringify(samples[index].detail, null, 2)" in research_console_source
+        and 'row.setAttribute("role", "button")' in research_console_source,
+        "Web 研究报告提供有界诊断样本筛选、键盘可选行与完整反事实详情",
+        "诊断明细缺少样本上界、可选行或基线/反事实详情投影",
+    )
+    check(
+        'pit?.affected_fact_decision_counts' in research_console_source
+        and 'pit?.affected_fact_counts' in research_console_source
+        and 'research-diagnostic-pit-table' in research_console_source
+        and 'research-diagnostic-pit-filter' in research_console_source
+        and 'pitSamples[index].sample' in research_console_source
+        and 'pitEvidence.slice(0, 75)' in research_console_source
+        and 'MAX_PIT_EXAMPLES_PER_STATUS = 25' in (ROOT / "python/qianxing_strategy/diagnostics.py").read_text(encoding="utf-8")
+        and 'research-diagnostic-pit-table' in (ROOT / "web/console/index.html").read_text(encoding="utf-8"),
+        "Web 策略诊断按 PIT 账本真实字段展示风险计数、事实版本与可见时间，并可筛选钻取",
+        "PIT 摘要/样例明细与诊断账本字段未贯通到交互报告",
+    )
+
+
 # 地基规格对象（规划 §6.2 / §7）：每类声明式文档各自只有一份 JSON Schema、一个版本常量、
 # 一处 `pub struct` 定义，且 `qx_spec::describe` 是它们唯一的生产读入漏斗（CLI `plan` 命令）。
 FOUNDATION_SPECS = (
@@ -16337,7 +16660,10 @@ def risk_spec_fail_closed_check() -> None:
     )
     check(
         "pub fn check_with_context(" in case_source(ZHENLU_LIB_FILE)
-        and "check_with_context(" in admission
+        and (
+            "check_with_context(" in admission
+            or "risk.rule_set().evaluate(&risk_context, &order)" in admission
+        )
         and "check_with_context(" in book
         and "check_with_context(" in portfolio_book
         and all("check_with_spec(" not in source for source in (admission, book, portfolio_book))
@@ -16991,19 +17317,20 @@ def run_evidence_check() -> None:
     declared = list(run_schema.get("required", []))
     properties = set(run_schema.get("properties", {}))
     rust_fields = _rust_struct_fields(contract, "RunEvidencePayload")
-    optional_fields = {"fidelity", "report_analysis"}
-    optional_fidelity_is_defaulted = (
+    optional_fields = {"fidelity", "report_analysis", "strategy_diagnostics"}
+    optional_run_attachments_are_defaulted = (
         '#[serde(default, skip_serializing_if = "Option::is_none")]' in contract
         and "pub fidelity: Option<RunEvidenceFidelity>" in contract
         and "pub report_analysis: Option<RunEvidenceReportAnalysis>" in contract
-        and contract.count('#[serde(default, skip_serializing_if = "Option::is_none")]') >= 2
+        and "pub strategy_diagnostics: Option<RunEvidenceStrategyDiagnostics>" in contract
+        and contract.count('#[serde(default, skip_serializing_if = "Option::is_none")]') >= 3
     )
     check(
         bool(rust_fields)
         and set(rust_fields) == properties
         and set(rust_fields) - optional_fields == set(declared)
         and properties - set(declared) == optional_fields
-        and optional_fidelity_is_defaulted
+        and optional_run_attachments_are_defaulted
         and set(_rust_struct_fields(bundle_contract, "EvidenceBundle"))
         == {"schema_version", "generation"},
         "T1-1 统一证据包 run 世代字段与 schema required 逐一相等",
@@ -17360,8 +17687,8 @@ REPORT_READABILITY_MODULES = (
     "crates/qx-cli/src/report_command.rs",
     "crates/qx-cli/src/report_credibility.rs",
 )
-# 报告模板里不得出现的 token（注释行不计）：内联 SVG 不带命名空间、无外链脚本/图片/样式。
-REPORT_EXTERNAL_TOKENS = ("xmlns", "http", "<script", "<img", "<link ", "<iframe")
+# 报告模板里不得出现的外链 token（注释行不计）；固定内联脚本单独做能力限制检查。
+REPORT_EXTERNAL_TOKENS = ("xmlns", "http", "<img", "<link ", "<iframe")
 # 这份产物能被当研究件、不被当投资建议的底线声明。
 REPORT_DISCLAIMER = "未连接真实交易所"
 
@@ -17415,6 +17742,28 @@ def report_readability_check() -> None:
         if token in _code_lines(rel)
     ]
     check(not leaks, "报告模板无外部资源引用（出现外链 token 即红）", "；".join(leaks) or "无")
+    script_count = html.count("<script>")
+    local_script = (
+        script_count >= 2
+        and html.count("</script>") == script_count
+        and "<script src=" not in html
+        and "researchData=" in html
+        and "fillRows=" in html
+        and not any(
+            token in html
+            for token in (
+                "fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon(",
+                "WebTransport", "import("
+            )
+        )
+    )
+    check(
+        local_script,
+        "HTML 研究图、成交与事件筛选仅使用本地内联脚本和嵌入数据",
+        f"内联脚本数量={script_count} / chart+fill hooks="
+        f"{('researchData=' in html)}/{('fillRows=' in html)} / "
+        f"外部执行或网络 API={'存在' if not local_script else '无'}",
+    )
     check(
         REPORT_DISCLAIMER in html,
         "HTML 报告保留「未连接真实交易所」声明",
@@ -18706,7 +19055,7 @@ def kernel_timeline_check() -> None:
 # 自动称为前后端完整贯通」——贯通要有一条**可核对的接线表**，而不是"页面能打开"。前端调用一个
 # 后端不存在的端点、或它绕过控制面直连下单端点，都必须在这里当场变红。
 WEB_CONSOLE_DIR = "web/console"
-WEB_CONSOLE_FILES = ("index.html", "app.js", "styles.css")
+WEB_CONSOLE_FILES = ("index.html", "app.js", "styles.css", "research-comparison.js")
 # 控制台**唯一**允许的写面：控制面受理入口。它不直接下单——下单要走这条命令，由控制面
 # 受理后交给执行者，所以"页面直连某个下单端点"这类形状必须被禁掉（下面那份名单）。
 WEB_CONSOLE_WRITE_PATH = "/control/commands"
@@ -18734,13 +19083,23 @@ def web_console_check() -> None:
     missing = [name for name in WEB_CONSOLE_FILES if not (console / name).is_file()]
     check(
         not missing,
-        "Web 控制台的三件在盘（index.html / app.js / styles.css）",
+        "Web 控制台的四件在盘（index.html / app.js / styles.css / research-comparison.js）",
         f"缺失 {missing}",
     )
     if missing:
         return
     app = (console / "app.js").read_text(encoding="utf-8")
     html = (console / "index.html").read_text(encoding="utf-8")
+    helper_tag = '<script src="research-comparison.js"></script>'
+    app_tag = '<script src="app.js"></script>'
+    check(
+        helper_tag in html
+        and app_tag in html
+        and html.index(helper_tag) < html.index(app_tag)
+        and "QxResearchComparison.alignUtcEquityCurves" in app,
+        "UTC 曲线比较 helper 已作为静态资源在 app.js 之前加载并被调用",
+        "静态资源加载顺序或前端调用断开",
+    )
     # 只看代码，不看注释：控制台的注释里会解释"受理 202 不是已经执行"，那是说明而不是逻辑。
     # 与门禁别处「先剥整行注释再判」同口径。
     code = re.sub(r"//[^\n]*", "", app)
@@ -18766,6 +19125,9 @@ def web_console_check() -> None:
     routes.update(
         re.findall(r"RUN_START_[A-Z0-9_]+:[\s\S]{0,80}?(/app/[a-z0-9/-]+)", app_runs)
     )
+    # Include the qx-api module-level app route declarations as well as its main router and
+    # asynchronous run table; synchronous qx-app use cases are dispatched from app_surface.rs.
+    routes.update(_api_declared_routes())
     unknown = sorted(path for path in declared if path not in routes)
     check(
         bool(declared) and not unknown,
@@ -19203,9 +19565,40 @@ def web_console_field_wiring_check() -> None:
     # 方向四（反向）：代码里出现的每一个 `*_raw` 键名都必须落在名册里。
     read_raw = set(re.findall(r"\b[a-z][a-z0-9_]*_raw\b", code))
     promised = {name for names in rosters.values() for name in names}
+    # Raw fields evolve with ResearchArtifactView. Include every versioned contract so a
+    # legitimate newer report field is recognized without weakening the raw-key check.
+    research_schemas = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((ROOT / "schemas").glob("research-artifact-view-v*.json"))
+    ]
+    def schema_property_names(value: object) -> set[str]:
+        if isinstance(value, dict):
+            names = set(value.get("properties", {}))
+            for nested in value.values():
+                names.update(schema_property_names(nested))
+            return names
+        if isinstance(value, list):
+            names: set[str] = set()
+            for nested in value:
+                names.update(schema_property_names(nested))
+            return names
+        return set()
+
+    for research_schema in research_schemas:
+        promised.update(schema_property_names(research_schema))
+    # This name is a local table projection derived from the verified event's
+    # AccountCashflow amount; it is not a wire key in ResearchArtifactView.
+    cashflow_projection = 'cashflow_amount_raw: cashflow?.amount?.raw ?? cashflow?.amount ?? "—"' in code
+    check(
+        "cashflow_amount_raw" not in read_raw or cashflow_projection,
+        "cashflow_amount_raw is explicitly derived from the verified cashflow event payload",
+        "the local cashflow raw projection no longer matches the API event contract",
+    )
+    if cashflow_projection:
+        read_raw.discard("cashflow_amount_raw")
     check(
         read_raw <= promised,
-        "app.js 里读到的每个 *_raw 键名都在名册里（凭空开一列的那类故障反向也堵）",
+        "app.js 里读到的每个 *_raw 键名都在响应名册或研究报告 schema 里（凭空开一列的那类故障反向也堵）",
         f"名册外出现的键 {sorted(read_raw - promised)}",
     )
 
@@ -19443,7 +19836,7 @@ CONSOLE_PUBLIC_CONSTS = (
     "DEFAULT_CONSOLE_SESSION_TTL_SECONDS",
     "CONSOLE_ASSETS",
 )
-CONSOLE_ASSET_NAMES = ("index.html", "app.js", "styles.css")
+CONSOLE_ASSET_NAMES = ("index.html", "app.js", "styles.css", "research-comparison.js")
 # `ConsoleConfig::new` 的四类拒绝：这一层最贵的错是"配错了也起得来"。
 CONSOLE_CONFIG_REJECTIONS = (
     "console.operator 不能为空",
@@ -19484,7 +19877,7 @@ def console_front_check() -> None:
     missing = [name for name in CONSOLE_PUBLIC_CONSTS if f"pub const {name}" not in front]
     check(
         not missing and all(f'"{asset}"' in front for asset in CONSOLE_ASSET_NAMES),
-        "会话/CSRF/令牌查询参数与缺省 TTL 六个公开常量齐备，静态资源表只认那三份",
+        "会话/CSRF/令牌查询参数与缺省 TTL 六个公开常量齐备，静态资源表只认那四份",
         f"缺常量 {missing}",
     )
     check(
@@ -20912,6 +21305,12 @@ def _api_declared_routes() -> set[str]:
         routes.update(
             re.findall(r'const\s+[A-Z_]*ROUTE[A-Z_]*:\s*&str\s*=\s*"(/[^"]*)"', text)
         )
+    app_surface = production_text(
+        (ROOT / "crates/qx-api/src/app_surface.rs").read_text(encoding="utf-8")
+    )
+    routes.update(
+        re.findall(r'const\s+[A-Z_]*ROUTE[A-Z_]*:\s*&str\s*=\s*"(/[^\"]*)"', app_surface)
+    )
     return routes
 
 
@@ -21369,6 +21768,7 @@ def cli_app_command_behavior_coverage_check() -> None:
         "multi-market-backtest": "crates/qx-cli/tests/multi_market_quality_manifest.rs",
         "multi-market-depth-backtest": "crates/qx-cli/tests/multi_market_depth_quality_manifest.rs",
         "multi-account-backtest": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        "multi-account-joint-backtest": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
     }
     missing_evidence = []
     for command, path in evidence.items():
@@ -21402,7 +21802,7 @@ def cli_app_command_behavior_coverage_check() -> None:
 
 
 def cli_strategy_command_behavior_coverage_check() -> None:
-    """WP-2.1: strategy list/init/backtest leaves have process-level behavior evidence."""
+    """WP-2.1: every strategy leaf has process-level behavior evidence."""
     args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
     sources = cli_args_sources()
     strategy_enum = clap_subcommand_parents(args_text, sources).get("strategy")
@@ -21428,6 +21828,38 @@ def cli_strategy_command_behavior_coverage_check() -> None:
                 "strategy_chain_rejects_the_same_broken_pairing",
             ),
         ),
+        "diagnose-depth": (
+            "crates/qx-cli/tests/cli_behavior_parity.rs",
+            (
+                '"diagnose-depth"',
+                "strategy_diagnose_depth_rejects_non_run_input",
+                "strategy diagnose-depth 只接受多市场深度运行产物",
+            ),
+        ),
+        "diagnose-multi-bar": (
+            "crates/qx-cli/tests/multi_market_quality_manifest.rs",
+            (
+                '"diagnose-multi-bar"',
+                "generated_diagnostics",
+                "strategyDiagnostics",
+            ),
+        ),
+        "diagnose-multi-account": (
+            "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+            (
+                '"diagnose-multi-account"',
+                "generated-multi-account-diagnostics.json",
+                "generated_html.contains(\"策略未来数据与预热诊断\")",
+            ),
+        ),
+        "diagnose-bar": (
+            "crates/qx-cli/tests/cli_behavior_parity.rs",
+            (
+                '"diagnose-bar"',
+                "strategy_diagnose_bar_replays_verified_run_and_attaches_to_html_report",
+                "--html",
+            ),
+        ),
     }
     missing_evidence = []
     for command, (path, tokens) in evidence.items():
@@ -21439,7 +21871,7 @@ def cli_strategy_command_behavior_coverage_check() -> None:
             missing_evidence.append(command)
     check(
         strategy_enum is not None and set(evidence) == declared and not missing_evidence,
-        "WP-2.1 `strategy` 三个子命令均有真实 CLI 进程行为用例",
+        "WP-2.1 `strategy` 全部子命令均有真实 CLI 进程行为用例",
         f"clap={sorted(declared)}；evidence={sorted(evidence)}；缺进程证据={missing_evidence}",
     )
 
@@ -21654,7 +22086,7 @@ def cli_ccxt_builtin_parity_check() -> None:
                 '"op": "fetch_ohlcv"',
                 '"start_ms": 1000',
                 '"end_ms": 70000',
-                "result_hash=55a91efd8bfb7254",
+                "result_hash=c3d92708bceb2ecb",
                 "immutable normalized CCXT dataset cache",
                 "manifest_fingerprint",
                 "quality_manifest_path",
@@ -23238,6 +23670,51 @@ def experiment_split_plan_check() -> None:
         if bar_vocab_match and depth_vocab_match
         else []
     )
+
+    def schema_parameter_vocab(schema_name: str, definition_name: str) -> set[str]:
+        try:
+            schema = json.loads(
+                _text_or_empty(ROOT / "schemas" / schema_name)
+            )
+            return set(
+                schema["$defs"][definition_name]["properties"]["name"]["enum"]
+            )
+        except (KeyError, TypeError, json.JSONDecodeError):
+            return set()
+
+    bar_parameter_vocab = set(
+        re.findall(r'"([^\"]+)"', bar_vocab_match.group(1))
+    ) if bar_vocab_match else set()
+    depth_parameter_vocab = bar_parameter_vocab | (
+        set(re.findall(r'"([^\"]+)"', depth_vocab_match.group(1)))
+        if depth_vocab_match
+        else set()
+    )
+    bar_parameter_schemas = (
+        "run-experiment-spec-v1.json",
+        "run-multi-leg-experiment-spec-v1.json",
+        "run-multi-market-experiment-spec-v1.json",
+    )
+    depth_parameter_schemas = (
+        "run-depth-experiment-spec-v1.json",
+        "run-multi-market-depth-experiment-spec-v1.json",
+    )
+    parameter_schema_shapes_match = (
+        all(
+            schema_parameter_vocab(name, "ExperimentParameterSpace")
+            == bar_parameter_vocab
+            for name in bar_parameter_schemas
+        )
+        and all(
+            schema_parameter_vocab(name, "ExperimentParameterSpace")
+            == depth_parameter_vocab
+            for name in depth_parameter_schemas
+        )
+        and schema_parameter_vocab(
+            "run-experiment-spec-v1.json", "ExperimentParameterRange"
+        )
+        == bar_parameter_vocab
+    )
     parameter_shape_mirror = (
         app_parameter_fields == [("name", "String"), ("values", "Vec<i128>")]
         and bool(python_parameter_vocab_match)
@@ -23245,6 +23722,7 @@ def experiment_split_plan_check() -> None:
         and 'return {"name": self.name, "values": list(self.values)}' in python_parameter_source
         and set(python_parameter_vocab) == set(rust_parameter_vocab)
         and spec_parameter_fields == [("name", "String"), ("values", "Vec<String>")]
+        and parameter_schema_shapes_match
     )
     python_split_start = python_app.find("class ExperimentSplitPlan:")
     python_split_end = python_app.find("\n\n@dataclass", python_split_start)
@@ -23254,7 +23732,7 @@ def experiment_split_plan_check() -> None:
         else ""
     )
     python_split_fields = re.findall(
-        r"^    (train_bars|test_bars|walk_forward|step_bars): (int|bool)(?: = [^\n]+)?$",
+        r"^    (train_bars|test_bars|walk_forward|step_bars|purge_bars|embargo_bars): (int|bool)(?: = [^\n]+)?$",
         python_split_source,
         re.M,
     )
@@ -23265,6 +23743,8 @@ def experiment_split_plan_check() -> None:
             ("test_bars", "int"),
             ("walk_forward", "bool"),
             ("step_bars", "int"),
+            ("purge_bars", "int"),
+            ("embargo_bars", "int"),
         ]
         and "def validate(" not in python_split_source
         and all(f'"{field}"' in python_split_source for field, _ in python_split_fields)
@@ -23295,7 +23775,7 @@ def experiment_split_plan_check() -> None:
         and "self.split_plan.validate()?;" in spec_src
     )
     check(
-        len(spec_rules) == 3 and app_has_no_duplicate_validator and app_calls_shared_validator,
+        len(spec_rules) == 6 and app_has_no_duplicate_validator and app_calls_shared_validator,
         "切分形状只由 qx-spec::SplitPlan 校验，序列化规格与 qx-app 执行入口调用同一实现",
         f"qx-spec {len(spec_rules)} 条 / qx-app 无重复校验 {app_has_no_duplicate_validator} / 两入口共用 {app_calls_shared_validator}",
     )
@@ -23328,9 +23808,9 @@ def experiment_split_plan_check() -> None:
     )
 
     # ④ 选参读训练窗、报分读测试窗——反了就是把测试窗信息泄漏进选参。
-    selects_on_train = "let score = window_return_bps(values, train_start, train_end);" in split_src
+    selects_on_train = "window_return_bps(values, ranges.train[0], ranges.train[1])" in split_src
     reports_on_test = (
-        "out_of_sample_return_bps: window_return_bps(values, test_start, test_end)," in split_src
+        "out_of_sample_return_bps: window_return_bps(values, ranges.test[0], ranges.test[1])," in split_src
     )
     check(
         selects_on_train and reports_on_test,
@@ -23892,6 +24372,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("MultiLegBacktestSpec", "qx-app::MultiLegBacktestSpec"),
         ("MultiAccountBacktestSpec", "qx-app::MultiAccountBacktestSpec"),
         ("MultiAccountDepthBacktestSpec", "qx-app::MultiAccountDepthBacktestSpec"),
+        ("MultiAccountJointBacktestSpec", "qx-app::MultiAccountJointBacktestSpec"),
         ("MultiMarketBacktestSpec", "qx-app::MultiMarketBacktestSpec"),
         ("MultiMarketDepthBacktestSpec", "qx-app::MultiMarketDepthBacktestSpec"),
         ("RunExperimentSpec", "qx-app::RunExperimentSpec"),
@@ -23909,6 +24390,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("run_depth_backtest", "qx-app::run_depth_backtest"),
         ("run_multi_leg_backtest", "qx-app::run_multi_leg_backtest"),
         ("run_multi_account_backtest", "qx-app::run_multi_account_backtest"),
+        ("run_multi_account_joint_backtest", "qx-app::run_multi_account_joint_backtest"),
         ("run_experiment", "qx-app::run_experiment"),
         ("run_depth_experiment", "qx-app::run_depth_experiment"),
         ("run_multi_leg_experiment", "qx-app::run_multi_leg_experiment"),
@@ -23923,6 +24405,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("DepthBacktestSpec", "qx-app::DepthBacktestSpec"),
         ("MultiAccountBacktestSpec", "qx-app::MultiAccountBacktestSpec"),
         ("MultiAccountDepthBacktestSpec", "qx-app::MultiAccountDepthBacktestSpec"),
+        ("MultiAccountJointBacktestSpec", "qx-app::MultiAccountJointBacktestSpec"),
         ("MultiLegBacktestSpec", "qx-app::MultiLegBacktestSpec"),
         ("MultiMarketBacktestSpec", "qx-app::MultiMarketBacktestSpec"),
         ("MultiMarketDepthBacktestSpec", "qx-app::MultiMarketDepthBacktestSpec"),
@@ -24053,6 +24536,7 @@ PY_LAYER_LOCAL_FREE_FUNCTIONS = (
     "run_depth_backtest",
     "run_multi_leg_backtest",
     "run_multi_account_backtest",
+    "run_multi_account_joint_backtest",
 )
 # 可选适配器：核心层在 import 期不得把它们拉进来（方案 §6.2「optional dependencies 不改变
 # 核心语义」）。只按**真的 import 语句**判，不按散文判——`qianxing/data/__init__.py` 的文档
@@ -24071,13 +24555,13 @@ PY_LAYER_REQUIRED_CASES = (
     "test_ashare_backtest_dtos_match_rust_rule_and_event_fields",
     "test_multi_leg_manifest_fields_match_rust_and_preserve_legacy_payload",
     "test_multi_market_market_fields_match_rust_and_serialize_manifest",
+    "test_multi_account_backtest_schemas_match_rust_python_and_bound_batches",
     "test_depth_backtest_dtos_match_rust_fields_and_serialize_queue_model",
     "test_dataset_spec_fields_match_the_rust_contract_and_registered_schema",
     "test_builtin_strategy_spec_fields_and_kind_values_match_schema",
     "test_backtest_spec_schema_fields_match_rust_python_and_nested_specs",
     "test_depth_backtest_schema_matches_rust_python_and_registered_nested_contracts",
     "test_multi_leg_backtest_schema_matches_rust_python_and_runtime_constraints",
-    "test_multi_account_backtest_schemas_match_rust_python_and_bound_batches",
     "test_multi_market_backtest_schemas_match_rust_python_contracts",
     "test_experiment_input_schemas_match_rust_python_and_bound_candidates",
     "test_compare_runs_schemas_match_rust_python_and_ranked_result",
@@ -24748,6 +25232,7 @@ def runtime_invariant_error_propagation_check() -> None:
         _text_or_empty(ROOT / "crates/qx-api/src/app_runs.rs"),
         "fn reserve(&self, run_id: String)",
     )
+    watcher_slot = _text_or_empty(ROOT / "crates/qx-api/src/app_runs/persistence.rs")
     ws = _text_or_empty(ROOT / "crates/qx-api/src/ws.rs")
     api = production_text(_text_or_empty(ROOT / "crates/qx-api/src/lib.rs"))
     api_tight = re.sub(r"\s+", "", api)
@@ -24773,8 +25258,12 @@ def runtime_invariant_error_propagation_check() -> None:
         "entries.get_mut(&run_id)" in app_runs
         and 'AppErrorCategory::InternalInvariant' in app_runs
         and "entries.get_mut(&run_id).unwrap()" not in app_runs
-        and "APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);" in app_runs,
-        "异步运行注册表项意外缺失时返回 InternalInvariant 并释放观察器名额",
+        and "persistence::WatcherSlot(self.watcher_counter)" in app_runs
+        and "watcher_slot," in app_runs
+        and "entries.remove(&run_id);" in app_runs
+        and "impl Drop for WatcherSlot" in watcher_slot
+        and "self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);" in watcher_slot,
+        "异步运行注册表项意外缺失时返回 InternalInvariant，观察器名额由 WatcherSlot RAII 释放",
     )
     check(
         "self.pending.get(mask_start..total)" in ws
@@ -25236,6 +25725,10 @@ def main() -> int:
     baseline_freeze_check()
     release_supply_chain_check()
     performance_baseline_check()
+    report_generation_capacity_check()
+    adaptive_search_capacity_check()
+    adaptive_search_cost_neighborhood_capacity_check()
+    research_diagnostics_and_retry_check()
     doc_citation_reachability_check()
     command_status_vocabulary_single_source_check()
     foundation_specs_check()

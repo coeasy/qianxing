@@ -254,6 +254,74 @@ mod test_cases {
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].ts, 2);
         assert_eq!(report.fills[0].price.raw(), 102);
+        let decisions = report
+            .event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::StrategyDecision { decision } => Some((event, decision)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decisions.len(), 2, "each native callback is auditable");
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|(event, _)| event.ts)
+                .collect::<Vec<_>>(),
+            [2, 3],
+            "strategy decisions are timestamped at their submission boundary"
+        );
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|(_, fact)| fact.signal_id)
+                .collect::<Vec<_>>(),
+            [1, 2],
+            "each decision identifies only the last completed Bar it consumed"
+        );
+        assert!(
+            decisions[1].1.intents.is_empty(),
+            "empty decisions are auditable too"
+        );
+        let emitted = decisions[0].1;
+        assert_eq!(emitted.strategy_id, "native-bar");
+        // Bar(2) consumes the signal formed from visible Bar(1), never Bar(2)'s OHLC.
+        assert_eq!(emitted.signal_id, 1);
+        assert_eq!(emitted.intents.len(), 1);
+        assert_eq!(decisions[0].0.prio, qx_core::Priority::COMMAND);
+        assert_eq!(decisions[0].0.metadata.context.signal_id, "1");
+
+        let risk_event = report
+            .event_log
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::OrderRiskDecision { decision } => Some((event, decision)),
+                _ => None,
+            })
+            .expect("the admitted native order has a replayable risk decision");
+        assert!(risk_event.1.allowed);
+        assert_eq!(risk_event.1.strategy_id.as_deref(), Some("native-bar"));
+        assert_eq!(risk_event.1.signal_id, Some(emitted.signal_id));
+        assert_eq!(risk_event.1.intent_id, Some(emitted.intents[0].intent_id));
+        assert_eq!(risk_event.1.reference_price_raw, Some(100));
+        let submit_index = report
+            .event_log
+            .events()
+            .iter()
+            .position(|event| {
+                matches!(event.kind, EventKind::Submit { client_order_id } if client_order_id == risk_event.1.client_order_id)
+            })
+            .expect("risk decision links to submitted order");
+        let risk_index = report
+            .event_log
+            .events()
+            .iter()
+            .position(|event| event.seq == risk_event.0.seq)
+            .unwrap();
+        assert!(risk_index > 0 && risk_index < submit_index);
+        assert_replay_matches(&report);
     }
 
     #[test]
@@ -356,6 +424,47 @@ mod test_cases {
             .entries()
             .iter()
             .all(|entry| !matches!(entry.kind, qx_core::LedgerEntryKind::CorporateAction)));
+    }
+
+    #[test]
+    fn maximum_drawdown_uses_each_rolling_peak_before_later_equity_highs() {
+        let bars = vec![
+            Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 10),
+            Bar::new(2, 102 * SCALE, 103 * SCALE, 89 * SCALE, 90 * SCALE, 10),
+            Bar::new(3, 90 * SCALE, 201 * SCALE, 90 * SCALE, 200 * SCALE, 10),
+        ];
+        let report = BacktestEngine::new(simple_config())
+            .run(&bars, &mut BuyOnce { done: false })
+            .unwrap();
+
+        // Equity falls from 1000 to 988, then rallies to 1098. The 120 bps
+        // historical drawdown must not be diluted by the later 1098 equity peak.
+        assert_eq!(
+            report.equity,
+            [1_000, 988, 1_098].map(|value| value * SCALE)
+        );
+        assert_eq!(report.max_drawdown_bps, 120);
+    }
+
+    #[test]
+    fn drawdown_budget_prunes_at_the_first_training_bar_that_breaches_it() {
+        let bars = vec![
+            Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 10),
+            Bar::new(2, 102 * SCALE, 103 * SCALE, 89 * SCALE, 90 * SCALE, 10),
+            Bar::new(3, 90 * SCALE, 201 * SCALE, 90 * SCALE, 200 * SCALE, 10),
+        ];
+        let (status, report) = BacktestEngine::new(simple_config())
+            .run_with_drawdown_pruning(&bars, &mut BuyOnce { done: false }, 2, 3, 115, || false)
+            .unwrap();
+
+        assert_eq!(
+            status,
+            BacktestRunStatus::Pruned {
+                processed_bars: 2,
+                max_drawdown_bps: 120,
+            }
+        );
+        assert!(report.is_none(), "被剪枝的候选不得伪装成完整回测报告");
     }
 
     #[test]
@@ -512,6 +621,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 500,
             valid_from: 1,
@@ -647,6 +757,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 500,
             valid_from: 1,
@@ -732,6 +843,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 10,
             maintenance_margin_bps: 500,
             valid_from: 1,
@@ -803,6 +915,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
@@ -874,6 +987,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
@@ -918,6 +1032,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
@@ -1014,6 +1129,7 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 10,
             maintenance_margin_bps: 500,
             valid_from: 1,

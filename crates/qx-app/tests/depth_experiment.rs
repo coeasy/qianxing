@@ -18,8 +18,8 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
         experiment_id: "tick-grid".into(),
         base: spec("unused-tick-grid", &root, "l1", 1),
         parameter_space: vec![ExperimentParameterSpace {
-            name: "quantity_raw".into(),
-            values: vec![0, SCALE],
+            name: "fast_window".into(),
+            values: vec![2, 4],
         }],
         strategy_kinds: Vec::new(),
     };
@@ -29,13 +29,13 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
     assert_eq!(result.completed_candidates, 2);
     assert_eq!(result.failed_candidates, 1);
     assert_eq!(result.succeeded_candidates, 1);
-    assert!(result.candidates[0].error.is_some());
-    assert!(result.candidates[1].outcome.is_some());
+    assert!(result.candidates[0].outcome.is_some());
+    assert!(result.candidates[1].error.is_some());
     assert!(Path::new(&result.artifact_path).is_file());
     assert_eq!(run_depth_experiment(&spec, &context).unwrap(), result);
 
     let mut changed = spec;
-    changed.parameter_space[0].values = vec![SCALE, SCALE * 2];
+    changed.parameter_space[0].values = vec![2, 3];
     assert_eq!(
         run_depth_experiment(&changed, &context)
             .unwrap_err()

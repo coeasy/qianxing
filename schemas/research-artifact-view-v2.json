@@ -1,0 +1,588 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-view-v2.json",
+  "title": "Qianxing ResearchArtifactView v2",
+  "description": "Verified, bounded Bar and depth backtest drilldown data for interactive research reports.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_kind",
+    "run_id",
+    "instrument",
+    "verification",
+    "summary",
+    "equity",
+    "fills",
+    "events",
+    "bars",
+    "depth",
+    "event_trace_available"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "run_kind": {
+      "enum": [
+        "bar",
+        "depth"
+      ]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verification": {
+      "$ref": "verification-result-v1.json"
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "initial_cash_raw": {"type": ["integer", "string"]},
+        "final_equity_raw": {"type": ["integer", "string"]},
+        "fees_raw": {"type": ["integer", "string"]},
+        "turnover_raw": {"type": ["integer", "string"]},
+        "account": {
+          "type": "object",
+          "properties": {"initial_cash_raw": {"type": ["integer", "string"]}},
+          "additionalProperties": true
+        },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "final_equity_raw": {"type": ["integer", "string"]},
+            "fees_raw": {"type": ["integer", "string"]},
+            "turnover_raw": {"type": ["integer", "string"]}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "equity": {
+      "$ref": "#/$defs/equityRows"
+    },
+    "fills": {
+      "$ref": "#/$defs/rows"
+    },
+    "events": {
+      "$ref": "#/$defs/events"
+    },
+    "bars": {
+      "type": "object",
+      "required": [
+        "source_status",
+        "total",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "source_status": {
+          "enum": [
+            "verified",
+            "run_not_verified",
+            "input_not_declared",
+            "unsupported_input_kind",
+            "input_path_missing",
+            "source_outside_data_root"
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": [
+              "ts",
+              "open_raw",
+              "high_raw",
+              "low_raw",
+              "close_raw",
+              "volume_raw"
+            ],
+            "properties": {
+              "ts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "open_raw": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$"
+              },
+              "high_raw": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$"
+              },
+              "low_raw": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$"
+              },
+              "close_raw": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$"
+              },
+              "volume_raw": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "depth": {
+      "type": "object",
+      "required": [
+        "source_status",
+        "total",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "source_status": {
+          "enum": [
+            "verified",
+            "run_not_verified",
+            "input_not_declared",
+            "unsupported_input_kind",
+            "input_path_missing",
+            "source_outside_data_root"
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/depthPoint"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_trace_available": {
+      "type": "boolean"
+    },
+    "strategy_diagnostics": {
+      "type": "object",
+      "required": [
+        "identity_bound",
+        "computation",
+        "report"
+      ],
+      "properties": {
+        "identity_bound": {
+          "const": true
+        },
+        "computation": {
+          "const": "client_computed_not_reexecuted_by_api"
+        },
+        "report": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "depthPoint": {
+      "type": "object",
+      "required": [
+        "ts",
+        "sequence",
+        "bids",
+        "asks",
+        "levels_truncated"
+      ],
+      "properties": {
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bids": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/depthLevel"
+          }
+        },
+        "asks": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/depthLevel"
+          }
+        },
+        "levels_truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "depthLevel": {
+      "type": "object",
+      "required": [
+        "price_raw",
+        "qty_raw"
+      ],
+      "properties": {
+        "price_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "qty_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "equityRows": {
+      "type": "object",
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "truncated": {"type": "boolean"},
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ts", "equity_raw"],
+            "properties": {
+              "ts": {"type": ["integer", "string"]},
+              "equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+              "position_raw": {"type": "string", "pattern": "^-?[0-9]+$"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "total",
+        "offset",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 300,
+          "items": {
+            "type": "object",
+            "required": [
+              "seq",
+              "ts",
+              "prio",
+              "kind",
+              "bar_context",
+              "bar_context_status"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "prio": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "kind": {},
+              "metadata": {
+                "type": "object"
+              },
+              "market_context": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["instrument", "data_fingerprint"],
+                    "properties": {
+                      "instrument": { "type": "string", "minLength": 1 },
+                      "data_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "research_fact": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/strategyDecisionFact"
+                  },
+                  {
+                    "$ref": "#/$defs/orderRiskDecisionFact"
+                  }
+                ]
+              },
+              "bar_context_status": {
+                "enum": [
+                  "verified",
+                  "before_first_visible_bar",
+                  "input_unavailable",
+                  "not_applicable_depth"
+                ]
+              },
+              "bar_context": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "event_ts",
+                      "bar_index",
+                      "relation",
+                      "bar"
+                    ],
+                    "properties": {
+                      "event_ts": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "bar_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "relation": {
+                        "enum": [
+                          "same_timestamp_visible",
+                          "previous_visible"
+                        ]
+                      },
+                      "bar": {
+                        "$ref": "#/$defs/barPoint"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "strategyDecisionFact": {
+      "type": "object",
+      "required": [
+        "kind",
+        "strategy_id",
+        "signal_id",
+        "confidence",
+        "priority",
+        "expires_at",
+        "intent_count"
+      ],
+      "properties": {
+        "kind": {
+          "const": "strategy_decision"
+        },
+        "strategy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signal_id": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "confidence": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "priority": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "intent_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "orderRiskDecisionFact": {
+      "type": "object",
+      "required": [
+        "kind",
+        "client_order_id",
+        "instrument",
+        "allowed",
+        "rule_set_version",
+        "violations",
+        "projected_position_raw",
+        "projected_margin_raw",
+        "reference_price_raw"
+      ],
+      "properties": {
+        "kind": {
+          "const": "risk_decision"
+        },
+        "client_order_id": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "instrument": {
+          "type": "object",
+          "required": [
+            "symbol",
+            "venue"
+          ],
+          "properties": {
+            "symbol": {
+              "type": "string",
+              "minLength": 1
+            },
+            "venue": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "rule_set_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "projected_position_raw": {
+          "type": "string",
+          "pattern": "^(null|-?[0-9]+)$"
+        },
+        "projected_margin_raw": {
+          "type": "string",
+          "pattern": "^(null|-?[0-9]+)$"
+        },
+        "reference_price_raw": {
+          "type": "string",
+          "pattern": "^(null|-?[0-9]+)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "barPoint": {
+      "type": "object",
+      "required": [
+        "ts",
+        "open_raw",
+        "high_raw",
+        "low_raw",
+        "close_raw",
+        "volume_raw"
+      ],
+      "properties": {
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "open_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "high_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "low_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "close_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "volume_raw": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rows": {
+      "type": "object",
+      "required": [
+        "total",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

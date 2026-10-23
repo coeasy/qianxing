@@ -10,12 +10,55 @@ from typing import get_args, get_type_hints
 from qianxing.app import (
     BacktestSpec,
     BuiltinStrategySpec,
+    ExperimentParameterRange,
     ExperimentParameterSpace,
     list_builtin_strategies,
     run_backtest,
     verify_run,
 )
 from qianxing_bridge import native
+
+
+class ParameterTypingContractTest(unittest.TestCase):
+
+    def test_typed_parameter_names_cover_rust_sizing_and_depth_maker_dimensions(self) -> None:
+        names = set(get_args(get_type_hints(ExperimentParameterSpace)["name"]))
+        self.assertEqual(
+            names,
+            {
+                "fast_window",
+                "slow_window",
+                "period",
+                "threshold_bps",
+                "quantity_raw",
+                "target_notional_raw",
+                "target_available_margin_bps",
+                "target_volatility_bps",
+                "target_kelly_fraction_bps",
+                "market_making_spread_bps",
+                "market_making_quote_qty_raw",
+                "market_making_max_inventory_raw",
+                "market_making_tick_size_raw",
+                "market_making_inventory_skew_bps",
+            },
+        )
+
+    def test_typed_continuous_parameter_names_cover_fixed_point_sizing_dimensions(self) -> None:
+        names = set(get_args(get_type_hints(ExperimentParameterRange)["name"]))
+        self.assertEqual(
+            names,
+            {
+                "fast_window",
+                "slow_window",
+                "period",
+                "threshold_bps",
+                "quantity_raw",
+                "target_notional_raw",
+                "target_available_margin_bps",
+                "target_volatility_bps",
+                "target_kelly_fraction_bps",
+            },
+        )
 
 
 class StrategyCatalogTest(unittest.TestCase):
@@ -41,25 +84,6 @@ class StrategyCatalogTest(unittest.TestCase):
         )
         self.assertEqual(next(item for item in catalog if item.name == "macd").signal_knobs, ())
         self.assertTrue(all(item.description.strip() for item in catalog))
-
-    def test_typed_parameter_names_cover_rust_sizing_and_depth_maker_dimensions(self) -> None:
-        names = set(get_args(get_type_hints(ExperimentParameterSpace)["name"]))
-        self.assertEqual(
-            names,
-            {
-                "fast_window",
-                "slow_window",
-                "period",
-                "threshold_bps",
-                "quantity_raw",
-                "target_kelly_fraction_bps",
-                "market_making_spread_bps",
-                "market_making_quote_qty_raw",
-                "market_making_max_inventory_raw",
-                "market_making_tick_size_raw",
-                "market_making_inventory_skew_bps",
-            },
-        )
 
     def test_selecting_catalog_entry_runs_and_verifies_shared_rust_backtest(self) -> None:
         selected = next(

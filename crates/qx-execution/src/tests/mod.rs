@@ -116,6 +116,10 @@ impl VenuePort for NeverCalledVenue {
         qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         panic!("risk rejection must happen before Venue submit")
     }
@@ -150,6 +154,10 @@ impl VenueRouterPort for PortRouter {
         _venue_id: &str,
     ) -> Option<qx_zhenlu::venue_capabilities::VenueCapabilities> {
         Some(qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES)
+    }
+
+    fn execution_readiness_for(&self, _venue_id: &str) -> Result<(), String> {
+        Ok(())
     }
 
     fn submit_order(
@@ -192,6 +200,10 @@ impl VenuePort for PortVenue {
 
     fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
         qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
     }
 
     fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {

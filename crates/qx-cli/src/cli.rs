@@ -153,7 +153,11 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::Quickstart { project, force } => quickstart::run(project, force),
+        Command::Quickstart {
+            project,
+            html,
+            force,
+        } => quickstart::run(project, html, force),
         Command::Guide(args) => guide::run(args),
         Command::Doctor { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
@@ -284,6 +288,100 @@ pub(crate) fn run() {
                     dataset_manifest.as_deref(),
                 ) {
                     eprintln!("[qx-cli · CLI] 策略回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            Some(StrategyCommand::DiagnoseDepth {
+                artifact,
+                output,
+                html,
+            }) => {
+                if let Err(error) =
+                    crate::report_multi_market_depth::generate_builtin_depth_diagnostics(
+                        &artifact, &output,
+                    )
+                {
+                    eprintln!("[qx-cli · CLI] 深度策略诊断失败: {error}");
+                    std::process::exit(2);
+                }
+                if html {
+                    let options = crate::report_command::ReportOptions {
+                        as_json: false,
+                        html: true,
+                        evidence: false,
+                        output: None,
+                        against: &[],
+                        benchmark_bars: None,
+                        benchmark_calendar: None,
+                        benchmark_csv: None,
+                        strategy_diagnostics: Some(&output),
+                        xlsx: None,
+                    };
+                    if let Err(error) =
+                        crate::report_command::run_report_with_benchmark(&artifact, options)
+                    {
+                        eprintln!("[qx-cli · CLI] 深度策略交互报告生成失败: {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            Some(StrategyCommand::DiagnoseMultiBar {
+                artifact,
+                output,
+                html,
+            }) => {
+                if let Err(error) = crate::report_multi_market::generate_builtin_bar_diagnostics(
+                    &artifact, &output, html,
+                ) {
+                    eprintln!("[qx-cli · CLI] 多市场 Bar 策略诊断失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            Some(StrategyCommand::DiagnoseMultiAccount {
+                artifact,
+                spec,
+                output,
+                html,
+            }) => {
+                if let Err(error) = crate::strategy_multi_account_diagnostics::generate_multi_account_builtin_bar_diagnostics(
+                    &artifact,
+                    &spec,
+                    &output,
+                ) {
+                    eprintln!("[qx-cli · CLI] 多账户 Bar 策略诊断失败: {error}");
+                    std::process::exit(2);
+                }
+                if html {
+                    let options = crate::report_command::ReportOptions {
+                        as_json: false,
+                        html: true,
+                        evidence: false,
+                        output: None,
+                        against: &[],
+                        benchmark_bars: None,
+                        benchmark_calendar: None,
+                        benchmark_csv: None,
+                        strategy_diagnostics: Some(&output),
+                        xlsx: None,
+                    };
+                    if let Err(error) =
+                        crate::report_command::run_report_with_benchmark(&artifact, options)
+                    {
+                        eprintln!("[qx-cli · CLI] 多账户策略交互报告生成失败: {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            Some(StrategyCommand::DiagnoseBar {
+                summary,
+                spec,
+                output,
+                html,
+            }) => {
+                if let Err(error) = crate::strategy_diagnostics::generate_builtin_bar_diagnostics(
+                    &summary, &spec, &output, html,
+                ) {
+                    eprintln!("[qx-cli · CLI] Bar 策略诊断失败: {error}");
                     std::process::exit(2);
                 }
             }

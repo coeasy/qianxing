@@ -40,6 +40,9 @@ pub(crate) enum Command {
     #[command(name = "quickstart")]
     Quickstart {
         project: Option<PathBuf>,
+        /// 额外生成自包含 HTML 报告与三张 SVG 图表。
+        #[arg(long)]
+        html: bool,
         #[arg(long)]
         force: bool,
     },
@@ -427,6 +430,50 @@ pub(crate) enum StrategyCommand {
         spec: Option<PathBuf>,
         #[arg(long = "dataset-manifest", value_name = "DATASET_MANIFEST_V2")]
         dataset_manifest: Option<PathBuf>,
+    },
+    /// 从已复核的多市场深度运行产物生成内置策略预热诊断。
+    #[command(name = "diagnose-depth")]
+    DiagnoseDepth {
+        artifact: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从已复核的多市场 Bar 运行产物生成所有 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-multi-bar")]
+    DiagnoseMultiBar {
+        artifact: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从独立账户 Bar 批次生成逐账户 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-multi-account")]
+    DiagnoseMultiAccount {
+        artifact: PathBuf,
+        #[arg(long, value_name = "MULTI_ACCOUNT_SPEC_JSON")]
+        spec: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从已验证的单标的 Bar 回测摘要和原始规格重建 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-bar")]
+    DiagnoseBar {
+        summary: PathBuf,
+        #[arg(long, value_name = "BACKTEST_SPEC_JSON")]
+        spec: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
     },
 }
 

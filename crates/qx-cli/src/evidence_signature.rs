@@ -215,9 +215,19 @@ pub(crate) fn run(args: EvidenceArgs) -> Result<(), String> {
             market_spec.as_deref(),
             build_attestation.as_deref(),
         ),
+        Some(EvidenceCommand::PackMultiAccountRun {
+            result,
+            spec,
+            output_dir,
+        }) => {
+            crate::run_evidence_multi_account::pack_multi_account_run(&result, &spec, &output_dir)
+        }
+        Some(EvidenceCommand::VerifyMultiAccountRun { bundle_dir }) => {
+            crate::run_evidence_multi_account::verify_multi_account_run(&bundle_dir)
+        }
         Some(EvidenceCommand::PackMultiMarketRun { artifact }) => {
             let path =
-                crate::run_evidence_multi_market::write_multi_market_run_evidence(&artifact)?;
+                crate::run_evidence_multi_market::write_multi_market_run_evidence(&artifact, None)?;
             println!("{}", path.display());
             Ok(())
         }

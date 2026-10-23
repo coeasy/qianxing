@@ -13,6 +13,105 @@ use crate::valuation::{ValuationContext, ValuationResult};
 use std::collections::BTreeMap;
 
 impl Ledger {
+    /// Return the exact marked equity contribution of one instrument above the account's
+    /// unallocated starting cash. Instrument-attributed cash ledger entries and that
+    /// instrument's marked position are valued in the same reporting currency as the
+    /// portfolio. The contributions are additive when every account cash movement is
+    /// instrument-attributed; unallocated deposits/transfers remain outside this projection.
+    pub fn instrument_equity_contribution(
+        &self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        mark: Option<&Price>,
+        reporting_currency: &str,
+        spec: &TradingInstrumentSpec,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<i128> {
+        spec.validate()?;
+        if spec.instrument != *instrument {
+            return Err(QxError::BusinessViolation(
+                "标的权益归因规格 instrument 不一致".into(),
+            ));
+        }
+
+        let mut cash_by_currency = BTreeMap::<String, i128>::new();
+        for entry in self.entries.iter().filter(|entry| {
+            entry.account_id == account_id && entry.instrument.as_ref() == Some(instrument)
+        }) {
+            let amount = cash_by_currency.entry(entry.currency.clone()).or_default();
+            *amount = amount
+                .checked_add(entry.amount.raw())
+                .ok_or_else(|| QxError::Invariant("标的现金归因累计溢出".into()))?;
+        }
+        let marks = mark
+            .copied()
+            .map(|mark| BTreeMap::from([(instrument.clone(), mark)]))
+            .unwrap_or_default();
+        let context = ValuationContext::spot(account_id, &marks, reporting_currency)
+            .with_spec(Some(spec))
+            .with_fx(fx_rates);
+        self.instrument_equity_contribution_from_cash(&context, &cash_by_currency)
+    }
+
+    /// Value an instrument's P&L contribution using a caller-maintained cumulative ledger-cash
+    /// projection. This lets event loops update the cash projection incrementally instead of
+    /// rescanning the append-only ledger for every marked Bar. The market identity comes from
+    /// the frozen single-instrument spec in the valuation context.
+    pub fn instrument_equity_contribution_from_cash(
+        &self,
+        context: &ValuationContext<'_>,
+        cash_by_currency: &BTreeMap<String, i128>,
+    ) -> QxResult<i128> {
+        let spec = context.spec.ok_or_else(|| {
+            QxError::BusinessViolation("标的权益归因估值上下文缺少单标的规格".into())
+        })?;
+        let instrument = &spec.instrument;
+        spec.validate()?;
+        let account_id = context.account_id;
+        let mark = context.marks.get(instrument);
+        let mut contribution = 0_i128;
+        for (currency, amount) in cash_by_currency {
+            contribution = contribution
+                .checked_add(Self::convert_equity_currency(
+                    *amount,
+                    currency,
+                    context.reporting_currency,
+                    context.fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("标的现金归因估值溢出".into()))?;
+        }
+
+        let mut add_position = |position: &PositionState| -> QxResult<()> {
+            if position.quantity.is_zero() {
+                return Ok(());
+            }
+            let mark = mark.ok_or_else(|| {
+                QxError::ReconcileRequired(format!("标的权益归因缺少标记价: {instrument}"))
+            })?;
+            let (value, currency) = Self::market_position_value(spec, position, mark)?;
+            contribution = contribution
+                .checked_add(Self::convert_equity_currency(
+                    value,
+                    currency,
+                    context.reporting_currency,
+                    context.fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("标的持仓归因估值溢出".into()))?;
+            Ok(())
+        };
+        for ((account, candidate), position) in self.iter_positions() {
+            if account == account_id && candidate == instrument {
+                add_position(position)?;
+            }
+        }
+        for ((account, candidate, _), position) in self.iter_hedge_positions() {
+            if account == account_id && candidate == instrument {
+                add_position(position)?;
+            }
+        }
+        Ok(contribution)
+    }
+
     pub fn cash(&self, currency: &str) -> i128 {
         self.iter_cash()
             .filter(|((_, candidate), _)| *candidate == currency)

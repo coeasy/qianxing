@@ -23,7 +23,12 @@ mod run_record;
 pub mod sink;
 mod strategy_backtest_artifacts;
 
-pub use backtest_input_verification::recompute_declared_backtest_input;
+pub use backtest_input_verification::{
+    recompute_declared_backtest_input, verified_barframe_event_contexts, verified_barframe_preview,
+    verified_depthframe_preview, VerifiedBarFrameEventContext, VerifiedBarFramePoint,
+    VerifiedBarFramePreview, VerifiedDepthFramePoint, VerifiedDepthFramePreview,
+    VerifiedDepthLevel,
+};
 pub use backtest_summary::{
     account_base_source_label, persist_backtest_artifacts, persist_backtest_artifacts_with_summary,
     write_backtest_artifact, BacktestAccountBase, BacktestArtifacts, BacktestInputProvenance,
@@ -68,7 +73,9 @@ pub use run_evidence_assembly::{
 pub use run_evidence_files::{
     canonical_run_evidence_path, load_run_evidence_identity_files,
     run_evidence_artifact_references, run_evidence_dataset_component,
-    run_evidence_quality_manifest_reference, run_evidence_report_analysis, RunEvidenceRunFiles,
+    run_evidence_depth_strategy_diagnostics_array, run_evidence_quality_manifest_reference,
+    run_evidence_report_analysis, run_evidence_strategy_diagnostics,
+    run_evidence_strategy_diagnostics_array, RunEvidenceRunFiles,
 };
 pub use run_evidence_readout::{
     run_evidence_assumption_rows, run_evidence_fidelity_classification, run_evidence_summary_str,

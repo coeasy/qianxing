@@ -11,6 +11,7 @@ pub(crate) fn write_run_evidence(
     summary_path: &Path,
     summary: &serde_json::Value,
     report_analysis: Option<&serde_json::Value>,
+    strategy_diagnostics: Option<(&Path, &serde_json::Value)>,
 ) -> Result<PathBuf, String> {
     let dataset_kind =
         qx_app::artifact_store::run_evidence_summary_str(summary, &["input", "kind"])?;
@@ -38,16 +39,23 @@ pub(crate) fn write_run_evidence(
         Vec::new()
     };
     let operator = std::env::var("QX_OPERATOR").unwrap_or_else(|_| "local".to_string());
-    let (has_report_analysis, assembly) = qx_app::artifact_store::prepare_run_evidence_assembly(
-        qx_app::artifact_store::RunEvidencePreparation {
-            summary_path,
-            summary,
-            report_analysis,
-            components,
-            build_profile: build_identity::BUILD_PROFILE,
-            target_triple: build_identity::TARGET_TRIPLE,
-            operator: &operator,
-        },
-    )?;
-    qx_app::artifact_store::persist_run_evidence_bundle(summary_path, has_report_analysis, assembly)
+    let (has_report_analysis, has_strategy_diagnostics, assembly) =
+        qx_app::artifact_store::prepare_run_evidence_assembly(
+            qx_app::artifact_store::RunEvidencePreparation {
+                summary_path,
+                summary,
+                report_analysis,
+                strategy_diagnostics,
+                components,
+                build_profile: build_identity::BUILD_PROFILE,
+                target_triple: build_identity::TARGET_TRIPLE,
+                operator: &operator,
+            },
+        )?;
+    qx_app::artifact_store::persist_run_evidence_bundle(
+        summary_path,
+        has_report_analysis,
+        has_strategy_diagnostics,
+        assembly,
+    )
 }

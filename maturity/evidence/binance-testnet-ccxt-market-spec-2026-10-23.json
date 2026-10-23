@@ -1,0 +1,22 @@
+{
+  "active": true,
+  "base": "BTC",
+  "contract": false,
+  "contract_size_raw": 1000000000,
+  "exchange_id": "binance",
+  "expiry_ms": null,
+  "inverse": null,
+  "leverage_tiers": [],
+  "linear": null,
+  "maintenance_margin_bps": null,
+  "market_id": "BTCUSDT",
+  "market_type": "spot",
+  "max_leverage": null,
+  "max_qty_raw": 9000000000000,
+  "min_qty_raw": 10000,
+  "price_tick_raw": 10000000,
+  "qty_step_raw": 10000,
+  "quote": "USDT",
+  "settle": null,
+  "symbol": "BTC/USDT"
+}

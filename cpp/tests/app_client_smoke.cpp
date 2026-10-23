@@ -147,6 +147,16 @@ int main() {
     assert(observed_path == "/app/multi-account-backtest/start");
     assert(observed_body == spec);
 
+    const auto joint_multi_account = client.run_multi_account_joint_backtest(spec);
+    assert(joint_multi_account.ok());
+    assert(observed_path == "/app/multi-account-joint-backtest");
+    assert(observed_body == spec);
+
+    const auto started_joint_multi_account = client.start_multi_account_joint_backtest(spec);
+    assert(started_joint_multi_account.ok());
+    assert(observed_path == "/app/multi-account-joint-backtest/start");
+    assert(observed_body == spec);
+
     const auto multi_account_depth = client.run_multi_account_depth_backtest(depth_spec);
     assert(multi_account_depth.ok());
     assert(observed_path == "/app/multi-account-depth-backtest");
@@ -213,6 +223,11 @@ int main() {
     const auto depth_verification = client.verify_depth_run(spec);
     assert(depth_verification.ok());
     assert(observed_path == "/app/verify-depth");
+    assert(observed_body == spec);
+
+    const auto research_artifacts = client.research_artifacts(spec);
+    assert(research_artifacts.ok());
+    assert(observed_path == "/app/research-artifacts");
     assert(observed_body == spec);
 
     const auto paper = client.submit_paper_command(spec);

@@ -151,19 +151,13 @@ fn multi_leg_spec_json(run_id: &str, output_dir: &Path) -> String {
 }
 
 fn multi_leg_experiment_spec_json(experiment_id: &str, output_dir: &Path) -> String {
-    let mut base: Value = serde_json::from_str(&multi_leg_spec_json(
-        "unused-multi-leg-experiment-base",
-        output_dir,
-    ))
-    .expect("multi-leg base spec");
-    base["output_dir"] = json!(output_dir);
-    json!({
-        "schema_version": 1,
-        "experiment_id": experiment_id,
-        "base": base,
-        "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
-    })
-    .to_string()
+    let base = multi_leg_spec_json("unused-multi-leg-experiment-base", output_dir);
+    format!(
+        "{{\"schema_version\":1,\"experiment_id\":{},\"base\":{},\"parameter_space\":[{{\"name\":\"quantity_raw\",\"values\":[{},1000000000]}}]}}",
+        serde_json::to_string(experiment_id).expect("experiment id JSON"),
+        base,
+        i128::MAX,
+    )
 }
 
 fn multi_leg_strategy_selection_spec_json(experiment_id: &str, output_dir: &Path) -> String {

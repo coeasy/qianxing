@@ -125,6 +125,8 @@ fn the_rust_sdk_facade_quick_selects_multiple_single_leg_strategy_kinds() {
             strategy_kinds: kinds,
             split_plan: None,
             baselines: Vec::new(),
+            search: None,
+            cost_sensitivity: Vec::new(),
         })
         .expect("Rust SDK should route strategy selection through qx-app");
     assert_eq!(result.total_candidates, 10);

@@ -26,6 +26,10 @@ impl AshareCorporateActionSchedule {
         Self::build(actions, Some(bars))
     }
 
+    pub(crate) fn has_events_at(&self, ts: u64) -> bool {
+        self.by_timestamp.contains_key(&ts)
+    }
+
     fn build(actions: &[AshareCorporateActionEvent], bars: Option<&[Bar]>) -> Self {
         let mut explicit_rights_expiries = BTreeMap::<u64, BTreeSet<String>>::new();
         let mut by_timestamp = HashMap::<u64, Vec<usize>>::new();

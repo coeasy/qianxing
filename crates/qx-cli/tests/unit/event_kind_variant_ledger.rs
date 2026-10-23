@@ -1,7 +1,7 @@
 //! #141 的第四条缺口：变体生产者判据**看不见结构体式变体**，本轮实测到 EventKind 整本词汇表。
 //!
 //! 门禁 `enum_variant_producer_check` 的变体扫描是单行的：一行 `Name,` 才算变体，而枚举体内
-//! 遇到第一个 `^\s*}` 就停。`crates/qx-core/src/event.rs` 里 `EventKind` 的 14 颗变体有 13 颗是
+//! 遇到第一个 `^\s*}` 就停。`crates/qx-core/src/event.rs` 里 `EventKind` 的 16 颗变体有 15 颗是
 //! `Name {` 跨行形状，第一颗 `MarketQuote {` 的字段闭合 `},` 就把扫描赶出了这个枚举 —— 探针实测
 //! 门禁对 EventKind 数出的变体集合是空的（`logs/s521_pass22_probe_before.txt`）。同一把尺子在全仓
 //! 的读数：按花括号配平能解析出 383 颗变体，门禁的单行扫描只认到 248 颗，135 颗不在判据里。
@@ -180,8 +180,8 @@ fn event_kind_variants_are_enumerated_beyond_the_first_struct_body() {
     let variants = declared_variants();
     // 门禁的单行扫描在这里数出 0 颗：这条判据先自证它走到了枚举体的末尾。
     assert!(
-        variants.len() >= 14,
-        "EventKind 只解析出 {} 颗变体，少于本轮实测的 14 颗：{}",
+        variants.len() >= 16,
+        "EventKind 只解析出 {} 颗变体，少于本轮实测的 16 颗：{}",
         variants.len(),
         variants.join(",")
     );
@@ -204,8 +204,8 @@ fn every_event_kind_variant_has_a_production_constructor() {
     let ledger = production_constructors(&variants);
     let total = ledger.values().sum::<usize>();
     assert!(
-        total >= 29,
-        "全仓只数出 {total} 处 EventKind 构造点，比本轮实测的 29 处少：判定式需要先修，否则这条判据空转\
+        total >= 31,
+        "全仓只数出 {total} 处 EventKind 构造点，比本轮实测的 31 处少：判定式需要先修，否则这条判据空转\
          （台账 {ledger:?}）"
     );
     let missing = variants

@@ -7,7 +7,8 @@ use crate::clock::Ts;
 use crate::identity::InstrumentId;
 use crate::ledger::{LedgerEntry, LedgerEntryKind};
 use crate::numeric::{Money, Price, Quantity};
-use crate::order::Fill;
+use crate::order::{Fill, Side};
+use crate::trading::OrderPolicy;
 use serde::{Deserialize, Serialize};
 
 /// 交易事实的最小血缘元数据。
@@ -222,6 +223,48 @@ pub struct AccountCashflow {
     pub external_id: String,
 }
 
+/// The strategy output that crossed the backtest adapter boundary.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct StrategyIntentFact {
+    pub intent_id: u64,
+    pub instrument: InstrumentId,
+    pub side: Side,
+    pub qty: Quantity,
+    pub limit: Option<Price>,
+    pub policy: Option<OrderPolicy>,
+    pub reduce_only: bool,
+    pub post_only: bool,
+}
+
+/// An immutable strategy decision recorded before order admission.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct StrategyDecisionFact {
+    pub schema_version: u32,
+    pub request_id: String,
+    pub strategy_id: String,
+    pub signal_id: u64,
+    pub confidence: i128,
+    pub priority: i32,
+    pub expires_at: u64,
+    pub intents: Vec<StrategyIntentFact>,
+}
+
+/// The exact canonical risk decision evaluated for an order in a backtest.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct OrderRiskDecisionFact {
+    pub client_order_id: u64,
+    pub instrument: InstrumentId,
+    pub strategy_id: Option<String>,
+    pub signal_id: Option<u64>,
+    pub intent_id: Option<u64>,
+    pub allowed: bool,
+    pub violations: Vec<String>,
+    pub projected_position_raw: Option<i128>,
+    pub projected_margin_raw: Option<i128>,
+    pub reference_price_raw: Option<i128>,
+    pub rule_set_version: String,
+}
+
 /// 事件类型。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum EventKind {
@@ -257,6 +300,12 @@ pub enum EventKind {
     /// EventLog 在重启后恢复 OMS 所需的完整订单形状。
     OrderSubmitted {
         order: crate::order::Order,
+    },
+    StrategyDecision {
+        decision: StrategyDecisionFact,
+    },
+    OrderRiskDecision {
+        decision: OrderRiskDecisionFact,
     },
     Submit {
         client_order_id: u64,
@@ -496,6 +545,75 @@ impl Event {
                     h.write_text("");
                 }
             }
+            EventKind::StrategyDecision { decision } => {
+                h.write_u64(17);
+                h.write_u64(decision.schema_version as u64);
+                h.write_text(&decision.request_id);
+                h.write_text(&decision.strategy_id);
+                h.write_u64(decision.signal_id);
+                h.write_i128(decision.confidence);
+                h.write_u64(decision.priority as i64 as u64);
+                h.write_u64(decision.expires_at);
+                h.write_u64(decision.intents.len() as u64);
+                for intent in &decision.intents {
+                    h.write_u64(intent.intent_id);
+                    h.write_text(&intent.instrument.to_string());
+                    h.write_u64(match intent.side {
+                        Side::Buy => 1,
+                        Side::Sell => 2,
+                    });
+                    h.write_i128(intent.qty.raw());
+                    h.write_u64(u64::from(intent.limit.is_some()));
+                    h.write_i128(intent.limit.map(Price::raw).unwrap_or_default());
+                    h.write_u64(u64::from(intent.policy.is_some()));
+                    if let Some(policy) = intent.policy {
+                        h.write_u64(u64::from(policy.reduce_only));
+                        h.write_u64(match policy.position_side {
+                            crate::trading::PositionSide::Long => 1,
+                            crate::trading::PositionSide::Short => 2,
+                            crate::trading::PositionSide::Net => 3,
+                        });
+                        h.write_u64(match policy.margin_mode {
+                            crate::trading::MarginMode::Cash => 1,
+                            crate::trading::MarginMode::Cross => 2,
+                            crate::trading::MarginMode::Isolated => 3,
+                        });
+                        h.write_u64(match policy.position_mode {
+                            crate::trading::PositionMode::OneWay => 1,
+                            crate::trading::PositionMode::Hedge => 2,
+                        });
+                        h.write_u64(policy.leverage as u64);
+                        h.write_u64(u64::from(policy.post_only));
+                    }
+                    h.write_u64(u64::from(intent.reduce_only));
+                    h.write_u64(u64::from(intent.post_only));
+                }
+            }
+            EventKind::OrderRiskDecision { decision } => {
+                h.write_u64(18);
+                h.write_u64(decision.client_order_id);
+                h.write_text(&decision.instrument.to_string());
+                h.write_u64(u64::from(decision.strategy_id.is_some()));
+                h.write_text(decision.strategy_id.as_deref().unwrap_or_default());
+                h.write_u64(u64::from(decision.signal_id.is_some()));
+                h.write_u64(decision.signal_id.unwrap_or_default());
+                h.write_u64(u64::from(decision.intent_id.is_some()));
+                h.write_u64(decision.intent_id.unwrap_or_default());
+                h.write_u64(u64::from(decision.allowed));
+                h.write_u64(decision.violations.len() as u64);
+                for violation in &decision.violations {
+                    h.write_text(violation);
+                }
+                for value in [
+                    decision.projected_position_raw,
+                    decision.projected_margin_raw,
+                    decision.reference_price_raw,
+                ] {
+                    h.write_u64(u64::from(value.is_some()));
+                    h.write_i128(value.unwrap_or_default());
+                }
+                h.write_text(&decision.rule_set_version);
+            }
             EventKind::Submit { client_order_id } => {
                 h.write_u64(3);
                 h.write_u64(*client_order_id);
@@ -631,6 +749,107 @@ mod tests {
         left.digest(&mut left_hash);
         right.digest(&mut right_hash);
         assert_ne!(left_hash.finish(), right_hash.finish());
+    }
+
+    #[test]
+    fn strategy_and_risk_decision_fields_are_bound_to_replay_digest() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let strategy_event = Event::new(
+            1,
+            20,
+            Priority::COMMAND,
+            EventKind::StrategyDecision {
+                decision: StrategyDecisionFact {
+                    schema_version: 1,
+                    request_id: "request-1".into(),
+                    strategy_id: "strategy-1".into(),
+                    signal_id: 7,
+                    confidence: 9_500,
+                    priority: -2,
+                    expires_at: 25,
+                    intents: vec![StrategyIntentFact {
+                        intent_id: 8,
+                        instrument,
+                        side: Side::Buy,
+                        qty: Quantity::from_i64(2),
+                        limit: None,
+                        policy: None,
+                        reduce_only: false,
+                        post_only: false,
+                    }],
+                },
+            },
+        );
+        let changed_confidence = match &strategy_event.kind {
+            EventKind::StrategyDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.confidence += 1;
+                Event::new(
+                    strategy_event.seq,
+                    strategy_event.ts,
+                    strategy_event.prio,
+                    EventKind::StrategyDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let risk_event = Event::new(
+            2,
+            20,
+            Priority::COMMAND,
+            EventKind::OrderRiskDecision {
+                decision: OrderRiskDecisionFact {
+                    client_order_id: 9,
+                    instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+                    strategy_id: Some("strategy-1".into()),
+                    signal_id: Some(7),
+                    intent_id: Some(8),
+                    allowed: true,
+                    violations: Vec::new(),
+                    projected_position_raw: Some(0),
+                    projected_margin_raw: None,
+                    reference_price_raw: Some(100),
+                    rule_set_version: "risk-v1".into(),
+                },
+            },
+        );
+        let changed_projection = match &risk_event.kind {
+            EventKind::OrderRiskDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.projected_margin_raw = Some(0);
+                Event::new(
+                    risk_event.seq,
+                    risk_event.ts,
+                    risk_event.prio,
+                    EventKind::OrderRiskDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let changed_instrument = match &risk_event.kind {
+            EventKind::OrderRiskDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.instrument = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+                Event::new(
+                    risk_event.seq,
+                    risk_event.ts,
+                    risk_event.prio,
+                    EventKind::OrderRiskDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&strategy_event), digest(&changed_confidence));
+        assert_ne!(digest(&risk_event), digest(&changed_projection));
+        assert_ne!(digest(&risk_event), digest(&changed_instrument));
+        let restored: Event = serde_json::from_str(&serde_json::to_string(&risk_event).unwrap())
+            .expect("risk decision fact round-trip");
+        assert_eq!(restored, risk_event);
     }
 
     #[test]

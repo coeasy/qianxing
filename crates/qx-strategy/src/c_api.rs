@@ -23,6 +23,7 @@ pub const QX_C_STRATEGY_ABI_VERSION: u32 = 2;
 const MAX_PLUGIN_INTENTS: usize = 100_000;
 const MAX_PLUGIN_STRING_BYTES: usize = 1_048_576;
 const ERROR_BUFFER_SIZE: usize = 512;
+const MAX_DIAGNOSTIC_STATE_BYTES: usize = 64 * 1024;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     ring::digest::digest(&ring::digest::SHA256, bytes)
@@ -186,6 +187,11 @@ pub struct QxStrategyVTable {
     pub free_decision: Option<unsafe extern "C" fn(QxStrategyHandle, *mut QxStrategyDecision)>,
     pub destroy: Option<unsafe extern "C" fn(QxStrategyHandle)>,
 }
+
+/// Optional dynamic-library export `qx_strategy_diagnostic_state`.
+/// It writes one bounded UTF-8 JSON value into host-owned memory and never transfers ownership.
+pub type QxStrategyDiagnosticState =
+    unsafe extern "C" fn(QxStrategyHandle, *mut c_char, usize, *mut usize) -> i32;
 
 // These fields intentionally exist to keep the C pointers alive while a
 // callback runs; the wire struct is the only field read by the host.
@@ -403,6 +409,7 @@ impl EventBuffers {
 pub struct CAbiStrategy {
     vtable: &'static QxStrategyVTable,
     handle: QxStrategyHandle,
+    diagnostic_state: Option<QxStrategyDiagnosticState>,
 }
 
 fn required_callback<T: Copy>(callback: Option<T>, name: &str) -> Result<T, String> {
@@ -432,7 +439,11 @@ impl CAbiStrategy {
         if handle.is_null() {
             return Err("C ABI Strategy create 返回空句柄".into());
         }
-        Ok(Self { vtable, handle })
+        Ok(Self {
+            vtable,
+            handle,
+            diagnostic_state: None,
+        })
     }
 
     fn call_error(label: &str, code: i32, buffer: &[c_char; ERROR_BUFFER_SIZE]) -> String {
@@ -533,6 +544,26 @@ impl CAbiStrategy {
 }
 
 impl Strategy for CAbiStrategy {
+    fn diagnostic_state(&self) -> Option<serde_json::Value> {
+        let callback = self.diagnostic_state?;
+        let mut output = vec![0 as c_char; MAX_DIAGNOSTIC_STATE_BYTES];
+        let mut output_len = 0_usize;
+        let code = unsafe {
+            callback(
+                self.handle,
+                output.as_mut_ptr(),
+                output.len(),
+                &mut output_len,
+            )
+        };
+        if code != 0 || output_len == 0 || output_len > output.len() {
+            return None;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(output.as_ptr().cast::<u8>(), output_len) };
+        let value = std::str::from_utf8(bytes).ok()?;
+        serde_json::from_str(value).ok()
+    }
+
     fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
         context.validate()?;
         let buffers = ContextBuffers::new(context)?;
@@ -786,7 +817,12 @@ impl DynamicCAbiStrategy {
         // The library is stored in this struct and dropped after `inner`; the
         // erased lifetime is therefore bounded by DynamicCAbiStrategy itself.
         let vtable: &'static QxStrategyVTable = &*vtable_ptr;
-        let inner = CAbiStrategy::from_vtable(vtable, config_json)?;
+        let diagnostic_state = library
+            .get::<QxStrategyDiagnosticState>(b"qx_strategy_diagnostic_state\0")
+            .ok()
+            .map(|callback| *callback);
+        let mut inner = CAbiStrategy::from_vtable(vtable, config_json)?;
+        inner.diagnostic_state = diagnostic_state;
         Ok(Self {
             inner,
             _library: library,
@@ -918,6 +954,10 @@ fn decode_hex(value: &str, expected_bytes: usize, label: &str) -> Result<Vec<u8>
 }
 
 impl Strategy for DynamicCAbiStrategy {
+    fn diagnostic_state(&self) -> Option<serde_json::Value> {
+        self.inner.diagnostic_state()
+    }
+
     fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
         self.inner.on_init(context)
     }

@@ -6,22 +6,21 @@ use super::guard::guard_panics;
 use super::run_backtest::strategy_slot::{
     build_strategy_slot, strategy_version, StrategySlotContext,
 };
-use super::run_multi_leg_backtest::execution_market_spec;
 use super::run_multi_market_manifest::{
     build_run_manifest, dataset_manifest_fingerprint, existing_identical, invalid,
     max_drawdown_bps, take_runtime_market, verify_dataset_quality, DataIdentity,
     MultiMarketManifestInput, PreparedMarket,
 };
 use crate::{
-    AppError, AppErrorCategory, CallerCapability, MultiMarketBacktestOutcome,
+    AppError, AppErrorCategory, BacktestMarginConfig, CallerCapability, MultiMarketBacktestOutcome,
     MultiMarketBacktestSpec, RunContext, StrategyArtifactIdentity,
 };
-use qx_core::{Fnv1a, MakerTakerFeeModel, Money};
+use qx_core::{Fnv1a, MakerTakerFeeModel, Money, OrderPolicy};
 use qx_datastruct::BarFrame;
 use qx_strategy::Strategy;
 use qx_xingban::{
-    LeverageMargin, MarketRoutedBarStrategy, NoMargin, PortfolioBarEngine,
-    PortfolioBarSessionConfig, PortfolioBarStrategy,
+    LeverageMargin, MarginTier, MarketRoutedBarStrategy, NoMargin, PortfolioBarEngine,
+    PortfolioBarSessionConfig, PortfolioBarStrategy, TieredMargin,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
@@ -224,16 +223,59 @@ pub(super) fn run_inner(
             data_hasher.write_text(dataset_manifest_fingerprint(quality)?);
         }
         let market_data_fingerprint = format!("barframe:{data_hash}");
-        let contract = execution_market_spec(
-            market.market_spec.as_ref(),
-            &instrument,
-            &spec.settlement_currency,
-        );
-        let margin: Box<dyn qx_xingban::MarginRule> = if contract.product.supports_leverage() {
-            Box::new(LeverageMargin {
-                leverage: 1,
-                maintenance_bp: i64::from(contract.maintenance_margin_bps),
+        let contract = market
+            .market_spec
+            .as_ref()
+            .map(|snapshot| crate::market_spec_from_value(&instrument, snapshot))
+            .transpose()?
+            .unwrap_or_else(|| {
+                qx_core::TradingInstrumentSpec::spot_default(&instrument, &spec.settlement_currency)
+            });
+        let default_policy = OrderPolicy {
+            margin_mode: contract.margin_mode_default(),
+            ..OrderPolicy::default()
+        };
+        let order_policy = market.order_policy.unwrap_or(default_policy);
+        let derived_margin_model = market
+            .market_spec
+            .as_ref()
+            .filter(|snapshot| {
+                snapshot
+                    .get("leverage_tiers")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|tiers| !tiers.is_empty())
             })
+            .map(crate::backtest_margin_model_from_market);
+        let margin_model = market
+            .margin_model
+            .as_ref()
+            .or(derived_margin_model.as_ref());
+        let margin: Box<dyn qx_xingban::MarginRule> = if contract.product.supports_leverage() {
+            match margin_model {
+                Some(BacktestMarginConfig::Tiers { tiers }) => Box::new(TieredMargin {
+                    tiers: tiers
+                        .iter()
+                        .map(|tier| MarginTier {
+                            max_notional: tier.max_notional,
+                            initial_bp: tier.initial_bp,
+                            maintenance_bp: tier.maintenance_bp,
+                            max_leverage: tier.max_leverage,
+                        })
+                        .collect(),
+                }),
+                Some(BacktestMarginConfig::Leverage {
+                    leverage,
+                    maintenance_bp,
+                }) => Box::new(LeverageMargin {
+                    leverage: *leverage,
+                    maintenance_bp: *maintenance_bp,
+                }),
+                Some(BacktestMarginConfig::NoMargin) => Box::new(NoMargin),
+                None => Box::new(LeverageMargin {
+                    leverage: order_policy.leverage,
+                    maintenance_bp: i64::from(contract.maintenance_margin_bps),
+                }),
+            }
         } else {
             Box::new(NoMargin)
         };
@@ -273,6 +315,7 @@ pub(super) fn run_inner(
         routed_strategies.push((
             instrument.clone(),
             Box::new(strategy_basket) as Box<dyn qx_xingban::BarStrategy>,
+            Some(order_policy),
         ));
         let row_count = bars.len();
         prepared.push(PreparedMarket {
@@ -322,16 +365,31 @@ pub(super) fn run_inner(
         .map(take_runtime_market)
         .collect::<Result<Vec<_>, AppError>>()?;
     let data_fingerprint = format!("{:016x}", data_hasher.finish());
-    let mut strategy = MarketRoutedBarStrategy::new(routed_strategies)
+    let mut strategy = MarketRoutedBarStrategy::new_with_order_policies(routed_strategies)
         .map_err(|error| AppError::from_qx_error(&error))?;
+    let funding_bps = spec
+        .markets
+        .iter()
+        .filter(|market| market.funding_bps != 0)
+        .map(|market| {
+            let instrument = qx_core::InstrumentId::parse(&market.instrument)
+                .ok_or_else(|| invalid("通过校验的资金费标的无法再次解析"))?;
+            Ok((instrument, market.funding_bps))
+        })
+        .collect::<Result<BTreeMap<_, _>, AppError>>()?;
+    let funding_events = spec
+        .markets
+        .iter()
+        .flat_map(|market| market.funding_events.iter().cloned())
+        .collect::<Vec<_>>();
     let engine = PortfolioBarEngine::new(
         PortfolioBarSessionConfig {
             account_id: spec.account_id.clone(),
             currency: spec.settlement_currency.clone(),
             initial_cash: Money::from_raw(spec.initial_cash_raw),
             risk: RiskGate::conservative_default(),
-            funding_bps: BTreeMap::new(),
-            funding_events: Vec::new(),
+            funding_bps,
+            funding_events,
         },
         runtime_markets,
     )
@@ -374,6 +432,11 @@ pub(super) fn run_inner(
     let equity_artifact_path = equity_path.to_string_lossy().into_owned();
     let fills_path = output_root.join(format!("{}.multi-market.fills.json", spec.run_id));
     let fills_artifact_path = fills_path.to_string_lossy().into_owned();
+    let instrument_equity_path = output_root.join(format!(
+        "{}.multi-market.instrument-equity.json",
+        spec.run_id
+    ));
+    let instrument_equity_artifact_path = instrument_equity_path.to_string_lossy().into_owned();
     let mut input_components = prepared
         .iter()
         .map(|market| {
@@ -391,6 +454,31 @@ pub(super) fn run_inner(
             );
         }
     }
+    let instrument_equity_json = serde_json::to_string(
+        &report
+            .instrument_equity_contributions
+            .iter()
+            .map(|(instrument, rows)| {
+                (
+                    instrument.to_string(),
+                    rows.iter()
+                        .map(|(equity_index, ts, value)| {
+                            serde_json::json!({
+                                "equity_index": equity_index,
+                                "ts": ts,
+                                "pnl_contribution_raw": value.to_string()
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>(),
+    )
+    .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    input_components.insert(
+        "derived:instrument-equity-contributions".into(),
+        qx_data::sha256_hex_bytes(instrument_equity_json.as_bytes()),
+    );
     let result_hash = format!("{:016x}", report.result_hash());
     let event_hash = format!("{:016x}", report.event_log.digest());
     let run_manifest_json = build_run_manifest(MultiMarketManifestInput {
@@ -437,6 +525,13 @@ pub(super) fn run_inner(
         "dataset_quality": prepared.iter().filter_map(|market| market.dataset_quality.as_ref().map(|quality| (market.identity.instrument.clone(), quality.clone()))).collect::<BTreeMap<_, _>>(),
         "strategy_identities": strategy_identities,
         "per_market_fills": per_market_fills,
+        "funding_by_instrument_raw": report.funding_by_instrument_raw,
+        "funding_events_by_instrument": report.funding_events_by_instrument,
+        "funding_rate_input": spec.markets.iter().map(|market| serde_json::json!({
+            "instrument": market.instrument,
+            "funding_bps": market.funding_bps,
+            "funding_events": market.funding_events,
+        })).collect::<Vec<_>>(),
         "equity": report.equity,
         "event_log": report.event_log.events(),
         "ledger_entries": report.ledger.entries(),
@@ -444,6 +539,7 @@ pub(super) fn run_inner(
         "run_manifest_path": run_manifest_path,
         "equity_path": equity_artifact_path,
         "fills_path": fills_artifact_path,
+        "instrument_equity_contributions_path": instrument_equity_artifact_path,
     });
     let artifact_json = serde_json::to_string(&artifact)
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
@@ -460,6 +556,11 @@ pub(super) fn run_inner(
     };
     let equity_exists = existing_identical(&equity_path, &equity_json, "权益曲线")?;
     let fills_exists = existing_identical(&fills_path, &fills_json, "成交明细")?;
+    let instrument_equity_exists = existing_identical(
+        &instrument_equity_path,
+        &instrument_equity_json,
+        "逐标的权益贡献曲线",
+    )?;
     match std::fs::read_to_string(&output_path) {
         Ok(existing) if existing == artifact_json => {
             if !equity_exists {
@@ -467,6 +568,9 @@ pub(super) fn run_inner(
             }
             if !fills_exists {
                 write_text(&fills_artifact_path, &fills_json)?;
+            }
+            if !instrument_equity_exists {
+                write_text(&instrument_equity_artifact_path, &instrument_equity_json)?;
             }
             if !manifest_exists {
                 write_text(&run_manifest_path, &run_manifest_json)?;
@@ -487,6 +591,9 @@ pub(super) fn run_inner(
     }
     if !fills_exists {
         write_text(&fills_artifact_path, &fills_json)?;
+    }
+    if !instrument_equity_exists {
+        write_text(&instrument_equity_artifact_path, &instrument_equity_json)?;
     }
     if !manifest_exists {
         write_text(&run_manifest_path, &run_manifest_json)?;

@@ -1,13 +1,15 @@
-//! Same-account backtests across three or more independently sampled markets.
+//! Same-account backtests across one or more independently sampled markets.
 
-use super::{is_identity_token, MakerTakerFeeSchedule, PortfolioStrategySpec};
+use super::{
+    is_identity_token, BacktestMarginConfig, MakerTakerFeeSchedule, PortfolioStrategySpec,
+};
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::{InstrumentId, TradingInstrumentSpec};
+use qx_core::{FundingRateEvent, InstrumentId, OrderPolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MULTI_MARKET_BACKTEST_SCHEMA_VERSION: u32 = 1;
-pub const MIN_MULTI_MARKETS: usize = 3;
+pub const MIN_MULTI_MARKETS: usize = 1;
 pub const MAX_MULTI_MARKETS: usize = 32;
 pub const MAX_STRATEGIES_PER_MARKET: usize = 16;
 
@@ -21,8 +23,24 @@ pub struct MultiMarketBacktestMarket {
     pub dataset_manifest_path: Option<String>,
     /// Stable order for same-timestamp market events; instrument id breaks ties.
     pub priority: u32,
-    pub market_spec: Option<TradingInstrumentSpec>,
+    /// Frozen product spec or raw normalized snapshot from `qx-cli ccxt-market-spec`.
+    /// The application parser normalizes both forms into the same domain contract.
+    pub market_spec: Option<serde_json::Value>,
     pub fee_schedule: Option<MakerTakerFeeSchedule>,
+    /// Product/order semantics applied to generated orders on this market when the strategy
+    /// does not provide an order policy of its own. Omitted policies default to cash/1x for spot
+    /// and cross/1x for derivatives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
+    /// Optional exchange-provided tiered margin schedule for this market.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_model: Option<BacktestMarginConfig>,
+    /// Constant funding rate in basis points per UTC 8-hour settlement for this derivative.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub funding_bps: i64,
+    /// Historical funding observations; mutually exclusive with nonzero `funding_bps`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub funding_events: Vec<FundingRateEvent>,
     pub strategies: Vec<PortfolioStrategySpec>,
 }
 
@@ -129,7 +147,8 @@ impl MultiMarketBacktestSpec {
                     "市场 {instrument} 策略数必须在 1..={MAX_STRATEGIES_PER_MARKET}"
                 )));
             }
-            if let Some(contract) = &market.market_spec {
+            if let Some(snapshot) = &market.market_spec {
+                let contract = crate::market_spec_from_value(&instrument, snapshot)?;
                 contract
                     .validate()
                     .map_err(|error| AppError::from_qx_error(&error))?;
@@ -141,15 +160,98 @@ impl MultiMarketBacktestSpec {
                 if contract.product == qx_core::TradingProduct::Option {
                     return Err(invalid("多市场 Bar 回测暂不支持期权合约"));
                 }
+                let default_policy = OrderPolicy {
+                    margin_mode: contract.margin_mode_default(),
+                    ..OrderPolicy::default()
+                };
+                let order_policy = market.order_policy.unwrap_or(default_policy);
+                order_policy
+                    .validate_for(&contract)
+                    .map_err(|error| AppError::from_qx_error(&error))?;
                 if market.fee_schedule.is_none() {
                     return Err(invalid(format!(
                         "市场 {instrument} 显式 market_spec 时必须显式提供 fee_schedule"
                     )));
                 }
+                let has_frozen_tiers = snapshot
+                    .get("leverage_tiers")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|tiers| !tiers.is_empty());
+                let snapshot_margin_model =
+                    has_frozen_tiers.then(|| crate::backtest_margin_model_from_market(snapshot));
+                if has_frozen_tiers
+                    && matches!(&snapshot_margin_model, Some(BacktestMarginConfig::NoMargin))
+                {
+                    return Err(invalid(format!(
+                        "市场 {instrument} 的冻结阶梯保证金数据无法归一化"
+                    )));
+                }
+                let margin_model = market
+                    .margin_model
+                    .as_ref()
+                    .or(snapshot_margin_model.as_ref());
+                if let Some(margin_model) = margin_model {
+                    margin_model.validate().map_err(|message| {
+                        invalid(format!("市场 {instrument} 保证金模型非法: {message}"))
+                    })?;
+                    match (contract.product.supports_leverage(), margin_model) {
+                        (false, BacktestMarginConfig::NoMargin) => {}
+                        (false, _) => {
+                            return Err(invalid(format!(
+                                "现货市场 {instrument} 只能使用 no_margin"
+                            )));
+                        }
+                        (true, BacktestMarginConfig::NoMargin) => {
+                            return Err(invalid(format!(
+                                "杠杆市场 {instrument} 不能使用 no_margin"
+                            )));
+                        }
+                        (true, BacktestMarginConfig::Leverage { leverage, .. })
+                            if *leverage != order_policy.leverage =>
+                        {
+                            return Err(invalid(format!(
+                                "市场 {instrument} margin_model leverage 必须与 order_policy.leverage 一致"
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+            } else if market.order_policy.is_some() || market.margin_model.is_some() {
+                return Err(invalid(format!(
+                    "市场 {instrument} 声明 order_policy/margin_model 时必须提供 market_spec"
+                )));
             }
             if let Some(fees) = market.fee_schedule {
                 fees.validate()
                     .map_err(|error| AppError::from_qx_error(&error))?;
+            }
+            if !(-10_000..=10_000).contains(&market.funding_bps)
+                || (!market.funding_events.is_empty() && market.funding_bps != 0)
+                || market.funding_events.len() > 100_000
+            {
+                return Err(invalid(format!(
+                    "市场 {instrument} 资金费率输入无效或超过上限"
+                )));
+            }
+            if (!market.funding_events.is_empty() || market.funding_bps != 0)
+                && !market.market_spec.as_ref().is_some_and(|snapshot| {
+                    crate::market_spec_from_value(&instrument, snapshot)
+                        .is_ok_and(|contract| contract.product.is_derivative())
+                })
+            {
+                return Err(invalid(format!("现货市场 {instrument} 不得配置资金费率")));
+            }
+            let mut funding_ids = BTreeSet::new();
+            for event in &market.funding_events {
+                if event.instrument != instrument
+                    || !(-10_000..=10_000).contains(&event.rate_bps)
+                    || event.settlement_ts % qx_core::FUNDING_INTERVAL_MS != 0
+                    || !funding_ids.insert(event.settlement_ts)
+                {
+                    return Err(invalid(format!(
+                        "市场 {instrument} 资金费事件的标的/费率/UTC 8小时结算时间/唯一性非法"
+                    )));
+                }
             }
             for member in &market.strategies {
                 member.strategy.validate()?;
@@ -196,6 +298,10 @@ impl MultiMarketBacktestSpec {
             )
         })
     }
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 fn invalid(message: impl Into<String>) -> AppError {

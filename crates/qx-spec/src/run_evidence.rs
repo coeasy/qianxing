@@ -142,6 +142,18 @@ pub struct RunEvidenceReportAnalysis {
     pub analysis: String,
 }
 
+/// External strategy-bias diagnostic snapshot attached to the research report.
+///
+/// The verifier checks the file digest and binds its declared strategy/instrument/data identity
+/// to this run. It does not claim to reproduce the external diagnostic calculation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunEvidenceStrategyDiagnostics {
+    pub kind: String,
+    pub input_path: String,
+    pub input_sha256: String,
+}
+
 /// 配置与策略身份：这份结果到底是「哪套配置跑哪个策略」跑出来的。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,6 +214,8 @@ pub struct RunEvidencePayload {
     pub dataset: RunEvidenceDataset,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_analysis: Option<RunEvidenceReportAnalysis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_diagnostics: Option<RunEvidenceStrategyDiagnostics>,
     pub identity: RunEvidenceIdentity,
     pub assumptions: Vec<RunEvidenceAssumption>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -463,6 +477,28 @@ impl RunEvidencePayload {
                     "运行证据包 report_analysis 必须包含 benchmark 类型、输入身份和分析对象".into(),
                 );
             }
+        }
+        if self
+            .strategy_diagnostics
+            .as_ref()
+            .is_some_and(|diagnostics| {
+                !matches!(
+                    (diagnostics.kind.as_str(), self.dataset.kind.as_str()),
+                    ("strategy-bias-diagnostics", "barframe")
+                        | ("strategy-bias-diagnostics-array", "multi-market-barframe")
+                        | (
+                            "strategy-bias-diagnostics-depth-array",
+                            "multi-market-depthframe"
+                        )
+                ) || diagnostics.input_path.trim().is_empty()
+                    || diagnostics.input_sha256.len() != 64
+                    || !diagnostics
+                        .input_sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit())
+            })
+        {
+            return Err("运行证据包 strategy_diagnostics 必须包含类型、路径和 SHA-256".into());
         }
         let pairs = [
             (

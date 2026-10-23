@@ -63,6 +63,7 @@ RuntimeConfig 无需重复配置。`doctor` 会检查 endpoint 的 `exchange_id`
 
 ```powershell
 cargo run --release -p qx-cli -- quickstart my-qx
+cargo run --release -p qx-cli -- quickstart my-qx --html
 cargo run --release -p qx-cli -- init qianxing.runtime.json
 cargo run --release -p qx-cli -- init qianxing.runtime.json --strategy macd
 cargo run --release -p qx-cli -- init qianxing.runtime.ccxt.json --profile ccxt
@@ -84,6 +85,8 @@ cargo run --release -p qx-cli -- paper-check --json deploy/qianxing.runtime.pape
 仓库 `deploy/data/` 一份都不碰」也钉成判据）。收尾给三条照抄就能退 0 的下一步（`report --json` / `strategy list` /
 `init --profile ashare`）；`paper-check` 不在其中——它只对 paper profile 那份带启用 Scheduler worker 的运行时成立
 （#261），文档把它写成带前提的一句话而不是待敲命令。
+
+`quickstart --html` 会让同一条首跑链在摘要复核步骤调用 `report --html`，额外写出自包含 HTML 报告与三张 SVG 图表；默认不启用，保持默认项目 16 份文件的既有合同。启用时为 20 份，回测 `result_hash` 不变。
 
 `paper-check` 是端到端的一次性验收（调度 → 策略 → 注入一条合成行情 → 执行 worker 撮合），末行按「本轮新增」而不是事实流的累计量给结论（V13 第三十一遍 ② #275）：真跑出成交的那一遍印 `orders=N (+N 本轮新增) … ✓`；同一目录当日重敲第二遍时调度把当天那轮判为 `skipped`、策略与执行各 `processed=0`，端到端一手没跑，末行于是如实写「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」且不带 ✓。文本模式两遍都退 0——空转是幂等复用而不是执行错误；`paper-check --json` 返回共享诊断报告，只有本轮确实新增订单时 P 层才是 `pass`，同日空转记为 `not_assessed`，主链路错误记为 `blocked` 并以 2 退出。判据在 `tools/check_architecture.py` 的 `paper_check_delta_honesty_check`。
 
@@ -297,6 +300,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /app/runs/{run_id}` | 运行状态以及完成后的原始 outcome/error 文档 | 有界保留 1024 项；最多 64 个异步任务并行持有终态持久化观察器，满额时启动请求以可重试错误拒绝；终态结果保存在 artifact 根目录 `.app-runs`，服务重启后仍可读取，未完成任务恢复为带中断原因的 `failed`；容量淘汰只移除终态项；未知 ID 为 404 |
 | `POST /app/runs/{run_id}/cancel` | 请求协作取消并返回当前状态 | 取消在 Rust 撮合边界生效，不返回部分报告；取消可能与成功完成竞态，客户端以随后状态查询为准；未知 ID 为 404 |
 | `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物缺失/互不一致是成功返回（`verified` 为假 + `mismatches` 非空，仍 200）；只有"这份 outcome 自己没带 run_id"才失败（T2-2） |
+| `POST /app/research-artifacts` | 交互式研究报告的经复核明细（支持单次 Bar/深度结果、多市场 Bar 与多账户 Bar/深度批次） | 只读取配置的 artifact/data root 内产物；逐运行或逐账户复核输入、manifest、事件重放、权益与成交，返回有界明细；每个产物上限 128 MiB、单行上限 1 MiB；请求与响应契约见 `schemas/research-artifact-request-v1.json` 和 `schemas/research-artifact-view-v*.json` |
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/plan-risk-parity` | 应用层用例 `qx_app::plan_risk_parity` 的确定性组合调仓计划（请求体为 `RiskParitySpec` JSON） | 使用冻结的对齐收益序列求 long-only 等风险贡献权重；校验资金与换手预算，只返回计划，不提交订单 |
 | `POST /app/plan-algo-execution` | 应用层用例 `qx_app::plan_algo_execution` 的确定性 TWAP/VWAP 子单计划（请求体为 `AlgoExecutionSpec` JSON） | TWAP 均分数量；VWAP 使用冻结成交量 profile；返回 parent-linked 子单计划，不提交订单 |
@@ -313,7 +317,9 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/multi-account-backtest/start` | `MultiAccountBacktestSpec::start` 的多账户后台运行句柄 | 立即返回 `run_id/status`；成员与账户 Bar 循环协作取消；结果、状态、事件和取消使用现有运行句柄与事件读面 |
 | `POST /app/multi-account-depth-backtest` | 多账户独立 Tick/OrderBook 批次（请求体为 `MultiAccountDepthBacktestSpec` JSON） | 每账户使用独立账本并复用 Rust 深度回测用例；最多 32 个成员、结算币种须一致；成员失败隔离，不做跨账户净额；输入与产物路径由服务端约束 |
 | `POST /app/multi-account-depth-backtest/start` | `MultiAccountDepthBacktestSpec::start` 的多账户 Tick/OrderBook 后台运行句柄 | 返回批次 `run_id/status`；成员与盘口循环协作取消，状态、结果、生命周期事件和取消复用 `/app/runs/{run_id}` |
-| `POST /app/multi-market-backtest` | 应用层用例 `qx_app::run_multi_market_backtest` 的共享账户多市场 Bar 组合回测（请求体为 `MultiMarketBacktestSpec` JSON） | 3..=32 市场；共用账户账本、风控、OMS、事件与重放校验；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
+| `POST /app/multi-account-joint-backtest` | 多交易所多账户联合 Bar 回测（请求体为 `MultiAccountJointBacktestSpec` JSON） | 支持 OKX/Binance/Bitget，2..=32 个独立账户组、总计最多 256 个标的；各账户保留独立资金/保证金账簿，汇总权益与成交，不做跨账户保证金净额或币种换算 |
+| `POST /app/multi-account-joint-backtest/start` | `MultiAccountJointBacktestSpec::start` 的可取消联合账户运行句柄 | 返回 `run_id/status`；账户之间与 Rust Bar 事件循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
+| `POST /app/multi-market-backtest` | 应用层用例 `qx_app::run_multi_market_backtest` 的共享账户多市场 Bar 组合回测（请求体为 `MultiMarketBacktestSpec` JSON） | 1..=32 市场；支持现货和带杠杆/分层保证金/资金费的合约；共用账户账本、风控、OMS、事件与重放校验；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/multi-market-depth-backtest` | `MultiMarketDepthBacktestSpec` 的共享账户多市场 L1 Tick/L2 OrderBook 组合回测 | 2..=32 个现货市场；每市场声明 `data_tier=l1/l2`，L1 每个时间点恰有一档 bid/ask 并向策略发 Tick 事件；共用 Rust OrderBookPortfolioBacktestEngine、账本、风控、OMS、EventLog 与 Replay；输入限制在服务端数据根目录；目前不支持跨市场衍生品保证金 |
 | `POST /app/run-multi-market-experiment` | 应用层用例 `qx_app::run_multi_market_experiment` 的多市场策略/参数网格（请求体为 `RunMultiMarketExperimentSpec` JSON） | 最多 256 个候选；每个候选复用多市场共享账户 Rust 内核，候选失败隔离、收益/回撤稳定排序；输入和产物限制在服务端配置根目录 |
 | `POST /app/run-multi-leg-experiment` | 应用层用例 `qx_app::run_multi_leg_experiment` 的有界双腿参数实验结果（请求体为 `RunMultiLegExperimentSpec` JSON） | 最多 256 个候选；每个候选复用 Rust 多腿回测并独立落归因产物，失败隔离；按组合收益稳定排名；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
@@ -424,7 +430,9 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/multi-leg-backtest` | 应用层用例 RunMultiLegBacktest：两腿信号、Rust Bar 撮合、独立重放校验与成交归因 | 两份输入限制在服务端数据根目录；结果产物由服务端指定路径；market spec 与输入标的/结算币一致校验；资金费只允许声明了衍生品的腿；不对齐返回 400、样本不足返回 422、同 run_id 异内容返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-backtest` | 多账户独立 Rust Bar 回测（不同账户及市场、逐账户校验、成功结果加权摘要） | 每账户输入路径限制在服务端数据根目录并写入各自产物路径；最多 32 个成员；要求相同 settlement_currency；成员失败隔离为部分结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-depth-backtest` | 多账户独立 Rust Tick/OrderBook 回测（逐账户独立账簿、每成员复用 DepthBacktest 内核） | 每账户深度输入限制在服务端数据根目录、产物路径由服务端覆盖；最多 32 个成员；要求相同 settlement_currency；成员失败隔离为部分结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/multi-market-backtest` | 同账户多市场 Rust Bar 组合回测（3..=32 市场，共享 PortfolioBarEngine、账簿、Risk/OMS、EventLog 与 Replay） | 每份输入限制在服务端数据根目录；结果由服务端指定产物目录；单/多策略槽按确定性优先级执行；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-account-joint-backtest` | OKX/Binance/Bitget 多交易所独立账户联合 Bar 回测（逐账户复用共享账户 Rust 内核） | 每账户输入限制在服务端数据根目录并写入服务端产物目录；2..=32 个独立账户、最多二百五十六个标的；统一结算币种；不跨账户净额或换汇；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-account-joint-backtest/start` | 创建多交易所多账户联合 Rust Bar 后台任务 | 账户间及各账户 Bar 循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-market-backtest` | 同账户多市场 Rust Bar 组合回测（1..=32 市场，共享 PortfolioBarEngine、账簿、Risk/OMS、EventLog 与 Replay） | 每份输入限制在服务端数据根目录；支持合约杠杆、保证金档位和资金费；结果由服务端指定产物目录；单/多策略槽按确定性优先级执行；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-market-depth-backtest` | 同账户多市场 Rust L1 Tick/L2 OrderBook 现货回测（2..=32 市场，共享 OrderBookPortfolioBacktestEngine、账簿、Risk/OMS、EventLog 与 Replay） | L1 必须是一档 bid/ask，策略分别接收 Tick 或 OrderBook；输入限制在服务端数据根目录，产物路径由服务端覆盖；跨市场衍生品保证金尚未支持；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-market-backtest/start` | 创建同账户多市场 Rust Bar 后台回测任务 | 市场间与 Bar 循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}` 生命周期；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-market-depth-backtest/start` | 创建同账户多市场 Rust L1 Tick/L2 OrderBook 现货后台回测任务 | 市场间与盘口快照循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}` 生命周期；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -441,6 +449,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-multi-leg-experiment/start` | 创建 Rust 多腿参数实验后台任务 | 候选与双腿撮合循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/research-artifacts` | 经复核的 Bar 回测权益、成交与事件轨迹，供交互式研究报告行级钻取 | 请求体为 `BacktestOutcome`；所有文件必须规范化到服务端 artifact root 内；复核不通过时只返回裁决与摘要、不返回明细；成功返回有界采样；400/404/409/503 沿用应用层类别映射；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/plan-risk-parity` | 依据冻结的对齐收益率与标记价生成确定性 long-only 风险平价计划 | 400 非法输入、422 缺历史或求解未收敛；纯研究规划，不提交订单；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

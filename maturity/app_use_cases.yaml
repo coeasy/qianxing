@@ -75,7 +75,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；数据指纹或标的不一致为 Conflict"
     capability_level: "R"
   - name: run_experiment
-    input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；可选 strategy_kinds 快速选择单腿内置策略，或本地 Rust/Python StrategyArtifactIdentity + factory 为每个候选提供新自定义策略；两种选择方式互斥；可与 split_plan 组合，由训练窗选择策略和参数并报告 OOS；最多 256 候选）"
+    input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；可选 strategy_kinds 快速选择单腿内置策略，或本地 Rust/Python StrategyArtifactIdentity + factory 为每个候选提供新自定义策略；两种选择方式互斥；可与 split_plan 组合，由训练窗选择策略和参数并报告 OOS；可选 seeded random 或 categorical TPE 搜索，需 split_plan 且搜索预算不超过 256）"
     output_schema: "run-experiment-result-v1（逐候选结果/错误/策略 kind + CompareRunsResult + 可选 OOS/基准结果；schemas/run-experiment-result-v1.json）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 规格指纹；自定义策略身份另绑定 ID/version/SHA-256；不匹配的既有实验在启动候选前拒绝"
@@ -235,7 +235,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；身份/规格/回调意图非法为 InvalidInput，异身份覆盖为 Conflict"
     capability_level: "R"
   - name: run_multi_market_backtest
-    input_schema: "MultiMarketBacktestSpec v1（3..=32 个异步 Bar 市场；同一账户/结算币种/共享 Ledger；每市场 1..=16 个 Rust 内置单腿策略槽；可按 StrategyArtifactIdentity 将 Rust/Python 本地回调绑定到槽位，未绑定槽仍用内置策略；显式优先级/预算；禁止期权和双腿策略）"
+    input_schema: "MultiMarketBacktestSpec v1（1..=32 个异步 Bar 市场；同一账户/结算币种/共享 Ledger；每市场 1..=16 个 Rust 内置单腿策略槽；可按 StrategyArtifactIdentity 将 Rust/Python 本地回调绑定到槽位，未绑定槽仍用内置策略；显式优先级/预算；禁止期权和双腿策略）"
     output_schema: "MultiMarketBacktestOutcome v1（schemas/multi-market-backtest-result-v1.json；共享账簿哈希、聚合收益/回撤、市场/策略/成交计数）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规格/排序市场 BarFrame 指纹 + 排序自定义策略 ID/version/source_sha256；产物字节相同才允许重跑，否则 Conflict"
@@ -253,6 +253,16 @@ use_cases:
     progress: "RunHandle 提供状态、取消、等待和一次性结果；每候选错误隔离，取消整个批次"
     artifacts: "不可变 <experiment_id>.multi-market-experiment.json 与每个候选的共享多市场回测产物"
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，异身份产物为 Conflict"
+    capability_level: "R"
+  - name: run_multi_account_joint_backtest
+    input_schema: "MultiAccountJointBacktestSpec v1（2..=32 个 OKX/Binance/Bitget 账户，每账户独立资金与保证金账本，账户内 1..=32 个现货/杠杆合约市场共享 Rust Bar 引擎；统一结算币种，跨账户不做保证金净额）"
+    output_schema: "MultiAccountJointBacktestOutcome v1（联合权益/成交产物 + 每个交易所账户的独立 MultiMarketBacktestOutcome）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + 规范规格/每账户市场 BarFrame 指纹；同身份产物逐字节相同，异内容拒绝覆盖"
+    cancellation: "同步入口不取消；RunHandle 在账户间与每个账户共享 Rust 市场内核事件批次协作取消，不发布部分联合产物"
+    progress: "RunHandle 提供状态、取消、等待和一次性结果；账户独立失败会使联合运行明确失败"
+    artifacts: "<run_id>.joint-portfolio.json、<run_id>.joint-equity.json、<run_id>.joint-fills.json；账户子运行分别保留可重放产物"
+    error_categories: "AppErrorCategory 八类；不支持交易所/标的 venue 不匹配/无效合约或数据为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
   - name: run_multi_market_depth_backtest
     input_schema: "MultiMarketDepthBacktestSpec v1（2..=32 个同账户 L1 Tick/L2 OrderBook 现货市场；每市场声明 data_tier，L1 每时间点恰有一档 bid/ask，L2 提供完整 OrderBook；Rust 内置 Bar 策略复用 DepthBarStrategy 将盘口中间价/数量折成 Bar 事件，本地 Rust/Python 回调按档位接收 Tick 或 OrderBook；统一结算币种/账本；衍生品跨市场保证金暂不支持）"

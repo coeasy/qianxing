@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "multi_account_multi_strategy_bar_capacity",
+  "generated_at_utc": "2026-10-22T06:51:59Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "c61f0999a4b5aa6392e86df427db89d9ae9031504953d752025811b87674bef5",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "e97f3e8c20ba50092fffba25a2f7dcc63ed7d196ed2fb4040aa2ea2529078cdb",
+  "bars_per_account": 64000,
+  "repeats": 3,
+  "configured_workloads": [
+    {
+      "accounts": 2,
+      "strategies_per_account": 1
+    },
+    {
+      "accounts": 2,
+      "strategies_per_account": 4
+    },
+    {
+      "accounts": 4,
+      "strategies_per_account": 1
+    }
+  ],
+  "method": "one qx-cli multi-account-backtest process; every account runs the same synthetic BarFrame through the normal per-account BacktestSpec path and optional same-account strategy portfolio",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "scope_limitations": [
+    "synthetic crypto spot Bars without TradingInstrumentSpec or venue rules",
+    "MultiAccountBacktestSpec accounts execute sequentially; this measures batch memory and wall time, not internal scheduler concurrency",
+    "does not exercise external provider, Paper, network, or multi-venue profile paths",
+    "process-tree RSS is a sampled aggregate and may miss brief spikes"
+  ],
+  "workloads": [
+    {
+      "accounts": 2,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 2,
+      "bars_per_account": 64000,
+      "bars_total": 128000,
+      "bars_times_strategy_slots": 128000,
+      "warmup_wall_ms": 642.864,
+      "p50_wall_ms": 648.785,
+      "p95_wall_ms": 650.333,
+      "peak_rss_bytes_max": 42819584,
+      "aggregate_process_tree_peak_rss_bytes_max": 42778624,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.109,
+      "process_tree_io_read_bytes_max": 10640385,
+      "process_tree_io_write_bytes_max": 7210478,
+      "successful_fills": 2,
+      "result_hashes_by_account": [
+        "8bfdd2c07237d775",
+        "aa8ebcda8b3bac8d"
+      ],
+      "deterministic_across_repeats": true
+    },
+    {
+      "accounts": 2,
+      "strategies_per_account": 4,
+      "total_strategy_slots": 8,
+      "bars_per_account": 64000,
+      "bars_total": 128000,
+      "bars_times_strategy_slots": 512000,
+      "warmup_wall_ms": 37881.469,
+      "p50_wall_ms": 36960.597,
+      "p95_wall_ms": 38737.531,
+      "peak_rss_bytes_max": 133341184,
+      "aggregate_process_tree_peak_rss_bytes_max": 129581056,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 23.078,
+      "process_tree_io_read_bytes_max": 10641817,
+      "process_tree_io_write_bytes_max": 64326560,
+      "successful_fills": 12010,
+      "result_hashes_by_account": [
+        "0ea6cd2f21e49c3c",
+        "266b5f0bab982522"
+      ],
+      "deterministic_across_repeats": true
+    },
+    {
+      "accounts": 4,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 4,
+      "bars_per_account": 64000,
+      "bars_total": 256000,
+      "bars_times_strategy_slots": 256000,
+      "warmup_wall_ms": 982.265,
+      "p50_wall_ms": 977.203,
+      "p95_wall_ms": 1013.419,
+      "peak_rss_bytes_max": 43298816,
+      "aggregate_process_tree_peak_rss_bytes_max": 43229184,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.328,
+      "process_tree_io_read_bytes_max": 21279993,
+      "process_tree_io_write_bytes_max": 14424792,
+      "successful_fills": 4,
+      "result_hashes_by_account": [
+        "8bfdd2c07237d775",
+        "aa8ebcda8b3bac8d",
+        "8d7b41b84f15e809",
+        "0806a2a5037170c9"
+      ],
+      "deterministic_across_repeats": true
+    }
+  ]
+}

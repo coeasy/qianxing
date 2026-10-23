@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 
-MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 2
+MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 3
 
 
 def _workspace_version(root: Path) -> str | None:
@@ -62,8 +62,14 @@ def measurement_source_fingerprint(root: Path) -> str:
             "run_baseline.py",
             "run_rust_bench.py",
             "run_ashare_profile_backtest.py",
+            "run_profile_backtest.py",
+            "run_concurrent_capacity.py",
             "run_crypto_paper_e2e.py",
+            "run_multi_account_capacity.py",
+            "run_multi_market_depth_capacity.py",
+            "process_metrics.py",
             "hardware.py",
+            "source_fingerprint.py",
         )
     )
     candidates.extend((root / "maturity" / "fixtures").rglob("*"))

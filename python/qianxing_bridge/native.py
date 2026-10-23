@@ -55,6 +55,8 @@ APP_ENTRYPOINTS = (
     "app_run_multi_leg_backtest_with_strategy",
     "app_start_multi_leg_backtest_with_strategy",
     "app_run_multi_account_backtest",
+    "app_run_multi_account_joint_backtest",
+    "app_start_multi_account_joint_backtest",
     "app_start_multi_account_backtest",
     "app_run_multi_account_depth_backtest",
     "app_start_multi_account_depth_backtest",
@@ -417,6 +419,14 @@ def app_start_multi_leg_experiment_with_strategy(
 def app_run_multi_account_backtest(spec_json: str) -> str:
     """Run isolated account Bar backtests with the shared Rust use case."""
     return str(_extension().app_run_multi_account_backtest(spec_json))
+
+
+def app_run_multi_account_joint_backtest(spec_json: str) -> str:
+    return str(_extension().app_run_multi_account_joint_backtest(spec_json))
+
+
+def app_start_multi_account_joint_backtest(spec_json: str) -> Any:
+    return _extension().app_start_multi_account_joint_backtest(spec_json)
 
 
 def app_start_multi_account_backtest(spec_json: str) -> Any:

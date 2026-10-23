@@ -11,8 +11,8 @@
 #     避免把「表达式」误当成「版本号」冻结。
 
 schema_version: 1
-updated_at: "2026-10-06"
-release_version: "0.2.1"
+updated_at: "2026-10-23"
+release_version: "0.2.2"
 
 # ---- 冻结的 schema 版本（u32 / u16 字面量） ----
 frozen_versions:

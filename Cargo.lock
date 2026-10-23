@@ -333,7 +333,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contract-tests"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-adapter",
  "qx-control",
@@ -1511,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "qx-adapter"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-genglu",
@@ -1530,18 +1530,20 @@ dependencies = [
 
 [[package]]
 name = "qx-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-app",
  "qx-control",
  "qx-core",
  "qx-data",
+ "qx-datastruct",
  "qx-guanxing",
  "qx-protocol",
  "qx-provider",
  "qx-scheduler",
  "qx-storage",
  "qx-strategy",
+ "qx-xingban",
  "rustls",
  "serde",
  "serde_json",
@@ -1549,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "qx-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-control",
  "qx-core",
@@ -1568,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "qx-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clap",
  "criterion",
@@ -1603,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "qx-control"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "serde",
@@ -1612,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "qx-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "serde",
@@ -1621,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "qx-data"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-datastruct",
@@ -1632,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "qx-datastruct"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-guanxing",
@@ -1642,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "qx-execution"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-adapter",
  "qx-control",
@@ -1656,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "qx-factor"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-guanxing",
@@ -1666,14 +1668,14 @@ dependencies = [
 
 [[package]]
 name = "qx-genglu"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
 ]
 
 [[package]]
 name = "qx-guanxing"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "serde",
@@ -1682,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "qx-orchestrator"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-process-io",
@@ -1692,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "qx-plugin"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "ring",
@@ -1702,11 +1704,11 @@ dependencies = [
 
 [[package]]
 name = "qx-process-io"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "qx-protocol"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "serde",
@@ -1715,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "qx-provider"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-data",
@@ -1727,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "qx-python"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pyo3",
  "pyo3-build-config",
@@ -1744,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "qx-risk"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "serde",
@@ -1752,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "qx-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "libc",
  "qx-control",
@@ -1770,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "qx-scheduler"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "qx-core",
@@ -1780,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "qx-sdk"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-app",
  "qx-execution",
@@ -1791,7 +1793,7 @@ dependencies = [
 
 [[package]]
 name = "qx-service"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-adapter",
  "qx-api",
@@ -1817,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "qx-spec"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "qx-core",
  "qx-data",
@@ -1827,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "qx-storage"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-nats",
  "futures-util",
@@ -1846,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "qx-strategy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "libloading",
  "memmap2",
@@ -1858,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "qx-xingban"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "qx-core",
@@ -1873,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "qx-zhenlu"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "qx-core",

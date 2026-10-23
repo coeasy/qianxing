@@ -1,6 +1,7 @@
 #include "qianxing_strategy.h"
 
 #include <cstring>
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -86,4 +87,25 @@ const qx_strategy_vtable VTABLE{
 
 extern "C" const qx_strategy_vtable* qx_strategy_get_vtable(void) {
     return &VTABLE;
+}
+
+extern "C" int qx_strategy_diagnostic_state(qx_strategy_handle raw,
+                                             char* output,
+                                             size_t output_capacity,
+                                             size_t* output_len) {
+    if (!raw || !output || output_capacity == 0 || !output_len) {
+        return 1;
+    }
+    const auto* state = static_cast<const State*>(raw);
+    const int written = std::snprintf(
+        output,
+        output_capacity,
+        "{\"next_intent_id\":%llu,\"has_request\":%s}",
+        static_cast<unsigned long long>(state->next_intent_id),
+        state->request_id.empty() ? "false" : "true");
+    if (written < 0 || static_cast<size_t>(written) >= output_capacity) {
+        return 2;
+    }
+    *output_len = static_cast<size_t>(written);
+    return 0;
 }

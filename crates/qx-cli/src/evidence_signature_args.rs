@@ -55,6 +55,18 @@ pub(crate) enum EvidenceCommand {
         #[arg(long, value_name = "PATH")]
         build_attestation: Option<PathBuf>,
     },
+    /// Package a multi-account batch result, its exact specification, and each portable run bundle.
+    #[command(name = "pack-multi-account-run")]
+    PackMultiAccountRun {
+        result: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        spec: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
+    /// Verify the batch identity and every portable account run bundle in a multi-account package.
+    #[command(name = "verify-multi-account-run")]
+    VerifyMultiAccountRun { bundle_dir: PathBuf },
     /// Build a local-run EvidenceBundle from a completed multi-market application artifact.
     #[command(name = "pack-multi-market-run")]
     PackMultiMarketRun { artifact: PathBuf },

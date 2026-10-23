@@ -72,6 +72,34 @@ unsafe extern "C" fn fake_destroy(handle: QxStrategyHandle) {
     DESTROYED.fetch_add(1, Ordering::SeqCst);
 }
 
+unsafe extern "C" fn fake_diagnostic_state(
+    _handle: QxStrategyHandle,
+    output: *mut c_char,
+    output_capacity: usize,
+    output_len: *mut usize,
+) -> i32 {
+    let payload = br#"{"warmup_count":7,"rolling_sum_raw":"4200"}"#;
+    if output.is_null() || output_len.is_null() || output_capacity < payload.len() {
+        return 1;
+    }
+    std::ptr::copy_nonoverlapping(payload.as_ptr(), output.cast::<u8>(), payload.len());
+    *output_len = payload.len();
+    0
+}
+
+unsafe extern "C" fn fake_diagnostic_state_oversize(
+    _handle: QxStrategyHandle,
+    _output: *mut c_char,
+    output_capacity: usize,
+    output_len: *mut usize,
+) -> i32 {
+    if output_len.is_null() {
+        return 1;
+    }
+    *output_len = output_capacity + 1;
+    0
+}
+
 static FAKE_VTABLE: QxStrategyVTable = QxStrategyVTable {
     abi_version: QX_C_STRATEGY_ABI_VERSION,
     create: Some(fake_create),
@@ -128,6 +156,21 @@ fn old_c_abi_vtable_is_rejected_before_plugin_callbacks() {
         .err()
         .unwrap();
     assert!(error.contains("版本"));
+}
+
+#[test]
+fn c_abi_optional_diagnostic_state_is_bounded_json_and_read_only() {
+    let mut strategy = unsafe { CAbiStrategy::from_vtable(&FAKE_VTABLE, "{}") }.unwrap();
+    strategy.diagnostic_state = Some(fake_diagnostic_state);
+    assert_eq!(
+        Strategy::diagnostic_state(&strategy),
+        Some(serde_json::json!({
+            "warmup_count": 7,
+            "rolling_sum_raw": "4200"
+        }))
+    );
+    strategy.diagnostic_state = Some(fake_diagnostic_state_oversize);
+    assert_eq!(Strategy::diagnostic_state(&strategy), None);
 }
 
 #[test]
@@ -237,6 +280,7 @@ fn decode_decision_rejects_an_invalid_c_side_value() {
     let strategy = CAbiStrategy {
         vtable: &FAKE_VTABLE,
         handle: ptr::null_mut(),
+        diagnostic_state: None,
     };
     let error = strategy.decode_decision(&raw, &context, 10).unwrap_err();
     // Two deliberate leaks: `decode_decision` returns before `free_decision`
@@ -280,6 +324,7 @@ fn decode_decision_rejects_intent_length_above_declared_capacity() {
     let strategy = CAbiStrategy {
         vtable: &FAKE_VTABLE,
         handle: ptr::null_mut(),
+        diagnostic_state: None,
     };
     let error = strategy.decode_decision(&raw, &context, 1).unwrap_err();
     std::mem::forget(strategy);
@@ -291,6 +336,7 @@ fn decode_decision_rejects_intent_length_above_declared_capacity() {
 
 #[test]
 fn c_abi_strategy_copies_plugin_decision_before_freeing_it() {
+    let destroyed_before = DESTROYED.load(Ordering::SeqCst);
     let context = StrategyContext {
         strategy_id: "abi-test".into(),
         strategy_version: "v1".into(),
@@ -317,5 +363,8 @@ fn c_abi_strategy_copies_plugin_decision_before_freeing_it() {
     assert_eq!(decision.intents.len(), 1);
     assert_eq!(decision.intents[0].qty.raw(), 1_000_000_000);
     drop(strategy);
-    assert_eq!(DESTROYED.load(Ordering::SeqCst), 1);
+    assert!(
+        DESTROYED.load(Ordering::SeqCst) > destroyed_before,
+        "dropping the adapter must call the plugin destructor"
+    );
 }

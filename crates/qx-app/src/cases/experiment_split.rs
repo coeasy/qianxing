@@ -29,27 +29,41 @@ use std::collections::BTreeMap;
 
 /// 定点换算：基点 = 万分之一。
 const BPS_SCALE: i128 = 10_000;
-type RankedTrainingCandidate = (usize, Option<String>, BTreeMap<String, i128>, i32);
+type RankedTrainingCandidate = (usize, Option<String>, BTreeMap<String, i128>, i32, u32);
 /// 防止极小步长和巨大数据集制造无界报告、耗尽内存或把取消延迟到分折结束。
 pub const MAX_EXPERIMENT_FOLDS: usize = 10_000;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FoldRanges {
+    pub(super) train: [usize; 2],
+    pub(super) purge: [usize; 2],
+    pub(super) test: [usize; 2],
+    pub(super) embargo: [usize; 2],
+}
 
 /// Split samples by Bar ordinal; only the execution-specific fold algorithm lives in qx-app.
 pub(super) fn experiment_folds(
     plan: &ExperimentSplitPlan,
     total_bars: usize,
-) -> Result<Vec<[usize; 4]>, AppError> {
+) -> Result<Vec<FoldRanges>, AppError> {
+    plan.validate().map_err(invalid)?;
     let train = usize::try_from(plan.train_bars)
         .map_err(|_| invalid("实验训练窗超过当前平台可表示的 Bar 数量"))?;
     let test = usize::try_from(plan.test_bars)
         .map_err(|_| invalid("实验测试窗超过当前平台可表示的 Bar 数量"))?;
+    let purge = usize::try_from(plan.purge_bars)
+        .map_err(|_| invalid("实验 purge 间隔超过当前平台可表示的 Bar 数量"))?;
+    let embargo = usize::try_from(plan.embargo_bars)
+        .map_err(|_| invalid("实验 embargo 间隔超过当前平台可表示的 Bar 数量"))?;
     let span = train
-        .checked_add(test)
+        .checked_add(purge)
+        .and_then(|value| value.checked_add(test))
         .ok_or_else(|| invalid("实验训练窗与测试窗长度溢出"))?;
     if total_bars < span {
         return Err(AppError::new(
                 AppErrorCategory::FidelityInsufficient,
                 format!(
-                    "实验切分计划需要至少 {span} 根 Bar（训练 {train} + 测试 {test}），实际 {total_bars} 根"
+                    "实验切分计划需要至少 {span} 根 Bar（训练 {train} + purge {purge} + 测试 {test}），实际 {total_bars} 根"
                 ),
             ));
     }
@@ -61,8 +75,14 @@ pub(super) fn experiment_folds(
         let mut start = 0usize;
         while start <= last_start {
             let train_end = start + train; // `start <= total_bars - span`，以下加法已界内。
-            let test_end = train_end + test;
-            folds.push([start, train_end, train_end, test_end]);
+            let test_start = train_end + purge;
+            let test_end = test_start + test;
+            folds.push(FoldRanges {
+                train: [start, train_end],
+                purge: [train_end, test_start],
+                test: [test_start, test_end],
+                embargo: [test_end, test_end],
+            });
             if folds.len() > MAX_EXPERIMENT_FOLDS {
                 return Err(invalid(format!(
                     "实验走查折数超过上限 {MAX_EXPERIMENT_FOLDS}；增大 step_bars 或缩小样本区间"
@@ -77,7 +97,18 @@ pub(super) fn experiment_folds(
     } else {
         // 单段切分**只有一段**。第一版在这里也用循环推步长，于是 60 根样本会多切出
         // 第二段 `[30,50)+[50,60)`——"不打开走查"却滚动了两次，正是这条用例咬出来的。
-        folds.push([0, train, train, train + test]);
+        let test_start = train + purge;
+        folds.push(FoldRanges {
+            train: [0, train],
+            purge: [train, test_start],
+            test: [test_start, test_start + test],
+            embargo: [test_start + test, test_start + test],
+        });
+    }
+    for index in 0..folds.len().saturating_sub(1) {
+        let end = folds[index].test[1];
+        let next_start = folds[index + 1].test[0];
+        folds[index].embargo = [end, end.saturating_add(embargo).min(next_start)];
     }
     if folds.is_empty() {
         return Err(AppError::new(
@@ -96,6 +127,12 @@ pub struct ExperimentFoldReport {
     pub train_range: [u64; 2],
     /// 测试窗 `[start, end)`，按 Bar 序号。
     pub test_range: [u64; 2],
+    /// Excluded interval between training and test windows; omitted when purge is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purge_range: Option<[u64; 2]>,
+    /// Excluded interval after this test window; omitted when embargo is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embargo_range: Option<[u64; 2]>,
     /// 在训练窗上胜出的候选序号（`ExperimentCandidateResult.ordinal`）。
     pub selected_ordinal: usize,
     /// Strategy selected from the in-sample window; omitted for legacy single-strategy runs.
@@ -103,6 +140,13 @@ pub struct ExperimentFoldReport {
     pub selected_strategy_kind: Option<String>,
     pub selected_parameters: BTreeMap<String, i128>,
     pub in_sample_return_bps: i32,
+    /// Optional robust objective used to choose the candidate from this fold's training window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_training_robustness_score_bps: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_training_max_drawdown_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_training_drawdown_bps: Option<u32>,
     pub out_of_sample_return_bps: i32,
 }
 
@@ -116,6 +160,20 @@ pub struct ExperimentOutOfSampleReport {
     pub out_of_sample_return_bps: i32,
     /// 样本内减样本外：正数表示训练窗上的优势没有延续到测试窗。
     pub degradation_bps: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_fold_robustness: Option<ExperimentCrossFoldRobustness>,
+}
+
+/// Training/test stability summary across the selected walk-forward candidates.
+/// It is descriptive only and never feeds candidate proposals or selection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExperimentCrossFoldRobustness {
+    pub folds_evaluated: usize,
+    pub positive_training_folds: usize,
+    pub minimum_training_return_bps: i32,
+    pub worst_training_drawdown_bps: u32,
+    pub positive_out_of_sample_folds: usize,
+    pub minimum_out_of_sample_return_bps: i32,
 }
 
 /// 一条基准对照列。
@@ -158,6 +216,9 @@ pub(super) fn evaluate_out_of_sample(
     plan: &ExperimentSplitPlan,
     total_bars: usize,
     candidates: &[ExperimentCandidateResult],
+    max_training_drawdown_bps: Option<u32>,
+    robustness_subwindows: Option<usize>,
+    minimum_training_robustness_score_bps: Option<i32>,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<Option<ExperimentOutOfSampleReport>, AppError> {
     plan.validate().map_err(invalid)?;
@@ -208,7 +269,7 @@ pub(super) fn evaluate_out_of_sample(
     }
 
     let mut reports = Vec::with_capacity(folds.len());
-    for (index, [train_start, train_end, test_start, test_end]) in folds.into_iter().enumerate() {
+    for (index, ranges) in folds.into_iter().enumerate() {
         if is_cancelled() {
             return Ok(None);
         }
@@ -222,11 +283,25 @@ pub(super) fn evaluate_out_of_sample(
             else {
                 continue;
             };
-            let score = window_return_bps(values, train_start, train_end);
+            let score = window_return_bps(values, ranges.train[0], ranges.train[1]);
+            let robustness_score = robustness_subwindows.and_then(|count| {
+                window_robustness_score_bps(values, ranges.train[0], ranges.train[1], count)
+            });
+            if minimum_training_robustness_score_bps
+                .is_some_and(|minimum| robustness_score.is_none_or(|score| score < minimum))
+            {
+                continue;
+            }
+            let selection_score = robustness_score.unwrap_or(score);
+            let drawdown = window_max_drawdown_bps(values, ranges.train[0], ranges.train[1]);
+            if max_training_drawdown_bps.is_some_and(|limit| drawdown > limit) {
+                continue;
+            }
             let better = match &best {
                 None => true,
-                Some((ordinal, _, _, incumbent)) => {
-                    score > *incumbent || (score == *incumbent && candidate.ordinal < *ordinal)
+                Some((ordinal, _, _, incumbent, _)) => {
+                    selection_score > *incumbent
+                        || (selection_score == *incumbent && candidate.ordinal < *ordinal)
                 }
             };
             if better {
@@ -234,12 +309,37 @@ pub(super) fn evaluate_out_of_sample(
                     candidate.ordinal,
                     candidate.strategy_kind.clone(),
                     candidate.parameters.clone(),
-                    score,
+                    selection_score,
+                    drawdown,
                 ));
             }
         }
-        let Some((selected_ordinal, selected_strategy_kind, selected_parameters, in_sample)) = best
+        let Some((
+            selected_ordinal,
+            selected_strategy_kind,
+            selected_parameters,
+            _selection_score,
+            selected_drawdown,
+        )) = best
         else {
+            if let Some(minimum) = minimum_training_robustness_score_bps {
+                return Err(AppError::new(
+                    AppErrorCategory::FidelityInsufficient,
+                    format!(
+                        "第 {} 折没有成功候选满足最小训练稳健收益阈值 {minimum} bps",
+                        index + 1
+                    ),
+                ));
+            }
+            if let Some(limit) = max_training_drawdown_bps {
+                return Err(AppError::new(
+                    AppErrorCategory::FidelityInsufficient,
+                    format!(
+                        "第 {} 折没有成功候选满足最大训练回撤预算 {limit} bps",
+                        index + 1
+                    ),
+                ));
+            }
             continue;
         };
         let values = series
@@ -254,13 +354,22 @@ pub(super) fn evaluate_out_of_sample(
             })?;
         reports.push(ExperimentFoldReport {
             fold: index + 1,
-            train_range: [train_start as u64, train_end as u64],
-            test_range: [test_start as u64, test_end as u64],
+            train_range: [ranges.train[0] as u64, ranges.train[1] as u64],
+            test_range: [ranges.test[0] as u64, ranges.test[1] as u64],
+            purge_range: (ranges.purge[0] < ranges.purge[1])
+                .then_some([ranges.purge[0] as u64, ranges.purge[1] as u64]),
+            embargo_range: (ranges.embargo[0] < ranges.embargo[1])
+                .then_some([ranges.embargo[0] as u64, ranges.embargo[1] as u64]),
             selected_ordinal,
             selected_strategy_kind,
             selected_parameters,
-            in_sample_return_bps: in_sample,
-            out_of_sample_return_bps: window_return_bps(values, test_start, test_end),
+            in_sample_return_bps: window_return_bps(values, ranges.train[0], ranges.train[1]),
+            selected_training_robustness_score_bps: robustness_subwindows.and_then(|count| {
+                window_robustness_score_bps(values, ranges.train[0], ranges.train[1], count)
+            }),
+            selected_training_max_drawdown_bps: Some(selected_drawdown),
+            max_training_drawdown_bps,
+            out_of_sample_return_bps: window_return_bps(values, ranges.test[0], ranges.test[1]),
         });
     }
     if reports.is_empty() {
@@ -269,18 +378,106 @@ pub(super) fn evaluate_out_of_sample(
             "样本外评估没有任何一段窗口选出候选——没有成功候选就没有 OOS 分数",
         ));
     }
+    Ok(Some(summarize_folds(reports)))
+}
+
+pub(super) fn summarize_folds(reports: Vec<ExperimentFoldReport>) -> ExperimentOutOfSampleReport {
     let in_sample = mean_bps(reports.iter().map(|fold| fold.in_sample_return_bps));
     let out_of_sample = mean_bps(reports.iter().map(|fold| fold.out_of_sample_return_bps));
-    Ok(Some(ExperimentOutOfSampleReport {
+    let cross_fold_robustness = reports.first().map(|_| ExperimentCrossFoldRobustness {
+        folds_evaluated: reports.len(),
+        positive_training_folds: reports
+            .iter()
+            .filter(|fold| fold.in_sample_return_bps > 0)
+            .count(),
+        minimum_training_return_bps: reports
+            .iter()
+            .map(|fold| fold.in_sample_return_bps)
+            .min()
+            .unwrap_or_default(),
+        worst_training_drawdown_bps: reports
+            .iter()
+            .filter_map(|fold| fold.selected_training_max_drawdown_bps)
+            .max()
+            .unwrap_or_default(),
+        positive_out_of_sample_folds: reports
+            .iter()
+            .filter(|fold| fold.out_of_sample_return_bps > 0)
+            .count(),
+        minimum_out_of_sample_return_bps: reports
+            .iter()
+            .map(|fold| fold.out_of_sample_return_bps)
+            .min()
+            .unwrap_or_default(),
+    });
+    ExperimentOutOfSampleReport {
         folds: reports,
         in_sample_return_bps: in_sample,
         out_of_sample_return_bps: out_of_sample,
         degradation_bps: clamp_bps(in_sample as i128 - out_of_sample as i128),
-    }))
+        cross_fold_robustness,
+    }
+}
+
+/// Return and maximum drawdown on the first training window only.
+pub(super) fn training_metrics_for_equity(
+    plan: &ExperimentSplitPlan,
+    total_bars: usize,
+    equity: &[i128],
+) -> Result<(i32, u32), AppError> {
+    if equity.len() != total_bars {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!(
+                "训练窗选参的权益点数 {} 与样本根数 {total_bars} 不一致",
+                equity.len()
+            ),
+        ));
+    }
+    if equity.iter().any(|value| *value <= 0) {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            "训练窗选参的权益序列包含非正权益",
+        ));
+    }
+    let folds = experiment_folds(plan, total_bars)?;
+    let ranges = folds
+        .first()
+        .ok_or_else(|| invalid("自适应搜索无法取得首段训练窗口"))?;
+    Ok((
+        window_return_bps(equity, ranges.train[0], ranges.train[1]),
+        window_max_drawdown_bps(equity, ranges.train[0], ranges.train[1]),
+    ))
+}
+
+/// Minimum contiguous subwindow return, used as a training-only robustness objective.
+pub(super) fn window_robustness_score_bps(
+    series: &[i128],
+    start: usize,
+    end: usize,
+    subwindows: usize,
+) -> Option<i32> {
+    let length = end.checked_sub(start)?;
+    let intervals = length.checked_sub(1)?;
+    if subwindows < 2 || end > series.len() || intervals < subwindows {
+        return None;
+    }
+    let quotient = intervals / subwindows;
+    let remainder = intervals % subwindows;
+    let mut minimum = i32::MAX;
+    for index in 0..subwindows {
+        let start_offset = quotient * index + (remainder * index) / subwindows;
+        let next_index = index + 1;
+        let end_offset = quotient * next_index + (remainder * next_index) / subwindows;
+        let segment_start = start + start_offset;
+        let segment_end = start + end_offset + 1;
+        minimum = minimum.min(window_return_bps(series, segment_start, segment_end));
+    }
+    Some(minimum)
 }
 
 /// 窗口 `[start, end)` 上的收益（基点），以窗口首点为基准。
-fn window_return_bps(series: &[i128], start: usize, end: usize) -> i32 {
+pub(super) fn window_return_bps(series: &[i128], start: usize, end: usize) -> i32 {
     if end <= start + 1 || end > series.len() {
         return 0;
     }
@@ -302,7 +499,7 @@ fn window_return_bps(series: &[i128], start: usize, end: usize) -> i32 {
 }
 
 /// 窗口 `[start, end)` 上的最大回撤（基点）。
-fn window_max_drawdown_bps(series: &[i128], start: usize, end: usize) -> u32 {
+pub(super) fn window_max_drawdown_bps(series: &[i128], start: usize, end: usize) -> u32 {
     if end <= start || end > series.len() {
         return 0;
     }
@@ -359,9 +556,29 @@ mod tests {
             test_bars: 1,
             walk_forward: false,
             step_bars: 0,
+            purge_bars: 0,
+            embargo_bars: 0,
         };
         let error = experiment_folds(&plan, usize::MAX).expect_err("窗长加法必须拒绝溢出");
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn robustness_score_uses_worst_contiguous_training_segment_and_ignores_suffix() {
+        let training = [100_i128, 110, 120, 108, 100];
+        let with_future = [100_i128, 110, 120, 108, 100, 9_000, 1];
+        let score = window_robustness_score_bps(&training, 0, training.len(), 2);
+        assert_eq!(score, Some(-1_666));
+        assert_eq!(
+            window_robustness_score_bps(&with_future, 0, training.len(), 2),
+            score,
+            "bars after the requested training end cannot enter the robustness score"
+        );
+        assert_eq!(
+            window_robustness_score_bps(&training, 0, training.len(), 5),
+            None,
+            "each contiguous segment needs at least one return interval"
+        );
     }
 
     #[test]
@@ -371,10 +588,49 @@ mod tests {
             test_bars: 1,
             walk_forward: true,
             step_bars: 1,
+            purge_bars: 0,
+            embargo_bars: 0,
         };
         let error =
             experiment_folds(&plan, MAX_EXPERIMENT_FOLDS + 2).expect_err("不得生成无界 OOS 报告");
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn purged_embargoed_walk_forward_ranges_are_reportable_and_disjoint() {
+        let plan = ExperimentSplitPlan {
+            train_bars: 4,
+            test_bars: 2,
+            walk_forward: true,
+            step_bars: 5,
+            purge_bars: 1,
+            embargo_bars: 3,
+        };
+        let folds = experiment_folds(&plan, 17).expect("valid purged walk-forward plan");
+        assert_eq!(folds.len(), 3);
+        assert_eq!(folds[0].train, [0, 4]);
+        assert_eq!(folds[0].purge, [4, 5]);
+        assert_eq!(folds[0].test, [5, 7]);
+        assert_eq!(folds[0].embargo, [7, 10]);
+        assert_eq!(folds[1].train, [5, 9]);
+        assert_eq!(folds[1].purge, [9, 10]);
+        assert_eq!(folds[1].test, [10, 12]);
+    }
+
+    #[test]
+    fn walk_forward_rejects_stride_that_cannot_preserve_embargo() {
+        let plan = ExperimentSplitPlan {
+            train_bars: 4,
+            test_bars: 2,
+            walk_forward: true,
+            step_bars: 4,
+            purge_bars: 0,
+            embargo_bars: 3,
+        };
+        assert!(plan
+            .validate()
+            .unwrap_err()
+            .contains("test_bars + embargo_bars"));
     }
 
     #[test]

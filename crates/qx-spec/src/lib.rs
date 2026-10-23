@@ -32,8 +32,8 @@ pub use project::{DatasetRef, ProjectManifest, StrategyRef, PROJECT_MANIFEST_SCH
 pub use run_evidence::{
     RunEvidenceAssumption, RunEvidenceBuild, RunEvidenceDataset, RunEvidenceDatasetComponent,
     RunEvidenceFidelity, RunEvidenceIdentity, RunEvidencePayload, RunEvidenceQualityReport,
-    RunEvidenceRecompute, RunEvidenceReportAnalysis, RunEvidenceRun, RunEvidenceVerification,
-    RUN_EVIDENCE_REQUIRED_ARTIFACTS,
+    RunEvidenceRecompute, RunEvidenceReportAnalysis, RunEvidenceRun,
+    RunEvidenceStrategyDiagnostics, RunEvidenceVerification, RUN_EVIDENCE_REQUIRED_ARTIFACTS,
 };
 pub use run_record::{ArtifactRef, ReplayVerdict, RunRecord, RunStatus, RUN_RECORD_SCHEMA_VERSION};
 pub use schema_registry::{

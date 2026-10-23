@@ -70,6 +70,10 @@ pub struct TradingInstrumentSpec {
     pub price_tick: i128,
     pub qty_step: i128,
     pub min_qty: i128,
+    /// Minimum order notional in quote-currency raw units; zero means the venue did not
+    /// publish a usable minimum. Kept optional at the JSON boundary for older frozen specs.
+    #[serde(default, skip_serializing_if = "raw_zero")]
+    pub min_notional_raw: i128,
     pub max_leverage: u32,
     pub maintenance_margin_bps: u32,
     pub valid_from: u64,
@@ -84,6 +88,31 @@ pub fn resolve_settlement_currency(spec: Option<&TradingInstrumentSpec>) -> Stri
 }
 
 impl TradingInstrumentSpec {
+    /// Canonical spot fallback used only when a caller explicitly permits an absent market
+    /// specification. Keep the fallback definition in the domain contract so report verifiers
+    /// can reproduce the exact specification used by execution.
+    pub fn spot_default(instrument: &InstrumentId, settlement_currency: &str) -> Self {
+        let currency = settlement_currency.trim().to_ascii_uppercase();
+        Self {
+            instrument: instrument.clone(),
+            product: TradingProduct::Spot,
+            base_currency: instrument.symbol.clone(),
+            quote_currency: currency.clone(),
+            settlement_currency: currency,
+            contract_size: SCALE,
+            linear: false,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 0,
+            valid_to: None,
+        }
+    }
+
     pub fn validate(&self) -> QxResult<()> {
         if self.base_currency.trim().is_empty()
             || self.quote_currency.trim().is_empty()
@@ -92,6 +121,7 @@ impl TradingInstrumentSpec {
             || self.price_tick <= 0
             || self.qty_step <= 0
             || self.min_qty <= 0
+            || self.min_notional_raw < 0
             || self.max_leverage == 0
             || self.maintenance_margin_bps > 10_000
             || self.valid_to.is_some_and(|to| to <= self.valid_from)
@@ -138,6 +168,24 @@ impl TradingInstrumentSpec {
         value.ok_or_else(|| QxError::Invariant("名义额计算溢出".into()))
     }
 
+    /// Venue order-cost amount in quote-currency raw units. Inverse contracts quote their
+    /// fixed contract value directly; linear products multiply base quantity by price.
+    pub fn quote_notional(&self, qty: i128, price: i128) -> QxResult<i128> {
+        if qty < 0 || price <= 0 {
+            return Err(QxError::BusinessViolation("订单名义金额输入非法".into()));
+        }
+        let value = if self.inverse {
+            qty.checked_mul(self.contract_size)
+                .and_then(|value| value.checked_div(SCALE))
+        } else {
+            qty.checked_mul(self.contract_size)
+                .and_then(|value| value.checked_div(SCALE))
+                .and_then(|value| value.checked_mul(price))
+                .and_then(|value| value.checked_div(SCALE))
+        };
+        value.ok_or_else(|| QxError::Invariant("订单名义金额计算溢出".into()))
+    }
+
     pub fn initial_margin(&self, qty: i128, price: i128, leverage: u32) -> QxResult<i128> {
         if leverage == 0 || leverage > self.max_leverage {
             return Err(QxError::BusinessViolation("杠杆超出产品限制".into()));
@@ -157,15 +205,39 @@ impl TradingInstrumentSpec {
     /// 这里不做静默截断或四舍五入；策略目标若无法精确落在 lot/tick 上，
     /// 必须显式调整目标或由上层按业务规则拆单，避免回测与实盘产生不同语义。
     pub fn validate_order(&self, qty: i128, price: Option<i128>) -> QxResult<()> {
+        self.validate_order_with_reference(qty, price, price)
+    }
+
+    /// Validate a market order against an observed price without treating that reference as a
+    /// submitted limit price. This checks minimum quote cost while applying the tick rule only
+    /// to actual limit prices.
+    pub fn validate_order_with_reference(
+        &self,
+        qty: i128,
+        limit_price: Option<i128>,
+        reference_price: Option<i128>,
+    ) -> QxResult<()> {
         if qty <= 0 || qty < self.min_qty || qty % self.qty_step != 0 {
             return Err(QxError::BusinessViolation(
                 "订单数量不满足最小数量或数量步长".into(),
             ));
         }
-        if let Some(price) = price {
+        if let Some(price) = limit_price {
             if price <= 0 || price % self.price_tick != 0 {
                 return Err(QxError::BusinessViolation(
                     "订单价格不满足正数或价格 tick".into(),
+                ));
+            }
+        }
+        if self.min_notional_raw > 0 {
+            let reference_price = reference_price.ok_or_else(|| {
+                QxError::BusinessViolation("缺少可核验参考价，无法校验交易所最小名义金额".into())
+            })?;
+            if reference_price <= 0
+                || self.quote_notional(qty, reference_price)? < self.min_notional_raw
+            {
+                return Err(QxError::BusinessViolation(
+                    "订单名义金额低于交易所最小限制".into(),
                 ));
             }
         }
@@ -237,6 +309,10 @@ impl TradingInstrumentSpec {
             .map(|amount| if qty >= 0 { amount } else { -amount })
             .ok_or_else(|| QxError::Invariant("资金费计算溢出".into()))
     }
+}
+
+fn raw_zero(value: &i128) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -333,6 +409,7 @@ mod tests {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: if product == TradingProduct::Spot {
                 1
             } else {
@@ -431,6 +508,36 @@ mod tests {
         assert!(instrument.validate_order(19, Some(100)).is_err());
         assert!(instrument.validate_order(25, Some(100)).is_err());
         assert!(instrument.validate_order(20, Some(101)).is_err());
+    }
+
+    #[test]
+    fn low_price_spot_instrument_keeps_small_ticks_and_exact_notional() {
+        let mut instrument = spec(TradingProduct::Spot);
+        instrument.instrument = InstrumentId::parse("PEPE/USDT.BINANCE").unwrap();
+        instrument.base_currency = "PEPE".into();
+        instrument.price_tick = 10;
+        instrument.qty_step = 1_000;
+        instrument.min_qty = 1_000;
+        instrument.min_notional_raw = 1_001;
+        instrument.validate().unwrap();
+
+        let one_token = SCALE;
+        let one_micro_usdt = 1_000;
+        assert!(instrument
+            .validate_order(one_token, Some(one_micro_usdt))
+            .is_err());
+        assert!(instrument
+            .validate_order(one_token + 1_000_000, Some(one_micro_usdt))
+            .is_ok());
+        assert!(instrument.validate_order(one_token, None).is_err());
+        assert!(instrument
+            .validate_order_with_reference(one_token + 1_000_000, None, Some(1_001))
+            .is_ok());
+        assert_eq!(
+            instrument.notional(one_token, one_micro_usdt).unwrap(),
+            1_000
+        );
+        assert!(instrument.validate_order(one_token, Some(1_001)).is_err());
     }
 
     #[test]

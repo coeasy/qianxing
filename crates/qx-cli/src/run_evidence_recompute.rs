@@ -55,7 +55,11 @@ pub(crate) fn recompute_multi_barframe_identity(
     for component in &dataset.components {
         let path = resolve_reference(root, &component.path)?;
         let frame = read_bar_frame_for_backtest(&path)?;
-        let (_, identity) = barframe_dataset_identity(&path, &frame)?;
+        let (_, identity) = if component.version == qx_data::BARFRAME_DATASET_VERSION {
+            qx_app::backtest_input_identity::legacy_barframe_dataset_identity(&path, &frame)?
+        } else {
+            barframe_dataset_identity(&path, &frame)?
+        };
         for (field, declared, actual) in [
             (
                 "dataset_id",

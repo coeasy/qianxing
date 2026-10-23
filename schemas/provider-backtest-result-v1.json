@@ -355,6 +355,10 @@
         "fills": {
           "type": "string",
           "minLength": 1
+        },
+        "event_trace": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false

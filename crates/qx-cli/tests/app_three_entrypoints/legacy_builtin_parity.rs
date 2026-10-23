@@ -6,21 +6,22 @@ use std::{path::Path, process::Command};
 fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
     let root = scratch("legacy-builtin-parity");
     let bars = sample_bars();
+    // Refreshed after the result identity began including native strategy-decision and risk facts.
     let strategies = [
-        ("sma_cross", "0d4347c63a5254b3"),
-        ("ema_cross", "269a4897dc0dd634"),
-        ("macd", "1189853a7c12447d"),
+        ("sma_cross", "092fdc46817956a3"),
+        ("ema_cross", "8aeb8d92a6b85a8c"),
+        ("macd", "a54513c4314ffbe1"),
         // Cash-spot sells without available inventory are rejected by the shared engine.
-        ("rsi", "039291b36c391d9d"),
-        ("bollinger", "3ad5dc6e6dc13eaa"),
-        ("donchian_breakout", "eca2b2c9724529f8"),
-        ("momentum", "f3b9742cd9c467b8"),
-        ("mean_reversion", "2c9ab4c42024e17a"),
-        ("grid", "aeab250a1024980a"),
-        ("atr_trend", "e25fddfd488529b1"),
-        ("keltner_trend", "f057d53be9ec40a9"),
-        ("vwap_reversion", "45f986ab58cab026"),
-        ("volatility_breakout", "e25fddfd488529b1"),
+        ("rsi", "d69e15f4502483d6"),
+        ("bollinger", "cecacfff7bb24b13"),
+        ("donchian_breakout", "38c41f3832f6a4d4"),
+        ("momentum", "74bd63d22639bb30"),
+        ("mean_reversion", "4ef7b79cfc9a994c"),
+        ("grid", "ccf920ce86a90bfc"),
+        ("atr_trend", "cfa3e83b491ec337"),
+        ("keltner_trend", "aab3e6ffb2209f48"),
+        ("vwap_reversion", "25234b946fc9df70"),
+        ("volatility_breakout", "cfa3e83b491ec337"),
     ];
     for (kind, expected_hash) in strategies {
         let legacy_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))

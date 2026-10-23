@@ -40,7 +40,7 @@ pub(super) fn apply_virtual_events(
                 Money::from_raw(amount),
                 bar.ts,
             )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
+            append_pre_decision_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
         }
     }
     for event in events_at(&config.interest, bar.ts, |event| event.ts) {
@@ -53,7 +53,7 @@ pub(super) fn apply_virtual_events(
                 Money::from_raw(amount),
                 bar.ts,
             )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
+            append_pre_decision_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
         }
     }
     for event in events_at(&config.delivery, bar.ts, |event| event.ts) {
@@ -61,7 +61,7 @@ pub(super) fn apply_virtual_events(
         state.log.append(Event::new(
             settle_seq,
             bar.ts,
-            Priority::APPLY,
+            Priority::FEEDBACK,
             EventKind::Settle,
         ));
         let current = state
@@ -101,10 +101,19 @@ pub(super) fn apply_virtual_events(
                     bar.ts,
                     None,
                     Some(position_side),
+                    Priority::FEEDBACK,
                 )?;
             }
         } else {
-            close_virtual_position(state, current, event.settlement_price, bar.ts, None, None)?;
+            close_virtual_position(
+                state,
+                current,
+                event.settlement_price,
+                bar.ts,
+                None,
+                None,
+                Priority::FEEDBACK,
+            )?;
         }
     }
     Ok(())

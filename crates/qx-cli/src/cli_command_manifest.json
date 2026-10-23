@@ -286,6 +286,11 @@
       "variant": "AppCommand"
     },
     {
+      "name": "multi-account-joint-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
       "name": "multi-leg-backtest",
       "parent": "app",
       "variant": "AppCommand"
@@ -401,6 +406,11 @@
       "variant": "EvidenceCommand"
     },
     {
+      "name": "pack-multi-account-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
       "name": "pack-multi-leg-experiment",
       "parent": "evidence",
       "variant": "EvidenceCommand"
@@ -447,6 +457,11 @@
     },
     {
       "name": "verify",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-multi-account-run",
       "parent": "evidence",
       "variant": "EvidenceCommand"
     },
@@ -502,6 +517,26 @@
     },
     {
       "name": "backtest",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "diagnose-bar",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "diagnose-depth",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "diagnose-multi-account",
+      "parent": "strategy",
+      "variant": "StrategyCommand"
+    },
+    {
+      "name": "diagnose-multi-bar",
       "parent": "strategy",
       "variant": "StrategyCommand"
     },

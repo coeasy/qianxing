@@ -10,19 +10,22 @@ default = []
 sqlite = ["qx-storage/sqlite"]
 
 [dependencies]
-qx-control = { version = "0.2.1", path = "../qx-control" }
-qx-core = { version = "0.2.1", path = "../qx-core" }
-qx-protocol = { version = "0.2.1", path = "../qx-protocol" }
-qx-storage = { version = "0.2.1", path = "../qx-storage" }
-qx-scheduler = { version = "0.2.1", path = "../qx-scheduler" }
+qx-control = { version = "0.2.2", path = "../qx-control" }
+qx-core = { version = "0.2.2", path = "../qx-core" }
+qx-protocol = { version = "0.2.2", path = "../qx-protocol" }
+qx-storage = { version = "0.2.2", path = "../qx-storage" }
+qx-scheduler = { version = "0.2.2", path = "../qx-scheduler" }
 # T2-2/G1：`POST /app/*` 三条入口调的是 `qx-app` 的应用层用例，不另装一套。
-qx-app = { version = "0.2.1", path = "../qx-app" }
-qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-app = { version = "0.2.2", path = "../qx-app" }
+qx-data = { version = "0.2.2", path = "../qx-data" }
+qx-datastruct = { version = "0.2.2", path = "../qx-datastruct" }
+qx-strategy = { version = "0.2.2", path = "../qx-strategy" }
+qx-xingban = { version = "0.2.2", path = "../qx-xingban" }
+qx-provider = { version = "0.2.2", path = "../qx-provider" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 
 [dev-dependencies]
-qx-data = { version = "0.2.1", path = "../qx-data" }
-qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
-qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-data = { version = "0.2.2", path = "../qx-data" }
+qx-guanxing = { version = "0.2.2", path = "../qx-guanxing" }

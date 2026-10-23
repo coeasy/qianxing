@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-view-v7.json",
+  "title": "Qianxing ResearchArtifactView v7",
+  "description": "Verified multi-account batch summary with independently verified account drilldowns and a chronologically merged event timeline linked to each verified account instrument.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_kind",
+    "run_id",
+    "instrument",
+    "verification",
+    "summary",
+    "equity",
+    "fills",
+    "events",
+    "bars",
+    "event_trace_available",
+    "accounts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 7
+    },
+    "run_kind": {
+      "const": "multi_account"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verification": {
+      "$ref": "verification-result-v1.json"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "equity": {
+      "$ref": "research-artifact-view-v2.json#/$defs/equityRows"
+    },
+    "fills": {
+      "$ref": "research-artifact-view-v2.json#/$defs/rows"
+    },
+    "events": {
+      "allOf": [
+        {
+          "$ref": "research-artifact-view-v2.json#/$defs/events"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "account_id",
+                  "instrument"
+                ],
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "instrument": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bars": {
+      "type": "object",
+      "required": [
+        "source_status",
+        "total",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "source_status": {
+          "const": "unsupported_input_kind"
+        },
+        "total": {
+          "const": 0
+        },
+        "truncated": {
+          "const": false
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_trace_available": {
+      "type": "boolean"
+    },
+    "account_event_offsets": {
+      "type": "object",
+      "description": "Next unread event offset for each account after the merged events page.",
+      "maxProperties": 32,
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "accounts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/account"
+      }
+    },
+    "event_instrument": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "$defs": {
+    "account": {
+      "type": "object",
+      "required": [
+        "account_id",
+        "status"
+      ],
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed"
+          ]
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instrument": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "return_bps": {
+          "type": "integer"
+        },
+        "max_drawdown_bps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fills": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "equity_points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "report": {
+          "anyOf": [
+            {
+              "$ref": "research-artifact-view-v1.json"
+            },
+            {
+              "$ref": "research-artifact-view-v2.json"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "run_id",
+              "instrument",
+              "data_fingerprint",
+              "result_hash",
+              "return_bps",
+              "max_drawdown_bps",
+              "fills",
+              "equity_points",
+              "report"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

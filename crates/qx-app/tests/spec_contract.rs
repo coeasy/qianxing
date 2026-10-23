@@ -115,6 +115,7 @@ fn bar_market_spec_must_match_the_run_instrument_and_settlement_currency() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,
@@ -522,6 +523,7 @@ fn the_output_types_round_trip_and_keep_their_key_sets() {
         summary: "summary.json".into(),
         equity: "equity.csv".into(),
         fills: "fills.csv".into(),
+        event_trace: None,
     };
     let outcome = BacktestOutcome {
         run_id: "run-1".into(),

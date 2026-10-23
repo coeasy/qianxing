@@ -316,7 +316,7 @@ fn count_files(dir: &Path) -> usize {
 }
 
 #[test]
-fn init_lands_nine_files_and_the_advertised_backtest_adds_five() {
+fn init_lands_ten_files_and_the_advertised_backtest_adds_six() {
     let root = temp_case_dir("r2-init-file-count");
     let runtime = root.join("qianxing.runtime.json");
     let (code, stdout) = qx_cli(&[
@@ -340,6 +340,9 @@ fn init_lands_nine_files_and_the_advertised_backtest_adds_five() {
     let runs = std::fs::read_dir(root.join("data/qianxing/runs"))
         .expect("runs directory should exist")
         .count();
-    assert_eq!(runs, 5, "one run should write five artifact files");
+    assert_eq!(
+        runs, 5,
+        "one run should write four core files and one event-trace sidecar"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

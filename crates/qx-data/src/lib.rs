@@ -46,7 +46,9 @@ pub use catalog_v2::{
     DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 pub use corporate_action::{CorporateAction, CorporateActionType};
-pub use fingerprint::{fingerprint_bar_frame, fingerprint_bars};
+pub use fingerprint::{
+    barframe_registry_version, barframe_snapshot_version, fingerprint_bar_frame, fingerprint_bars,
+};
 pub use incremental::{merge_bars, IncrementalMergeReport};
 pub use ingestion::{ingest_bars, IngestionReport, IngestionRequest};
 pub use pipeline::{process_bars, DataPipelineReport};

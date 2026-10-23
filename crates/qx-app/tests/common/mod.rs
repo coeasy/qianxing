@@ -116,6 +116,8 @@ pub fn experiment_spec(
         strategy_kinds: Vec::new(),
         split_plan: None,
         baselines: Vec::new(),
+        search: None,
+        cost_sensitivity: Vec::new(),
     }
 }
 
@@ -221,6 +223,7 @@ pub fn perpetual_market_spec() -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 100,
         maintenance_margin_bps: 500,
         valid_from: 1_000,

@@ -16,8 +16,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `init` 落 10 份 + 首轮回测落 6 份（项目清单与数据集清单、runs 四份产物）；这份分解由
-/// `src/tests/init_onboarding.rs` 的 `init_lands_nine_files_and_the_advertised_backtest_adds_five`
+/// `init` 落 10 份 + 首轮回测落 6 份（项目清单、datasets manifest、runs 四份核心产物及事件追溯 sidecar）；这份分解由
+/// `src/tests/init_onboarding.rs` 的 `init_lands_ten_files_and_the_advertised_backtest_adds_six`
 /// 逐文件钉住，两处口径必须一起改。
 const EXPECTED_PROJECT_FILES: usize = 16;
 
@@ -44,11 +44,19 @@ fn program() -> String {
 
 /// 临时目录按用例名与进程号取：集成用例并行跑，共用一个目录会互相踩产物。
 fn temp_base(label: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "qianxing-quickstart-{label}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("仓库根目录")
+        .join("target/qx-cli-test-tmp")
+        .join(format!(
+            "qianxing-quickstart-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     std::fs::create_dir_all(&base).expect("创建临时运行目录失败");
     base
 }
@@ -271,17 +279,21 @@ fn second_run_without_force_stops_at_the_first_step() {
         stderr.contains("[止步] 建项目 失败"),
         "止步文案要点名失败的那一步: {stderr}"
     );
+    let init_command = stderr
+        .lines()
+        .find(|line| line.starts_with("  这一步的原文命令："))
+        .expect("必须回显那一步的原文命令");
+    let expected_init_command = format!("{names} init {}", runtime.display()).replace('\\', "/");
+    let actual_init_command = init_command.replace('\\', "/");
     assert!(
-        stderr.contains(&format!(
-            "这一步的原文命令：{names} init {}",
-            runtime.display()
-        )),
-        "必须回显那一步的原文命令: {stderr}"
+        actual_init_command.contains(&expected_init_command)
+            && actual_init_command.ends_with("--strategy macd"),
+        "必须回显完整的 init 命令（含策略参数）: actual={actual_init_command:?}, expected-prefix={expected_init_command:?}"
     );
     assert!(
-        stderr.contains(&format!(
+        stderr.replace('\\', "/").contains(&format!(
             "重跑整条链条：{names} quickstart {}",
-            project.display()
+            project.display().to_string().replace('\\', "/")
         )),
         "必须给出重跑整条链条的写法: {stderr}"
     );
@@ -304,5 +316,52 @@ fn second_run_without_force_stops_at_the_first_step() {
         5,
         "--force 重跑的五步不齐:\n{stdout}"
     );
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// 显式启用 HTML 时，首跑要输出可直接打开的报告和三个配套 SVG，且都在项目目录内。
+#[test]
+fn html_option_writes_the_interactive_report_bundle_without_changing_backtest_identity() {
+    let base = temp_base("html");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy(), "--html"]);
+    assert_eq!(code, 0, "quickstart --html 失败: {stderr}");
+    assert!(
+        stdout.contains("[完成] 复核摘要并生成 HTML 报告：")
+            && stdout.contains(" report ")
+            && stdout.contains("--html"),
+        "报告步骤没有回显实际使用的 HTML 命令:\n{stdout}"
+    );
+    assert_eq!(
+        count_files(&project),
+        EXPECTED_PROJECT_FILES + 4,
+        "HTML 选项应只增加 HTML 和三张 SVG 报告工件"
+    );
+    let html = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[Report] html="))
+        .map(PathBuf::from)
+        .expect("report --html 应回显 HTML 路径");
+    assert!(html.is_file(), "HTML 报告不存在: {}", html.display());
+    assert!(
+        html.starts_with(&project),
+        "HTML 报告写出项目目录: {}",
+        html.display()
+    );
+    let parent = html.parent().expect("HTML 报告有父目录");
+    let stem = html
+        .file_stem()
+        .expect("HTML 报告有文件名")
+        .to_string_lossy();
+    for suffix in ["equity.svg", "fills.svg", "monthly.svg"] {
+        let asset = parent.join(format!("{stem}.{suffix}"));
+        assert!(asset.is_file(), "缺少报告图表 {}", asset.display());
+        assert!(
+            asset.starts_with(&project),
+            "图表写出项目目录: {}",
+            asset.display()
+        );
+    }
+    assert_eq!(result_hashes(&stdout).len(), 1, "HTML 导出不应重新运行回测");
     let _ = std::fs::remove_dir_all(base);
 }

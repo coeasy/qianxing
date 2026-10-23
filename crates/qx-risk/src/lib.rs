@@ -160,13 +160,10 @@ pub struct OrderRiskContext {
 /// `RiskPort` 实现读的就是这三格。
 ///
 /// 另外三格投影（`projected_position_raw` / `projected_margin_raw` /
-/// `reference_price_raw`）**目前没有任何生产读者**：它们每笔订单都算，但只被
-/// `tests/risk_parity.rs` 用来证明三条入口判定一致，不写进产物也不进 API 读模型，
-/// 所以"这一单成交后仓位与保证金会变成多少"今天读不到产物。派生面登记在
-/// `maturity/capabilities.yaml` 的
-/// `canonical_order_risk_decision.limitations.order_risk_projection_fields_have_no_production_reader`
-/// （V13 §9.12 #171）。本类型 `Serialize` 是为了将来接审计落盘时不必改形状，
-/// 不代表它今天被序列化过。
+/// `reference_price_raw`）由 Bar 回测的风险事件持久化，并通过已复核的 research-artifact
+/// 读模型展示原始定点值。Paper/Live 的 `RiskPort` 目前仍只消费前述三格，未把这些投影
+/// 接入其运行产物或研究读模型；这项剩余边界登记在
+/// `maturity/capabilities.yaml` 的 `canonical_order_risk_decision.limitations`。
 ///
 /// Venue 只能在 `allowed=true` 且调用方完成副作用前被调用。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -486,6 +483,7 @@ mod tests {
                 price_tick: 1,
                 qty_step: 1,
                 min_qty: 1,
+                min_notional_raw: 0,
                 max_leverage: 1,
                 maintenance_margin_bps: 0,
                 valid_from: 1,
@@ -527,6 +525,7 @@ mod tests {
                 price_tick: 1,
                 qty_step: 1,
                 min_qty: 1,
+                min_notional_raw: 0,
                 max_leverage: 20,
                 maintenance_margin_bps: 500,
                 valid_from: 1,
@@ -570,6 +569,7 @@ mod tests {
                 price_tick: 1,
                 qty_step: SCALE,
                 min_qty: SCALE,
+                min_notional_raw: 0,
                 max_leverage: 1,
                 maintenance_margin_bps: 0,
                 valid_from: 1,
