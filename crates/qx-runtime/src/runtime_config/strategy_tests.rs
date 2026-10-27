@@ -82,6 +82,112 @@ fn c_abi_strategy_requires_digest_and_exclusive_source() {
 }
 
 #[test]
+fn python_base_strategy_spec_requires_a_module_object_and_size_bound() {
+    let mut config = config();
+    config.strategy.python_strategy_spec = Some(serde_json::json!({"parameters": {}}));
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("python_strategy_spec 必须与 python_module 一起配置"));
+
+    config.strategy.python_module = Some("python.examples.strategy_file_sma".into());
+    config.strategy.python_strategy_spec = Some(serde_json::json!([]));
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("python_strategy_spec 必须是 JSON 对象"));
+
+    config.strategy.python_strategy_spec = Some(serde_json::json!({
+        "parameters": {"padding": "x".repeat(16 * 1024)}
+    }));
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("超过 16 KiB worker 配置上限"));
+
+    config.strategy.python_strategy_spec = Some(serde_json::json!({
+        "strategy": {"kind": "python"},
+        "parameters": {"fast_window": 5}
+    }));
+    assert!(config.validate().is_ok());
+
+    let serialized =
+        serde_json::to_value(super::test_support::config()).expect("default config serializes");
+    assert!(serialized["strategy"].get("python_strategy_spec").is_none());
+}
+
+#[test]
+fn runtime_timer_strategy_requires_an_explicit_live_base_strategy_binding() {
+    let mut config = config();
+    config.strategy.python_module = Some("python.examples.strategy_file_timer".into());
+    config.strategy.python_strategy_spec = Some(serde_json::json!({"data_level": "timer"}));
+
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("Runtime Tick/Timer/OrderBook 模式必须启用 live_enabled"));
+
+    config.strategy.live_enabled = true;
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn runtime_orderbook_strategy_uses_the_durable_live_base_strategy_path() {
+    let mut config = config();
+    config.strategy.python_strategy_spec = Some(serde_json::json!({"data_level": "orderbook"}));
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("Tick/Timer/OrderBook 模式必须使用"));
+
+    config.strategy.python_module = Some("python.examples.strategy_file_orderbook".into());
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("Runtime Tick/Timer/OrderBook 模式必须启用 live_enabled"));
+    config.strategy.live_enabled = true;
+    config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+    config.strategy.account_id = Some("main".into());
+    config.strategy.venue_id = Some("BINANCE".into());
+    config.workers.push(WorkerConfig {
+        id: "strategy-orderbook".into(),
+        role: WorkerRole::Strategy,
+        enabled: true,
+        account_id: Some("main".into()),
+        venue_id: Some("BINANCE".into()),
+        endpoint: None,
+        symbols: vec!["BTCUSDT.BINANCE".into()],
+        settlement_currency: None,
+        credential_env: None,
+        credential_files: None,
+        instrument_spec_path: None,
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    });
+    config.workers.push(WorkerConfig {
+        id: "execution-orderbook".into(),
+        role: WorkerRole::Execution,
+        enabled: true,
+        account_id: Some("main".into()),
+        venue_id: Some("BINANCE".into()),
+        endpoint: None,
+        symbols: vec!["BTCUSDT.BINANCE".into()],
+        settlement_currency: Some("USDT".into()),
+        credential_env: Some(CredentialEnv {
+            api_key: "QX_BINANCE_TESTNET_API_KEY".into(),
+            secret: "QX_BINANCE_TESTNET_API_SECRET".into(),
+        }),
+        credential_files: None,
+        instrument_spec_path: Some("market.json".into()),
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    });
+    assert!(config.validate().is_ok(), "{:?}", config.validate());
+}
+
+#[test]
 fn trusted_native_requires_signature_and_target_triple() {
     // P0-3 / DD-4：开启 in-process 信任门后，动态库、Ed25519 信任根、目标三元组三样缺一即拒。
     let mut config = config();
@@ -342,6 +448,7 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         ashare_actions_path: None,
         ashare_calendar_path: None,
         python_module: None,
+        python_strategy_spec: None,
         transport: StrategyTransport::Jsonl,
         shared_memory_capacity: default_strategy_shared_memory_capacity(),
         shared_memory_slot_bytes: default_strategy_shared_memory_slot_bytes(),

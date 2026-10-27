@@ -23,6 +23,7 @@ fn perpetual_spec() -> TradingInstrumentSpec {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -45,6 +46,7 @@ fn order(side: Side, qty: i128, reduce_only: bool) -> Order {
             leverage: 10,
             post_only: false,
         }),
+        exact_amounts: None,
     }
 }
 
@@ -69,6 +71,7 @@ fn reduce_only_close_uses_projected_exposure_instead_of_gross_plus_order() {
         instrument_spec: Some(perpetual_spec()),
         max_order_notional_raw: None,
         max_position_notional_raw: Some(150 * SCALE),
+        exact: None,
     };
     let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
 
@@ -85,6 +88,7 @@ fn reduce_only_cannot_increase_or_flip_a_one_way_position() {
         instrument_spec: Some(perpetual_spec()),
         max_order_notional_raw: None,
         max_position_notional_raw: Some(500 * SCALE),
+        exact: None,
     };
     let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
 
@@ -104,6 +108,7 @@ fn hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero() {
         instrument_spec: Some(perpetual_spec()),
         max_order_notional_raw: None,
         max_position_notional_raw: Some(500 * SCALE),
+        exact: None,
     };
     let position = OrderRiskPosition::new_with_multiplier(0, 400 * SCALE, SCALE)
         .with_hedge_legs(2 * SCALE, -2 * SCALE);

@@ -21,6 +21,8 @@ fn order_book_backtest_rejects_l2_snapshots_declared_as_l1() {
     };
     let mut l2_snapshot = snapshot(1, 100);
     l2_snapshot.bids.push(crate::BookLevel {
+        price_exact: None,
+        qty_exact: None,
         price: qx_core::Price::from_i64(98),
         qty: qx_core::Quantity::from_i64(3),
     });

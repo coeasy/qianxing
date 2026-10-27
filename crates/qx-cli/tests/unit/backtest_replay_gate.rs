@@ -70,6 +70,8 @@ fn write_run_manifest(path: &Path, log: &qx_core::EventLog, result_hash: u64) {
         input_event_hash: "test-input".into(),
         output_event_hash: format!("{:016x}", log.digest()),
         runtime_version: "test-runtime".into(),
+        canonical_run_spec_json: None,
+        canonical_run_spec_fingerprint: None,
     };
     std::fs::write(path, manifest.to_json().unwrap()).unwrap();
 }
@@ -90,6 +92,7 @@ fn artifact_input<'a>(
         samples: 2,
         sample_ts: qx_app::artifact_store::BacktestSampleTimestamps::Values(&[1, 2]),
         equity: &[100, 150],
+        equity_exact: None,
         positions: &[0, 0],
         fills: &[],
         execution_attempts: &[],

@@ -73,7 +73,7 @@ pub(crate) fn print_cli_help() {
 配置与运维入口：
   init [runtime.json] [--force]
       创建本地运行时配置及可复用的样例数据/调度文件。
-  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest> [--force]
+  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest|research-local|crypto-paper|crypto-sandbox-acceptance> [--force]
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
@@ -85,6 +85,10 @@ pub(crate) fn print_cli_help() {
   doctor [runtime.json] [--json]
       一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
       因此不判运行健康，也不连接交易所、不发送订单。
+  doctor --capabilities [--json]
+      离线查看统一产品能力矩阵；用 --capability-id <ID> 查看支持限制与验收证据。
+      用 --operation balance.read|orders.read|positions.read|cashflows.read|funding.read|account_settings.read 查询私有读取范围。
+      静态登记不代表当前环境连通、凭据可用或沙盒验收通过。
   config explain [runtime.json] [--json]
       输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
   config validate [runtime.json]
@@ -123,8 +127,18 @@ pub(crate) fn print_cli_help() {
       从已完成的多市场 Bar 回测产物、RunManifest、权益/成交副件与各市场输入生成 run EvidenceBundle。
   evidence pack-multi-account-run <multi-account-result.json> --spec <multi-account-spec.json> --output-dir <DIR>
       先对每个成功账户执行 report --evidence，再将批次结果、规格及所有账户便携 EvidenceBundle 原子打包。
-  evidence verify-multi-account-run <DIR>
-      离线验真批次规格/结果身份、全部账户 EvidenceBundle、输入指纹与账户归属；不重算回测结果。
+  evidence verify-multi-account-run <DIR> [--recompute]
+  evidence pack-multi-account-joint-run <multi-account-joint-result.json> --spec <multi-account-joint-spec.json> --output-dir <DIR>
+  evidence verify-multi-account-joint-run <DIR> [--recompute]
+      离线验真批次规格/结果身份、全部账户 EvidenceBundle、输入指纹与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence pack-multi-account-depth-run <multi-account-depth-result.json> --spec <multi-account-depth-spec.json> --output-dir <DIR>
+      将多账户 Tick/OrderBook 批次结果、规格与每个成功账户的便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-depth-run <DIR> [--recompute]
+      离线验真多账户深度输入与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence recompute-experiment <experiment.json>
+      在匹配代码构建上复算单市场 Bar 参数网格的全部候选，并验证原始与重跑产物。
+  evidence recompute-depth-experiment <depth-experiment.json>
+      在匹配代码构建上复算单市场 Tick/OrderBook 参数网格的全部候选，并验证原始与重跑产物。
   evidence recompute-multi-market-experiment <experiment.multi-market-experiment.json>
       在匹配代码构建上复算 Bar 参数网格中的全部候选，并逐项比较结果与 RunManifest。
   evidence recompute-multi-market-depth-experiment <experiment.multi-market-depth-experiment.json>

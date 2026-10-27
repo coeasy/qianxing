@@ -58,6 +58,7 @@ impl BarStrategy for PendingSellStrategy {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect()
     }
@@ -93,6 +94,7 @@ impl BarStrategy for DuplicateSellStrategy {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect()
     }

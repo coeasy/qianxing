@@ -1,5 +1,6 @@
 //! Venue market-data worker hosts and their supervised polling/stream loops.
 
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::market_bridges::{
     bridge_market_quote_to_paper, observe_paper_market_bridges, open_paper_market_bridges,
     worker_scoped_event_log_name, PaperMarketQuote,
@@ -62,7 +63,20 @@ pub fn run_binance_market_worker(
     let mut quotes = 0_u64;
     let mut idle_windows = 0_u64;
     while !context.should_stop() {
-        match stream.recv_quote(runtime_timestamp_ms())? {
+        let poll_now = runtime_timestamp_ms();
+        let poll = match stream.recv_quote(poll_now) {
+            Ok(poll) => poll,
+            Err(error) => {
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::MarketData,
+                    GatewayBusinessHealthStatus::Unhealthy,
+                    poll_now,
+                );
+                metrics.publish(false, poll_now);
+                return Err(format!("Binance market stream 读取行情失败: {error}"));
+            }
+        };
+        match poll {
             BinanceQuotePoll::Quote(quote) => {
                 idle_windows = 0;
                 let received_ts = runtime_timestamp_ms();
@@ -75,6 +89,11 @@ pub fn run_binance_market_worker(
                         format!("{}:quote:{}", worker.id, quote.source_seq),
                     ))
                     .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::MarketData,
+                    GatewayBusinessHealthStatus::Healthy,
+                    received_ts,
+                );
                 metrics.observe(&pipeline);
                 metrics.publish_if_due(true, received_ts);
                 bridge_market_quote_to_paper(
@@ -84,8 +103,10 @@ pub fn run_binance_market_worker(
                         instrument: &instrument,
                         bid: quote.bid,
                         bid_qty: quote.bid_qty,
+                        bid_qty_exact: quote.bid_qty_exact,
                         ask: quote.ask,
                         ask_qty: quote.ask_qty,
+                        ask_qty_exact: quote.ask_qty_exact,
                         event_ts: quote.ts,
                         receive_ts: received_ts,
                         source_seq: quote.source_seq,
@@ -98,13 +119,28 @@ pub fn run_binance_market_worker(
             // An idle read window is healthy-but-degraded and remains cancellable.
             BinanceQuotePoll::Idle => {
                 idle_windows = idle_windows.saturating_add(1);
+                let now = runtime_timestamp_ms();
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::MarketData,
+                    GatewayBusinessHealthStatus::Degraded,
+                    now,
+                );
+                metrics.publish_if_due(true, now);
                 context.mark(
                     ServiceStatus::Degraded,
                     format!("market stream idle consecutive_windows={idle_windows}"),
-                    Some(runtime_timestamp_ms()),
+                    Some(now),
                 )?;
             }
-            BinanceQuotePoll::Closed => break,
+            BinanceQuotePoll::Closed => {
+                let now = runtime_timestamp_ms();
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::MarketData,
+                    GatewayBusinessHealthStatus::Unhealthy,
+                    now,
+                );
+                break;
+            }
         }
     }
     let _ = stream.close();

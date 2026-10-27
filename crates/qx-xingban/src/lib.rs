@@ -34,7 +34,7 @@ pub use self::backtest::{
     PortfolioBarEvent, PortfolioBarMarket, PortfolioBarSeries, PortfolioBarSessionConfig,
     PortfolioBarSessionReport, PortfolioBarStrategy, PortfolioBarTimeline, PortfolioStrategySlot,
     ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,
-    RunManifestIdentity, VirtualTradingConfig,
+    RunManifestIdentity, VirtualTradingConfig, MAX_INSTRUMENT_EQUITY_SAMPLES,
 };
 pub use self::cost::{
     FixedRateMargin, LatencyModel, LeverageMargin, MarginRule, MarginTier, NoMargin, StaticLatency,

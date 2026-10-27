@@ -172,6 +172,7 @@ fn generate_builtin_bar_diagnostics_with_readout(
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         });
     }
     if events.len() < 2 {
@@ -190,6 +191,9 @@ fn generate_builtin_bar_diagnostics_with_readout(
         // checked above but is not repeated in this attachment field.
         data_fingerprint: content_fingerprint.clone(),
         as_of: frame.ts[0],
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         positions: BTreeMap::new(),
         cash: BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]),
         available_margin_raw: None,

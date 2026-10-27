@@ -76,7 +76,7 @@ use_cases:
     capability_level: "R"
   - name: run_experiment
     input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；可选 strategy_kinds 快速选择单腿内置策略，或本地 Rust/Python StrategyArtifactIdentity + factory 为每个候选提供新自定义策略；两种选择方式互斥；可与 split_plan 组合，由训练窗选择策略和参数并报告 OOS；可选 seeded random 或 categorical TPE 搜索，需 split_plan 且搜索预算不超过 256）"
-    output_schema: "run-experiment-result-v1（逐候选结果/错误/策略 kind + CompareRunsResult + 可选 OOS/基准结果；schemas/run-experiment-result-v1.json）"
+    output_schema: "run-experiment-result-v1（逐候选结果/错误/策略 kind + CompareRunsResult + 可选 OOS/基准结果 + CanonicalRunSpec 身份 + RunManifest/RunRecord V2、内容寻址报告与输入规格 sidecar；schemas/run-experiment-result-v1.json）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 规格指纹；自定义策略身份另绑定 ID/version/SHA-256；不匹配的既有实验在启动候选前拒绝"
     cancellation: "同步用例无取消点；RunExperimentSpec::start 与 start_with_strategy_factory 在候选之间及候选 Bar 撮合循环协作取消，不发布部分实验报告"
@@ -86,7 +86,7 @@ use_cases:
     capability_level: "R"
   - name: run_depth_experiment
     input_schema: "RunDepthExperimentSpec v1（DepthBacktestSpec + 内置信号参数网格，可选 strategy_kinds 与参数网格笛卡尔组合；或 market_making_* 做市参数网格；本地 Rust/Python 可用 StrategyArtifactIdentity + strategy factory 为每个 Tick/OrderBook 候选创建新策略，不能与 strategy_kinds 混用；最多 256 候选）"
-    output_schema: "run-depth-experiment-result-v1（逐候选策略 kind/参数/结果/错误 + 收益降序、回撤升序确定性排名；schemas/run-depth-experiment-result-v1.json）"
+    output_schema: "run-depth-experiment-result-v1（逐候选策略 kind/参数/结果/错误 + 收益降序、回撤升序确定性排名；报告绑定 CanonicalRunSpec、输入帧指纹、不可变报告 ArtifactRef、输入规格 sidecar、RunManifest 与 RunRecord V2；schemas/run-depth-experiment-result-v1.json）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 完整规格指纹；自定义策略实验另绑定 StrategyArtifactIdentity ID/version/SHA-256；不同规格/源码在启动候选前拒绝"
     cancellation: "RunDepthExperimentSpec::start 与 start_with_strategy_factory 在候选间及 Tick/快照内核循环协作取消，不发布部分实验报告"
@@ -96,12 +96,12 @@ use_cases:
     capability_level: "R"
   - name: run_multi_leg_experiment
     input_schema: "RunMultiLegExperimentSpec v1（MultiLegBacktestSpec + 双腿策略 kind 选择及 fast_window/slow_window/period/threshold_bps/quantity_raw 参数网格笛卡尔组合；最多 256 候选；本地 Rust/Python 可用 StrategyArtifactIdentity + strategy factory 为每个候选创建自定义策略，不能与 strategy_kinds 混用）"
-    output_schema: "run-multi-leg-experiment-result-v1（逐候选策略 kind/参数/结果/错误 + 按组合收益确定性排名；schemas/run-multi-leg-experiment-result-v1.json）"
+    output_schema: "run-multi-leg-experiment-result-v1（逐候选策略 kind/参数/结果/错误 + 按组合收益确定性排名、CanonicalRunSpec、实验输入规格 sidecar 与绑定输入的 RunRecord V2；schemas/run-multi-leg-experiment-result-v1.json）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 完整规格指纹；自定义策略实验再绑定 StrategyArtifactIdentity；不同规格/源码在启动候选前拒绝"
     cancellation: "RunMultiLegExperimentSpec::start 与 start_with_strategy_factory 在候选之间和候选双腿撮合循环协作取消，不发布部分实验报告"
     progress: "逐候选记载成功与稳定 AppError JSON；RunHandle 提供状态/取消/等待/一次性结果读取，无百分比进度"
-    artifacts: "各成功候选的多腿归因产物 + <experiment_id>.multi-leg-experiment.json"
+    artifacts: "各成功候选的多腿归因产物 + 稳定/不可变实验报告、输入规格 sidecar、RunManifest 与 RunRecord V2"
     error_categories: "AppErrorCategory 八类；候选失败隔离，整体规格/存储错误由用例返回"
     capability_level: "R"
   - name: run_depth_backtest
@@ -136,7 +136,7 @@ use_cases:
     capability_level: "P/L"
   - name: run_multi_account_backtest
     input_schema: "MultiAccountBacktestSpec v1 或 MultiAccountDepthBacktestSpec v1（2..=32 个独立账户；Bar 或 L1 Tick/L2 OrderBook；须同结算币种；不做跨账户净额）"
-    output_schema: "MultiAccountBacktestResult v1 或 MultiAccountDepthBacktestResult v1（每账户独立 outcome/error + 成功账户本金加权收益摘要，部分失败显式 complete=false；schemas/multi-account-backtest-result-v1.json / schemas/multi-account-depth-backtest-result-v1.json）"
+    output_schema: "MultiAccountBacktestResult v2 或 MultiAccountDepthBacktestResult v2（每账户独立 outcome/error + 成功账户本金加权收益摘要，含父 RunManifest；schemas/multi-account-backtest-result-v2.json / schemas/multi-account-depth-backtest-result-v2.json；历史 v1 可读）"
     capability: "RESEARCH"
     idempotency_key: "batch_id + 按 account_id 排序的规格指纹（忽略本地数据/产物路径）；数据内容由子结果指纹标识，成员 run_id 唯一"
     cancellation: "同步入口不取消；两种规格的 start 均返回 RunHandle，在账户间检查取消，并将取消令牌传入当前 Rust Bar 或 Tick/OrderBook 内核；取消不返回部分批次结果"
@@ -146,7 +146,7 @@ use_cases:
     capability_level: "R"
   - name: run_multi_account_depth_backtest
     input_schema: "MultiAccountDepthBacktestSpec v1（2..=32 个独立账户 DepthBacktestSpec；L1 Tick 或 L2 OrderBook 可跨市场但须同结算币种；不做跨账户净额）"
-    output_schema: "MultiAccountDepthBacktestResult v1（每账户独立 DepthBacktestOutcome/error + 成功账户本金加权收益摘要，部分失败显式 complete=false；schemas/multi-account-depth-backtest-result-v1.json）"
+    output_schema: "MultiAccountDepthBacktestResult v2（每账户独立 DepthBacktestOutcome/error + 成功账户本金加权收益摘要与父 RunManifest，部分失败显式 complete=false；历史 v1 可读，schemas/multi-account-depth-backtest-result-v2.json）"
     capability: "RESEARCH"
     idempotency_key: "batch_id + 按 account_id 排序的深度规格指纹（忽略本地数据/产物路径）；成员 run_id 唯一，数据内容由子结果指纹标识"
     cancellation: "同步入口不取消；MultiAccountDepthBacktestSpec::start 在账户间检查取消，并将取消令牌传入当前 Rust Tick/OrderBook 内核；取消不返回部分批次结果"
@@ -161,7 +161,7 @@ use_cases:
     idempotency_key: "run_id + 规格指纹 + 双 BarFrame 内容指纹；异内容拒绝覆盖"
     cancellation: "同步入口不取消；MultiLegBacktestSpec::start 在共享事件时间线和撮合循环协作取消，不发布部分归因产物"
     progress: "RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；统一 OMS/Ledger/EventLog 通过 Rust ReplayVerifier"
-    artifacts: "<run_id>.multi-leg.json（策略、数据与配置身份、共享 EventLog/账簿回放、两腿成交哈希与归因、裸腿待对账事实）"
+    artifacts: "<run_id>.multi-leg.json v4 + <run_id>.multi-leg.run.json；CanonicalRunSpec 绑定双 BarFrame、策略源码/参数、有效市场规格、费用/撮合/资金费与真实 session clock；API 报告读回复核 RunManifest 并重放 EventLog；v3 产物继续读取"
     error_categories: "AppErrorCategory 八类；重复标的或非法时间序列为 InvalidInput，样本不足为 FidelityInsufficient，异身份覆盖为 Conflict"
     capability_level: "R"
   - name: run_multi_builtin_backtest
@@ -208,10 +208,10 @@ use_cases:
     input_schema: "ProviderBacktestSpec（DataRequest + BacktestSpec + dataset identity；qx-app 负责注册表选源与 failover）"
     output_schema: "ProviderBacktestOutcome v1（schemas/provider-backtest-result-v1.json；DatasetManifestV2 + DatasetVerdict + BacktestOutcome）"
     capability: "RESEARCH"
-    idempotency_key: "BarFrame 与 manifest 内容逐字节相同允许重跑；同路径异内容返回 Conflict"
+    idempotency_key: "run_id + config/data/canonical fingerprints；Provider request/source 与冻结 BarFrame/Manifest 全部进入 CanonicalRunSpec，同路径异身份返回 Conflict"
     cancellation: "同步 Provider 取数由 Provider adapter 定义 deadline；冻结/校验/回测同步无取消点"
-    progress: "无；结果包含同一 Rust 回测产物与 Provider provenance"
-    artifacts: "不可变 BarFrame JSON + DatasetManifestV2 sidecar + BacktestSpec 既定四份产物"
+    progress: "无；标准 RunManifest 与摘要输入块均保留 Provider request/source 与 DatasetManifestV2 lineage，结果继续复用共享 Rust 回测产物"
+    artifacts: "不可变 BarFrame JSON + DatasetManifestV2 sidecar + BacktestSpec 既定四份产物；CanonicalRunSpec/summary 对 Provider lineage 做一致性校验"
     error_categories: "AppErrorCategory 八类；数据、冻结冲突、校验及回测沿用共享用例错误"
     capability_level: "R"
   - name: run_provider_depth_backtest
@@ -231,7 +231,7 @@ use_cases:
     idempotency_key: "run_id + 规格/双 BarFrame 指纹 + strategy_id/version/source_sha256；身份或内容变化拒绝覆盖"
     cancellation: "同步入口不取消；start_* RunHandle 在信号与双腿 Rust 撮合边界协作取消，不发布部分归因产物"
     progress: "RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；两腿各自通过 Rust ReplayVerifier"
-    artifacts: "<run_id>.multi-leg.json（策略 ID/版本、数据与配置身份、两腿结果哈希、归因与裸腿待对账事实）"
+    artifacts: "<run_id>.multi-leg.json v4 + <run_id>.multi-leg.run.json；策略 ID/版本/源码 SHA、双腿数据区间、有效市场规格、执行模型和真实 session clock 进入 CanonicalRunSpec；报告读回对账 manifest 并重放；v3 产物继续读取"
     error_categories: "AppErrorCategory 八类；身份/规格/回调意图非法为 InvalidInput，异身份覆盖为 Conflict"
     capability_level: "R"
   - name: run_multi_market_backtest
@@ -245,13 +245,13 @@ use_cases:
     error_categories: "AppErrorCategory 八类；无效标的/预算/数据或跨市场规格不匹配为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
   - name: run_multi_market_experiment
-    input_schema: "RunMultiMarketExperimentSpec v1（共享账户多市场 Bar 规格 + 目标策略槽 + 有界参数/内置策略种类网格；最多 256 个候选）"
-    output_schema: "run-multi-market-experiment-result-v1（候选逐项结果/错误、共享账簿哈希、按收益与回撤确定性排序的榜单）"
+    input_schema: "RunMultiMarketExperimentSpec v1（共享账户多市场 Bar 规格 + 目标策略槽 + 有界参数/内置策略种类网格；最多 256 个候选；可选联合时间轴 holdout/walk-forward SplitPlan；search 支持随机/TPE/KDE-TPE/Pareto-TPE 离散或步进整数提案，必须配置 SplitPlan）"
+    output_schema: "run-multi-market-experiment-result-v1（候选逐项结果/错误、折内候选失败、共享账簿哈希、确定性训练榜单、逐折训练/OOS 结果与自适应提案轨迹）"
     capability: "RESEARCH"
-    idempotency_key: "experiment_id + 规格/排序市场 BarFrame 指纹 + 目标槽/网格；产物字节相同才允许重跑，否则 Conflict"
-    cancellation: "同步入口不取消；RunMultiMarketExperimentSpec::start 在候选之间及共享 Rust 市场内核事件批次协作取消，不发布部分实验报告"
+    idempotency_key: "experiment_id + 规格/排序市场 BarFrame 指纹 + 目标槽/参数网格/搜索算法预算与 seed/SplitPlan；产物字节相同才允许重跑，否则 Conflict"
+    cancellation: "同步入口不取消；RunMultiMarketExperimentSpec::start 在每个训练/OOS 执行之间及共享 Rust 市场内核事件批次协作取消，不发布部分实验报告；含切分时训练与OOS总执行数不超过4096"
     progress: "RunHandle 提供状态、取消、等待和一次性结果；每候选错误隔离，取消整个批次"
-    artifacts: "不可变 <experiment_id>.multi-market-experiment.json 与每个候选的共享多市场回测产物"
+    artifacts: "稳定 <experiment_id>.multi-market-experiment.json 索引、不可变带 result_hash/input-v1 报告、RunManifest、绑定原始实验规格 sidecar 的 RunRecord V2 与每个候选的共享多市场回测产物"
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
   - name: run_multi_account_joint_backtest
@@ -261,7 +261,7 @@ use_cases:
     idempotency_key: "run_id + 规范规格/每账户市场 BarFrame 指纹；同身份产物逐字节相同，异内容拒绝覆盖"
     cancellation: "同步入口不取消；RunHandle 在账户间与每个账户共享 Rust 市场内核事件批次协作取消，不发布部分联合产物"
     progress: "RunHandle 提供状态、取消、等待和一次性结果；账户独立失败会使联合运行明确失败"
-    artifacts: "<run_id>.joint-portfolio.json、<run_id>.joint-equity.json、<run_id>.joint-fills.json；账户子运行分别保留可重放产物"
+    artifacts: "<run_id>.joint-portfolio.json（envelope v2，Outcome DTO v1）、<run_id>.joint-equity.json、<run_id>.joint-fills.json、父 RunManifest 与 RunRecord V2；ArtifactRef 记录各自 payload schema version 并以 SHA-256/字节长度绑定四项产物；账户子运行分别保留可重放产物"
     error_categories: "AppErrorCategory 八类；不支持交易所/标的 venue 不匹配/无效合约或数据为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
   - name: run_multi_market_depth_backtest
@@ -276,12 +276,12 @@ use_cases:
     capability_level: "R"
   - name: run_multi_market_depth_experiment
     input_schema: "RunMultiMarketDepthExperimentSpec v1（共享账户多市场混合 L1/L2 现货规格 + 目标策略槽 + 最多 256 个内置参数/策略种类组合，内置经典策略由共享盘口→Bar 适配器驱动并要求每个候选有有效成交，或 callback_parameter_space 自定义策略参数网格）"
-    output_schema: "run-multi-market-depth-experiment-result-v1（候选逐项结果/错误、共享账簿哈希、按收益与回撤确定性排序的榜单）"
+    output_schema: "run-multi-market-depth-experiment-result-v1（候选逐项结果/错误、共享账簿哈希、确定性排名、CanonicalRunSpec、实验输入规格 sidecar、RunManifest 与绑定输入 sidecar 的 RunRecord V2）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 规范规格/排序市场 DepthFrame 指纹 + 目标槽/网格；产物字节相同才允许重跑，否则 Conflict"
     cancellation: "同步入口不取消；RunMultiMarketDepthExperimentSpec::start 在候选之间及共享 Rust L1/L2 市场内核快照循环协作取消，不发布部分实验报告"
     progress: "RunHandle 提供状态、事件、取消、等待和一次性结果；每候选错误隔离，取消整个批次"
-    artifacts: "不可变 <experiment_id>.multi-market-depth-experiment.json 与每个候选的共享多市场 L1/L2 回测产物"
+    artifacts: "稳定实验索引、不可变内容寻址报告、RunManifest、RunRecord V2 与每个候选的共享多市场 L1/L2 回测产物；复用前复核候选 CanonicalRunSpec 和 EventLog"
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，衍生品跨市场保证金明确拒绝，异身份产物为 Conflict"
     capability_level: "R"
   - name: validate_dataset_manifest

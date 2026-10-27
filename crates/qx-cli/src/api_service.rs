@@ -10,11 +10,6 @@ use std::path::Path;
 
 mod api_service_builder;
 
-#[cfg(test)]
-pub(crate) use qx_service::api_read_model::{
-    default_account_event_log, load_api_account_snapshots,
-};
-
 pub(crate) fn build_configured_api_service(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
@@ -22,12 +17,4 @@ pub(crate) fn build_configured_api_service(
     catch_panic("api-service", || {
         api_service_builder::build_configured_api_service_inner(config, runtime_config_path)
     })
-}
-
-/// Compatibility helper for older CLI tests; production uses the multi-account service read model.
-#[cfg(test)]
-pub(crate) fn load_api_account_snapshot(
-    config: &RuntimeConfig,
-) -> Result<Option<qx_protocol::AccountSnapshot>, String> {
-    Ok(load_api_account_snapshots(config)?.into_iter().next())
 }

@@ -61,11 +61,11 @@ pub(super) fn experiment_folds(
         .ok_or_else(|| invalid("实验训练窗与测试窗长度溢出"))?;
     if total_bars < span {
         return Err(AppError::new(
-                AppErrorCategory::FidelityInsufficient,
-                format!(
-                    "实验切分计划需要至少 {span} 根 Bar（训练 {train} + purge {purge} + 测试 {test}），实际 {total_bars} 根"
-                ),
-            ));
+            AppErrorCategory::FidelityInsufficient,
+            format!(
+                "实验切分计划需要至少 {span} 根 Bar（训练 {train} + purge {purge} + 测试 {test}），实际 {total_bars} 根"
+            ),
+        ));
     }
     let mut folds = Vec::new();
     if plan.walk_forward {

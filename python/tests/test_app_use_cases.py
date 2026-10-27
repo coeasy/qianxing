@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import asyncio
+import csv
 import os
 import shutil
 import tempfile
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 from typing import Any
@@ -32,13 +34,22 @@ def _load_native():
     """
     root = Path(__file__).resolve().parents[2]
     loaded = sys.modules.get("qianxing_bridge._qianxing_native")
-    if loaded is not None and hasattr(loaded, "app_assemble_dataset_bundle"):
+    loaded_path = Path(getattr(loaded, "__file__", "")).resolve() if loaded else None
+    # Reuse only the per-process copy made below from the newest target artifact.
+    # A package-local wheel extension can expose the older app entrypoints while
+    # lacking newer schema fields, so method-name presence alone is not a version check.
+    process_copy = root / "target" / f"python-test-native-{os.getpid()}"
+    if (
+        loaded is not None
+        and hasattr(loaded, "app_assemble_dataset_bundle")
+        and loaded_path is not None
+        and loaded_path.parent == process_copy.resolve()
+    ):
         # Reuse the already imported build. On Windows the loaded DLL is locked, so copying
         # the same source into another per-process directory fails with WinError 32.
         return loaded
     if loaded is not None:
-        # An earlier test may have imported an ignored, stale package-local `.pyd`.
-        # Do not let that cached module bypass the version probe below.
+        # Prefer the newest target artifact over an importable but possibly stale wheel.
         sys.modules.pop("qianxing_bridge._qianxing_native", None)
     directories = []
     for profile in ("release", "debug"):
@@ -214,6 +225,36 @@ class AppUseCaseTests(unittest.TestCase):
             self.assertIs(app.start_experiment_with_strategy(spec, callback, **identity), handle)
             start.assert_called_once_with(expected_payload, "custom", "v1", "a" * 64, unittest.mock.ANY)
 
+    def test_quick_research_spec_bridge_calls_the_rust_app_preflight(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing_bridge import app, native
+
+        spec = {"schema_version": 1, "experiment_id": "quick-research"}
+        expected_payload = json.dumps(spec, ensure_ascii=False)
+        normalized = {**spec, "baselines": ["buy-and-hold"]}
+        with patch.object(
+            native,
+            "app_prepare_quick_research_spec_v1",
+            return_value=json.dumps(normalized, ensure_ascii=False),
+            create=True,
+        ) as prepare:
+            self.assertEqual(app.prepare_quick_research_spec(spec), normalized)
+            prepare.assert_called_once_with(expected_payload)
+
+    def test_native_quick_research_entrypoint_calls_the_bundled_extension(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing_bridge import native
+
+        payload = '{"experiment_id":"quick-native"}'
+        extension = SimpleNamespace(
+            app_prepare_quick_research_spec_v1=lambda value: f"normalized:{value}"
+        )
+        with patch.object(native, "_extension", return_value=extension):
+            self.assertEqual(
+                native.app_prepare_quick_research_spec_v1(payload),
+                f"normalized:{payload}",
+            )
+
     def tearDown(self):
         self.temp_dir.cleanup()
 
@@ -272,24 +313,54 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(depth.command, "depth-backtest")
         self.assertEqual(depth.input, "depth.json")
 
-    def test_doctor_reports_all_native_multi_leg_entrypoints(self):
+    def test_doctor_reports_complete_native_use_case_catalog(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import doctor
         from qianxing_bridge import native
 
-        with patch.object(native, "available", return_value=True), patch.object(
-            native, "app_available", return_value=True
-        ):
+        required_entrypoints = {
+            entrypoint
+            for _use_case, entrypoints in native.APP_USE_CASE_ENTRYPOINTS
+            for entrypoint in entrypoints
+        }
+        self.assertLessEqual(required_entrypoints, set(native.APP_ENTRYPOINTS))
+        extension = SimpleNamespace(
+            **{entrypoint: object() for entrypoint in native.APP_ENTRYPOINTS}
+        )
+        with patch.object(native, "_extension", return_value=extension):
             report = doctor()
+
+        expected_use_cases = [
+            use_case for use_case, _entrypoints in native.APP_USE_CASE_ENTRYPOINTS
+        ]
+        self.assertEqual(report["implemented_use_cases"], expected_use_cases)
+        self.assertIn("report.read.depth.v1", report["implemented_use_cases"])
+        self.assertIn("report.read.multi-leg.facts.v1", report["implemented_use_cases"])
+        self.assertIn("report.read.multi-leg.event-page.v1", report["implemented_use_cases"])
+        self.assertIn("backtest.multi-account.bar.v1", report["implemented_use_cases"])
+        self.assertIn("backtest.multi-account.depth.v1", report["implemented_use_cases"])
+        self.assertIn("backtest.multi-account.joint.v1", report["implemented_use_cases"])
+        self.assertIn("backtest.multi-market.bar.v1", report["implemented_use_cases"])
+        self.assertIn("backtest.multi-market.depth.v1", report["implemented_use_cases"])
         self.assertIn("backtest.multi-leg.bar.v1", report["implemented_use_cases"])
-        self.assertIn(
-            "backtest.multi-leg.bar.run-handle.v1", report["implemented_use_cases"]
-        )
         self.assertIn("experiment.grid.multi-leg.bar.v1", report["implemented_use_cases"])
-        self.assertIn(
-            "experiment.grid.multi-leg.bar.run-handle.v1", report["implemented_use_cases"]
-        )
         self.assertFalse(any("multi-leg" in item for item in report["limitations"]))
+
+        partial_extension = SimpleNamespace(app_run_multi_market_backtest=object())
+        with patch.object(native, "_extension", return_value=partial_extension):
+            self.assertNotIn(
+                "backtest.multi-market.bar.v1", native.app_implemented_use_cases()
+            )
+
+        old_extension = SimpleNamespace(
+            **{
+                entrypoint: object()
+                for entrypoint in native.APP_ENTRYPOINTS
+                if entrypoint != "app_prepare_quick_research_spec_v1"
+            }
+        )
+        with patch.object(native, "_extension", return_value=old_extension):
+            self.assertFalse(native.app_available())
 
     def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -563,6 +634,10 @@ class AppUseCaseTests(unittest.TestCase):
             ("run_backtest", "/app/backtest", False),
             ("run_provider_backtest_with_manifest", "/app/provider-backtest", False),
             ("run_provider_depth_backtest", "/app/provider-depth-backtest", False),
+            ("read_provider_run_report_v1", "/app/read-provider-report", False),
+            ("read_provider_depth_run_report_v1", "/app/read-provider-depth-report", False),
+            ("read_multi_account_joint_report_v1", "/app/read-multi-account-joint-report", False),
+            ("read_multi_leg_research_report_v1", "/app/read-multi-leg-report", False),
             ("provider_preflight", "/app/capabilities/providers/preflight", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
@@ -630,6 +705,46 @@ class AppUseCaseTests(unittest.TestCase):
                 "retry_chain": ["provider"],
                 "source_hash": "0123456789abcdef",
                 "depth_path": "depth.json",
+            },
+            "read_provider_run_report_v1": {
+                "schema_version": 1,
+                "report": {"schema_version": 1, "run_id": "bar"},
+                "dataset_verdict": {},
+                "manifest": {},
+            },
+            "read_provider_depth_run_report_v1": {
+                "schema_version": 1,
+                "report": {"schema_version": 1, "run_id": "depth"},
+                "provider_id": "provider",
+                "provider_version": "v1",
+                "request_id": "request",
+                "retry_chain": ["provider"],
+                "source_hash": "0123456789abcdef",
+                "query_digest": "0123456789abcdef",
+                "depth_input_hash": "0123456789abcdef",
+            },
+            "read_multi_account_joint_report_v1": {
+                "schema_version": 1,
+                "run_id": "joint",
+                "settlement_currency": "USDT",
+                "spec_fingerprint": "0123456789abcdef",
+                "verification": {"verified": True},
+                "summary": {},
+                "equity": {"rows": []},
+                "fills": {"rows": []},
+                "accounts": [],
+            },
+            "read_multi_leg_research_report_v1": {
+                "schema_version": 1,
+                "run_id": "multi-leg",
+                "strategy_id": "pairs",
+                "data_fingerprint": "0123456789abcdef",
+                "summary": {},
+                "execution": {},
+                "markets": [],
+                "equity": {"rows": []},
+                "fills": {"rows": []},
+                "events": {"rows": []},
             },
             "provider_preflight": {
                 "schema_version": 1,
@@ -901,6 +1016,33 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(sent.method, "POST")
         self.assertEqual(json.loads(sent.data), outcome)
 
+    def test_async_multi_leg_report_uses_the_versioned_remote_route(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"schema_version":1,"run_id":"multi-leg","events":{"rows":[]}}'
+
+        request = {
+            "schema_version": 1,
+            "outcome": {"run_id": "multi-leg"},
+        }
+        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+            client = AppClient("https://localhost")
+            result = asyncio.run(client.async_read_multi_leg_research_report_v1(request))
+        self.assertEqual(result["run_id"], "multi-leg")
+        sent = open_url.call_args.args[0]
+        self.assertEqual(sent.full_url, "https://localhost/app/read-multi-leg-report")
+        self.assertEqual(sent.method, "POST")
+        self.assertEqual(json.loads(sent.data), request)
+
     def test_async_provider_preflight_delegates_to_the_same_remote_route(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import AppClient
@@ -977,35 +1119,68 @@ class AppUseCaseTests(unittest.TestCase):
         spec["strategy"]["strategy_id"] = "python-custom-strategy"
         spec["strategy"]["fast_window"] = 5
         spec["strategy"]["slow_window"] = 20
+        spec["market_spec"] = {
+            "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+            "product": "spot",
+            "base_currency": "BTC",
+            "quote_currency": "USDT",
+            "settlement_currency": "USDT",
+            "contract_size": 1_000_000_000,
+            "linear": False,
+            "inverse": False,
+            "price_tick": 1,
+            "qty_step": 1,
+            "min_qty": 1,
+            "min_notional_raw": 0,
+            "max_leverage": 1,
+            "maintenance_margin_bps": 0,
+            "valid_from": 0,
+            "valid_to": None,
+            "exact_rules": {
+                "contract_size": {"coefficient": "1", "scale": 0},
+                "price_tick": {"coefficient": "1", "scale": 8},
+                "quantity_step": {"coefficient": "1", "scale": 8},
+                "minimum_quantity": {"coefficient": "1", "scale": 8},
+                "minimum_notional": {"coefficient": "0", "scale": 0},
+            },
+        }
+        spec["fee_schedule"] = {"maker_fee_bps": 10, "taker_fee_bps": 10}
 
-        class BuyOnce:
-            emitted = False
+        from qianxing_strategy import BaseStrategy
 
-            def on_event(self, context, event):
-                bar = event["Bar"]
+        class BuyOnce(BaseStrategy):
+            def on_init(self, context):
+                self.emitted = False
+                self.lifecycle = ["init"]
+
+            def on_start(self, context):
+                self.lifecycle.append("start")
+
+            def on_bar(self, context, bar):
+                self.lifecycle.append("bar")
                 intents = []
                 if not self.emitted:
                     self.emitted = True
-                    intents.append({
-                        "intent_id": 1,
-                        "instrument": bar["instrument"],
-                        "side": "Buy",
-                        "qty": 1_000_000,
-                        "limit": None,
-                        "policy": None,
-                        "reduce_only": False,
-                        "post_only": False,
-                    })
-                return {
-                    "schema_version": 1,
-                    "request_id": f"{context['strategy_id']}:{bar['ts']}",
-                    "strategy_id": context["strategy_id"],
-                    "signal_id": bar["ts"],
-                    "confidence": 10_000,
-                    "priority": 0,
-                    "expires_at": 0,
-                    "intents": intents,
-                }
+                    intents.append(self.order_intent(
+                        intent_id=1,
+                        instrument=bar["instrument"],
+                        side="buy",
+                        qty_exact="0.001",
+                    ))
+                return self.decision(
+                    context,
+                    "Bar",
+                    bar,
+                    intents=intents,
+                    confidence=10_000,
+                )
+
+            def on_order_update(self, context, update):
+                self.lifecycle.append(f"update:{update['event']}")
+                return None
+
+            def on_stop(self):
+                self.lifecycle.append("stop")
 
         from qianxing.app import (
             AsyncCoreClient,
@@ -1014,19 +1189,74 @@ class AppUseCaseTests(unittest.TestCase):
             run_backtest_with_strategy_slots,
             start_backtest_with_strategy,
             start_backtest_with_strategy_slots,
+            read_run_report_v1,
             verify_run,
         )
 
+        callback_strategy = BuyOnce()
         outcome = run_backtest_with_strategy(
             spec,
-            BuyOnce(),
+            callback_strategy,
             strategy_id="python-custom-strategy",
             strategy_version="python-test-v1",
             source_sha256="a" * 64,
         )
         self.assertGreater(outcome.fills, 0)
+        events = [
+            json.loads(line)
+            for line in Path(outcome.artifacts["event_trace"])
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        custom_fills = [
+            event["kind"]["Filled"]["fill"]
+            for event in events
+            if "Filled" in event.get("kind", {})
+            and event["kind"]["Filled"]["fill"].get("strategy_id")
+            == "python-custom-strategy"
+        ]
+        self.assertTrue(custom_fills)
+        self.assertEqual(
+            custom_fills[0]["exact_amounts"]["quantity"],
+            {"coefficient": "1", "scale": 3},
+        )
+        import csv
+
+        with Path(outcome.artifacts["fills"]).open(
+            encoding="utf-8", newline=""
+        ) as fills_file:
+            fill_rows = list(csv.DictReader(fills_file))
+        exact_fill_rows = [
+            row
+            for row in fill_rows
+            if row["strategy_id"] == "python-custom-strategy"
+        ]
+        self.assertEqual(len(exact_fill_rows), 1)
+        self.assertEqual(exact_fill_rows[0]["qty_raw"], "0")
+        self.assertEqual(exact_fill_rows[0]["qty_exact"], "0.001")
+        self.assertTrue(exact_fill_rows[0]["price_exact"])
+        self.assertIsInstance(
+            json.loads(exact_fill_rows[0]["exact_fees_json"] or "[]"), list
+        )
+        self.assertEqual(callback_strategy.lifecycle[:2], ["init", "start"])
+        self.assertTrue(any(item.startswith("update:") for item in callback_strategy.lifecycle))
+        self.assertEqual(callback_strategy.lifecycle[-1], "stop")
         verification = verify_run(outcome)
         self.assertTrue(verification.verified, verification.mismatches)
+        report = read_run_report_v1(outcome)
+        self.assertEqual(report["schema_version"], 1)
+        self.assertTrue(report["verification"]["verified"])
+        self.assertEqual(report["summary"]["run_id"], outcome.run_id)
+        self.assertEqual(report["equity"]["total"], outcome.equity_points)
+        self.assertEqual(report["fills"]["total"], outcome.fills)
+        exact_report_fills = [
+            row
+            for row in report["fills"]["rows"]
+            if row.get("strategy_id") == "python-custom-strategy"
+        ]
+        self.assertEqual(len(exact_report_fills), 1)
+        self.assertEqual(exact_report_fills[0]["qty_exact"], "0.001")
         summary = json.loads(Path(outcome.artifacts["summary"]).read_text(encoding="utf-8"))
         self.assertEqual(summary["strategy_version"], "python-test-v1")
 
@@ -1299,6 +1529,87 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(async_outcome)
         self.assertGreater(async_outcome.fills, 0)
         self.assertTrue(verify_run(async_outcome).verified)
+
+    def test_python_strategy_warmup_gates_orders_in_the_shared_rust_backtest(self):
+        self._require()
+        scale = 1_000_000_000
+        bars_path = self.output_dir / "python-warmup-bars.json"
+        prices = [100 * scale + index * scale for index in range(7)]
+        bars_path.write_text(json.dumps({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "python-warmup-v1",
+            "ts": [1_000 + index * 1_000 for index in range(len(prices))],
+            "open_raw": prices,
+            "high_raw": [price + scale for price in prices],
+            "low_raw": [price - scale for price in prices],
+            "close_raw": prices,
+            "volume_raw": [scale] * len(prices),
+        }), encoding="utf-8")
+        spec = self._spec(
+            "python-warmup-gate", self.output_dir / "warmup-gate", str(bars_path)
+        )
+        spec["strategy"]["strategy_id"] = "python-warmup-gate"
+        spec["strategy"]["fast_window"] = 5
+        spec["strategy"]["slow_window"] = 20
+
+        from qianxing import run_backtest_with_strategy, verify_run
+        from qianxing_strategy import BaseStrategy
+
+        class BuyOnFirstDecision(BaseStrategy):
+            def __init__(self):
+                self.completed = []
+                self.seen = 0
+                self.emitted = False
+                self.ready = False
+
+            def history_requirements(self):
+                return {"warmup_bars": 3}
+
+            def on_warmup_complete(self, context, instrument, observed_bars):
+                self.completed.append((instrument, observed_bars))
+                self.ready = True
+
+            def on_bar(self, context, bar):
+                self.seen += 1
+                intents = []
+                if self.ready and not self.emitted:
+                    self.emitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": bar["instrument"],
+                        "side": "Buy",
+                        "qty": 1_000_000,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return self.decision(
+                    context,
+                    "Bar",
+                    bar,
+                    intents=intents,
+                )
+
+        strategy = BuyOnFirstDecision()
+        outcome = run_backtest_with_strategy(
+            spec,
+            strategy,
+            strategy_id="python-warmup-gate",
+            strategy_version="python-test-v1",
+            source_sha256="b" * 64,
+        )
+        self.assertEqual(strategy.seen, 6)
+        self.assertEqual(
+            strategy.completed,
+            [({"symbol": "BTCUSDT", "venue": "BINANCE"}, 3)],
+        )
+        with Path(outcome.artifacts["fills"]).open(encoding="utf-8", newline="") as stream:
+            fills = list(csv.DictReader(stream))
+        self.assertEqual(len(fills), 1)
+        self.assertGreaterEqual(int(fills[0]["ts"]), 4_000)
+        self.assertTrue(verify_run(outcome).verified)
 
     def test_python_order_update_decision_returns_to_the_rust_fill_loop(self):
         self._require()
@@ -1931,6 +2242,12 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(result["failed_candidates"], 0)
         self.assertEqual(len(result["comparison"]["runs"]), 2)
         self.assertTrue(Path(result["artifact_path"]).is_file())
+        self.assertTrue(Path(result["run_manifest"]).is_file())
+        self.assertTrue(Path(result["run_record"]).is_file())
+        self.assertTrue(Path(result["artifact_locations"]["experiment_report"]).is_file())
+        self.assertNotEqual(result["artifact_locations"]["experiment_report"], result["artifact_path"])
+        self.assertEqual(result["artifact_locations"]["run_manifest"], result["run_manifest"])
+        self.assertTrue(Path(result["artifact_locations"]["experiment_input"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
         result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-experiment-result-v1.json").read_text(encoding="utf-8"))
@@ -2139,6 +2456,7 @@ class AppUseCaseTests(unittest.TestCase):
             PortfolioStrategySpec,
             TradingInstrumentSpec,
             run_depth_backtest,
+            read_depth_run_report_v1,
             start_depth_backtest,
             verify_depth_run,
         )
@@ -2221,6 +2539,12 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_summary["market_spec"]["product"], "perpetual")
         self.assertEqual(typed_summary["order_policy"]["leverage"], 2)
         self.assertTrue(verify_depth_run(typed).verified)
+        typed_report = read_depth_run_report_v1(typed)
+        self.assertEqual(typed_report["schema_version"], 1)
+        self.assertTrue(typed_report["verification"]["verified"])
+        self.assertEqual(typed_report["run_id"], typed.run_id)
+        self.assertEqual(typed_report["equity"]["total"], typed.equity_points)
+        self.assertEqual(typed_report["fills"]["total"], typed.fills)
 
         kelly_snapshots = []
         for index in range(48):
@@ -2370,6 +2694,9 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(verify_depth_run(market_maker).verified)
 
         depth_handle_payload = {**payload, "run_id": "python-tick-handle-run"}
+        depth_handle_payload["manifest_run_id"] = (
+            "depth-backtest:l1:sma_cross:BTCUSDT.BINANCE"
+        )
         depth_handle_payload["output_dir"] = str(self.output_dir / "depth-handle-runs")
         handle = start_depth_backtest(depth_handle_payload)
         self.assertEqual(handle.run_id, "python-tick-handle-run")
@@ -2378,6 +2705,11 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(depth_result)
         self.assertEqual(depth_result.tier, "l1")
         self.assertEqual(depth_result.equity_points, 48)
+        self.assertEqual(
+            depth_result.manifest_run_id,
+            "depth-backtest:l1:sma_cross:BTCUSDT.BINANCE",
+        )
+        self.assertTrue(verify_depth_run(depth_result).verified)
         self.assertIsNone(handle.result(), "depth outcome is delivered only once")
 
         depth_experiment_payload = {
@@ -2391,6 +2723,7 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(depth_experiment["failed_candidates"], 0)
         self.assertEqual(depth_experiment["succeeded_candidates"], 2)
         self.assertTrue(Path(depth_experiment["artifact_path"]).is_file())
+        self.assertTrue(Path(depth_experiment["artifact_locations"]["experiment_input"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
         result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-depth-experiment-result-v1.json").read_text(encoding="utf-8"))
@@ -2882,9 +3215,16 @@ class AppUseCaseTests(unittest.TestCase):
         result = json.loads(handle.result_json())
         self.assertEqual(result["summary"]["accounts_succeeded"], 2)
         self.assertGreater(result["summary"]["successful_fills"], 0)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import read_multi_account_report_v1
+
+        report = read_multi_account_report_v1(result)
+        self.assertEqual(report["schema_version"], 1)
+        self.assertTrue(report["verification"]["verified"])
+        self.assertEqual(report["summary"]["accounts_succeeded"], 2)
+        self.assertEqual(len(report["accounts"]), 2)
         self.assertIsNone(handle.result_json(), "batch result is delivered once")
 
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BacktestSpec,
             BuiltinStrategySpec,
@@ -2917,6 +3257,9 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_handle.wait(10_000), "succeeded")
         typed_result = typed_handle.result()
         self.assertEqual(typed_result.summary["accounts_succeeded"], 2)
+        typed_report = read_multi_account_report_v1(typed_result)
+        self.assertTrue(typed_report["verification"]["verified"])
+        self.assertEqual(typed_report["summary"]["accounts_succeeded"], 2)
         self.assertIsNone(typed_handle.result(), "typed batch result is delivered once")
 
     def test_multi_account_depth_start_translates_native_errors(self):
@@ -2987,6 +3330,13 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertGreater(result["summary"]["successful_fills"], 0)
         self.assertEqual(result["runs"][0]["outcome"]["instrument"], "BTCUSDT.BINANCE")
         self.assertEqual(result["runs"][1]["outcome"]["instrument"], "ETHUSDT.OKX")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import read_multi_account_report_v1
+
+        depth_report = read_multi_account_report_v1(result)
+        self.assertTrue(depth_report["verification"]["verified"])
+        self.assertEqual(depth_report["summary"]["accounts_succeeded"], 2)
+        self.assertEqual(len(depth_report["accounts"]), 2)
 
         handle = self.bridge.start_multi_account_depth_backtest(payload)
         self.assertEqual(handle.wait(10_000), "succeeded")
@@ -2995,7 +3345,7 @@ class AppUseCaseTests(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BuiltinStrategySpec, DepthBacktestSpec, MultiAccountDepthBacktestSpec,
-            start_multi_account_depth_backtest,
+            read_multi_account_report_v1, start_multi_account_depth_backtest,
         )
         typed_run = lambda account, run_id: DepthBacktestSpec(
             run_id=run_id, account_id=account, depth_path=str(depth), tier="l1",
@@ -3010,7 +3360,11 @@ class AppUseCaseTests(unittest.TestCase):
         )
         typed_handle = start_multi_account_depth_backtest(typed_spec)
         self.assertEqual(typed_handle.wait(10_000), "succeeded")
-        self.assertEqual(typed_handle.result().summary["accounts_succeeded"], 2)
+        typed_result = typed_handle.result()
+        self.assertEqual(typed_result.summary["accounts_succeeded"], 2)
+        typed_depth_report = read_multi_account_report_v1(typed_result)
+        self.assertTrue(typed_depth_report["verification"]["verified"])
+        self.assertEqual(typed_depth_report["summary"]["accounts_succeeded"], 2)
 
     def test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle(self):
         self._require()
@@ -3046,6 +3400,14 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertGreater(first["primary_fills"], 0)
         self.assertGreater(first["reference_fills"], 0)
         self.assertTrue(Path(first["attribution_artifact"]).is_file())
+
+        facts = self.bridge.read_multi_leg_report_facts_v1(first)
+        self.assertEqual(facts["schema_version"], 1)
+        self.assertEqual(facts["account_id"], first["account_id"])
+        self.assertEqual(
+            facts["total_fills"], first["primary_fills"] + first["reference_fills"]
+        )
+        self.assertEqual(len(facts["event_hash"]), 16)
 
         handle_payload = {**payload, "run_id": "python-multi-leg-handle"}
         handle_payload["output_dir"] = str(self.output_dir / "multi-leg-handle")
@@ -3274,6 +3636,7 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(factory_quantities, [500_000_000, 1_000_000_000])
         self.assertEqual(experiment.completed_candidates, 2)
         self.assertEqual(experiment.succeeded_candidates, 2)
+        self.assertTrue(Path(experiment.artifact_locations["experiment_input"]).is_file())
         self.assertTrue(all(
             candidate.outcome.primary_fills > 0 and candidate.outcome.reference_fills > 0
             for candidate in experiment.candidates
@@ -3380,6 +3743,7 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(experiment["failed_candidates"], 0)
         self.assertEqual(experiment["succeeded_candidates"], 2)
         self.assertTrue(Path(experiment["artifact_path"]).is_file())
+        self.assertTrue(Path(experiment["artifact_locations"]["experiment_input"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
         result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-leg-experiment-result-v1.json").read_text(encoding="utf-8"))
@@ -3605,6 +3969,22 @@ class AppUseCaseTests(unittest.TestCase):
         experiment_result = run_multi_market_experiment(experiment_spec)
         self.assertEqual(experiment_result.total_candidates, 4)
         self.assertEqual(experiment_result.succeeded_candidates, 4)
+        self.assertIsNotNone(experiment_result.canonical_run_spec_fingerprint)
+        self.assertIsNotNone(experiment_result.input_data_fingerprint)
+        self.assertIsNotNone(experiment_result.result_hash)
+        self.assertIsNotNone(experiment_result.run_manifest)
+        self.assertIsNotNone(experiment_result.run_record)
+        experiment_input_path = Path(experiment_result.artifact_locations["experiment_input"])
+        experiment_input = experiment_input_path.read_bytes()
+        run_record = json.loads(Path(experiment_result.run_record).read_text(encoding="utf-8"))
+        experiment_input_ref = next(
+            ref for ref in run_record["artifact_refs"] if ref["name"] == "experiment_input"
+        )
+        import hashlib
+        self.assertEqual(experiment_input_ref["byte_len"], len(experiment_input))
+        self.assertEqual(
+            experiment_input_ref["artifact_id"], hashlib.sha256(experiment_input).hexdigest()
+        )
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
         result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-market-experiment-result-v1.json").read_text(encoding="utf-8"))
@@ -3627,7 +4007,17 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(async_handle.result().total_candidates, 4)
 
         class NoopStrategy:
+            def __init__(self):
+                self.lifecycle = []
+
+            def on_init(self, context):
+                self.lifecycle.append("init")
+
+            def on_start(self, context):
+                self.lifecycle.append("start")
+
             def on_event(self, context, event):
+                self.lifecycle.append("event")
                 event_body = next(iter(event.values()))
                 timestamp = event_body["ts"]
                 return {
@@ -3640,6 +4030,9 @@ class AppUseCaseTests(unittest.TestCase):
                     "expires_at": 0,
                     "intents": [],
                 }
+
+            def on_stop(self):
+                self.lifecycle.append("stop")
 
         from qianxing_bridge.app import (
             run_multi_market_backtest_with_strategy_slots,
@@ -3656,13 +4049,17 @@ class AppUseCaseTests(unittest.TestCase):
             "kind": "sma_cross", "strategy_id": "py-sma-0", "quantity_raw": 1_000_000_000,
             "fast_window": 5, "slow_window": 20,
         }
+        callback_strategy = NoopStrategy()
         binding = {
             "strategy_id": "py-sma-0",
             "strategy_version": "python-test-v1",
             "source_sha256": "a" * 64,
-            "strategy": NoopStrategy(),
+            "strategy": callback_strategy,
         }
         custom_result = run_multi_market_backtest_with_strategy_slots(custom_payload, [binding])
+        self.assertEqual(callback_strategy.lifecycle[:2], ["init", "start"])
+        self.assertTrue("event" in callback_strategy.lifecycle)
+        self.assertEqual(callback_strategy.lifecycle[-1], "stop")
         custom_artifact = json.loads(Path(custom_result["artifact_path"]).read_text(encoding="utf-8"))
         self.assertEqual(custom_artifact["strategy_identities"][0]["strategy_version"], "python-test-v1")
         self.assertTrue(custom_artifact["replay_verified"])
@@ -3693,6 +4090,29 @@ class AppUseCaseTests(unittest.TestCase):
         ).read_text(encoding="utf-8"))
         self.assertEqual(custom_grid_artifact["strategy_identities"][0]["strategy_version"], "python-grid-v1")
 
+        from qianxing import CallbackParameterSpace
+        callback_experiment = RunMultiMarketExperimentSpec(
+            experiment_id="python-multi-market-callback-grid",
+            target_strategy_id="typed-0",
+            base=typed,
+            callback_parameter_space=(CallbackParameterSpace("risk_scale", (2, 4)),),
+        )
+        callback_parameters = []
+
+        def callback_factory(_candidate, parameters):
+            callback_parameters.append(parameters["risk_scale"])
+            return NoopStrategy()
+
+        callback_grid = run_multi_market_experiment_with_strategy(
+            callback_experiment,
+            callback_factory,
+            strategy_id="typed-0",
+            strategy_version="python-callback-grid-v1",
+            source_sha256="c" * 64,
+        )
+        self.assertEqual(callback_grid.succeeded_candidates, 2, callback_grid.candidates)
+        self.assertEqual(callback_parameters, [2, 4])
+
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     def test_multi_market_depth_typed_sdk_shares_cash_across_python_strategy_slots(self):
         self._require()
@@ -3705,6 +4125,7 @@ class AppUseCaseTests(unittest.TestCase):
             MultiMarketDepthBacktestSpec,
             QueuePositionFifoVolumeEstimate,
             ExperimentParameterSpace,
+            CallbackParameterSpace,
             RunMultiMarketDepthExperimentSpec,
             run_multi_market_depth_backtest,
             TradingInstrumentSpec,
@@ -3876,9 +4297,8 @@ class AppUseCaseTests(unittest.TestCase):
             experiment_id="python-multi-market-depth-experiment",
             target_strategy_id="python-l2-0",
             base=spec,
-            parameter_space=(),
             callback_parameter_space=(
-                ExperimentParameterSpace("risk_scale", (1, 2)),
+                CallbackParameterSpace("risk_scale", (1, 2)),
             ),
         )
         run_args = {
@@ -3891,6 +4311,7 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(experiment.completed_candidates, 2)
         self.assertEqual(experiment.succeeded_candidates, 2, repr(experiment.candidates))
+        self.assertTrue(Path(experiment.artifact_locations["experiment_input"]).is_file())
         from jsonschema import Draft202012Validator
         from referencing import Registry, Resource
         result_schema = json.loads((Path(__file__).parents[2] / "schemas" / "run-multi-market-depth-experiment-result-v1.json").read_text(encoding="utf-8"))

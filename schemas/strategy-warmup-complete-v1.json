@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-warmup-complete-v1.json",
+  "title": "Qianxing Strategy Warmup Complete v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event", "instrument", "observed_bars"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event": { "const": "warmup_complete" },
+    "instrument": { "type": ["string", "null"], "minLength": 1 },
+    "observed_bars": { "type": "integer", "minimum": 0 }
+  }
+}

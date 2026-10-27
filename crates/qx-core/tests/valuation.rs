@@ -29,6 +29,7 @@ fn perpetual_spec(instrument: &InstrumentId) -> TradingInstrumentSpec {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -50,6 +51,7 @@ fn spot_ledger() -> (Ledger, InstrumentId) {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(
@@ -86,7 +88,20 @@ fn spot_spec(instrument: &InstrumentId, base: &str, quote: &str) -> TradingInstr
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
+}
+
+fn subnano_spot_spec(instrument: &InstrumentId) -> TradingInstrumentSpec {
+    let mut spec = spot_spec(instrument, "T", "USDT");
+    spec.exact_rules = Some(ExactTradingRules {
+        contract_size: ExactDecimal::ONE,
+        price_tick: ExactDecimal::parse("0.000000001").unwrap(),
+        quantity_step: ExactDecimal::parse("0.000000000001").unwrap(),
+        minimum_quantity: ExactDecimal::parse("0.000000000001").unwrap(),
+        minimum_notional: ExactDecimal::ZERO,
+    });
+    spec
 }
 
 fn buy_position(
@@ -109,6 +124,7 @@ fn buy_position(
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(
@@ -142,6 +158,8 @@ fn spec_driven_spot_fill_books_cash_in_the_market_quote_currency() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+
+        exact_amounts: None,
     };
     let mut ledger = Ledger::new();
     ledger
@@ -228,6 +246,95 @@ fn ledger_valuate_marks_spot_positions_and_cash_for_multiple_markets_and_currenc
 }
 
 #[test]
+fn multi_market_exact_valuation_preserves_subnano_cash_and_position_value() {
+    let instrument = InstrumentId::parse("T-USDT.BINANCE").unwrap();
+    let spec = subnano_spot_spec(&instrument);
+    let quantity = ExactDecimal::parse("0.0000000001").unwrap();
+    let entry_price = ExactDecimal::ONE;
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_i64(100), 1)
+        .unwrap();
+    let order = Order {
+        client_id: 21,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::Accepted,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity,
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+        }),
+    };
+    ledger
+        .apply_fill_with_spec(
+            &order,
+            &Fill {
+                order_id: order.client_id,
+                qty: Quantity::ZERO,
+                price: Price::ZERO,
+                fee: Money::ZERO,
+                ts: 2,
+                exact_amounts: Some(ExactFillAmounts {
+                    quantity,
+                    price: entry_price,
+                    quote_cost: Some(quantity),
+                    quote_budget_complete: false,
+                }),
+                ..Fill::default()
+            },
+            "USDT",
+            &spec,
+        )
+        .unwrap();
+    let specs = BTreeMap::from([(instrument.clone(), spec.clone())]);
+    let marks = BTreeMap::from([(instrument.clone(), Price::from_i64(2))]);
+
+    let exact_equity = ledger
+        .equity_for_with_market_specs_and_fx_exact("main", &marks, "USDT", &specs, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(exact_equity, ExactDecimal::parse("100.0000000001").unwrap());
+    let exact_context = ExactValuationContext::new(
+        ValuationContext::spot("main", &marks, "USDT").with_market_specs(&specs),
+    );
+    assert_eq!(ledger.valuate_exact(&exact_context).unwrap(), exact_equity);
+    let exact_marks = BTreeMap::from([(
+        instrument.clone(),
+        ExactDecimal::parse("2.0000001").unwrap(),
+    )]);
+    let exact_mark_context = ExactValuationContext::new(
+        ValuationContext::spot("main", &marks, "USDT").with_market_specs(&specs),
+    )
+    .with_exact_marks(&exact_marks);
+    assert_eq!(
+        ledger.valuate_exact(&exact_mark_context).unwrap(),
+        ExactDecimal::parse("100.00000000010000001").unwrap()
+    );
+    let raw_equity = ledger
+        .equity_for_with_market_specs_and_fx("main", &marks, "USDT", &specs, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(raw_equity, 100 * SCALE - 1);
+
+    let attributed_cash = BTreeMap::from([("USDT".into(), quantity.checked_neg().unwrap())]);
+    let context = ValuationContext::spot("main", &marks, "USDT").with_spec(Some(&spec));
+    assert_eq!(
+        ledger
+            .instrument_equity_contribution_from_exact_cash(&context, &attributed_cash)
+            .unwrap(),
+        quantity
+    );
+}
+
+#[test]
 fn multi_market_valuation_fails_closed_on_missing_position_spec_or_mark() {
     let eth = InstrumentId::parse("ETH-USDT.BINANCE").unwrap();
     let btc = InstrumentId::parse("BTC-EUR.KRAKEN").unwrap();
@@ -294,6 +401,7 @@ fn single_market_derivative_valuation_refuses_to_omit_other_account_positions() 
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         ledger
             .apply_fill_with_spec(
@@ -339,6 +447,15 @@ fn ledger_valuate_equals_the_multiplier_ruler_for_spot() {
             .unwrap();
         let context = ValuationContext::spot("main", &marks, "USDT").with_multiplier(multiplier);
         assert_eq!(ledger.valuate(&context).unwrap().equity.raw(), expected);
+        let exact_expected = ledger
+            .equity_for_with_multiplier_exact("main", &marks, "USDT", multiplier, &BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            ledger
+                .valuate_exact(&ExactValuationContext::new(context))
+                .unwrap(),
+            exact_expected
+        );
     }
 }
 
@@ -376,6 +493,8 @@ fn ledger_valuate_uses_the_contract_spec_ruler_without_fx() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+
+        exact_amounts: None,
     };
     ledger
         .apply_fill_with_spec(
@@ -428,6 +547,7 @@ fn paper_valuation_uses_persisted_blended_position_leverage_and_fails_closed_whe
                 leverage,
                 ..OrderPolicy::default()
             }),
+            exact_amounts: None,
         };
         ledger
             .apply_fill_with_spec(
@@ -472,6 +592,8 @@ fn paper_valuation_uses_persisted_blended_position_leverage_and_fails_closed_whe
         account_id: "legacy".into(),
         trace: None,
         policy: None,
+
+        exact_amounts: None,
     };
     let mut legacy = Ledger::new();
     legacy

@@ -54,6 +54,16 @@ pub(crate) use multi_account::{depth_batch, multi_account};
 mod multi_market_depth_experiment;
 pub(crate) use multi_market_depth_experiment::multi_market_depth_experiment;
 
+/// Read the generated product capability catalog without starting an API server or contacting a venue.
+pub fn product_capability_catalog_document() -> Result<serde_json::Value, String> {
+    capabilities::product_capability_catalog().map(Clone::clone)
+}
+
+/// Query the same generated product catalog used by `/app/capabilities/query`.
+pub fn product_capability_query_document(query_json: &str) -> Result<serde_json::Value, String> {
+    capabilities::product_capability_query_document(query_json)
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {
     pub data_root: PathBuf,
@@ -336,11 +346,7 @@ pub(crate) fn depth_experiment(body: &str, paths: &AppPaths) -> ApiResponse {
         return respond(Err(error));
     }
     let experiment_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&experiment_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     respond(
         run_depth_experiment(&spec, &context(&experiment_id)).and_then(|result| result.to_json()),
     )
@@ -438,11 +444,7 @@ pub(crate) fn multi_leg_grid(body: &str, paths: &AppPaths) -> ApiResponse {
         }
     }
     let experiment_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&experiment_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     respond(
         run_multi_leg_experiment(&spec, &context(&experiment_id))
             .and_then(|result| result.to_json()),
@@ -460,11 +462,7 @@ pub(crate) fn multi_market_grid(body: &str, paths: &AppPaths) -> ApiResponse {
         }
     }
     let experiment_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&experiment_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     respond(
         run_multi_market_experiment(&spec, &context(&experiment_id))
             .and_then(|result| result.to_json()),
@@ -499,11 +497,28 @@ pub(crate) fn route_app_run(
     if let ("GET", "/app/capabilities") = (method, route) {
         return Some(capabilities::application_capabilities(provider_registry));
     }
+    if let ("POST", "/app/capabilities/query") = (method, route) {
+        return Some(capabilities::product_capability_query(body));
+    }
     if let ("POST", "/app/capabilities/providers/preflight") = (method, route) {
         return Some(capabilities::provider_preflight(body, provider_registry));
     }
     if let ("POST", "/app/research-artifacts") = (method, route) {
         return Some(research_artifacts::route(body, paths));
+    }
+    if let ("POST", "/app/read-provider-report") = (method, route) {
+        return Some(research_artifacts::provider_bar_report_route(body, paths));
+    }
+    if let ("POST", "/app/read-provider-depth-report") = (method, route) {
+        return Some(research_artifacts::provider_depth_report_route(body, paths));
+    }
+    if let ("POST", "/app/read-multi-account-joint-report") = (method, route) {
+        return Some(research_artifacts::multi_account_joint_report_route(
+            body, paths,
+        ));
+    }
+    if let ("POST", "/app/read-multi-leg-report") = (method, route) {
+        return Some(research_artifacts::multi_leg_report_route(body, paths));
     }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)

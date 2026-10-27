@@ -1,4 +1,4 @@
-use qx_control::ControlCommand;
+use qx_control::{order_from_submit_command, ControlCommand};
 use qx_core::OrderStatus;
 use qx_zhenlu::SpreadOrderGroupStore;
 
@@ -49,6 +49,16 @@ pub(crate) fn check_spread_group_barrier(
             "FAIL_CLOSED: 多腿订单组 {group_id} 状态为 {:?}，禁止提交剩余腿（未知腿: {unknown_legs}），须先完成对账/补偿",
             group.status
         ));
+    }
+    if let Some(in_flight_order_id) = group.submission_in_flight_order_id {
+        let requested_order_id = order_from_submit_command(command)
+            .ok()
+            .map(|order| order.client_id);
+        if requested_order_id != Some(in_flight_order_id) {
+            return Err(format!(
+                "RETRYABLE: 多腿订单组 {group_id} 的订单 {in_flight_order_id} 正在提交，当前腿等待其结果同步后重试"
+            ));
+        }
     }
     Ok(())
 }

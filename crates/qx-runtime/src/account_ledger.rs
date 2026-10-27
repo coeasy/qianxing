@@ -265,6 +265,7 @@ mod tests {
             id: "main".into(),
             settlement_currency: Some("cny".into()),
             initial_cash_raw: None,
+            portfolio_id: None,
         }];
         config.workers = vec![worker("execution", WorkerRole::Execution, "USD")];
         let log_name = "paper-main-paper-events";

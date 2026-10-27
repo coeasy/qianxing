@@ -192,8 +192,27 @@ pub fn run_provider_depth_backtest(
             result.request_id,
             result.source_hash
         );
+        let levels = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bids.iter().chain(&snapshot.asks))
+            .collect::<Vec<_>>();
+        let exact_count = levels
+            .iter()
+            .filter(|level| level.price_exact.is_some() && level.qty_exact.is_some())
+            .count();
+        if exact_count != 0 && exact_count != levels.len() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "Provider depth payload mixes exact and 1e-9-only book levels",
+            ));
+        }
+        let schema_version = if !levels.is_empty() && exact_count == levels.len() {
+            DepthFrame::EXACT_SCHEMA_VERSION
+        } else {
+            DepthFrame::LEGACY_SCHEMA_VERSION
+        };
         let frame = DepthFrame {
-            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            schema_version,
             source,
             instrument: snapshots
                 .first()
@@ -239,7 +258,7 @@ pub fn run_provider_depth_backtest(
 mod tests {
     use super::*;
     use crate::{BuiltinStrategySpec, CallerCapability, RunContext};
-    use qx_core::{InstrumentId, Price, Quantity, SCALE};
+    use qx_core::{ExactDecimal, InstrumentId, Price, Quantity, SCALE};
     use qx_provider::{
         DataProvider, DataQuery, DataRequirements, ProviderCapability, ProviderError,
         ProviderPayload, ProviderResult, PROVIDER_RESULT_SCHEMA_VERSION,
@@ -263,23 +282,41 @@ mod tests {
         }
     }
 
-    fn snapshot(ts: u64) -> OrderBookSnapshot {
+    fn snapshot(ts: u64, exact: bool) -> OrderBookSnapshot {
+        let level = |price: i64, exact_price: &str, exact_qty: &str| {
+            if exact {
+                BookLevel::from_exact(
+                    ExactDecimal::parse(exact_price).unwrap(),
+                    ExactDecimal::parse(exact_qty).unwrap(),
+                )
+                .unwrap()
+            } else {
+                BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
+                    price: Price::from_i64(price),
+                    qty: Quantity::from_i64(2),
+                }
+            }
+        };
         OrderBookSnapshot {
             instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
             ts,
             sequence: ts,
-            bids: vec![BookLevel {
-                price: Price::from_i64(100 + ts as i64),
-                qty: Quantity::from_i64(2),
-            }],
-            asks: vec![BookLevel {
-                price: Price::from_i64(101 + ts as i64),
-                qty: Quantity::from_i64(2),
-            }],
+            bids: vec![level(
+                100 + ts as i64,
+                &format!("{}.0000000001", 100 + ts),
+                "0.0000000001",
+            )],
+            asks: vec![level(
+                101 + ts as i64,
+                &format!("{}.0000000002", 101 + ts),
+                "0.0000000002",
+            )],
         }
     }
 
-    fn registry() -> (ProviderRegistry, DataRequest) {
+    fn registry(exact_depth: bool) -> (ProviderRegistry, DataRequest) {
         let capability = ProviderCapability {
             provider_id: "fixture-depth".into(),
             version: "v1".into(),
@@ -300,7 +337,7 @@ mod tests {
         let instrument = "BTCUSDT.BINANCE";
         let payloads = (1..=3)
             .map(|ts| {
-                let book = snapshot(ts);
+                let book = snapshot(ts, exact_depth);
                 (
                     ts,
                     ts,
@@ -364,6 +401,8 @@ mod tests {
             queue_position_bps: 0,
             queue_position_model: qx_xingban::QueuePositionModel::Disabled,
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir,
             strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, strategy_id),
             market_spec: None,
@@ -391,7 +430,7 @@ mod tests {
 
     #[test]
     fn provider_depth_data_is_frozen_with_lineage_then_runs_shared_engine() {
-        let (registry, data_request) = registry();
+        let (registry, data_request) = registry(false);
         let root = std::env::current_dir()
             .unwrap()
             .join("target")
@@ -410,6 +449,7 @@ mod tests {
             data_request,
             backtest,
         };
+        let expected_query_digest = format!("{:016x}", spec.data_request.query.digest());
         let mut mismatched = spec.clone();
         mismatched.backtest.tier = "l2".into();
         assert!(mismatched.validate().is_err());
@@ -425,12 +465,73 @@ mod tests {
         assert!(frozen.source.contains("#source="));
         assert_eq!(frozen.snapshots.len(), 3);
         assert_eq!(outcome.outcome.run_id, "provider-depth-e2e");
+        let report = crate::read_provider_depth_backtest_report_v1(
+            &outcome,
+            &RunContext::new(CallerCapability::Research, "provider-depth-e2e"),
+        )
+        .expect("Provider depth report should verify the frozen input and shared report");
+        assert!(report.report.verification.verified);
+        assert_eq!(report.provider_id, "fixture-depth");
+        assert_eq!(report.query_digest, expected_query_digest);
+        assert_eq!(
+            report.depth_input_hash,
+            format!("{:016x}", frozen.input_hash())
+        );
+
+        let mut tampered_outcome = outcome.clone();
+        tampered_outcome.source_hash = "0000000000000000".into();
+        assert!(crate::read_provider_depth_backtest_report_v1(
+            &tampered_outcome,
+            &RunContext::new(CallerCapability::Research, "provider-depth-e2e"),
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn provider_depth_freezes_exact_v2_input_and_fails_closed_before_rounded_execution() {
+        let (registry, data_request) = registry(true);
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("qx-provider-depth-exact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let depth_path = root.join("depth.json");
+        let spec = ProviderDepthBacktestSpec {
+            schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+            data_request,
+            backtest: depth_spec(
+                "provider-depth-exact",
+                depth_path.to_string_lossy().into_owned(),
+                root.join("runs").to_string_lossy().into_owned(),
+                "provider-exact",
+                Some("provider-test".into()),
+            ),
+        };
+
+        let error = run_provider_depth_backtest(
+            &registry,
+            &spec,
+            &RunContext::new(CallerCapability::Research, "provider-depth-exact"),
+        )
+        .unwrap_err();
+        assert!(
+            error.message().contains("精确盘口"),
+            "exact provider data must fail closed, got: {}",
+            error.message()
+        );
+        let frozen = DepthFrame::from_json(&std::fs::read_to_string(&depth_path).unwrap()).unwrap();
+        assert_eq!(frozen.schema_version, DepthFrame::EXACT_SCHEMA_VERSION);
+        assert_eq!(
+            frozen.snapshots[0].bids[0].qty_exact,
+            Some(ExactDecimal::parse("0.0000000001").unwrap())
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn provider_depth_spec_rejects_bar_query_before_provider_access() {
-        let (registry, mut request) = registry();
+        let (registry, mut request) = registry(false);
         request.query.kind = DataKind::Bar;
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
@@ -454,7 +555,7 @@ mod tests {
 
     #[test]
     fn provider_depth_spec_rejects_unknown_schema_before_provider_access() {
-        let (registry, data_request) = registry();
+        let (registry, data_request) = registry(false);
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION + 1,
             data_request,

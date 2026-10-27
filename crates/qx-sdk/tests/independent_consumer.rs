@@ -14,14 +14,14 @@ use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
     AlgoParentOrder, BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
     CallerCapability, Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent,
-    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterSpace, ExperimentSearchAlgorithm,
-    ExperimentSearchPlan, ExperimentSplitPlan, InstrumentId, MakerTakerFeeSchedule,
-    MultiLegBacktestSpec, MultiMarketBacktestMarket, MultiMarketBacktestSpec, Order, OrderStatus,
-    OrderStore, PortfolioBacktestConfig, PortfolioStrategySpec, Price, Quantity,
-    RiskParityAssetSpec, RiskParitySpec, RiskPort, RiskVerdict, RunDepthExperimentSpec,
-    RunEventKind, RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
-    RunStatus, Side, VenuePort, VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    BACKTEST_SPEC_SCHEMA_VERSION,
+    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterRange, ExperimentParameterSpace,
+    ExperimentSearchAlgorithm, ExperimentSearchPlan, ExperimentSplitPlan, InstrumentId,
+    MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
+    MultiMarketBacktestSpec, Order, OrderStatus, OrderStore, PortfolioBacktestConfig,
+    PortfolioStrategySpec, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
+    RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
+    RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec, RunStatus, Side, VenuePort,
+    VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -336,6 +336,7 @@ fn an_independent_consumer_prepares_restartable_algo_state_through_the_facade() 
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         },
     })
     .expect("prepare Rust SDK algo state");

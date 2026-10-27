@@ -20,7 +20,7 @@ use crate::report_fidelity::fidelity_panel;
 use crate::report_output_paths::report_artifact_paths;
 use crate::report_readout::{summary_number, summary_text, READOUT_ABSENT};
 use crate::report_svg::{equity_svg, fills_svg, money, monthly_svg, year_month};
-use qx_core::{Event, EventKind, EventLog};
+use qx_core::{Event, EventKind, EventLog, ExactDecimal};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
@@ -34,6 +34,9 @@ pub(crate) struct FillPoint {
     pub(crate) qty_raw: i128,
     pub(crate) price_raw: i128,
     pub(crate) fee_raw: Option<i128>,
+    pub(crate) qty_exact: Option<String>,
+    pub(crate) price_exact: Option<String>,
+    pub(crate) exact_fees_json: Option<String>,
     pub(crate) account_id: Option<String>,
     pub(crate) strategy_id: String,
     pub(crate) signal_id: Option<String>,
@@ -548,6 +551,7 @@ pub(crate) fn sample_indices(length: usize, limit: usize) -> Vec<usize> {
 pub(crate) fn event_kind_identity(kind: &EventKind) -> (&'static str, Option<u64>) {
     match kind {
         EventKind::MarketQuote { .. } => ("MarketQuote", None),
+        EventKind::MarketOrderBook { .. } => ("MarketOrderBook", None),
         EventKind::AccountBalanceSnapshot { .. } => ("AccountBalanceSnapshot", None),
         EventKind::AccountPositionSnapshot { .. } => ("AccountPositionSnapshot", None),
         EventKind::FundingRateSnapshot { .. } => ("FundingRateSnapshot", None),
@@ -557,6 +561,10 @@ pub(crate) fn event_kind_identity(kind: &EventKind) -> (&'static str, Option<u64
         EventKind::OrderRiskDecision { decision } => {
             ("OrderRiskDecision", Some(decision.client_order_id))
         }
+        EventKind::ExecutionCapabilityDecision { decision } => (
+            "ExecutionCapabilityDecision",
+            Some(decision.client_order_id),
+        ),
         EventKind::Submit { client_order_id } => ("Submit", Some(*client_order_id)),
         EventKind::Accepted {
             client_order_id, ..
@@ -564,8 +572,10 @@ pub(crate) fn event_kind_identity(kind: &EventKind) -> (&'static str, Option<u64
         EventKind::Rejected {
             client_order_id, ..
         } => ("Rejected", Some(*client_order_id)),
+        EventKind::CancelPending { client_order_id } => ("CancelPending", Some(*client_order_id)),
         EventKind::Cancelled { client_order_id } => ("Cancelled", Some(*client_order_id)),
         EventKind::Filled { fill } => ("Filled", Some(fill.order_id)),
+        EventKind::FeeAdjustment { order_id, .. } => ("FeeAdjustment", Some(*order_id)),
         EventKind::LedgerApplied { .. } => ("LedgerApplied", None),
         EventKind::ReconcileRequired { client_order_id } => {
             ("ReconcileRequired", Some(*client_order_id))
@@ -937,7 +947,7 @@ fn fills_table(
     order_event_links: Option<&BTreeMap<u64, u64>>,
 ) -> String {
     let mut html = String::from(
-        "<section class=\"fills\"><h2>成交明细</h2><p class=\"fills-note\">成交事实只展示来源文件明确提供的字段。成交产物不含买卖方向，不按数量正负推断买卖方向或风险决定。存在校验通过的事件流时，可按订单 ID 跳转到订单提交/撮合事件。数量、价格与费用使用 raw 定点值。</p><label class=\"fill-search\">筛选时间/订单/账户/策略/腿 <input id=\"fill-filter\" type=\"search\" placeholder=\"输入订单号、账户、策略 ID 或腿名\"></label><span id=\"fill-count\" aria-live=\"polite\"></span><div class=\"fill-scroll\"><table id=\"fill-table\"><thead><tr><th>时间戳</th><th>订单 ID</th><th>组合腿</th><th>事件链</th><th>账户</th><th>策略 ID</th><th>信号 ID</th><th>意图 ID</th><th>Venue</th><th>Venue 订单 ID</th><th>数量 raw</th><th>价格 raw</th><th>费用 raw</th></tr></thead><tbody>",
+        "<section class=\"fills\"><h2>成交明细</h2><p class=\"fills-note\">成交事实只展示来源文件明确提供的字段。成交产物不含买卖方向，不按数量正负推断买卖方向或风险决定。存在校验通过的事件流时，可按订单 ID 跳转到订单提交/撮合事件。精确数量、价格和手续费只在来源产物明确提供时显示；raw 字段保留作兼容投影。</p><label class=\"fill-search\">筛选时间/订单/账户/策略/腿 <input id=\"fill-filter\" type=\"search\" placeholder=\"输入订单号、账户、策略 ID 或腿名\"></label><span id=\"fill-count\" aria-live=\"polite\"></span><div class=\"fill-scroll\"><table id=\"fill-table\"><thead><tr><th>时间戳</th><th>订单 ID</th><th>组合腿</th><th>事件链</th><th>账户</th><th>策略 ID</th><th>信号 ID</th><th>意图 ID</th><th>Venue</th><th>Venue 订单 ID</th><th>数量 raw</th><th>数量 exact</th><th>价格 raw</th><th>价格 exact</th><th>费用 raw</th><th>精确手续费 JSON</th></tr></thead><tbody>",
     );
     for fill in fills {
         let strategy = escape_html(if fill.strategy_id.is_empty() {
@@ -954,7 +964,7 @@ fn fills_table(
             );
         let _ = write!(
             html,
-            "<tr data-search=\"{} {} {} {} {} {} {} {} {}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr data-search=\"{} {} {} {} {} {} {} {} {} {} {} {}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             fill.order_id,
             fill.ts,
             escape_html(fill.account_id.as_deref().unwrap_or("")),
@@ -964,6 +974,9 @@ fn fills_table(
             escape_html(fill.venue_id.as_deref().unwrap_or("")),
             escape_html(fill.venue_order_id.as_deref().unwrap_or("")),
             leg,
+            escape_html(fill.qty_exact.as_deref().unwrap_or("")),
+            escape_html(fill.price_exact.as_deref().unwrap_or("")),
+            escape_html(fill.exact_fees_json.as_deref().unwrap_or("")),
             fill.ts,
             fill.order_id,
             leg,
@@ -975,9 +988,12 @@ fn fills_table(
             escape_html(fill.venue_id.as_deref().unwrap_or(READOUT_ABSENT)),
             escape_html(fill.venue_order_id.as_deref().unwrap_or(READOUT_ABSENT)),
             fill.qty_raw,
+            escape_html(fill.qty_exact.as_deref().unwrap_or(READOUT_ABSENT)),
             fill.price_raw,
+            escape_html(fill.price_exact.as_deref().unwrap_or(READOUT_ABSENT)),
             fill.fee_raw
-                .map_or_else(|| READOUT_ABSENT.to_string(), |value| value.to_string())
+                .map_or_else(|| READOUT_ABSENT.to_string(), |value| value.to_string()),
+            escape_html(fill.exact_fees_json.as_deref().unwrap_or(READOUT_ABSENT))
         );
     }
     let _ = write!(
@@ -1029,7 +1045,10 @@ pub(crate) fn read_fills_csv(path: &Path) -> Result<Vec<FillPoint>, String> {
     read_fills_csv_window(path, None).map(|(rows, _)| rows)
 }
 
-fn read_fills_csv_tail(path: &Path, limit: usize) -> Result<(Vec<FillPoint>, u64), String> {
+pub(crate) fn read_fills_csv_tail(
+    path: &Path,
+    limit: usize,
+) -> Result<(Vec<FillPoint>, u64), String> {
     read_fills_csv_window(path, Some(limit))
 }
 
@@ -1048,13 +1067,17 @@ fn read_fills_csv_window(
     let header = header_line.trim();
     let extended = header
         == "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id";
+    let exact = header
+        == "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json";
     let multi_leg = header
         == "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id";
+    let multi_leg_exact = header
+        == "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json";
     let legacy = header == "ts,order_id,qty_raw,price_raw,fee_raw,strategy_id";
     let oldest = header == "order_id,ts,qty_raw,price_raw";
-    if !extended && !multi_leg && !legacy && !oldest {
+    if !exact && !extended && !multi_leg_exact && !multi_leg && !legacy && !oldest {
         return Err(format!(
-            "成交明细 {} 表头不属于已登记的 4 列、6 列、11 列或 12 列契约",
+            "成交明细 {} 表头不属于已登记的 4 列、6 列、11 列、12 列、14 列或 15 列契约",
             path.display()
         ));
     }
@@ -1072,9 +1095,19 @@ fn read_fills_csv_window(
         if line.trim().is_empty() {
             continue;
         }
-        let cols: Vec<&str> = line.split(',').collect();
-        let expected_columns = if multi_leg {
+        let cols = parse_csv_record(&line).map_err(|reason| {
+            format!(
+                "成交明细 {} 第 {} 行 CSV 格式非法：{reason}",
+                path.display(),
+                line_index + 2
+            )
+        })?;
+        let expected_columns = if multi_leg_exact {
+            15
+        } else if multi_leg {
             12
+        } else if exact {
+            14
         } else if extended {
             11
         } else if legacy {
@@ -1110,7 +1143,7 @@ fn read_fills_csv_window(
             intent_index,
             venue_index,
             venue_order_index,
-        ) = if multi_leg {
+        ) = if multi_leg || multi_leg_exact {
             (
                 2,
                 1,
@@ -1124,7 +1157,7 @@ fn read_fills_csv_window(
                 Some(10),
                 Some(11),
             )
-        } else if extended {
+        } else if exact || extended {
             (
                 1,
                 0,
@@ -1143,7 +1176,53 @@ fn read_fills_csv_window(
         } else {
             (1, 0, 2, 3, None, None, None, None, None, None, None)
         };
-        let optional = |index: usize| (!cols[index].is_empty()).then(|| cols[index].to_string());
+        let optional = |index: usize| (!cols[index].is_empty()).then(|| cols[index].clone());
+        let (qty_exact, price_exact, exact_fees_json) = if exact || multi_leg_exact {
+            let exact_offset = if multi_leg_exact { 12 } else { 11 };
+            let qty = optional(exact_offset);
+            let price = optional(exact_offset + 1);
+            if qty.is_some() != price.is_some() {
+                return Err(format!(
+                    "成交明细 {} 第 {} 行精确数量和价格必须同时存在",
+                    path.display(),
+                    line_index + 2
+                ));
+            }
+            for (value, field) in [
+                (qty.as_deref(), "qty_exact"),
+                (price.as_deref(), "price_exact"),
+            ] {
+                if let Some(value) = value {
+                    ExactDecimal::parse(value).map_err(|reason| {
+                        format!(
+                            "成交明细 {} 第 {} 行 {field} 非法：{reason}",
+                            path.display(),
+                            line_index + 2
+                        )
+                    })?;
+                }
+            }
+            let fees = optional(exact_offset + 2);
+            if let Some(fees) = fees.as_deref() {
+                let value: serde_json::Value = serde_json::from_str(fees).map_err(|error| {
+                    format!(
+                        "成交明细 {} 第 {} 行 exact_fees_json 非法：{error}",
+                        path.display(),
+                        line_index + 2
+                    )
+                })?;
+                if !value.is_array() {
+                    return Err(format!(
+                        "成交明细 {} 第 {} 行 exact_fees_json 必须是 JSON 数组",
+                        path.display(),
+                        line_index + 2
+                    ));
+                }
+            }
+            (qty, price, fees)
+        } else {
+            (None, None, None)
+        };
         rows.push_back(FillPoint {
             ts: u64::try_from(parse(ts_index, "ts")?).map_err(|_| {
                 format!(
@@ -1159,10 +1238,13 @@ fn read_fills_csv_window(
                     line_index + 2
                 )
             })?,
-            leg: multi_leg.then(|| cols[0].to_string()),
+            leg: (multi_leg || multi_leg_exact).then(|| cols[0].clone()),
             qty_raw: parse(qty_index, "qty_raw")?,
             price_raw: parse(price_index, "price_raw")?,
             fee_raw: fee_index.map(|index| parse(index, "fee_raw")).transpose()?,
+            qty_exact,
+            price_exact,
+            exact_fees_json,
             account_id: account_index.and_then(optional),
             strategy_id: strategy_index.map_or_else(String::new, |index| cols[index].to_string()),
             signal_id: signal_index.and_then(optional),
@@ -1178,6 +1260,47 @@ fn read_fills_csv_window(
         }
     }
     Ok((rows.into_iter().collect(), total))
+}
+
+/// Parse one RFC 4180 record. Fill rows are newline-delimited; quoted cells may contain
+/// commas and escaped quotes (notably the JSON fee breakdown) but not embedded newlines.
+fn parse_csv_record(record: &str) -> Result<Vec<String>, &'static str> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut chars = record.chars().peekable();
+    let mut quoted = false;
+    let mut closed_quote = false;
+    while let Some(character) = chars.next() {
+        if quoted {
+            match character {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    field.push('"');
+                }
+                '"' => {
+                    quoted = false;
+                    closed_quote = true;
+                }
+                _ => field.push(character),
+            }
+        } else {
+            match character {
+                ',' => {
+                    fields.push(std::mem::take(&mut field));
+                    closed_quote = false;
+                }
+                '"' if field.is_empty() && !closed_quote => quoted = true,
+                _ if closed_quote => return Err("结束引号后只能出现逗号或记录结尾"),
+                '"' => return Err("未加引号的字段包含双引号"),
+                _ => field.push(character),
+            }
+        }
+    }
+    if quoted {
+        return Err("带引号的字段未闭合");
+    }
+    fields.push(field);
+    Ok(fields)
 }
 
 /// 自包含样式：全部内联，无外链字体/脚本/图片（`http` 出现即被门禁判红）。
@@ -1273,6 +1396,64 @@ mod fill_window_tests {
         let table = fills_table(&fills, 1, None);
         assert!(table.contains("<td>primary</td>"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn exact_fill_reader_preserves_small_decimals_and_quoted_fee_json() {
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join("target/report-fill-tests");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("exact-{}.csv", std::process::id()));
+        std::fs::write(
+            &path,
+            concat!(
+                "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\n",
+                "17,1000,0,0,0,main,momentum,5,6,BINANCE,venue-17,0.001,0.00001234,\"[{\"\"currency\"\":\"\"USDT\"\",\"\"amount\"\":\"\"0.00000001\"\"},{\"\"currency\"\":\"\"BNB\"\",\"\"amount\"\":\"\"0.00000002\"\"}]\"\n"
+            ),
+        )
+        .unwrap();
+
+        let fills = read_fills_csv(&path).unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].qty_raw, 0);
+        assert_eq!(fills[0].qty_exact.as_deref(), Some("0.001"));
+        assert_eq!(fills[0].price_exact.as_deref(), Some("0.00001234"));
+        assert_eq!(
+            fills[0].exact_fees_json.as_deref(),
+            Some(
+                r#"[{"currency":"USDT","amount":"0.00000001"},{"currency":"BNB","amount":"0.00000002"}]"#
+            )
+        );
+        let html = fills_table(&fills, 1, None);
+        assert!(html.contains("<td>0.001</td>"));
+        assert!(html.contains("<td>0.00001234</td>"));
+        assert!(html.contains("&quot;USDT&quot;"));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn exact_multi_leg_fill_reader_preserves_leg_and_exact_amounts() {
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join("target/report-fill-tests");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("multi-leg-exact-{}.csv", std::process::id()));
+        std::fs::write(
+            &path,
+            concat!(
+                "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\n",
+                "reference,17,1000,0,0,0,main,momentum,5,6,OKX,venue-17,0.00000001,0.00001234,[]\n"
+            ),
+        )
+        .unwrap();
+
+        let fills = read_fills_csv(&path).unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].leg.as_deref(), Some("reference"));
+        assert_eq!(fills[0].qty_exact.as_deref(), Some("0.00000001"));
+        assert_eq!(fills[0].price_exact.as_deref(), Some("0.00001234"));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

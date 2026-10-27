@@ -69,28 +69,83 @@ pub(crate) fn write_multi_market_depth_run_evidence(
     if manifest.run_id != spec.run_id {
         return Err("多市场深度 RunManifest run_id 不一致".into());
     }
-    let events: Vec<qx_core::Event> = serde_json::from_value(
-        artifact
-            .get("event_log")
-            .cloned()
-            .ok_or("多市场深度产物缺少 event_log")?,
-    )
-    .map_err(|error| format!("多市场深度 event_log 无效: {error}"))?;
-    let (log, ledger) = qx_core::ReplayVerifier::replay_owned(events)
-        .map_err(|error| format!("多市场深度事件重放失败: {error}"))?;
-    log.validate()
-        .map_err(|error| format!("多市场深度重放日志无效: {error}"))?;
-    if artifact.get("ledger_entries")
-        != Some(&serde_json::to_value(ledger.entries()).map_err(|error| error.to_string())?)
-        || format!("{:016x}", log.digest()) != manifest.output_event_hash
-        || format!("{:016x}", log.digest()) != manifest.result_hash
-        || artifact
-            .pointer("/outcome/shared_result_hash")
-            .and_then(serde_json::Value::as_str)
-            != Some(manifest.result_hash.as_str())
+    qx_app::artifact_store::verify_canonical_run_spec_for_manifest(&manifest, &artifact)?;
+    let mut event_trace_path = None;
+    let streamed_fill_identity = if artifact
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .is_some_and(|version| (2..=4).contains(&version))
     {
-        return Err("多市场深度重放账簿/事件摘要与 RunManifest 不一致".into());
-    }
+        if artifact.get("event_log").is_some() {
+            return Err("多市场深度 v2-v4 产物不得内嵌完整 event_log".into());
+        }
+        let event_count = artifact
+            .get("event_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("多市场深度 v2 产物缺少 event_count")?;
+        let trace_path = absolute_artifact_path(
+            artifact
+                .get("event_trace_path")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("多市场深度 v2 产物缺少 event_trace_path")?,
+        )?;
+        let strategy_markets = spec
+            .markets
+            .iter()
+            .map(|market| {
+                (
+                    market.strategy.strategy_id.clone(),
+                    market.instrument.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let report = qx_app::read_multi_market_event_report_v1_with_reader(
+            &trace_path.to_string_lossy(),
+            event_count,
+            &manifest.output_event_hash,
+            artifact
+                .get("ledger_entries")
+                .ok_or("多市场深度产物缺少重放账簿")?,
+            &strategy_markets,
+            Some((0, 1)),
+            &qx_app::artifact_store::FileArtifactReader,
+        )
+        .map_err(|error| format!("多市场深度 JSONL 事件流核验失败: {error}"))?;
+        if manifest.output_event_hash != manifest.result_hash
+            || artifact
+                .pointer("/outcome/shared_result_hash")
+                .and_then(serde_json::Value::as_str)
+                != Some(manifest.result_hash.as_str())
+        {
+            return Err("多市场深度重放账簿/事件摘要与 RunManifest 不一致".into());
+        }
+        event_trace_path = Some(trace_path);
+        Some((report.fill_count, report.fill_sequence_sha256))
+    } else {
+        let events: Vec<qx_core::Event> = serde_json::from_value(
+            artifact
+                .get("event_log")
+                .cloned()
+                .ok_or("多市场深度产物缺少 event_log")?,
+        )
+        .map_err(|error| format!("多市场深度 event_log 无效: {error}"))?;
+        let (log, ledger) = qx_core::ReplayVerifier::replay_owned(events)
+            .map_err(|error| format!("多市场深度事件重放失败: {error}"))?;
+        log.validate()
+            .map_err(|error| format!("多市场深度重放日志无效: {error}"))?;
+        if artifact.get("ledger_entries")
+            != Some(&serde_json::to_value(ledger.entries()).map_err(|error| error.to_string())?)
+            || format!("{:016x}", log.digest()) != manifest.output_event_hash
+            || format!("{:016x}", log.digest()) != manifest.result_hash
+            || artifact
+                .pointer("/outcome/shared_result_hash")
+                .and_then(serde_json::Value::as_str)
+                != Some(manifest.result_hash.as_str())
+        {
+            return Err("多市场深度重放账簿/事件摘要与 RunManifest 不一致".into());
+        }
+        None
+    };
     let equity_path = absolute_artifact_path(
         artifact
             .pointer("/equity_path")
@@ -103,6 +158,11 @@ pub(crate) fn write_multi_market_depth_run_evidence(
             .and_then(serde_json::Value::as_str)
             .ok_or("缺少 fills sidecar")?,
     )?;
+    let equity_exact_path = artifact
+        .pointer("/equity_exact_path")
+        .and_then(serde_json::Value::as_str)
+        .map(absolute_artifact_path)
+        .transpose()?;
     let equity: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&equity_path)
             .map_err(|error| format!("读取多市场深度权益 sidecar 失败: {error}"))?,
@@ -110,6 +170,18 @@ pub(crate) fn write_multi_market_depth_run_evidence(
     .map_err(|error| format!("多市场深度权益 sidecar JSON 无效: {error}"))?;
     if artifact.get("equity") != Some(&equity) {
         return Err("多市场深度权益 sidecar 与摘要内 equity 不一致".into());
+    }
+    if let Some(path) = equity_exact_path.as_ref() {
+        let exact_equity: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(path)
+                .map_err(|error| format!("读取多市场深度精确权益 sidecar 失败: {error}"))?,
+        )
+        .map_err(|error| format!("多市场深度精确权益 sidecar JSON 无效: {error}"))?;
+        if !exact_equity.is_array() || artifact.get("equity_exact") != Some(&exact_equity) {
+            return Err("多市场深度精确权益 sidecar 与摘要内 equity_exact 不一致".into());
+        }
+    } else if artifact.get("equity_exact").is_some() {
+        return Err("多市场深度产物包含 equity_exact 但缺少 sidecar 路径".into());
     }
     let fills: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&fills_path)
@@ -120,6 +192,14 @@ pub(crate) fn write_multi_market_depth_run_evidence(
         .as_array()
         .and_then(|items| u64::try_from(items.len()).ok())
         .ok_or("多市场深度 fills sidecar 必须是可计数数组")?;
+    if let Some((expected_count, expected_sequence_sha256)) = streamed_fill_identity.as_ref() {
+        qx_app::verify_multi_market_event_fill_sidecar_v1(
+            &fills,
+            *expected_count,
+            expected_sequence_sha256,
+        )
+        .map_err(|error| format!("多市场深度成交 sidecar 核验失败: {error}"))?;
+    }
     if artifact
         .pointer("/outcome/successful_fills")
         .and_then(serde_json::Value::as_u64)
@@ -166,6 +246,8 @@ pub(crate) fn write_multi_market_depth_run_evidence(
             .canonicalize()
             .map_err(|error| format!("解析 {role} 输入失败: {error}"))?;
         let frame = read_depth_frame_for_backtest(&input)?;
+        let source_start_ts = frame.snapshots.first().map(|snapshot| snapshot.ts);
+        let source_end_ts = frame.snapshots.last().map(|snapshot| snapshot.ts);
         if frame.instrument.to_string() != market.instrument {
             return Err(format!("{role} 深度标的与 spec 不匹配"));
         }
@@ -175,6 +257,14 @@ pub(crate) fn write_multi_market_depth_run_evidence(
             .and_then(serde_json::Value::as_str)
             != Some(hash.as_str())
             || frame.source != source
+            || identity
+                .get("start_ts_ms")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|start| source_start_ts != Some(start))
+            || identity
+                .get("end_ts_ms")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|end| source_end_ts != Some(end))
         {
             return Err(format!("{role} 深度内容身份不匹配"));
         }
@@ -331,6 +421,20 @@ pub(crate) fn write_multi_market_depth_run_evidence(
         })
     })
     .collect::<Result<Vec<_>, String>>()?;
+    if let Some(path) = equity_exact_path {
+        artifact_refs.push(ArtifactRef {
+            name: "equity_exact".into(),
+            path: path.to_string_lossy().to_string(),
+            digest: qx_strategy::file_digest::sha256_file_hex(&path)?,
+        });
+    }
+    if let Some(path) = event_trace_path {
+        artifact_refs.push(ArtifactRef {
+            name: "event_trace".into(),
+            path: path.to_string_lossy().to_string(),
+            digest: qx_strategy::file_digest::sha256_file_hex(&path)?,
+        });
+    }
     for component in &components {
         if let (Some(path), Some(digest)) = (
             component.quality_manifest_path.as_ref(),

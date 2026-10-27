@@ -381,6 +381,17 @@ fn multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine() {
     assert_eq!(result["total_candidates"], 4);
     assert_eq!(result["completed_candidates"], 4);
     assert_eq!(result["ranking"].as_array().unwrap().len(), 4);
+    let sync_artifact = PathBuf::from(result["artifact_path"].as_str().unwrap());
+    let sync_experiment_dir = paths.artifact_root.join("api-multi-market-depth-grid");
+    assert!(
+        sync_artifact.is_file(),
+        "missing sync artifact: {sync_artifact:?}"
+    );
+    assert_eq!(
+        sync_artifact.parent().unwrap().canonicalize().unwrap(),
+        sync_experiment_dir.canonicalize().unwrap(),
+        "sync artifact must be written under one experiment directory"
+    );
 
     spec["experiment_id"] = json!("api-multi-market-depth-grid-async");
     let registry = AppRunRegistry::default();
@@ -403,6 +414,20 @@ fn multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine() {
         if document["status"] == "succeeded" {
             assert_eq!(document["result"]["total_candidates"], 4);
             assert_eq!(document["result"]["ranking"].as_array().unwrap().len(), 4);
+            let async_artifact =
+                PathBuf::from(document["result"]["artifact_path"].as_str().unwrap());
+            let async_experiment_dir = paths
+                .artifact_root
+                .join("api-multi-market-depth-grid-async");
+            assert!(
+                async_artifact.is_file(),
+                "missing async artifact: {async_artifact:?}"
+            );
+            assert_eq!(
+                async_artifact.parent().unwrap().canonicalize().unwrap(),
+                async_experiment_dir.canonicalize().unwrap(),
+                "async artifact must be written under one experiment directory"
+            );
             async_candidates = document["result"]["completed_candidates"].as_u64().unwrap();
             break;
         }

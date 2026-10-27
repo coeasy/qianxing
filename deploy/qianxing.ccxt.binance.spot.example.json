@@ -12,5 +12,8 @@
     "secret": "QX_CCXT_BINANCE_SECRET"
   },
   "options": {},
-  "instruments": ["BTC/USDT.BINANCE"]
+  "instruments": [
+    "BTC/USDT.BINANCE"
+  ],
+  "account_model": "spot"
 }

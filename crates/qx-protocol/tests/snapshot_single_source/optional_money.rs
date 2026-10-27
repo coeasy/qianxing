@@ -155,12 +155,14 @@ const POSITION_ROW_INSTRUMENT: &str = "BTCUSDT-PERP.BINANCE";
 pub(super) fn position_row(instrument: &str) -> PositionSnapshot {
     PositionSnapshot {
         instrument: InstrumentId::parse(instrument).expect("valid instrument"),
+        settlement_currency: None,
         quantity_raw: Quantity::from_i64(3).raw(),
         today_quantity_raw: Quantity::from_i64(3).raw(),
         average_price_raw: Price::from_i64(101).raw(),
         mark_price_raw: Price::from_i64(105).raw(),
         unrealized_pnl_raw: None,
         margin_raw: None,
+        exact_amounts: None,
     }
 }
 

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 pub(in crate::cases) struct StrategySlotContext<'a> {
     pub priority: i32,
     pub reserved_capital_raw: i128,
+    pub reserved_capital_exact: qx_core::ExactDecimal,
     pub instrument: &'a InstrumentId,
     pub account_id: &'a str,
     pub currency: &'a str,
@@ -26,6 +27,10 @@ pub(in crate::cases) struct BoxedStrategy(Box<dyn Strategy>);
 impl Strategy for BoxedStrategy {
     fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
         self.0.on_init(context)
+    }
+
+    fn on_start(&mut self, context: &StrategyContext) -> Result<(), String> {
+        self.0.on_start(context)
     }
 
     fn on_event(
@@ -47,6 +52,17 @@ impl Strategy for BoxedStrategy {
     fn on_stop(&mut self) -> Result<(), String> {
         self.0.on_stop()
     }
+
+    fn on_stop_with_context(
+        &mut self,
+        stop: &qx_strategy::StrategyStopContextV1,
+    ) -> Result<(), String> {
+        self.0.on_stop_with_context(stop)
+    }
+
+    fn diagnostic_state(&self) -> Option<serde_json::Value> {
+        self.0.diagnostic_state()
+    }
 }
 
 pub(in crate::cases) fn build_strategy_slot(
@@ -55,12 +71,13 @@ pub(in crate::cases) fn build_strategy_slot(
     external: Option<Box<dyn Strategy>>,
 ) -> Result<PortfolioStrategySlot, AppError> {
     let (strategy_id, native) = build_native_strategy(spec, context, external)?;
-    Ok(PortfolioStrategySlot::native(
+    let slot = PortfolioStrategySlot::native(
         context.priority,
         strategy_id,
         context.reserved_capital_raw,
         native,
-    ))
+    );
+    Ok(slot.with_reserved_capital_exact(context.reserved_capital_exact))
 }
 
 pub(in crate::cases) fn build_single_native_strategy(
@@ -99,6 +116,7 @@ fn build_native_strategy(
         .map(str::to_string)
         .unwrap_or_else(|| strategy_version(spec));
     strategy_config.validate().map_err(invalid_strategy)?;
+    let budget_exact = context.reserved_capital_exact;
     let cash = BTreeMap::from([(context.currency.to_string(), context.reserved_capital_raw)]);
     let strategy_context = StrategyContext {
         strategy_id: strategy_config.strategy_id.clone(),
@@ -107,6 +125,9 @@ fn build_native_strategy(
         venue_id: context.instrument.venue.to_string(),
         data_fingerprint: context.data_fingerprint.to_string(),
         as_of: context.as_of,
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: BTreeMap::from([(context.currency.to_string(), budget_exact)]),
+        available_margin_exact: Some(budget_exact),
         positions: BTreeMap::new(),
         available_margin_raw: strategy_available_margin_raw(&cash, context.currency),
         cash,
@@ -119,10 +140,7 @@ fn build_native_strategy(
             BuiltinStrategy::new(strategy_config).map_err(invalid_strategy)?,
         )),
     };
-    let mut native = NativeBarStrategy::new(strategy, strategy_context);
-    native
-        .initialize()
-        .map_err(|error| AppError::from_qx_error(&error))?;
+    let native = NativeBarStrategy::new(strategy, strategy_context);
     Ok((strategy_id, native))
 }
 

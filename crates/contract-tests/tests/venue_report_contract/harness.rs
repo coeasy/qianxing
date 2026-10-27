@@ -37,6 +37,7 @@ pub(crate) fn spec() -> TradingInstrumentSpec {
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -52,6 +53,7 @@ pub(crate) fn order(client_id: u64, qty: i128, limit: i128, status: OrderStatus)
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 

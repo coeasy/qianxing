@@ -74,29 +74,45 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
 /// `backtest builtin` 入口：输入校验 fail-closed，且真实跑通共用内核。
 #[test]
 fn builtin_backtest_entry_validates_inputs_and_runs_on_the_shared_kernel() {
-    let (_deploy, frame, _template) = builtin_backtest_example_paths();
-    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1, None, None).is_err());
-    assert!(run_builtin_backtest("sma_cross", &frame, None, 0, None, None).is_err());
+    let (deploy, frame, template) = builtin_backtest_example_paths();
+    let config = read_runtime_config(&template).unwrap();
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "builtin-entry");
+    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1, Some(&runtime), None).is_err());
+    assert!(run_builtin_backtest("sma_cross", &frame, None, 0, Some(&runtime), None).is_err());
     assert!(run_builtin_backtest(
         "sma_cross",
         Path::new("missing-frame.json"),
         None,
         1,
-        None,
+        Some(&runtime),
         None
     )
     .is_err());
-    run_builtin_backtest("sma_cross", &frame, None, 1, None, None).unwrap();
+    run_builtin_backtest("sma_cross", &frame, None, 1, Some(&runtime), None).unwrap();
+    assert_eq!(
+        list_backtest_summary_paths(&root.join("runs"))
+            .unwrap()
+            .len(),
+        1
+    );
     let spec_root = temp_cli_case_dir("builtin-broken-market-spec");
     let broken_spec = spec_root.join("spec.json");
     std::fs::write(&broken_spec, "{ not json").unwrap();
-    let error =
-        run_builtin_backtest("sma_cross", &frame, Some(&broken_spec), 1, None, None).unwrap_err();
+    let error = run_builtin_backtest(
+        "sma_cross",
+        &frame,
+        Some(&broken_spec),
+        1,
+        Some(&runtime),
+        None,
+    )
+    .unwrap_err();
     assert!(
         error.contains("策略回测 market spec JSON 无效"),
         "market spec 必须走共用读取口径并 fail-closed: {error}"
     );
     let _ = std::fs::remove_dir_all(&spec_root);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 回测摘要必须带上风控来源版本号，且版本号与真正参与判定的门禁同源。

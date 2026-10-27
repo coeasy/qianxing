@@ -40,6 +40,7 @@ struct RawColumns {
     low_raw: Vec<i128>,
     close_raw: Vec<i128>,
     volume_raw: Vec<i128>,
+    exact_ohlcv: Option<Vec<qx_core::ExactOhlcv>>,
 }
 
 /// 一份 BarFrame 的连续性问题计数，与 `DatasetQualityReport` 的数值字段一一对应。
@@ -108,15 +109,31 @@ fn parse_columns(payload: &str) -> Result<RawColumns, String> {
         let rows = ts.len();
         return Err(format!("数据集 BarFrame 各列长度不一致或为空: ts={rows}"));
     }
+    let exact_ohlcv = value
+        .get("exact_ohlcv")
+        .cloned()
+        .map(serde_json::from_value::<Vec<qx_core::ExactOhlcv>>)
+        .transpose()
+        .map_err(|error| format!("数据集 BarFrame exact_ohlcv 无效: {error}"))?;
+    let schema_version = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if (schema_version == 2) != exact_ohlcv.is_some() {
+        return Err("BarFrame schema_version=2 必须携带 exact_ohlcv，其他版本不能携带".into());
+    }
+    if exact_ohlcv
+        .as_ref()
+        .is_some_and(|values| values.len() != ts.len())
+    {
+        return Err("数据集 BarFrame exact_ohlcv 行数与列不一致".into());
+    }
     let instrument = text("instrument");
     if instrument.trim().is_empty() {
         return Err("数据集 BarFrame instrument 不能为空".into());
     }
     Ok(RawColumns {
-        schema_version: value
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
+        schema_version,
         instrument,
         source: text("source"),
         ts,
@@ -125,6 +142,7 @@ fn parse_columns(payload: &str) -> Result<RawColumns, String> {
         low_raw,
         close_raw,
         volume_raw,
+        exact_ohlcv,
     })
 }
 
@@ -140,6 +158,7 @@ fn data_bars(raw: &RawColumns) -> Vec<Bar> {
             low_raw: raw.low_raw[i],
             close_raw: raw.close_raw[i],
             volume_raw: raw.volume_raw[i],
+            exact_ohlcv: raw.exact_ohlcv.as_ref().map(|values| values[i]),
         })
         .collect()
 }
@@ -269,10 +288,13 @@ fn run_data_validate(
     let raw = parse_columns(&payload)
         .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
     if raw.schema_version > u64::from(BAR_FRAME_SCHEMA_VERSION) {
-        return Err(AppError::new(AppErrorCategory::InvalidInput, format!(
-            "不支持的 BarFrame schema_version={}（本构建支持 0 旧格式、1..={BAR_FRAME_SCHEMA_VERSION}）",
-            raw.schema_version
-        )));
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!(
+                "不支持的 BarFrame schema_version={}（本构建支持 0 旧格式、1..={BAR_FRAME_SCHEMA_VERSION}）",
+                raw.schema_version
+            ),
+        ));
     }
     let quality = assess_frame(&raw.ts, spec.interval_ms)
         .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;

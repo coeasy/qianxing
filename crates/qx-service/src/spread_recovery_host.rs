@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use qx_control::{order_from_submit_command, ControlCommand, ControlPlane, Permission};
-use qx_core::{Money, OrderStatus, Price, Quantity};
 use qx_storage::ControlCommandQueueBackend;
 use qx_zhenlu::{SpreadOrderGroup, SpreadOrderLeg};
 
@@ -77,14 +76,23 @@ pub fn is_fail_closed_rejection(result: &Result<String, String>) -> bool {
         .is_some_and(|error| error.starts_with("FAIL_CLOSED:"))
 }
 
+/// A sibling leg waits while another persisted submit intent is unresolved. Queue workers
+/// leave this command pending so it can retry after the first leg is synchronized.
+pub fn is_retryable_spread_submission(result: &Result<String, String>) -> bool {
+    result
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.starts_with("RETRYABLE:"))
+}
+
 /// 将某条执行 worker 已写入 EventLog 的订单状态归约到多腿组快照。
-/// 只依据本地事实更新，不根据命令成功返回值臆造成交；部分成交、取消和未知
-/// 状态分别进入 SpreadOrderGroup 的补偿/对账状态机。
+/// 只依据本地 OMS 事实更新；存储在同一文件锁内执行读、归约、写，防止不同
+/// Venue worker 同时归约不同腿时互相覆盖。精确数量和报价预算字段直接继承 OMS 快照。
 pub fn sync_spread_group_after_order(
     root: &Path,
     pipeline: &LiveEventPipeline,
     command: &ControlCommand,
-    now: u64,
+    _now: u64,
 ) -> Result<(), String> {
     let Some(group_id) = command.payload.get("spread_group_id") else {
         return Ok(());
@@ -97,54 +105,97 @@ pub fn sync_spread_group_after_order(
         .find(|candidate| candidate.client_id == order.client_id)
         .ok_or_else(|| format!("多腿订单组缺少 EventLog 订单 {}", order.client_id))?;
     let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
-    let Some(mut group) = store.load(group_id)? else {
-        return Err(format!("找不到多腿订单组快照: {group_id}"));
+    store.apply_order_snapshot(group_id, &current)
+}
+
+/// Recover the group projection from EventLog after a worker exits between persisting venue
+/// facts and synchronizing the cross-account group snapshot. Only intents owned by this account
+/// and venue are considered; an absent order is left fenced for its original command replay.
+pub fn sync_in_flight_spread_orders(
+    root: &Path,
+    pipeline: &LiveEventPipeline,
+    group_id: Option<&str>,
+    account_id: Option<&str>,
+    venue_id: Option<&str>,
+) -> Result<usize, String> {
+    let Some(group_id) = group_id else {
+        return Ok(0);
     };
-    let leg_id = format!("leg-{}", current.client_id);
-    let recorded_filled = group
-        .leg(&leg_id)
-        .map_err(|error| format!("读取多腿订单腿失败: {error:?}"))?
-        .order
-        .filled
-        .raw();
-    let filled_delta = current.filled.raw().saturating_sub(recorded_filled);
-    if filled_delta > 0 {
-        let fill = qx_core::Fill {
-            order_id: current.client_id,
-            qty: Quantity::from_raw(filled_delta),
-            price: current.limit.unwrap_or_else(|| Price::from_i64(1)),
-            fee: Money::ZERO,
-            ts: now,
-            account_id: current.account_id.clone(),
-            ..qx_core::Fill::default()
+    let snapshots = pipeline.orders();
+    let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let mut synchronized = 0_usize;
+    let Some(group) = store.load(group_id)? else {
+        // The execution gateway owns the canonical fail-closed classification for missing
+        // groups; this opportunistic crash-recovery pass must not mask it.
+        return Ok(0);
+    };
+    let Some(client_order_id) = group.submission_in_flight_order_id else {
+        return Ok(0);
+    };
+    let Some(leg) = group
+        .legs
+        .iter()
+        .find(|leg| leg.order.client_id == client_order_id)
+    else {
+        return Err(format!(
+            "多腿提交意图 {group_id}/{client_order_id} 没有对应腿"
+        ));
+    };
+    if account_id.is_some_and(|account| leg.order.account_id != account)
+        || venue_id.is_some_and(|venue| !leg.venue_id.eq_ignore_ascii_case(venue))
+    {
+        return Ok(0);
+    }
+    if let Some(snapshot) = snapshots
+        .iter()
+        .find(|snapshot| snapshot.client_id == client_order_id)
+    {
+        store.apply_order_snapshot(group_id, snapshot)?;
+        synchronized = synchronized.saturating_add(1);
+    }
+    Ok(synchronized)
+}
+
+/// Synchronize any persisted spread group containing a CancelOrder target after the cancellation
+/// fact has been reduced into the account EventLog. Membership is resolved from the stored group,
+/// never from caller-supplied group metadata.
+pub fn sync_spread_groups_after_cancel(
+    root: &Path,
+    pipeline: &LiveEventPipeline,
+    client_order_id: u64,
+) -> Result<(), String> {
+    let current = pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == client_order_id)
+        .ok_or_else(|| format!("撤单后 EventLog 缺少订单 {client_order_id}"))?;
+    let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let mut matched = None;
+    for group_id in store.group_ids()? {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
         };
-        group
-            .record_fill(&leg_id, &fill)
-            .map_err(|error| format!("归约多腿成交失败: {error:?}"))?;
+        if group
+            .legs
+            .iter()
+            .any(|leg| leg.order.client_id == client_order_id)
+        {
+            if matched.replace(group_id.clone()).is_some() {
+                return Err(format!(
+                    "订单 {client_order_id} 同时属于多个多腿组，拒绝推测归属"
+                ));
+            }
+        }
     }
-    match current.status {
-        OrderStatus::Accepted
-        | OrderStatus::Working
-        | OrderStatus::PartiallyFilled
-        | OrderStatus::Filled => group
-            .record_accepted(&leg_id)
-            .map_err(|error| format!("归约多腿 Accepted 失败: {error:?}"))?,
-        OrderStatus::Cancelled | OrderStatus::Expired => group
-            .record_cancelled(&leg_id)
-            .map_err(|error| format!("归约多腿 Cancelled 失败: {error:?}"))?,
-        OrderStatus::Rejected => group
-            .record_rejected(&leg_id)
-            .map_err(|error| format!("归约多腿 Rejected 失败: {error:?}"))?,
-        OrderStatus::Unknown => group
-            .record_unknown(&leg_id)
-            .map_err(|error| format!("归约多腿 Unknown 失败: {error:?}"))?,
-        OrderStatus::PendingSubmit | OrderStatus::Submitted | OrderStatus::CancelPending => {}
+    if let Some(group_id) = matched {
+        store.apply_order_snapshot(&group_id, &current)?;
     }
-    store.save(&group)
+    Ok(())
 }
 
 pub struct SpreadRecoveryContext<'a> {
     pub root: &'a Path,
+    pub account_id: Option<&'a str>,
     pub venue_id: &'a str,
     pub accept_any_venue: bool,
     pub order_validator: Option<&'a dyn HedgeOrderValidator>,
@@ -166,6 +217,7 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
 ) -> Result<(V, Vec<String>), String> {
     let SpreadRecoveryContext {
         root,
+        account_id,
         venue_id,
         accept_any_venue,
         order_validator,
@@ -181,11 +233,12 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
         .filter_map(|group_id| match probe_store.load(&group_id) {
             Ok(Some(group))
                 if group.status == SpreadOrderGroupStatus::HedgeRequired
-                    && group.legs.iter().any(|leg| {
-                        leg.order.filled.raw() > 0
-                            && (venue_id.trim().is_empty()
-                                || leg.venue_id.eq_ignore_ascii_case(venue_id))
-                    }) =>
+                    && (group.all_confirmed_exposure_hedged()
+                        || group.compensation_targets().iter().any(|target| {
+                            account_id.is_none_or(|account| target.account_id == account)
+                                && (venue_id.trim().is_empty()
+                                    || target.venue_id.eq_ignore_ascii_case(venue_id))
+                        })) =>
             {
                 Some(Ok(group))
             }
@@ -195,6 +248,9 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
         .collect::<Result<Vec<_>, String>>()?;
     if groups.is_empty() {
         return Ok((venue, Vec::new()));
+    }
+    if !accept_any_venue && account_id.is_none_or(|account| account.trim().is_empty()) {
+        return Err("live 多腿恢复缺少 account_id，拒绝使用错误账户处理补偿订单".into());
     }
 
     let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
@@ -206,7 +262,7 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
     let mut diagnostics = Vec::new();
     for group in groups {
         let group_id = group.group_id.clone();
-        let outcome = HedgeRecoveryWorker::new(
+        let worker = HedgeRecoveryWorker::new(
             group,
             &mut store,
             &mut router,
@@ -215,8 +271,17 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
             now,
             source_seq,
         )
-        .map_err(|error| format!("构造多腿恢复 worker 失败: {error:?}"))?
-        .execute_with_validator(order_validator)?;
+        .map_err(|error| format!("构造多腿恢复 worker 失败: {error:?}"))?;
+        let worker = match account_id {
+            Some(account_id) if venue_id.trim().is_empty() => worker
+                .for_account(account_id)
+                .map_err(|error| format!("绑定多腿恢复账户失败: {error}"))?,
+            Some(account_id) => worker
+                .for_account_venue(account_id, venue_id)
+                .map_err(|error| format!("绑定多腿恢复账户/交易所失败: {error}"))?,
+            None => worker,
+        };
+        let outcome = worker.execute_with_validator(order_validator)?;
         if outcome.completed {
             diagnostics.push(format!("spread_group={group_id} hedge=completed"));
         }
@@ -235,6 +300,25 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
 /// 两条恢复循环要的都不是"有没有"而是"这一轮扫描之后少了没有"，所以这里给的是计数：
 /// 扫描前后各数一次，分组没减少就计一轮原地不动（V13 R2 #201 让第五处内联扫描也这么记）。
 pub fn pending_spread_recovery_groups(root: &Path, venue_id: &str) -> Result<usize, String> {
+    pending_spread_recovery_groups_inner(root, venue_id, None)
+}
+
+pub fn pending_spread_recovery_groups_for_account(
+    root: &Path,
+    venue_id: &str,
+    account_id: Option<&str>,
+) -> Result<usize, String> {
+    if account_id.is_none() {
+        return pending_spread_recovery_groups(root, venue_id);
+    }
+    pending_spread_recovery_groups_inner(root, venue_id, account_id)
+}
+
+fn pending_spread_recovery_groups_inner(
+    root: &Path,
+    venue_id: &str,
+    account_id: Option<&str>,
+) -> Result<usize, String> {
     let store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
     let mut pending = 0_usize;
     for group_id in store.group_ids()? {
@@ -244,10 +328,13 @@ pub fn pending_spread_recovery_groups(root: &Path, venue_id: &str) -> Result<usi
         if group.status != SpreadOrderGroupStatus::HedgeRequired {
             continue;
         }
-        if group.legs.iter().any(|leg| {
-            leg.order.filled.raw() > 0
-                && (venue_id.trim().is_empty() || leg.venue_id.eq_ignore_ascii_case(venue_id))
-        }) {
+        if group.all_confirmed_exposure_hedged()
+            || group.compensation_targets().iter().any(|target| {
+                account_id.is_none_or(|account| target.account_id == account)
+                    && (venue_id.trim().is_empty()
+                        || target.venue_id.eq_ignore_ascii_case(venue_id))
+            })
+        {
             pending = pending.saturating_add(1);
         }
     }
@@ -365,6 +452,41 @@ pub fn recover_paper_spread_groups(
     order_validator: Option<&dyn HedgeOrderValidator>,
     costs: &ExecutionCostBinding,
 ) -> Result<Vec<String>, String> {
+    recover_paper_spread_groups_inner(root, None, pipeline, worker_id, now, order_validator, costs)
+}
+
+pub fn recover_paper_spread_groups_for_account(
+    root: &Path,
+    account_id: Option<&str>,
+    pipeline: &mut LiveEventPipeline,
+    worker_id: &str,
+    now: u64,
+    order_validator: Option<&dyn HedgeOrderValidator>,
+    costs: &ExecutionCostBinding,
+) -> Result<Vec<String>, String> {
+    if account_id.is_none() {
+        return recover_paper_spread_groups(root, pipeline, worker_id, now, order_validator, costs);
+    }
+    recover_paper_spread_groups_inner(
+        root,
+        account_id,
+        pipeline,
+        worker_id,
+        now,
+        order_validator,
+        costs,
+    )
+}
+
+fn recover_paper_spread_groups_inner(
+    root: &Path,
+    account_id: Option<&str>,
+    pipeline: &mut LiveEventPipeline,
+    worker_id: &str,
+    now: u64,
+    order_validator: Option<&dyn HedgeOrderValidator>,
+    costs: &ExecutionCostBinding,
+) -> Result<Vec<String>, String> {
     let hedge_orders = pipeline
         .orders()
         .into_iter()
@@ -377,6 +499,55 @@ pub fn recover_paper_spread_groups(
         })
         .collect::<Vec<_>>();
     let mut venue = PaperVenue::new("paper", costs.fee_model());
+    let mut exact_spec_orders = hedge_orders
+        .iter()
+        .filter(|order| order.exact_amounts.is_some() && !order.status.is_terminal())
+        .map(|order| (order.instrument.clone(), order.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    for group_id in group_store.group_ids()? {
+        let Some(group) = group_store.load(&group_id)? else {
+            continue;
+        };
+        if group.status != SpreadOrderGroupStatus::HedgeRequired {
+            continue;
+        }
+        for target in group.compensation_targets() {
+            if target.qty_exact.is_none()
+                || account_id.is_some_and(|account| account != target.account_id)
+            {
+                continue;
+            }
+            let source_leg = group
+                .leg(&target.leg_id)
+                .map_err(|error| format!("读取精确补偿来源腿失败: {error:?}"))?;
+            exact_spec_orders
+                .entry(source_leg.order.instrument.clone())
+                .or_insert_with(|| source_leg.order.clone());
+        }
+    }
+    if !exact_spec_orders.is_empty() {
+        let validator = order_validator.ok_or_else(|| {
+            "FAIL_CLOSED: Paper exact spread recovery 缺少冻结规格解析器".to_string()
+        })?;
+        for (instrument, order) in exact_spec_orders {
+            let spec = validator.instrument_spec(&order)?.ok_or_else(|| {
+                format!(
+                    "FAIL_CLOSED: Paper exact spread recovery 缺少 {} 的冻结 market spec",
+                    instrument
+                )
+            })?;
+            if spec.instrument != instrument {
+                return Err(format!(
+                    "FAIL_CLOSED: Paper spread market spec 标的不匹配: expected={} actual={}",
+                    instrument, spec.instrument
+                ));
+            }
+            venue
+                .set_instrument_spec(spec)
+                .map_err(|error| format!("Paper spread 冻结 market spec 配置失败: {error:?}"))?;
+        }
+    }
     venue
         .restore_orders(hedge_orders)
         .map_err(|error| format!("恢复 Paper 补偿订单失败: {error:?}"))?;
@@ -389,6 +560,7 @@ pub fn recover_paper_spread_groups(
     let (mut venue, mut diagnostics) = recover_spread_groups_for_venue(
         SpreadRecoveryContext {
             root,
+            account_id,
             venue_id: "",
             accept_any_venue: true,
             order_validator,
@@ -438,7 +610,14 @@ pub fn recover_paper_spread_groups(
             },
             None => None,
         };
-        let events = venue.on_quote(&instrument, quote);
+        if let Some(spec) = spec.as_ref() {
+            venue
+                .set_instrument_spec(spec.clone())
+                .map_err(|error| format!("Paper spread 冻结 market spec 配置失败: {error:?}"))?;
+        }
+        let events = venue
+            .try_on_quote(&instrument, quote)
+            .map_err(|error| format!("Paper spread 精确行情撮合失败: {error:?}"))?;
         if !events.is_empty() {
             let ingested = match spec.as_ref() {
                 Some(spec) => ingest_venue_events_with_spec(
@@ -459,6 +638,7 @@ pub fn recover_paper_spread_groups(
     let (_venue, second_pass) = recover_spread_groups_for_venue(
         SpreadRecoveryContext {
             root,
+            account_id,
             venue_id: "",
             accept_any_venue: true,
             order_validator,
@@ -534,4 +714,433 @@ pub fn command_is_final(control: &ControlPlane, command_id: u64) -> bool {
         .rev()
         .find(|record| record.command_id == command_id)
         .is_some_and(|record| record.status.is_final())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_core::{
+        ExactDecimal, ExactFillAmounts, ExactOrderAmounts, ExactTradingRules, Fill, InstrumentId,
+        OrderStatus, Price, Quantity, Side, TradingInstrumentSpec,
+    };
+    use qx_execution::HedgeOrderValidator;
+    use qx_runtime::{RuntimeEventEnvelope, RuntimeExternalEvent};
+    use qx_zhenlu::{SpreadOrderGroup, SpreadOrderLeg};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct ExactSpecValidator(TradingInstrumentSpec);
+
+    impl HedgeOrderValidator for ExactSpecValidator {
+        fn validate(&self, _order: &Order) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn instrument_spec(&self, order: &Order) -> Result<Option<TradingInstrumentSpec>, String> {
+            (order.instrument == self.0.instrument)
+                .then(|| self.0.clone())
+                .map(Some)
+                .ok_or_else(|| format!("test spec is not configured for {}", order.instrument))
+        }
+    }
+
+    #[test]
+    fn paper_recovery_matches_sub_nano_exact_compensation_with_frozen_spec() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qx-service-paper-exact-recovery-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let instrument = InstrumentId::parse("TINY/USDT.OKX").unwrap();
+        let mut spec = TradingInstrumentSpec::spot_default(&instrument, "USDT");
+        spec.base_currency = "TINY".into();
+        spec.exact_rules = Some(ExactTradingRules {
+            contract_size: ExactDecimal::ONE,
+            price_tick: ExactDecimal::parse("0.01").unwrap(),
+            quantity_step: ExactDecimal::parse("0.0000000001").unwrap(),
+            minimum_quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+            minimum_notional: ExactDecimal::ZERO,
+        });
+        spec.validate().unwrap();
+        let quantity = ExactDecimal::parse("0.0000000002").unwrap();
+        let mut source_order = Order {
+            client_id: 4_001,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "account-exact".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity,
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                market_reference_price: Some(ExactDecimal::parse("100").unwrap()),
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+            }),
+        };
+        let other_order = Order {
+            client_id: 4_002,
+            instrument: InstrumentId::parse("OTHER/USDT.OKX").unwrap(),
+            side: Side::Sell,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "account-exact".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let source_fill = Fill {
+            order_id: source_order.client_id,
+            ts: 3,
+            exact_amounts: Some(ExactFillAmounts {
+                quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+                price: ExactDecimal::parse("100").unwrap(),
+                quote_cost: Some(ExactDecimal::parse("0.00000001").unwrap()),
+                quote_budget_complete: false,
+            }),
+            ..Fill::default()
+        };
+        let mut group = SpreadOrderGroup::new(
+            "paper-exact-recovery",
+            "exact-recovery-strategy",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "exact-leg".into(),
+                    venue_id: "OKX".into(),
+                    order: source_order.clone(),
+                },
+                SpreadOrderLeg {
+                    leg_id: "empty-leg".into(),
+                    venue_id: "OKX".into(),
+                    order: other_order,
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        group.record_accepted("exact-leg").unwrap();
+        group.record_accepted("empty-leg").unwrap();
+        group.record_fill("exact-leg", &source_fill).unwrap();
+        group.record_cancelled("exact-leg").unwrap();
+        group.record_cancelled("empty-leg").unwrap();
+        assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+
+        let mut pipeline = LiveEventPipeline::open(&root, "paper-exact-recovery", "USDT").unwrap();
+        pipeline.register_order(source_order.clone(), 1).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: source_order.client_id,
+                    venue_order_id: Some("source-order".into()),
+                },
+                2,
+                2,
+                1,
+                "exact-recovery:source:accepted",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::FillWithSpec {
+                    fill: Box::new(source_fill),
+                    spec: Box::new(spec.clone()),
+                },
+                3,
+                3,
+                2,
+                "exact-recovery:source:fill",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Cancelled {
+                    client_order_id: source_order.client_id,
+                },
+                4,
+                4,
+                3,
+                "exact-recovery:source:cancelled",
+            ))
+            .unwrap();
+        source_order.status = OrderStatus::Cancelled;
+        source_order.exact_amounts.as_mut().unwrap().filled =
+            ExactDecimal::parse("0.0000000001").unwrap();
+        let mut group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        group_store.save(&group).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                qx_guanxing::QuoteTick::new(
+                    5,
+                    Price::from_i64(99),
+                    Quantity::ZERO,
+                    Price::from_i64(100),
+                    Quantity::ZERO,
+                    4,
+                )
+                .with_exact_prices(
+                    ExactDecimal::parse("99").unwrap(),
+                    ExactDecimal::parse("100").unwrap(),
+                )
+                .with_exact_sizes(
+                    ExactDecimal::parse("0.0000000002").unwrap(),
+                    ExactDecimal::parse("0.0000000002").unwrap(),
+                ),
+                5,
+                4,
+                "exact-recovery:market",
+            ))
+            .unwrap();
+
+        let validator = ExactSpecValidator(spec);
+        let diagnostics = recover_paper_spread_groups_for_account(
+            &root,
+            Some("account-exact"),
+            &mut pipeline,
+            "paper-exact-recovery",
+            6,
+            Some(&validator),
+            &ExecutionCostBinding::builtin_default(),
+        )
+        .unwrap();
+
+        let restored = group_store.load("paper-exact-recovery").unwrap().unwrap();
+        assert_eq!(
+            restored.status,
+            SpreadOrderGroupStatus::Hedged,
+            "recovery diagnostics: {diagnostics:?}"
+        );
+        let compensation = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| {
+                order
+                    .trace
+                    .as_ref()
+                    .and_then(|trace| trace.rule_version.as_deref())
+                    == Some("spread-hedge-v1")
+            })
+            .expect("exact compensation order should be in EventLog");
+        assert_eq!(compensation.status, OrderStatus::Filled);
+        assert_eq!(
+            compensation.exact_amounts.unwrap().filled,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paper_recovery_scan_closes_a_fully_hedged_group_after_restart() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qx-service-spread-finalize-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let mut first = Order {
+            client_id: 901,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(2),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "account-binance".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let mut second = first.clone();
+        second.client_id = 902;
+        second.instrument = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+        second.side = Side::Sell;
+        second.account_id = "account-okx".into();
+        let mut group = SpreadOrderGroup::new(
+            "restart-finalize",
+            "basis-restart-finalize",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "binance-leg".into(),
+                    venue_id: "BINANCE".into(),
+                    order: first.clone(),
+                },
+                SpreadOrderLeg {
+                    leg_id: "okx-leg".into(),
+                    venue_id: "OKX".into(),
+                    order: second.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        for (leg_id, order) in [("binance-leg", &mut first), ("okx-leg", &mut second)] {
+            group.record_accepted(leg_id).unwrap();
+            group
+                .record_fill(
+                    leg_id,
+                    &qx_core::Fill {
+                        order_id: order.client_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ..qx_core::Fill::default()
+                    },
+                )
+                .unwrap();
+            group.record_cancelled(leg_id).unwrap();
+            group
+                .record_compensation_fill(leg_id, Quantity::from_i64(1))
+                .unwrap();
+        }
+        assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+        assert!(group.compensation_targets().is_empty());
+
+        let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        store.save(&group).unwrap();
+        assert_eq!(
+            pending_spread_recovery_groups_for_account(&root, "BINANCE", Some("account-binance"))
+                .unwrap(),
+            1,
+            "scanner must select persisted completion that still needs a status commit"
+        );
+
+        let mut pipeline = LiveEventPipeline::open(&root, "paper-recovery", "USDT").unwrap();
+        recover_paper_spread_groups_for_account(
+            &root,
+            Some("account-binance"),
+            &mut pipeline,
+            "paper-recovery",
+            1_000,
+            None,
+            &ExecutionCostBinding::builtin_default(),
+        )
+        .unwrap();
+        assert_eq!(
+            store.load("restart-finalize").unwrap().unwrap().status,
+            SpreadOrderGroupStatus::Hedged
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn in_flight_spread_replay_syncs_only_the_matching_account_snapshot() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qx-service-spread-inflight-sync-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let first = Order {
+            client_id: 9_101,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "account-binance".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let mut second = first.clone();
+        second.client_id = 9_102;
+        second.instrument = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+        second.account_id = "account-okx".into();
+        let mut group = SpreadOrderGroup::new(
+            "spread-inflight-replay",
+            "replay-test",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "binance".into(),
+                    venue_id: "BINANCE".into(),
+                    order: first.clone(),
+                },
+                SpreadOrderLeg {
+                    leg_id: "okx".into(),
+                    venue_id: "OKX".into(),
+                    order: second,
+                },
+            ],
+        )
+        .unwrap();
+        group.submission_in_flight_order_id = Some(first.client_id);
+        let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        store.save(&group).unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(&root, "account-binance-log", "USDT").unwrap();
+        pipeline.register_order(first.clone(), 1).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: first.client_id,
+                    venue_order_id: Some("binance-remote-9101".into()),
+                },
+                2,
+                2,
+                1,
+                "spread-inflight-replay:accepted",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            sync_in_flight_spread_orders(
+                &root,
+                &pipeline,
+                Some("spread-inflight-replay"),
+                Some("account-binance"),
+                Some("BINANCE"),
+            )
+            .unwrap(),
+            1
+        );
+        let synced = store.load("spread-inflight-replay").unwrap().unwrap();
+        assert_eq!(synced.submission_in_flight_order_id, None);
+        assert_eq!(synced.legs[0].order.status, OrderStatus::Accepted);
+
+        group.submission_in_flight_order_id = Some(first.client_id);
+        store.save(&group).unwrap();
+        assert_eq!(
+            sync_in_flight_spread_orders(
+                &root,
+                &pipeline,
+                Some("spread-inflight-replay"),
+                Some("account-okx"),
+                Some("OKX"),
+            )
+            .unwrap(),
+            0,
+            "an account worker must not infer facts from a different account EventLog"
+        );
+        assert_eq!(
+            store
+                .load("spread-inflight-replay")
+                .unwrap()
+                .unwrap()
+                .submission_in_flight_order_id,
+            Some(first.client_id)
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

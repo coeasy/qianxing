@@ -1,15 +1,31 @@
 //! Independent read-back verification for depth-backtest artifacts.
 
-use super::artifacts::{csv_rows, last_equity_raw, read_text, unverified};
+use super::artifacts::{unverified, unverified_artifact_read, verify_declared_artifact_identity};
 use super::{attach, guard::guard_panics};
+use crate::artifact_store::FileArtifactReader;
+use crate::artifact_store::{
+    declared_run_record_artifact_locators, read_text_bounded, read_text_bounded_by_id,
+    scan_csv_artifact, scan_csv_artifact_by_id, ArtifactReader,
+};
 use crate::{AppError, AppErrorCategory, DepthBacktestOutcome, RunContext, VerificationResult};
 use qx_core::RunManifest;
 use serde_json::Value;
+
+const MAX_VERIFY_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Re-read the four artifacts of an L1/L2 run and check their identities and counts.
 pub fn verify_depth_run(
     outcome: &DepthBacktestOutcome,
     context: &RunContext,
+) -> Result<VerificationResult, AppError> {
+    verify_depth_run_with_reader(outcome, context, &FileArtifactReader)
+}
+
+/// Verify a depth run using a caller-provided artifact storage adapter.
+pub(crate) fn verify_depth_run_with_reader(
+    outcome: &DepthBacktestOutcome,
+    context: &RunContext,
+    reader: &dyn ArtifactReader,
 ) -> Result<VerificationResult, AppError> {
     let correlation_id = context.correlation_id().to_string();
     if outcome.run_id.trim().is_empty() {
@@ -19,20 +35,17 @@ pub fn verify_depth_run(
         )
         .with_correlation_id(&correlation_id));
     }
-    guard_panics(&correlation_id, || Ok(verify_inner(outcome)))
+    guard_panics(&correlation_id, || Ok(verify_inner(outcome, reader)))
         .map_err(|error| attach(error, &correlation_id))
 }
 
-fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
-    let manifest_body = match read_text(&outcome.artifacts.run_manifest) {
-        Ok(body) => body,
-        Err(error) => return unverified(&outcome.run_id, format!("run manifest 不可读: {error}")),
-    };
-    let manifest = match RunManifest::from_json(&manifest_body) {
-        Ok(value) => value,
-        Err(error) => return unverified(&outcome.run_id, format!("run manifest 无效: {error}")),
-    };
-    let summary_body = match read_text(&outcome.artifacts.summary) {
+fn verify_inner(outcome: &DepthBacktestOutcome, reader: &dyn ArtifactReader) -> VerificationResult {
+    let summary_body = match read_text_bounded(
+        reader,
+        &outcome.artifacts.summary,
+        MAX_VERIFY_ARTIFACT_BYTES,
+        "depth summary",
+    ) {
         Ok(body) => body,
         Err(error) => return unverified(&outcome.run_id, format!("summary 不可读: {error}")),
     };
@@ -40,22 +53,80 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         Ok(value) => value,
         Err(error) => return unverified(&outcome.run_id, format!("summary 无效: {error}")),
     };
-    let equity = match read_text(&outcome.artifacts.equity) {
-        Ok(body) => body,
-        Err(error) => return unverified(&outcome.run_id, format!("equity 不可读: {error}")),
+    let declared_artifacts = match declared_run_record_artifact_locators(&summary, reader) {
+        Ok(locators) => locators,
+        Err(error) => {
+            return unverified(
+                &outcome.run_id,
+                format!("RunRecord SHA-256 复核失败（工件身份不可用）: {error}"),
+            );
+        }
     };
-    let fills = match read_text(&outcome.artifacts.fills) {
+    let manifest_body_result = match &declared_artifacts {
+        Some(locators) => read_text_bounded_by_id(
+            reader,
+            &locators.run_manifest.id,
+            Some(&locators.run_manifest.legacy_reference),
+            MAX_VERIFY_ARTIFACT_BYTES,
+            "depth run manifest",
+        ),
+        None => read_text_bounded(
+            reader,
+            &outcome.artifacts.run_manifest,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            "depth run manifest",
+        ),
+    };
+    let manifest_body = match manifest_body_result {
         Ok(body) => body,
-        Err(error) => return unverified(&outcome.run_id, format!("fills 不可读: {error}")),
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "run manifest", &error),
+    };
+    let manifest = match RunManifest::from_json(&manifest_body) {
+        Ok(value) => value,
+        Err(error) => return unverified(&outcome.run_id, format!("run manifest 无效: {error}")),
+    };
+    let equity_result = match &declared_artifacts {
+        Some(locators) => {
+            scan_csv_artifact_by_id(reader, &locators.equity, MAX_VERIFY_ARTIFACT_BYTES, true)
+        }
+        None => scan_csv_artifact(
+            reader,
+            &outcome.artifacts.equity,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            true,
+        ),
+    };
+    let equity = match equity_result {
+        Ok(check) => check,
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "equity", &error),
+    };
+    let fills_result = match &declared_artifacts {
+        Some(locators) => {
+            scan_csv_artifact_by_id(reader, &locators.fills, MAX_VERIFY_ARTIFACT_BYTES, false)
+        }
+        None => scan_csv_artifact(
+            reader,
+            &outcome.artifacts.fills,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            false,
+        ),
+    };
+    let fills = match fills_result {
+        Ok(check) => check,
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "fills", &error),
     };
 
     let mut checks = Vec::new();
     let mut mismatches = Vec::new();
+    let expected_manifest_run_id = outcome
+        .manifest_run_id
+        .as_deref()
+        .unwrap_or(outcome.run_id.as_str());
     check(
         &mut checks,
         &mut mismatches,
         "manifest.run_id",
-        manifest.run_id == outcome.run_id,
+        manifest.run_id == expected_manifest_run_id,
     );
     check(
         &mut checks,
@@ -82,6 +153,15 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         &mut checks,
         &mut mismatches,
     );
+    if outcome.manifest_run_id.is_some() {
+        check_value(
+            &summary,
+            "manifest_run_id",
+            expected_manifest_run_id,
+            &mut checks,
+            &mut mismatches,
+        );
+    }
     check_value(
         &summary,
         "result_hash",
@@ -147,7 +227,7 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         &mut checks,
         &mut mismatches,
     );
-    let equity_rows = csv_rows(&equity).len() as u64;
+    let equity_rows = equity.rows;
     check(
         &mut checks,
         &mut mismatches,
@@ -155,7 +235,7 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         equity_rows == outcome.equity_points,
     );
     if let (Some(last), Ok(expected)) = (
-        last_equity_raw(&equity),
+        equity.final_equity_raw,
         summary["final_equity_raw"].to_string().parse::<i128>(),
     ) {
         check(
@@ -167,7 +247,7 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
     } else {
         mismatches.push("equity.csv 末值或 summary.final_equity_raw 无法解析".into());
     }
-    let fill_rows = csv_rows(&fills).len() as u64;
+    let fill_rows = fills.rows;
     check(
         &mut checks,
         &mut mismatches,
@@ -182,6 +262,7 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         "重放账簿条数",
         ledger_entries.is_some() && ledger_entries == replay_entries,
     );
+    verify_declared_artifact_identity(&summary, &mut checks, &mut mismatches, reader);
 
     VerificationResult {
         run_id: outcome.run_id.clone(),

@@ -3,6 +3,7 @@ use super::*;
 fn observation(instrument: &str) -> AccountPositionSnapshot {
     AccountPositionSnapshot {
         instrument: InstrumentId::parse(instrument).expect("valid instrument"),
+        settlement_currency: Some("USDT".into()),
         quantity: Quantity::from_i64(3),
         average_price: Some(Price::from_i64(101)),
         mark_price: Some(Price::from_i64(105)),
@@ -13,6 +14,7 @@ fn observation(instrument: &str) -> AccountPositionSnapshot {
         leverage: Some(5),
         margin_mode: Some("cross".into()),
         position_side: Some("LONG".into()),
+        exact_amounts: None,
     }
 }
 
@@ -118,6 +120,8 @@ fn order_and_fill_facts_use_the_same_wire_projection() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+
+        exact_amounts: None,
     };
     assert_eq!(
         OrderSnapshot::from(&order),
@@ -129,6 +133,7 @@ fn order_and_fill_facts_use_the_same_wire_projection() {
             quantity_raw: Quantity::from_i64(2).raw(),
             filled_raw: Quantity::from_i64(1).raw(),
             status: OrderStatus::Accepted,
+            exact_amounts: None,
         }
     );
 
@@ -146,6 +151,10 @@ fn order_and_fill_facts_use_the_same_wire_projection() {
         venue_order_id: None,
         rule_version: None,
         fee_currency: None,
+        fees: vec![],
+        exact_fees: vec![],
+
+        exact_amounts: None,
     };
     assert_eq!(
         FillSnapshot::from_fact(9, &fill),
@@ -155,6 +164,10 @@ fn order_and_fill_facts_use_the_same_wire_projection() {
             quantity_raw: Quantity::from_i64(1).raw(),
             price_raw: Price::from_i64(99).raw(),
             fee_raw: 0,
+            fee_currency: None,
+            fees: vec![],
+            exact_amounts: None,
+            exact_fees: vec![],
             ts: 1234,
         }
     );
@@ -168,6 +181,8 @@ fn net_cash_uses_the_single_kernel_formula() {
         free: Money::from_i64(100),
         locked: Money::from_i64(30),
         borrowed: Money::from_i64(-20),
+        net_cash_balance: None,
+        exact_amounts: None,
     };
     assert_eq!(balance.net_cash_raw(), Some(Money::from_i64(150).raw()));
 
@@ -183,6 +198,8 @@ fn net_cash_uses_the_single_kernel_formula() {
         free: Money::from_raw(i128::MAX),
         locked: Money::from_raw(1),
         borrowed: Money::ZERO,
+        net_cash_balance: None,
+        exact_amounts: None,
     };
     assert_eq!(overflowed.net_cash_raw(), None);
     let mut batch = AccountSnapshot::new(2, "main", "default", "BINANCE", 11);
@@ -194,6 +211,8 @@ fn net_cash_uses_the_single_kernel_formula() {
                 free: Money::from_i64(5),
                 locked: Money::ZERO,
                 borrowed: Money::ZERO,
+                net_cash_balance: None,
+                exact_amounts: None,
             },
             overflowed,
         ])

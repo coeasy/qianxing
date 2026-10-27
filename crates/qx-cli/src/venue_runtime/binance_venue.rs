@@ -86,6 +86,13 @@ pub(crate) fn run_binance_private_probe(
         return Err(format!("worker {worker_id} 不是 Binance worker"));
     }
     resolve_worker_runtime_paths(&mut worker, runtime_path);
+    let query_capabilities =
+        qx_service::execution_capability_gate::require_account_query_execution_capability(
+            &worker,
+            &config.environment,
+            qx_service::execution_capability_gate::AccountQueryPurpose::BalanceProbe,
+            qx_service::execution_capability_gate::ExecutionConnectorProfile::BinanceSpot,
+        )?;
     let auth = load_binance_worker_auth(&worker)?;
     let transport: Arc<dyn HttpTransport> =
         Arc::new(TlsHttpTransport::new(Duration::from_secs(10))?);
@@ -98,14 +105,15 @@ pub(crate) fn run_binance_private_probe(
         .fetch_account_balances(runtime_timestamp_ms())
         .map_err(|error| format!("Binance private account probe 失败: {error:?}"))?;
     println!(
-        "[Binance · PrivateProbe] network={} worker={} balances={}",
+        "[Binance · PrivateProbe] network={} worker={} balances={} query_ops={:?}",
         if is_binance_testnet(&worker) {
             "testnet"
         } else {
             "mainnet"
         },
         worker.id,
-        balances.len()
+        balances.len(),
+        query_capabilities.allowed_operations
     );
     Ok(())
 }

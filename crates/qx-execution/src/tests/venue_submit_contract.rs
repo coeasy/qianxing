@@ -46,9 +46,20 @@ struct ContractCcxtRpc;
 impl CcxtRpc for ContractCcxtRpc {
     fn call(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         match request.get("op").and_then(serde_json::Value::as_str) {
+            Some("fetch_contract_settings") => Ok(serde_json::json!({
+                "settings": {"contract": false, "symbol": "BTC/USDT"}
+            })),
             Some("create_order") => Ok(serde_json::json!({
                 "order": {"order_id": "ccxt-contract-1", "status": "open", "filled_raw": 0}
             })),
+            Some("fetch_order") => Ok(serde_json::json!({
+                "order": {
+                    "order_id": "ccxt-contract-1",
+                    "status": "canceled",
+                    "filled_raw": 0
+                }
+            })),
+            Some("fetch_my_trades") => Ok(serde_json::json!({"trades": []})),
             _ => Ok(serde_json::json!({})),
         }
     }
@@ -229,6 +240,73 @@ fn paper_ccxt_and_binance_share_submit_cancel_port_contract() {
     assert_submit_cancel_port_contract(VenuePortAdapter::new(binance), order, "binance");
 }
 
+#[test]
+fn reused_client_order_id_must_match_the_original_submission_identity() {
+    let mut existing = port_order(88);
+    existing.status = OrderStatus::Accepted;
+
+    let mut changed_legacy_order = existing.clone();
+    changed_legacy_order.qty = Quantity::from_i64(2);
+    let mut state = PortState::default();
+    state.orders.push(existing);
+    let mut never_called = NeverCalledVenue;
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut never_called,
+        &mut state,
+        "identity-contract",
+        100,
+        &mut source_seq,
+    )
+    .submit(changed_legacy_order)
+    .expect_err("a changed legacy quantity cannot reuse an accepted client ID");
+    assert!(error.contains("拒绝复用"), "{error}");
+    assert!(state.events.is_empty());
+
+    let exact_amounts = qx_core::ExactOrderAmounts {
+        quantity: qx_core::ExactDecimal::parse("0.0000000001").unwrap(),
+        limit_price: Some(qx_core::ExactDecimal::parse("12.3456789012").unwrap()),
+        filled: qx_core::ExactDecimal::ZERO,
+        quote_budget: None,
+        quote_filled: qx_core::ExactDecimal::ZERO,
+        market_reference_price: None,
+    };
+    let mut existing_exact = port_order(89);
+    existing_exact.qty = Quantity::ZERO;
+    existing_exact.limit = None;
+    existing_exact.exact_amounts = Some(exact_amounts);
+    existing_exact.status = OrderStatus::PartiallyFilled;
+    existing_exact.exact_amounts.as_mut().unwrap().filled =
+        qx_core::ExactDecimal::parse("0.00000000005").unwrap();
+
+    let mut changed_exact = existing_exact.clone();
+    changed_exact.exact_amounts.as_mut().unwrap().quantity =
+        qx_core::ExactDecimal::parse("0.0000000002").unwrap();
+    changed_exact.exact_amounts.as_mut().unwrap().filled = qx_core::ExactDecimal::ZERO;
+    changed_exact.status = OrderStatus::PendingSubmit;
+
+    let mut state = PortState::default();
+    state.orders.push(existing_exact);
+    let mut never_called = NeverCalledVenue;
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut never_called,
+        &mut state,
+        "identity-contract",
+        101,
+        &mut source_seq,
+    )
+    .submit(changed_exact)
+    .expect_err("a changed exact quantity cannot reuse a partially filled client ID");
+    assert!(error.contains("拒绝复用"), "{error}");
+    assert!(state.events.is_empty());
+
+    let mut same_exact_request = state.orders[0].clone();
+    same_exact_request.status = OrderStatus::PendingSubmit;
+    same_exact_request.exact_amounts.as_mut().unwrap().filled = qx_core::ExactDecimal::ZERO;
+    assert!(state.orders[0].same_submission_identity(&same_exact_request));
+}
+
 /// 同一订单在同一个 `ts` 上可以有两笔真实成交（分档吃单、费用返还），
 /// 只靠 `order_id + ts + qty + price` 会把第二笔判为重播而静默丢弃。
 /// 身份段必须覆盖 `fee` 与 `venue_order_id`，与 `qx-runtime` 的 `fill_key` 对齐。
@@ -299,6 +377,7 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
             maintenance_margin_bps: 0,
             valid_from: 0,
             valid_to: None,
+            exact_rules: None,
         }
     }
 
@@ -347,6 +426,7 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
         let mut source_seq = 0;
         let order = Order {
             qty: Quantity::from_raw(10 * STEP),
+            limit: None,
             ..port_order(7)
         };
         let outcome = PortExecutionService::new(
@@ -365,9 +445,11 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
                 ExecutionEvent::Accepted { .. } => "accepted",
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
+                ExecutionEvent::CancelPending { .. } => "cancel-pending",
                 ExecutionEvent::Cancelled { .. } => "cancelled",
                 ExecutionEvent::ReconcileRequired { .. } => "reconcile",
                 ExecutionEvent::MarketQuote { .. } => "quote",
+                ExecutionEvent::FeeAdjustment { .. } => "fee-adjustment",
             })
             .collect::<Vec<_>>();
         if must_reconcile {
@@ -389,4 +471,131 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
             );
         }
     }
+}
+
+#[test]
+fn paper_quote_validation_accepts_sub_nano_exact_l1_without_raw_values() {
+    use qx_core::ExactDecimal;
+
+    let quote = QuoteTick::new(
+        100,
+        Price::from_raw(9),
+        Quantity::ZERO,
+        Price::from_raw(10),
+        Quantity::ZERO,
+        1,
+    )
+    .with_exact_prices(
+        ExactDecimal::parse("0.0000000099").unwrap(),
+        ExactDecimal::parse("0.0000000100").unwrap(),
+    )
+    .with_exact_sizes(
+        ExactDecimal::parse("0.0000000005").unwrap(),
+        ExactDecimal::parse("0.0000000002").unwrap(),
+    );
+
+    assert!(validate_paper_quote(&quote).is_ok());
+}
+
+#[test]
+fn paper_quote_validation_rejects_conflicting_exact_raw_projection() {
+    use qx_core::ExactDecimal;
+
+    let quote = QuoteTick::new(
+        100,
+        Price::from_raw(8),
+        Quantity::ZERO,
+        Price::from_raw(10),
+        Quantity::ZERO,
+        1,
+    )
+    .with_exact_prices(
+        ExactDecimal::parse("0.0000000099").unwrap(),
+        ExactDecimal::parse("0.0000000100").unwrap(),
+    )
+    .with_exact_sizes(
+        ExactDecimal::parse("0.0000000005").unwrap(),
+        ExactDecimal::parse("0.0000000002").unwrap(),
+    );
+
+    assert!(validate_paper_quote(&quote).is_err());
+}
+
+#[test]
+fn exact_fill_identity_and_spec_gate_keep_sub_nano_reports_distinct() {
+    use qx_core::{
+        ExactDecimal, ExactFillAmounts, ExactFillFee, ExactOrderAmounts, ExactTradingRules,
+    };
+
+    let instrument = InstrumentId::parse("PEPE/USDT.BINANCE").unwrap();
+    let mut order = port_order(7);
+    order.instrument = instrument.clone();
+    order.qty = Quantity::ZERO;
+    order.limit = None;
+    order.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.0000000002").unwrap(),
+        limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+        filled: ExactDecimal::ZERO,
+        market_reference_price: None,
+        quote_budget: None,
+        quote_filled: Default::default(),
+    });
+
+    let mut spec = qx_core::TradingInstrumentSpec::spot_default(&instrument, "USDT");
+    spec.base_currency = "PEPE".into();
+    spec.exact_rules = Some(ExactTradingRules {
+        contract_size: ExactDecimal::parse("1").unwrap(),
+        price_tick: ExactDecimal::parse("0.00000001").unwrap(),
+        quantity_step: ExactDecimal::parse("0.0000000001").unwrap(),
+        minimum_quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+        minimum_notional: ExactDecimal::ZERO,
+    });
+    let fill = qx_core::Fill {
+        order_id: order.client_id,
+        ts: 200,
+        exact_amounts: Some(ExactFillAmounts {
+            quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+            price: ExactDecimal::parse("0.00000001").unwrap(),
+            quote_cost: None,
+            quote_budget_complete: false,
+        }),
+        exact_fees: vec![ExactFillFee {
+            amount: ExactDecimal::ZERO,
+            currency: None,
+            source_trade_ids: vec!["trade-a".into()],
+        }],
+        ..qx_core::Fill::default()
+    };
+    let second_fill = qx_core::Fill {
+        exact_fees: vec![ExactFillFee {
+            source_trade_ids: vec!["trade-b".into()],
+            ..fill.exact_fees[0].clone()
+        }],
+        ..fill.clone()
+    };
+
+    assert_ne!(fill_tag(&fill), fill_tag(&second_fill));
+    let facts = [
+        ExecutionEvent::Accepted {
+            client_order_id: order.client_id,
+            venue_order_id: "remote-7".into(),
+        },
+        ExecutionEvent::FillWithSpec {
+            fill: Box::new(fill.clone()),
+            spec: Box::new(spec.clone()),
+        },
+    ];
+    assert!(gate_submit_facts(&order, &facts, Some(&spec)).is_ok());
+
+    let mut off_step = fill;
+    off_step.exact_amounts.as_mut().unwrap().quantity =
+        ExactDecimal::parse("0.00000000015").unwrap();
+    let invalid = [ExecutionEvent::FillWithSpec {
+        fill: Box::new(off_step),
+        spec: Box::new(spec.clone()),
+    }];
+    assert!(matches!(
+        gate_submit_facts(&order, &invalid, Some(&spec)),
+        Err(SubmitFactViolation::Precision(_))
+    ));
 }

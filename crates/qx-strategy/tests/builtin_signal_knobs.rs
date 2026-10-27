@@ -49,6 +49,7 @@ fn bar(instrument: &InstrumentId, ts: u64, offset: i128) -> MarketEvent {
         low_raw: open.min(close) - lower_wick + offset,
         close_raw: close + offset,
         volume_raw: (100 + i128::from(ts % 7) * 13) * scale,
+        exact_ohlcv: None,
     }
 }
 
@@ -64,6 +65,9 @@ fn context(instrument: &InstrumentId) -> StrategyContext {
         cash: BTreeMap::new(),
         available_margin_raw: Some(1_000_000),
         risk_state: "ready".into(),
+        positions_exact: BTreeMap::new(),
+        cash_exact: BTreeMap::new(),
+        available_margin_exact: None,
     }
 }
 

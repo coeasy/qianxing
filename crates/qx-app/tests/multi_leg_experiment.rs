@@ -64,6 +64,10 @@ impl Strategy for BuyEachLeg {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         } else {
             Vec::new()
@@ -111,6 +115,42 @@ fn multi_leg_parameter_experiment_runs_independent_rust_candidates_and_ranks_the
     assert_eq!(result.ranking.len(), 2);
     assert!(result.ranking[0].combined_return_bps >= result.ranking[1].combined_return_bps);
     assert!(Path::new(&result.artifact_path).is_file());
+    let artifact_locations = result.artifact_locations.as_ref().unwrap();
+    let input_spec_path = artifact_locations
+        .get("experiment_input")
+        .expect("multi-leg experiment input spec locator");
+    let input_spec_bytes = std::fs::read(input_spec_path).expect("persisted input spec sidecar");
+    let record = qx_spec::RunRecordV2::from_json(
+        &std::fs::read_to_string(result.run_record.as_ref().unwrap()).unwrap(),
+    )
+    .expect("RunRecord V2 parses");
+    let input_ref = record
+        .artifact_refs
+        .iter()
+        .find(|artifact| artifact.name == "experiment_input")
+        .expect("RunRecord binds input spec");
+    assert_eq!(
+        input_ref.artifact_id,
+        qx_strategy::sha256_hex(&input_spec_bytes)
+    );
+    let result_value = serde_json::to_value(&result).unwrap();
+    qx_app::artifact_store::verify_declared_run_manifest(&result_value)
+        .expect("RunRecord validates the original multi-leg input spec");
+    std::fs::write(input_spec_path, b"tampered").expect("tamper input spec sidecar");
+    assert!(qx_app::artifact_store::verify_declared_run_manifest(&result_value).is_err());
+    std::fs::write(input_spec_path, input_spec_bytes).expect("restore input spec sidecar");
+    let canonical_json = result
+        .canonical_run_spec_json
+        .as_deref()
+        .expect("multi-leg experiment canonical identity");
+    let canonical = qx_spec::CanonicalRunSpec::from_json(canonical_json)
+        .expect("valid multi-leg experiment CanonicalRunSpec");
+    assert_eq!(
+        result.canonical_run_spec_fingerprint.as_deref(),
+        Some(canonical.fingerprint().unwrap().as_str())
+    );
+    assert!(result.input_data_fingerprint.is_some());
+    assert!(!canonical_json.contains(&root.to_string_lossy().to_string()));
     let repeated = run_multi_leg_experiment(&spec, &context).expect("idempotent experiment");
     assert_eq!(repeated, result);
 
@@ -121,6 +161,182 @@ fn multi_leg_parameter_experiment_runs_independent_rust_candidates_and_ranks_the
             .unwrap_err()
             .category(),
         AppErrorCategory::Conflict
+    );
+}
+
+#[test]
+fn multi_leg_experiment_accepts_exact_principal_v2_and_persists_v6_runs() {
+    let root = scratch("multi-leg-experiment-exact");
+    let exact_base = base(&root)
+        .with_initial_cash_exact(
+            qx_core::ExactDecimal::parse("1000000.0000000005").unwrap(),
+            qx_core::ExactDecimal::parse("1000000.0000000005").unwrap(),
+        )
+        .expect("exact two-leg experiment base");
+    let spec = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "pairs-grid-exact".into(),
+        base: exact_base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let result = run_multi_leg_experiment(
+        &spec,
+        &RunContext::new(CallerCapability::Research, "pairs-grid-exact"),
+    )
+    .expect("exact principal candidate experiment");
+    assert_eq!(result.succeeded_candidates, 1);
+    let outcome = result.candidates[0]
+        .outcome
+        .as_ref()
+        .expect("candidate has a completed backtest");
+    let artifact: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&outcome.attribution_artifact).unwrap())
+            .unwrap();
+    assert_eq!(artifact["schema_version"], 6);
+    assert_eq!(artifact["initial_cash_exact"], "2000000.000000001");
+    qx_app::read_multi_leg_report_facts_v1(
+        outcome,
+        &RunContext::new(CallerCapability::Research, "pairs-grid-exact-report"),
+    )
+    .expect("experiment candidate report is exact-principal verifiable");
+}
+
+#[test]
+fn multi_leg_experiment_identity_ignores_input_paths_and_rejects_changed_data_reuse() {
+    let root = scratch("multi-leg-experiment-canonical-identity");
+    let source = base(&root);
+    let alternate_inputs = root.join("alternate-inputs");
+    std::fs::create_dir_all(&alternate_inputs).unwrap();
+    let primary = alternate_inputs.join("primary.json");
+    let reference = alternate_inputs.join("reference.json");
+    std::fs::copy(&source.primary_bars_path, &primary).unwrap();
+    std::fs::copy(&source.reference_bars_path, &reference).unwrap();
+
+    let mut first = source.clone();
+    first.output_dir = root.join("first-output").to_string_lossy().into_owned();
+    let first = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "path-free-multi-leg".into(),
+        base: first,
+        parameter_space: Vec::new(),
+        strategy_kinds: vec![BuiltinStrategyKind::PairsArbitrage],
+    };
+    let context = RunContext::new(CallerCapability::Research, "path-free-multi-leg");
+    let first_result = run_multi_leg_experiment(&first, &context).unwrap();
+
+    let mut second = source;
+    second.primary_bars_path = primary.to_string_lossy().into_owned();
+    second.reference_bars_path = reference.to_string_lossy().into_owned();
+    second.output_dir = root.join("second-output").to_string_lossy().into_owned();
+    let second = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "path-free-multi-leg".into(),
+        base: second,
+        parameter_space: Vec::new(),
+        strategy_kinds: vec![BuiltinStrategyKind::PairsArbitrage],
+    };
+    let second_result = run_multi_leg_experiment(&second, &context).unwrap();
+    assert_eq!(
+        first_result.canonical_run_spec_json, second_result.canonical_run_spec_json,
+        "same data and parameters at different paths must retain the canonical identity"
+    );
+    assert_eq!(
+        first_result.canonical_run_spec_fingerprint,
+        second_result.canonical_run_spec_fingerprint
+    );
+
+    let changed_frame_payload =
+        std::fs::read_to_string(&primary).expect("read relocated primary BarFrame");
+    let mut changed_frame = qx_datastruct::BarFrame::from_json(&changed_frame_payload)
+        .expect("parse relocated primary BarFrame");
+    changed_frame.close_raw[0] += 1;
+    std::fs::write(&primary, changed_frame.to_json()).expect("write changed primary BarFrame");
+    assert_eq!(
+        run_multi_leg_experiment(&second, &context)
+            .unwrap_err()
+            .category(),
+        AppErrorCategory::Conflict,
+        "a changed content fingerprint must not reuse a prior experiment_id"
+    );
+}
+
+#[test]
+fn multi_leg_experiment_does_not_reuse_legacy_report_without_data_identity() {
+    let root = scratch("multi-leg-experiment-legacy-identity");
+    let spec = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "legacy-multi-leg-identity".into(),
+        base: base(&root),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let context = RunContext::new(CallerCapability::Research, "legacy-multi-leg-identity");
+    let result = run_multi_leg_experiment(&spec, &context).unwrap();
+    let mut legacy: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&result.artifact_path).expect("read experiment report"),
+    )
+    .expect("parse experiment report");
+    let report = legacy.as_object_mut().expect("report object");
+    report.remove("canonical_run_spec_json");
+    report.remove("canonical_run_spec_fingerprint");
+    report.remove("input_data_fingerprint");
+    std::fs::write(
+        &result.artifact_path,
+        serde_json::to_vec(&legacy).expect("serialize legacy report"),
+    )
+    .expect("write legacy report");
+
+    let error = run_multi_leg_experiment(&spec, &context)
+        .expect_err("legacy report cannot be reused without proven data identity");
+    assert_eq!(error.category(), AppErrorCategory::Conflict);
+    assert!(error.message().contains("缺少数据级 CanonicalRunSpec"));
+}
+
+#[test]
+fn multi_leg_experiment_rejects_candidate_manifest_detached_from_parent_identity() {
+    let root = scratch("multi-leg-experiment-candidate-manifest");
+    let spec = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "candidate-manifest-check".into(),
+        base: base(&root),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let context = RunContext::new(CallerCapability::Research, "candidate-manifest-check");
+    let result = run_multi_leg_experiment(&spec, &context).unwrap();
+    let outcome = result.candidates[0]
+        .outcome
+        .as_ref()
+        .expect("successful candidate");
+    let manifest_path = Path::new(&outcome.attribution_artifact)
+        .with_file_name(format!("{}.multi-leg.run.json", outcome.run_id));
+    let mut manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path).expect("read candidate manifest"),
+    )
+    .expect("parse candidate manifest");
+    manifest["data_fingerprint"] = serde_json::Value::String("different-inputs".into());
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec(&manifest).expect("serialize modified candidate manifest"),
+    )
+    .expect("write modified candidate manifest");
+
+    assert_eq!(
+        run_multi_leg_experiment(&spec, &context)
+            .unwrap_err()
+            .category(),
+        AppErrorCategory::StorageFailure,
+        "a detached candidate manifest must not be returned as a verified experiment"
     );
 }
 

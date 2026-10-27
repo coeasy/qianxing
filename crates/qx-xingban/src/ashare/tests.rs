@@ -17,6 +17,7 @@ fn order(side: Side, qty: i128) -> Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -51,11 +52,26 @@ fn sealed_limit_and_halt_block_the_correct_side() {
     };
     rules.validate().unwrap();
     let up = 10 * SCALE;
-    let up_limit = rules.limits(up).0;
+    let up_limit = rules.limits(up).unwrap().0;
     let sealed = Bar::new(1, up_limit, up_limit, up_limit, up_limit, 1);
     assert!(rules.blocks_fill(Side::Buy, &sealed, Some(up)));
     assert!(!rules.blocks_fill(Side::Sell, &sealed, Some(up)));
     assert!(!rules.is_trading(2));
+}
+
+#[test]
+fn overflowing_limit_band_calculation_fails_closed() {
+    let rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    rules.validate().unwrap();
+
+    assert!(rules.limits(i128::MAX).is_err());
+    assert!(rules.limits(0).is_err());
+    let extreme = Bar::new(1, i128::MAX, i128::MAX, i128::MAX, i128::MAX, 1);
+    assert!(rules.blocks_fill(Side::Buy, &extreme, Some(i128::MAX)));
+    assert!(rules.blocks_fill(Side::Sell, &extreme, Some(i128::MAX)));
 }
 
 #[test]
@@ -345,7 +361,7 @@ fn unset_limit_band_comes_from_the_board_not_a_flat_ten_percent() {
             "{board:?} 未声明时必须按板块表推导"
         );
         assert_eq!(
-            rules.limits(previous_close),
+            rules.limits(previous_close).unwrap(),
             (
                 previous_close * (10_000 + i128::from(band)) / 10_000,
                 previous_close * (10_000 - i128::from(band)) / 10_000
@@ -371,7 +387,7 @@ fn declared_limit_band_still_overrides_the_board_table() {
     };
     rules.validate().unwrap();
     assert_eq!(
-        rules.limits(10 * SCALE),
+        rules.limits(10 * SCALE).unwrap(),
         (11 * SCALE, 9 * SCALE),
         "声明 ±10% 的创业板规则不能被板块表改成 ±20%"
     );
@@ -437,15 +453,15 @@ fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar() {
         ),
     ];
     // 同一交易日内的前一根不是昨收，所以今天头一根之前都没有锚。
-    assert_eq!(rules.previous_close(&bars, 0), None);
-    assert_eq!(rules.previous_close(&bars, 1), None);
-    assert_eq!(rules.previous_close(&bars, 2), Some(yuan(1_000)));
+    assert_eq!(rules.previous_close(&bars, 0).unwrap(), None);
+    assert_eq!(rules.previous_close(&bars, 1).unwrap(), None);
+    assert_eq!(rules.previous_close(&bars, 2).unwrap(), Some(yuan(1_000)));
     // 关键一格：今天第二根的锚仍是昨天收，而不是 10.50 那根。
-    assert_eq!(rules.previous_close(&bars, 3), Some(yuan(1_000)));
-    assert_eq!(rules.limits(yuan(1_000)).0, yuan(1_100));
-    assert!(rules.blocks_fill(Side::Buy, &bars[3], rules.previous_close(&bars, 3)));
+    assert_eq!(rules.previous_close(&bars, 3).unwrap(), Some(yuan(1_000)));
+    assert_eq!(rules.limits(yuan(1_000)).unwrap().0, yuan(1_100));
+    assert!(rules.blocks_fill(Side::Buy, &bars[3], rules.previous_close(&bars, 3).unwrap()));
     // 上一根 Bar 收价那种旧口径把板推到 11.55，这根封死的分钟线就照样成交。
-    let (stale_up, _) = rules.limits(bars[2].close);
+    let (stale_up, _) = rules.limits(bars[2].close).unwrap();
     assert_eq!(stale_up, yuan(1_155));
     assert!(!rules.blocks_fill(Side::Buy, &bars[3], Some(stale_up)));
     // 覆盖表赢过推导：除权除息日的昨收只能由数据侧给。
@@ -454,7 +470,10 @@ fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar() {
         ..rules.clone()
     };
     overridden.validate().unwrap();
-    assert_eq!(overridden.previous_close(&bars, 3), Some(yuan(1_050)));
+    assert_eq!(
+        overridden.previous_close(&bars, 3).unwrap(),
+        Some(yuan(1_050))
+    );
 }
 
 /// 除权除息日的锚不再退回**不复权**昨收：折算读的就是公司行为 JSON 装载进来的那份事实。
@@ -504,14 +523,14 @@ fn ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules() {
         .unwrap();
     rules.validate().unwrap();
     assert_eq!(
-        rules.previous_close(&bars, 1),
+        rules.previous_close(&bars, 1).unwrap(),
         Some(yuan(950)),
         "除息日的锚必须扣掉已装载的每股现金红利"
     );
-    assert_eq!(rules.limits(yuan(950)).0, yuan(1_045));
-    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1)));
+    assert_eq!(rules.limits(yuan(950)).unwrap().0, yuan(1_045));
+    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1).unwrap()));
     assert!(
-        rules.blocks_fill(Side::Buy, &bars[2], rules.previous_close(&bars, 2)),
+        rules.blocks_fill(Side::Buy, &bars[2], rules.previous_close(&bars, 2).unwrap()),
         "除息日内的分钟线用同一格折算锚"
     );
     // 旧口径（不复权昨收 10.00）把板推到 11.00，这根封死的线就照样成交。
@@ -522,7 +541,10 @@ fn ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules() {
         ..rules.clone()
     };
     overridden.validate().unwrap();
-    assert_eq!(overridden.previous_close(&bars, 1), Some(yuan(1_000)));
+    assert_eq!(
+        overridden.previous_close(&bars, 1).unwrap(),
+        Some(yuan(1_000))
+    );
 }
 
 /// 同一除权日上的红利 + 送转 + 配股按 `(昨收 + 配股价×配股比例 − 红利) ÷ (1 + 送转 + 配股)`
@@ -560,13 +582,54 @@ fn ex_rights_anchor_folds_dividend_bonus_shares_and_rights_issue_together() {
     rules.validate().unwrap();
     // (10.00 + 5.00×0.3 − 0.50) ÷ 1.6 = 6.875 → 落到 0.01 刻度是 6.88。
     assert_eq!(
-        rules.previous_close(&bars, 1),
+        rules.previous_close(&bars, 1).unwrap(),
         Some(yuan(688)),
         "同一除权日的三类事实必须一次折算，而不是只读红利"
     );
-    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1)));
+    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1).unwrap()));
     // 只折算红利（锚 9.50、板 10.45）时，这根封在 7.56 的线照样成交 —— 送转与配股不能漏。
     assert!(!rules.blocks_fill(Side::Buy, &bars[1], Some(yuan(950))));
+}
+
+#[test]
+fn ex_rights_reference_arithmetic_overflow_is_rejected() {
+    let yuan = |cents: i128| cents * SCALE / 100;
+    let previous_session = date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+    let ex_date = date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+    let bars = vec![
+        Bar::new(
+            previous_session,
+            yuan(1_000),
+            yuan(1_000),
+            yuan(1_000),
+            yuan(1_000),
+            1_000,
+        ),
+        Bar::new(
+            ex_date,
+            yuan(1_000),
+            yuan(1_000),
+            yuan(1_000),
+            yuan(1_000),
+            1_000,
+        ),
+    ];
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    let payload = format!(
+        r#"[{{"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"rights_issue","rights_instrument":"700001.SZSE","rights_issue_price_raw":"{}","rights_issue_ratio_num":1,"rights_issue_ratio_den":1,"source":"overflow-test"}}]"#,
+        i128::MAX
+    );
+    rules
+        .apply_corporate_actions_json("000001.SZSE", &payload)
+        .unwrap();
+    rules.validate().unwrap();
+
+    let error = rules.previous_close(&bars, 1).unwrap_err();
+    assert!(error.contains("现金流合计溢出"), "{error}");
+    assert!(rules.previous_close_series(&bars).is_err());
 }
 
 /// 跨语言对照夹具目录：Python 写侧的产物，Rust 读侧在这里读回。
@@ -760,14 +823,17 @@ fn python_written_actions_fold_into_the_shared_ex_rights_reference() {
         "夹具走的是折算，不是数据侧覆盖"
     );
     assert_eq!(
-        rules.previous_close(&bars, 1),
+        rules.previous_close(&bars, 1).unwrap(),
         Some(cross_check_raw(anchor, "expected_reference_raw")),
         "除权日锚定的参考价必须等于两侧共读的那一格期望值"
     );
     // 不折算就是不复权昨收 10.00：这两格必须分开，否则整条对照是空的。
-    assert_ne!(rules.previous_close(&bars, 1), Some(previous_close));
+    assert_ne!(
+        rules.previous_close(&bars, 1).unwrap(),
+        Some(previous_close)
+    );
     assert!(
-        rules.limits(previous_close).0 > rules.limits(reference).0,
+        rules.limits(previous_close).unwrap().0 > rules.limits(reference).unwrap().0,
         "同一根 Bar 在未折算与折算后的锚下必须落在不同的涨停板上"
     );
 }

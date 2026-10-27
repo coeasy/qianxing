@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/account-activity-report-v1.json",
+  "title": "Qianxing account activity report v1",
+  "description": "Bounded account snapshot and retained account-projection event page. Currency values remain in native currency rows and are not implicitly aggregated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "as_of_age_ms",
+    "balances",
+    "positions",
+    "orders",
+    "fills",
+    "transfers",
+    "events",
+    "reconciliation",
+    "completeness"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account_id",
+        "venue_id",
+        "portfolio_id",
+        "snapshot_id",
+        "snapshot_event_seq",
+        "snapshot_state_hash",
+        "snapshot_as_of_ms"
+      ],
+      "properties": {
+        "account_id": { "type": "string", "minLength": 1 },
+        "venue_id": { "type": "string", "minLength": 1 },
+        "portfolio_id": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "integer", "minimum": 0 },
+        "snapshot_event_seq": { "type": "integer", "minimum": 0 },
+        "snapshot_state_hash": { "type": "string" },
+        "snapshot_as_of_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "as_of_age_ms": {
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "balances": { "type": "object", "additionalProperties": true },
+    "positions": { "$ref": "#/$defs/snapshotRows" },
+    "orders": { "$ref": "#/$defs/snapshotRows" },
+    "fills": { "$ref": "#/$defs/snapshotRows" },
+    "transfers": { "$ref": "#/$defs/snapshotRows" },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available_total",
+        "oldest_seq",
+        "latest_seq",
+        "requested_after",
+        "requested_before",
+        "limit",
+        "has_older",
+        "has_newer",
+        "previous_before",
+        "next_after",
+        "rows"
+      ],
+      "properties": {
+        "available_total": { "type": "integer", "minimum": 0 },
+        "oldest_seq": { "$ref": "#/$defs/nullableUnsigned" },
+        "latest_seq": { "$ref": "#/$defs/nullableUnsigned" },
+        "requested_after": { "$ref": "#/$defs/nullableUnsigned" },
+        "requested_before": { "$ref": "#/$defs/nullableUnsigned" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "has_older": { "type": "boolean" },
+        "has_newer": { "type": "boolean" },
+        "previous_before": { "$ref": "#/$defs/nullableUnsigned" },
+        "next_after": { "$ref": "#/$defs/nullableUnsigned" },
+        "rows": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "reconciliation": { "type": "object", "additionalProperties": true },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_available",
+        "event_history_scope",
+        "equity_reported",
+        "available_reported",
+        "margin_reported",
+        "realized_pnl_reported",
+        "unrealized_pnl_reported",
+        "fees_reported",
+        "funding_reported",
+        "reconciliation_reported",
+        "positions_truncated",
+        "orders_truncated",
+        "fills_truncated",
+        "transfers_truncated"
+      ],
+      "properties": {
+        "snapshot_available": { "type": "boolean" },
+        "event_history_scope": { "const": "retained_account_projection_event_log" },
+        "equity_reported": { "type": "boolean" },
+        "available_reported": { "type": "boolean" },
+        "margin_reported": { "type": "boolean" },
+        "realized_pnl_reported": { "type": "boolean" },
+        "unrealized_pnl_reported": { "type": "boolean" },
+        "fees_reported": { "type": "boolean" },
+        "funding_reported": { "type": "boolean" },
+        "reconciliation_reported": { "type": "boolean" },
+        "positions_truncated": { "type": "boolean" },
+        "orders_truncated": { "type": "boolean" },
+        "fills_truncated": { "type": "boolean" },
+        "transfers_truncated": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "nullableUnsigned": {
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "snapshotRows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "returned", "truncated", "rows"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "truncated": { "type": "boolean" },
+        "rows": { "type": "array", "maxItems": 500, "items": { "type": "object" } }
+      }
+    }
+  }
+}

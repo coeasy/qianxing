@@ -49,6 +49,9 @@ impl EventAppender for MemoryOms {
                     OrderStatus::PartiallyFilled
                 };
             }
+            ExecutionEvent::CancelPending { client_order_id } => {
+                self.find_mut(client_order_id)?.status = OrderStatus::CancelPending;
+            }
             ExecutionEvent::Cancelled { client_order_id } => {
                 self.find_mut(client_order_id)?.status = OrderStatus::Cancelled;
             }
@@ -56,6 +59,7 @@ impl EventAppender for MemoryOms {
                 self.find_mut(client_order_id)?.status = OrderStatus::Unknown;
             }
             ExecutionEvent::MarketQuote { .. } => {}
+            ExecutionEvent::FeeAdjustment { .. } => {}
         }
         Ok(())
     }
@@ -153,6 +157,7 @@ fn parent_order(quantity_raw: i128) -> Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -194,6 +199,7 @@ fn market_spec(qty_step: i128, min_qty: i128) -> qx_core::TradingInstrumentSpec 
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

@@ -11,15 +11,50 @@ mod combined_return;
 mod metrics;
 mod multi_builtin_summary;
 mod quality;
+mod report_facts;
+mod report_reader;
 pub use buckets::{multi_leg_leg_buckets, multi_leg_realized_standing_at};
 pub use cash_sizing::multi_leg_leg_cash_reserve;
-pub use combined_equity::{multi_leg_combined_equity_metrics, MultiLegCombinedEquity};
+pub use combined_equity::{
+    multi_leg_combined_equity_metrics, multi_leg_combined_exact_equity_metrics,
+    MultiLegCombinedEquity, MultiLegCombinedExactEquity,
+};
 pub use combined_return::multi_leg_combined_return_bps;
 pub use metrics::{multi_leg_cost_bps, multi_leg_group_totals, multi_leg_leg_integrity};
 pub use multi_builtin_summary::{
     multi_builtin_composition_summary_json, MultiBuiltinCompositionSummary,
 };
 pub use quality::{aggregate_multi_leg_quality_report, multi_leg_quality_fingerprint};
+pub use report_facts::{
+    multi_leg_funding_cost, multi_leg_leg_pnl_exact, multi_leg_leg_return_bps,
+    multi_leg_leg_return_bps_exact, multi_leg_leg_return_bps_exact_v2,
+    multi_leg_shared_account_ledger_summary_exact_v2, multi_leg_shared_account_ledger_summary_v1,
+    verify_multi_leg_cost_facts_v1, verify_multi_leg_shared_account_ledger_exact_v2,
+    verify_multi_leg_shared_account_ledger_v1, MultiLegCostFacts, MultiLegCostVerificationFacts,
+    MultiLegLegReturnFacts,
+};
+pub use report_reader::{
+    multi_leg_initial_cash_raw_v1, multi_leg_pending_turnover_raw_v1,
+    read_multi_leg_event_report_page_v1, read_multi_leg_event_report_page_v1_with_readers,
+    read_multi_leg_report_facts_v1, read_multi_leg_report_facts_v1_with_reader,
+    read_multi_leg_report_facts_v1_with_readers,
+    read_multi_leg_report_read_model_v1_with_page_and_readers,
+    read_multi_leg_report_read_model_v1_with_readers, read_multi_leg_research_report_v1,
+    read_multi_leg_research_report_v1_with_readers, verify_multi_leg_equity_report_exact_v1,
+    verify_multi_leg_equity_report_exact_with_principal_v2, verify_multi_leg_equity_report_v1,
+    verify_multi_leg_market_fill_report_v1, verify_multi_leg_research_report_facts_v1,
+    MultiLegEquityReportFactsV1, MultiLegEventPageRequestV1, MultiLegEventReportPageV1,
+    MultiLegEventReportReadRequestV1, MultiLegLegReportFactsV1, MultiLegMarketFillReportFactsV1,
+    MultiLegReportCostFactsV1, MultiLegReportRowsV1, MultiLegResearchReportCostSummaryV1,
+    MultiLegResearchReportEquitySummaryV1, MultiLegResearchReportExecutionV1,
+    MultiLegResearchReportFactsV1, MultiLegResearchReportInputV1,
+    MultiLegResearchReportLegSummaryV1, MultiLegResearchReportMarketV1,
+    MultiLegResearchReportReadModelV1, MultiLegResearchReportReadRequestV1,
+    MultiLegResearchReportSummaryV1, MultiLegResearchReportV1, MAX_MULTI_LEG_EQUITY_REPORT_ROWS,
+    MAX_MULTI_LEG_EVENT_REPORT_PAGE_ROWS, MAX_MULTI_LEG_FILL_REPORT_ROWS,
+    MAX_MULTI_LEG_REPORT_ROWS, MULTI_LEG_EVENT_REPORT_SCHEMA_VERSION_V1,
+    MULTI_LEG_RESEARCH_REPORT_SCHEMA_VERSION_V1,
+};
 
 use qx_core::{InstrumentId, Order, OrderStatus, Quantity, Side, TradingInstrumentSpec};
 use qx_guanxing::Bar;
@@ -251,6 +286,7 @@ pub fn multi_leg_group_attributions(
                 account_id: leg.account_id.to_string(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             });
             attributions.push(SpreadLegAttribution {
                 leg_id: (*leg_id).to_string(),

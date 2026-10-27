@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-api-input-v9-exact-cash-margin",
+  "generated_at_utc": "2026-10-27T03:44:18Z",
+  "scope": {
+    "contract": "Python/Rust strategy input preserves exact account cash and available margin across worker/runtime boundaries",
+    "schema_version": 9,
+    "exact_fields": [
+      "cash_exact",
+      "available_margin_exact"
+    ],
+    "projection": "1e-9 raw compatibility values truncate toward zero while exact decimal strings remain authoritative",
+    "local_strategy_mode": "direct process execution; sandbox is optional"
+  },
+  "validation": [
+    {
+      "command": "python -m unittest tests.test_strategy_contract tests.test_strategy_base",
+      "passed": 66,
+      "failed": 0,
+      "details": "Covers v9 exact cash/margin round-trip, raw projection mismatch/negative rejection, and BaseStrategy exact-first accessors."
+    },
+    {
+      "command": "cargo test -p qx-runtime --test strategy_contract_input_schema --offline -j 1",
+      "passed": 12,
+      "failed": 0,
+      "details": "Includes v9 exact balances with sub-nano precision and no L2 order books."
+    },
+    {
+      "command": "cargo test -p qx-runtime strategy_contract --offline -j 1",
+      "passed": 8,
+      "failed": 0,
+      "details": "Runtime strategy contract unit tests."
+    },
+    {
+      "command": "cargo test -p qx-core exact_decimal_preserves_precision_beyond_legacy_scale --offline -j 1",
+      "passed": 1,
+      "failed": 0,
+      "details": "Strict conversion behavior remains intact; explicit compatibility projection truncates toward zero."
+    },
+    {
+      "command": "cargo check -p qx-cli --tests --offline -j 1",
+      "passed": true,
+      "details": "CLI test targets compile with exact account context fields."
+    },
+    {
+      "command": "cargo test -p qx-cli --bin qx-cli strategy_account_context_reads_the_worker_settlement_currency --offline -j 1",
+      "passed": 1,
+      "failed": 0,
+      "details": "Worker settlement currency account context preserves exact cash and margin."
+    },
+    {
+      "command": "python -m py_compile tools/check_architecture.py python/qianxing_bridge/strategy.py python/qianxing_strategy/base.py python/tests/test_strategy_contract.py python/tests/test_strategy_base.py",
+      "passed": true
+    },
+    {
+      "command": "git diff --check",
+      "passed": true
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "details": "Four shards, full named-check coverage, no duplicates; completed in 119.49 seconds."
+    },
+    {
+      "command": "rustfmt --edition 2021 --check on touched Rust strategy files; git diff --check",
+      "passed": true,
+      "details": "Targeted Rust formatting and workspace whitespace checks passed."
+    },
+    {
+      "command": "Parse strategy-api-input-v9.json and evidence JSON",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Exact precision can only be preserved when the upstream ledger/provider supplies the exact sidecar; a raw-only source cannot recover discarded precision.",
+    "No live exchange or hosted E2B, Microsandbox, or OpenSandbox service was contacted in this validation.",
+    "llm-sandbox remains an unintegrated alternative.",
+    "This is an unpublished workspace validation and does not establish release readiness."
+  ],
+  "release_status": "unpublished workspace"
+}

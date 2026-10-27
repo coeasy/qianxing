@@ -58,6 +58,7 @@ mod tests {
             account_id: "acct".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }
     }
 

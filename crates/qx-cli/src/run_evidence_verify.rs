@@ -233,9 +233,7 @@ fn verify_run_bundle_impl(
             root,
             &run.dataset,
             &manifest.input_components,
-            summary_path
-                .as_deref()
-                .ok_or("多市场 EvidenceBundle 缺少 summary 产物")?,
+            &run.artifacts,
         )?,
         "multi-market-depthframe" => {
             recompute_multi_market_depth_identity(root, &run.dataset, &manifest)?
@@ -445,6 +443,7 @@ fn verify_run_bundle_impl(
                     &input_path,
                     runtime_config_path.as_deref(),
                     market_spec_path.as_deref(),
+                    quality_manifest_path.as_deref(),
                     &manifest,
                 )?;
             }

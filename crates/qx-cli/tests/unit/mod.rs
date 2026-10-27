@@ -24,6 +24,7 @@ pub(crate) fn smoke_paper_risk_context() -> RiskContext {
         instrument_spec: Some(spec),
         max_order_notional_raw: None,
         max_position_notional_raw: None,
+        exact: None,
     }
 }
 
@@ -179,6 +180,16 @@ pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
         .join("..")
         .join("deploy")
         .join("qianxing.binance.spot.spec.json")
+}
+
+/// API valuation fixtures use the same frozen BTCUSDT spot rule as the Paper worker.
+/// An empty spec map must leave equity/PnL absent because `BTCUSDT` alone cannot
+/// distinguish spot from a derivative contract.
+pub(crate) fn workspace_binance_spot_market_specs() -> BTreeMap<InstrumentId, TradingInstrumentSpec>
+{
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let spec: TradingInstrumentSpec = serde_json::from_str(&payload).unwrap();
+    BTreeMap::from([(spec.instrument.clone(), spec)])
 }
 
 /// 为账簿记账回归生成指定报价币种的现货规格。

@@ -80,11 +80,7 @@ pub(super) fn start_experiment(
         return respond(Err(error));
     }
     let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     if let Err(error) = registry.reserve(run_id.clone()) {
         return respond(Err(error));
     }
@@ -313,11 +309,7 @@ pub(super) fn start_multi_leg_experiment(
         }
     }
     let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     if let Err(error) = registry.reserve(run_id.clone()) {
         return respond(Err(error));
     }
@@ -343,11 +335,7 @@ pub(super) fn start_multi_market_experiment(
         }
     }
     let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     if let Err(error) = registry.reserve(run_id.clone()) {
         return respond(Err(error));
     }
@@ -373,11 +361,7 @@ pub(super) fn start_multi_market_depth_experiment(
         }
     }
     let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     if let Err(error) = registry.reserve(run_id.clone()) {
         return respond(Err(error));
     }

@@ -25,6 +25,7 @@ fn snapshot_with_rows() -> AccountSnapshot {
             quantity_raw: 2,
             filled_raw: 0,
             status: qx_core::OrderStatus::Working,
+            exact_amounts: None,
         },
     );
     snapshot.fills.insert(
@@ -35,6 +36,10 @@ fn snapshot_with_rows() -> AccountSnapshot {
             quantity_raw: 2,
             price_raw: 100,
             fee_raw: 1,
+            fee_currency: None,
+            fees: vec![],
+            exact_amounts: None,
+            exact_fees: vec![],
             ts: 10,
         },
     );

@@ -43,22 +43,10 @@ class ParameterTypingContractTest(unittest.TestCase):
             },
         )
 
-    def test_typed_continuous_parameter_names_cover_fixed_point_sizing_dimensions(self) -> None:
-        names = set(get_args(get_type_hints(ExperimentParameterRange)["name"]))
-        self.assertEqual(
-            names,
-            {
-                "fast_window",
-                "slow_window",
-                "period",
-                "threshold_bps",
-                "quantity_raw",
-                "target_notional_raw",
-                "target_available_margin_bps",
-                "target_volatility_bps",
-                "target_kelly_fraction_bps",
-            },
-        )
+    def test_continuous_parameter_names_stay_open_for_callback_parameters(self) -> None:
+        # Rust built-in dimensions are checked against the schema at execution;
+        # custom callback strategies may use any valid declared identifier.
+        self.assertIs(get_type_hints(ExperimentParameterRange)["name"], str)
 
 
 class StrategyCatalogTest(unittest.TestCase):

@@ -19,6 +19,7 @@ fn timed_rights_issue_lifecycle_uses_record_date_and_expires_remaining_rights() 
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(
@@ -127,6 +128,7 @@ fn timed_cash_dividend_pays_after_post_record_date_sale() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(

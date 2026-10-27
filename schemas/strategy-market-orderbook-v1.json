@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-market-orderbook-v1.json",
+  "title": "Qianxing Strategy Market OrderBook Event v1",
+  "description": "Exact source price and quantity are coefficient/scale decimals. Legacy raw fields remain the toward-zero 1e-9 projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["OrderBook"],
+  "properties": {
+    "OrderBook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instrument", "ts", "sequence", "bids", "asks"],
+      "properties": {
+        "instrument": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["symbol", "venue"],
+          "properties": {
+            "symbol": { "type": "string", "minLength": 1 },
+            "venue": { "type": "string", "minLength": 1 }
+          }
+        },
+        "ts": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 },
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 },
+        "bids": { "type": "array", "items": { "$ref": "#/$defs/level" } },
+        "asks": { "type": "array", "items": { "$ref": "#/$defs/level" } }
+      }
+    }
+  },
+  "$defs": {
+    "decimal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coefficient", "scale"],
+      "properties": {
+        "coefficient": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "scale": { "type": "integer", "minimum": 0, "maximum": 18 }
+      }
+    },
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_raw", "qty_raw", "price_exact", "qty_exact"],
+      "properties": {
+        "price_raw": { "type": "integer" },
+        "qty_raw": { "type": "integer" },
+        "price_exact": { "$ref": "#/$defs/decimal" },
+        "qty_exact": { "$ref": "#/$defs/decimal" }
+      }
+    }
+  }
+}

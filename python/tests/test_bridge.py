@@ -29,6 +29,34 @@ class BridgeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             frame.resample(0)
 
+    def test_bar_frame_v2_round_trip_preserves_sub_nano_ohlcv(self):
+        frame = BarFrame(
+            "T.SIM",
+            "bars-v2",
+            (1,),
+            (1_000_000_000,),
+            (1_000_000_000,),
+            (1_000_000_000,),
+            (1_000_000_000,),
+            (1_000_000_000,),
+            (
+                {
+                    "open": {"coefficient": "10000000001", "scale": 10},
+                    "high": {"coefficient": "10000000003", "scale": 10},
+                    "low": {"coefficient": "10000000001", "scale": 10},
+                    "close": {"coefficient": "10000000002", "scale": 10},
+                    "volume": {"coefficient": "100000000005", "scale": 11},
+                },
+            ),
+        )
+        payload = frame.to_json()
+        self.assertIn('"schema_version":2', payload)
+        restored = BarFrame.from_json(payload)
+        self.assertEqual(restored, frame)
+        changed = payload.replace('"coefficient":"100000000005"', '"coefficient":"100000000105"')
+        with self.assertRaisesRegex(ValueError, "raw projection mismatch"):
+            BarFrame.from_json(changed)
+
     def test_account_snapshot_schema_boundary(self):
         payload = {
             "protocol": "QIANXING_ACCOUNT",
@@ -53,10 +81,57 @@ class BridgeTest(unittest.TestCase):
         self.assertIsNone(
             load_account_snapshot(json.dumps({**payload, "equity_raw": None}))["equity_raw"]
         )
-        # 别的版本号不是"缺字段"，也不能被当成 v1 解开——Rust 的 from_json 同一判据。
-        for version in (0, 2):
+        # v1/v2/v3 都是声明过的契约；范围外版本必须与 Rust 的 from_json 一样拒绝。
+        current = {**payload, "schema_version": 2}
+        self.assertEqual(load_account_snapshot(json.dumps(current))["schema_version"], 2)
+        current_with_settlement = {
+            **current,
+            "positions": {"BTC/USDT:USDT.OKX": {"settlement_currency": "USDT"}},
+        }
+        self.assertEqual(
+            load_account_snapshot(json.dumps(current_with_settlement))["positions"][
+                "BTC/USDT:USDT.OKX"
+            ]["settlement_currency"],
+            "USDT",
+        )
+        version_three = {
+            **payload,
+            "schema_version": 3,
+            "cash_raw": {"USDT": 0},
+            "cash_exact": {
+                "USDT": {"coefficient": "3", "scale": 10},
+            },
+            "positions": {
+                "TINY/USDT:USDT.BINANCE": {
+                    "exact_amounts": {
+                        "quantity": {"coefficient": "2", "scale": 10},
+                        "unrealized_pnl": {"coefficient": "7", "scale": 10},
+                    }
+                }
+            },
+        }
+        self.assertEqual(
+            load_account_snapshot(json.dumps(version_three))["cash_exact"]["USDT"]["coefficient"],
+            "3",
+        )
+        with self.assertRaisesRegex(ValueError, "cannot declare exact"):
+            load_account_snapshot(json.dumps({**current, "cash_exact": version_three["cash_exact"]}))
+        with self.assertRaisesRegex(ValueError, "disagrees with cash_raw"):
+            load_account_snapshot(json.dumps({**version_three, "cash_raw": {"USDT": 1}}))
+        for version in (0, 4):
             with self.assertRaisesRegex(ValueError, "unsupported account snapshot schema"):
                 load_account_snapshot(json.dumps({**payload, "schema_version": version}))
+        with self.assertRaisesRegex(ValueError, "version mismatch"):
+            load_account_snapshot(json.dumps({**current, "header": {"schema_version": 1}}))
+        with self.assertRaisesRegex(ValueError, "v1 account snapshot"):
+            load_account_snapshot(
+                json.dumps(
+                    {
+                        **payload,
+                        "positions": {"BTC-USDT.BINANCE": {"settlement_currency": "USDT"}},
+                    }
+                )
+            )
 
     def test_reader_consumes_the_document_the_writer_emits(self):
         # 此前这里喂的是手抄字典、四张键表全填 {}：写侧把键印成裸数字（`"orders":{77:...}`，

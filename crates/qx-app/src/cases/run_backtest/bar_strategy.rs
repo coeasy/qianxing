@@ -25,6 +25,7 @@ pub(in crate::cases) fn run_backtest_inner_with_bar_strategy(
         Vec::new(),
         Some(strategy),
         None,
+        std::collections::BTreeMap::new(),
     )? {
         SearchBacktestAttempt::Completed(details) => Ok(details),
         SearchBacktestAttempt::Pruned(_) => Err(AppError::new(
@@ -40,6 +41,22 @@ pub(super) fn run_backtest_inner_unchecked(
     cancellation: Option<&CancellationToken>,
     injected: Vec<InjectedStrategy>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
+    run_backtest_inner_unchecked_with_identity_extensions(
+        spec,
+        context,
+        cancellation,
+        injected,
+        std::collections::BTreeMap::new(),
+    )
+}
+
+pub(super) fn run_backtest_inner_unchecked_with_identity_extensions(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    injected: Vec<InjectedStrategy>,
+    identity_extensions: std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<Option<BacktestOutcome>, AppError> {
     match run_backtest_inner_unchecked_with_details(
         spec,
         context,
@@ -47,6 +64,7 @@ pub(super) fn run_backtest_inner_unchecked(
         injected,
         None,
         None,
+        identity_extensions,
     )? {
         SearchBacktestAttempt::Completed(details) => Ok(details.map(|details| details.outcome)),
         SearchBacktestAttempt::Pruned(_) => Err(AppError::new(

@@ -332,104 +332,96 @@ fn market_instruments(report: &Value) -> Result<Vec<Value>, String> {
 }
 
 fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
-    let outcome = artifact
-        .get("outcome")
-        .ok_or("多市场深度产物缺少 outcome")?;
-    let markets = artifact
-        .get("market_data")
-        .and_then(Value::as_array)
-        .ok_or("多市场深度产物缺少 market_data")?;
-    let mut rows = Vec::with_capacity(markets.len());
-    let mut data_hasher = qx_core::Fnv1a::new();
-    let mut input_components = std::collections::BTreeMap::new();
-    for market in markets {
-        let instrument = market
-            .get("instrument")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 instrument")?;
-        let depth_path = market
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 depth path")?;
-        let frame = crate::read_depth_frame_for_backtest(Path::new(depth_path))?;
-        if frame.instrument.to_string() != instrument
-            || market.get("content_hash").and_then(Value::as_str)
-                != Some(format!("{:016x}", frame.input_hash()).as_str())
-            || market.get("source").and_then(Value::as_str) != Some(frame.source.as_str())
-            || market.get("snapshot_count").and_then(Value::as_u64)
-                != Some(frame.snapshots.len() as u64)
-        {
-            return Err(format!("{instrument} 深度输入身份与运行产物不一致"));
-        }
-        let tier = market
-            .get("data_tier")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 data_tier")?;
-        if !matches!(tier, "l1" | "l2") {
-            return Err(format!("{instrument} 深度档位非法"));
-        }
-        data_hasher.write_text(instrument);
-        data_hasher.write_text(tier);
-        data_hasher.write_text(&frame.source);
-        data_hasher.write_u64(frame.input_hash());
-        input_components.insert(
-            format!("depthframe:{instrument}"),
-            format!("depth:{tier}:{}:{:016x}", frame.source, frame.input_hash()),
-        );
-        let quality = match market
-            .get("dataset_quality")
-            .filter(|value| !value.is_null())
-        {
-            Some(quality) => Some(verify_quality(
-                instrument, depth_path, tier, &frame, quality,
-            )?),
-            None => None,
-        };
-        if let Some(quality) = &quality {
-            let fingerprint = quality["manifest_fingerprint"]
-                .as_str()
-                .ok_or("质量清单缺少 fingerprint")?;
-            data_hasher.write_text(fingerprint);
-            input_components.insert(
-                format!("dataset-quality:{instrument}"),
-                fingerprint.to_string(),
-            );
-        }
-        rows.push(json!({
-            "instrument": instrument,
-            "data_tier": tier,
-            "source": frame.source,
-            "content_hash": market["content_hash"],
-            "data_fingerprint": format!("depth:{tier}:{}:{}", frame.source, market["content_hash"].as_str().unwrap_or_default()),
-            "snapshot_count": frame.snapshots.len(),
-            "source_end_ts": frame.snapshots.last().map(|snapshot| snapshot.ts),
-            "fills": artifact.pointer(&format!("/per_market_fills/{instrument}")).cloned().unwrap_or(json!(0)),
-            "dataset_quality": quality,
-        }));
-    }
-    let composed = format!("{:016x}", data_hasher.finish());
-    let run_manifest_path = artifact["run_manifest_path"]
-        .as_str()
-        .ok_or("多市场深度产物缺少 RunManifest 路径")?;
-    let manifest = qx_core::RunManifest::from_json(
-        &std::fs::read_to_string(run_manifest_path)
-            .map_err(|error| format!("读取 RunManifest 失败: {error}"))?,
-    )?;
-    if composed != outcome["data_fingerprint"].as_str().unwrap_or_default()
-        || manifest.data_fingerprint != composed
-        || manifest.input_components != input_components
-        || manifest.result_hash != outcome["shared_result_hash"].as_str().unwrap_or_default()
-    {
-        return Err("多市场深度报告输入与 RunManifest 身份不一致".into());
-    }
+    let outcome = serde_json::from_value::<qx_app::MultiMarketDepthBacktestOutcome>(
+        artifact
+            .get("outcome")
+            .cloned()
+            .ok_or("多市场深度产物缺少 outcome")?,
+    )
+    .map_err(|error| format!("多市场深度 outcome 无效: {error}"))?;
+    let request = qx_app::MultiMarketDepthResearchReportReadRequestV1 {
+        schema_version: qx_app::MULTI_MARKET_DEPTH_RESEARCH_REPORT_SCHEMA_VERSION_V1,
+        outcome: outcome.clone(),
+        page: None,
+    };
+    let context =
+        qx_app::RunContext::new(qx_app::CallerCapability::Research, outcome.run_id.clone());
+    // Bind the outcome's canonical locator to the exact file selected by the CLI. This keeps
+    // edited copies from silently falling back to the original run artifact during verification.
+    let selected_artifact_reader = SelectedDepthArtifactReader {
+        selected_reference: outcome.artifact_path.clone(),
+        selected_path: path.to_path_buf(),
+        fallback: qx_app::artifact_store::FileArtifactReader,
+    };
+    let report = qx_app::read_multi_market_depth_research_report_v1_with_readers(
+        &request,
+        &context,
+        &selected_artifact_reader,
+        &qx_app::artifact_store::FileArtifactReader,
+    )
+    .map_err(|error| error.to_string())?;
+    let summary = report.summary;
+    let metrics = summary
+        .get("metrics")
+        .ok_or("多市场深度应用报告缺少 metrics")?;
+    let markets = report
+        .markets
+        .into_iter()
+        .map(|market| {
+            json!({
+                "instrument": market.instrument,
+                "data_tier": market.data_tier,
+                "source": market.source,
+                "content_hash": market.content_hash,
+                "data_fingerprint": market.data_fingerprint,
+                "snapshot_count": market.depth.total,
+                "source_end_ts": market.source_end_ts,
+                "fills": market.fill_count,
+                "quality_status": market.quality_status,
+                "dataset_quality": market.dataset_quality,
+                "depth": market.depth,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
-        "run_id": outcome["run_id"], "account_id": outcome["account_id"],
-        "result_hash": outcome["shared_result_hash"], "data_fingerprint": outcome["data_fingerprint"],
-        "markets_total": outcome["markets_total"], "successful_fills": outcome["successful_fills"],
-        "pending_orders": outcome["pending_orders"], "equity_points": outcome["equity_points"],
-        "final_equity_raw": outcome["final_equity_raw"], "return_bps": outcome["return_bps"],
-        "max_drawdown_bps": outcome["max_drawdown_bps"], "summary_path": path, "markets": rows
+        "run_id": report.run_id,
+        "account_id": report.account_id,
+        "result_hash": summary["result_hash"],
+        "data_fingerprint": summary["data_fingerprint"],
+        "markets_total": summary["markets_total"],
+        "successful_fills": summary["successful_fills"],
+        "pending_orders": summary["pending_orders"],
+        "equity_points": summary["equity_points"],
+        "final_equity_raw": metrics["final_equity_raw"],
+        "return_bps": metrics["return_bps"],
+        "max_drawdown_bps": metrics["max_drawdown_bps"],
+        "verification": report.verification,
+        "summary_path": path,
+        "markets": markets
     }))
+}
+
+struct SelectedDepthArtifactReader {
+    selected_reference: String,
+    selected_path: PathBuf,
+    fallback: qx_app::artifact_store::FileArtifactReader,
+}
+
+impl qx_app::artifact_store::ArtifactReader for SelectedDepthArtifactReader {
+    fn open(
+        &self,
+        reference: &str,
+    ) -> Result<qx_app::artifact_store::ArtifactStream, qx_app::AppError> {
+        if reference == self.selected_reference {
+            self.fallback.open(&self.selected_path.to_string_lossy())
+        } else {
+            self.fallback.open(reference)
+        }
+    }
+
+    fn equivalent_references(&self, left: &str, right: &str) -> Result<bool, qx_app::AppError> {
+        self.fallback.equivalent_references(left, right)
+    }
 }
 
 /// Recompute bounded startup diagnostics from the same verified DepthFrame and built-in
@@ -546,6 +538,7 @@ pub(crate) fn generate_builtin_depth_diagnostics(
                 low_raw: mid,
                 close_raw: mid,
                 volume_raw: volume,
+                exact_ohlcv: None,
             });
         }
         if events.len() != frame.snapshots.len() {
@@ -568,6 +561,9 @@ pub(crate) fn generate_builtin_depth_diagnostics(
             cash: BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]),
             available_margin_raw: None,
             risk_state: "backtest_diagnostic_fixed_context".into(),
+            positions_exact: BTreeMap::new(),
+            cash_exact: BTreeMap::new(),
+            available_margin_exact: None,
         };
         let runtime_strategy = qx_runtime::StrategyRuntimeConfig {
             id: Some(strategy_spec.strategy_id.clone()),
@@ -912,84 +908,6 @@ pub(crate) fn verify_strategy_diagnostics_for_evidence(
         read_artifact(artifact_path)?.ok_or("多市场深度诊断证据引用的摘要不是深度回测产物")?;
     let report = build_report(artifact_path, &artifact)?;
     bind_market_depth_diagnostics_value(diagnostics, &artifact, &report).map(|_| ())
-}
-
-fn verify_quality(
-    instrument: &str,
-    frame_path: &str,
-    tier: &str,
-    frame: &qx_xingban::DepthFrame,
-    quality: &Value,
-) -> Result<Value, String> {
-    let manifest_path = quality
-        .get("manifest_path")
-        .and_then(Value::as_str)
-        .ok_or("质量摘要缺少 manifest_path")?;
-    let bytes = std::fs::read(manifest_path)
-        .map_err(|error| format!("读取 {instrument} 质量清单失败: {error}"))?;
-    let sha = qx_data::sha256_hex_bytes(&bytes);
-    if quality.get("manifest_sha256").and_then(Value::as_str) != Some(sha.as_str()) {
-        return Err(format!("{instrument} 清单 SHA-256 不匹配"));
-    }
-    let manifest = qx_data::DatasetManifestV2::from_json(
-        std::str::from_utf8(&bytes).map_err(|error| error.to_string())?,
-    )?;
-    let expected_tier = if tier == "l1" {
-        qx_data::DatasetTier::L1
-    } else {
-        qx_data::DatasetTier::L2
-    };
-    let input_hash = qx_strategy::file_digest::sha256_file_hex(Path::new(frame_path))?;
-    let count = u64::try_from(frame.snapshots.len()).map_err(|_| "DepthFrame 快照数溢出")?;
-    let interval = manifest
-        .quality_report
-        .interval_ms
-        .filter(|value| *value > 0)
-        .ok_or("质量清单缺少正 interval_ms")?;
-    let (duplicates, out_of_order, missing) = frame
-        .snapshots
-        .windows(2)
-        .try_fold((0_u64, 0_u64, 0_u64), |(d, o, m), pair| {
-            if pair[1].ts < pair[0].ts {
-                Some((d, o.checked_add(1)?, m))
-            } else if pair[1].ts == pair[0].ts {
-                Some((d.checked_add(1)?, o, m))
-            } else {
-                Some((
-                    d,
-                    o,
-                    m.checked_add((pair[1].ts - pair[0].ts).div_ceil(interval) - 1)?,
-                ))
-            }
-        })
-        .ok_or("深度质量统计溢出")?;
-    if manifest.instrument != instrument
-        || manifest.tier != expected_tier
-        || manifest.provider_version != qx_data::DEPTHFRAME_DATASET_VERSION
-        || manifest.content_hash != input_hash
-        || manifest.dataset.fingerprint != format!("{:016x}", frame.input_hash())
-        || manifest.dataset.source != frame.source
-        || manifest.dataset.schema_version != frame.schema_version
-        || manifest.dataset.start_timestamp != frame.snapshots.first().ok_or("DepthFrame 为空")?.ts
-        || manifest.dataset.end_timestamp != frame.snapshots.last().ok_or("DepthFrame 为空")?.ts
-        || manifest.quality_report.row_count != count
-        || manifest.quality_report.usable_tiers != [tier]
-        || manifest.quality_report.duplicate_rows != duplicates
-        || manifest.quality_report.out_of_order_rows != out_of_order
-        || manifest.quality_report.missing_intervals != missing
-        || quality.get("manifest_fingerprint").and_then(Value::as_str)
-            != Some(manifest.fingerprint()?.as_str())
-        || quality.get("quality_report")
-            != Some(
-                &serde_json::to_value(&manifest.quality_report)
-                    .map_err(|error| error.to_string())?,
-            )
-    {
-        return Err(format!("{instrument} 质量清单与 DepthFrame 不一致"));
-    }
-    Ok(
-        json!({"manifest_fingerprint": manifest.fingerprint()?, "manifest_sha256": sha, "quality_report": manifest.quality_report, "status": if missing + duplicates + out_of_order == 0 {"clean"} else {"issues"}}),
-    )
 }
 
 #[cfg(test)]

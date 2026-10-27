@@ -50,9 +50,34 @@ pub(crate) enum Command {
     Guide(super::guide_args::GuideArgs),
     #[command(name = "doctor")]
     Doctor {
+        #[arg(conflicts_with = "capabilities")]
         path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// Print the offline product capability catalog instead of checking a runtime configuration.
+        #[arg(long)]
+        capabilities: bool,
+        /// Show full support limits and linked maturity evidence for one stable capability ID.
+        #[arg(long, requires = "capabilities")]
+        capability_id: Option<String>,
+        /// Filter declared execution scopes by venue (for example BINANCE, OKX, BITGET).
+        #[arg(long, requires = "capabilities")]
+        venue: Option<String>,
+        /// Filter declared execution scopes by product (for example spot or perpetual).
+        #[arg(long, requires = "capabilities")]
+        product: Option<String>,
+        /// Filter by normalized account mode: cash, one_way, or hedge.
+        #[arg(long, requires = "capabilities")]
+        account_mode: Option<String>,
+        /// Filter by venue account model (for example classic, unified, or uta).
+        #[arg(long, requires = "capabilities")]
+        account_model: Option<String>,
+        /// Filter by margin mode (cash, cross, or isolated).
+        #[arg(long, requires = "capabilities")]
+        margin_mode: Option<String>,
+        /// Filter private account-read scopes (for example balance.read or account_settings.read).
+        #[arg(long, requires = "capabilities")]
+        operation: Option<String>,
     },
     #[command(name = "config")]
     Config {

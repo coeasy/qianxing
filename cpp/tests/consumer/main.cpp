@@ -15,5 +15,8 @@ int main() {
         return qianxing::AppResponse{200, "{}"};
     });
     const auto response = app.compare_runs("{\"schema_version\":1,\"runs\":[]}");
-    return QX_STRATEGY_API_VERSION == 1u && QX_STRATEGY_ABI_VERSION == 2u && response.ok() ? 0 : 1;
+    return QX_STRATEGY_API_VERSION == 1u && QX_STRATEGY_ABI_VERSION == 2u &&
+                   QX_STRATEGY_ORDER_POLICY_SCHEMA_VERSION == 1u && response.ok()
+               ? 0
+               : 1;
 }

@@ -31,6 +31,7 @@ impl BarStrategy for OneShotBuyer {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }])
     }
 }
@@ -53,6 +54,7 @@ fn spot_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-runtime-constructor-error-v1",
+  "generated_at_utc": "2026-10-27T02:53:20Z",
+  "scope": {
+    "strategy_host": "Python Runtime BaseStrategy worker",
+    "error_stage": "initialization",
+    "failure_points": [
+      "create_strategy(spec) raises before returning an instance",
+      "STRATEGY_CLASS construction raises before an instance exists",
+      "create_strategy(spec) returns a non-BaseStrategy value"
+    ]
+  },
+  "behavior": {
+    "module_observer": "on_error_v1(StrategyErrorV1)",
+    "observer_failure_replaces_original_failure": false,
+    "strategy_identity_sources": ["runtime spec", "manifest", "module constants"],
+    "module_import_failure_observable": false
+  },
+  "validation": [
+    {
+      "command": "python -m pytest -q python/tests/test_strategy_process_adapter.py",
+      "passed": 28,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing_strategy/worker.py python/tests/test_strategy_process_adapter.py",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "This closes Runtime class construction error observation only; it does not close the four-host lifecycle golden matrix.",
+    "No connected E2B, Microsandbox, or OpenSandbox service was contacted.",
+    "Sandbox isolation, server-side resource enforcement, capacity, cost, and production approval remain unverified."
+  ],
+  "release_status": "unpublished workspace"
+}

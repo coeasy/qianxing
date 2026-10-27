@@ -1684,6 +1684,22 @@ mod tests {
         assert_eq!(queue.pending().unwrap().len(), 1);
         assert_eq!(queue.enqueue(job, run.clone(), 11).unwrap(), first);
 
+        let mut regenerated_run = run.clone();
+        regenerated_run.started_ts = 11;
+        regenerated_run.deadline_ts = 71;
+        assert_eq!(
+            queue
+                .enqueue(queue.pending().unwrap()[0].job.clone(), regenerated_run, 11,)
+                .unwrap(),
+            first,
+            "re-enqueueing the same stable run must tolerate regenerated timestamps"
+        );
+        assert_eq!(
+            queue.pending().unwrap()[0].run,
+            run,
+            "the queue must preserve the existing run record and its durable state"
+        );
+
         let lease = queue.claim(run_id, "worker-a", 10, 10).unwrap();
         assert_eq!(lease.expires_ts, 20);
         assert_eq!(lease.fencing_token, 1);

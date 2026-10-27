@@ -32,6 +32,10 @@ impl Strategy for BuyOnce {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         };
         Ok(StrategyDecision {
@@ -93,6 +97,8 @@ fn depth_spec(run_id: &str, output_dir: &std::path::Path, tier: &str) -> DepthBa
         queue_position_bps: 0,
         queue_position_model: Default::default(),
         market_impact_bps: 0,
+        funding_bps: 0,
+        funding_events: Vec::new(),
         output_dir: output_dir.join("runs").to_string_lossy().into_owned(),
         strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "sdk-depth-custom"),
         market_spec: None,
@@ -215,9 +221,11 @@ fn sdk_client_composes_multiple_custom_callbacks_in_tick_and_order_book_portfoli
         spec.portfolio = Some(PortfolioBacktestConfig {
             primary_priority: 0,
             primary_reserved_capital_raw: 500_000_000_000_000,
+            primary_reserved_capital_exact: None,
             additional_strategies: vec![PortfolioStrategySpec {
                 priority: 1,
                 reserved_capital_raw: 500_000_000_000_000,
+                reserved_capital_exact: None,
                 strategy: BuiltinStrategySpec::new(
                     BuiltinStrategyKind::Momentum,
                     "sdk-depth-child",

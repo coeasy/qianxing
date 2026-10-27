@@ -11,11 +11,7 @@ pub(crate) fn multi_market_depth_experiment(body: &str, paths: &AppPaths) -> Api
         }
     }
     let experiment_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&experiment_id)
-        .to_string_lossy()
-        .into_owned();
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
     respond(
         run_multi_market_depth_experiment(&spec, &context(&experiment_id))
             .and_then(|result| result.to_json()),

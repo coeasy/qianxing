@@ -9,6 +9,7 @@ use qx_guanxing::QuoteTick;
 use qx_runtime::{LiveEventPipeline, RuntimeConfig, WorkerConfig};
 use qx_storage::JsonStateStore;
 use qx_zhenlu::PaperVenue;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 const ALGO_PAGE_SIZE: usize = 32;
@@ -33,6 +34,24 @@ pub fn run_paper_algo_execution_cycle(
         "paper",
         execution_cost_binding_from_config(config, Some(config_path))?.fee_model(),
     );
+    let exact_instruments = pipeline
+        .orders()
+        .into_iter()
+        .filter(|order| order.exact_amounts.is_some() && !order.status.is_terminal())
+        .map(|order| order.instrument)
+        .collect::<BTreeSet<_>>();
+    for instrument in exact_instruments {
+        let spec = load_worker_market_spec_for_instrument(worker, &instrument, Some(config_path))?
+            .ok_or_else(|| {
+                format!(
+                    "FAIL_CLOSED: Paper algo exact order 缺少 {} 的冻结 market spec",
+                    instrument
+                )
+            })?;
+        venue
+            .set_instrument_spec(spec)
+            .map_err(|error| format!("Paper algo 冻结 market spec 配置失败: {error:?}"))?;
+    }
     let next_venue_id = pipeline
         .log()
         .events()
@@ -75,6 +94,11 @@ pub fn run_paper_algo_execution_cycle(
                 ask,
                 bid_qty,
                 ask_qty,
+                bid_exact,
+                ask_exact,
+                bid_qty_exact,
+                ask_qty_exact,
+                ..
             } => Some((
                 event.seq,
                 event.ts,
@@ -84,12 +108,30 @@ pub fn run_paper_algo_execution_cycle(
                 *bid_qty,
                 *ask,
                 *ask_qty,
+                *bid_exact,
+                *ask_exact,
+                *bid_qty_exact,
+                *ask_qty_exact,
             )),
             _ => None,
         })
         .collect::<Vec<_>>();
     let mut venue_source_seq = 0_u64;
-    for (event_seq, ts, source_seq, instrument, bid, bid_qty, ask, ask_qty) in quotes {
+    for (
+        event_seq,
+        ts,
+        source_seq,
+        instrument,
+        bid,
+        bid_qty,
+        ask,
+        ask_qty,
+        bid_exact,
+        ask_exact,
+        bid_qty_exact,
+        ask_qty_exact,
+    ) in quotes
+    {
         if event_seq <= cursor {
             continue;
         }
@@ -101,8 +143,12 @@ pub fn run_paper_algo_execution_cycle(
         if !should_process {
             continue;
         }
-        let quote = QuoteTick::new(ts, bid, bid_qty, ask, ask_qty, source_seq);
-        let events = venue.on_quote(&instrument, quote);
+        let quote = QuoteTick::new(ts, bid, bid_qty, ask, ask_qty, source_seq)
+            .with_optional_exact_prices(bid_exact, ask_exact)
+            .with_optional_exact_sizes(bid_qty_exact, ask_qty_exact);
+        let events = venue
+            .try_on_quote(&instrument, quote)
+            .map_err(|error| format!("Paper algo 精确行情撮合失败: {error:?}"))?;
         if !events.is_empty() {
             let spec =
                 load_worker_market_spec_for_instrument(worker, &instrument, Some(config_path))?

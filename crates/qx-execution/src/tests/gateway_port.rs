@@ -20,8 +20,11 @@ fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_ef
     assert!(state.orders.is_empty() && state.events.is_empty());
     assert_eq!(source_seq, 0);
 
-    // Cancel uses the same readiness gate and leaves the existing local order untouched.
-    state.orders.push(port_order(81));
+    // Cancel checks OMS state before Venue readiness. Use an order already accepted remotely
+    // so this assertion reaches the disconnected Venue readiness gate.
+    let mut accepted_order = port_order(81);
+    accepted_order.status = OrderStatus::Accepted;
+    state.orders.push(accepted_order);
     let error = PortExecutionService::new(
         &mut paper,
         &mut state,
@@ -33,7 +36,7 @@ fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_ef
     .unwrap_err();
     assert!(error.contains("尚未就绪"), "{error}");
     assert_eq!(state.events.len(), 0);
-    assert_eq!(state.orders[0].status, OrderStatus::PendingSubmit);
+    assert_eq!(state.orders[0].status, OrderStatus::Accepted);
     assert_eq!(source_seq, 0);
 
     struct NoNetwork;
@@ -85,6 +88,120 @@ fn port_execution_service_registers_and_appends_standard_facts() {
     assert!(matches!(
         state.events[0].event,
         ExecutionEvent::Accepted { .. }
+    ));
+}
+
+#[test]
+fn cancel_intent_is_appended_before_venue_cancel_and_unknown_orders_require_reconcile() {
+    let mut state = PortState::default();
+    let mut accepted = port_order(7);
+    accepted.status = OrderStatus::Accepted;
+    state.orders.push(accepted);
+    let mut venue = PortVenue {
+        result: Ok(vec![ExecutionEvent::Cancelled { client_order_id: 7 }]),
+    };
+    let mut source_seq = 0;
+    let outcome =
+        PortExecutionService::new(&mut venue, &mut state, "cancel-worker", 20, &mut source_seq)
+            .cancel(7)
+            .expect("cancel should complete after its durable intent");
+    assert_eq!(outcome.event_count, 1, "count only venue response facts");
+    assert!(matches!(
+        state.events.first().map(|event| &event.event),
+        Some(ExecutionEvent::CancelPending { client_order_id: 7 })
+    ));
+    assert!(matches!(
+        state.events.last().map(|event| &event.event),
+        Some(ExecutionEvent::Cancelled { client_order_id: 7 })
+    ));
+    assert_eq!(state.orders[0].status, OrderStatus::Cancelled);
+
+    let mut unknown = port_order(84);
+    unknown.status = OrderStatus::Unknown;
+    state.orders.push(unknown);
+    let prior_events = state.events.len();
+    let mut never_called = NeverCalledVenue;
+    let error = PortExecutionService::new(
+        &mut never_called,
+        &mut state,
+        "cancel-worker",
+        21,
+        &mut source_seq,
+    )
+    .cancel(84)
+    .expect_err("unknown remote order must be reconciled before cancellation");
+    assert!(error.contains("必须先对账"), "{error}");
+    assert_eq!(state.events.len(), prior_events);
+    assert_eq!(state.orders[1].status, OrderStatus::Unknown);
+}
+
+#[test]
+fn duplicate_durable_cancel_intent_does_not_repeat_venue_side_effect() {
+    use qx_control::{CommandKind, ControlCommand, Permission};
+
+    let mut state = PortState::default();
+    let mut accepted = port_order(86);
+    accepted.status = OrderStatus::Accepted;
+    state.orders.push(accepted);
+    // Simulate a second worker with a stale Accepted snapshot. The shared EventLog
+    // already contains the stable intent for this command, so the append receipt
+    // must stop this worker before it can contact the Venue.
+    state.events.push(ExecutionEventEnvelope {
+        event: ExecutionEvent::CancelPending {
+            client_order_id: 86,
+        },
+        event_ts: 20,
+        receive_ts: 20,
+        source_seq: 1,
+        correlation_id: "control:cancel:770:86:pending:86".into(),
+    });
+    let command = ControlCommand {
+        command_id: 770,
+        request_id: "cancel-770".into(),
+        operator_id: "operator".into(),
+        reason: "cancel duplicate delivery".into(),
+        kind: CommandKind::CancelOrder,
+        target: "86".into(),
+        payload: BTreeMap::from([
+            ("account_id".into(), "port-main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]),
+        permission: Permission::Trading,
+        dry_run: false,
+    };
+    let mut venue = NeverCalledVenue;
+    let mut source_seq = 1;
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "retry-worker", 20, &mut source_seq)
+            .cancel_command(&command)
+            .expect_err("duplicate CancelPending must not trigger a second Venue cancel");
+    assert!(error.contains("禁止重复调用 Venue"), "{error}");
+    assert_eq!(state.events.len(), 1);
+    assert_eq!(state.orders[0].status, OrderStatus::Accepted);
+}
+
+#[test]
+fn preexisting_pending_submit_requires_reconciliation_before_retry() {
+    let mut state = PortState::default();
+    let mut pending = port_order(87);
+    pending.status = OrderStatus::PendingSubmit;
+    state.orders.push(pending.clone());
+    let mut venue = NeverCalledVenue;
+    let mut source_seq = 0;
+
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "retry-worker", 20, &mut source_seq)
+            .submit(pending)
+            .expect_err("a persisted pre-submit state is ambiguous after restart");
+
+    assert!(error.contains("必须先对账"), "{error}");
+    assert_eq!(source_seq, 1);
+    assert_eq!(state.orders[0].status, OrderStatus::Unknown);
+    assert!(matches!(
+        state.events.last().map(|event| &event.event),
+        Some(ExecutionEvent::ReconcileRequired {
+            client_order_id: 87
+        })
     ));
 }
 
@@ -159,6 +276,7 @@ fn undeclared_order_type_is_rejected_before_registration_or_venue_side_effect() 
             };
             VenueCapabilities {
                 market_scope: VenueMarketScope::InstrumentVenue,
+                exact_orders: false,
                 order_types: &[VenueOrderType::Market],
                 data_tiers: &[],
                 cancel: false,

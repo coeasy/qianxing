@@ -64,12 +64,82 @@ pub(crate) enum EvidenceCommand {
         #[arg(long, value_name = "DIR")]
         output_dir: PathBuf,
     },
-    /// Verify the batch identity and every portable account run bundle in a multi-account package.
+    /// Verify and optionally recompute every account in a portable multi-account package.
     #[command(name = "verify-multi-account-run")]
-    VerifyMultiAccountRun { bundle_dir: PathBuf },
+    VerifyMultiAccountRun {
+        bundle_dir: PathBuf,
+        #[arg(long)]
+        recompute: bool,
+    },
+    /// Package a multi-exchange joint account run and each portable market run bundle.
+    #[command(name = "pack-multi-account-joint-run")]
+    PackMultiAccountJointRun {
+        result: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        spec: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
+    /// Verify and optionally recompute a portable multi-exchange joint account package.
+    #[command(name = "verify-multi-account-joint-run")]
+    VerifyMultiAccountJointRun {
+        bundle_dir: PathBuf,
+        #[arg(long)]
+        recompute: bool,
+    },
+    /// Package a multi-account Tick/OrderBook batch and all portable member run bundles.
+    #[command(name = "pack-multi-account-depth-run")]
+    PackMultiAccountDepthRun {
+        result: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        spec: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
+    /// Verify and optionally recompute every account in a portable depth batch package.
+    #[command(name = "verify-multi-account-depth-run")]
+    VerifyMultiAccountDepthRun {
+        bundle_dir: PathBuf,
+        #[arg(long)]
+        recompute: bool,
+    },
     /// Build a local-run EvidenceBundle from a completed multi-market application artifact.
     #[command(name = "pack-multi-market-run")]
     PackMultiMarketRun { artifact: PathBuf },
+    /// Recompute every builtin candidate in a single-market Bar experiment.
+    #[command(name = "recompute-experiment")]
+    RecomputeExperiment { artifact: PathBuf },
+    /// Recompute every builtin candidate in a single-market depth experiment.
+    #[command(name = "recompute-depth-experiment")]
+    RecomputeDepthExperiment { artifact: PathBuf },
+    /// Package a completed builtin single-market Bar experiment with portable inputs and artifacts.
+    #[command(name = "pack-experiment")]
+    PackExperiment {
+        artifact: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
+    /// Package a completed builtin single-market depth experiment with portable inputs and artifacts.
+    #[command(name = "pack-depth-experiment")]
+    PackDepthExperiment {
+        artifact: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
+    /// Verify a portable single-market Bar experiment package and optionally recompute its grid.
+    #[command(name = "verify-experiment")]
+    VerifyExperiment {
+        bundle_dir: PathBuf,
+        #[arg(long)]
+        recompute: bool,
+    },
+    /// Verify a portable single-market depth experiment package and optionally recompute its grid.
+    #[command(name = "verify-depth-experiment")]
+    VerifyDepthExperiment {
+        bundle_dir: PathBuf,
+        #[arg(long)]
+        recompute: bool,
+    },
     /// Recompute every builtin candidate in a multi-market Bar experiment.
     #[command(name = "recompute-multi-market-experiment")]
     RecomputeMultiMarketExperiment { artifact: PathBuf },

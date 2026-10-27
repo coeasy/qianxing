@@ -1,10 +1,10 @@
 //! Persistence for the combined report of two independently replayed Bar legs.
 
 use crate::artifact_store::{
-    persist_run_manifest, persist_verified_run_record, write_backtest_artifact,
-    BacktestInputProvenance, BACKTEST_SUMMARY_SCHEMA_VERSION,
+    persist_run_manifest, persist_verified_run_record, serialize_multi_leg_backtest_fills_csv,
+    write_backtest_artifact, BacktestInputProvenance, BACKTEST_SUMMARY_SCHEMA_VERSION,
 };
-use crate::multi_leg_combined_equity_metrics;
+use crate::{multi_leg_combined_equity_metrics, multi_leg_combined_exact_equity_metrics};
 use qx_datastruct::BarFrame;
 use qx_xingban::{BacktestReport, RunManifestIdentity};
 use std::collections::BTreeMap;
@@ -203,6 +203,12 @@ pub fn persist_multi_leg_composition_artifacts(
     );
     summary["run_manifest"] = serde_json::json!(manifest_path.to_string_lossy());
     summary["run_record"] = serde_json::json!(record_path.to_string_lossy());
+    summary["artifact_locations"] = serde_json::json!({
+        "summary": summary_path.to_string_lossy(),
+        "equity": equity_path.to_string_lossy(),
+        "fills": fills_path.to_string_lossy(),
+        "run_manifest": manifest_path.to_string_lossy(),
+    });
 
     let primary_initial_cash = summary["accounts"]["primary_initial_cash"]
         .as_str()
@@ -221,20 +227,22 @@ pub fn persist_multi_leg_composition_artifacts(
         reference_initial_cash,
         primary_frame.ts.len(),
     )?;
-    let combined_return_bps = i32::try_from(
-        summary["totals"]["combined_return_bps"]
-            .as_i64()
-            .ok_or("组合摘要缺少 combined_return_bps")?,
-    )
-    .map_err(|_| "组合收益基点超出 i32 范围")?;
+    let combined_exact = multi_leg_combined_exact_equity_metrics(
+        &primary_report.equity_exact,
+        &reference_report.equity_exact,
+        primary_report.initial_cash_exact,
+        reference_report.initial_cash_exact,
+        primary_frame.ts.len(),
+    )?;
+    let combined_return_bps = combined_exact.return_bps;
     let risk = qx_core::backtest_risk_metrics(
         &combined_equity.equity_raw,
         combined_return_bps,
-        combined_equity.max_drawdown_bps,
+        combined_exact.max_drawdown_bps,
     );
     summary["metrics"] = serde_json::json!({
         "return_bps": combined_return_bps,
-        "max_drawdown_bps": combined_equity.max_drawdown_bps,
+        "max_drawdown_bps": combined_exact.max_drawdown_bps,
         "fees_raw": summary["totals"]["fees_raw"],
         "turnover_raw": summary["totals"]["turnover_raw"],
         "final_equity_raw": combined_equity.final_equity_raw.to_string(),
@@ -244,52 +252,86 @@ pub fn persist_multi_leg_composition_artifacts(
         "win_rate": risk.win_rate,
         "profit_factor": risk.profit_factor
     });
+    let mut max_drawdown_exact = qx_core::ExactDecimal::ZERO;
+    let mut peak_exact = combined_exact.initial_cash_exact;
+    for equity in &combined_exact.equity_exact {
+        if peak_exact
+            .checked_cmp(*equity)
+            .is_some_and(|ordering| ordering.is_lt())
+        {
+            peak_exact = *equity;
+        }
+        let drawdown = peak_exact
+            .checked_sub(*equity)
+            .ok_or("多腿 exact 回撤金额溢出")?;
+        if drawdown
+            .checked_cmp(max_drawdown_exact)
+            .is_some_and(|ordering| ordering.is_gt())
+        {
+            max_drawdown_exact = drawdown;
+        }
+    }
+    summary["accounts"]["primary_initial_cash_exact"] =
+        serde_json::Value::String(primary_report.initial_cash_exact.to_string());
+    summary["accounts"]["reference_initial_cash_exact"] =
+        serde_json::Value::String(reference_report.initial_cash_exact.to_string());
+    summary["accounts"]["primary_final_equity_exact"] = serde_json::Value::String(
+        primary_report
+            .equity_exact
+            .last()
+            .copied()
+            .unwrap_or(primary_report.initial_cash_exact)
+            .to_string(),
+    );
+    summary["accounts"]["reference_final_equity_exact"] = serde_json::Value::String(
+        reference_report
+            .equity_exact
+            .last()
+            .copied()
+            .unwrap_or(reference_report.initial_cash_exact)
+            .to_string(),
+    );
+    summary["totals"]["combined_return_bps"] = serde_json::json!(combined_return_bps);
+    summary["metrics_exact"] = serde_json::json!({
+        "equity": {
+            "initial": combined_exact.initial_cash_exact.to_string(),
+            "final": combined_exact.final_equity_exact.to_string(),
+            "return": combined_exact.final_equity_exact
+                .checked_sub(combined_exact.initial_cash_exact)
+                .ok_or("多腿 exact 收益金额溢出")?
+                .to_string(),
+            "return_bps": combined_exact.return_bps.to_string(),
+            "max_drawdown": max_drawdown_exact.to_string(),
+            "max_drawdown_bps": combined_exact.max_drawdown_bps.to_string(),
+        }
+    });
     let summary_payload = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("编码组合级回测摘要失败: {error}"))?;
     let persisted_summary: serde_json::Value = serde_json::from_str(&summary_payload)
         .map_err(|error| format!("组合级回测摘要序列化后读回失败: {error}"))?;
     write_backtest_artifact(&summary_path, &summary_payload, "组合级回测摘要")?;
 
-    let mut equity_payload = String::from("index,ts,primary_equity_raw,reference_equity_raw\n");
-    for (index, (primary, reference)) in primary_report
+    let mut equity_payload =
+        String::from("index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact\n");
+    for (index, ((primary, reference), exact)) in primary_report
         .equity
         .iter()
         .zip(&reference_report.equity)
+        .zip(&combined_exact.equity_exact)
         .enumerate()
     {
         let ts = primary_frame.ts.get(index).copied().unwrap_or_default();
-        equity_payload.push_str(&format!("{index},{ts},{primary},{reference}\n"));
+        let combined_raw = primary
+            .checked_add(*reference)
+            .ok_or("组合 raw 权益投影溢出")?;
+        equity_payload.push_str(&format!(
+            "{index},{ts},{primary},{reference},{combined_raw},{exact}\n"
+        ));
     }
     write_backtest_artifact(&equity_path, &equity_payload, "组合级权益曲线")?;
 
-    let mut fills_payload = String::from(
-        "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id\n",
-    );
-    for (label, fills) in [
-        ("primary", &primary_report.fills),
-        ("reference", &reference_report.fills),
-    ] {
-        for fill in fills {
-            fills_payload.push_str(&format!(
-                "{label},{},{},{},{},{},{},{},{},{},{},{}\n",
-                fill.order_id,
-                fill.ts,
-                fill.qty.raw(),
-                fill.price.raw(),
-                fill.fee.raw(),
-                fill.account_id,
-                fill.strategy_id.as_deref().unwrap_or_default(),
-                fill.signal_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
-                fill.intent_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
-                fill.venue_id.as_deref().unwrap_or_default(),
-                fill.venue_order_id.as_deref().unwrap_or_default()
-            ));
-        }
-    }
+    let fills_payload =
+        serialize_multi_leg_backtest_fills_csv(&primary_report.fills, &reference_report.fills)?;
     write_backtest_artifact(&fills_path, &fills_payload, "组合级成交明细")?;
     persist_verified_run_record(&manifest_path, &summary_path, &equity_path, &fills_path)?;
     Ok((summary_path, persisted_summary))

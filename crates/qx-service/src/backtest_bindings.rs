@@ -173,6 +173,8 @@ pub fn depth_backtest_spec_from_runtime(
         queue_position_bps: 0,
         queue_position_model: qx_xingban::QueuePositionModel::default(),
         market_impact_bps: i128::from(input.market_impact_bps),
+        funding_bps: 0,
+        funding_events: Vec::new(),
         output_dir: input.root.to_string_lossy().into_owned(),
         strategy: strategy_spec,
         market_spec: input.market_spec,

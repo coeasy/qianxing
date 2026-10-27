@@ -14,15 +14,16 @@ pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
 use qx_core::{
-    FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError,
-    QxResult, Side, TradingInstrumentSpec,
+    DecimalRounding, ExactDecimal, FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace,
+    Price, Quantity, QxError, QxResult, Side, TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
+use qx_risk::{
+    ExactOrderRiskFacts, OrderRiskContext as CanonicalOrderRiskContext, OrderRiskPosition,
+    RiskRule, RuleSet,
+};
 #[cfg(test)]
 use qx_risk::{MaxNotionalRule, MaxQtyRule, NoShortRule};
-use qx_risk::{
-    OrderRiskContext as CanonicalOrderRiskContext, OrderRiskPosition, RiskRule, RuleSet,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -39,6 +40,7 @@ pub struct RiskContext {
     pub instrument_spec: Option<TradingInstrumentSpec>,
     pub max_order_notional_raw: Option<i128>,
     pub max_position_notional_raw: Option<i128>,
+    pub exact: Option<ExactOrderRiskFacts>,
 }
 
 impl RiskContext {
@@ -51,6 +53,7 @@ impl RiskContext {
             max_order_notional_raw: self.max_order_notional_raw,
             max_position_notional_raw: self.max_position_notional_raw,
             position: *position,
+            exact: self.exact,
         }
     }
 
@@ -272,6 +275,8 @@ impl OrderIntent {
                 rule_version: Some(self.rule_version),
             }),
             policy: None,
+
+            exact_amounts: None,
         }
     }
 }
@@ -284,6 +289,14 @@ pub enum VenueEvent {
         ts: u64,
     },
     Fill(Fill),
+    FeeAdjustment {
+        account_id: String,
+        venue_id: String,
+        order_id: u64,
+        instrument: InstrumentId,
+        fees: Vec<qx_core::FillFee>,
+        ts: u64,
+    },
     Cancelled {
         client_order_id: u64,
         ts: u64,
@@ -339,6 +352,8 @@ pub struct VenueOrderSnapshot {
     pub client_order_id: u64,
     pub status: OrderStatus,
     pub filled: Quantity,
+    /// Exact remote cumulative fill when the exchange returns it as a decimal string.
+    pub filled_exact: Option<ExactDecimal>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -359,12 +374,33 @@ pub enum VenueReconcileIssue {
         local: Quantity,
         venue: Quantity,
     },
+    ExactFilledMismatch {
+        client_order_id: u64,
+        local: Option<ExactDecimal>,
+        venue: Option<ExactDecimal>,
+    },
 }
 
 /// Venue 适配器的最小执行契约。适配器只返回事实事件，不直接改 OMS 或账簿。
 pub trait Venue {
     fn id(&self) -> &str;
     fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities;
+    /// Check that the venue's current product metadata still agrees with the frozen risk spec.
+    /// Most venues do not have a live metadata RPC at this boundary; adapters that do should
+    /// override this and fail closed before `submit` when the contract has drifted.
+    fn validate_instrument_spec(&mut self, _spec: &TradingInstrumentSpec) -> QxResult<()> {
+        Ok(())
+    }
+    /// Validate order-kind-specific rules that do not fit in the frozen instrument spec,
+    /// such as a venue's separate market-order lot size. The common live risk path calls this
+    /// after metadata validation and before committing the order intent or writing remotely.
+    fn validate_order_constraints(
+        &mut self,
+        _spec: &TradingInstrumentSpec,
+        _order: &Order,
+    ) -> QxResult<()> {
+        Ok(())
+    }
     /// Reject execution while the connector is disconnected or still recovering.
     /// Adapters with richer synchronization state should override this check.
     fn execution_readiness(&self) -> QxResult<()> {
@@ -412,18 +448,56 @@ pub struct SpreadOrderLeg {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct SpreadCompensationTarget {
     pub leg_id: String,
+    pub venue_id: String,
     pub instrument: InstrumentId,
     pub account_id: String,
     pub side: Side,
     pub qty: Quantity,
+    /// Exact base quantity when the original order uses scale-aware amounts.
+    /// `qty` remains populated for legacy 1e9 orders and is zero for exact orders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qty_exact: Option<ExactDecimal>,
+    pub attempt: u32,
+}
+
+impl SpreadCompensationTarget {
+    pub fn quantity_decimal(&self) -> ExactDecimal {
+        self.qty_exact.unwrap_or_else(|| {
+            ExactDecimal::from_parts(self.qty.raw(), 9).unwrap_or(ExactDecimal::ZERO)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SpreadHedgeProgress {
+    // The containing map defaults for legacy groups; once a progress record exists,
+    // require its quantity so truncated state cannot masquerade as zero compensation.
+    pub hedged_qty: Quantity,
+    /// Scale-aware compensation progress. Legacy snapshots omit this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hedged_qty_exact: Option<ExactDecimal>,
+    #[serde(default)]
+    pub attempt: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+/// In-memory reducer for a multi-leg order group.
+///
+/// The `record_*` methods are public for external execution coordinators that own their
+/// event/persistence boundary. Durable hosts in this workspace use `apply_order_snapshot`
+/// with authoritative OMS/EventLog state so duplicate replay remains idempotent.
 pub struct SpreadOrderGroup {
     pub group_id: String,
     pub strategy_id: String,
     pub status: SpreadOrderGroupStatus,
     pub legs: Vec<SpreadOrderLeg>,
+    /// The order whose submit request has crossed the local durable boundary but has not yet
+    /// produced an authoritative venue outcome. This is deliberately persisted separately
+    /// from the aggregate status so a restart cannot mistake a still-Planned group for idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_in_flight_order_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub hedge_progress: std::collections::BTreeMap<String, SpreadHedgeProgress>,
 }
 
 impl SpreadOrderGroup {
@@ -437,6 +511,8 @@ impl SpreadOrderGroup {
             strategy_id: strategy_id.into(),
             status: SpreadOrderGroupStatus::Planned,
             legs,
+            submission_in_flight_order_id: None,
+            hedge_progress: std::collections::BTreeMap::new(),
         };
         group.validate()?;
         Ok(group)
@@ -461,7 +537,7 @@ impl SpreadOrderGroup {
                 ));
             }
             leg.order.validate().map_err(QxError::BusinessViolation)?;
-            if leg.order.filled != Quantity::ZERO {
+            if !leg.order.filled_decimal().is_zero() {
                 return Err(QxError::BusinessViolation(
                     "SpreadOrderGroup 初始订单不得带有已成交数量".into(),
                 ));
@@ -473,14 +549,55 @@ impl SpreadOrderGroup {
     /// 校验已经进入执行生命周期的订单组。与创建时的 `validate` 不同，
     /// 持久化状态允许腿带有部分/全部成交数量，但仍禁止超量成交和非法订单。
     pub fn validate_persisted(&self) -> QxResult<()> {
+        if let Some(client_order_id) = self.submission_in_flight_order_id {
+            if !self
+                .legs
+                .iter()
+                .any(|leg| leg.order.client_id == client_order_id)
+            {
+                return Err(QxError::BusinessViolation(format!(
+                    "持久化多腿提交意图引用了未知订单腿: {client_order_id}"
+                )));
+            }
+        }
+        for (leg_id, progress) in &self.hedge_progress {
+            let leg = self.leg(leg_id)?;
+            let hedged = progress.hedged_qty_exact.unwrap_or_else(|| {
+                ExactDecimal::from_parts(progress.hedged_qty.raw(), 9).unwrap_or(ExactDecimal::ZERO)
+            });
+            if hedged.is_negative()
+                || hedged
+                    .checked_cmp(leg.order.filled_decimal())
+                    .is_none_or(|ordering| ordering.is_gt())
+            {
+                return Err(QxError::BusinessViolation(format!(
+                    "持久化多腿补偿数量超出原腿已成交范围: leg={leg_id}"
+                )));
+            }
+        }
         let mut structure = self.clone();
+        structure.hedge_progress.clear();
         for leg in &mut structure.legs {
-            if leg.order.filled.raw() < 0 || leg.order.filled.raw() > leg.order.qty.raw() {
+            let exceeds_quantity = if let Some(amounts) = leg.order.exact_amounts {
+                amounts.quote_budget.is_none()
+                    && leg
+                        .order
+                        .filled_decimal()
+                        .checked_cmp(amounts.quantity)
+                        .is_none_or(|ordering| ordering.is_gt())
+            } else {
+                leg.order.filled.raw() < 0 || leg.order.filled.raw() > leg.order.qty.raw()
+            };
+            if exceeds_quantity {
                 return Err(QxError::BusinessViolation(
                     "持久化多腿状态的成交数量超出订单范围".into(),
                 ));
             }
             leg.order.filled = Quantity::ZERO;
+            if let Some(amounts) = leg.order.exact_amounts.as_mut() {
+                amounts.filled = ExactDecimal::ZERO;
+                amounts.quote_filled = ExactDecimal::ZERO;
+            }
         }
         structure.validate()
     }
@@ -493,6 +610,7 @@ impl SpreadOrderGroup {
         Ok(())
     }
 
+    /// Mark a leg accepted in an external coordinator's in-memory group projection.
     pub fn record_accepted(&mut self, leg_id: &str) -> QxResult<()> {
         let leg = self.leg_mut(leg_id)?;
         Self::accept_leg_order(leg)?;
@@ -500,27 +618,58 @@ impl SpreadOrderGroup {
         Ok(())
     }
 
+    /// Apply one confirmed fill to an in-memory leg projection.
     pub fn record_fill(&mut self, leg_id: &str, fill: &Fill) -> QxResult<()> {
+        fill.validate_exact_amounts()
+            .map_err(QxError::BusinessViolation)?;
         let leg = self.leg_mut(leg_id)?;
-        if fill.order_id != leg.order.client_id || fill.qty.raw() <= 0 {
+        if fill.order_id != leg.order.client_id || !fill.quantity_decimal().is_positive() {
             return Err(QxError::BusinessViolation(
                 "SpreadOrderGroup Fill 与腿订单不匹配".into(),
             ));
         }
-        let next = leg
-            .order
-            .filled
-            .raw()
-            .checked_add(fill.qty.raw())
-            .ok_or_else(|| QxError::Invariant("SpreadOrderGroup 成交数量溢出".into()))?;
-        if next > leg.order.qty.raw() {
+        if leg.order.exact_amounts.is_some() != fill.exact_amounts.is_some() {
             return Err(QxError::BusinessViolation(
-                "SpreadOrderGroup 成交数量超过腿订单数量".into(),
+                "SpreadOrderGroup 腿订单与成交的金额精度不一致".into(),
             ));
         }
+        let next = leg
+            .order
+            .filled_decimal()
+            .checked_add(fill.quantity_decimal())
+            .ok_or_else(|| QxError::Invariant("SpreadOrderGroup 成交数量溢出".into()))?;
+        if let Some(amounts) = leg.order.exact_amounts.as_mut() {
+            if amounts.quote_budget.is_none()
+                && next
+                    .checked_cmp(amounts.quantity)
+                    .is_none_or(|ordering| ordering.is_gt())
+            {
+                return Err(QxError::BusinessViolation(
+                    "SpreadOrderGroup 成交数量超过腿订单数量".into(),
+                ));
+            }
+            amounts.filled = next;
+        } else {
+            let raw = next
+                .to_raw(9)
+                .map_err(|error| QxError::BusinessViolation(error.into()))?;
+            if raw > leg.order.qty.raw() {
+                return Err(QxError::BusinessViolation(
+                    "SpreadOrderGroup 成交数量超过腿订单数量".into(),
+                ));
+            }
+            leg.order.filled = Quantity::from_raw(raw);
+        }
         Self::accept_leg_order(leg)?;
-        leg.order.filled = Quantity::from_raw(next);
-        leg.order.status = if next == leg.order.qty.raw() {
+        let fully_filled = leg.order.exact_amounts.map_or_else(
+            || leg.order.filled == leg.order.qty,
+            |amounts| {
+                amounts.quote_budget.is_none()
+                    && amounts.filled.checked_cmp(amounts.quantity)
+                        == Some(std::cmp::Ordering::Equal)
+            },
+        );
+        leg.order.status = if fully_filled {
             OrderStatus::Filled
         } else {
             OrderStatus::PartiallyFilled
@@ -529,32 +678,145 @@ impl SpreadOrderGroup {
         Ok(())
     }
 
+    /// Replace a leg with the authoritative OMS snapshot. This makes the group reducer
+    /// idempotent and preserves exact fills and quote-budget accounting from the EventLog.
+    pub fn apply_order_snapshot(&mut self, snapshot: &Order) -> QxResult<()> {
+        let leg = self
+            .legs
+            .iter_mut()
+            .find(|leg| leg.order.client_id == snapshot.client_id)
+            .ok_or_else(|| {
+                QxError::BusinessViolation(format!(
+                    "SpreadOrderGroup 不存在订单腿: {}",
+                    snapshot.client_id
+                ))
+            })?;
+        let old_status = leg.order.status;
+        let new_status = snapshot.status;
+        let status_regressed = (old_status.is_terminal() && old_status != new_status)
+            || matches!(
+                (old_status, new_status),
+                (OrderStatus::Submitted, OrderStatus::PendingSubmit)
+                    | (
+                        OrderStatus::Accepted,
+                        OrderStatus::PendingSubmit | OrderStatus::Submitted
+                    )
+                    | (
+                        OrderStatus::Working,
+                        OrderStatus::PendingSubmit | OrderStatus::Submitted | OrderStatus::Accepted
+                    )
+                    | (
+                        OrderStatus::PartiallyFilled,
+                        OrderStatus::PendingSubmit
+                            | OrderStatus::Submitted
+                            | OrderStatus::Accepted
+                            | OrderStatus::Working
+                    )
+                    | (
+                        OrderStatus::CancelPending,
+                        OrderStatus::PendingSubmit
+                            | OrderStatus::Submitted
+                            | OrderStatus::Accepted
+                            | OrderStatus::Working
+                            | OrderStatus::PartiallyFilled
+                    )
+                    | (
+                        OrderStatus::Unknown,
+                        OrderStatus::PendingSubmit
+                            | OrderStatus::Submitted
+                            | OrderStatus::CancelPending
+                    )
+            );
+        let exact_terms_match = match (leg.order.exact_amounts, snapshot.exact_amounts) {
+            (Some(old), Some(new)) => {
+                old.quantity == new.quantity
+                    && old.limit_price == new.limit_price
+                    && old.quote_budget == new.quote_budget
+                    && old.market_reference_price == new.market_reference_price
+            }
+            (None, None) => leg.order.qty == snapshot.qty && leg.order.limit == snapshot.limit,
+            _ => false,
+        };
+        if leg.order.instrument != snapshot.instrument
+            || leg.order.side != snapshot.side
+            || leg.order.account_id != snapshot.account_id
+            || leg.order.trace != snapshot.trace
+            || leg.order.policy != snapshot.policy
+            || !exact_terms_match
+            || status_regressed
+            || leg
+                .order
+                .filled_decimal()
+                .checked_cmp(snapshot.filled_decimal())
+                .is_none_or(|ordering| ordering.is_gt())
+        {
+            return Err(QxError::BusinessViolation(
+                "SpreadOrderGroup EventLog 订单快照身份不一致或成交量倒退".into(),
+            ));
+        }
+        snapshot.validate().map_err(QxError::BusinessViolation)?;
+        leg.order = snapshot.clone();
+        if self.submission_in_flight_order_id == Some(snapshot.client_id)
+            && matches!(
+                snapshot.status,
+                OrderStatus::Accepted
+                    | OrderStatus::Working
+                    | OrderStatus::PartiallyFilled
+                    | OrderStatus::Filled
+                    | OrderStatus::Rejected
+                    | OrderStatus::Expired
+                    | OrderStatus::Cancelled
+                    | OrderStatus::Unknown
+            )
+        {
+            // Accepted/terminal facts resolve the submit attempt. Unknown remains fail-closed
+            // through the aggregate ReconcileRequired status after recomputation.
+            self.submission_in_flight_order_id = None;
+        }
+        self.recompute_status();
+        Ok(())
+    }
+
+    /// Record a venue rejection in an external coordinator's group projection.
     pub fn record_rejected(&mut self, leg_id: &str) -> QxResult<()> {
         let leg = self.leg_mut(leg_id)?;
-        if leg.order.filled.raw() > 0 {
-            self.status = SpreadOrderGroupStatus::HedgeRequired;
-            return Ok(());
+        if matches!(
+            leg.order.status,
+            OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Expired
+        ) {
+            return Err(QxError::VenueState(
+                "终态腿不能被不同终态回报覆盖为 Rejected".into(),
+            ));
         }
-        if !leg.order.status.is_terminal() {
+        if leg.order.status != OrderStatus::Rejected {
             leg.order.status = OrderStatus::Rejected;
         }
         self.recompute_status();
         Ok(())
     }
 
+    /// Record a confirmed cancellation in an external coordinator's group projection.
     pub fn record_cancelled(&mut self, leg_id: &str) -> QxResult<()> {
         let leg = self.leg_mut(leg_id)?;
-        if leg.order.filled.raw() > 0 {
-            self.status = SpreadOrderGroupStatus::HedgeRequired;
-            return Ok(());
+        if matches!(
+            leg.order.status,
+            OrderStatus::Filled | OrderStatus::Rejected
+        ) {
+            return Err(QxError::VenueState(
+                "终态腿不能被不同终态回报覆盖为 Cancelled".into(),
+            ));
         }
-        if !leg.order.status.is_terminal() {
+        if !matches!(
+            leg.order.status,
+            OrderStatus::Cancelled | OrderStatus::Expired
+        ) {
             leg.order.status = OrderStatus::Cancelled;
         }
         self.recompute_status();
         Ok(())
     }
 
+    /// Mark an uncertain venue outcome as requiring reconciliation before more legs submit.
     pub fn record_unknown(&mut self, leg_id: &str) -> QxResult<()> {
         let leg = self.leg_mut(leg_id)?;
         if leg.order.status.is_terminal() {
@@ -573,7 +835,12 @@ impl SpreadOrderGroup {
     pub fn blocks_new_leg_submission(&self) -> bool {
         matches!(
             self.status,
-            SpreadOrderGroupStatus::ReconcileRequired | SpreadOrderGroupStatus::HedgeRequired
+            SpreadOrderGroupStatus::ReconcileRequired
+                | SpreadOrderGroupStatus::HedgeRequired
+                | SpreadOrderGroupStatus::Hedged
+                | SpreadOrderGroupStatus::Filled
+                | SpreadOrderGroupStatus::Failed
+                | SpreadOrderGroupStatus::Cancelled
         )
     }
 
@@ -590,18 +857,125 @@ impl SpreadOrderGroup {
         }
         self.legs
             .iter()
-            .filter(|leg| leg.order.filled.raw() > 0)
-            .map(|leg| SpreadCompensationTarget {
-                leg_id: leg.leg_id.clone(),
-                instrument: leg.order.instrument.clone(),
-                account_id: leg.order.account_id.clone(),
-                side: match leg.order.side {
-                    Side::Buy => Side::Sell,
-                    Side::Sell => Side::Buy,
-                },
-                qty: leg.order.filled,
+            .filter_map(|leg| {
+                let progress = self
+                    .hedge_progress
+                    .get(&leg.leg_id)
+                    .copied()
+                    .unwrap_or_default();
+                let filled = leg.order.filled_decimal();
+                let hedged = progress.hedged_qty_exact.unwrap_or_else(|| {
+                    ExactDecimal::from_parts(progress.hedged_qty.raw(), 9)
+                        .unwrap_or(ExactDecimal::ZERO)
+                });
+                let outstanding = filled.checked_sub(hedged)?;
+                outstanding.is_positive().then(|| SpreadCompensationTarget {
+                    leg_id: leg.leg_id.clone(),
+                    venue_id: leg.venue_id.clone(),
+                    instrument: leg.order.instrument.clone(),
+                    account_id: leg.order.account_id.clone(),
+                    side: match leg.order.side {
+                        Side::Buy => Side::Sell,
+                        Side::Sell => Side::Buy,
+                    },
+                    qty: if leg.order.exact_amounts.is_some() {
+                        Quantity::ZERO
+                    } else {
+                        Quantity::from_raw(outstanding.to_raw(9).unwrap_or(0))
+                    },
+                    qty_exact: leg.order.exact_amounts.map(|_| outstanding),
+                    attempt: progress.attempt,
+                })
             })
             .collect()
+    }
+
+    /// Record a legacy scale fill for an external in-memory compensation projection.
+    pub fn record_compensation_fill(&mut self, leg_id: &str, qty: Quantity) -> QxResult<()> {
+        if qty.raw() <= 0 {
+            return Err(QxError::BusinessViolation("补偿成交数量必须为正".into()));
+        }
+        let exact = ExactDecimal::from_parts(qty.raw(), 9)
+            .map_err(|error| QxError::BusinessViolation(error.into()))?;
+        self.record_compensation_fill_exact(leg_id, exact)
+    }
+
+    pub fn record_compensation_fill_exact(
+        &mut self,
+        leg_id: &str,
+        qty: ExactDecimal,
+    ) -> QxResult<()> {
+        if !qty.is_positive() {
+            return Err(QxError::BusinessViolation("补偿成交数量必须为正".into()));
+        }
+        let leg = self.leg(leg_id)?;
+        let current = self.hedge_progress.get(leg_id).copied().unwrap_or_default();
+        let next = current
+            .hedged_qty_exact
+            .unwrap_or_else(|| {
+                ExactDecimal::from_parts(current.hedged_qty.raw(), 9).unwrap_or(ExactDecimal::ZERO)
+            })
+            .checked_add(qty)
+            .ok_or_else(|| QxError::Invariant("累计补偿数量溢出".into()))?;
+        if next
+            .checked_cmp(leg.order.filled_decimal())
+            .is_none_or(|ordering| ordering.is_gt())
+        {
+            return Err(QxError::BusinessViolation(
+                "补偿成交数量超过原腿已确认敞口".into(),
+            ));
+        }
+        let (hedged_qty, hedged_qty_exact) = if leg.order.exact_amounts.is_some() {
+            (Quantity::ZERO, Some(next))
+        } else {
+            (
+                Quantity::from_raw(
+                    next.to_raw(9)
+                        .map_err(|error| QxError::BusinessViolation(error.into()))?,
+                ),
+                None,
+            )
+        };
+        self.hedge_progress.insert(
+            leg_id.to_string(),
+            SpreadHedgeProgress {
+                hedged_qty,
+                hedged_qty_exact,
+                attempt: current.attempt,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn advance_compensation_attempt(&mut self, leg_id: &str) -> QxResult<u32> {
+        self.leg(leg_id)?;
+        let progress = self.hedge_progress.entry(leg_id.to_string()).or_default();
+        progress.attempt = progress
+            .attempt
+            .checked_add(1)
+            .ok_or_else(|| QxError::Invariant("补偿尝试计数溢出".into()))?;
+        Ok(progress.attempt)
+    }
+
+    pub fn all_confirmed_exposure_hedged(&self) -> bool {
+        self.legs.iter().all(|leg| {
+            leg.order.status.is_terminal()
+                && self
+                    .hedge_progress
+                    .get(&leg.leg_id)
+                    .map_or(ExactDecimal::ZERO, |progress| {
+                        progress.hedged_qty_exact.unwrap_or_else(|| {
+                            ExactDecimal::from_parts(progress.hedged_qty.raw(), 9)
+                                .unwrap_or(ExactDecimal::ZERO)
+                        })
+                    })
+                    .checked_cmp(leg.order.filled_decimal())
+                    .is_some_and(|ordering| !ordering.is_lt())
+        })
+    }
+
+    pub fn require_reconciliation(&mut self) {
+        self.status = SpreadOrderGroupStatus::ReconcileRequired;
     }
 
     /// Mark a group as recovered only after every deterministic compensation
@@ -612,6 +986,11 @@ impl SpreadOrderGroup {
                 "只有 HedgeRequired 订单组可以标记为 Hedged，当前为 {:?}",
                 self.status
             )));
+        }
+        if !self.all_confirmed_exposure_hedged() {
+            return Err(QxError::VenueState(
+                "仍有未完成的跨账户/交易所补偿敞口，不能标记为 Hedged".into(),
+            ));
         }
         self.status = SpreadOrderGroupStatus::Hedged;
         Ok(())
@@ -651,7 +1030,7 @@ impl SpreadOrderGroup {
             total_fees_raw,
             total_margin_raw,
             total_funding_raw,
-        ) = SpreadGroupAttribution::sum(&legs);
+        ) = SpreadGroupAttribution::sum(&legs)?;
         let net_cost_raw = total_fees_raw
             .checked_add(total_funding_raw)
             .ok_or("多腿归因净成本溢出")?;
@@ -666,7 +1045,7 @@ impl SpreadOrderGroup {
             total_margin_raw,
             total_funding_raw,
             net_cost_raw,
-            cost_bps: SpreadGroupAttribution::cost_bps(net_cost_raw, total_turnover_raw),
+            cost_bps: SpreadGroupAttribution::cost_bps(net_cost_raw, total_turnover_raw)?,
         };
         attribution.validate()?;
         Ok(attribution)
@@ -720,7 +1099,10 @@ impl SpreadOrderGroup {
             self.status = SpreadOrderGroupStatus::ReconcileRequired;
             return;
         }
-        let any_filled = self.legs.iter().any(|leg| leg.order.filled.raw() > 0);
+        let any_filled = self
+            .legs
+            .iter()
+            .any(|leg| leg.order.filled_decimal().is_positive());
         if self
             .legs
             .iter()
@@ -886,7 +1268,7 @@ impl SpreadGroupAttribution {
                 return Err(format!("多腿归因 leg_id 重复: {}", leg.leg_id));
             }
         }
-        let totals = Self::sum(&self.legs);
+        let totals = Self::sum(&self.legs)?;
         if self.total_filled_qty_raw != totals.0
             || self.total_turnover_raw != totals.1
             || self.total_fees_raw != totals.2
@@ -903,34 +1285,46 @@ impl SpreadGroupAttribution {
         {
             return Err("多腿归因净成本与费用/资金费之和不一致".into());
         }
-        if self.cost_bps != Self::cost_bps(self.net_cost_raw, self.total_turnover_raw) {
+        if self.cost_bps != Self::cost_bps(self.net_cost_raw, self.total_turnover_raw)? {
             return Err("多腿归因成本 bps 与明细不一致".into());
         }
         Ok(())
     }
 
-    fn sum(legs: &[SpreadLegAttribution]) -> (i128, i128, i128, i128, i128) {
-        legs.iter().fold((0, 0, 0, 0, 0), |mut acc, leg| {
-            acc.0 = acc.0.saturating_add(leg.filled_qty_raw);
-            acc.1 = acc.1.saturating_add(leg.turnover_raw);
-            acc.2 = acc.2.saturating_add(leg.fees_raw);
-            acc.3 = acc.3.saturating_add(leg.margin_raw);
-            acc.4 = acc.4.saturating_add(leg.funding_raw);
-            acc
-        })
+    fn sum(legs: &[SpreadLegAttribution]) -> Result<(i128, i128, i128, i128, i128), String> {
+        legs.iter()
+            .try_fold((0_i128, 0_i128, 0_i128, 0_i128, 0_i128), |acc, leg| {
+                Ok((
+                    acc.0
+                        .checked_add(leg.filled_qty_raw)
+                        .ok_or("多腿归因成交数量合计溢出")?,
+                    acc.1
+                        .checked_add(leg.turnover_raw)
+                        .ok_or("多腿归因成交额合计溢出")?,
+                    acc.2
+                        .checked_add(leg.fees_raw)
+                        .ok_or("多腿归因费用合计溢出")?,
+                    acc.3
+                        .checked_add(leg.margin_raw)
+                        .ok_or("多腿归因保证金合计溢出")?,
+                    acc.4
+                        .checked_add(leg.funding_raw)
+                        .ok_or("多腿归因资金费合计溢出")?,
+                ))
+            })
     }
 
-    fn cost_bps(net_cost_raw: i128, turnover_raw: i128) -> i64 {
+    fn cost_bps(net_cost_raw: i128, turnover_raw: i128) -> Result<i64, String> {
         if turnover_raw <= 0 {
-            return 0;
+            return Ok(0);
         }
-        i64::try_from(
-            net_cost_raw
-                .saturating_mul(10_000)
-                .checked_div(turnover_raw)
-                .unwrap_or(0),
-        )
-        .unwrap_or(i64::MAX)
+        let scaled = net_cost_raw
+            .checked_mul(10_000)
+            .ok_or("多腿归因成本 bps 缩放溢出")?;
+        let bps = scaled
+            .checked_div(turnover_raw)
+            .ok_or("多腿归因成本 bps 除法溢出")?;
+        i64::try_from(bps).map_err(|_| "多腿归因成本 bps 超出 i64 范围".into())
     }
 }
 
@@ -939,30 +1333,30 @@ impl SpreadGroupAttribution {
 pub trait SpreadOrderGroupStore {
     fn load(&self, group_id: &str) -> Result<Option<SpreadOrderGroup>, String>;
     fn save(&mut self, group: &SpreadOrderGroup) -> Result<(), String>;
+    /// Atomically reduce an authoritative local OMS order snapshot into its group.
+    /// Backends must serialize the read-modify-write so concurrent venue workers cannot
+    /// overwrite one another's leg progress with stale snapshots.
+    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String>;
     fn delete(&mut self, group_id: &str) -> Result<(), String>;
 
-    /// Claim a group for a single recovery owner. Backends that do not yet
-    /// provide a durable lease keep the historical no-op behavior; the file
-    /// backend implements an expiring atomic claim below.
+    /// Claim a group for a single recovery owner. Backends must implement a
+    /// durable lease; silently acting as a single-owner store is unsafe when
+    /// recovery workers overlap.
     fn try_claim(
         &mut self,
-        _group_id: &str,
-        _owner: &str,
-        _now: u64,
-        _lease_ms: u64,
-    ) -> Result<Option<u64>, String> {
-        Ok(Some(0))
-    }
+        group_id: &str,
+        owner: &str,
+        now: u64,
+        lease_ms: u64,
+    ) -> Result<Option<u64>, String>;
 
     fn verify_claim(
         &mut self,
-        _group_id: &str,
-        _owner: &str,
-        _token: u64,
-        _now: u64,
-    ) -> Result<bool, String> {
-        Ok(true)
-    }
+        group_id: &str,
+        owner: &str,
+        token: u64,
+        now: u64,
+    ) -> Result<bool, String>;
 
     fn save_claimed(
         &mut self,
@@ -970,16 +1364,14 @@ pub trait SpreadOrderGroupStore {
         owner: &str,
         token: u64,
         now: u64,
-    ) -> Result<(), String> {
-        if !self.verify_claim(&group.group_id, owner, token, now)? {
-            return Err("多腿恢复 claim 已过期或已被其他 owner 接管".into());
-        }
-        self.save(group)
-    }
+    ) -> Result<(), String>;
 
-    fn release_claim(&mut self, _group_id: &str, _owner: &str, _token: u64) -> Result<(), String> {
-        Ok(())
-    }
+    fn release_claim(&mut self, group_id: &str, owner: &str, token: u64) -> Result<(), String>;
+
+    /// Persist an in-flight submit intent before the EventLog registration and venue call.
+    /// Repeating the same client order ID is idempotent; a different in-flight leg is left
+    /// for the queue to retry after the current result is synchronized.
+    fn begin_leg_submission(&self, group_id: &str, client_order_id: u64) -> Result<(), String>;
 }
 
 /// 单机多腿状态文件存储。它只保存订单组状态，不替代 EventLog；每次状态
@@ -1044,10 +1436,52 @@ impl FileSpreadOrderGroupStore {
         self.path_for(group_id)
             .map(|path| path.with_extension("lease"))
     }
+
+    fn claim_matches_locked(
+        &self,
+        group_id: &str,
+        owner: &str,
+        token: u64,
+        now: u64,
+    ) -> Result<bool, String> {
+        let path = self.lease_path_for(group_id)?;
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("读取多腿恢复 claim 失败: {error}")),
+        };
+        let current: serde_json::Value = serde_json::from_str(&existing)
+            .map_err(|error| format!("解析多腿恢复 claim 失败: {error}"))?;
+        let current_owner = current.get("owner").and_then(serde_json::Value::as_str);
+        let current_token = current.get("token").and_then(serde_json::Value::as_u64);
+        let expires_at = current
+            .get("expires_at")
+            .and_then(serde_json::Value::as_u64);
+        Ok(current_owner == Some(owner)
+            && current_token == Some(token)
+            && expires_at.is_some_and(|expires_at| expires_at > now))
+    }
+
+    fn save_locked(&self, group: &SpreadOrderGroup) -> Result<(), String> {
+        let path = self.path_for(&group.group_id)?;
+        let payload = serde_json::to_vec_pretty(group)
+            .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
+        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        std::fs::write(&temporary, payload)
+            .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(&path);
+            std::fs::rename(&temporary, &path)
+                .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
+        }
+        Ok(())
+    }
 }
 
 impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
     fn load(&self, group_id: &str) -> Result<Option<SpreadOrderGroup>, String> {
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿状态读锁失败: {error}"))?;
         let path = self.path_for(group_id)?;
         let payload = match std::fs::read_to_string(&path) {
             Ok(payload) => payload,
@@ -1066,25 +1500,81 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
         group
             .validate_persisted()
             .map_err(|error| format!("保存多腿状态前校验失败: {error:?}"))?;
-        let path = self.path_for(&group.group_id)?;
         // 写锁交给 qx-core::file_lock：进程被杀留下的 `.spread-groups.lock` 在旧实现里会让
         // 多腿状态此后每一次写入都失败，且错误只有一句 OS 文案（V11 §40 D1）。
         let _lock = qx_core::FileLock::acquire(self.lock_path())
             .map_err(|error| format!("获取多腿状态写锁失败: {error}"))?;
-        let payload = serde_json::to_vec_pretty(group)
-            .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
-        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload)
-            .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path)
-                .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
+        self.save_locked(group)
+    }
+
+    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String> {
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿订单快照归约锁失败: {error}"))?;
+        let path = self.path_for(group_id)?;
+        let payload = std::fs::read_to_string(&path)
+            .map_err(|error| format!("读取多腿状态 {} 失败: {error}", path.display()))?;
+        let mut group: SpreadOrderGroup = serde_json::from_str(&payload)
+            .map_err(|error| format!("解析多腿状态 {} 失败: {error}", path.display()))?;
+        group
+            .validate_persisted()
+            .map_err(|error| format!("多腿状态 {} 校验失败: {error:?}", path.display()))?;
+        if group.group_id != group_id {
+            return Err(format!("多腿状态文件标识与请求不一致: {group_id}"));
         }
-        Ok(())
+        group
+            .apply_order_snapshot(snapshot)
+            .map_err(|error| format!("归约多腿订单快照失败: {error:?}"))?;
+        group
+            .validate_persisted()
+            .map_err(|error| format!("归约后多腿状态无效: {error:?}"))?;
+        self.save_locked(&group)
+    }
+
+    fn begin_leg_submission(&self, group_id: &str, client_order_id: u64) -> Result<(), String> {
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿提交意图锁失败: {error}"))?;
+        let path = self.path_for(group_id)?;
+        let payload = std::fs::read_to_string(&path)
+            .map_err(|error| format!("读取多腿状态 {} 失败: {error}", path.display()))?;
+        let mut group: SpreadOrderGroup = serde_json::from_str(&payload)
+            .map_err(|error| format!("解析多腿状态 {} 失败: {error}", path.display()))?;
+        group
+            .validate_persisted()
+            .map_err(|error| format!("多腿状态 {} 校验失败: {error:?}", path.display()))?;
+        if !group
+            .legs
+            .iter()
+            .any(|leg| leg.order.client_id == client_order_id)
+        {
+            return Err(format!(
+                "多腿订单组 {group_id} 不包含订单 {client_order_id}"
+            ));
+        }
+        if group.blocks_new_leg_submission() {
+            return Err(format!(
+                "FAIL_CLOSED: 多腿订单组 {group_id} 状态为 {:?}，禁止开始新腿提交",
+                group.status
+            ));
+        }
+        match group.submission_in_flight_order_id {
+            Some(existing) if existing != client_order_id => {
+                return Err(format!(
+                    "RETRYABLE: 多腿订单组 {group_id} 的订单 {existing} 正在提交，等待其结果同步后重试"
+                ));
+            }
+            Some(_) => return Ok(()),
+            None => {}
+        }
+        group.submission_in_flight_order_id = Some(client_order_id);
+        group
+            .validate_persisted()
+            .map_err(|error| format!("多腿提交意图无效: {error:?}"))?;
+        self.save_locked(&group)
     }
 
     fn delete(&mut self, group_id: &str) -> Result<(), String> {
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿状态写锁失败: {error}"))?;
         let path = self.path_for(group_id)?;
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -1103,6 +1593,8 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
         if owner.trim().is_empty() || lease_ms == 0 {
             return Err("多腿恢复 claim 要求非空 owner 和正 lease_ms".into());
         }
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿恢复 claim 锁失败: {error}"))?;
         let path = self.lease_path_for(group_id)?;
         let mut next_token = 1_u64;
         for _ in 0..3 {
@@ -1180,23 +1672,32 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
         token: u64,
         now: u64,
     ) -> Result<bool, String> {
-        let path = self.lease_path_for(group_id)?;
-        let existing = match std::fs::read_to_string(&path) {
-            Ok(value) => value,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(format!("读取多腿恢复 claim 失败: {error}")),
-        };
-        let current: serde_json::Value = serde_json::from_str(&existing)
-            .map_err(|error| format!("解析多腿恢复 claim 失败: {error}"))?;
-        let current_owner = current.get("owner").and_then(serde_json::Value::as_str);
-        let current_token = current.get("token").and_then(serde_json::Value::as_u64);
-        let expires_at = current
-            .get("expires_at")
-            .and_then(serde_json::Value::as_u64);
-        Ok(current_owner == Some(owner) && current_token == Some(token) && expires_at > Some(now))
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿恢复 claim 锁失败: {error}"))?;
+        self.claim_matches_locked(group_id, owner, token, now)
+    }
+
+    fn save_claimed(
+        &mut self,
+        group: &SpreadOrderGroup,
+        owner: &str,
+        token: u64,
+        now: u64,
+    ) -> Result<(), String> {
+        group
+            .validate_persisted()
+            .map_err(|error| format!("保存多腿状态前校验失败: {error:?}"))?;
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿恢复 claim 锁失败: {error}"))?;
+        if !self.claim_matches_locked(&group.group_id, owner, token, now)? {
+            return Err("多腿恢复 claim 已过期或已被其他 owner 接管".into());
+        }
+        self.save_locked(group)
     }
 
     fn release_claim(&mut self, group_id: &str, owner: &str, token: u64) -> Result<(), String> {
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取多腿恢复 claim 锁失败: {error}"))?;
         let path = self.lease_path_for(group_id)?;
         let existing = match std::fs::read_to_string(&path) {
             Ok(value) => value,
@@ -1231,6 +1732,50 @@ pub struct PaperVenue {
     last_source_seq: u64,
     reconnects: u64,
     fee_model: Box<dyn FeeModel + Send>,
+    instrument_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+}
+
+fn exact_from_legacy_raw(raw: i128) -> QxResult<ExactDecimal> {
+    ExactDecimal::from_parts(raw, 9).map_err(|error| QxError::Invariant(error.into()))
+}
+
+fn exact_projection_raw(value: ExactDecimal) -> QxResult<i128> {
+    value
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+        .and_then(|projection| projection.to_raw(9).ok())
+        .ok_or_else(|| QxError::Invariant("精确数量无法投影到 1e-9 兼容字段".into()))
+}
+
+fn exact_quote_value(
+    raw: i128,
+    exact: Option<ExactDecimal>,
+    label: &str,
+) -> QxResult<ExactDecimal> {
+    let value = exact.unwrap_or(exact_from_legacy_raw(raw)?);
+    if !value.is_positive() || exact.is_some_and(|_| exact_projection_raw(value).ok() != Some(raw))
+    {
+        return Err(QxError::BusinessViolation(format!(
+            "Paper L1 {label} 非正数或与兼容投影不一致"
+        )));
+    }
+    Ok(value)
+}
+
+fn exact_min(left: ExactDecimal, right: ExactDecimal) -> QxResult<ExactDecimal> {
+    match left.checked_cmp(right) {
+        Some(std::cmp::Ordering::Greater) => Ok(right),
+        Some(_) => Ok(left),
+        None => Err(QxError::Invariant("Paper 精确金额比较失败".into())),
+    }
+}
+
+fn floor_exact_to_step(value: ExactDecimal, step: ExactDecimal) -> QxResult<ExactDecimal> {
+    let units = value
+        .checked_div_at_scale(step, 0, DecimalRounding::TowardZero)
+        .ok_or_else(|| QxError::Invariant("Paper 数量步进除法失败".into()))?;
+    units
+        .checked_mul_at_scale(step, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+        .ok_or_else(|| QxError::Invariant("Paper 数量步进回乘溢出".into()))
 }
 
 impl PaperVenue {
@@ -1248,7 +1793,24 @@ impl PaperVenue {
             last_source_seq: 0,
             reconnects: 0,
             fee_model,
+            instrument_specs: BTreeMap::new(),
         }
+    }
+
+    /// Register the frozen product rules used for exact Paper admission and matching.
+    pub fn set_instrument_spec(&mut self, spec: TradingInstrumentSpec) -> QxResult<()> {
+        spec.validate()?;
+        if let Some(existing) = self.instrument_specs.get(&spec.instrument) {
+            if existing != &spec {
+                return Err(QxError::ReconcileRequired(format!(
+                    "Paper Venue 收到冲突的冻结规格: {}",
+                    spec.instrument
+                )));
+            }
+            return Ok(());
+        }
+        self.instrument_specs.insert(spec.instrument.clone(), spec);
+        Ok(())
     }
 
     /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
@@ -1345,6 +1907,16 @@ impl PaperVenue {
                             venue: remote.filled,
                         });
                     }
+                    let local_exact = local.exact_amounts.map(|amounts| amounts.filled);
+                    if local_exact.is_some() || remote.filled_exact.is_some() {
+                        if local_exact != remote.filled_exact {
+                            issues.push(VenueReconcileIssue::ExactFilledMismatch {
+                                client_order_id: *id,
+                                local: local_exact,
+                                venue: remote.filled_exact,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -1366,80 +1938,287 @@ impl PaperVenue {
         self.state
     }
 
-    /// 连接中断期间只返回 Ambiguous，调用者必须走 snapshot/reconcile。
+    /// Legacy convenience wrapper. Production execution paths use `try_on_quote` so an exact
+    /// amount, fee or specification error cannot be mistaken for an empty matching result.
     pub fn on_quote(&mut self, instrument: &InstrumentId, quote: QuoteTick) -> Vec<VenueEvent> {
+        self.try_on_quote(instrument, quote).unwrap_or_default()
+    }
+
+    /// Match one L1 quote. Exact orders use the quote's scale-bearing price and displayed size,
+    /// frozen instrument rules, and exact fee path; legacy orders remain on the 1e-9 grid.
+    /// State is staged on a cloned order map and committed only after all fills validate.
+    pub fn try_on_quote(
+        &mut self,
+        instrument: &InstrumentId,
+        quote: QuoteTick,
+    ) -> QxResult<Vec<VenueEvent>> {
         if !self.connected || !matches!(self.state, ConnectorState::Live) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         if quote.source_seq != 0 && quote.source_seq <= self.last_source_seq {
-            return Vec::new();
+            return Ok(Vec::new());
         }
+        let bid = exact_quote_value(quote.bid.raw(), quote.bid_exact, "bid")?;
+        let ask = exact_quote_value(quote.ask.raw(), quote.ask_exact, "ask")?;
+        if bid.checked_cmp(ask).is_none_or(|ordering| ordering.is_gt()) {
+            return Err(QxError::BusinessViolation("Paper 行情买卖价交叉".into()));
+        }
+        let bid_size = exact_quote_value(quote.bid_qty.raw(), quote.bid_qty_exact, "bid quantity")?;
+        let ask_size = exact_quote_value(quote.ask_qty.raw(), quote.ask_qty_exact, "ask quantity")?;
+        for order in self
+            .orders
+            .values()
+            .filter(|order| &order.instrument == instrument && !order.status.is_terminal())
+            .filter(|order| order.exact_amounts.is_some())
+        {
+            if !self.instrument_specs.contains_key(&order.instrument) {
+                return Err(QxError::BusinessViolation(format!(
+                    "Paper 精确订单缺少冻结 market spec: {}",
+                    order.instrument
+                )));
+            }
+        }
+
+        let mut orders = self.orders.clone();
+        let mut remaining_buy = ask_size;
+        let mut remaining_sell = bid_size;
+        let mut out = Vec::new();
+        // BTreeMap order gives deterministic FIFO by client order id.
+        for (id, order) in &mut orders {
+            if &order.instrument != instrument || order.status.is_terminal() {
+                continue;
+            }
+            let price = match order.side {
+                Side::Buy => ask,
+                Side::Sell => bid,
+            };
+            let price_ok = match order.limit_price_decimal() {
+                Some(limit) => match price.checked_cmp(limit) {
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                        if order.side == Side::Buy =>
+                    {
+                        true
+                    }
+                    Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                        if order.side == Side::Sell =>
+                    {
+                        true
+                    }
+                    Some(_) => false,
+                    None => {
+                        return Err(QxError::Invariant("Paper 限价与最新价精确比较失败".into()));
+                    }
+                },
+                None => true,
+            };
+            if !price_ok {
+                continue;
+            }
+            let available = match order.side {
+                Side::Buy => &mut remaining_buy,
+                Side::Sell => &mut remaining_sell,
+            };
+            if !available.is_positive() {
+                continue;
+            }
+
+            if let Some(mut amounts) = order.exact_amounts {
+                let spec = self
+                    .instrument_specs
+                    .get(&order.instrument)
+                    .ok_or_else(|| QxError::BusinessViolation("Paper exact spec missing".into()))?;
+                let quantity_step = spec
+                    .exact_rules
+                    .as_ref()
+                    .map(|rules| rules.quantity_step)
+                    .unwrap_or(exact_from_legacy_raw(spec.qty_step)?);
+                let max_by_order = if let Some(budget) = amounts.quote_budget {
+                    let remaining_budget = budget
+                        .checked_sub(amounts.quote_filled)
+                        .ok_or_else(|| QxError::Invariant("Paper quote budget 下溢".into()))?;
+                    remaining_budget
+                        .checked_div_at_scale(
+                            price,
+                            ExactDecimal::MAX_SCALE,
+                            DecimalRounding::TowardZero,
+                        )
+                        .ok_or_else(|| QxError::Invariant("Paper quote budget 除法失败".into()))?
+                } else {
+                    amounts
+                        .quantity
+                        .checked_sub(amounts.filled)
+                        .ok_or_else(|| QxError::Invariant("Paper exact remaining 下溢".into()))?
+                };
+                let raw_cap = exact_min(max_by_order, *available)?;
+                let quantity = floor_exact_to_step(raw_cap, quantity_step)?;
+                if !quantity.is_positive() {
+                    continue;
+                }
+                spec.validate_exact_fill(quantity, price)?;
+                let quote_cost = spec.quote_cash_exact(
+                    quantity,
+                    price,
+                    if order.side == Side::Buy {
+                        DecimalRounding::AwayFromZero
+                    } else {
+                        DecimalRounding::TowardZero
+                    },
+                )?;
+                if let Some(budget) = amounts.quote_budget {
+                    let remaining_budget = budget
+                        .checked_sub(amounts.quote_filled)
+                        .ok_or_else(|| QxError::Invariant("Paper quote budget 下溢".into()))?;
+                    if quote_cost
+                        .checked_cmp(remaining_budget)
+                        .is_none_or(|ordering| ordering.is_gt())
+                    {
+                        // A conservative buy debit can round up by one unit at scale 18.
+                        // Skip this quote instead of overspending or looping over tiny lots.
+                        continue;
+                    }
+                    amounts.quote_filled = amounts
+                        .quote_filled
+                        .checked_add(quote_cost)
+                        .ok_or_else(|| QxError::Invariant("Paper quote fill 累计溢出".into()))?;
+                }
+                amounts.filled = amounts
+                    .filled
+                    .checked_add(quantity)
+                    .ok_or_else(|| QxError::Invariant("Paper exact fill 累计溢出".into()))?;
+                let fee_basis = spec.notional_exact(ExactDecimal::ONE, price)?;
+                // Maker/taker classification matches the Bar matcher: only an explicit
+                // post-only order receives maker treatment.
+                let is_maker = order.policy.as_ref().is_some_and(|policy| policy.post_only);
+                let fee = self
+                    .fee_model
+                    .commission_exact(quantity, fee_basis, order.side, is_maker)?;
+                if fee.is_negative() {
+                    return Err(QxError::BusinessViolation(
+                        "Paper 精确费用模型返回负手续费".into(),
+                    ));
+                }
+                let fee_currency = (!fee.is_zero()).then(|| spec.settlement_currency.clone());
+                order.exact_amounts = Some(amounts);
+                if matches!(order.status, OrderStatus::Accepted) {
+                    order
+                        .status
+                        .transition(OrderStatus::Working)
+                        .map_err(QxError::Invariant)?;
+                }
+                let fully_filled = amounts.quote_budget.map_or_else(
+                    || {
+                        amounts
+                            .filled
+                            .checked_cmp(amounts.quantity)
+                            .is_some_and(|ordering| !ordering.is_lt())
+                    },
+                    |budget| {
+                        amounts
+                            .quote_filled
+                            .checked_cmp(budget)
+                            .is_some_and(|ordering| !ordering.is_lt())
+                    },
+                );
+                order
+                    .status
+                    .transition(if fully_filled {
+                        OrderStatus::Filled
+                    } else {
+                        OrderStatus::PartiallyFilled
+                    })
+                    .map_err(QxError::Invariant)?;
+                *available = available
+                    .checked_sub(quantity)
+                    .ok_or_else(|| QxError::Invariant("Paper exact quote depth 下溢".into()))?;
+                let mut fill = Fill {
+                    order_id: *id,
+                    qty: Quantity::ZERO,
+                    price: Price::ZERO,
+                    fee: qx_core::Money::ZERO,
+                    ts: quote.ts,
+                    account_id: order.account_id.clone(),
+                    fee_currency: fee_currency.clone(),
+                    exact_amounts: Some(qx_core::ExactFillAmounts {
+                        quantity,
+                        price,
+                        quote_cost: Some(quote_cost),
+                        quote_budget_complete: false,
+                    }),
+                    ..Fill::default()
+                };
+                if !fee.is_zero() {
+                    fill.exact_fees.push(qx_core::ExactFillFee {
+                        amount: fee,
+                        currency: fee_currency,
+                        source_trade_ids: Vec::new(),
+                    });
+                }
+                order.trace_fill(&mut fill, Some(&self.id), None);
+                out.push(VenueEvent::Fill(fill));
+            } else {
+                let px = match order.side {
+                    Side::Buy => quote.ask,
+                    Side::Sell => quote.bid,
+                };
+                if px.raw() <= 0 {
+                    continue;
+                }
+                let available_raw = exact_projection_raw(*available)?.max(0);
+                let qty = Quantity::from_raw(order.remaining().raw().min(available_raw));
+                if qty.is_zero() {
+                    continue;
+                }
+                let exact_qty = exact_from_legacy_raw(qty.raw())?;
+                *available = available
+                    .checked_sub(exact_qty)
+                    .ok_or_else(|| QxError::Invariant("Paper legacy quote depth 下溢".into()))?;
+                if matches!(order.status, OrderStatus::Accepted) {
+                    order
+                        .status
+                        .transition(OrderStatus::Working)
+                        .map_err(QxError::Invariant)?;
+                }
+                order.filled = Quantity::from_raw(
+                    order
+                        .filled
+                        .raw()
+                        .checked_add(qty.raw())
+                        .ok_or_else(|| QxError::Invariant("Paper raw fill 累计溢出".into()))?,
+                );
+                order
+                    .status
+                    .transition(if order.filled.raw() >= order.qty.raw() {
+                        OrderStatus::Filled
+                    } else {
+                        OrderStatus::PartiallyFilled
+                    })
+                    .map_err(QxError::Invariant)?;
+                let is_maker = order.policy.as_ref().is_some_and(|policy| policy.post_only);
+                let fee = self.fee_model.commission_for_side(
+                    qty.raw(),
+                    px.raw(),
+                    order.side,
+                    is_maker,
+                )?;
+                let mut fill = Fill {
+                    order_id: *id,
+                    qty,
+                    price: px,
+                    fee: qx_core::Money::from_raw(fee),
+                    ts: quote.ts,
+                    account_id: order.account_id.clone(),
+                    ..Fill::default()
+                };
+                order.trace_fill(&mut fill, Some(&self.id), None);
+                out.push(VenueEvent::Fill(fill));
+            }
+        }
+        self.orders = orders;
         self.last_event_ts = quote.ts;
         if quote.source_seq != 0 {
             self.last_source_seq = quote.source_seq;
         }
-        let mut out = Vec::new();
-        let mut remaining_buy = quote.ask_qty.raw();
-        let mut remaining_sell = quote.bid_qty.raw();
-        // BTreeMap iteration already preserves client-order-id order. Mutate the
-        // matching entries in place to avoid allocating an ID snapshot and then
-        // looking every entry up a second time on each quote.
-        for (id, o) in &mut self.orders {
-            if &o.instrument != instrument || o.status.is_terminal() {
-                continue;
-            }
-            let px = match o.side {
-                Side::Buy => quote.ask,
-                Side::Sell => quote.bid,
-            };
-            let price_ok = o
-                .limit
-                .map(|limit| match o.side {
-                    Side::Buy => px.raw() <= limit.raw(),
-                    Side::Sell => px.raw() >= limit.raw(),
-                })
-                .unwrap_or(true);
-            let available_raw = match o.side {
-                Side::Buy => &mut remaining_buy,
-                Side::Sell => &mut remaining_sell,
-            };
-            if !price_ok || *available_raw <= 0 {
-                continue;
-            }
-            let qty = Quantity::from_raw(o.remaining().raw().min(*available_raw));
-            if qty.is_zero() {
-                continue;
-            }
-            *available_raw -= qty.raw();
-            if matches!(o.status, OrderStatus::Accepted) {
-                let _ = o.status.transition(OrderStatus::Working);
-            }
-            o.filled = Quantity::from_raw(o.filled.raw() + qty.raw());
-            let next = if o.filled.raw() >= o.qty.raw() {
-                OrderStatus::Filled
-            } else {
-                OrderStatus::PartiallyFilled
-            };
-            let _ = o.status.transition(next);
-            // maker/taker 判定必须与 BarMatchingEngine 同规则：只有显式
-            // post_only 的挂单算 maker，否则 Paper 会比回测更乐观。
-            let is_maker = o.policy.as_ref().is_some_and(|policy| policy.post_only);
-            let fee = self
-                .fee_model
-                .commission_for_side(qty.raw(), px.raw(), o.side, is_maker);
-            let mut fill = Fill {
-                order_id: *id,
-                qty,
-                price: px,
-                fee: qx_core::Money::from_raw(fee),
-                ts: quote.ts,
-                account_id: o.account_id.clone(),
-                ..Fill::default()
-            };
-            o.trace_fill(&mut fill, Some(&self.id), None);
-            out.push(VenueEvent::Fill(fill));
-        }
-        out
+        Ok(out)
     }
 }
 
@@ -1457,6 +2236,31 @@ impl Venue for PaperVenue {
             .validate_submit(&order, self.id())
             .map_err(QxError::BusinessViolation)?;
         order.validate().map_err(QxError::BusinessViolation)?;
+        if let Some(amounts) = order.exact_amounts {
+            let spec = self
+                .instrument_specs
+                .get(&order.instrument)
+                .ok_or_else(|| {
+                    QxError::BusinessViolation(format!(
+                        "Paper exact submit 缺少冻结 market spec: {}",
+                        order.instrument
+                    ))
+                })?;
+            if spec.instrument != order.instrument {
+                return Err(QxError::BusinessViolation(
+                    "Paper exact submit 的 market spec 标的不匹配".into(),
+                ));
+            }
+            if let Some(budget) = amounts.quote_budget {
+                spec.validate_exact_quote_budget(budget)?;
+            } else {
+                spec.validate_exact_order_with_reference(
+                    amounts.quantity,
+                    amounts.limit_price,
+                    amounts.market_reference_price,
+                )?;
+            }
+        }
         self.fee_model.validate()?;
         if !self.connected {
             return Err(QxError::Ambiguous(
@@ -1524,6 +2328,7 @@ impl Venue for PaperVenue {
                 client_order_id: o.client_id,
                 status: o.status,
                 filled: o.filled,
+                filled_exact: o.exact_amounts.map(|amounts| amounts.filled),
             })
             .collect()
     }
@@ -1654,7 +2459,10 @@ mod tests {
 
     use super::*;
 
-    use qx_core::{InstrumentId, Money, Price, Side, TradingProduct, SCALE};
+    use qx_core::{
+        ExactDecimal, ExactTradingRules, InstrumentId, Money, Price, Side, TradingInstrumentSpec,
+        TradingProduct, SCALE,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn order(qty: i64, side: Side) -> Order {
@@ -1669,6 +2477,7 @@ mod tests {
             account_id: "a".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }
     }
 
@@ -1703,6 +2512,286 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    fn exact_order(client_id: u64, instrument: &str, side: Side, quantity: ExactDecimal) -> Order {
+        Order {
+            client_id,
+            instrument: InstrumentId::parse(instrument).unwrap(),
+            side,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::Submitted,
+            filled: Quantity::ZERO,
+            account_id: "exact-account".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(qx_core::ExactOrderAmounts {
+                quantity,
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: Some(ExactDecimal::parse("100").unwrap()),
+            }),
+        }
+    }
+
+    fn tiny_exact_spot_spec(instrument: &InstrumentId) -> TradingInstrumentSpec {
+        TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: TradingProduct::Spot,
+            base_currency: "TINY".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: false,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 0,
+            valid_to: None,
+            exact_rules: Some(ExactTradingRules {
+                contract_size: ExactDecimal::ONE,
+                price_tick: ExactDecimal::parse("0.0000000001").unwrap(),
+                quantity_step: ExactDecimal::parse("0.0000000001").unwrap(),
+                minimum_quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+                minimum_notional: ExactDecimal::ZERO,
+            }),
+        }
+    }
+
+    #[test]
+    fn paper_venue_matches_sub_nano_order_against_exact_l1_size_and_price() {
+        let instrument = InstrumentId::parse("TINY/USDT.OKX").unwrap();
+        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
+        venue
+            .set_instrument_spec(tiny_exact_spot_spec(&instrument))
+            .unwrap();
+        let quantity = ExactDecimal::parse("0.0000000003").unwrap();
+        let mut order = exact_order(9_801, "TINY/USDT.OKX", Side::Buy, quantity);
+        order.status = OrderStatus::Submitted;
+        venue.submit(order, 1).unwrap();
+
+        let quote = QuoteTick::new(
+            2,
+            Price::from_raw(9),
+            Quantity::ZERO,
+            Price::from_raw(10),
+            Quantity::ZERO,
+            1,
+        )
+        .with_exact_prices(
+            ExactDecimal::parse("0.0000000099").unwrap(),
+            ExactDecimal::parse("0.0000000100").unwrap(),
+        )
+        .with_exact_sizes(
+            ExactDecimal::parse("0.0000000005").unwrap(),
+            ExactDecimal::parse("0.0000000002").unwrap(),
+        );
+        let events = venue.try_on_quote(&instrument, quote).unwrap();
+        let [VenueEvent::Fill(fill)] = events.as_slice() else {
+            panic!("expected one exact partial fill, got {events:?}");
+        };
+        let exact_fill = fill.exact_amounts.unwrap();
+        assert_eq!(
+            exact_fill.quantity,
+            ExactDecimal::parse("0.0000000002").unwrap()
+        );
+        assert_eq!(
+            exact_fill.price,
+            ExactDecimal::parse("0.0000000100").unwrap()
+        );
+        assert_eq!(
+            exact_fill.quote_cost,
+            Some(ExactDecimal::parse("0.000000000000000002").unwrap())
+        );
+        assert_eq!(fill.qty, Quantity::ZERO);
+        assert_eq!(fill.price, Price::ZERO);
+        assert_eq!(venue.snapshot()[0].status, OrderStatus::PartiallyFilled);
+        assert_eq!(
+            venue.snapshot()[0].filled_exact,
+            Some(ExactDecimal::parse("0.0000000002").unwrap())
+        );
+    }
+
+    #[test]
+    fn paper_venue_records_exact_fee_in_the_instrument_settlement_currency() {
+        let instrument = InstrumentId::parse("TINY/USDT.OKX").unwrap();
+        let mut venue = PaperVenue::new(
+            "paper",
+            Box::new(qx_core::MakerTakerFeeModel {
+                maker_bp: 2,
+                taker_bp: 5,
+            }),
+        );
+        venue
+            .set_instrument_spec(tiny_exact_spot_spec(&instrument))
+            .unwrap();
+        let mut order = exact_order(
+            9_803,
+            "TINY/USDT.OKX",
+            Side::Buy,
+            ExactDecimal::parse("0.0000000002").unwrap(),
+        );
+        order.status = OrderStatus::Submitted;
+        venue.submit(order, 1).unwrap();
+        let quote = QuoteTick::new(
+            2,
+            Price::from_i64(99),
+            Quantity::ZERO,
+            Price::from_i64(100),
+            Quantity::ZERO,
+            1,
+        )
+        .with_exact_prices(
+            ExactDecimal::parse("99").unwrap(),
+            ExactDecimal::parse("100").unwrap(),
+        )
+        .with_exact_sizes(
+            ExactDecimal::parse("0.0000000005").unwrap(),
+            ExactDecimal::parse("0.0000000002").unwrap(),
+        );
+
+        let events = venue.try_on_quote(&instrument, quote).unwrap();
+        let [VenueEvent::Fill(fill)] = events.as_slice() else {
+            panic!("expected one exact fee fill, got {events:?}");
+        };
+        assert_eq!(fill.fee_currency.as_deref(), Some("USDT"));
+        assert_eq!(fill.exact_fees.len(), 1);
+        assert_eq!(fill.exact_fees[0].currency.as_deref(), Some("USDT"));
+        assert_eq!(
+            fill.exact_fees[0].amount,
+            ExactDecimal::parse("0.00000000001").unwrap()
+        );
+    }
+
+    #[test]
+    fn paper_venue_rejects_exact_submit_without_frozen_spec() {
+        let mut venue = PaperVenue::new(
+            "paper",
+            Box::new(qx_core::MakerTakerFeeModel {
+                maker_bp: 2,
+                taker_bp: 5,
+            }),
+        );
+        let order = exact_order(
+            9_802,
+            "TINY/USDT.OKX",
+            Side::Buy,
+            ExactDecimal::parse("0.0000000002").unwrap(),
+        );
+        let error = venue.submit(order, 1).unwrap_err();
+        assert!(error.to_string().contains("缺少冻结 market spec"));
+        assert!(venue.snapshot().is_empty());
+    }
+
+    #[test]
+    fn spread_group_exact_small_coin_fill_produces_exact_compensation_target() {
+        let order_qty = ExactDecimal::parse("0.0000000008").unwrap();
+        let fill_qty = ExactDecimal::parse("0.0000000003").unwrap();
+        let first = exact_order(801, "TINY.V1", Side::Buy, order_qty);
+        let second = exact_order(802, "TINY2.V2", Side::Sell, order_qty);
+        let mut group = SpreadOrderGroup::new(
+            "spread-exact-small-coin",
+            "tiny-pair",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "buy".into(),
+                    venue_id: "V1".into(),
+                    order: first.clone(),
+                },
+                SpreadOrderLeg {
+                    leg_id: "sell".into(),
+                    venue_id: "V2".into(),
+                    order: second.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut first_snapshot = first;
+        first_snapshot.status = OrderStatus::Cancelled;
+        first_snapshot.exact_amounts.as_mut().unwrap().filled = fill_qty;
+        group.apply_order_snapshot(&first_snapshot).unwrap();
+        let mut second_snapshot = second;
+        second_snapshot.status = OrderStatus::Cancelled;
+        group.apply_order_snapshot(&second_snapshot).unwrap();
+
+        assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+        let target = group.compensation_targets().pop().unwrap();
+        assert_eq!(target.qty, Quantity::ZERO);
+        assert_eq!(target.qty_exact, Some(fill_qty));
+        group
+            .record_compensation_fill_exact("buy", fill_qty)
+            .unwrap();
+        assert!(group.all_confirmed_exposure_hedged(), "group={group:#?}");
+    }
+
+    #[test]
+    fn spread_group_file_store_applies_concurrent_leg_snapshots_atomically() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qianxing-spread-atomic-snapshots-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let group = two_leg_group();
+        let mut store = FileSpreadOrderGroupStore::new(&root).unwrap();
+        store.save(&group).unwrap();
+        let mut first = group.legs[0].order.clone();
+        first.status = OrderStatus::Filled;
+        first.filled = first.qty;
+        let mut second = group.legs[1].order.clone();
+        second.status = OrderStatus::Filled;
+        second.filled = second.qty;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let paths = [root.clone(), root.clone()];
+        let snapshots = [first, second];
+        let handles = paths
+            .into_iter()
+            .zip(snapshots)
+            .map(|(path, snapshot)| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut store = FileSpreadOrderGroupStore::new(path).unwrap();
+                    barrier.wait();
+                    store
+                        .apply_order_snapshot("spread-attr", &snapshot)
+                        .unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let restored = store.load("spread-attr").unwrap().unwrap();
+        assert_eq!(restored.status, SpreadOrderGroupStatus::Filled);
+        assert!(restored
+            .legs
+            .iter()
+            .all(|leg| leg.order.status == OrderStatus::Filled));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spread_group_legacy_state_defaults_missing_progress_but_rejects_partial_progress() {
+        let group = two_leg_group();
+        let mut legacy = serde_json::to_value(&group).unwrap();
+        legacy.as_object_mut().unwrap().remove("hedge_progress");
+        let restored: SpreadOrderGroup = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(restored.hedge_progress.is_empty());
+
+        legacy["hedge_progress"] = serde_json::json!({ "primary": { "attempt": 1 } });
+        assert!(serde_json::from_value::<SpreadOrderGroup>(legacy).is_err());
     }
 
     #[test]
@@ -1761,6 +2850,28 @@ mod tests {
     }
 
     #[test]
+    fn spread_group_attribution_rejects_overflowing_leg_totals() {
+        let error = two_leg_group()
+            .attribute(vec![
+                SpreadLegAttribution::new("primary", i128::MAX, 0, 0, 0, 0).unwrap(),
+                SpreadLegAttribution::new("reference", 1, 0, 0, 0, 0).unwrap(),
+            ])
+            .unwrap_err();
+        assert!(error.contains("成交数量合计溢出"), "{error}");
+    }
+
+    #[test]
+    fn spread_group_attribution_rejects_cost_bps_overflow() {
+        let error = two_leg_group()
+            .attribute(vec![
+                SpreadLegAttribution::new("primary", 0, 1, i128::MAX, 0, 0).unwrap(),
+                SpreadLegAttribution::new("reference", 0, 0, 0, 0, 0).unwrap(),
+            ])
+            .unwrap_err();
+        assert!(error.contains("成本 bps 缩放溢出"), "{error}");
+    }
+
+    #[test]
     fn spread_group_requires_explicit_compensation_after_partial_fill() {
         let mut first = order(10, Side::Buy);
         first.client_id = 101;
@@ -1811,18 +2922,31 @@ mod tests {
 
         group.record_cancelled("sell-leg").unwrap();
         assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+        assert_eq!(group.legs[1].order.status, OrderStatus::Cancelled);
+        assert!(!group.all_confirmed_exposure_hedged());
+        group.record_cancelled("buy-leg").unwrap();
+        group
+            .record_compensation_fill("buy-leg", Quantity::from_i64(4))
+            .unwrap();
+        assert!(group.all_confirmed_exposure_hedged());
+        group.mark_hedged().unwrap();
+        assert_eq!(group.status, SpreadOrderGroupStatus::Hedged);
+        assert!(group.blocks_new_leg_submission());
     }
 
     #[test]
     fn spread_group_file_store_round_trips_in_progress_fills() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-spread-store-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qianxing-spread-store-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         let mut first = order(10, Side::Buy);
         first.client_id = 301;
         let mut second = order(10, Side::Sell);
@@ -1872,14 +2996,17 @@ mod tests {
 
     #[test]
     fn spread_group_file_store_claim_is_exclusive_and_expires() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-spread-claim-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qianxing-spread-claim-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         let mut first = FileSpreadOrderGroupStore::new(&root).unwrap();
         let mut second = FileSpreadOrderGroupStore::new(&root).unwrap();
         let first_token = first
@@ -1916,6 +3043,65 @@ mod tests {
         assert!(second
             .release_claim("spread-claim", "worker-b", second_token)
             .is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claimed_group_save_is_atomic_with_lease_ownership() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qianxing-spread-claim-save-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let mut first = FileSpreadOrderGroupStore::new(&root).unwrap();
+        let mut second = FileSpreadOrderGroupStore::new(&root).unwrap();
+        let group = SpreadOrderGroup::new(
+            "spread-claim-save",
+            "claim-test",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "first".into(),
+                    venue_id: "venue-a".into(),
+                    order: order(1, Side::Buy),
+                },
+                SpreadOrderLeg {
+                    leg_id: "second".into(),
+                    venue_id: "venue-b".into(),
+                    order: order(1, Side::Sell),
+                },
+            ],
+        )
+        .unwrap();
+        first.save(&group).unwrap();
+
+        let first_token = first
+            .try_claim("spread-claim-save", "worker-a", 100, 10)
+            .unwrap()
+            .unwrap();
+        let second_token = second
+            .try_claim("spread-claim-save", "worker-b", 111, 10)
+            .unwrap()
+            .expect("the second worker may claim after expiry");
+
+        let mut next = group.clone();
+        next.begin_submission().unwrap();
+        second
+            .save_claimed(&next, "worker-b", second_token, 111)
+            .unwrap();
+
+        assert!(first
+            .save_claimed(&group, "worker-a", first_token, 112)
+            .is_err());
+        assert_eq!(
+            first.load("spread-claim-save").unwrap().unwrap().status,
+            SpreadOrderGroupStatus::Submitting
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1959,6 +3145,7 @@ mod tests {
             assert!(matches!(side, Side::Buy | Side::Sell));
         }
         assert_eq!(group.status, SpreadOrderGroupStatus::Filled);
+        assert!(group.blocks_new_leg_submission());
         assert!(group.compensation_targets().is_empty());
     }
 
@@ -2181,6 +3368,7 @@ mod tests {
             maintenance_margin_bps: 500,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         };
         let mut candidate = order(1, Side::Buy);
         candidate.instrument = instrument;

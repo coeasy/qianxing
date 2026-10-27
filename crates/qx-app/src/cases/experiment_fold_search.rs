@@ -263,6 +263,10 @@ pub(super) fn evaluate_fold_local_search(
             low_raw: frame.low_raw[first..last].to_vec(),
             close_raw: frame.close_raw[first..last].to_vec(),
             volume_raw: frame.volume_raw[first..last].to_vec(),
+            exact_ohlcv: frame
+                .exact_ohlcv
+                .as_ref()
+                .map(|values| values[first..last].to_vec()),
         };
         let fold_input = fold_root.join("bars.json");
         write_text(&fold_input.to_string_lossy(), &fold_frame.to_json())?;

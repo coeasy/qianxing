@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "kind": "multi-market-exact-principal",
+  "generated_at_utc": "2026-10-26T17:09:39Z",
+  "environment": {
+    "os": "Windows 11",
+    "architecture": "x86_64",
+    "rust_mode": "offline"
+  },
+  "behavior": {
+    "schema_v1": "raw principal compatibility",
+    "schema_v2": "exact principal with toward-zero 1e-9 raw projection",
+    "exact_principal": "100000.0000000005",
+    "exact_principal_raw_projection": "100000000000000",
+    "subnano_principal": "0.0000000005",
+    "subnano_principal_raw_projection": "0",
+    "walk_forward_exact_account_snapshot": "cash and available margin forwarded"
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-xingban --lib",
+      "passed": 200,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test multi_market_backtest",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test multi_market_experiment",
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --lib multi_market",
+      "passed": 17,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test multi_account_joint_backtest",
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-xingban -p qx-app -p qx-sdk --no-run",
+      "passed": true
+    },
+    {
+      "command": "python -m unittest python.tests.test_sdk_layering.TopLevelStabilityTest.test_multi_market_backtest_schemas_match_rust_python_contracts python.tests.test_sdk_layering.TopLevelStabilityTest.test_experiment_input_schemas_match_rust_python_and_bound_candidates python.tests.test_sdk_layering.TopLevelStabilityTest.test_backtest_spec_schema_fields_match_rust_python_and_nested_specs",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "shards": 4,
+      "duplicates": 0,
+      "wall_seconds": 113.14
+    },
+    {
+      "command": "git diff --check",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "The complete Python suite and release matrix were not run.",
+    "Workspace-wide cargo fmt --all -- --check fails on existing formatting drift across the dirty worktree; broad reformatting was avoided.",
+    "MultiMarket Depth, MultiLeg exact principal, cross-currency budget conversion, recovery/export, and complete cross-language golden coverage remain open.",
+    "This evidence is local and offline; no exchange or sandbox provider was contacted, and no release was published."
+  ]
+}

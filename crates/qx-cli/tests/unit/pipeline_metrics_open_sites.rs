@@ -22,7 +22,7 @@ const COUNTED_OPEN_SITES: [(&str, usize); 2] = [
 /// 不并账的函数：函数名 -> 站点数与"为什么不该出现在按 worker 进程累计的量纲里"。
 ///
 /// 这里的每一项都必须在 qx-service `pipeline_metrics_report.rs` 模块文档里点名，反过来也一样。
-const EXEMPT_OPEN_SITES: [(&str, usize, &str); 12] = [
+const EXEMPT_OPEN_SITES: [(&str, usize, &str); 17] = [
     (
         "open_account_pipeline",
         1,
@@ -33,17 +33,50 @@ const EXEMPT_OPEN_SITES: [(&str, usize, &str); 12] = [
         1,
         "共享的底层打开器，不归属于单个 worker 进程",
     ),
-    ("hydrate_api_initial_state", 1, "只读"),
+    (
+        "hydrate_api_initial_state_with_market_specs",
+        1,
+        "启动时只读装载账户投影",
+    ),
     ("query_api_models", 1, "只读"),
-    ("spawn_api_projection_bridge", 1, "只读行情投影桥"),
+    (
+        "spawn_api_projection_bridge",
+        2,
+        "账户事件与组合 FX 行情的只读投影桥",
+    ),
     (
         "handle_algo_execution_request",
         2,
         "Paper 算法单受理与父单聚合读面",
     ),
-    ("load_api_account_snapshot_for_worker", 1, "只读"),
-    ("strategy_current_qty_for", 1, "只读"),
+    (
+        "load_api_account_snapshot_for_worker_with_market_specs",
+        1,
+        "按冻结市场规格读取账户快照",
+    ),
+    ("strategy_current_qty_for_account", 1, "只读"),
+    ("strategy_current_qty_exact_for_account", 1, "只读"),
     ("strategy_account_context", 1, "只读"),
+    (
+        "collect_pending",
+        2,
+        "策略更新任务分别读取行情与账户 EventLog 的短生命周期只读快照",
+    ),
+    (
+        "execution_updates_for_ranges",
+        2,
+        "策略重试任务分别读取行情与账户 EventLog 的短生命周期只读快照",
+    ),
+    (
+        "live_strategy_input_digest",
+        1,
+        "调度器读取最新行情 EventLog 生成策略输入触发摘要",
+    ),
+    (
+        "populate_strategy_execution_positions",
+        1,
+        "策略账户持仓只读投影",
+    ),
     ("run_paper_pipeline_once_with_report", 2, "一次性验收入口"),
     ("run_paper_submit_order", 1, "一次性验收入口"),
     ("paper_submit_action", 1, "一次性验收入口拆出的提交尝试"),

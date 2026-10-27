@@ -42,8 +42,32 @@ pub fn reconcile_issue_json(issue: &AdapterReconcileIssue) -> serde_json::Value 
             object.insert("local_raw".into(), serde_json::json!(local.raw()));
             object.insert("venue_raw".into(), serde_json::json!(venue.raw()));
         }
+        AdapterReconcileIssue::FilledExactMismatch { local, venue, .. } => {
+            object.insert("local_exact".into(), serde_json::json!(local.to_string()));
+            object.insert("venue_exact".into(), serde_json::json!(venue.to_string()));
+        }
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_core::ExactDecimal;
+
+    #[test]
+    fn exact_fill_reconciliation_report_keeps_decimal_values() {
+        let value = reconcile_issue_json(&AdapterReconcileIssue::FilledExactMismatch {
+            client_order_id: 42,
+            local: ExactDecimal::parse("0.0000000001").unwrap(),
+            venue: ExactDecimal::parse("0.0000000002").unwrap(),
+        });
+        assert_eq!(value["kind"], "filled_mismatch");
+        assert_eq!(value["action"], "resync");
+        assert_eq!(value["local_exact"], "0.0000000001");
+        assert_eq!(value["venue_exact"], "0.0000000002");
+        assert!(value.get("local_raw").is_none());
+    }
 }
 
 pub fn persist_reconcile_report(input: ReconcileReportInput<'_>) -> Result<(), String> {

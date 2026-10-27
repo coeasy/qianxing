@@ -8,7 +8,9 @@ use crate::{
 use qx_strategy::Strategy;
 use std::collections::BTreeMap;
 
+mod canonical_spec;
 mod workflow;
+pub(crate) use canonical_spec::build_multi_market_depth_canonical_run_spec;
 use workflow::{run_inner, run_inner_with_strategies, InjectedStrategy};
 
 pub(super) fn run_candidate(

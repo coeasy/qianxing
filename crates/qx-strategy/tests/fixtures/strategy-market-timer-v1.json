@@ -1,0 +1,6 @@
+{
+  "Timer": {
+    "name": "scheduler",
+    "ts": 1000
+  }
+}

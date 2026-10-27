@@ -1,15 +1,359 @@
 use super::*;
 
 #[test]
+fn hedge_recovery_submits_and_books_sub_nano_exact_compensation() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exact-hedge-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let quantity = qx_core::ExactDecimal::parse("0.0000000003").unwrap();
+    let source_order = Order {
+        client_id: 791,
+        instrument: InstrumentId::parse("TINY/USDT.BINANCE").unwrap(),
+        side: Side::Buy,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "tiny-binance".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity,
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: Some(qx_core::ExactDecimal::parse("100").unwrap()),
+        }),
+    };
+    let other_order = port_order(792);
+    let mut group = SpreadOrderGroup::new(
+        "exact-small-coin-hedge",
+        "tiny-pair",
+        vec![
+            SpreadOrderLeg {
+                leg_id: "tiny-binance".into(),
+                venue_id: "binance".into(),
+                order: source_order.clone(),
+            },
+            SpreadOrderLeg {
+                leg_id: "other-venue".into(),
+                venue_id: "okx".into(),
+                order: other_order.clone(),
+            },
+        ],
+    )
+    .unwrap();
+    let mut filled_source = source_order;
+    filled_source.status = OrderStatus::Cancelled;
+    filled_source.exact_amounts.as_mut().unwrap().filled = quantity;
+    group.apply_order_snapshot(&filled_source).unwrap();
+    let mut cancelled_other = other_order;
+    cancelled_other.status = OrderStatus::Cancelled;
+    group.apply_order_snapshot(&cancelled_other).unwrap();
+    assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+
+    let mut store = FileSpreadOrderGroupStore::new(root.join("groups")).unwrap();
+    store.save(&group).unwrap();
+    let mut events = PortState::default();
+    let mut router = PortRouter {
+        exact_orders: true,
+        ..PortRouter::default()
+    };
+    let mut source_seq = 0;
+    let outcome = HedgeRecoveryWorker::new(
+        group,
+        &mut store,
+        &mut router,
+        &mut events,
+        "tiny-recovery",
+        900,
+        &mut source_seq,
+    )
+    .unwrap()
+    .execute()
+    .unwrap();
+
+    assert!(outcome.completed, "{:?}", outcome.errors);
+    assert_eq!(outcome.group.status, SpreadOrderGroupStatus::Hedged);
+    assert_eq!(router.calls, vec!["binance"]);
+    let compensation = &events.orders[0];
+    assert_eq!(compensation.qty, Quantity::ZERO);
+    assert_eq!(compensation.exact_amounts.unwrap().quantity, quantity);
+    assert_eq!(compensation.filled_decimal(), quantity);
+    assert!(compensation.policy.unwrap().reduce_only);
+    assert_eq!(
+        outcome.group.hedge_progress["tiny-binance"].hedged_qty_exact,
+        Some(quantity)
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn cross_account_and_cross_venue_hedge_progress_converges_under_account_scoped_workers() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-cross-account-hedge-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let mut binance_leg = port_order(701);
+    binance_leg.instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
+    binance_leg.account_id = "account-binance".into();
+    binance_leg.qty = Quantity::from_i64(2);
+    let mut okx_leg = port_order(702);
+    okx_leg.instrument = InstrumentId::parse("ETH/USDT.OKX").unwrap();
+    okx_leg.account_id = "account-okx".into();
+    okx_leg.qty = Quantity::from_i64(2);
+    okx_leg.side = Side::Sell;
+    let mut group = SpreadOrderGroup::new(
+        "cross-account-hedge",
+        "basis-cross-account",
+        vec![
+            SpreadOrderLeg {
+                leg_id: "binance-leg".into(),
+                venue_id: "BINANCE".into(),
+                order: binance_leg,
+            },
+            SpreadOrderLeg {
+                leg_id: "okx-leg".into(),
+                venue_id: "OKX".into(),
+                order: okx_leg,
+            },
+        ],
+    )
+    .unwrap();
+    group.begin_submission().unwrap();
+    for (leg_id, order_id) in [("binance-leg", 701), ("okx-leg", 702)] {
+        group.record_accepted(leg_id).unwrap();
+        group
+            .record_fill(
+                leg_id,
+                &qx_core::Fill {
+                    order_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ..qx_core::Fill::default()
+                },
+            )
+            .unwrap();
+    }
+    group.record_cancelled("binance-leg").unwrap();
+    group.record_cancelled("okx-leg").unwrap();
+    assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+
+    let mut store = FileSpreadOrderGroupStore::new(root.join("groups")).unwrap();
+    store.save(&group).unwrap();
+
+    let mut binance_state = PortState::default();
+    let mut binance_router = PortRouter::default();
+    let mut binance_seq = 0;
+    let binance_outcome = HedgeRecoveryWorker::new(
+        group.clone(),
+        &mut store,
+        &mut binance_router,
+        &mut binance_state,
+        "binance-recovery",
+        500,
+        &mut binance_seq,
+    )
+    .unwrap()
+    .for_account_venue("account-binance", "BINANCE")
+    .unwrap()
+    .execute()
+    .unwrap();
+
+    assert!(!binance_outcome.completed);
+    assert_eq!(
+        binance_outcome.group.status,
+        SpreadOrderGroupStatus::HedgeRequired
+    );
+    assert_eq!(binance_router.calls, vec!["BINANCE"]);
+    assert_eq!(binance_state.orders.len(), 1);
+    assert_eq!(binance_state.orders[0].account_id, "account-binance");
+    assert_eq!(
+        binance_outcome.group.hedge_progress["binance-leg"].hedged_qty,
+        Quantity::from_i64(1)
+    );
+    assert!(!binance_outcome.group.hedge_progress.contains_key("okx-leg"));
+
+    let mut okx_state = PortState::default();
+    let mut okx_router = PortRouter::default();
+    let mut okx_seq = 0;
+    let okx_outcome = HedgeRecoveryWorker::new(
+        binance_outcome.group,
+        &mut store,
+        &mut okx_router,
+        &mut okx_state,
+        "okx-recovery",
+        501,
+        &mut okx_seq,
+    )
+    .unwrap()
+    .for_account_venue("account-okx", "OKX")
+    .unwrap()
+    .execute()
+    .unwrap();
+
+    assert!(okx_outcome.completed, "{:?}", okx_outcome.errors);
+    assert_eq!(okx_outcome.group.status, SpreadOrderGroupStatus::Hedged);
+    assert_eq!(okx_router.calls, vec!["OKX"]);
+    assert_eq!(okx_state.orders.len(), 1);
+    assert_eq!(okx_state.orders[0].account_id, "account-okx");
+    assert!(okx_outcome.group.all_confirmed_exposure_hedged());
+    assert_eq!(
+        store.load("cross-account-hedge").unwrap().unwrap().status,
+        SpreadOrderGroupStatus::Hedged
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn hedge_recovery_finishes_persisted_progress_after_restart_before_status_commit() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-hedge-status-recovery-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let mut first = port_order(711);
+    first.account_id = "account-binance".into();
+    first.qty = Quantity::from_i64(2);
+    let mut second = port_order(712);
+    second.account_id = "account-okx".into();
+    second.qty = Quantity::from_i64(2);
+    second.instrument = InstrumentId::parse("ETH/USDT.OKX").unwrap();
+    let mut group = SpreadOrderGroup::new(
+        "hedge-status-recovery",
+        "basis-status-recovery",
+        vec![
+            SpreadOrderLeg {
+                leg_id: "binance-leg".into(),
+                venue_id: "BINANCE".into(),
+                order: first,
+            },
+            SpreadOrderLeg {
+                leg_id: "okx-leg".into(),
+                venue_id: "OKX".into(),
+                order: second,
+            },
+        ],
+    )
+    .unwrap();
+    group.begin_submission().unwrap();
+    for (leg_id, order_id) in [("binance-leg", 711), ("okx-leg", 712)] {
+        group.record_accepted(leg_id).unwrap();
+        group
+            .record_fill(
+                leg_id,
+                &qx_core::Fill {
+                    order_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ..qx_core::Fill::default()
+                },
+            )
+            .unwrap();
+    }
+    group.record_cancelled("binance-leg").unwrap();
+    assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+    // Model a restart after both fill-progress writes committed, but before the
+    // process wrote the group-wide terminal status.
+    group
+        .record_compensation_fill("binance-leg", Quantity::from_i64(1))
+        .unwrap();
+    group
+        .record_compensation_fill("okx-leg", Quantity::from_i64(1))
+        .unwrap();
+    assert!(group.compensation_targets().is_empty());
+
+    let mut store = FileSpreadOrderGroupStore::new(root.join("groups")).unwrap();
+    store.save(&group).unwrap();
+    let mut events = PortState::default();
+    let mut router = PortRouter::default();
+    let mut source_seq = 0;
+    let mut outcome = HedgeRecoveryWorker::new(
+        group,
+        &mut store,
+        &mut router,
+        &mut events,
+        "binance-recovery",
+        800,
+        &mut source_seq,
+    )
+    .unwrap()
+    .for_account_venue("account-binance", "BINANCE")
+    .unwrap()
+    .execute()
+    .unwrap();
+
+    assert!(!outcome.completed, "an open source leg is not terminal");
+    assert_eq!(outcome.group.status, SpreadOrderGroupStatus::HedgeRequired);
+    assert!(router.calls.is_empty(), "recovery must not resubmit orders");
+    outcome.group.record_cancelled("okx-leg").unwrap();
+    store.save(&outcome.group).unwrap();
+
+    let mut final_events = PortState::default();
+    let mut final_router = PortRouter::default();
+    let mut final_seq = 0;
+    let outcome = HedgeRecoveryWorker::new(
+        store.load("hedge-status-recovery").unwrap().unwrap(),
+        &mut store,
+        &mut final_router,
+        &mut final_events,
+        "okx-recovery",
+        801,
+        &mut final_seq,
+    )
+    .unwrap()
+    .for_account_venue("account-okx", "OKX")
+    .unwrap()
+    .execute()
+    .unwrap();
+
+    assert!(outcome.completed, "{:?}", outcome.errors);
+    assert_eq!(outcome.attempted, 0);
+    assert_eq!(outcome.group.status, SpreadOrderGroupStatus::Hedged);
+    assert!(router.calls.is_empty(), "recovery must not resubmit orders");
+    assert!(events.orders.is_empty());
+    assert_eq!(
+        store.load("hedge-status-recovery").unwrap().unwrap().status,
+        SpreadOrderGroupStatus::Hedged
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn hedge_recovery_worker_is_idempotent_and_fails_closed_on_unknown_state() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-hedge-recovery-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-hedge-recovery-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let mut first = port_order(401);
     first.side = Side::Buy;
     let mut second = port_order(402);
@@ -194,6 +538,7 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
             maintenance_margin_bps: 0,
             valid_from: 0,
             valid_to: None,
+            exact_rules: None,
         }
     }
 
@@ -317,9 +662,11 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
                 ExecutionEvent::Accepted { .. } => "accepted",
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
+                ExecutionEvent::CancelPending { .. } => "cancel-pending",
                 ExecutionEvent::Cancelled { .. } => "cancelled",
                 ExecutionEvent::ReconcileRequired { .. } => "reconcile",
                 ExecutionEvent::MarketQuote { .. } => "quote",
+                ExecutionEvent::FeeAdjustment { .. } => "fee-adjustment",
             })
             .collect()
     }
@@ -381,14 +728,17 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
         },
     ];
 
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-hedge-gate-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-hedge-gate-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     for scenario in scenarios {
         let group_id = format!("hedge-gate-{}", scenario.label);
         let mut store = FileSpreadOrderGroupStore::new(root.join(&group_id)).unwrap();
@@ -442,13 +792,15 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
             );
         }
         let persisted = store.load(&group_id).unwrap().unwrap();
+        let expected_group_status = if scenario.expect_completed {
+            SpreadOrderGroupStatus::Hedged
+        } else if scenario.label == "off-tick-sync-fill-reconciles" {
+            SpreadOrderGroupStatus::ReconcileRequired
+        } else {
+            SpreadOrderGroupStatus::HedgeRequired
+        };
         assert_eq!(
-            persisted.status,
-            if scenario.expect_completed {
-                SpreadOrderGroupStatus::Hedged
-            } else {
-                SpreadOrderGroupStatus::HedgeRequired
-            },
+            persisted.status, expected_group_status,
             "{}: 未知/未验证结果不得把组标记为已对冲",
             scenario.label
         );

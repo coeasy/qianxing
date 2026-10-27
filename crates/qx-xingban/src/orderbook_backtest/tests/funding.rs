@@ -30,6 +30,7 @@ impl OrderBookStrategy for TwoPendingSpotBuys {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect())
     }
@@ -62,6 +63,7 @@ impl OrderBookStrategy for SpotBuyAfterPartialFill {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }])
     }
 }
@@ -99,6 +101,7 @@ impl OrderBookStrategy for BuyThenCompetingSpotSells {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect())
     }
@@ -124,6 +127,7 @@ impl OrderBookStrategy for OneMarketBuy {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }])
     }
 }
@@ -146,10 +150,14 @@ fn market_buy_price_gap_fails_closed_before_cash_can_be_overdrawn() {
         ts,
         sequence: ts,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(ask - 1),
             qty: Quantity::from_i64(10),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(ask),
             qty: Quantity::from_i64(10),
         }],
@@ -175,10 +183,14 @@ fn pending_spot_sell_orders_reserve_inventory_before_acceptance() {
         ts,
         sequence: ts,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(99),
             qty: Quantity::from_i64(10),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(100),
             qty: Quantity::from_i64(10),
         }],
@@ -249,6 +261,7 @@ fn spot_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -260,10 +273,14 @@ fn pending_spot_buy_orders_reserve_shared_cash_before_acceptance() {
         ts: 1,
         sequence: 1,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(99),
             qty: Quantity::from_i64(100),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(100),
             qty: Quantity::from_i64(100),
         }],
@@ -315,10 +332,14 @@ fn partial_spot_fill_releases_only_the_filled_order_reservation() {
         ts,
         sequence: ts,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(99),
             qty: Quantity::from_i64(100),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(100),
             qty: Quantity::from_i64(30),
         }],

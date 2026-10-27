@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "python-wheel-local-strategy-smoke",
+  "generated_at_utc": "2026-10-26T16:08:26Z",
+  "environment": {
+    "os": "Windows-11-10.0.22631-SP0",
+    "architecture": "AMD64",
+    "python_implementation": "CPython",
+    "python_version": "3.13.13"
+  },
+  "package": {
+    "name": "qianxing",
+    "version": "0.2.2",
+    "wheel": "qianxing-0.2.2-cp310-abi3-win_amd64.whl",
+    "sha256": "1b3597255ee4e7a0d39f30d32a5c5f53e2735761677665e6b52c56850c8eb2a1",
+    "fresh_virtual_environment": true,
+    "installation": "pip install --no-index --no-deps <wheel>"
+  },
+  "doctor": {
+    "native_extension_available": true,
+    "application_use_cases_available": true,
+    "version": "0.2.2"
+  },
+  "strategy_run": {
+    "command": "qianxing run-strategy python/examples/strategy_file_sma.py .codex-tmp-build/package-wheel-smoke.json",
+    "strategy": "python/examples/strategy_file_sma.py",
+    "strategy_id": "file-sma-cross",
+    "strategy_version": "1.3",
+    "run_id": "package-wheel-smoke",
+    "data_fingerprint": "barframe:613fdc1dc0b779e7",
+    "input_data_hash": "e5c20c038f1bb74c",
+    "result_hash": "364e0f7aaccf9904",
+    "bars": 70,
+    "equity_points": 70,
+    "fills": 1,
+    "summary_sha256": "6eb9b081c0d4b6d4eaada1a74c482a48ae915c099982160828b212dcfbc7cec3",
+    "run_manifest_sha256": "38589370e387ed77cc3d5a0d665dce9be7f42940c909fe0d7fde437f149b5630",
+    "artifacts": [
+      "run summary",
+      "run manifest",
+      "equity CSV",
+      "fills CSV",
+      "event trace"
+    ]
+  },
+  "regression": {
+    "command": "python -m pytest python/tests/test_strategy_base.py -q",
+    "passed": 28,
+    "failed": 0,
+    "covers": "Rust ExactDecimal coefficient/scale position objects and decimal-string positions both feed position_qty and close_position without precision loss"
+  },
+  "limitations": [
+    "Only Windows x64 CPython 3.13 was built and installed in this evidence record.",
+    "This does not prove other Python or OS wheel matrices, publication to PyPI, optional extras, or sandbox/provider acceptance."
+  ]
+}

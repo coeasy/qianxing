@@ -4,7 +4,7 @@
 //! 都要为同一条 `Fill.fee` 负责，放在回测层会让其他执行平面各写一套。
 //! 延迟与保证金只参与回测撮合，因此留在本层。
 
-use qx_core::{bp_amount, QxError, QxResult, TradingInstrumentSpec};
+use qx_core::{bp_amount, DecimalRounding, ExactDecimal, QxError, QxResult, TradingInstrumentSpec};
 
 pub trait LatencyModel {
     fn name(&self) -> &'static str;
@@ -83,8 +83,8 @@ pub trait MarginRule {
     fn version(&self) -> &'static str {
         "v1"
     }
-    fn initial_margin(&self, notional: i128) -> i128;
-    fn maintain_margin(&self, notional: i128) -> i128;
+    fn initial_margin(&self, notional: i128) -> QxResult<i128>;
+    fn maintain_margin(&self, notional: i128) -> QxResult<i128>;
 
     /// 产品规格路径的初始保证金。默认使用产品固定杠杆；阶梯规则覆盖此
     /// 方法后，回测的合约开仓和强平会真正使用同一套 tier。
@@ -96,6 +96,33 @@ pub trait MarginRule {
         leverage: u32,
     ) -> QxResult<i128> {
         spec.initial_margin(qty, price, leverage)
+    }
+
+    /// Exact counterpart used when a strategy portfolio budget is checked against exact
+    /// positions. Implementations with tiered/custom notional rules should override this
+    /// method so exact orders retain the same margin policy as raw orders.
+    fn instrument_initial_margin_exact(
+        &self,
+        spec: &TradingInstrumentSpec,
+        quantity: ExactDecimal,
+        price: ExactDecimal,
+        leverage: u32,
+    ) -> QxResult<ExactDecimal> {
+        // Preserve custom MarginRule implementations while remaining conservative for
+        // quantities/marks finer than the legacy 1e-9 contract. TieredMargin overrides
+        // this with exact notional and tier selection.
+        let quantity_raw = quantity
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::Ceiling)
+            .and_then(|value| value.to_raw(9).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| QxError::Invariant("精确保证金数量无法保守投影到 raw".into()))?;
+        let price_raw = price
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::Ceiling)
+            .and_then(|value| value.to_raw(9).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| QxError::Invariant("精确保证金价格无法保守投影到 raw".into()))?;
+        let margin_raw = self.instrument_initial_margin(spec, quantity_raw, price_raw, leverage)?;
+        ExactDecimal::from_parts(margin_raw, 9).map_err(|error| QxError::Invariant(error.into()))
     }
 
     fn instrument_maintenance_margin(
@@ -118,11 +145,11 @@ impl MarginRule for NoMargin {
     fn name(&self) -> &'static str {
         "NoMargin"
     }
-    fn initial_margin(&self, _n: i128) -> i128 {
-        0
+    fn initial_margin(&self, _n: i128) -> QxResult<i128> {
+        Ok(0)
     }
-    fn maintain_margin(&self, _n: i128) -> i128 {
-        0
+    fn maintain_margin(&self, _n: i128) -> QxResult<i128> {
+        Ok(0)
     }
 }
 
@@ -144,13 +171,15 @@ impl MarginRule for LeverageMargin {
     fn name(&self) -> &'static str {
         "LeverageMargin"
     }
-    fn initial_margin(&self, n: i128) -> i128 {
+    fn initial_margin(&self, n: i128) -> QxResult<i128> {
         if self.leverage == 0 {
-            return i128::MAX;
+            return Err(QxError::BusinessViolation(
+                "初始保证金杠杆必须大于 0".into(),
+            ));
         }
-        n.max(0) / i128::from(self.leverage)
+        Ok(n.max(0) / i128::from(self.leverage))
     }
-    fn maintain_margin(&self, n: i128) -> i128 {
+    fn maintain_margin(&self, n: i128) -> QxResult<i128> {
         bp_amount(n.max(0), self.maintenance_bp)
     }
     fn descriptor(&self) -> String {
@@ -180,13 +209,17 @@ impl MarginRule for TieredMargin {
     fn name(&self) -> &'static str {
         "TieredMargin"
     }
-    fn initial_margin(&self, n: i128) -> i128 {
-        self.tier(n)
-            .map_or(i128::MAX, |tier| bp_amount(n.max(0), tier.initial_bp))
+    fn initial_margin(&self, n: i128) -> QxResult<i128> {
+        let tier = self
+            .tier(n)
+            .ok_or_else(|| QxError::BusinessViolation("名义额超过阶梯保证金最大档位".into()))?;
+        bp_amount(n.max(0), tier.initial_bp)
     }
-    fn maintain_margin(&self, n: i128) -> i128 {
-        self.tier(n)
-            .map_or(i128::MAX, |tier| bp_amount(n.max(0), tier.maintenance_bp))
+    fn maintain_margin(&self, n: i128) -> QxResult<i128> {
+        let tier = self
+            .tier(n)
+            .ok_or_else(|| QxError::BusinessViolation("名义额超过阶梯保证金最大档位".into()))?;
+        bp_amount(n.max(0), tier.maintenance_bp)
     }
     fn instrument_initial_margin(
         &self,
@@ -206,7 +239,40 @@ impl MarginRule for TieredMargin {
                 "订单杠杆超过当前名义额阶梯限制".into(),
             ));
         }
-        Ok(self.initial_margin(notional))
+        self.initial_margin(notional)
+    }
+    fn instrument_initial_margin_exact(
+        &self,
+        spec: &TradingInstrumentSpec,
+        quantity: ExactDecimal,
+        price: ExactDecimal,
+        leverage: u32,
+    ) -> QxResult<ExactDecimal> {
+        let notional = spec.notional_exact(quantity, price)?;
+        let notional_raw = notional
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::Ceiling)
+            .and_then(|value| value.to_raw(9).ok())
+            .ok_or_else(|| QxError::Invariant("阶梯保证金精确名义额投影溢出".into()))?;
+        let Some(tier) = self.tier(notional_raw) else {
+            return Err(QxError::BusinessViolation(
+                "产品名义额超过阶梯保证金最大档位".into(),
+            ));
+        };
+        if tier.max_leverage.is_some_and(|max| leverage > max) {
+            return Err(QxError::BusinessViolation(
+                "订单杠杆超过当前名义额阶梯限制".into(),
+            ));
+        }
+        if tier.initial_bp < 0 {
+            return Err(QxError::BusinessViolation(
+                "阶梯保证金初始保证金比例不能为负数".into(),
+            ));
+        }
+        let rate = ExactDecimal::from_parts(i128::from(tier.initial_bp), 4)
+            .map_err(|error| QxError::Invariant(error.into()))?;
+        notional
+            .checked_mul_at_scale(rate, ExactDecimal::MAX_SCALE, DecimalRounding::AwayFromZero)
+            .ok_or_else(|| QxError::Invariant("阶梯保证金精确计算溢出".into()))
     }
     fn instrument_maintenance_margin(
         &self,
@@ -220,7 +286,7 @@ impl MarginRule for TieredMargin {
                 "产品名义额超过阶梯保证金最大档位".into(),
             ));
         }
-        Ok(self.maintain_margin(notional))
+        self.maintain_margin(notional)
     }
     fn descriptor(&self) -> String {
         let tiers = self
@@ -254,10 +320,10 @@ impl MarginRule for FixedRateMargin {
     fn name(&self) -> &'static str {
         "FixedRateMargin"
     }
-    fn initial_margin(&self, n: i128) -> i128 {
+    fn initial_margin(&self, n: i128) -> QxResult<i128> {
         bp_amount(n, self.initial_bp)
     }
-    fn maintain_margin(&self, n: i128) -> i128 {
+    fn maintain_margin(&self, n: i128) -> QxResult<i128> {
         bp_amount(n, self.maintain_bp)
     }
     fn descriptor(&self) -> String {
@@ -300,8 +366,8 @@ mod tests {
             leverage: 10,
             maintenance_bp: 500,
         };
-        assert_eq!(leverage.initial_margin(1_000), 100);
-        assert_eq!(leverage.maintain_margin(1_000), 50);
+        assert_eq!(leverage.initial_margin(1_000).unwrap(), 100);
+        assert_eq!(leverage.maintain_margin(1_000).unwrap(), 50);
         let tiered = TieredMargin {
             tiers: vec![
                 MarginTier {
@@ -318,7 +384,65 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(tiered.initial_margin(500), 50);
-        assert_eq!(tiered.maintain_margin(2_000), 200);
+        assert_eq!(tiered.initial_margin(500).unwrap(), 50);
+        assert_eq!(tiered.maintain_margin(2_000).unwrap(), 200);
+        assert!(tiered.initial_margin(i128::MAX).is_err());
+    }
+
+    #[test]
+    fn exact_portfolio_margin_uses_conservative_tier_selection_and_amounts() {
+        let instrument = qx_core::InstrumentId::parse("T/USDT.BINANCE").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument,
+            product: qx_core::TradingProduct::Perpetual,
+            base_currency: "T".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: qx_core::SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 10,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(qx_core::ExactTradingRules {
+                contract_size: ExactDecimal::ONE,
+                price_tick: ExactDecimal::parse("0.000000001").unwrap(),
+                quantity_step: ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_quantity: ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_notional: ExactDecimal::ZERO,
+            }),
+        };
+        let tiered = TieredMargin {
+            tiers: vec![
+                MarginTier {
+                    max_notional: 100,
+                    initial_bp: 1_000,
+                    maintenance_bp: 500,
+                    max_leverage: Some(10),
+                },
+                MarginTier {
+                    max_notional: 1_000,
+                    initial_bp: 2_000,
+                    maintenance_bp: 1_000,
+                    max_leverage: Some(5),
+                },
+            ],
+        };
+
+        let margin = tiered
+            .instrument_initial_margin_exact(
+                &spec,
+                ExactDecimal::parse("0.0000001001").unwrap(),
+                ExactDecimal::ONE,
+                3,
+            )
+            .unwrap();
+
+        assert_eq!(margin, ExactDecimal::parse("0.00000002002").unwrap());
     }
 }

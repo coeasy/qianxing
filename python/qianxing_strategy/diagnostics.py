@@ -8,11 +8,12 @@ import json
 import math
 import subprocess
 import sys
+import tempfile
 from bisect import bisect_left, bisect_right
 from pathlib import Path
 from typing import Any, Sequence
 
-from qianxing_bridge.strategy import StrategyInput
+from qianxing_bridge.strategy import StrategyBars, StrategyInput
 
 DECISION_FIELDS = ("target_qty", "confidence", "priority", "intents", "signal_id", "expires_at")
 DEFAULT_MAX_LOOKAHEAD_CHECKS = 200
@@ -24,6 +25,7 @@ MAX_PIT_VERSIONS_PER_FACT = 100
 MAX_PIT_FACT_DECISION_CHECKS = 5_000_000
 MAX_PIT_EXAMPLES_PER_STATUS = 25
 MAX_ADJUSTMENT_RELATION_CHECKS = 5_000_000
+MAX_CALLBACK_DIAGNOSTIC_BARS = 65_536
 PRICE_ADJUSTMENT_BASES = frozenset({"raw", "forward_adjusted", "backward_adjusted", "unknown"})
 PRICE_BAR_FIELDS = frozenset(
     f"bar.{column}{suffix}"
@@ -42,6 +44,7 @@ def _decision_view(response: dict[str, Any]) -> dict[str, Any]:
 def _call_strategy(
     strategy: str, request: StrategyInput, timeout_seconds: int,
     worker_command: Sequence[str] | None = None,
+    worker_extra: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Run one isolated request through Python or an external JSONL worker."""
     command = list(worker_command) if worker_command else [
@@ -50,7 +53,16 @@ def _call_strategy(
     ]
     process = subprocess.run(
         command,
-        input=request.to_json() + "\n",
+        input=(
+            request.to_json()
+            if worker_extra is None
+            else json.dumps(
+                {"strategy_input": request.to_dict(), **worker_extra},
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        ) + "\n",
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -97,11 +109,42 @@ def _evenly_spaced_indices(total: int, limit: int) -> list[int]:
     return [round(index * (total - 1) / (limit - 1)) for index in range(limit)]
 
 
-def _clone_request(request: StrategyInput, bars: dict[str, Any], as_of: int) -> StrategyInput:
+def _clone_request(
+    request: StrategyInput,
+    bars: dict[str, Any],
+    as_of: int,
+    market_bars: dict[str, StrategyBars] | None = None,
+) -> StrategyInput:
     value = request.to_dict()
     value["as_of"] = as_of
     value["bars"] = bars
+    if market_bars is not None:
+        value["market_bars"] = {
+            instrument: frame.to_dict() for instrument, frame in market_bars.items()
+        }
     return StrategyInput.from_dict(value)
+
+
+def _slice_market_bars(
+    frames: dict[str, StrategyBars], start_at: int | None, end_at: int
+) -> dict[str, StrategyBars]:
+    """Keep peer Bars in a matching startup interval and strictly before the decision."""
+    result: dict[str, StrategyBars] = {}
+    for instrument, frame in frames.items():
+        source = frame.to_dict()
+        indices = [
+            index for index, timestamp in enumerate(frame.ts)
+            if timestamp < end_at and (start_at is None or timestamp >= start_at)
+        ]
+        if not indices:
+            continue
+        first, last = indices[0], indices[-1] + 1
+        sliced = {
+            key: (value[first:last] if isinstance(value, list) else value)
+            for key, value in source.items()
+        }
+        result[instrument] = StrategyBars.from_dict(sliced)
+    return result
 
 
 def _mutate_future_bars(bars: dict[str, Any], first_future_index: int) -> dict[str, Any]:
@@ -161,6 +204,7 @@ def _lookahead_check(
     max_checks: int,
     timeout_seconds: int,
     worker_command: Sequence[str] | None = None,
+    diagnostic_market_bars: dict[str, StrategyBars] | None = None,
 ) -> dict[str, Any]:
     if request.bars is None or len(request.bars.ts) < 2:
         return {
@@ -169,6 +213,7 @@ def _lookahead_check(
             "reason": "lookahead analysis requires at least two bars",
         }
     source = request.bars.to_dict()
+    peer_frames = diagnostic_market_bars if diagnostic_market_bars is not None else dict(request.market_bars)
     decision_indices = list(range(len(request.bars.ts) - 1))
     if len(decision_indices) > max_checks:
         stride = math.ceil(len(decision_indices) / max_checks)
@@ -179,14 +224,38 @@ def _lookahead_check(
         # and after that timestamp must not affect the strategy's decision.
         decision_as_of = request.bars.ts[index + 1]
         baseline, baseline_state = _call_strategy(
-            strategy, _clone_request(request, source, decision_as_of), timeout_seconds, worker_command
+            strategy,
+            _clone_request(request, source, decision_as_of),
+            timeout_seconds,
+            worker_command,
+            None if diagnostic_market_bars is None else {
+                "market_bars": {key: frame.to_dict() for key, frame in peer_frames.items()}
+            },
         )
-        for profile, perturbed in _future_perturbations(source, index + 1):
+        for profile_index, (profile, perturbed) in enumerate(
+            _future_perturbations(source, index + 1)
+        ):
+            perturbed_market_bars: dict[str, StrategyBars] = {}
+            changed_market_instruments: list[str] = []
+            for instrument, peer_frame in peer_frames.items():
+                peer_source = peer_frame.to_dict()
+                peer_future_index = bisect_left(peer_frame.ts, decision_as_of)
+                peer_profiles = _future_perturbations(peer_source, peer_future_index)
+                peer_bars = peer_profiles[profile_index][1]
+                if peer_future_index < len(peer_frame.ts) and peer_bars != peer_source:
+                    changed_market_instruments.append(instrument)
+                perturbed_market_bars[instrument] = StrategyBars.from_dict(peer_bars)
             counterfactual, counterfactual_state = _call_strategy(
                 strategy,
                 _clone_request(request, perturbed, decision_as_of),
                 timeout_seconds,
                 worker_command,
+                None if diagnostic_market_bars is None else {
+                    "market_bars": {
+                        key: frame.to_dict()
+                        for key, frame in perturbed_market_bars.items()
+                    }
+                },
             )
             changed_fields = _changed_decision_fields(baseline, counterfactual)
             changed_state_fields = _changed_state_fields(baseline_state, counterfactual_state)
@@ -195,6 +264,7 @@ def _lookahead_check(
                     "visible_history_end_index": index,
                     "decision_as_of": decision_as_of,
                     "perturbation_profile": profile,
+                    "cross_market_instruments_perturbed": changed_market_instruments,
                     "future_perturbation_changed_decision": bool(changed_fields),
                     "changed_decision_fields": changed_fields,
                     "intermediate_state_changed": bool(changed_state_fields),
@@ -219,6 +289,8 @@ def _lookahead_check(
             or item["counterfactual_intermediate_state"] is not None
             for item in checks
         ),
+        "cross_market_inputs_included": bool(peer_frames),
+        "cross_market_instruments_included": sorted(peer_frames),
         "perturbation_profiles": ["mixed_ohlcv", "prices_up", "prices_down", "future_volume_zero"],
         "checks": checks,
         "interpretation": (
@@ -236,6 +308,7 @@ def _startup_check(
     max_checks: int,
     timeout_seconds: int,
     worker_command: Sequence[str] | None = None,
+    diagnostic_market_bars: dict[str, StrategyBars] | None = None,
 ) -> dict[str, Any]:
     if request.bars is None:
         return {
@@ -283,8 +356,26 @@ def _startup_check(
             key: (value[first:] if isinstance(value, list) and key != "source" else value)
             for key, value in visible_source.items()
         }
+        peer_start = suffix["ts"][0] if suffix.get("ts") else None
+        peer_frames = (
+            diagnostic_market_bars
+            if diagnostic_market_bars is not None
+            else dict(request.market_bars)
+        )
+        sliced_peers = _slice_market_bars(peer_frames, peer_start, request.as_of)
         decision, intermediate_state = _call_strategy(
-            strategy, _clone_request(request, suffix, request.as_of), timeout_seconds, worker_command
+            strategy,
+            _clone_request(
+                request,
+                suffix,
+                request.as_of,
+                None,
+            ),
+            timeout_seconds,
+            worker_command,
+            None if diagnostic_market_bars is None else {
+                "market_bars": {key: frame.to_dict() for key, frame in sliced_peers.items()}
+            },
         )
         windows.append(
             {
@@ -313,6 +404,7 @@ def _startup_check(
         max_checks,
         timeout_seconds,
         worker_command,
+        diagnostic_market_bars,
     )
     changed = [row["requested_bars"] for row in windows if row["changed_decision_fields"]]
     state_changed = [row["requested_bars"] for row in windows if row["intermediate_state_changed_fields"]]
@@ -381,6 +473,7 @@ def _startup_trajectory_check(
     max_checks: int,
     timeout_seconds: int,
     worker_command: Sequence[str] | None = None,
+    diagnostic_market_bars: dict[str, StrategyBars] | None = None,
 ) -> dict[str, Any]:
     """Compare startup-window decisions at matching history points with a bounded replay budget."""
     if request.bars is None:
@@ -436,6 +529,7 @@ def _startup_trajectory_check(
     sample_indices = _evenly_spaced_indices(eligible_points, points_per_window_set)
     decision_times = [eligible_decision_times[index] for index in sample_indices]
     source = request.bars.to_dict()
+    peer_frames = diagnostic_market_bars if diagnostic_market_bars is not None else dict(request.market_bars)
     terminal_by_window = {row["requested_bars"]: row for row in terminal_windows}
     changed_fields_by_window: dict[int, set[str]] = {}
     state_fields_by_window: dict[int, set[str]] = {}
@@ -462,9 +556,24 @@ def _startup_trajectory_check(
             else:
                 decision, intermediate_state = _call_strategy(
                     strategy,
-                    _clone_request(request, suffix, decision_at),
+                    _clone_request(
+                        request,
+                        suffix,
+                        decision_at,
+                        None,
+                    ),
                     timeout_seconds,
                     worker_command,
+                    None if diagnostic_market_bars is None else {
+                        "market_bars": {
+                            key: frame.to_dict()
+                            for key, frame in _slice_market_bars(
+                                peer_frames,
+                            suffix["ts"][0] if suffix.get("ts") else None,
+                            decision_at,
+                            ).items()
+                        }
+                    },
                 )
                 worker_replays += 1
             point_rows.append({
@@ -891,6 +1000,7 @@ def diagnose(
     timeout_seconds: int = DEFAULT_HANDLER_TIMEOUT_SECONDS,
     worker_command: Sequence[str] | None = None,
     pit_ledger: dict[str, Any] | None = None,
+    diagnostic_market_bars: dict[str, StrategyBars] | None = None,
 ) -> dict[str, Any]:
     if not worker_command and not (strategy or "").strip():
         raise ValueError("strategy module or .py path must be non-empty")
@@ -922,14 +1032,117 @@ def diagnose(
         "instrument": request.instrument,
         "as_of": request.as_of,
         "input_bars": len(request.bars.ts),
-        "lookahead": _lookahead_check(request, strategy, max_checks, timeout_seconds, worker_command),
+        "lookahead": _lookahead_check(
+            request,
+            strategy,
+            max_checks,
+            timeout_seconds,
+            worker_command,
+            diagnostic_market_bars,
+        ),
         "visible_bars_at_as_of": visible_count,
         "startup": _startup_check(
-            request, strategy, startup_windows, max_checks, timeout_seconds, worker_command
+            request,
+            strategy,
+            startup_windows,
+            max_checks,
+            timeout_seconds,
+            worker_command,
+            diagnostic_market_bars,
         ),
     }
     if data_visibility is not None:
         report["data_visibility"] = data_visibility
+    return report
+
+
+def diagnose_callback_strategy(
+    request: StrategyInput,
+    strategy_file: str | Path,
+    backtest_spec: dict[str, Any],
+    *,
+    strategy_bundle_sha256: str,
+    startup_windows: list[int],
+    max_checks: int = DEFAULT_MAX_LOOKAHEAD_CHECKS,
+    timeout_seconds: int = DEFAULT_HANDLER_TIMEOUT_SECONDS,
+    pit_ledger: dict[str, Any] | None = None,
+    diagnostic_market_bars: dict[str, StrategyBars] | None = None,
+    factory_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Diagnose a modern ``create_strategy(spec)`` Bar callback through bounded replays.
+
+    Each request launches a clean worker process and reconstructs the strategy by replaying
+    only Bars visible before that request's decision time. The worker exposes each modified
+    counterfactual frame through the BacktestSpec's temporary ``bars_path``.
+    """
+    path = Path(strategy_file).expanduser().resolve(strict=True)
+    if path.suffix.lower() != ".py" or not path.is_file():
+        raise ValueError(f"strategy file must be an existing .py file: {path}")
+    if not isinstance(backtest_spec, dict):
+        raise ValueError("BacktestSpec must be a JSON object")
+    if request.bars is None or len(request.bars.ts) > MAX_CALLBACK_DIAGNOSTIC_BARS:
+        raise ValueError(
+            f"callback diagnostics require 1..={MAX_CALLBACK_DIAGNOSTIC_BARS} bars"
+        )
+    digest = strategy_bundle_sha256.strip().lower()
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise ValueError("strategy_bundle_sha256 must be a SHA-256 digest")
+    worker = Path(__file__).with_name("diagnostic_callback_worker.py").resolve()
+    with tempfile.TemporaryDirectory(prefix="qianxing-diagnostic-spec-") as temporary:
+        spec_path = Path(temporary) / "backtest-spec.json"
+        factory_spec = dict(backtest_spec)
+        if factory_context is not None:
+            factory_spec.update(factory_context)
+        spec_path.write_text(
+            json.dumps(factory_spec, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
+            encoding="utf-8",
+        )
+        report = diagnose(
+            request,
+            "",
+            startup_windows,
+            max_checks=max_checks,
+            timeout_seconds=timeout_seconds,
+            worker_command=[
+                sys.executable,
+                str(worker),
+                "--strategy-file",
+                str(path),
+                "--spec-file",
+                str(spec_path),
+            ],
+            pit_ledger=pit_ledger,
+            diagnostic_market_bars=diagnostic_market_bars,
+        )
+    report.update(
+        {
+            "strategy": "python_create_strategy_callback",
+            "worker_kind": "python_callback_visible_bar_replay",
+            "strategy_bundle_sha256": digest,
+            "backtest_spec_sha256": hashlib.sha256(
+                json.dumps(
+                    backtest_spec,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest(),
+            "backtest_strategy_config": backtest_spec.get("strategy"),
+            "context_assumption": (
+                "Each sampled decision uses fixed positions, cash, margin and risk context from the "
+                "diagnostic input. The worker replays visible Bar callbacks but does not simulate fills, "
+                "order updates, or account-state transitions."
+            ),
+            "diagnostic_scope": (
+                "Perturbations cover the target Bar input and, for multi-market specs, each declared "
+                "peer Bar file supplied to create_strategy(spec). External data reads, network access, "
+                "hidden process state, and unsampled decision points are outside this diagnostic. "
+                "When a PIT ledger is supplied for a multi-market spec, its checks currently use the "
+                "selected target market's decision times only."
+            ),
+        }
+    )
     return report
 
 

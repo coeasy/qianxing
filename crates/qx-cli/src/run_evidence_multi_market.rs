@@ -30,10 +30,10 @@ pub(crate) fn recompute_multi_market_barframe_identity(
     root: &Path,
     dataset: &qx_spec::RunEvidenceDataset,
     manifest_components: &BTreeMap<String, String>,
-    summary_path: &Path,
+    artifacts: &[qx_spec::ArtifactRef],
 ) -> Result<(BacktestInputProvenance, u64), String> {
-    if dataset.components.len() < 3 {
-        return Err("multi-market-barframe 至少要有三个市场输入".into());
+    if !(1..=32).contains(&dataset.components.len()) {
+        return Err("multi-market-barframe 必须有 1..=32 个市场输入".into());
     }
     let mut component_fingerprints = Vec::with_capacity(dataset.components.len());
     let mut instruments = Vec::with_capacity(dataset.components.len());
@@ -195,19 +195,17 @@ pub(crate) fn recompute_multi_market_barframe_identity(
     let mut expected_input_components = manifest_components.clone();
     let derived_equity_hash =
         expected_input_components.remove("derived:instrument-equity-contributions");
-    let summary: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(summary_path).map_err(|error| {
-            format!(
-                "读取多市场 EvidenceBundle 摘要失败 {}: {error}",
-                summary_path.display()
-            )
-        })?)
-        .map_err(|error| format!("多市场 EvidenceBundle 摘要 JSON 无效: {error}"))?;
-    let derived_equity_path = summary
-        .get("instrument_equity_contributions_path")
-        .and_then(serde_json::Value::as_str)
-        .map(|reference| resolve_reference(root, reference))
+    let derived_exact_equity_hash = expected_input_components.remove("derived:equity-exact");
+    let mut derived_equity_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact.name == "instrument_equity_contributions");
+    let derived_equity_path = derived_equity_artifacts
+        .next()
+        .map(|artifact| resolve_reference(root, &artifact.path))
         .transpose()?;
+    if derived_equity_artifacts.next().is_some() {
+        return Err("EvidenceBundle 按标的权益贡献工件重复".into());
+    }
     match (derived_equity_path, derived_equity_hash) {
         (Some(path), Some(expected)) => {
             let bytes = std::fs::read(&path).map_err(|error| {
@@ -220,6 +218,29 @@ pub(crate) fn recompute_multi_market_barframe_identity(
         }
         (None, None) => {}
         _ => return Err("EvidenceBundle 按标的权益贡献路径与 RunManifest 组件不成对".into()),
+    }
+    let mut exact_equity_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact.name == "equity_exact");
+    let exact_equity_path = exact_equity_artifacts
+        .next()
+        .map(|artifact| resolve_reference(root, &artifact.path))
+        .transpose()?;
+    if exact_equity_artifacts.next().is_some() {
+        return Err("EvidenceBundle 精确权益曲线工件重复".into());
+    }
+    match (exact_equity_path, derived_exact_equity_hash) {
+        (Some(path), Some(expected)) => {
+            let bytes = std::fs::read(&path).map_err(|error| {
+                format!("读取多市场精确权益曲线失败 {}: {error}", path.display())
+            })?;
+            let actual = qx_data::sha256_hex_bytes(&bytes);
+            if actual != expected {
+                return Err("EvidenceBundle 精确权益曲线与 RunManifest SHA-256 不一致".into());
+            }
+        }
+        (None, None) => {}
+        _ => return Err("EvidenceBundle 精确权益曲线路径与 RunManifest 组件不成对".into()),
     }
     let version = "multi-market-barframe-v1";
     if recomputed_components != expected_input_components

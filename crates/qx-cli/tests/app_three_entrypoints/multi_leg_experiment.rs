@@ -45,6 +45,56 @@ fn multi_leg_parameter_experiment_is_shared_by_cli_http_and_python() {
     assert_eq!(cli["completed_candidates"], 2);
     assert_eq!(cli["failed_candidates"], 1);
     assert_eq!(cli["succeeded_candidates"], 1);
+    assert!(cli["result_hash"].as_str().is_some());
+    assert!(cli["run_manifest"].as_str().is_some());
+    assert!(cli["run_record"].as_str().is_some());
+    assert_eq!(cli["artifact_locations"].as_object().unwrap().len(), 3);
+    assert!(cli["artifact_locations"]["experiment_input"].is_string());
+
+    let experiment_report = cli["artifact_path"].as_str().unwrap();
+    let package = root.join("portable-multi-leg-experiment");
+    let package_text = package.to_string_lossy().into_owned();
+    let run_evidence = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            .args(args)
+            .output()
+            .expect("start qx-cli evidence command")
+    };
+    let output = run_evidence(&[
+        "evidence",
+        "pack-multi-leg-experiment",
+        experiment_report,
+        "--output-dir",
+        &package_text,
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "multi-leg experiment pack failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = run_evidence(&["evidence", "verify-multi-leg-experiment", &package_text]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "multi-leg experiment bundle verify failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let moved_package = root.join("moved-multi-leg-experiment");
+    std::fs::rename(&package, &moved_package).expect("move portable experiment package");
+    let moved_text = moved_package.to_string_lossy().into_owned();
+    let output = run_evidence(&[
+        "evidence",
+        "verify-multi-leg-experiment",
+        &moved_text,
+        "--recompute",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "moved multi-leg experiment bundle recompute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     match python_native::via_python(&repo_root(), "run_multi_leg_experiment", &spec) {
         None => eprintln!("[skip] Python leg: PyO3 extension not built"),
         Some(Ok(python)) => assert_eq!(same_results(&python), same_results(&cli)),

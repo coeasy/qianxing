@@ -20,6 +20,7 @@ from . import (
     CcxtConfig,
     CcxtConnectorError,
     CcxtErrorClass,
+    _exact_decimal_wire_text,
     CcxtExchangeClient,
     create_ccxt_pro_exchange,
     normalize_stream_event,
@@ -32,6 +33,33 @@ from . import (
 # 就是 8.5 小时一觉，而驱动方的读窗最长 300 秒——睡满之前子进程早已被杀掉重开，
 # 退避形同没有，还把重连节律变成随机数（V13 R17 C5）。
 WS_RETRY_MAX_DELAY_MS = 8_000
+
+
+def _fee_rows(value: Any) -> list[dict[str, Any]]:
+    return [
+        {"amount_raw": amount_raw, "currency": currency}
+        for amount_raw, currency in value
+    ]
+
+
+def _order_wire(order: Any) -> dict[str, Any]:
+    payload = dict(order.__dict__)
+    payload["fees"] = _fee_rows(order.fees)
+    payload["exact_fees"] = [
+        {"amount": amount, "currency": currency}
+        for amount, currency in order.exact_fees
+    ]
+    return payload
+
+
+def _trade_wire(trade: Any) -> dict[str, Any]:
+    payload = dict(trade.__dict__)
+    payload["fees"] = _fee_rows(trade.fees)
+    payload["exact_fees"] = [
+        {"amount": amount, "currency": currency}
+        for amount, currency in trade.exact_fees
+    ]
+    return payload
 
 
 class CcxtJsonWorker:
@@ -62,45 +90,214 @@ class CcxtJsonWorker:
                 str(request["instrument"]), params=dict(request.get("params", {}))
             )
             return {"ticker": ticker.__dict__}
-        if operation == "create_order":
-            order = self.client.create_order(
+        if operation == "fetch_order_book":
+            book = self.client.fetch_order_book(
                 str(request["instrument"]),
+                limit=int(request.get("limit", 20)),
+                params=dict(request.get("params", {})),
+            )
+            return {"order_book": book.__dict__}
+        if operation == "validate_market_spec":
+            try:
+                self.client.validate_live_market_spec(
+                    str(request["instrument"]), request.get("expected_spec")
+                )
+            except CcxtConnectorError as error:
+                return {
+                    "market_spec_rejected": {
+                        "class": error.error_class.value,
+                        "message": str(error),
+                    }
+                }
+            return {"market_spec_verified": True}
+        if operation == "create_order":
+            amount_unit = request.get("amount_unit")
+            if amount_unit not in {"base", "contracts", "quote"}:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 必须显式声明 amount_unit 为 base、contracts 或 quote",
+                )
+            instrument = str(request["instrument"])
+            market = self.client.resolve_market(instrument)
+            amount_exact_wire = request.get("amount_exact")
+            price_exact_wire = request.get("price_exact")
+            if amount_exact_wire is not None and request.get("amount_raw") is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 不能同时携带 amount_raw 与 amount_exact",
+                )
+            if price_exact_wire is not None and request.get("price_raw") is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 不能同时携带 price_raw 与 price_exact",
+                )
+            amount_exact = (
+                None
+                if amount_exact_wire is None
+                else _exact_decimal_wire_text(amount_exact_wire, field="amount_exact")
+            )
+            price_exact = (
+                None
+                if price_exact_wire is None
+                else _exact_decimal_wire_text(price_exact_wire, field="price_exact")
+            )
+            if amount_unit == "quote" and not (
+                self.client.config.exchange_id.lower() == "bitget"
+                and not market.contract
+                and str(request.get("side", "")).lower() == "buy"
+                and str(request.get("order_type", "")).lower() == "market"
+                and amount_exact is not None
+                and request.get("amount_raw") is None
+                and price_exact is None
+                and request.get("price_raw") is None
+            ):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "amount_unit=quote 只支持 Bitget 现货精确市价买单",
+                )
+            if amount_unit != "quote" and amount_unit != (
+                "contracts" if market.contract else "base"
+            ):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    f"订单数量单位 {amount_unit!r} 与市场 {market.symbol} 不匹配",
+                )
+            risk_leverage = request.get("risk_leverage")
+            risk_reduce_only = request.get("risk_reduce_only", False)
+            risk_margin_mode = request.get("risk_margin_mode")
+            if not isinstance(risk_reduce_only, bool):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order risk_reduce_only 必须为布尔值",
+                )
+            if market.contract:
+                if isinstance(risk_leverage, bool) or not isinstance(risk_leverage, int) or risk_leverage < 1:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "合约 create_order 必须显式声明正整数 risk_leverage",
+                    )
+                if risk_margin_mode not in {"cross", "isolated"}:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "合约 create_order 必须显式声明 risk_margin_mode 为 cross 或 isolated",
+                    )
+            elif risk_leverage is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "现货 create_order 不应声明 risk_leverage",
+                )
+            amount_raw = None if amount_exact is not None else int(request["amount_raw"])
+            price_raw = (
+                None
+                if price_exact is not None or request.get("price_raw") is None
+                else int(request["price_raw"])
+            )
+            if market.contract:
+                try:
+                    params = dict(request.get("params", {}))
+                    hedged = params.get("hedged", False)
+                    if not isinstance(hedged, bool):
+                        raise CcxtConnectorError(
+                            CcxtErrorClass.INVALID,
+                            "合约 create_order params.hedged 必须为布尔值",
+                        )
+                    self.client.validate_contract_order_leverage_tier(
+                        instrument,
+                        side=str(request["side"]),
+                        hedged=hedged,
+                        amount_raw=amount_raw,
+                        amount_exact=amount_exact,
+                        price_raw=price_raw,
+                        price_exact=price_exact,
+                        leverage=risk_leverage,
+                        reduce_only=risk_reduce_only,
+                        margin_mode=risk_margin_mode,
+                    )
+                except CcxtConnectorError as error:
+                    return {
+                        "preflight_rejected": {
+                            "class": error.error_class.value,
+                            "message": str(error),
+                        }
+                    }
+            elif self.client.config.exchange_id.lower() == "binance":
+                try:
+                    self.client.validate_binance_spot_max_position(
+                        instrument,
+                        side=str(request["side"]),
+                        amount_unit=amount_unit,
+                        amount_raw=amount_raw,
+                        amount_exact=amount_exact,
+                    )
+                except CcxtConnectorError as error:
+                    return {
+                        "preflight_rejected": {
+                            "class": error.error_class.value,
+                            "message": str(error),
+                        }
+                    }
+            order = self.client.create_order(
+                instrument,
                 side=str(request["side"]),
                 order_type=str(request["order_type"]),
-                amount_raw=int(request["amount_raw"]),
-                price_raw=None
-                if request.get("price_raw") is None
-                else int(request["price_raw"]),
+                amount_raw=amount_raw,
+                amount_exact=amount_exact,
+                amount_unit=amount_unit,
+                price_raw=price_raw,
+                price_exact=price_exact,
+                risk_leverage=risk_leverage,
+                risk_reduce_only=risk_reduce_only,
+                risk_margin_mode=risk_margin_mode,
+                risk_preflight_verified=(
+                    market.contract or self.client.config.exchange_id.lower() == "binance"
+                ),
                 client_order_id=None
                 if request.get("client_order_id") is None
                 else str(request["client_order_id"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
         if operation == "fetch_order":
             order = self.client.fetch_order(
                 str(request["order_id"]),
                 str(request["instrument"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
         if operation == "fetch_my_trades":
-            trades = self.client.fetch_my_trades(
-                str(request["instrument"]),
-                since_ms=None if request.get("since_ms") is None else int(request["since_ms"]),
-                limit=None if request.get("limit") is None else int(request["limit"]),
-                params=dict(request.get("params", {})),
-            )
-            return {"trades": [trade.__dict__ for trade in trades]}
+            if request.get("order_id") is not None:
+                trades = self.client.fetch_order_trades(
+                    str(request["order_id"]),
+                    str(request["instrument"]),
+                    params=dict(request.get("params", {})),
+                )
+            else:
+                trades = self.client.fetch_my_trades(
+                    str(request["instrument"]),
+                    since_ms=None
+                    if request.get("since_ms") is None
+                    else int(request["since_ms"]),
+                    limit=None if request.get("limit") is None else int(request["limit"]),
+                    params=dict(request.get("params", {})),
+                )
+            return {"trades": [_trade_wire(trade) for trade in trades]}
         if operation == "cancel_order":
             order = self.client.cancel_order(
                 str(request["order_id"]),
                 str(request["instrument"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
         if operation == "fetch_balance":
-            return {"balance": self.client.fetch_balance(params=dict(request.get("params", {})))}
+            balance = self.client.fetch_balance(params=dict(request.get("params", {})))
+            return {
+                "balance": balance,
+                "exact": self.client.exact_balance_fields(balance),
+            }
+        if operation == "fetch_contract_settings":
+            return {
+                "settings": self.client.fetch_contract_settings(str(request["instrument"]))
+            }
         if operation == "set_margin_mode":
             return {
                 "result": self.client.set_margin_mode(
@@ -115,6 +312,8 @@ class CcxtJsonWorker:
                     str(request["instrument"]),
                     int(request["leverage"]),
                     margin_mode=request.get("margin_mode"),
+                    position_mode=str(request.get("position_mode", "one_way")),
+                    position_side=str(request.get("position_side", "net")),
                     params=dict(request.get("params", {})),
                 )
             }
@@ -161,7 +360,7 @@ class CcxtJsonWorker:
             orders = self.client.fetch_open_orders(
                 request.get("instrument"), params=dict(request.get("params", {}))
             )
-            return {"orders": [order.__dict__ for order in orders]}
+            return {"orders": [_order_wire(order) for order in orders]}
         raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, f"不支持的 CCXT Worker 操作: {operation}")
 
     async def handle_async(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +487,7 @@ def _config_from_file(path: Path) -> CcxtConfig:
 
     return CcxtConfig(
         exchange_id=str(value["exchange_id"]),
+        account_model=str(value.get("account_model", "")),
         api_key=env("api_key"),
         secret=env("secret"),
         password=env("password"),

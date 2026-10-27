@@ -76,6 +76,111 @@ fn joint_exchange_backtest_command_runs_okx_and_bitget_accounts() {
         outcome["accounts"][0]["exchange_id"],
         outcome["accounts"][1]["exchange_id"]
     );
+
+    let outcome_path = root.join("joint-outcome.json");
+    let outcome_json = serde_json::to_string_pretty(&outcome).expect("serialize joint outcome");
+    std::fs::write(&outcome_path, &outcome_json).expect("save joint outcome");
+    let report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "read-multi-account-joint-report"])
+        .arg(&outcome_path)
+        .output()
+        .expect("read joint report through CLI");
+    assert_eq!(
+        report_output.status.code(),
+        Some(0),
+        "joint report CLI error: {}",
+        String::from_utf8_lossy(&report_output.stderr)
+    );
+    let cli_report: Value =
+        serde_json::from_slice(&report_output.stdout).expect("joint report JSON");
+    assert_eq!(cli_report["schema_version"], 1);
+    assert_eq!(cli_report["verification"]["verified"], true);
+    assert_eq!(cli_report["summary"]["accounts_total"], 2);
+    assert_eq!(cli_report["accounts"].as_array().unwrap().len(), 2);
+    assert!(cli_report["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|account| {
+            account["exchange_id"] == "okx" && account["event_rows_total"].as_u64().unwrap() > 0
+        }));
+
+    let repo = repo_root();
+    match python_native::via_python_json_value(
+        &repo,
+        "read_multi_account_joint_report_v1",
+        &outcome_json,
+    ) {
+        None => eprintln!("[skip] Python native joint report reader: PyO3 extension not built"),
+        Some(Ok(python_report)) => assert_eq!(python_report, cli_report),
+        Some(Err(payload)) => panic!("Python joint report reader failed: {payload}"),
+    }
+
+    let page_request = json!({
+        "outcome": outcome,
+        "joint_account_event_pages": {
+            "okx": {"primary": {"offset": 0, "limit": 1}}
+        }
+    });
+    let page_request_path = root.join("joint-report-page-request.json");
+    let page_request_json = serde_json::to_string(&page_request).expect("encode page request");
+    std::fs::write(&page_request_path, &page_request_json).expect("save joint report page request");
+    let page_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "read-multi-account-joint-report"])
+        .arg(&page_request_path)
+        .output()
+        .expect("read a single venue/account report page through CLI");
+    assert_eq!(
+        page_output.status.code(),
+        Some(0),
+        "joint report page CLI error: {}",
+        String::from_utf8_lossy(&page_output.stderr)
+    );
+    let cli_page: Value = serde_json::from_slice(&page_output.stdout).expect("joint page JSON");
+    let okx_page = cli_page["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["exchange_id"] == "okx")
+        .unwrap();
+    assert_eq!(okx_page["event_rows_offset"], 0);
+    assert_eq!(okx_page["event_rows_limit"], 1);
+    assert_eq!(okx_page["event_rows"].as_array().unwrap().len(), 1);
+    assert_eq!(okx_page["event_rows_next_offset"], 1);
+    match python_native::via_python_json_value(
+        &repo,
+        "read_multi_account_joint_report_v1",
+        &page_request_json,
+    ) {
+        None => eprintln!("[skip] Python native joint report pagination: PyO3 extension not built"),
+        Some(Ok(python_page)) => assert_eq!(python_page, cli_page),
+        Some(Err(payload)) => panic!("Python joint report pagination failed: {payload}"),
+    }
+
+    let equity_path = std::path::PathBuf::from(
+        outcome["equity_path"]
+            .as_str()
+            .expect("joint outcome equity path"),
+    );
+    let equity_original = std::fs::read_to_string(&equity_path).expect("read joint equity");
+    let mut equity: Value = serde_json::from_str(&equity_original).expect("joint equity JSON");
+    equity[0][1] = json!(0);
+    std::fs::write(
+        &equity_path,
+        serde_json::to_vec(&equity).expect("encode tampered equity"),
+    )
+    .expect("tamper joint equity");
+    let rejected = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "read-multi-account-joint-report"])
+        .arg(&outcome_path)
+        .output()
+        .expect("read tampered joint report");
+    std::fs::write(&equity_path, equity_original).expect("restore joint equity");
+    assert_ne!(
+        rejected.status.code(),
+        Some(0),
+        "joint report must reject a modified aggregate equity curve"
+    );
 }
 
 #[test]
@@ -139,6 +244,33 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         serde_json::to_vec_pretty(&cli).expect("serialize saved batch result"),
     )
     .expect("save multi-account result for reporting");
+    let core_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "read-multi-account-report"])
+        .arg(&result_path)
+        .output()
+        .expect("read shared multi-account report through CLI");
+    assert_eq!(
+        core_report_output.status.code(),
+        Some(0),
+        "shared report CLI error: {}",
+        String::from_utf8_lossy(&core_report_output.stderr)
+    );
+    let cli_core_report: Value =
+        serde_json::from_slice(&core_report_output.stdout).expect("shared CLI report JSON");
+    assert_eq!(cli_core_report["schema_version"], 1);
+    assert_eq!(cli_core_report["verification"]["verified"], true);
+    assert_eq!(cli_core_report["accounts"].as_array().unwrap().len(), 2);
+    match python_native::via_python_json_value(
+        &repo,
+        "read_multi_account_report_v1",
+        &serde_json::to_string(&cli).expect("encode batch result for Python report reader"),
+    ) {
+        None => eprintln!("[skip] Python native report reader: PyO3 extension not built"),
+        Some(Ok(python_core_report)) => {
+            assert_eq!(python_core_report, cli_core_report);
+        }
+        Some(Err(payload)) => panic!("Python multi-account report reader failed: {payload}"),
+    }
     let (status, http) = via_http("/app/multi-account-backtest", &spec);
     assert_eq!(status, 200, "HTTP batch failed: {http}");
     for value in [&cli, &http] {
@@ -173,6 +305,11 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let report: Value = serde_json::from_slice(&report_output.stdout).expect("report JSON");
     assert_eq!(report["report"]["report_kind"], "multi_account_backtest");
     assert_eq!(report["report"]["accounts"].as_array().unwrap().len(), 2);
+    assert_eq!(report["report"]["summary"], cli_core_report["summary"]);
+    assert_eq!(
+        report["report"]["accounts"][0]["run_data_fingerprint"],
+        cli_core_report["accounts"][0]["report"]["verification"]["data_fingerprint"]
+    );
     assert_eq!(
         report["report"]["accounts"][0]["fill_rows_total"],
         report["report"]["accounts"][0]["fills"]
@@ -465,7 +602,9 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         serde_json::from_slice(&verified_batch.stdout).expect("batch verification JSON");
     assert_eq!(verified_batch_json["verified_account_count"], 2);
     let packaged_result_path = moved_batch_dir.join("multi-account-result.json");
-    let mut changed_result = std::fs::read(&packaged_result_path).expect("read portable result");
+    let original_packaged_result =
+        std::fs::read(&packaged_result_path).expect("read portable result");
+    let mut changed_result = original_packaged_result.clone();
     changed_result.push(b' ');
     std::fs::write(&packaged_result_path, changed_result).expect("tamper portable result");
     let rejected_batch_tamper = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
@@ -475,6 +614,8 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         .expect("reject tampered multi-account evidence");
     assert_ne!(rejected_batch_tamper.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&rejected_batch_tamper.stderr).contains("SHA-256 不匹配"));
+    std::fs::write(&packaged_result_path, original_packaged_result)
+        .expect("restore portable batch result after tamper check");
 
     let diagnostic_html = std::fs::read_to_string(&report_html).expect("read diagnostic HTML");
     assert!(diagnostic_html.contains("策略未来数据与预热诊断"));
@@ -585,6 +726,10 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         None => eprintln!("[skip] Python leg: PyO3 extension not built"),
         Some(Ok(python)) => {
             assert_eq!(python["spec_fingerprint"], cli["spec_fingerprint"]);
+            assert_eq!(
+                python["run_manifest"]["canonical_run_spec_fingerprint"],
+                cli["run_manifest"]["canonical_run_spec_fingerprint"]
+            );
             for index in 0..2 {
                 assert_eq!(
                     python["runs"][index]["outcome"]["result_hash"],
@@ -612,7 +757,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         .expect("run report against tampered account artifacts");
     std::fs::write(&equity_path, equity_before).expect("restore account equity fixture");
     assert_ne!(rejected.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("运行工件复核未通过"));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("运行产物复核未通过"));
 
     let trace_path = PathBuf::from(
         cli["runs"][0]["outcome"]["artifacts"]["event_trace"]
@@ -633,4 +778,335 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     std::fs::write(&trace_path, trace_before).expect("restore account event trace");
     assert_ne!(rejected_trace.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&rejected_trace.stderr).contains("事件追溯"));
+
+    let recompute_temp = root.with_file_name(format!(
+        "multi-account-recompute-temp-{}",
+        std::process::id()
+    ));
+    let relocated_package = root.with_file_name(format!(
+        "multi-account-recompute-package-{}",
+        std::process::id()
+    ));
+    assert!(!recompute_temp.starts_with(&root));
+    assert!(!relocated_package.starts_with(&root));
+    assert!(!recompute_temp.exists());
+    assert!(!relocated_package.exists());
+    std::fs::create_dir_all(&recompute_temp).expect("create isolated multi-account recompute temp");
+    std::fs::rename(&moved_batch_dir, &relocated_package)
+        .expect("move portable batch evidence outside source workspace");
+    std::fs::remove_dir_all(&root).expect("remove source runs, specifications and fixtures");
+    assert!(
+        !root.exists(),
+        "source workspace must be absent before recompute"
+    );
+    let relocated_package_text = relocated_package.to_string_lossy().into_owned();
+    let recomputed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args([
+            "evidence",
+            "verify-multi-account-run",
+            relocated_package_text.as_str(),
+            "--recompute",
+        ])
+        .env("TEMP", &recompute_temp)
+        .env("TMP", &recompute_temp)
+        .output()
+        .expect("recompute relocated multi-account package without source workspace");
+    assert_eq!(
+        recomputed.status.code(),
+        Some(0),
+        "portable multi-account recompute failed: {}",
+        String::from_utf8_lossy(&recomputed.stderr)
+    );
+    let recomputed_json: Value =
+        serde_json::from_slice(&recomputed.stdout).expect("multi-account recompute JSON");
+    assert_eq!(recomputed_json["result_recomputed"], true);
+    std::fs::remove_dir_all(&recompute_temp).expect("remove isolated recompute temp directory");
+}
+
+#[test]
+fn partial_multi_account_package_recomputes_after_source_removal() {
+    let root = scratch("multi-account-partial-portable");
+    let missing_bars = root.join("missing-account-bars.json");
+    let make_member = |account: &str, run: &str, bars: &Path| {
+        json!({
+            "schema_version": 1,
+            "run_id": run,
+            "account_id": account,
+            "instrument": "BTCUSDT.BINANCE",
+            "bars_path": bars,
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000_i128,
+            "seed": 20261026,
+            "output_dir": root.join(format!("{account}-output")),
+            "strategy": {
+                "kind": "sma_cross",
+                "strategy_id": format!("{account}-strategy"),
+                "quantity_raw": 1_000_000_000_i128,
+                "fast_window": 2,
+                "slow_window": 3,
+            },
+        })
+    };
+    let spec_path = root.join("multi-account-spec.json");
+    let spec = json!({
+        "schema_version": 1,
+        "batch_id": "partial-portable-batch",
+        "runs": [
+            make_member("acct-good", "good-run", Path::new(&sample_bars())),
+            make_member("acct-missing", "missing-run", &missing_bars),
+        ],
+    });
+    std::fs::write(&spec_path, serde_json::to_vec_pretty(&spec).unwrap())
+        .expect("write partial batch spec");
+    let result_path = root.join("multi-account-result.json");
+    let batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "multi-account-backtest"])
+        .arg(&spec_path)
+        .output()
+        .expect("run partial multi-account batch");
+    assert_eq!(
+        batch.status.code(),
+        Some(0),
+        "partial batch CLI failed: {}",
+        String::from_utf8_lossy(&batch.stderr)
+    );
+    let result: Value = serde_json::from_slice(&batch.stdout).expect("partial batch result JSON");
+    assert_eq!(result["summary"]["accounts_succeeded"], 1);
+    assert_eq!(result["summary"]["accounts_failed"], 1);
+    std::fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap())
+        .expect("save partial result");
+
+    let report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["report"])
+        .arg(&result_path)
+        .args(["--json", "--evidence"])
+        .output()
+        .expect("write successful account evidence");
+    assert_eq!(
+        report.status.code(),
+        Some(0),
+        "partial batch evidence report failed: {}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let package_dir = root.join("portable-batch");
+    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "pack-multi-account-run"])
+        .arg(&result_path)
+        .arg("--spec")
+        .arg(&spec_path)
+        .arg("--output-dir")
+        .arg(&package_dir)
+        .output()
+        .expect("pack partial multi-account evidence");
+    assert_eq!(
+        packed.status.code(),
+        Some(0),
+        "partial batch packaging failed: {}",
+        String::from_utf8_lossy(&packed.stderr)
+    );
+    let package_manifest: Value = serde_json::from_slice(
+        &std::fs::read(package_dir.join("multi-account-evidence.json")).unwrap(),
+    )
+    .expect("partial package manifest JSON");
+    assert_eq!(package_manifest["schema_version"], 2);
+    assert_eq!(package_manifest["inputs"].as_array().unwrap().len(), 2);
+    assert!(package_manifest["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|input| input["account_id"] == "acct-missing" && input["missing"] == true));
+    let good_input_relative = package_manifest["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["account_id"] == "acct-good")
+        .unwrap()["path"]
+        .as_str()
+        .unwrap();
+    let good_input = package_dir.join(good_input_relative);
+    let good_input_original = std::fs::read(&good_input).expect("read packaged successful input");
+    let mut tampered_good_input = good_input_original.clone();
+    tampered_good_input.push(b' ');
+    std::fs::write(&good_input, tampered_good_input).expect("tamper packaged successful input");
+    let rejected_input_tamper = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "verify-multi-account-run"])
+        .arg(&package_dir)
+        .output()
+        .expect("reject tampered successful account input");
+    assert_ne!(rejected_input_tamper.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&rejected_input_tamper.stderr).contains("SHA-256 不匹配"));
+    std::fs::write(&good_input, good_input_original).expect("restore packaged successful input");
+
+    let missing_input_relative = package_manifest["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["account_id"] == "acct-missing")
+        .unwrap()["path"]
+        .as_str()
+        .unwrap();
+    let unexpected_missing_input = package_dir.join(missing_input_relative);
+    std::fs::write(&unexpected_missing_input, b"unexpected")
+        .expect("create a file for an input declared missing");
+    let rejected_missing_marker = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "verify-multi-account-run"])
+        .arg(&package_dir)
+        .output()
+        .expect("reject changed missing-input state");
+    assert_ne!(rejected_missing_marker.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&rejected_missing_marker.stderr)
+        .contains("清单声明输入缺失，但包内文件仍存在"));
+    std::fs::remove_file(unexpected_missing_input).expect("restore missing-input marker");
+
+    let relocated_package = root.with_file_name(format!(
+        "multi-account-partial-package-{}",
+        std::process::id()
+    ));
+    let recompute_temp =
+        root.with_file_name(format!("multi-account-partial-temp-{}", std::process::id()));
+    assert!(!relocated_package.exists());
+    assert!(!recompute_temp.exists());
+    std::fs::create_dir_all(&recompute_temp).expect("create partial recompute temp directory");
+    std::fs::rename(&package_dir, &relocated_package).expect("relocate partial evidence package");
+    std::fs::remove_dir_all(&root).expect("remove partial batch source workspace");
+    let relocated_text = relocated_package.to_string_lossy().into_owned();
+    let temp_text = recompute_temp.to_string_lossy().into_owned();
+    let recomputed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args([
+            "evidence",
+            "verify-multi-account-run",
+            relocated_text.as_str(),
+            "--recompute",
+        ])
+        .env("TEMP", &temp_text)
+        .env("TMP", &temp_text)
+        .output()
+        .expect("recompute relocated partial evidence package");
+    assert_eq!(
+        recomputed.status.code(),
+        Some(0),
+        "partial portable batch recompute failed: {}",
+        String::from_utf8_lossy(&recomputed.stderr)
+    );
+    let recomputed_json: Value =
+        serde_json::from_slice(&recomputed.stdout).expect("partial recompute JSON");
+    assert_eq!(recomputed_json["result_recomputed"], true);
+    assert_eq!(recomputed_json["verified_account_count"], 1);
+    assert_eq!(recomputed_json["failed_account_count"], 1);
+    std::fs::remove_dir_all(&recompute_temp).expect("remove partial recompute temp directory");
+}
+
+#[test]
+fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_recompute() {
+    let root = scratch("multi-account-all-failed-portable");
+    let make_member = |account: &str, run: &str| {
+        json!({
+            "schema_version": 1,
+            "run_id": run,
+            "account_id": account,
+            "instrument": "BTCUSDT.BINANCE",
+            "bars_path": root.join(format!("missing-{account}.json")),
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000_i128,
+            "seed": 20261026,
+            "output_dir": root.join(format!("{account}-output")),
+            "strategy": {
+                "kind": "sma_cross",
+                "strategy_id": format!("{account}-strategy"),
+                "quantity_raw": 1_000_000_000_i128,
+                "fast_window": 2,
+                "slow_window": 3,
+            },
+        })
+    };
+    let spec_path = root.join("multi-account-spec.json");
+    let spec = json!({
+        "schema_version": 1,
+        "batch_id": "all-failed-portable-batch",
+        "runs": [
+            make_member("acct-missing-a", "missing-run-a"),
+            make_member("acct-missing-b", "missing-run-b"),
+        ],
+    });
+    std::fs::write(&spec_path, serde_json::to_vec_pretty(&spec).unwrap())
+        .expect("write all-failed batch spec");
+    let batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "multi-account-backtest"])
+        .arg(&spec_path)
+        .output()
+        .expect("run all-failed multi-account batch");
+    assert_eq!(
+        batch.status.code(),
+        Some(0),
+        "all-failed batch CLI failed: {}",
+        String::from_utf8_lossy(&batch.stderr)
+    );
+    let result: Value = serde_json::from_slice(&batch.stdout).expect("all-failed result JSON");
+    assert_eq!(result["summary"]["accounts_succeeded"], 0);
+    assert_eq!(result["summary"]["accounts_failed"], 2);
+    assert!(result["run_manifest"].is_null());
+    let result_path = root.join("multi-account-result.json");
+    std::fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap())
+        .expect("save all-failed batch result");
+
+    let package_dir = root.join("portable-batch");
+    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "pack-multi-account-run"])
+        .arg(&result_path)
+        .arg("--spec")
+        .arg(&spec_path)
+        .arg("--output-dir")
+        .arg(&package_dir)
+        .output()
+        .expect("pack all-failed multi-account evidence");
+    assert_eq!(
+        packed.status.code(),
+        Some(0),
+        "all-failed batch packaging failed: {}",
+        String::from_utf8_lossy(&packed.stderr)
+    );
+    let manifest: Value = serde_json::from_slice(
+        &std::fs::read(package_dir.join("multi-account-evidence.json")).unwrap(),
+    )
+    .expect("all-failed package manifest JSON");
+    assert_eq!(manifest["accounts"].as_array().unwrap().len(), 0);
+    assert_eq!(manifest["inputs"].as_array().unwrap().len(), 2);
+    assert!(manifest["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|input| { input["missing"] == true && input["sha256"].is_null() }));
+
+    let relocated = root.with_file_name(format!(
+        "multi-account-all-failed-package-{}",
+        std::process::id()
+    ));
+    std::fs::rename(&package_dir, &relocated).expect("relocate all-failed evidence package");
+    std::fs::remove_dir_all(&root).expect("remove all-failed source workspace");
+    let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "verify-multi-account-run"])
+        .arg(&relocated)
+        .output()
+        .expect("verify relocated all-failed package");
+    assert_eq!(
+        verified.status.code(),
+        Some(0),
+        "all-failed package verification failed: {}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    let verified: Value = serde_json::from_slice(&verified.stdout).unwrap();
+    assert_eq!(verified["verified_account_count"], 0);
+    assert_eq!(verified["failed_account_count"], 2);
+    assert_eq!(verified["result_recomputed"], false);
+
+    let recompute = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["evidence", "verify-multi-account-run"])
+        .arg(&relocated)
+        .arg("--recompute")
+        .output()
+        .expect("refuse dataset recompute without a parent RunManifest");
+    assert_ne!(recompute.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&recompute.stderr)
+        .contains("全失败或历史无父 RunManifest 的多账户批次不能声明独立复算"));
+    std::fs::remove_dir_all(&relocated).expect("remove relocated all-failed package");
 }

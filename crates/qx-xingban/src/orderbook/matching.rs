@@ -1,6 +1,9 @@
 use super::*;
 use crate::ExecutionLiquidityEvidence;
-use qx_core::Money;
+use qx_core::{
+    DecimalRounding, ExactDecimal, ExactFillAmounts, ExactFillFee, Fill, Money, OrderStatus,
+    TradingInstrumentSpec,
+};
 
 impl OrderBookMatchingEngine {
     pub fn on_snapshot_with_cancellations(
@@ -9,6 +12,15 @@ impl OrderBookMatchingEngine {
         cancelled_client_ids: &[u64],
     ) -> Result<Vec<Fill>, String> {
         snapshot.validate()?;
+        if snapshot.has_exact_levels() {
+            return self.on_exact_snapshot(snapshot, cancelled_client_ids);
+        }
+        if self.pending.iter().any(|pending| {
+            pending.order.exact_amounts.is_some()
+                && !cancelled_client_ids.contains(&pending.order.client_id)
+        }) {
+            return Err("精确订单不能在旧精度盘口上撮合，拒绝使用 1e-9 投影".into());
+        }
         if self
             .last_snapshot_sequence
             .is_some_and(|sequence| snapshot.sequence <= sequence)
@@ -214,6 +226,9 @@ impl OrderBookMatchingEngine {
                                     .as_ref()
                                     .and_then(|trace| trace.rule_version.clone()),
                                 fee_currency: None,
+                                fees: vec![],
+                                exact_fees: vec![],
+                                exact_amounts: None,
                             });
                             order.filled = Quantity::from_raw(
                                 order
@@ -343,6 +358,9 @@ impl OrderBookMatchingEngine {
                         .as_ref()
                         .and_then(|trace| trace.rule_version.clone()),
                     fee_currency: None,
+                    fees: vec![],
+                    exact_fees: vec![],
+                    exact_amounts: None,
                 });
                 first_price_raw.get_or_insert(execution_price_raw);
                 remaining_qty -= fill_qty;
@@ -438,5 +456,474 @@ impl OrderBookMatchingEngine {
         self.scratch_queue_asks = queue_asks;
         self.scratch_estimated_volume_budget = estimated_volume_budget;
         Ok(fills)
+    }
+
+    /// Exact spot path. Queue inference is deliberately disabled because it cannot be
+    /// reconstructed from the legacy raw liquidity fields.
+    fn on_exact_snapshot(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        cancelled_client_ids: &[u64],
+    ) -> Result<Vec<Fill>, String> {
+        if self
+            .last_snapshot_sequence
+            .is_some_and(|sequence| snapshot.sequence <= sequence)
+            || self.last_snapshot_ts.is_some_and(|ts| snapshot.ts <= ts)
+        {
+            return Err("订单簿快照 sequence/ts 必须严格递增".into());
+        }
+
+        let mut pending = self.pending.clone();
+        pending.retain(|item| !cancelled_client_ids.contains(&item.order.client_id));
+        if pending.is_empty() {
+            self.pending.clear();
+            self.snapshot_index = self.snapshot_index.saturating_add(1);
+            self.last_snapshot_sequence = Some(snapshot.sequence);
+            self.last_snapshot_ts = Some(snapshot.ts);
+            return Ok(Vec::new());
+        }
+        if pending
+            .iter()
+            .any(|pending| pending.order.exact_amounts.is_none())
+        {
+            return Err("旧精度订单不能在精确盘口上撮合，拒绝使用 1e-9 投影".into());
+        }
+        if self.model.queue_position_bps != 0
+            || self.model.queue_position_model != QueuePositionModel::Disabled
+        {
+            return Err("精确盘口撮合暂不支持队列位置估算".into());
+        }
+        let spec = self
+            .fee_spec
+            .as_ref()
+            .ok_or_else(|| "精确盘口撮合需要冻结 TradingInstrumentSpec".to_string())?;
+        if spec.exact_rules.is_none() {
+            return Err("精确盘口撮合需要带精确交易规则的产品规格".into());
+        }
+        let mut next = Vec::with_capacity(pending.len());
+        let mut fills = Vec::new();
+        let mut attempts = Vec::new();
+        let mut remaining_bids = snapshot
+            .bids
+            .iter()
+            .map(|level| level.qty_decimal())
+            .collect::<Vec<_>>();
+        let mut remaining_asks = snapshot
+            .asks
+            .iter()
+            .map(|level| level.qty_decimal())
+            .collect::<Vec<_>>();
+        let step = spec
+            .exact_rules
+            .as_ref()
+            .expect("exact rules were checked")
+            .quantity_step;
+
+        for mut pending_order in pending.drain(..) {
+            if pending_order.ready_at_snapshot > self.snapshot_index.saturating_add(1) {
+                next.push(pending_order);
+                continue;
+            }
+            let mut order = pending_order.order;
+            if order.instrument != snapshot.instrument {
+                return Err("订单簿订单 instrument 与快照不一致".into());
+            }
+            let amounts = order
+                .exact_amounts
+                .ok_or_else(|| "精确盘口订单缺少 exact_amounts".to_string())?;
+            let quote_budget = amounts.quote_budget;
+            let target_quantity = if let Some(budget) = quote_budget {
+                spec.validate_exact_quote_budget(budget)
+                    .map_err(|error| error.to_string())?;
+                if order.side != qx_core::Side::Buy {
+                    return Err("计价币预算只能用于精确现货买单".into());
+                }
+                let reference_price = amounts
+                    .market_reference_price
+                    .or_else(|| snapshot.asks.first().map(|level| level.price_decimal()))
+                    .ok_or_else(|| "计价币预算订单缺少冻结参考价".to_string())?;
+                let target = spec
+                    .base_quantity_for_quote_budget(budget, reference_price)
+                    .map_err(|error| error.to_string())?;
+                spec.validate_exact_order_with_reference(target, None, Some(reference_price))
+                    .map_err(|error| error.to_string())?;
+                Some(target)
+            } else {
+                None
+            };
+            let requested = match target_quantity {
+                Some(target) => target
+                    .checked_sub(amounts.filled)
+                    .ok_or_else(|| "计价币预算订单剩余基础币数量溢出".to_string())?,
+                None => order
+                    .remaining_decimal()
+                    .ok_or_else(|| "精确盘口订单剩余数量溢出".to_string())?,
+            };
+            let levels = if order.side == qx_core::Side::Buy {
+                &snapshot.asks
+            } else {
+                &snapshot.bids
+            };
+            let available = if order.side == qx_core::Side::Buy {
+                &mut remaining_asks
+            } else {
+                &mut remaining_bids
+            };
+            let mut remaining = requested;
+            let mut filled = ExactDecimal::ZERO;
+            let mut first_price = None;
+            let mut last_price = None;
+            let mut blocked_by_limit = false;
+            let fill_start = fills.len();
+            let mut remaining_budget = quote_budget
+                .map(|budget| {
+                    budget
+                        .checked_sub(amounts.quote_filled)
+                        .filter(|remaining| !remaining.is_negative())
+                        .ok_or_else(|| "计价币预算剩余金额非法".to_string())
+                })
+                .transpose()?;
+
+            for (level_index, level) in levels.iter().enumerate() {
+                if !remaining.is_positive() {
+                    break;
+                }
+                let execution_price =
+                    self.exact_execution_price(spec, order.side, level.price_decimal())?;
+                if let Some(limit) = amounts.limit_price {
+                    let comparison = execution_price
+                        .checked_cmp(limit)
+                        .ok_or_else(|| "精确限价比较失败".to_string())?;
+                    if (order.side == qx_core::Side::Buy && comparison.is_gt())
+                        || (order.side == qx_core::Side::Sell && comparison.is_lt())
+                    {
+                        blocked_by_limit = true;
+                        break;
+                    }
+                }
+
+                let available_at_level = available[level_index];
+                let mut maximum = if remaining
+                    .checked_cmp(available_at_level)
+                    .is_some_and(|ordering| ordering.is_gt())
+                {
+                    available_at_level
+                } else {
+                    remaining
+                };
+                if let Some(budget) = remaining_budget {
+                    let affordable = spec
+                        .base_quantity_for_quote_budget(budget, execution_price)
+                        .map_err(|error| error.to_string())?;
+                    if affordable
+                        .checked_cmp(maximum)
+                        .is_some_and(|ordering| ordering.is_lt())
+                    {
+                        maximum = affordable;
+                    }
+                }
+                let fill_quantity = floor_to_step(maximum, step)?;
+                if !fill_quantity.is_positive() {
+                    continue;
+                }
+                spec.validate_exact_fill(fill_quantity, execution_price)
+                    .map_err(|error| format!("精确盘口成交不符合冻结交易规则: {error}"))?;
+
+                let quote_rounding = if order.side == qx_core::Side::Buy {
+                    DecimalRounding::AwayFromZero
+                } else {
+                    DecimalRounding::TowardZero
+                };
+                let quote_cost = if spec.product == qx_core::TradingProduct::Spot {
+                    Some(
+                        spec.quote_cash_exact(fill_quantity, execution_price, quote_rounding)
+                            .map_err(|error| format!("精确盘口成交现金额计算失败: {error}"))?,
+                    )
+                } else {
+                    None
+                };
+                let quote_cost_value = quote_cost.unwrap_or(ExactDecimal::ZERO);
+                if remaining_budget.is_some_and(|budget| {
+                    quote_cost.is_none_or(|cost| {
+                        cost.checked_cmp(budget)
+                            .is_none_or(|ordering| ordering.is_gt())
+                    })
+                }) {
+                    return Err("精确盘口成交金额超过计价币预算".into());
+                }
+                let fee = exact_fee(spec, fill_quantity, execution_price, self.model.fee_bps)?;
+                let mut exact_fees = Vec::new();
+                if fee.is_positive() {
+                    exact_fees.push(ExactFillFee {
+                        amount: fee,
+                        currency: Some(
+                            if spec.product == qx_core::TradingProduct::Spot {
+                                spec.quote_currency.trim()
+                            } else {
+                                spec.settlement_currency.trim()
+                            }
+                            .to_ascii_uppercase(),
+                        ),
+                        source_trade_ids: Vec::new(),
+                    });
+                }
+                let next_filled = amounts
+                    .filled
+                    .checked_add(filled)
+                    .and_then(|value| value.checked_add(fill_quantity))
+                    .ok_or_else(|| "精确盘口订单累计成交数量溢出".to_string())?;
+                let current_quote_filled = order
+                    .exact_amounts
+                    .ok_or_else(|| "精确盘口订单 exact_amounts 丢失".to_string())?
+                    .quote_filled;
+                let next_quote_filled = current_quote_filled
+                    .checked_add(quote_budget.map_or(ExactDecimal::ZERO, |_| quote_cost_value))
+                    .ok_or_else(|| "精确盘口订单累计计价币金额溢出".to_string())?;
+                let complete = quote_budget.is_some_and(|budget| {
+                    target_quantity.is_some_and(|target| {
+                        next_filled
+                            .checked_cmp(target)
+                            .is_some_and(|ordering| !ordering.is_lt())
+                    }) || next_quote_filled
+                        .checked_cmp(budget)
+                        .is_some_and(|ordering| !ordering.is_lt())
+                });
+                fills.push(Fill {
+                    order_id: order.client_id,
+                    qty: qx_core::Quantity::ZERO,
+                    price: qx_core::Price::ZERO,
+                    fee: Money::ZERO,
+                    ts: snapshot.ts,
+                    account_id: order.account_id.clone(),
+                    strategy_id: order
+                        .trace
+                        .as_ref()
+                        .and_then(|trace| trace.strategy_id.clone()),
+                    signal_id: order.trace.as_ref().and_then(|trace| trace.signal_id),
+                    intent_id: order.trace.as_ref().and_then(|trace| trace.intent_id),
+                    venue_id: None,
+                    venue_order_id: None,
+                    rule_version: order
+                        .trace
+                        .as_ref()
+                        .and_then(|trace| trace.rule_version.clone()),
+                    fee_currency: None,
+                    fees: Vec::new(),
+                    exact_fees,
+                    exact_amounts: Some(ExactFillAmounts {
+                        quantity: fill_quantity,
+                        price: execution_price,
+                        quote_cost,
+                        quote_budget_complete: complete,
+                    }),
+                });
+
+                let exact = order
+                    .exact_amounts
+                    .as_mut()
+                    .ok_or_else(|| "精确盘口订单 exact_amounts 丢失".to_string())?;
+                exact.filled = exact
+                    .filled
+                    .checked_add(fill_quantity)
+                    .ok_or_else(|| "精确盘口订单累计成交数量溢出".to_string())?;
+                if quote_budget.is_some() {
+                    exact.quote_filled = exact
+                        .quote_filled
+                        .checked_add(quote_cost_value)
+                        .ok_or_else(|| "精确盘口订单累计计价币金额溢出".to_string())?;
+                    remaining_budget = remaining_budget
+                        .and_then(|budget| budget.checked_sub(quote_cost_value))
+                        .filter(|budget| !budget.is_negative());
+                    if remaining_budget.is_none() {
+                        return Err("精确盘口计价币预算扣减失败".into());
+                    }
+                }
+                remaining = remaining
+                    .checked_sub(fill_quantity)
+                    .ok_or_else(|| "精确盘口订单剩余数量计算溢出".to_string())?;
+                available[level_index] = available[level_index]
+                    .checked_sub(fill_quantity)
+                    .ok_or_else(|| "精确盘口档位剩余数量计算溢出".to_string())?;
+                filled = filled
+                    .checked_add(fill_quantity)
+                    .ok_or_else(|| "精确盘口本次成交数量溢出".to_string())?;
+                first_price.get_or_insert(execution_price);
+                last_price = Some(execution_price);
+                if complete {
+                    remaining = ExactDecimal::ZERO;
+                    break;
+                }
+            }
+
+            // If the residual budget cannot buy one quantity step at the last executable
+            // price, the budget order is complete even though decimal dust remains.
+            if remaining.is_positive() && filled.is_positive() {
+                if let (Some(budget), Some(price)) = (remaining_budget, last_price) {
+                    let affordable = spec
+                        .base_quantity_for_quote_budget(budget, price)
+                        .map_err(|error| error.to_string())?;
+                    if affordable.is_zero() {
+                        remaining = ExactDecimal::ZERO;
+                        if let Some(fill) = fills[fill_start..].last_mut() {
+                            if let Some(exact) = fill.exact_amounts.as_mut() {
+                                exact.quote_budget_complete = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let reason = if remaining.is_zero() {
+                ExecutionAttemptReason::Filled
+            } else if filled.is_positive() {
+                ExecutionAttemptReason::PartiallyFilled
+            } else if blocked_by_limit {
+                ExecutionAttemptReason::LimitNotMarketable
+            } else {
+                ExecutionAttemptReason::NoVisibleLiquidity
+            };
+            attempts.push(exact_attempt(
+                &order,
+                snapshot.ts,
+                requested,
+                filled,
+                first_price,
+                reason,
+            ));
+            order.status = if remaining.is_zero() {
+                OrderStatus::Filled
+            } else if filled.is_positive() {
+                OrderStatus::PartiallyFilled
+            } else {
+                order.status
+            };
+            if order.status != OrderStatus::Filled {
+                pending_order.order = order;
+                pending_order.queue_state = None;
+                next.push(pending_order);
+            }
+        }
+
+        self.pending = next;
+        self.snapshot_index = self.snapshot_index.saturating_add(1);
+        self.last_snapshot_sequence = Some(snapshot.sequence);
+        self.last_snapshot_ts = Some(snapshot.ts);
+        self.execution_attempts.extend(attempts);
+        Ok(fills)
+    }
+
+    fn exact_execution_price(
+        &self,
+        spec: &TradingInstrumentSpec,
+        side: qx_core::Side,
+        book_price: ExactDecimal,
+    ) -> Result<ExactDecimal, String> {
+        let rules = spec
+            .exact_rules
+            .as_ref()
+            .ok_or_else(|| "精确盘口缺少冻结交易规则".to_string())?;
+        if self.model.market_impact_bps == 0 {
+            return Ok(book_price);
+        }
+        let bps = ExactDecimal::from_parts(self.model.market_impact_bps, 0)
+            .map_err(|error| error.to_string())?;
+        let denominator = ExactDecimal::from_parts(10_000, 0).map_err(|error| error.to_string())?;
+        let impact = book_price
+            .checked_mul_at_scale(bps, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+            .and_then(|value| {
+                value.checked_div_at_scale(
+                    denominator,
+                    ExactDecimal::MAX_SCALE,
+                    DecimalRounding::TowardZero,
+                )
+            })
+            .ok_or_else(|| "精确盘口冲击价格计算溢出".to_string())?;
+        let impacted = match side {
+            qx_core::Side::Buy => book_price.checked_add(impact),
+            qx_core::Side::Sell => book_price.checked_sub(impact),
+        }
+        .ok_or_else(|| "精确盘口冲击价格计算溢出".to_string())?;
+        let rounding = match side {
+            qx_core::Side::Buy => DecimalRounding::Ceiling,
+            qx_core::Side::Sell => DecimalRounding::Floor,
+        };
+        let ticks = impacted
+            .checked_div_at_scale(rules.price_tick, 0, rounding)
+            .ok_or_else(|| "精确盘口价格 tick 取整失败".to_string())?;
+        rules
+            .price_tick
+            .checked_mul(ticks)
+            .filter(|price| price.is_positive())
+            .ok_or_else(|| "精确盘口冲击价格非正或溢出".to_string())
+    }
+}
+
+fn floor_to_step(value: ExactDecimal, step: ExactDecimal) -> Result<ExactDecimal, String> {
+    let units = value
+        .checked_div_at_scale(step, 0, DecimalRounding::TowardZero)
+        .ok_or_else(|| "精确盘口数量步长计算溢出".to_string())?;
+    step.checked_mul(units)
+        .ok_or_else(|| "精确盘口数量步进计算溢出".to_string())
+}
+
+fn exact_fee(
+    spec: &TradingInstrumentSpec,
+    quantity: ExactDecimal,
+    price: ExactDecimal,
+    fee_bps: i128,
+) -> Result<ExactDecimal, String> {
+    let notional = spec
+        .notional_exact(quantity, price)
+        .map_err(|error| format!("精确盘口手续费名义额计算失败: {error}"))?;
+    let bps = ExactDecimal::from_parts(fee_bps, 0).map_err(|error| error.to_string())?;
+    let denominator = ExactDecimal::from_parts(10_000, 0).map_err(|error| error.to_string())?;
+    notional
+        .checked_mul_at_scale(bps, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+        .and_then(|value| {
+            value.checked_div_at_scale(
+                denominator,
+                ExactDecimal::MAX_SCALE,
+                DecimalRounding::TowardZero,
+            )
+        })
+        .ok_or_else(|| "精确盘口手续费计算溢出".to_string())
+}
+
+fn exact_raw_projection(value: ExactDecimal) -> i128 {
+    value
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+        .and_then(|projected| projected.to_raw(9).ok())
+        .unwrap_or(0)
+}
+
+fn exact_attempt(
+    order: &qx_core::Order,
+    ts: u64,
+    requested: ExactDecimal,
+    filled: ExactDecimal,
+    price: Option<ExactDecimal>,
+    reason: ExecutionAttemptReason,
+) -> crate::ExecutionAttempt {
+    let remaining = requested.checked_sub(filled).unwrap_or(ExactDecimal::ZERO);
+    crate::ExecutionAttempt {
+        ts,
+        order_id: order.client_id,
+        instrument: order.instrument.to_string(),
+        side: order.side,
+        requested_qty_raw: exact_raw_projection(requested),
+        filled_qty_raw: exact_raw_projection(filled),
+        remaining_qty_raw: exact_raw_projection(remaining),
+        requested_qty_exact: Some(requested),
+        filled_qty_exact: Some(filled),
+        remaining_qty_exact: Some(remaining),
+        price_raw: price.map(exact_raw_projection),
+        price_exact: price,
+        reason,
+        displayed_qty_raw: None,
+        queue_ahead_before_raw: None,
+        queue_ahead_after_raw: None,
+        estimated_volume_raw: None,
+        displayed_reduction_raw: None,
+        queue_consumed_raw: None,
     }
 }

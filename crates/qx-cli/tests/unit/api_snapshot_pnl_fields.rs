@@ -12,11 +12,14 @@
 use super::*;
 
 fn pnl_snapshot(config: &RuntimeConfig) -> AccountSnapshot {
-    load_api_account_snapshots(config)
-        .unwrap()
-        .into_iter()
-        .find(|snapshot| snapshot.header.account_id == "main")
-        .expect("paper 拓扑必须投影出 main 账户快照")
+    qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        config,
+        &workspace_binance_spot_market_specs(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|snapshot| snapshot.header.account_id == "main")
+    .expect("paper 拓扑必须投影出 main 账户快照")
 }
 
 /// 只开仓未平仓：累计已实现盈亏是"算出来的零"（`Some(0)`）而不是"没算过"（`None`）；

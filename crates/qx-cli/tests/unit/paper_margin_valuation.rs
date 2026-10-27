@@ -25,6 +25,7 @@ pub(super) fn margin_valuation_spec(
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

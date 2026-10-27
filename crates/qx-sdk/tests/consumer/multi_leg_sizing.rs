@@ -25,6 +25,7 @@ fn rust_sdk_sizes_multi_leg_linear_contracts_from_frozen_market_specs() {
             maintenance_margin_bps: 500,
             valid_from: 0,
             valid_to: None,
+            exact_rules: None,
         }
     }
 

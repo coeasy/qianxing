@@ -5,6 +5,14 @@
 
 use super::*;
 
+struct TemporaryStrategyProbeModule(std::path::PathBuf);
+
+impl Drop for TemporaryStrategyProbeModule {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[test]
 fn builtin_strategy_worker_path_reads_bar_snapshot() {
     let root = std::env::temp_dir().join(format!(
@@ -25,9 +33,15 @@ fn builtin_strategy_worker_path_reads_bar_snapshot() {
     config.storage.data_dir = root.to_string_lossy().into_owned();
     resolve_strategy_runtime_paths(&mut config.strategy, &runtime);
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let output =
-        invoke_builtin_strategy(&root, &config, &instrument, "builtin-worker-test", u64::MAX)
-            .unwrap();
+    let output = invoke_builtin_strategy(
+        &root,
+        &config,
+        None,
+        &instrument,
+        "builtin-worker-test",
+        u64::MAX,
+    )
+    .unwrap();
     assert_eq!(output.request_id, "builtin-worker-test");
     assert_eq!(output.strategy_id, "strategy-builtin");
     assert_eq!(output.instrument, "BTCUSDT.BINANCE");
@@ -234,6 +248,7 @@ fn paper_builtin_kelly_sizing_reads_replayed_buying_power_and_bars() {
     let output = invoke_builtin_strategy(
         &data_dir,
         &config,
+        None,
         &instrument,
         "kelly-paper-worker",
         u64::MAX,
@@ -266,6 +281,264 @@ fn strategy_runtime_resolves_execution_market_specs_from_config_directory() {
         PathBuf::from(worker.instrument_spec_path.as_deref().unwrap()),
         expected
     );
+}
+
+#[test]
+fn strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates() {
+    use qx_core::{Fill, OrderTrace, Price, Quantity};
+    use qx_datastruct::BarFrame;
+
+    let root = temp_cli_case_dir("strategy-execution-updates-worker");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let mut config = paper_runtime_config(&data_dir);
+    config.strategy.id = Some("strategy-execution-updates-probe".into());
+    config.strategy.version = "strategy-execution-updates-probe-v1".into();
+    config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+    config.strategy.live_enabled = true;
+    config.strategy.live_timeframe = "1m".into();
+    config.strategy.live_closed_only = false;
+    config.strategy.python_timeout_ms = 30_000;
+    config.workers.push(qx_runtime::WorkerConfig {
+        id: "strategy-probe-market".into(),
+        role: WorkerRole::MarketData,
+        enabled: true,
+        account_id: None,
+        venue_id: Some("BINANCE".into()),
+        endpoint: Some("https://example.test".into()),
+        symbols: vec!["BTCUSDT.BINANCE".into()],
+        settlement_currency: None,
+        credential_env: None,
+        credential_files: None,
+        instrument_spec_path: None,
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    });
+
+    let probe_nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let module_name = format!(
+        "strategy_execution_probe_{}_{}",
+        std::process::id(),
+        probe_nonce
+    );
+    let module_dir = workspace_root.join("python");
+    let module_path = module_dir.join(format!("{module_name}.py"));
+    let _module_guard = TemporaryStrategyProbeModule(module_path.clone());
+    let mode_path = root.join("probe-mode.txt");
+    let trace_path = root.join("probe-calls.txt");
+    let queue_root = data_dir.join(&config.scheduler.job_queue_path);
+    let ready_path = root.join("probe-ready.txt");
+    let release_path = root.join("probe-release.txt");
+    std::fs::write(&mode_path, "fail").unwrap();
+    let python_path_literal =
+        |path: &Path| serde_json::to_string(&path.to_string_lossy().into_owned()).unwrap();
+    let module_source = format!(
+        "from pathlib import Path\nimport time\nfrom qianxing_strategy import StrategyOutput\n\nSTRATEGY_STATELESS = True\n_MODE = Path({})\n_TRACE = Path({})\n_READY = Path({})\n_RELEASE = Path({})\n\ndef on_event(request):\n    statuses = [update['status'] for update in request.execution_updates]\n    required = {{'submitted', 'accepted', 'partially_filled', 'filled'}}\n    if not required.issubset(set(statuses)):\n        raise RuntimeError(f'execution status facts missing: {{statuses}}')\n    if len(request.fill_updates) != 2:\n        raise RuntimeError(f'expected two committed fills, got {{len(request.fill_updates)}}')\n    status_by_seq = {{update['event_seq']: update['status'] for update in request.execution_updates}}\n    fill_seqs = [update['event_seq'] for update in request.fill_updates]\n    if any(status_by_seq.get(seq) not in {{'partially_filled', 'filled'}} for seq in fill_seqs):\n        raise RuntimeError(f'fill/status sequence pairing missing: {{fill_seqs}} / {{status_by_seq}}')\n    with _TRACE.open('a', encoding='utf-8') as trace:\n        trace.write(str(len(request.execution_updates)) + ':' + ','.join(statuses) + ':' + ','.join(str(seq) for seq in fill_seqs) + '\\n')\n    mode = _MODE.read_text(encoding='utf-8').strip()\n    if mode == 'fail':\n        raise RuntimeError('injected failure after strategy received execution updates')\n    if mode == 'pause':\n        _READY.write_text('ready', encoding='utf-8')\n        deadline = time.monotonic() + 15\n        while not _RELEASE.exists():\n            if time.monotonic() >= deadline:\n                raise RuntimeError('timed out waiting for the lease takeover test')\n            time.sleep(0.01)\n    target = request.positions.get(request.instrument, 0)\n    return StrategyOutput(request_id=request.request_id, strategy_id=request.strategy_id, signal_id=max(1, request.as_of), instrument=request.instrument, target_qty=target, confidence=1000, priority=1, expires_at=request.as_of)\n",
+        python_path_literal(&mode_path),
+        python_path_literal(&trace_path),
+        python_path_literal(&ready_path),
+        python_path_literal(&release_path),
+    );
+    std::fs::write(&module_path, module_source).unwrap();
+    config.strategy.python_module = Some(module_name.clone());
+
+    let now = runtime_timestamp_ms();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let snapshot_path = root.join("bars.json");
+    let frame = BarFrame {
+        instrument: instrument.clone(),
+        source: DataSourceId::new("strategy-execution-updates-worker"),
+        ts: vec![now.saturating_sub(1_000)],
+        open_raw: vec![100 * SCALE],
+        high_raw: vec![101 * SCALE],
+        low_raw: vec![99 * SCALE],
+        close_raw: vec![100 * SCALE],
+        volume_raw: vec![SCALE],
+        exact_ohlcv: None,
+    };
+    std::fs::write(&snapshot_path, frame.to_json()).unwrap();
+    config.strategy.bars_snapshot_path = Some(snapshot_path.to_string_lossy().into_owned());
+    let runtime_path = root.join("runtime.json");
+    std::fs::write(&runtime_path, config.to_json().unwrap()).unwrap();
+
+    let strategy_id = config.strategy.id.as_deref().unwrap();
+    let mut order = mk_order(91_701, &instrument, Side::Buy, 2);
+    order.trace = Some(OrderTrace {
+        strategy_id: Some(strategy_id.into()),
+        signal_id: Some(1),
+        intent_id: Some(1),
+        rule_version: Some("probe-v1".into()),
+    });
+    let log_name = paper_account_log();
+    let mut pipeline = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument.clone(),
+            QuoteTick::new(
+                now.saturating_sub(6_000),
+                Price::from_i64(99),
+                Quantity::from_i64(10),
+                Price::from_i64(100),
+                Quantity::from_i64(10),
+                1,
+            ),
+            now.saturating_sub(6_000),
+            1,
+            "strategy-probe:quote",
+        ))
+        .unwrap();
+    pipeline
+        .register_order(order, now.saturating_sub(5_000))
+        .unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::Accepted {
+                client_order_id: 91_701,
+                venue_order_id: Some("venue-91-701".into()),
+            },
+            now.saturating_sub(4_000),
+            now.saturating_sub(4_000),
+            2,
+            "strategy-probe:accepted",
+        ))
+        .unwrap();
+    for (index, offset) in [3_000_u64, 2_000].into_iter().enumerate() {
+        let fill = Fill {
+            order_id: 91_701,
+            qty: Quantity::from_i64(1),
+            price: Price::from_i64(100),
+            fee: qx_core::Money::ZERO,
+            ts: now.saturating_sub(offset),
+            account_id: "main".into(),
+            venue_id: Some("paper".into()),
+            strategy_id: Some(strategy_id.into()),
+            ..Fill::default()
+        };
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill { fill: fill.clone() },
+                fill.ts,
+                fill.ts,
+                index as u64 + 3,
+                format!("strategy-probe:fill-{index}"),
+            ))
+            .unwrap();
+    }
+    let through_seq = pipeline.log().events().last().unwrap().seq;
+    drop(pipeline);
+
+    let cursor_path = data_dir
+        .join("strategy-live-state")
+        .join("strategy-paper.execution-cursor.json");
+    let first_attempt = run_strategy_worker(&runtime_path, "strategy-paper", true, true);
+    assert!(
+        first_attempt.is_err(),
+        "the injected strategy failure must escape the worker"
+    );
+    assert!(
+        !cursor_path.exists(),
+        "a failed strategy callback must leave its EventLog range replayable"
+    );
+    let queue = FileJobQueue::new(&queue_root);
+    let pending = queue.pending().unwrap();
+    assert_eq!(pending.len(), 1, "the failed live job must remain queued");
+    let queued = &pending[0];
+    assert!(queued
+        .job
+        .input_refs
+        .iter()
+        .any(|reference| { reference.starts_with("strategy-execution-cursors-v1:") }));
+    let run_id = queued.run.run_id;
+
+    // Let another worker take over while the strategy callback is paused. The current worker must
+    // revalidate its lease before committing a cursor, then leave the range replayable.
+    std::fs::remove_file(queue_root.join("leases").join(format!("{run_id}.json"))).unwrap();
+    std::fs::write(&mode_path, "pause").unwrap();
+    let worker_runtime_path = runtime_path.clone();
+    let worker = std::thread::spawn(move || {
+        run_strategy_worker(&worker_runtime_path, "strategy-paper", true, true)
+    });
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !ready_path.exists() {
+        assert!(
+            std::time::Instant::now() < ready_deadline,
+            "strategy callback did not reach the bounded lease-takeover pause"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let takeover_now = lease_clock(runtime_timestamp_ms()).saturating_add(3_600);
+    let takeover = queue
+        .claim(run_id, "test-lease-takeover", takeover_now, 60)
+        .unwrap();
+    assert_eq!(takeover.owner, "test-lease-takeover");
+    std::fs::write(&release_path, "continue").unwrap();
+    let lost_lease = worker
+        .join()
+        .expect("strategy worker thread must not panic");
+    match lost_lease {
+        Err(error) if error.contains("失去租约") && error.contains("test-lease-takeover") => {}
+        other => panic!("worker that lost its lease must stop before checkpoint commit: {other:?}"),
+    }
+    assert!(
+        !cursor_path.exists(),
+        "a worker that lost its lease must not commit the EventLog cursor"
+    );
+    assert_eq!(
+        queue.pending().unwrap().len(),
+        1,
+        "lease loss must leave the frozen-range job available to the current owner"
+    );
+    let lease_path = queue_root.join("leases").join(format!("{run_id}.json"));
+    let current_lease: qx_storage::JobLease =
+        serde_json::from_slice(&std::fs::read(&lease_path).unwrap()).unwrap();
+    assert_eq!(current_lease.owner, takeover.owner);
+    assert_eq!(current_lease.fencing_token, takeover.fencing_token);
+    std::fs::remove_file(lease_path).unwrap();
+    std::fs::write(&mode_path, "ok").unwrap();
+    run_strategy_worker(&runtime_path, "strategy-paper", true, true).unwrap();
+    let cursor: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&cursor_path).unwrap()).unwrap();
+    assert_eq!(cursor["next_seq_by_log"][&log_name], through_seq + 1);
+    assert!(
+        queue.pending().unwrap().is_empty(),
+        "successful retry must ack the job"
+    );
+    assert!(
+        queue_root
+            .join("done")
+            .join(format!("{run_id}.json"))
+            .exists(),
+        "successful retry must move the job to the durable done set"
+    );
+    let calls_after_retry = std::fs::read_to_string(&trace_path).unwrap();
+    let call_lines = calls_after_retry.lines().collect::<Vec<_>>();
+    assert_eq!(
+        call_lines.len(),
+        3,
+        "callback failure, lost-lease retry, and successful replay must each receive the frozen range"
+    );
+    assert!(call_lines.iter().all(|line| {
+        let fields = line.split(':').collect::<Vec<_>>();
+        fields.len() == 3 && fields[0] == "4" && fields[2].contains(',')
+    }));
+
+    // A fresh worker process must load the persisted cursor and avoid redelivering old facts.
+    run_strategy_worker(&runtime_path, "strategy-paper", true, true).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&trace_path)
+            .unwrap()
+            .lines()
+            .count(),
+        3,
+        "restart after ack must not call the strategy again for an acknowledged range"
+    );
+    assert!(queue.pending().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

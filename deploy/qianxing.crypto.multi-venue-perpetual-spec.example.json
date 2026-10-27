@@ -1,0 +1,56 @@
+{
+  "kind": "qianxing_market_spec_set",
+  "schema_version": 1,
+  "markets": {
+    "BTC/USDT:USDT.BINANCE": {
+      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "BINANCE"},
+      "product": "perpetual",
+      "base_currency": "BTC",
+      "quote_currency": "USDT",
+      "settlement_currency": "USDT",
+      "contract_size": 1000000000,
+      "linear": true,
+      "inverse": false,
+      "price_tick": 100000000,
+      "qty_step": 1000000,
+      "min_qty": 1000000,
+      "min_notional_raw": 5000000000,
+      "max_leverage": 20,
+      "maintenance_margin_bps": 500,
+      "valid_from": 0,
+      "valid_to": null,
+      "exact_rules": {
+        "contract_size": {"coefficient": "1", "scale": 0},
+        "price_tick": {"coefficient": "1", "scale": 1},
+        "quantity_step": {"coefficient": "1", "scale": 3},
+        "minimum_quantity": {"coefficient": "1", "scale": 3},
+        "minimum_notional": {"coefficient": "5", "scale": 0}
+      }
+    },
+    "BTC/USDT:USDT.OKX": {
+      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "OKX"},
+      "product": "perpetual",
+      "base_currency": "BTC",
+      "quote_currency": "USDT",
+      "settlement_currency": "USDT",
+      "contract_size": 1000000,
+      "linear": true,
+      "inverse": false,
+      "price_tick": 100000000,
+      "qty_step": 1000000000,
+      "min_qty": 1000000000,
+      "min_notional_raw": 0,
+      "max_leverage": 20,
+      "maintenance_margin_bps": 500,
+      "valid_from": 0,
+      "valid_to": null,
+      "exact_rules": {
+        "contract_size": {"coefficient": "1", "scale": 3},
+        "price_tick": {"coefficient": "1", "scale": 1},
+        "quantity_step": {"coefficient": "1", "scale": 0},
+        "minimum_quantity": {"coefficient": "1", "scale": 0},
+        "minimum_notional": {"coefficient": "0", "scale": 0}
+      }
+    }
+  }
+}

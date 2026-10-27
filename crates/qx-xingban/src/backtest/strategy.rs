@@ -2,16 +2,53 @@
 
 use qx_core::{Fill, InstrumentId, Order};
 use qx_guanxing::Bar;
-use qx_strategy::{MarketEvent, Strategy, StrategyContext};
-use std::collections::BTreeMap;
+use qx_strategy::{
+    MarketEvent, Strategy, StrategyContext, StrategyErrorStage, StrategyErrorV1,
+    StrategyFillUpdateV2, StrategyHistoryRequirements, StrategyOrderStatusUpdate,
+    StrategyStopContextV1, StrategyStopReason, StrategyUpdate,
+};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub trait BarStrategy {
+    /// Called once after run inputs are prepared and before `on_start`.
+    fn on_init(&mut self) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Called after run inputs are prepared and before the first strategy event.
+    fn on_start(&mut self) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Called after completion, cancellation, pruning or an engine error.
+    fn on_stop(&mut self) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Reason-aware companion that preserves existing strategy implementations.
+    /// Hosts should use this hook when the terminal outcome is known.
+    fn on_stop_with_reason(&mut self, _reason: StrategyStopReason) -> Result<(), qx_core::QxError> {
+        self.on_stop()
+    }
+
     /// Refresh account state from the authoritative ledger before strategy callbacks.
     fn update_account_state(
         &mut self,
         _cash: &BTreeMap<String, i128>,
         _available_margin_raw: Option<i128>,
     ) {
+    }
+
+    /// Exact companion snapshot for adapters that need exchange precision beyond legacy raw
+    /// fields. Existing adapters keep receiving the original projection by default.
+    fn update_account_state_exact(
+        &mut self,
+        cash: &BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+        _cash_exact: &BTreeMap<String, qx_core::ExactDecimal>,
+        _available_margin_exact: Option<qx_core::ExactDecimal>,
+    ) {
+        self.update_account_state(cash, available_margin_raw);
     }
 
     fn refresh(
@@ -23,7 +60,16 @@ pub trait BarStrategy {
     ) -> Option<i128> {
         let cash = ledger.cash_balances_for_ref(account_id);
         let margin = cash_account.then(|| ledger.cash_for(account_id, currency).max(0));
-        self.update_account_state(cash, margin);
+        let cash_exact = ledger.cash_balances_exact_for(account_id);
+        let margin_exact = cash_account.then(|| {
+            let available = ledger.cash_for_exact(account_id, currency);
+            if available.is_negative() {
+                qx_core::ExactDecimal::ZERO
+            } else {
+                available
+            }
+        });
+        self.update_account_state_exact(cash, margin, &cash_exact, margin_exact);
         margin
     }
 
@@ -32,11 +78,44 @@ pub trait BarStrategy {
         None
     }
 
+    /// Scale-aware per-strategy capital limit. Legacy adapters inherit the 1e-9 raw projection.
+    fn strategy_budget_exact(&self, strategy_id: &str) -> Option<qx_core::ExactDecimal> {
+        self.strategy_budget_raw(strategy_id)
+            .and_then(|raw| qx_core::ExactDecimal::from_parts(raw, 9).ok())
+    }
+
     /// Receive a fill only after the shared ledger and replay event log have accepted it.
     /// Portfolio adapters use this to reconcile strategy-owned virtual positions with
     /// the authoritative account fills before the next decision boundary.
     fn on_fill(&mut self, _order: &Order, _fill: &Fill) -> Result<(), qx_core::QxError> {
         Ok(())
+    }
+
+    /// Receive a fill with its authoritative EventLog sequence. Legacy adapters
+    /// remain source compatible and can continue implementing `on_fill` only.
+    fn on_fill_with_event_seq(
+        &mut self,
+        order: &Order,
+        fill: &Fill,
+        event_seq: u64,
+    ) -> Result<(), qx_core::QxError> {
+        let _ = event_seq;
+        self.on_fill(order, fill)
+    }
+
+    /// Receive a committed OMS/EventLog order-state transition. The default
+    /// keeps legacy order-only strategies source compatible.
+    fn on_order_status(
+        &mut self,
+        _update: &StrategyOrderStatusUpdate,
+    ) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Whether this adapter owns an order status update. Routers use this to
+    /// deliver cross-market strategy callbacks to exactly one strategy basket.
+    fn owns_order_status(&self, _update: &StrategyOrderStatusUpdate) -> bool {
+        false
     }
 
     fn on_bar(
@@ -91,6 +170,27 @@ pub trait BarStrategy {
         self.on_bar_orders_checked(history, instrument, ts, position)
     }
 
+    /// Precision-aware Bar callback. Legacy adapters use the established raw projection;
+    /// native strategies also receive the authoritative exact position snapshot.
+    fn on_bar_orders_with_margin_exact_checked(
+        &mut self,
+        history: &[Bar],
+        instrument: &InstrumentId,
+        ts: u64,
+        position: i128,
+        position_exact: Option<qx_core::ExactDecimal>,
+        available_margin_raw: Option<i128>,
+    ) -> Result<Vec<Order>, qx_core::QxError> {
+        let _ = position_exact;
+        self.on_bar_orders_with_margin_checked(
+            history,
+            instrument,
+            ts,
+            position,
+            available_margin_raw,
+        )
+    }
+
     /// Drain the native strategy decisions produced at the most recent callback.
     /// Legacy order-only adapters keep the default empty audit surface.
     fn drain_decision_facts(&mut self) -> Vec<qx_core::StrategyDecisionFact> {
@@ -107,6 +207,11 @@ pub struct NativeBarStrategy<S: Strategy> {
     pub strategy: S,
     pub context: StrategyContext,
     virtual_position: bool,
+    initialized: bool,
+    history_requirements: StrategyHistoryRequirements,
+    warmup_seen: BTreeMap<InstrumentId, u64>,
+    warmup_completed: BTreeSet<InstrumentId>,
+    zero_warmup_notified: bool,
     pending_order_updates: Vec<qx_strategy::StrategyDecision>,
     emitted_decisions: Vec<qx_core::StrategyDecisionFact>,
 }
@@ -117,6 +222,11 @@ impl<S: Strategy> NativeBarStrategy<S> {
             strategy,
             context,
             virtual_position: false,
+            initialized: false,
+            history_requirements: StrategyHistoryRequirements::default(),
+            warmup_seen: BTreeMap::new(),
+            warmup_completed: BTreeSet::new(),
+            zero_warmup_notified: false,
             pending_order_updates: Vec::new(),
             emitted_decisions: Vec::new(),
         }
@@ -130,9 +240,53 @@ impl<S: Strategy> NativeBarStrategy<S> {
     }
 
     pub fn initialize(&mut self) -> Result<(), qx_core::QxError> {
-        self.strategy
-            .on_init(&self.context)
-            .map_err(qx_core::QxError::BusinessViolation)
+        if self.initialized {
+            return Ok(());
+        }
+        let init = self.strategy.on_init(&self.context);
+        self.callback_result(StrategyErrorStage::Initialization, None, None, init)?;
+        let requirements = self.strategy.history_requirements();
+        self.history_requirements = self.callback_result(
+            StrategyErrorStage::HistoryRequirements,
+            None,
+            None,
+            requirements,
+        )?;
+        self.initialized = true;
+        Ok(())
+    }
+
+    fn notify_callback_error(
+        &mut self,
+        stage: StrategyErrorStage,
+        timestamp: Option<u64>,
+        instrument: Option<&InstrumentId>,
+        message: &str,
+    ) {
+        let error = StrategyErrorV1::new(
+            stage,
+            &self.context,
+            timestamp,
+            instrument.cloned(),
+            message,
+        );
+        qx_strategy::notify_strategy_error(&mut self.strategy, &error);
+    }
+
+    fn callback_result<T>(
+        &mut self,
+        stage: StrategyErrorStage,
+        timestamp: Option<u64>,
+        instrument: Option<&InstrumentId>,
+        result: Result<T, String>,
+    ) -> Result<T, qx_core::QxError> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(message) => {
+                self.notify_callback_error(stage, timestamp, instrument, &message);
+                Err(qx_core::QxError::BusinessViolation(message))
+            }
+        }
     }
 }
 
@@ -155,6 +309,8 @@ impl<S: Strategy> NativeBarStrategy<S> {
                     side: intent.side,
                     qty: intent.qty,
                     limit: intent.limit,
+                    qty_exact: intent.qty_exact,
+                    limit_exact: intent.limit_price_exact,
                     policy: intent.policy,
                     reduce_only: intent.reduce_only,
                     post_only: intent.post_only,
@@ -179,16 +335,33 @@ impl<S: Strategy> NativeBarStrategy<S> {
         if owner != self.context.strategy_id {
             return Ok(());
         }
+        let quantity = fill.quantity_decimal();
+        let size_is_valid = if order.is_quote_budget_order() {
+            match (
+                order.remaining_budget_decimal(),
+                fill.exact_amounts.and_then(|amounts| amounts.quote_cost),
+            ) {
+                (Some(remaining), Some(cost)) => {
+                    cost.is_positive()
+                        && cost
+                            .checked_cmp(remaining)
+                            .is_some_and(|ordering| !ordering.is_gt())
+                }
+                _ => false,
+            }
+        } else {
+            let order_remaining = order
+                .remaining_decimal()
+                .unwrap_or(qx_core::ExactDecimal::ZERO);
+            quantity
+                .checked_cmp(order_remaining)
+                .is_some_and(|ordering| !ordering.is_gt())
+        };
         if order.account_id != self.context.account_id
             || fill.account_id != order.account_id
             || fill.order_id != order.client_id
-            || fill.qty.raw() <= 0
-            || fill.qty.raw()
-                > order
-                    .qty
-                    .raw()
-                    .checked_abs()
-                    .ok_or_else(|| qx_core::QxError::Invariant("组合策略订单数量溢出".into()))?
+            || !quantity.is_positive()
+            || !size_is_valid
         {
             return Err(qx_core::QxError::Invariant(
                 "组合策略成交账户、订单或数量与原订单不匹配".into(),
@@ -202,36 +375,41 @@ impl<S: Strategy> NativeBarStrategy<S> {
             ));
         }
         let delta = match order.side {
-            qx_core::Side::Buy => fill.qty.raw(),
-            qx_core::Side::Sell => fill
-                .qty
-                .raw()
+            qx_core::Side::Buy => quantity,
+            qx_core::Side::Sell => quantity
                 .checked_neg()
-                .ok_or_else(|| qx_core::QxError::Invariant("组合策略成交数量溢出".into()))?,
+                .ok_or_else(|| qx_core::QxError::Invariant("组合策略精确成交数量溢出".into()))?,
         };
-        let position = self
+        let instrument_key = order.instrument.to_string();
+        let current = self
             .context
-            .positions
-            .entry(order.instrument.to_string())
-            .or_default();
-        *position = position
+            .positions_exact
+            .get(&instrument_key)
+            .copied()
+            .or_else(|| {
+                self.context
+                    .positions
+                    .get(&instrument_key)
+                    .and_then(|raw| qx_core::ExactDecimal::from_parts(*raw, 9).ok())
+            })
+            .unwrap_or(qx_core::ExactDecimal::ZERO);
+        let next = current
             .checked_add(delta)
-            .ok_or_else(|| qx_core::QxError::Invariant("组合策略虚拟持仓溢出".into()))?;
+            .ok_or_else(|| qx_core::QxError::Invariant("组合策略精确虚拟持仓溢出".into()))?;
+        self.context.positions.insert(
+            instrument_key.clone(),
+            exact_to_raw_projection(next, qx_core::DecimalRounding::TowardZero)?,
+        );
+        self.context.positions_exact.insert(instrument_key, next);
         Ok(())
     }
-}
 
-impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
-    fn update_account_state(
+    fn dispatch_fill_update(
         &mut self,
-        cash: &BTreeMap<String, i128>,
-        available_margin_raw: Option<i128>,
-    ) {
-        self.context.cash.clone_from(cash);
-        self.context.available_margin_raw = available_margin_raw;
-    }
-
-    fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
+        order: &Order,
+        fill: &Fill,
+        event_seq: Option<u64>,
+    ) -> Result<(), qx_core::QxError> {
         self.apply_strategy_fill(order, fill)?;
         let is_owned = order
             .trace
@@ -242,29 +420,141 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             return Ok(());
         }
 
-        // `on_fill` is called only after OMS, the authoritative ledger and replay
-        // log have accepted the fill. Keep the wire event explicit and versioned
-        // so native and language-bridge strategies see the same lifecycle fact.
         self.context.as_of = self.context.as_of.max(fill.ts);
-        let update = serde_json::json!({
-            "schema_version": qx_strategy::ORDER_UPDATE_SCHEMA_VERSION,
-            "event": "fill",
-            "order": {
-                "order_id": order.client_id,
-                "account_id": order.account_id.as_str(),
-                "instrument": order.instrument.to_string(),
-                "side": order.side,
-                "qty_raw": order.qty.raw(),
-                "filled_raw": order.filled.raw(),
-                "strategy_id": self.context.strategy_id.as_str(),
-            },
-            "fill": fill,
+        let decision = if let Some(event_seq) = event_seq {
+            let update =
+                StrategyFillUpdateV2::from_fill(order, fill, &self.context.strategy_id, event_seq)
+                    .map_err(qx_core::QxError::BusinessViolation)?;
+            let result = self
+                .strategy
+                .on_strategy_fill_update_v2(&self.context, &update);
+            self.callback_result(
+                StrategyErrorStage::FillUpdate,
+                Some(fill.ts),
+                Some(&order.instrument),
+                result,
+            )?
+        } else {
+            let update = StrategyUpdate::from_fill(order, fill, &self.context.strategy_id)
+                .map_err(qx_core::QxError::BusinessViolation)?;
+            let result = self.strategy.on_strategy_update(&self.context, &update);
+            self.callback_result(
+                StrategyErrorStage::FillUpdate,
+                Some(fill.ts),
+                Some(&order.instrument),
+                result,
+            )?
+        };
+        if let Some(decision) = decision {
+            self.pending_order_updates.push(decision);
+        }
+        Ok(())
+    }
+}
+
+impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
+    fn on_init(&mut self) -> Result<(), qx_core::QxError> {
+        self.initialize()
+    }
+
+    fn on_start(&mut self) -> Result<(), qx_core::QxError> {
+        self.initialize()?;
+        let result = self.strategy.on_start(&self.context);
+        self.callback_result(StrategyErrorStage::Start, None, None, result)?;
+        if self.history_requirements.warmup_bars == 0 && !self.zero_warmup_notified {
+            let result = self.strategy.on_warmup_complete(&self.context, None, 0);
+            self.callback_result(StrategyErrorStage::WarmupComplete, None, None, result)?;
+            self.zero_warmup_notified = true;
+        }
+        Ok(())
+    }
+
+    fn on_stop(&mut self) -> Result<(), qx_core::QxError> {
+        self.on_stop_with_reason(StrategyStopReason::HostStop)
+    }
+
+    fn on_stop_with_reason(&mut self, reason: StrategyStopReason) -> Result<(), qx_core::QxError> {
+        let stop_context = StrategyStopContextV1::new(reason, Some(self.context.clone()));
+        let stop_error = match self.strategy.on_stop_with_context(&stop_context) {
+            Ok(()) => None,
+            Err(message) => {
+                self.notify_callback_error(
+                    StrategyErrorStage::Stop,
+                    Some(self.context.as_of),
+                    None,
+                    &message,
+                );
+                Some(message)
+            }
+        };
+        let required = self.history_requirements.warmup_bars;
+        let mut incomplete = self
+            .warmup_seen
+            .iter()
+            .filter(|(instrument, observed)| {
+                **observed < required && !self.warmup_completed.contains(*instrument)
+            })
+            .map(|(instrument, observed)| format!("{instrument}: {observed}/{required}"))
+            .collect::<Vec<_>>();
+        if required > 0 && self.warmup_seen.is_empty() {
+            incomplete.push(format!("no Bar events: 0/{required}"));
+        }
+        let warmup_error = (!incomplete.is_empty()).then(|| {
+            format!(
+                "NativeBarStrategy warmup incomplete at stop ({})",
+                incomplete.join(", ")
+            )
         });
-        if let Some(decision) = self
+        match (stop_error, warmup_error) {
+            (Some(stop), Some(warmup)) => Err(qx_core::QxError::BusinessViolation(format!(
+                "strategy on_stop failed: {stop}; {warmup}"
+            ))),
+            (Some(stop), None) => Err(qx_core::QxError::BusinessViolation(stop)),
+            (None, Some(warmup)) => Err(qx_core::QxError::BusinessViolation(warmup)),
+            (None, None) => Ok(()),
+        }
+    }
+
+    fn update_account_state(
+        &mut self,
+        cash: &BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        self.context.cash.clone_from(cash);
+        self.context.available_margin_raw = available_margin_raw;
+    }
+
+    fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
+        self.dispatch_fill_update(order, fill, None)
+    }
+
+    fn on_fill_with_event_seq(
+        &mut self,
+        order: &Order,
+        fill: &Fill,
+        event_seq: u64,
+    ) -> Result<(), qx_core::QxError> {
+        self.dispatch_fill_update(order, fill, Some(event_seq))
+    }
+
+    fn on_order_status(
+        &mut self,
+        update: &StrategyOrderStatusUpdate,
+    ) -> Result<(), qx_core::QxError> {
+        if update.order.strategy_id != self.context.strategy_id {
+            return Ok(());
+        }
+        self.context.as_of = self.context.as_of.max(update.ts);
+        let result = self
             .strategy
-            .on_order_update(&self.context, &update.to_string())
-            .map_err(qx_core::QxError::BusinessViolation)?
-        {
+            .on_strategy_order_status(&self.context, update);
+        let instrument = InstrumentId::parse(&update.order.instrument);
+        if let Some(decision) = self.callback_result(
+            StrategyErrorStage::OrderUpdate,
+            Some(update.ts),
+            instrument.as_ref(),
+            result,
+        )? {
             self.pending_order_updates.push(decision);
         }
         Ok(())
@@ -298,6 +588,25 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
                 .positions
                 .insert(instrument.to_string(), position);
         }
+        let observed = self.warmup_seen.entry(instrument.clone()).or_default();
+        *observed = observed.checked_add(1).ok_or_else(|| {
+            qx_core::QxError::BusinessViolation("NativeBarStrategy warmup Bar 计数溢出".into())
+        })?;
+        let observed = *observed;
+        let warmup_bars = self.history_requirements.warmup_bars;
+        let is_warm = warmup_bars == 0 || observed >= warmup_bars;
+        if is_warm && warmup_bars > 0 && !self.warmup_completed.contains(instrument) {
+            let result =
+                self.strategy
+                    .on_warmup_complete(&self.context, Some(instrument), observed);
+            self.callback_result(
+                StrategyErrorStage::WarmupComplete,
+                Some(visible.ts),
+                Some(instrument),
+                result,
+            )?;
+            self.warmup_completed.insert(instrument.clone());
+        }
         let event = MarketEvent::Bar {
             instrument: instrument.clone(),
             ts: visible.ts,
@@ -306,13 +615,24 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             low_raw: visible.low,
             close_raw: visible.close,
             volume_raw: visible.volume,
+            exact_ohlcv: visible.exact_ohlcv,
         };
-        let decision = self
-            .strategy
-            .on_event(&self.context, &event)
-            .map_err(qx_core::QxError::BusinessViolation)?;
+        let result = self.strategy.on_event(&self.context, &event);
+        let mut decision = self.callback_result(
+            StrategyErrorStage::MarketEvent,
+            Some(event.ts()),
+            Some(instrument),
+            result,
+        )?;
+        if !is_warm {
+            decision.intents.clear();
+        }
         let mut orders = Vec::new();
         for update_decision in self.pending_order_updates.drain(..) {
+            let mut update_decision = update_decision;
+            if !is_warm {
+                update_decision.intents.clear();
+            }
             update_decision
                 .append_orders(&self.context, &mut orders)
                 .map_err(qx_core::QxError::BusinessViolation)?;
@@ -337,12 +657,67 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
         self.context.available_margin_raw = available_margin_raw;
         self.on_bar_orders_checked(history, instrument, ts, position)
     }
+
+    fn update_account_state_exact(
+        &mut self,
+        cash: &BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+        cash_exact: &BTreeMap<String, qx_core::ExactDecimal>,
+        available_margin_exact: Option<qx_core::ExactDecimal>,
+    ) {
+        self.context.cash = cash.clone();
+        self.context.cash_exact = cash_exact.clone();
+        self.context.available_margin_raw = available_margin_raw;
+        self.context.available_margin_exact = available_margin_exact;
+    }
+
+    fn on_bar_orders_with_margin_exact_checked(
+        &mut self,
+        history: &[Bar],
+        instrument: &InstrumentId,
+        ts: u64,
+        position: i128,
+        position_exact: Option<qx_core::ExactDecimal>,
+        available_margin_raw: Option<i128>,
+    ) -> Result<Vec<Order>, qx_core::QxError> {
+        if !self.virtual_position {
+            let key = instrument.to_string();
+            let exact = match position_exact {
+                Some(exact) => exact,
+                None => qx_core::ExactDecimal::from_parts(position, 9)
+                    .map_err(|error| qx_core::QxError::Invariant(error.into()))?,
+            };
+            self.context.positions.insert(
+                key.clone(),
+                exact_to_raw_projection(exact, qx_core::DecimalRounding::TowardZero)?,
+            );
+            self.context.positions_exact.insert(key, exact);
+        }
+        self.context.available_margin_raw = available_margin_raw;
+        self.on_bar_orders_checked(history, instrument, ts, position)
+    }
+}
+
+fn exact_to_raw_projection(
+    value: qx_core::ExactDecimal,
+    rounding: qx_core::DecimalRounding,
+) -> Result<i128, qx_core::QxError> {
+    value
+        .checked_div_at_scale(qx_core::ExactDecimal::ONE, 9, rounding)
+        .and_then(|projected| projected.to_raw(9).ok())
+        .ok_or_else(|| qx_core::QxError::Invariant("精确值投影到 raw 失败".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
+    use qx_core::{ExactDecimal, Quantity, Side};
+    use qx_strategy::{
+        MarketEvent, Strategy, StrategyContext, StrategyDecision, StrategyErrorStage,
+        StrategyErrorV1, StrategyHistoryRequirements, StrategyOrderIntent, StrategyStopContextV1,
+        StrategyStopReason,
+    };
+    use std::sync::{Arc, Mutex};
 
     struct NoopStrategy;
 
@@ -365,6 +740,81 @@ mod tests {
         }
     }
 
+    struct BrokenEventStrategy(Arc<Mutex<Option<StrategyErrorV1>>>);
+
+    impl Strategy for BrokenEventStrategy {
+        fn on_event(
+            &mut self,
+            _context: &StrategyContext,
+            _event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            Err("original strategy callback failure".into())
+        }
+
+        fn on_error(&mut self, error: &StrategyErrorV1) -> Result<(), String> {
+            *self.0.lock().unwrap() = Some(error.clone());
+            Err("error observer failure must not replace callback failure".into())
+        }
+    }
+
+    #[test]
+    fn native_bar_strategy_notifies_error_observer_and_preserves_original_failure() {
+        let observed = Arc::new(Mutex::new(None));
+        let mut adapter =
+            NativeBarStrategy::new(BrokenEventStrategy(Arc::clone(&observed)), warmup_context());
+        adapter.initialize().unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let result =
+            adapter.on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0);
+
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("original strategy callback failure"));
+        assert!(!error.contains("error observer failure"));
+        let observed = observed.lock().unwrap().clone().unwrap();
+        assert_eq!(observed.stage, StrategyErrorStage::MarketEvent);
+        assert_eq!(observed.strategy_id, "warmup-test");
+        assert_eq!(observed.timestamp, Some(100));
+        assert_eq!(observed.instrument.as_deref(), Some("BTCUSDT.BINANCE"));
+        assert_eq!(observed.message, "original strategy callback failure");
+    }
+
+    struct ExactIntentStrategy {
+        quantity: Option<ExactDecimal>,
+        limit_price: Option<ExactDecimal>,
+        quote_budget: Option<ExactDecimal>,
+    }
+
+    impl Strategy for ExactIntentStrategy {
+        fn on_event(
+            &mut self,
+            context: &StrategyContext,
+            event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            Ok(StrategyDecision {
+                schema_version: qx_strategy::STRATEGY_API_VERSION,
+                request_id: "exact-bar-test".into(),
+                strategy_id: context.strategy_id.clone(),
+                signal_id: event.ts().max(1),
+                confidence: 10_000,
+                priority: 0,
+                expires_at: 0,
+                intents: vec![StrategyOrderIntent {
+                    intent_id: event.ts().max(1),
+                    instrument: event.instrument().unwrap().clone(),
+                    side: Side::Buy,
+                    qty: Quantity::ZERO,
+                    qty_exact: self.quantity,
+                    limit: None,
+                    limit_price_exact: self.limit_price,
+                    quote_budget: self.quote_budget,
+                    policy: None,
+                    reduce_only: false,
+                    post_only: false,
+                }],
+            })
+        }
+    }
+
     #[test]
     fn native_strategy_context_clock_never_regresses_across_unaligned_markets() {
         let mut adapter = NativeBarStrategy::new(
@@ -380,6 +830,9 @@ mod tests {
                 cash: BTreeMap::new(),
                 available_margin_raw: None,
                 risk_state: "backtest".into(),
+                positions_exact: BTreeMap::new(),
+                cash_exact: BTreeMap::new(),
+                available_margin_exact: None,
             },
         );
         let fast = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
@@ -392,5 +845,358 @@ mod tests {
             .on_bar_orders_checked(&[Bar::new(80, 1, 1, 1, 1, 1)], &slow, 120, 0)
             .unwrap();
         assert_eq!(adapter.context.as_of, 100);
+    }
+
+    #[test]
+    fn native_bar_strategy_preserves_exact_orders_and_audits_original_precision() {
+        let mut adapter = NativeBarStrategy::new(
+            ExactIntentStrategy {
+                quantity: Some(ExactDecimal::parse("0.001").unwrap()),
+                limit_price: Some(ExactDecimal::parse("10.25").unwrap()),
+                quote_budget: None,
+            },
+            warmup_context(),
+        );
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let orders = adapter
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0)
+            .unwrap();
+
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].qty.raw(), 0);
+        assert_eq!(orders[0].limit, None);
+        assert_eq!(
+            orders[0].quantity_decimal(),
+            ExactDecimal::parse("0.001").unwrap()
+        );
+        assert_eq!(
+            orders[0].limit_price_decimal(),
+            Some(ExactDecimal::parse("10.25").unwrap())
+        );
+        let fact = adapter.emitted_decisions.last().unwrap();
+        assert_eq!(fact.intents[0].qty.raw(), 0);
+        assert_eq!(
+            fact.intents[0].qty_exact,
+            Some(ExactDecimal::parse("0.001").unwrap())
+        );
+        assert_eq!(
+            fact.intents[0].limit_exact,
+            Some(ExactDecimal::parse("10.25").unwrap())
+        );
+    }
+
+    #[test]
+    fn native_bar_strategy_preserves_exact_quantity_and_quote_budget_intents() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let mut subnano = NativeBarStrategy::new(
+            ExactIntentStrategy {
+                quantity: Some(ExactDecimal::parse("0.0000000001").unwrap()),
+                limit_price: None,
+                quote_budget: None,
+            },
+            warmup_context(),
+        );
+        let orders = subnano
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0)
+            .unwrap();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            orders[0].quantity_decimal(),
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+
+        let mut quote_budget = NativeBarStrategy::new(
+            ExactIntentStrategy {
+                quantity: None,
+                limit_price: None,
+                quote_budget: Some(ExactDecimal::parse("25.5").unwrap()),
+            },
+            warmup_context(),
+        );
+        let orders = quote_budget
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0)
+            .unwrap();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            orders[0].remaining_budget_decimal(),
+            Some(ExactDecimal::parse("25.5").unwrap())
+        );
+    }
+
+    struct WarmupStrategy {
+        required: u64,
+        ready: bool,
+        callbacks: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Strategy for WarmupStrategy {
+        fn history_requirements(&self) -> Result<StrategyHistoryRequirements, String> {
+            Ok(StrategyHistoryRequirements {
+                warmup_bars: self.required,
+            })
+        }
+
+        fn on_warmup_complete(
+            &mut self,
+            _context: &StrategyContext,
+            instrument: Option<&InstrumentId>,
+            observed_bars: u64,
+        ) -> Result<(), String> {
+            self.ready = true;
+            self.callbacks.lock().unwrap().push(format!(
+                "ready:{}:{observed_bars}",
+                instrument.map(ToString::to_string).unwrap_or_default()
+            ));
+            Ok(())
+        }
+
+        fn on_event(
+            &mut self,
+            context: &StrategyContext,
+            event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            self.callbacks
+                .lock()
+                .unwrap()
+                .push(format!("event:{}:{}", self.ready, event.ts()));
+            let instrument = event.instrument().unwrap().clone();
+            Ok(StrategyDecision {
+                schema_version: qx_strategy::STRATEGY_API_VERSION,
+                request_id: format!("warmup:{}", event.ts()),
+                strategy_id: context.strategy_id.clone(),
+                signal_id: event.ts(),
+                confidence: 10_000,
+                priority: 0,
+                expires_at: 0,
+                intents: vec![StrategyOrderIntent {
+                    intent_id: event.ts(),
+                    instrument,
+                    side: Side::Buy,
+                    qty: Quantity::from_raw(1),
+                    qty_exact: None,
+                    limit: None,
+                    limit_price_exact: None,
+                    quote_budget: None,
+                    policy: None,
+                    reduce_only: false,
+                    post_only: false,
+                }],
+            })
+        }
+    }
+
+    fn warmup_context() -> StrategyContext {
+        StrategyContext {
+            strategy_id: "warmup-test".into(),
+            strategy_version: "test-v1".into(),
+            account_id: "account".into(),
+            venue_id: "SIM".into(),
+            data_fingerprint: "warmup-test".into(),
+            as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: None,
+            risk_state: "backtest".into(),
+        }
+    }
+
+    #[test]
+    fn native_bar_strategy_passes_terminal_reason_and_final_context() {
+        struct StopObserver(Arc<Mutex<Option<StrategyStopContextV1>>>);
+
+        impl Strategy for StopObserver {
+            fn on_event(
+                &mut self,
+                context: &StrategyContext,
+                _event: &MarketEvent,
+            ) -> Result<StrategyDecision, String> {
+                Ok(StrategyDecision {
+                    schema_version: qx_strategy::STRATEGY_API_VERSION,
+                    request_id: "stop-context-test".into(),
+                    strategy_id: context.strategy_id.clone(),
+                    signal_id: 1,
+                    confidence: 10_000,
+                    priority: 0,
+                    expires_at: 0,
+                    intents: Vec::new(),
+                })
+            }
+
+            fn on_stop_with_context(&mut self, stop: &StrategyStopContextV1) -> Result<(), String> {
+                *self.0.lock().unwrap() = Some(stop.clone());
+                Ok(())
+            }
+        }
+
+        let received = Arc::new(Mutex::new(None));
+        let mut adapter =
+            NativeBarStrategy::new(StopObserver(Arc::clone(&received)), warmup_context());
+        adapter.initialize().unwrap();
+        adapter
+            .on_stop_with_reason(StrategyStopReason::Cancelled)
+            .unwrap();
+
+        let stop = received.lock().unwrap().clone().unwrap();
+        assert_eq!(stop.reason, StrategyStopReason::Cancelled);
+        assert_eq!(
+            stop.context
+                .as_ref()
+                .map(|context| context.strategy_id.as_str()),
+            Some("warmup-test")
+        );
+    }
+
+    #[test]
+    fn strategy_context_accepts_subnano_position_with_zero_legacy_projection() {
+        let instrument = InstrumentId::parse("DOGEUSDT.BINANCE").unwrap().to_string();
+        let mut context = warmup_context();
+        context.positions.insert(instrument.clone(), 0);
+        context.positions_exact.insert(
+            instrument.clone(),
+            ExactDecimal::parse("0.0000000001").unwrap(),
+        );
+        context.cash.insert("USDT".into(), 1_000_000_000);
+        context
+            .cash_exact
+            .insert("USDT".into(), ExactDecimal::parse("1").unwrap());
+        context.available_margin_raw = Some(1_000_000_000);
+        context.available_margin_exact = Some(ExactDecimal::parse("1").unwrap());
+        context.validate().unwrap();
+
+        context.positions.insert(instrument, 1);
+        assert!(context.validate().is_err());
+    }
+
+    #[test]
+    fn native_bar_strategy_suppresses_intents_until_each_instrument_is_warm() {
+        let callbacks = Arc::new(Mutex::new(Vec::new()));
+        let strategy = WarmupStrategy {
+            required: 2,
+            ready: false,
+            callbacks: Arc::clone(&callbacks),
+        };
+        let mut adapter = NativeBarStrategy::new(strategy, warmup_context());
+        adapter.initialize().unwrap();
+        adapter.on_start().unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+
+        let first = adapter
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0)
+            .unwrap();
+        assert!(first.is_empty());
+        assert!(adapter.emitted_decisions.last().unwrap().intents.is_empty());
+
+        let second = adapter
+            .on_bar_orders_checked(
+                &[Bar::new(100, 1, 1, 1, 1, 1), Bar::new(110, 1, 1, 1, 1, 1)],
+                &instrument,
+                120,
+                0,
+            )
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].instrument, instrument);
+        assert_eq!(
+            *callbacks.lock().unwrap(),
+            vec![
+                "event:false:100",
+                "ready:BTCUSDT.BINANCE:2",
+                "event:true:110"
+            ]
+        );
+    }
+
+    #[test]
+    fn native_bar_strategy_counts_warmup_per_instrument() {
+        let callbacks = Arc::new(Mutex::new(Vec::new()));
+        let strategy = WarmupStrategy {
+            required: 2,
+            ready: false,
+            callbacks: Arc::clone(&callbacks),
+        };
+        let mut adapter = NativeBarStrategy::new(strategy, warmup_context());
+        adapter.initialize().unwrap();
+        adapter.on_start().unwrap();
+        let fast = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let slow = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+
+        assert!(adapter
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &fast, 110, 0)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            adapter
+                .on_bar_orders_checked(
+                    &[Bar::new(100, 1, 1, 1, 1, 1), Bar::new(110, 1, 1, 1, 1, 1)],
+                    &fast,
+                    120,
+                    0,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(adapter
+            .on_bar_orders_checked(&[Bar::new(105, 1, 1, 1, 1, 1)], &slow, 130, 0)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            adapter
+                .on_bar_orders_checked(
+                    &[Bar::new(105, 1, 1, 1, 1, 1), Bar::new(115, 1, 1, 1, 1, 1)],
+                    &slow,
+                    140,
+                    0,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            callbacks
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|callback| callback.starts_with("ready:"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn native_bar_strategy_notifies_zero_warmup_once_after_start() {
+        let callbacks = Arc::new(Mutex::new(Vec::new()));
+        let strategy = WarmupStrategy {
+            required: 0,
+            ready: false,
+            callbacks: Arc::clone(&callbacks),
+        };
+        let mut adapter = NativeBarStrategy::new(strategy, warmup_context());
+        adapter.initialize().unwrap();
+        adapter.initialize().unwrap();
+        adapter.on_start().unwrap();
+        adapter.on_start().unwrap();
+        assert_eq!(*callbacks.lock().unwrap(), vec!["ready::0"]);
+    }
+
+    #[test]
+    fn native_bar_strategy_fails_stop_when_declared_warmup_is_incomplete() {
+        let strategy = WarmupStrategy {
+            required: 2,
+            ready: false,
+            callbacks: Arc::new(Mutex::new(Vec::new())),
+        };
+        let mut adapter = NativeBarStrategy::new(strategy, warmup_context());
+        adapter.initialize().unwrap();
+        adapter.on_start().unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        adapter
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &instrument, 110, 0)
+            .unwrap();
+        let error = adapter.on_stop().unwrap_err().to_string();
+        assert!(error.contains("1/2"));
     }
 }

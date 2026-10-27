@@ -248,6 +248,7 @@ fn deterministic_adjustment_entries(size: usize) -> Vec<LedgerEntry> {
             position_side: None,
 
             leverage: None,
+            exact_amounts: None,
         })
         .collect()
 }

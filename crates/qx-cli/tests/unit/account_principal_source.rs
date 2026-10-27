@@ -70,6 +70,7 @@ fn account_registry_is_the_per_strategy_backtest_principal_source() {
         id: "research-a".into(),
         settlement_currency: Some("USDT".into()),
         initial_cash_raw: Some(PRINCIPAL_RAW),
+        portfolio_id: None,
     });
     let base = account_base_from_config(&config).unwrap();
     assert_eq!(base.cash.raw(), PRINCIPAL_RAW);

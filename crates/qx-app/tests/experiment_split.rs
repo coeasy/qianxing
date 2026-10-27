@@ -12,7 +12,7 @@ use qx_app::{
     run_experiment, AppErrorCategory, BacktestFillModel, CallerCapability,
     ExecutionCostSensitivityScenario, ExperimentEarlyPruningPlan, ExperimentParameterRange,
     ExperimentParameterSpace, ExperimentSearchAlgorithm, ExperimentSearchPlan, ExperimentSplitPlan,
-    RunContext, RunExperimentSpec,
+    RunContext, RunExperimentResult, RunExperimentSpec,
 };
 use qx_core::SCALE;
 use qx_xingban::{AshareRuleConfig, ExecutionCostRules};
@@ -286,13 +286,41 @@ fn existing_experiment_report_is_bound_to_the_actual_barframe() {
     let mut legacy: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&first.artifact_path).expect("read report"))
             .expect("report JSON");
+    let legacy_index = std::path::Path::new(&spec.base.output_dir)
+        .join(&spec.experiment_id)
+        .join(format!("{}.experiment.json", spec.experiment_id));
     legacy
         .as_object_mut()
         .unwrap()
         .remove("input_data_fingerprint");
-    std::fs::write(&first.artifact_path, legacy.to_string()).expect("write legacy report");
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("canonical_run_spec_json");
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("canonical_run_spec_fingerprint");
+    for field in [
+        "result_hash",
+        "run_manifest",
+        "run_record",
+        "artifact_locations",
+    ] {
+        legacy.as_object_mut().unwrap().remove(field);
+    }
+    legacy["artifact_path"] = serde_json::json!(legacy_index.to_string_lossy());
+    std::fs::write(&legacy_index, legacy.to_string()).expect("write legacy report");
     let reused = run_experiment(&spec, &research("input-identity")).expect("legacy reuse");
-    assert_eq!(reused.input_data_fingerprint, None);
+    assert_eq!(reused.input_data_fingerprint, first.input_data_fingerprint);
+    assert!(reused
+        .run_manifest
+        .as_deref()
+        .is_some_and(|path| std::path::Path::new(path).is_file()));
+    assert!(reused
+        .run_record
+        .as_deref()
+        .is_some_and(|path| std::path::Path::new(path).is_file()));
 
     let mut changed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&bars).unwrap()).unwrap();
@@ -301,6 +329,140 @@ fn existing_experiment_report_is_bound_to_the_actual_barframe() {
     let error = run_experiment(&spec, &research("input-identity"))
         .expect_err("same experiment id cannot return stale results for changed bars");
     assert_eq!(error.category(), AppErrorCategory::Conflict);
+}
+
+#[test]
+fn experiment_canonical_identity_is_path_free_and_verified_on_readback() {
+    let first_root = scratch("experiment-canonical-first");
+    let first_bars = write_frame(&first_root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let first_spec = spec_with(
+        "canonical-first",
+        &first_bars,
+        &first_root,
+        None,
+        Vec::new(),
+    );
+    let first = run_experiment(&first_spec, &research("canonical-first"))
+        .expect("first path-independent experiment");
+    assert!(first.result_hash.is_some());
+    assert!(first
+        .run_manifest
+        .as_deref()
+        .is_some_and(|path| std::path::Path::new(path).is_file()));
+    assert!(first
+        .run_record
+        .as_deref()
+        .is_some_and(|path| std::path::Path::new(path).is_file()));
+    let input_spec_path = first
+        .artifact_locations
+        .as_ref()
+        .and_then(|locations| locations.get("experiment_input"))
+        .expect("full parameter experiment spec sidecar");
+    assert!(std::path::Path::new(input_spec_path).is_file());
+    let first_value = serde_json::to_value(&first).expect("experiment result value");
+    qx_app::artifact_store::verify_declared_run_record_with_reader(
+        &first_value,
+        &qx_app::artifact_store::FileArtifactReader,
+    )
+    .expect("RunRecord V2 binds the report and manifest");
+    let input_spec_bytes = std::fs::read(input_spec_path).expect("read input spec sidecar");
+    let mut changed_input_spec = input_spec_bytes.clone();
+    changed_input_spec.push(b' ');
+    std::fs::write(input_spec_path, changed_input_spec).expect("tamper input spec sidecar");
+    assert!(
+        qx_app::artifact_store::verify_declared_run_record_with_reader(
+            &first_value,
+            &qx_app::artifact_store::FileArtifactReader,
+        )
+        .is_err()
+    );
+    std::fs::write(input_spec_path, input_spec_bytes).expect("restore input spec sidecar");
+    qx_app::artifact_store::verify_declared_run_manifest_with_reader(
+        &first_value,
+        &qx_app::artifact_store::FileArtifactReader,
+    )
+    .expect("RunManifest binds the canonical experiment identity");
+    let report_path = first
+        .artifact_locations
+        .as_ref()
+        .unwrap()
+        .get("experiment_report")
+        .unwrap();
+    let report_bytes = std::fs::read(report_path).expect("read immutable report");
+    let mut changed_report = report_bytes.clone();
+    changed_report.push(b' ');
+    std::fs::write(report_path, changed_report).expect("tamper immutable report");
+    assert!(
+        qx_app::artifact_store::verify_declared_run_record_with_reader(
+            &first_value,
+            &qx_app::artifact_store::FileArtifactReader,
+        )
+        .is_err()
+    );
+    std::fs::write(report_path, report_bytes).expect("restore immutable report");
+
+    let manifest_path = first.run_manifest.as_deref().unwrap();
+    let manifest_bytes = std::fs::read(manifest_path).expect("read manifest");
+    let mut changed_manifest = manifest_bytes.clone();
+    changed_manifest.push(b' ');
+    std::fs::write(manifest_path, changed_manifest).expect("tamper manifest");
+    assert!(
+        qx_app::artifact_store::verify_declared_run_manifest_with_reader(
+            &first_value,
+            &qx_app::artifact_store::FileArtifactReader,
+        )
+        .is_err()
+    );
+    std::fs::write(manifest_path, manifest_bytes).expect("restore manifest");
+    let canonical_json = first
+        .canonical_run_spec_json
+        .as_deref()
+        .expect("canonical run spec");
+    assert!(first.canonical_run_spec_fingerprint.is_some());
+    assert!(!canonical_json.contains("bars.json"));
+    assert!(!canonical_json.contains("canonical-first"));
+    assert!(!canonical_json.contains("run_id"));
+    assert!(!canonical_json.contains("output_dir"));
+    assert!(canonical_json.contains("\"content_fingerprint\":\"barframe:"));
+
+    let second_root = scratch("experiment-canonical-second");
+    let second_bars = write_frame(&second_root, "other-bars.json", "BTCUSDT.BINANCE", 60);
+    let second_spec = spec_with(
+        "canonical-second",
+        &second_bars,
+        &second_root,
+        None,
+        Vec::new(),
+    );
+    let second = run_experiment(&second_spec, &research("canonical-second"))
+        .expect("same inputs at another path");
+    assert_eq!(
+        first.canonical_run_spec_fingerprint,
+        second.canonical_run_spec_fingerprint
+    );
+
+    let mut changed_spec = second_spec;
+    let changed_root = scratch("experiment-canonical-changed");
+    changed_spec.experiment_id = "canonical-changed".into();
+    changed_spec.base.output_dir = changed_root.join("out").to_string_lossy().into_owned();
+    changed_spec.base.fill_model = Some(BacktestFillModel::BestPrice);
+    let changed = run_experiment(&changed_spec, &research("canonical-changed"))
+        .expect("changed execution assumption");
+    assert_ne!(
+        second.canonical_run_spec_fingerprint,
+        changed.canonical_run_spec_fingerprint
+    );
+
+    let mut tampered = first.to_json().expect("serialize verified result");
+    let mut value: serde_json::Value = serde_json::from_str(&tampered).unwrap();
+    value["canonical_run_spec_fingerprint"] = serde_json::json!("0000000000000000");
+    tampered = value.to_string();
+    assert_eq!(
+        RunExperimentResult::from_json(&tampered)
+            .expect_err("tampered canonical identity rejected")
+            .category(),
+        AppErrorCategory::StorageFailure
+    );
 }
 
 #[test]
@@ -1110,8 +1272,16 @@ fn tpe_search_is_seeded_and_never_uses_test_window_scores_to_propose_candidates(
         .iter()
         .all(|trial| trial.proposal == "tpe"));
     assert_eq!(
-        search_a.trials.iter().map(|trial| (&trial.parameters, trial.training_score_bps)).collect::<Vec<_>>(),
-        search_b.trials.iter().map(|trial| (&trial.parameters, trial.training_score_bps)).collect::<Vec<_>>(),
+        search_a
+            .trials
+            .iter()
+            .map(|trial| (&trial.parameters, trial.training_score_bps))
+            .collect::<Vec<_>>(),
+        search_b
+            .trials
+            .iter()
+            .map(|trial| (&trial.parameters, trial.training_score_bps))
+            .collect::<Vec<_>>(),
         "changing every test-window price cannot change candidate proposals or their training scores"
     );
     let folds = a.out_of_sample.unwrap().folds;

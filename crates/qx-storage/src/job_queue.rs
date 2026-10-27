@@ -29,7 +29,14 @@ pub trait JobQueueBackend {
         existing: &QueuedJob,
         incoming: &QueuedJob,
     ) -> Result<(), StorageError> {
-        if existing.job == incoming.job && existing.run == incoming.run {
+        // Re-enqueueing the same stable run after a worker restart must preserve
+        // the durable run state already stored in the queue. Status, retry and
+        // timestamps may have advanced, while the task/run identity remains fixed.
+        let same_run_identity = existing.run.run_id == incoming.run.run_id
+            && existing.run.job_id == incoming.run.job_id
+            && existing.run.trading_day == incoming.run.trading_day
+            && existing.run.manifest_digest == incoming.run.manifest_digest;
+        if existing.job == incoming.job && same_run_identity {
             return Ok(());
         }
         Err(StorageError::Conflict(format!(

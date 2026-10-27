@@ -150,6 +150,9 @@
         "min_notional_raw": {
           "type": "integer",
           "minimum": 0
+        },
+        "exact_rules": {
+          "$ref": "#/$defs/ExactTradingRules"
         }
       }
     },
@@ -593,12 +596,47 @@
         },
         "reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "strategy": {
           "$ref": "#/$defs/BuiltinStrategySpec"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "reserved_capital_exact"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reserved_capital_raw": {
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "required": [
+                "reserved_capital_exact"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "reserved_capital_raw": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "PortfolioBacktestConfig": {
@@ -614,7 +652,10 @@
         },
         "primary_reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "primary_reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "additional_strategies": {
           "type": "array",
@@ -624,6 +665,38 @@
           }
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "primary_reserved_capital_exact"
+            ]
+          },
+          "then": {
+            "properties": {
+              "primary_reserved_capital_raw": {
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "required": [
+                "primary_reserved_capital_exact"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "primary_reserved_capital_raw": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "ProtectiveExitSpec": {
@@ -889,14 +962,18 @@
         },
         "settlement_ts": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 18446744073709551615,
-          "multipleOf": 28800000
+          "minimum": 1,
+          "maximum": 18446744073709551615
         },
         "rate_bps": {
           "type": "integer",
           "minimum": -9223372036854775808,
           "maximum": 9223372036854775807
+        },
+        "funding_interval_ms": {
+          "type": "integer",
+          "minimum": 60000,
+          "maximum": 86400000
         }
       }
     },
@@ -1089,7 +1166,10 @@
       ],
       "properties": {
         "schema_version": {
-          "const": 1
+          "enum": [
+            1,
+            2
+          ]
         },
         "run_id": {
           "type": "string",
@@ -1114,11 +1194,11 @@
         },
         "primary_initial_cash_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
         },
         "reference_initial_cash_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
         },
         "seed": {
           "type": "integer",
@@ -1270,9 +1350,170 @@
               "type": "null"
             }
           ]
+        },
+        "primary_initial_cash_exact": {
+          "$ref": "#/$defs/ExactDecimal",
+          "description": "Positive scale-aware principal; raw counterpart is its toward-zero 1e-9 projection.",
+          "allOf": [
+            {
+              "properties": {
+                "coefficient": {
+                  "pattern": "^[1-9][0-9]*$"
+                }
+              },
+              "required": [
+                "coefficient"
+              ]
+            }
+          ]
+        },
+        "reference_initial_cash_exact": {
+          "$ref": "#/$defs/ExactDecimal",
+          "description": "Positive scale-aware principal; raw counterpart is its toward-zero 1e-9 projection.",
+          "allOf": [
+            {
+              "properties": {
+                "coefficient": {
+                  "pattern": "^[1-9][0-9]*$"
+                }
+              },
+              "required": [
+                "coefficient"
+              ]
+            }
+          ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "primary_dataset_manifest_path": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "primary_dataset_manifest_path"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_dataset_manifest_path": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "reference_dataset_manifest_path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reference_dataset_manifest_path": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "reference_dataset_manifest_path"
+            ]
+          },
+          "then": {
+            "properties": {
+              "primary_dataset_manifest_path": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "primary_dataset_manifest_path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "funding_bps": {
+                "not": {
+                  "const": 0
+                }
+              }
+            },
+            "required": [
+              "funding_bps"
+            ]
+          },
+          "then": {
+            "properties": {
+              "funding_events": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 2
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          },
+          "then": {
+            "required": [
+              "primary_initial_cash_exact",
+              "reference_initial_cash_exact"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "primary_initial_cash_exact"
+                  ]
+                },
+                {
+                  "required": [
+                    "reference_initial_cash_exact"
+                  ]
+                }
+              ]
+            },
+            "properties": {
+              "primary_initial_cash_raw": {
+                "minimum": 1
+              },
+              "reference_initial_cash_raw": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "ExperimentParameterSpace": {
       "type": "object",
@@ -1304,6 +1545,53 @@
             "minimum": -170141183460469231731687303715884105728,
             "maximum": 170141183460469231731687303715884105727
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactTradingRules": {
+      "type": "object",
+      "required": [
+        "contract_size",
+        "price_tick",
+        "quantity_step",
+        "minimum_quantity",
+        "minimum_notional"
+      ],
+      "properties": {
+        "contract_size": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "price_tick": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "quantity_step": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_quantity": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_notional": {
+          "$ref": "#/$defs/ExactDecimal"
         }
       },
       "additionalProperties": false

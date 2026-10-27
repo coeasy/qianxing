@@ -183,6 +183,8 @@ pub fn scheduler_manifest(
         input_event_hash: format!("input-{now}"),
         output_event_hash: format!("output-{now}"),
         runtime_version: runtime_version.into(),
+        canonical_run_spec_json: None,
+        canonical_run_spec_fingerprint: None,
     }
 }
 

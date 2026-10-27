@@ -8,7 +8,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MANIFEST_NAME: &str = "multi-account-evidence.json";
 const RESULT_NAME: &str = "multi-account-result.json";
 const SPEC_NAME: &str = "multi-account-spec.json";
@@ -36,6 +37,15 @@ struct AccountEvidence {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AccountInputEvidence {
+    account_id: String,
+    path: String,
+    sha256: Option<String>,
+    missing: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MultiAccountEvidenceManifest {
     schema_version: u32,
     kind: String,
@@ -45,6 +55,8 @@ struct MultiAccountEvidenceManifest {
     result: FileDigest,
     spec: FileDigest,
     accounts: Vec<AccountEvidence>,
+    #[serde(default)]
+    inputs: Vec<AccountInputEvidence>,
 }
 
 struct StagingDirectory(PathBuf);
@@ -88,6 +100,7 @@ pub(crate) fn pack_multi_account_run(
         .map(|member| (member.account_id.as_deref().unwrap_or_default(), member))
         .collect::<BTreeMap<_, _>>();
     let mut accounts = Vec::with_capacity(result.summary.accounts_succeeded);
+    let mut inputs = Vec::with_capacity(spec.runs.len());
     let mut portable_result = result.clone();
     let mut portable_spec = spec.clone();
     for run in result.runs.iter().filter(|run| run.outcome.is_some()) {
@@ -137,12 +150,13 @@ pub(crate) fn pack_multi_account_run(
         };
         verify_member_evidence(run, outcome, member, portable_evidence)?;
         let relative_dataset = validate_portable_relative(&portable_evidence.dataset.path)?;
+        let bars_path = format!("{evidence_dir}/{relative_dataset}");
         let packaged_member = portable_spec
             .runs
             .iter_mut()
             .find(|candidate| candidate.account_id.as_deref() == Some(run.account_id.as_str()))
             .ok_or("便携规格中缺少成功账户")?;
-        packaged_member.bars_path = format!("{evidence_dir}/{relative_dataset}");
+        packaged_member.bars_path = bars_path.clone();
         packaged_member.output_dir = format!("{evidence_dir}/replay-output");
         let packaged_run = portable_result
             .runs
@@ -169,6 +183,14 @@ pub(crate) fn pack_multi_account_run(
             packaged_run,
             portable_evidence,
         )?;
+        let packaged_bars = staging.0.join(&bars_path);
+        let bars_sha256 = qx_strategy::file_digest::sha256_file_hex(&packaged_bars)?;
+        inputs.push(AccountInputEvidence {
+            account_id: run.account_id.clone(),
+            path: bars_path,
+            sha256: Some(bars_sha256),
+            missing: false,
+        });
         let evidence_sha256 = qx_strategy::file_digest::sha256_file_hex(&portable_bundle)?;
         accounts.push(AccountEvidence {
             account_id: run.account_id.clone(),
@@ -182,6 +204,49 @@ pub(crate) fn pack_multi_account_run(
         });
     }
     accounts.sort_by(|left, right| left.account_id.cmp(&right.account_id));
+    for run in result.runs.iter().filter(|run| run.outcome.is_none()) {
+        let member = members
+            .get(run.account_id.as_str())
+            .ok_or_else(|| format!("失败账户 {} 不在批次规格中", run.account_id))?;
+        let evidence_dir = format!("accounts/{}/inputs", account_directory_id(&run.account_id));
+        let relative_bars = format!("{evidence_dir}/bars.json");
+        let packaged_path = staging.0.join(&relative_bars);
+        let parent = packaged_path.parent().ok_or("失败账户输入路径缺少父目录")?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建失败账户输入目录失败 {}: {error}", parent.display()))?;
+        let source = Path::new(&member.bars_path);
+        let (sha256, missing) = match std::fs::read(source) {
+            Ok(bytes) => {
+                write_new(&packaged_path, &bytes, "失败账户原始 BarFrame")?;
+                (Some(qx_strategy::sha256_hex(&bytes)), false)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, true),
+            Err(error) => {
+                return Err(format!(
+                    "读取失败账户 {} 的原始 BarFrame 失败 {}: {error}",
+                    run.account_id,
+                    source.display()
+                ));
+            }
+        };
+        let packaged_member = portable_spec
+            .runs
+            .iter_mut()
+            .find(|candidate| candidate.account_id.as_deref() == Some(run.account_id.as_str()))
+            .ok_or("便携规格中缺少失败账户")?;
+        packaged_member.bars_path = relative_bars.clone();
+        packaged_member.output_dir = format!(
+            "accounts/{}/replay-output",
+            account_directory_id(&run.account_id)
+        );
+        inputs.push(AccountInputEvidence {
+            account_id: run.account_id.clone(),
+            path: relative_bars,
+            sha256,
+            missing,
+        });
+    }
+    inputs.sort_by(|left, right| left.account_id.cmp(&right.account_id));
     let portable_result_bytes = serde_json::to_vec_pretty(&portable_result)
         .map_err(|error| format!("序列化便携多账户结果失败: {error}"))?;
     let portable_spec_bytes = serde_json::to_vec_pretty(&portable_spec)
@@ -211,6 +276,7 @@ pub(crate) fn pack_multi_account_run(
             sha256: qx_strategy::sha256_hex(&portable_spec_bytes),
         },
         accounts,
+        inputs,
     };
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("序列化多账户 Evidence manifest 失败: {error}"))?;
@@ -239,7 +305,7 @@ pub(crate) fn pack_multi_account_run(
     }))
 }
 
-pub(crate) fn verify_multi_account_run(bundle_dir: &Path) -> Result<(), String> {
+pub(crate) fn verify_multi_account_run(bundle_dir: &Path, recompute: bool) -> Result<(), String> {
     let root = bundle_dir
         .canonicalize()
         .map_err(|error| format!("解析多账户证据目录失败 {}: {error}", bundle_dir.display()))?;
@@ -252,8 +318,10 @@ pub(crate) fn verify_multi_account_run(bundle_dir: &Path) -> Result<(), String> 
             .map_err(|error| format!("读取批次 Evidence manifest 失败: {error}"))?,
     )
     .map_err(|error| format!("批次 Evidence manifest JSON 无效: {error}"))?;
-    if manifest.schema_version != SCHEMA_VERSION
-        || manifest.kind != "qianxing-multi-account-run-evidence"
+    if !matches!(
+        manifest.schema_version,
+        LEGACY_SCHEMA_VERSION | SCHEMA_VERSION
+    ) || manifest.kind != "qianxing-multi-account-run-evidence"
         || manifest.result.path != RESULT_NAME
         || manifest.spec.path != SPEC_NAME
     {
@@ -279,6 +347,7 @@ pub(crate) fn verify_multi_account_run(bundle_dir: &Path) -> Result<(), String> 
         return Err("Evidence manifest 与批次结果/规格身份不一致".into());
     }
     validate_successful_outcomes(&result, &spec)?;
+    verify_packaged_inputs(&root, &manifest, &spec, &result)?;
 
     let expected = result
         .runs
@@ -360,6 +429,9 @@ pub(crate) fn verify_multi_account_run(bundle_dir: &Path) -> Result<(), String> 
     if seen.len() != expected.len() {
         return Err("Evidence manifest 未覆盖全部成功账户".into());
     }
+    if recompute {
+        recompute_multi_account_run(&root, &manifest, &spec, &result)?;
+    }
     crate::print_machine_json(&serde_json::json!({
         "ok": true,
         "operation": "multi-account-run-evidence-verified",
@@ -367,9 +439,252 @@ pub(crate) fn verify_multi_account_run(bundle_dir: &Path) -> Result<(), String> 
         "verified_account_count": seen.len(),
         "failed_account_count": result.summary.accounts_failed,
         "input_identity_recomputed": true,
-        "result_recomputed": false,
+        "result_recomputed": recompute,
         "signed": false
     }))
+}
+
+fn recompute_multi_account_run(
+    package_root: &Path,
+    manifest: &MultiAccountEvidenceManifest,
+    packaged_spec: &MultiAccountBacktestSpec,
+    expected: &MultiAccountBacktestResult,
+) -> Result<(), String> {
+    let expected_manifest = expected
+        .run_manifest
+        .as_ref()
+        .ok_or("全失败或历史无父 RunManifest 的多账户批次不能声明独立复算")?;
+    if !expected_manifest
+        .code_commit
+        .eq_ignore_ascii_case(crate::build_identity::BUILD_REVISION)
+    {
+        return Err(format!(
+            "当前构建 revision={} 与多账户 Evidence 要求的 code_commit={} 不一致，拒绝独立复算",
+            crate::build_identity::BUILD_REVISION,
+            expected_manifest.code_commit
+        ));
+    }
+
+    let temp_root = std::env::temp_dir()
+        .canonicalize()
+        .map_err(|error| format!("解析多账户复算临时目录失败: {error}"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("读取多账户复算时钟失败: {error}"))?
+        .as_nanos();
+    let work_candidate = temp_root.join(format!(
+        "qx-multi-account-recompute-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&work_candidate).map_err(|error| {
+        format!(
+            "创建多账户隔离复算目录失败 {}: {error}",
+            work_candidate.display()
+        )
+    })?;
+    let staging = StagingDirectory(work_candidate.clone());
+    let work = work_candidate
+        .canonicalize()
+        .map_err(|error| format!("解析多账户隔离复算目录失败: {error}"))?;
+    if !work.starts_with(&temp_root) {
+        return Err("多账户隔离复算目录越出临时目录".into());
+    }
+
+    let mut spec = packaged_spec.clone();
+    for member in &mut spec.runs {
+        let account_id = member.account_id.as_deref().unwrap_or_default();
+        let input_evidence = manifest
+            .inputs
+            .iter()
+            .find(|input| input.account_id == account_id);
+        if expected.summary.accounts_failed > 0 && input_evidence.is_none() {
+            return Err("旧版多账户证据包没有失败账户输入清单，拒绝执行不完整的批次复算".into());
+        }
+        let relative = validate_portable_relative(&member.bars_path)?;
+        let input = match input_evidence {
+            Some(input) if input.missing => checked_missing_package_file(package_root, &relative)?,
+            Some(_) => checked_package_file(package_root, &relative)?,
+            None if expected.summary.accounts_failed == 0 => {
+                checked_package_file(package_root, &relative)?
+            }
+            None => return Err("多账户 Evidence 缺少账户输入清单".into()),
+        };
+        if !input_evidence.is_some_and(|evidence| evidence.missing) && !input.is_file() {
+            return Err(format!("账户 {} 的包内 BarFrame 不存在", account_id));
+        }
+        member.bars_path = input.to_string_lossy().into_owned();
+        member.output_dir = work
+            .join("accounts")
+            .join(account_directory_id(account_id))
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    let context =
+        qx_app::RunContext::new(qx_app::CallerCapability::Research, spec.batch_id.clone())
+            .with_code_commit(crate::build_identity::BUILD_REVISION);
+    let actual = qx_app::run_multi_account_backtest(&spec, &context)
+        .map_err(|error| format!("重新运行多账户批次失败: {}", error.to_json()))?;
+    qx_app::verify_multi_account_backtest_result(&actual)
+        .map_err(|error| format!("多账户复算结果自校验失败: {}", error.to_json()))?;
+    if actual.summary != expected.summary
+        || actual.spec_fingerprint != expected.spec_fingerprint
+        || actual.run_manifest.as_ref() != Some(expected_manifest)
+    {
+        return Err(format!(
+            "多账户 Evidence 独立复算不一致: expected={} actual={}",
+            expected_manifest.digest(),
+            actual
+                .run_manifest
+                .as_ref()
+                .map(|manifest| manifest.digest().to_string())
+                .unwrap_or_else(|| "missing".into())
+        ));
+    }
+    if actual.runs.len() != expected.runs.len()
+        || actual
+            .runs
+            .iter()
+            .zip(&expected.runs)
+            .any(|(actual, expected)| {
+                actual.account_id != expected.account_id
+                    || actual.outcome.as_ref().map(|outcome| {
+                        (
+                            outcome.run_id.as_str(),
+                            outcome.result_hash.as_str(),
+                            outcome.data_fingerprint.as_str(),
+                        )
+                    }) != expected.outcome.as_ref().map(|outcome| {
+                        (
+                            outcome.run_id.as_str(),
+                            outcome.result_hash.as_str(),
+                            outcome.data_fingerprint.as_str(),
+                        )
+                    })
+            })
+    {
+        return Err("多账户独立复算的账户顺序、状态或子结果身份不一致".into());
+    }
+    drop(staging);
+    Ok(())
+}
+
+fn verify_packaged_inputs(
+    root: &Path,
+    manifest: &MultiAccountEvidenceManifest,
+    spec: &MultiAccountBacktestSpec,
+    result: &MultiAccountBacktestResult,
+) -> Result<(), String> {
+    if manifest.schema_version == LEGACY_SCHEMA_VERSION {
+        if !manifest.inputs.is_empty() {
+            return Err("旧版多账户 Evidence manifest 不允许声明 inputs".into());
+        }
+        return Ok(());
+    }
+    if manifest.schema_version != SCHEMA_VERSION || manifest.inputs.len() != spec.runs.len() {
+        return Err("多账户 Evidence 输入清单必须逐账户覆盖整个批次".into());
+    }
+    let members = spec
+        .runs
+        .iter()
+        .map(|member| (member.account_id.as_deref().unwrap_or_default(), member))
+        .collect::<BTreeMap<_, _>>();
+    let outcomes = result
+        .runs
+        .iter()
+        .map(|run| (run.account_id.as_str(), run.outcome.is_some()))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    for input in &manifest.inputs {
+        if !seen.insert(input.account_id.as_str()) {
+            return Err(format!(
+                "多账户 Evidence 输入清单重复账户: {}",
+                input.account_id
+            ));
+        }
+        let member = members
+            .get(input.account_id.as_str())
+            .ok_or_else(|| format!("多账户 Evidence 输入包含未知账户: {}", input.account_id))?;
+        if input.path != member.bars_path {
+            return Err(format!(
+                "账户 {} 的输入路径与便携规格不一致",
+                input.account_id
+            ));
+        }
+        let relative = validate_portable_relative(&input.path)?;
+        let succeeded = outcomes
+            .get(input.account_id.as_str())
+            .copied()
+            .ok_or_else(|| format!("多账户结果缺少输入清单账户: {}", input.account_id))?;
+        if !succeeded
+            && input.path
+                != format!(
+                    "accounts/{}/inputs/bars.json",
+                    account_directory_id(&input.account_id)
+                )
+        {
+            return Err(format!(
+                "失败账户 {} 的便携输入路径不符合规范",
+                input.account_id
+            ));
+        }
+        match (input.missing, input.sha256.as_deref(), succeeded) {
+            (true, None, false) => {
+                checked_missing_package_file(root, &relative)?;
+            }
+            (false, Some(digest), _) if digest.len() == 64 => {
+                if !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(format!("账户 {} 的输入 SHA-256 格式无效", input.account_id));
+                }
+                let path = checked_package_file(root, &relative)?;
+                if !path.is_file() {
+                    return Err(format!(
+                        "账户 {} 的便携 BarFrame 不是文件",
+                        input.account_id
+                    ));
+                }
+                verify_digest(&path, digest, "账户 BarFrame 输入")?;
+            }
+            _ => {
+                return Err(format!(
+                    "账户 {} 的输入存在状态与结果状态不一致",
+                    input.account_id
+                ));
+            }
+        }
+    }
+    if seen.len() != members.len() {
+        return Err("多账户 Evidence 输入清单未覆盖全部账户".into());
+    }
+    Ok(())
+}
+
+fn checked_missing_package_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let resolved = crate::run_evidence_recompute::resolve_reference(root, relative)?;
+    let parent = resolved
+        .parent()
+        .ok_or_else(|| format!("包内缺失输入路径没有父目录: {relative}"))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("解析包内缺失输入父目录失败 {}: {error}", parent.display()))?;
+    if !canonical_parent.starts_with(root) {
+        return Err(format!("包内缺失输入路径逃逸出根目录: {relative}"));
+    }
+    match std::fs::symlink_metadata(&resolved) {
+        Ok(_) => return Err(format!("清单声明输入缺失，但包内文件仍存在: {relative}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "检查包内缺失输入路径失败 {}: {error}",
+                resolved.display()
+            ));
+        }
+    }
+    Ok(canonical_parent.join(
+        resolved
+            .file_name()
+            .ok_or_else(|| format!("包内缺失输入路径文件名无效: {relative}"))?,
+    ))
 }
 
 fn validate_successful_outcomes(

@@ -5,7 +5,7 @@ use super::multi_market::{MultiMarketBacktestMarket, MultiMarketBacktestOutcome}
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::InstrumentId;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MULTI_ACCOUNT_JOINT_BACKTEST_SCHEMA_VERSION: u32 = 1;
 pub const MAX_JOINT_ACCOUNTS: usize = 32;
@@ -106,6 +106,7 @@ impl MultiAccountJointBacktestSpec {
                 account_id: account.account_id.clone(),
                 settlement_currency: self.settlement_currency.clone(),
                 initial_cash_raw: account.initial_cash_raw,
+                initial_cash_exact: None,
                 seed: self.seed,
                 output_dir: self.output_dir.clone(),
                 markets: account.markets.clone(),
@@ -177,6 +178,18 @@ pub struct MultiAccountJointBacktestOutcome {
     pub equity_path: String,
     pub fills_path: String,
     pub artifact_path: String,
+    /// Parent RunManifest reference; absent only in historical v1 outcomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest_path: Option<String>,
+    /// Parent RunManifest result digest; absent only for historical joint reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_hash: Option<String>,
+    /// RunRecord V2 pointer; absent only for historical joint reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    /// Authorized storage locations for RunRecord V2 content IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<BTreeMap<String, String>>,
     pub accounts: Vec<JointAccountBacktestResult>,
 }
 

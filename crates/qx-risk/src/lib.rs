@@ -1,5 +1,6 @@
 use qx_core::{
-    Order, PositionMode, PositionSide, Price, QxError, QxResult, Side, TradingInstrumentSpec,
+    DecimalRounding, ExactDecimal, Order, PositionMode, PositionSide, Price, QxError, QxResult,
+    Side, TradingInstrumentSpec,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,6 +10,7 @@ pub mod rules;
 
 pub use pending_exposure::{
     pending_order_gross_notional, pending_order_gross_notional_at_reference_mark,
+    pending_order_gross_notional_exact, pending_order_gross_notional_exact_at_reference_mark,
 };
 
 pub use rules::{
@@ -151,6 +153,48 @@ pub struct OrderRiskContext {
     pub max_order_notional_raw: Option<i128>,
     pub max_position_notional_raw: Option<i128>,
     pub position: OrderRiskPosition,
+    /// Complete scale-aware account facts are required before the risk layer can evaluate an
+    /// exact order. Raw-only live snapshots deliberately do not populate this field.
+    pub exact: Option<ExactOrderRiskFacts>,
+}
+
+/// Position facts used when evaluating an order whose quantity or price exceeds the legacy
+/// 1e-9 grid. Gross notional includes all positions in the account/portfolio represented by the
+/// enclosing risk context; leg quantities identify the position affected by this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactOrderRiskPosition {
+    pub net_qty: ExactDecimal,
+    pub gross_notional: ExactDecimal,
+    pub long_qty: ExactDecimal,
+    pub short_qty: ExactDecimal,
+}
+
+impl ExactOrderRiskPosition {
+    pub fn active_qty_for(self, order: &Order) -> ExactDecimal {
+        let policy = order.policy.unwrap_or_default();
+        if policy.position_mode == PositionMode::Hedge {
+            match policy.position_side {
+                PositionSide::Long => self.long_qty,
+                PositionSide::Short => self.short_qty,
+                PositionSide::Net => self.net_qty,
+            }
+        } else {
+            self.net_qty
+        }
+    }
+}
+
+/// Scale-aware account and limit facts. `available_margin` and `position` must be populated
+/// from the same account snapshot/event sequence as the legacy risk context; stale or partial
+/// exact facts must not be used to admit an order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactOrderRiskFacts {
+    pub available_margin: Option<ExactDecimal>,
+    pub projected_initial_margin: Option<ExactDecimal>,
+    pub reference_price: Option<ExactDecimal>,
+    pub max_order_notional: Option<ExactDecimal>,
+    pub max_position_notional: Option<ExactDecimal>,
+    pub position: ExactOrderRiskPosition,
 }
 
 /// 统一订单级风控输出。
@@ -216,6 +260,12 @@ impl RiskEngine {
 impl OrderRiskContext {
     pub fn validate_order(&self, order: &Order) -> QxResult<()> {
         order.validate().map_err(QxError::BusinessViolation)?;
+        if order.exact_amounts.is_some() {
+            return self.validate_exact_order(order);
+        }
+        order
+            .require_legacy_amounts()
+            .map_err(QxError::BusinessViolation)?;
         let Some(spec) = self.instrument_spec.as_ref() else {
             if self.available_margin_raw.is_some()
                 || self.projected_initial_margin_raw.is_some()
@@ -296,6 +346,246 @@ impl OrderRiskContext {
         Ok(())
     }
 
+    fn validate_exact_order(&self, order: &Order) -> QxResult<()> {
+        let exact = self.exact.as_ref().ok_or_else(|| {
+            QxError::BusinessViolation(
+                "精确订单金额风控缺少同一账户快照的精确余额与持仓事实，拒绝提交".into(),
+            )
+        })?;
+        if exact.position.gross_notional.is_negative()
+            || exact.position.long_qty.is_negative()
+            || exact.position.short_qty.is_positive()
+        {
+            return Err(QxError::BusinessViolation(
+                "精确风险快照的总名义额或多空持仓方向非法".into(),
+            ));
+        }
+        let active_exact_position = exact.position.active_qty_for(order);
+        if self.position.active_qty_for(order)
+            != exact_to_raw_projection(active_exact_position, DecimalRounding::TowardZero)?
+        {
+            return Err(QxError::BusinessViolation(
+                "精确与兼容持仓快照不一致，拒绝使用精确订单风控".into(),
+            ));
+        }
+        if let (Some(raw), Some(available)) = (self.available_margin_raw, exact.available_margin) {
+            if raw != exact_to_raw_projection(available, DecimalRounding::TowardZero)? {
+                return Err(QxError::BusinessViolation(
+                    "精确与兼容可用保证金快照不一致".into(),
+                ));
+            }
+        }
+        if let (Some(raw), Some(projected)) = (
+            self.projected_initial_margin_raw,
+            exact.projected_initial_margin,
+        ) {
+            if raw != exact_to_raw_projection(projected, DecimalRounding::Ceiling)? {
+                return Err(QxError::BusinessViolation(
+                    "精确与兼容组合初始保证金投影不一致".into(),
+                ));
+            }
+        }
+        let spec = self.instrument_spec.as_ref().ok_or_else(|| {
+            QxError::BusinessViolation("精确订单风控缺少 TradingInstrumentSpec".into())
+        })?;
+        if order.instrument != spec.instrument {
+            return Err(QxError::BusinessViolation(
+                "精确订单标的与 TradingInstrumentSpec 不一致".into(),
+            ));
+        }
+        let policy = order.policy.unwrap_or_default();
+        policy.validate_for(spec)?;
+        let amounts = order
+            .exact_amounts
+            .ok_or_else(|| QxError::Invariant("精确风控订单缺少 exact_amounts".into()))?;
+        let limit_price = amounts.limit_price;
+        let price = limit_price
+            .or(exact.reference_price)
+            .ok_or_else(|| QxError::BusinessViolation("精确市价单风控缺少精确参考价".into()))?;
+        let rule_reference = exact.reference_price.or(Some(price));
+        let notional = if let Some(quote_budget) = amounts.quote_budget {
+            if order.side != Side::Buy
+                || spec.product != qx_core::TradingProduct::Spot
+                || policy.reduce_only
+                || !amounts.quantity.is_zero()
+                || limit_price.is_some()
+            {
+                return Err(QxError::BusinessViolation(
+                    "计价币预算订单仅支持非 reduce-only 的现货市价买入".into(),
+                ));
+            }
+            spec.validate_exact_quote_budget(quote_budget)?;
+            quote_budget
+        } else {
+            spec.validate_exact_order_with_reference(
+                amounts.quantity,
+                limit_price,
+                rule_reference,
+            )?;
+            spec.notional_exact(amounts.quantity, price)?
+        };
+        let raw_max_order = self
+            .max_order_notional_raw
+            .map(exact_from_raw)
+            .transpose()?;
+        let max_order = stricter_limit(exact.max_order_notional, raw_max_order)?;
+        if max_order.is_some_and(|limit| {
+            notional
+                .checked_cmp(limit)
+                .is_some_and(|ordering| ordering.is_gt())
+        }) {
+            return Err(QxError::BusinessViolation("订单名义额超过账户限额".into()));
+        }
+
+        self.validate_exact_reduce_only(order, exact.position)?;
+        let raw_max_position = self
+            .max_position_notional_raw
+            .map(exact_from_raw)
+            .transpose()?;
+        let max_position = stricter_limit(exact.max_position_notional, raw_max_position)?;
+        if let Some(limit) = max_position {
+            let (_, gross) = self.project_exposure_exact(spec, order, price, exact.position)?;
+            if gross
+                .checked_cmp(limit)
+                .is_some_and(|ordering| ordering.is_gt())
+            {
+                return Err(QxError::BusinessViolation(
+                    MAX_POSITION_NOTIONAL_MESSAGE.into(),
+                ));
+            }
+        }
+
+        let spot_sell_needs_no_cash_margin =
+            spec.product == qx_core::TradingProduct::Spot && order.side == Side::Sell;
+        if !spot_sell_needs_no_cash_margin && !policy.reduce_only {
+            let available = exact.available_margin.ok_or_else(|| {
+                QxError::BusinessViolation("精确订单缺少精确可用保证金快照".into())
+            })?;
+            if available.is_negative() {
+                return Err(QxError::BusinessViolation("可用保证金不能为负".into()));
+            }
+            let projected = match exact.projected_initial_margin {
+                Some(projected) => projected,
+                None if self.projected_initial_margin_raw.is_some() => {
+                    return Err(QxError::BusinessViolation(
+                        "精确订单缺少组合投影后的精确初始保证金".into(),
+                    ));
+                }
+                None => match amounts.quote_budget {
+                    Some(quote_budget) => quote_budget,
+                    None => spec.initial_margin_exact(amounts.quantity, price, policy.leverage)?,
+                },
+            };
+            if projected.is_negative() {
+                return Err(QxError::BusinessViolation("投影初始保证金不能为负".into()));
+            }
+            if projected
+                .checked_cmp(available)
+                .is_some_and(|ordering| ordering.is_gt())
+            {
+                return Err(QxError::BusinessViolation(
+                    "订单初始保证金超过账户可用保证金".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn project_exposure_exact(
+        &self,
+        spec: &TradingInstrumentSpec,
+        order: &Order,
+        price: ExactDecimal,
+        position: ExactOrderRiskPosition,
+    ) -> QxResult<(ExactDecimal, ExactDecimal)> {
+        if spec.instrument != order.instrument {
+            return Err(QxError::BusinessViolation(
+                "精确风控标的与 TradingInstrumentSpec 不一致".into(),
+            ));
+        }
+        let amounts = order
+            .exact_amounts
+            .ok_or_else(|| QxError::Invariant("精确风控订单缺少 exact_amounts".into()))?;
+        let current = position.active_qty_for(order);
+        if let Some(quote_budget) = amounts.quote_budget {
+            if order.side != Side::Buy || spec.product != qx_core::TradingProduct::Spot {
+                return Err(QxError::BusinessViolation(
+                    "计价币预算敞口只支持现货买入".into(),
+                ));
+            }
+            let current_notional = spec.notional_exact(exact_abs(current)?, price)?;
+            let other_notional = position
+                .gross_notional
+                .checked_sub(current_notional)
+                .ok_or_else(|| {
+                    QxError::BusinessViolation(
+                        "精确持仓总名义额小于目标标的当前名义额，风险快照不一致".into(),
+                    )
+                })?;
+            let projected_notional = current_notional
+                .checked_add(quote_budget)
+                .ok_or_else(|| QxError::Invariant("计价币预算投影名义额溢出".into()))?;
+            let gross = other_notional
+                .checked_add(projected_notional)
+                .ok_or_else(|| QxError::Invariant("精确投影总名义额溢出".into()))?;
+            return Ok((current, gross));
+        }
+        let delta = match order.side {
+            Side::Buy => amounts.quantity,
+            Side::Sell => amounts
+                .quantity
+                .checked_neg()
+                .ok_or_else(|| QxError::Invariant("精确订单数量取反溢出".into()))?,
+        };
+        let projected = current
+            .checked_add(delta)
+            .ok_or_else(|| QxError::Invariant("精确投影持仓数量溢出".into()))?;
+        let current_notional = spec.notional_exact(exact_abs(current)?, price)?;
+        let projected_notional = spec.notional_exact(exact_abs(projected)?, price)?;
+        let other_notional = position
+            .gross_notional
+            .checked_sub(current_notional)
+            .ok_or_else(|| {
+                QxError::BusinessViolation(
+                    "精确持仓总名义额小于目标标的当前名义额，风险快照不一致".into(),
+                )
+            })?;
+        let gross = other_notional
+            .checked_add(projected_notional)
+            .ok_or_else(|| QxError::Invariant("精确投影总名义额溢出".into()))?;
+        Ok((projected, gross))
+    }
+
+    fn validate_exact_reduce_only(
+        &self,
+        order: &Order,
+        position: ExactOrderRiskPosition,
+    ) -> QxResult<()> {
+        let policy = order.policy.unwrap_or_default();
+        if !policy.reduce_only {
+            return Ok(());
+        }
+        let current = position.active_qty_for(order);
+        let current_abs = exact_abs(current)?;
+        let reduces_direction = (current.is_positive() && order.side == Side::Sell)
+            || (current.is_negative() && order.side == Side::Buy);
+        let quantity = order
+            .exact_amounts
+            .ok_or_else(|| QxError::Invariant("精确 reduce_only 缺少订单数量".into()))?
+            .quantity;
+        if current.is_zero()
+            || !reduces_direction
+            || quantity
+                .checked_cmp(current_abs)
+                .is_none_or(|ordering| ordering.is_gt())
+        {
+            return Err(QxError::BusinessViolation(
+                "reduce_only 订单必须只减少目标持仓腿且不得反向穿仓".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 投影持仓名义额的唯一实现：返回 `(投影后净数量, 投影后组合 gross 名义额)`。
     ///
     /// `validate_order` 与规则链的 `MaxNotionalRule` 都调用本方法，名义额一律走
@@ -306,6 +596,9 @@ impl OrderRiskContext {
         order: &Order,
         price: Price,
     ) -> QxResult<(i128, i128)> {
+        order
+            .require_legacy_amounts()
+            .map_err(QxError::BusinessViolation)?;
         let current_qty = self.position.active_qty_for(order);
         let signed_delta = match order.side {
             Side::Buy => order.qty.raw(),
@@ -339,6 +632,15 @@ impl OrderRiskContext {
     /// reduce-only 不变式：不依赖产品规格与账户限额，规则链即使上下文缺规格
     /// 也必须先满足该条件，因此单独暴露给 [`crate::RuleSet`] 与上层门面复用。
     pub fn validate_reduce_only(&self, order: &Order) -> QxResult<()> {
+        if order.exact_amounts.is_some() {
+            let exact = self.exact.as_ref().ok_or_else(|| {
+                QxError::BusinessViolation("精确 reduce_only 缺少精确持仓风险事实".into())
+            })?;
+            return self.validate_exact_reduce_only(order, exact.position);
+        }
+        order
+            .require_legacy_amounts()
+            .map_err(QxError::BusinessViolation)?;
         let policy = order.policy.unwrap_or_default();
         if !policy.reduce_only {
             return Ok(());
@@ -358,10 +660,47 @@ impl OrderRiskContext {
     }
 }
 
+fn exact_from_raw(raw: i128) -> QxResult<ExactDecimal> {
+    ExactDecimal::from_parts(raw, 9).map_err(|error| QxError::Invariant(error.into()))
+}
+
+fn exact_to_raw_projection(value: ExactDecimal, rounding: DecimalRounding) -> QxResult<i128> {
+    let one = ExactDecimal::from_parts(1, 0).map_err(|error| QxError::Invariant(error.into()))?;
+    value
+        .checked_mul_at_scale(one, 9, rounding)
+        .and_then(|projected| projected.to_raw(9).ok())
+        .ok_or_else(|| QxError::Invariant("精确风险金额无法投影到兼容 raw 字段".into()))
+}
+
+fn stricter_limit(
+    exact_limit: Option<ExactDecimal>,
+    raw_limit: Option<ExactDecimal>,
+) -> QxResult<Option<ExactDecimal>> {
+    match (exact_limit, raw_limit) {
+        (Some(exact), Some(raw)) => exact
+            .checked_cmp(raw)
+            .map(|ordering| Some(if ordering.is_gt() { raw } else { exact }))
+            .ok_or_else(|| QxError::Invariant("精确风险限额比较失败".into())),
+        (Some(limit), None) | (None, Some(limit)) => Ok(Some(limit)),
+        (None, None) => Ok(None),
+    }
+}
+
+fn exact_abs(value: ExactDecimal) -> QxResult<ExactDecimal> {
+    if value.is_negative() {
+        value
+            .checked_neg()
+            .ok_or_else(|| QxError::Invariant("精确持仓绝对值溢出".into()))
+    } else {
+        Ok(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        OrderRiskContext, RiskDecision, RiskEngine, RiskSnapshot, ORDER_RISK_RULE_SET_VERSION,
+        ExactOrderRiskFacts, ExactOrderRiskPosition, OrderRiskContext, RiskDecision, RiskEngine,
+        RiskSnapshot, ORDER_RISK_RULE_SET_VERSION,
     };
     use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
     use std::collections::BTreeMap;
@@ -417,6 +756,7 @@ mod tests {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         let allowed = RiskEngine::evaluate_order(&OrderRiskContext::default(), &order);
         assert!(allowed.allowed);
@@ -438,6 +778,193 @@ mod tests {
         assert!(rejected.violations[0].contains("TradingInstrumentSpec"));
     }
 
+    #[test]
+    fn legacy_risk_boundary_rejects_exact_amounts_instead_of_treating_them_as_zero() {
+        use qx_core::{
+            ExactDecimal, ExactOrderAmounts, TradingInstrumentSpec, TradingProduct, SCALE,
+        };
+
+        let order = Order {
+            client_id: 4,
+            instrument: InstrumentId::parse("PEPE/USDT.OKX").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("1000.0000000001").unwrap(),
+                limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+                filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                quote_budget: None,
+                quote_filled: Default::default(),
+            }),
+        };
+        let rejected = RiskEngine::evaluate_order(&OrderRiskContext::default(), &order);
+        assert!(!rejected.allowed);
+        assert!(rejected
+            .violations
+            .iter()
+            .any(|error| error.contains("精确订单金额")));
+        assert!(OrderRiskContext::default()
+            .project_exposure(
+                &TradingInstrumentSpec {
+                    instrument: order.instrument.clone(),
+                    product: TradingProduct::Spot,
+                    base_currency: "PEPE".into(),
+                    quote_currency: "USDT".into(),
+                    settlement_currency: "USDT".into(),
+                    contract_size: SCALE,
+                    linear: false,
+                    inverse: false,
+                    price_tick: 1,
+                    qty_step: 1,
+                    min_qty: 1,
+                    min_notional_raw: 0,
+                    max_leverage: 1,
+                    maintenance_margin_bps: 0,
+                    valid_from: 1,
+                    valid_to: None,
+                    exact_rules: None,
+                },
+                &order,
+                Price::from_i64(1),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn exact_order_risk_validates_sub_nano_lot_tick_notional_and_margin() {
+        use qx_core::{
+            ExactDecimal, ExactOrderAmounts, ExactTradingRules, TradingInstrumentSpec,
+            TradingProduct, SCALE,
+        };
+
+        let instrument = InstrumentId::parse("PEPE/USDT.OKX").unwrap();
+        let price = ExactDecimal::parse("0.00000004").unwrap();
+        let order = Order {
+            client_id: 9,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("0.0000000003").unwrap(),
+                limit_price: Some(price),
+                filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                quote_budget: None,
+                quote_filled: Default::default(),
+            }),
+        };
+        let spec = TradingInstrumentSpec {
+            instrument,
+            product: TradingProduct::Spot,
+            base_currency: "PEPE".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(ExactTradingRules {
+                contract_size: ExactDecimal::parse("1").unwrap(),
+                price_tick: ExactDecimal::parse("0.00000001").unwrap(),
+                quantity_step: ExactDecimal::parse("0.0000000001").unwrap(),
+                minimum_quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+                minimum_notional: ExactDecimal::ZERO,
+            }),
+        };
+        let facts = ExactOrderRiskFacts {
+            available_margin: Some(ExactDecimal::parse("1").unwrap()),
+            projected_initial_margin: None,
+            reference_price: Some(price),
+            max_order_notional: Some(ExactDecimal::parse("0.00000000000000002").unwrap()),
+            max_position_notional: Some(ExactDecimal::parse("0.00000000000000002").unwrap()),
+            position: ExactOrderRiskPosition {
+                net_qty: ExactDecimal::ZERO,
+                gross_notional: ExactDecimal::ZERO,
+                long_qty: ExactDecimal::ZERO,
+                short_qty: ExactDecimal::ZERO,
+            },
+        };
+        let context = OrderRiskContext {
+            instrument_spec: Some(spec),
+            exact: Some(facts),
+            ..OrderRiskContext::default()
+        };
+
+        let allowed = RiskEngine::evaluate_order(&context, &order);
+        assert!(allowed.allowed, "{allowed:?}");
+        assert_eq!(allowed.reference_price_raw, Some(40));
+        assert_eq!(allowed.projected_position_raw, None);
+        assert_eq!(allowed.projected_margin_raw, None);
+
+        use super::{MaxQtyRule, NoShortRule, RiskRule};
+        assert!(MaxQtyRule { max_qty: 1 }.check(&context, &order).is_ok());
+        assert!(MaxQtyRule { max_qty: 0 }.check(&context, &order).is_err());
+        let mut sell = order.clone();
+        sell.side = Side::Sell;
+        assert!(NoShortRule.check(&context, &sell).is_err());
+        let mut held = context.clone();
+        held.exact.as_mut().unwrap().position.net_qty =
+            ExactDecimal::parse("0.0000000005").unwrap();
+        assert!(NoShortRule.check(&held, &sell).is_ok());
+        let mut reduce_only_close = sell.clone();
+        reduce_only_close.policy = Some(qx_core::OrderPolicy {
+            reduce_only: true,
+            ..qx_core::OrderPolicy::default()
+        });
+        assert!(held.validate_reduce_only(&reduce_only_close).is_ok());
+        reduce_only_close.exact_amounts.as_mut().unwrap().quantity =
+            ExactDecimal::parse("0.0000000006").unwrap();
+        assert!(held.validate_reduce_only(&reduce_only_close).is_err());
+
+        let mut mismatched_position = context.clone();
+        mismatched_position.position.net_qty = 1;
+        let rejected = RiskEngine::evaluate_order(&mismatched_position, &order);
+        assert!(!rejected.allowed);
+        assert!(rejected
+            .violations
+            .iter()
+            .any(|message| message.contains("持仓快照不一致")));
+
+        let mut insufficient = context.clone();
+        insufficient.exact.as_mut().unwrap().available_margin =
+            Some(ExactDecimal::parse("0.000000000000000001").unwrap());
+        let rejected = RiskEngine::evaluate_order(&insufficient, &order);
+        assert!(!rejected.allowed);
+        assert!(rejected
+            .violations
+            .iter()
+            .any(|message| message.contains("账户可用保证金")));
+
+        let mut stricter_legacy_limit = context;
+        stricter_legacy_limit.max_order_notional_raw = Some(0);
+        let rejected = RiskEngine::evaluate_order(&stricter_legacy_limit, &order);
+        assert!(!rejected.allowed);
+        assert!(rejected
+            .violations
+            .iter()
+            .any(|message| message.contains("订单名义额超过账户限额")));
+    }
+
     /// V13 R26：名义额规则缺规格即 fail-closed，不再合成临时现货规格。
     #[test]
     fn max_notional_rule_fails_closed_without_a_product_spec() {
@@ -457,6 +984,7 @@ mod tests {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         // 缺规格：拒绝，且理由点名缺的是 TradingInstrumentSpec。
         let bare = OrderRiskContext {
@@ -488,6 +1016,7 @@ mod tests {
                 maintenance_margin_bps: 0,
                 valid_from: 1,
                 valid_to: None,
+                exact_rules: None,
             }),
             ..OrderRiskContext::default()
         };
@@ -508,6 +1037,7 @@ mod tests {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         let context = OrderRiskContext {
             available_margin_raw: Some(50 * SCALE),
@@ -530,6 +1060,7 @@ mod tests {
                 maintenance_margin_bps: 500,
                 valid_from: 1,
                 valid_to: None,
+                exact_rules: None,
             }),
             ..OrderRiskContext::default()
         };
@@ -553,6 +1084,7 @@ mod tests {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         let context = OrderRiskContext {
             available_margin_raw: Some(0),
@@ -574,6 +1106,7 @@ mod tests {
                 maintenance_margin_bps: 0,
                 valid_from: 1,
                 valid_to: None,
+                exact_rules: None,
             }),
             ..OrderRiskContext::default()
         };

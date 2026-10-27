@@ -57,6 +57,7 @@ fn scoped_service() -> ApiService {
             multiplier: 1,
             position_side: None,
             leverage: None,
+            exact_amounts: None,
         }
     };
     let report = |worker_id: &str, account_id: &str, venue_id: &str| ReconcileReportSnapshot {
@@ -264,7 +265,7 @@ fn model_filter_routes_refuse_the_keys_their_data_cannot_honor() {
     );
 }
 
-/// #205 不能被读成"读面开始拒绝查询串"：带键的七条投影读面依旧按 `account_id`/`venue_id`
+/// #205 不能被读成"读面开始拒绝查询串"：带键的八条投影读面依旧按 `account_id`/`venue_id`
 /// 收窄，形状非法回 400、投影缺失回 404，走的不是上面那条通道（V13 R2 #191）。
 #[test]
 fn projection_scoped_routes_keep_their_own_key_contract() {
@@ -303,17 +304,18 @@ fn projection_scoped_routes_keep_their_own_key_contract() {
         .step_by(2)
         .chain(std::iter::once("/account/snapshot/diff"))
         .collect::<Vec<_>>();
-    // 取数区间一旦挪偏，这个循环会一颗判据都不发就过去：七条带键读面加 `diff` 共八条，缺一即红。
+    // 取数区间一旦挪偏，这个循环会一颗判据都不发就过去：八条带键读面加 `diff` 共九条，缺一即红。
     assert_eq!(
         refusal_scope.len(),
-        8,
+        9,
         "这一格的覆盖面挪了：{refusal_scope:?}"
     );
     for route in refusal_scope {
-        for (query, name) in [
-            ("?acount_id=ghost", "acount_id"),
-            ("?account_id=a&venue_id=paper&limit=10", "limit"),
-        ] {
+        let mut refused_queries = vec![("?acount_id=ghost", "acount_id")];
+        if route != "/account/activity" {
+            refused_queries.push(("?account_id=a&venue_id=paper&limit=10", "limit"));
+        }
+        for (query, name) in refused_queries {
             let response = service.handle("GET", &format!("{route}{query}"), "", 6);
             assert_eq!(
                 response.status, 400,
@@ -333,6 +335,21 @@ fn projection_scoped_routes_keep_their_own_key_contract() {
         !cursor.body.contains("不接受查询参数"),
         "事件读面认 `after`，它不能被上面那张表一起拒掉: {}",
         cursor.body
+    );
+    let activity_cursor = service.handle(
+        "GET",
+        "/account/activity?account_id=missing&venue_id=paper&after=0&limit=20",
+        "",
+        8,
+    );
+    assert_eq!(activity_cursor.status, 404, "合法分页键应进入账户投影查找");
+    assert!(
+        activity_cursor
+            .body
+            .contains("account_projection_not_found")
+            && !activity_cursor.body.contains("不接受查询参数"),
+        "账户活动读面接受 after/limit 并按缺失投影返回 404: {}",
+        activity_cursor.body
     );
 }
 
@@ -496,7 +513,7 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
         routes.iter().cloned().collect()
     };
     let filter_set = set(&filter);
-    assert_eq!(scoped.len(), 7, "带键读面是七条，见接口文档那段");
+    assert_eq!(scoped.len(), 8, "带键投影读面含七条兼容入口和账户活动报告");
     assert_eq!(filter.len(), 2, "模型过滤读面是两条：账簿流水与对账报告");
     assert_eq!(
         set(&keyless),

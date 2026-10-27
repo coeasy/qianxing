@@ -1,11 +1,18 @@
 use super::{Ledger, LedgerEntry, PositionState};
 use crate::identity::InstrumentId;
-use crate::numeric::{Money, Quantity};
+use crate::numeric::{ExactDecimal, Money, Quantity};
 use crate::trading::PositionSide;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 static EMPTY_CASH_BALANCES: OnceLock<BTreeMap<String, i128>> = OnceLock::new();
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ExactPositionState {
+    pub quantity: ExactDecimal,
+    pub average_entry: ExactDecimal,
+    pub realized_pnl: ExactDecimal,
+}
 
 impl Ledger {
     /// 返回账户所有币种的现金余额，按币种排序，供跨币种抵押品估值使用。
@@ -21,6 +28,40 @@ impl Ledger {
         self.cash
             .get(account_id)
             .unwrap_or_else(|| EMPTY_CASH_BALANCES.get_or_init(BTreeMap::new))
+    }
+
+    /// Exact cash by currency. Legacy entries are represented at their existing 1e9 scale;
+    /// exact entries retain their original decimal scale.
+    pub fn cash_balances_exact_for(&self, account_id: &str) -> BTreeMap<String, ExactDecimal> {
+        let mut balances = self
+            .cash_balances_for_ref(account_id)
+            .iter()
+            .map(|(currency, raw)| {
+                (
+                    currency.clone(),
+                    ExactDecimal::from_parts(*raw, 9).expect("legacy scale is supported"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        if let Some(currencies) = self.exact_cash.get(account_id) {
+            balances.extend(
+                currencies
+                    .iter()
+                    .map(|(currency, amount)| (currency.clone(), *amount)),
+            );
+        }
+        balances
+    }
+
+    pub fn cash_for_exact(&self, account_id: &str, currency: &str) -> ExactDecimal {
+        self.exact_cash
+            .get(account_id)
+            .and_then(|currencies| currencies.get(currency))
+            .copied()
+            .unwrap_or_else(|| {
+                ExactDecimal::from_parts(self.cash_for(account_id, currency), 9)
+                    .expect("legacy scale is supported")
+            })
     }
 
     pub fn position_for(&self, account_id: &str, instrument: &InstrumentId) -> PositionState {
@@ -66,6 +107,45 @@ impl Ledger {
             .and_then(|sides| sides.get(&side))
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn position_for_side_exact(
+        &self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        side: PositionSide,
+    ) -> ExactPositionState {
+        let state = if side == PositionSide::Net {
+            self.positions
+                .get(account_id)
+                .and_then(|positions| positions.get(instrument))
+        } else {
+            self.hedge_positions
+                .get(account_id)
+                .and_then(|positions| positions.get(instrument))
+                .and_then(|sides| sides.get(&side))
+        };
+        state.map_or(
+            ExactPositionState {
+                quantity: ExactDecimal::ZERO,
+                average_entry: ExactDecimal::ZERO,
+                realized_pnl: ExactDecimal::ZERO,
+            },
+            |state| ExactPositionState {
+                quantity: state.exact_quantity.unwrap_or_else(|| {
+                    ExactDecimal::from_parts(state.quantity.raw(), 9)
+                        .expect("legacy scale is supported")
+                }),
+                average_entry: state.exact_average_entry.unwrap_or_else(|| {
+                    ExactDecimal::from_parts(state.average_entry.raw(), 9)
+                        .expect("legacy scale is supported")
+                }),
+                realized_pnl: state.exact_realized_pnl.unwrap_or_else(|| {
+                    ExactDecimal::from_parts(state.realized_pnl.raw(), 9)
+                        .expect("legacy scale is supported")
+                }),
+            },
+        )
     }
 
     pub fn entries(&self) -> &[LedgerEntry] {

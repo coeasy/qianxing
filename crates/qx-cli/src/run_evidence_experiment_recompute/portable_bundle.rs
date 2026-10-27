@@ -18,12 +18,28 @@ pub(crate) use multi_market_bundle::{
     pack_multi_market_experiment, verify_multi_market_experiment_bundle,
 };
 
+#[path = "single_market_bundle.rs"]
+mod single_market_bundle;
+pub(crate) use single_market_bundle::{
+    pack_bar_experiment, pack_depth_experiment, verify_bar_experiment_bundle,
+    verify_depth_experiment_bundle,
+};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BundleFile {
     role: String,
     path: String,
     sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundleReference {
+    /// SHA-256 of a legacy storage locator. The locator itself can contain a private local path,
+    /// so portable packages store only its digest and the package-relative target.
+    locator_sha256: String,
+    path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -35,6 +51,8 @@ struct ExperimentEvidenceBundleManifest {
     code_commit: String,
     spec_fingerprint: String,
     files: Vec<BundleFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<BundleReference>,
 }
 
 fn package_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -121,7 +139,11 @@ fn read_and_verify_bundle(root: &Path) -> Result<ExperimentEvidenceBundleManifes
     if bundle.schema_version != BUNDLE_SCHEMA_VERSION
         || !matches!(
             bundle.kind.as_str(),
-            "multi-leg-experiment" | "multi-market-experiment" | "multi-market-depth-experiment"
+            "bar-experiment"
+                | "depth-experiment"
+                | "multi-leg-experiment"
+                | "multi-market-experiment"
+                | "multi-market-depth-experiment"
         )
     {
         return Err("实验包 schema_version 或 kind 不受支持".into());
@@ -149,6 +171,19 @@ fn read_and_verify_bundle(root: &Path) -> Result<ExperimentEvidenceBundleManifes
     ] {
         if !paths.contains(required) {
             return Err(format!("实验包缺少必需文件: {required}"));
+        }
+    }
+    let mut reference_ids = std::collections::BTreeSet::new();
+    for reference in &bundle.references {
+        if reference.locator_sha256.len() != 64
+            || !reference
+                .locator_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !reference_ids.insert(reference.locator_sha256.as_str())
+            || !paths.contains(reference.path.as_str())
+        {
+            return Err("实验包引用映射含无效摘要、重复 locator 或未登记文件".into());
         }
     }
     Ok(bundle)

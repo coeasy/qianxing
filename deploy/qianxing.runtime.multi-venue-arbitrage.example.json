@@ -24,13 +24,15 @@
       "credential_env": null
     },
     {
-      "id": "market-binance-spot",
+      "id": "market-binance-usdm",
       "role": "market_data",
       "enabled": true,
       "account_id": null,
       "venue_id": "binance",
-      "endpoint": "qianxing.ccxt.binance.spot.example.json",
-      "symbols": ["BTC/USDT.BINANCE"],
+      "endpoint": "qianxing.ccxt.binance.usdm.example.json",
+      "symbols": [
+        "BTC/USDT:USDT.BINANCE"
+      ],
       "credential_env": null
     },
     {
@@ -40,43 +42,50 @@
       "account_id": null,
       "venue_id": "okx",
       "endpoint": "qianxing.ccxt.okx.swap.example.json",
-      "symbols": ["BTC/USDT:USDT.OKX"],
+      "symbols": [
+        "BTC/USDT:USDT.OKX"
+      ],
       "credential_env": null
     },
     {
-      "id": "execution-binance-spot",
+      "id": "execution-binance-usdm",
       "role": "execution",
       "enabled": true,
-      "account_id": "main",
+      "account_id": "binance-usdm-sandbox",
       "venue_id": "binance",
-      "endpoint": "qianxing.ccxt.binance.spot.example.json",
-      "symbols": [],
+      "endpoint": "qianxing.ccxt.binance.usdm.example.json",
+      "symbols": [
+        "BTC/USDT:USDT.BINANCE"
+      ],
       "settlement_currency": "USDT",
       "credential_env": {
         "api_key": "QX_CCXT_BINANCE_API_KEY",
         "secret": "QX_CCXT_BINANCE_SECRET"
       },
-      "instrument_spec_path": "qianxing.binance.spot.spec.json"
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json"
     },
     {
       "id": "execution-okx-swap",
       "role": "execution",
       "enabled": true,
-      "account_id": "main",
+      "account_id": "okx-demo-swap",
       "venue_id": "okx",
       "endpoint": "qianxing.ccxt.okx.swap.example.json",
       "symbols": [],
       "settlement_currency": "USDT",
-      "credential_env": null,
-      "instrument_spec_path": "qianxing.ccxt.okx.perpetual.spec.json"
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      },
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json"
     },
     {
-      "id": "reconcile-binance-spot",
+      "id": "reconcile-binance-usdm",
       "role": "reconciler",
       "enabled": true,
-      "account_id": "main",
+      "account_id": "binance-usdm-sandbox",
       "venue_id": "binance",
-      "endpoint": "qianxing.ccxt.binance.spot.example.json",
+      "endpoint": "qianxing.ccxt.binance.usdm.example.json",
       "symbols": [],
       "settlement_currency": "USDT",
       "credential_env": {
@@ -88,21 +97,57 @@
       "id": "reconcile-okx-swap",
       "role": "reconciler",
       "enabled": true,
-      "account_id": "main",
+      "account_id": "okx-demo-swap",
       "venue_id": "okx",
       "endpoint": "qianxing.ccxt.okx.swap.example.json",
       "symbols": [],
       "settlement_currency": "USDT",
-      "credential_env": null
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      }
     },
     {
-      "id": "strategy-spot-futures",
+      "id": "spread-recovery-binance-usdm",
+      "role": "spread_recovery",
+      "enabled": true,
+      "account_id": "binance-usdm-sandbox",
+      "venue_id": "binance",
+      "endpoint": "qianxing.ccxt.binance.usdm.example.json",
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      }
+    },
+    {
+      "id": "spread-recovery-okx-swap",
+      "role": "spread_recovery",
+      "enabled": true,
+      "account_id": "okx-demo-swap",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.okx.swap.example.json",
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      }
+    },
+    {
+      "id": "strategy-cross-venue",
       "role": "strategy",
       "enabled": true,
-      "account_id": "main",
+      "account_id": "okx-demo-swap",
       "venue_id": "okx",
       "endpoint": null,
-      "symbols": ["BTC/USDT.BINANCE", "BTC/USDT:USDT.OKX"],
+      "symbols": [
+        "BTC/USDT:USDT.BINANCE",
+        "BTC/USDT:USDT.OKX"
+      ],
       "credential_env": null
     }
   ],
@@ -113,32 +158,44 @@
     "tick_interval_ms": 1000
   },
   "strategy": {
-    "id": "strategy-spot-futures",
-    "version": "spot-futures-arbitrage-v1",
+    "id": "strategy-cross-venue",
+    "version": "cross-venue-arbitrage-v1",
     "max_orders": 1000,
-    "account_id": "main",
+    "account_id": "okx-demo-swap",
     "venue_id": "okx",
     "instrument": "BTC/USDT:USDT.OKX",
     "target_qty": 0,
-    "live_enabled": true,
+    "live_enabled": false,
     "live_timeframe": "1m",
     "live_history_limit": 200,
     "live_closed_only": true,
-    "builtin_strategy": "spot_futures_arbitrage",
-    "builtin_quantity": 1000000000,
+    "builtin_strategy": "cross_venue_arbitrage",
+    "builtin_target_notional_raw": 100000000000,
     "builtin_period": 14,
     "builtin_threshold_bps": 30,
-    "builtin_reference_instrument": "BTC/USDT.BINANCE",
-    "builtin_reference_bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-spot.bar-frame.json",
-    "builtin_reference_margin_mode": "cash",
+    "builtin_reference_instrument": "BTC/USDT:USDT.BINANCE",
+    "builtin_reference_bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-binance.bar-frame.json",
+    "builtin_reference_margin_mode": "isolated",
     "builtin_reference_position_mode": "one_way",
-    "builtin_reference_leverage": 1,
-    "bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-swap.bar-frame.json",
+    "builtin_reference_leverage": 2,
+    "bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-okx.bar-frame.json",
     "product": "perpetual",
-    "margin_mode": "cross",
+    "margin_mode": "isolated",
     "position_mode": "one_way",
-    "leverage": 3,
+    "leverage": 2,
     "allow_short": true
   },
-  "shutdown_timeout_ms": 30000
+  "shutdown_timeout_ms": 30000,
+  "accounts": [
+    {
+      "settlement_currency": "USDT",
+      "portfolio_id": "multi-venue-demo",
+      "id": "binance-usdm-sandbox"
+    },
+    {
+      "settlement_currency": "USDT",
+      "portfolio_id": "multi-venue-demo",
+      "id": "okx-demo-swap"
+    }
+  ]
 }

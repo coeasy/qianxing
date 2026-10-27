@@ -12,7 +12,7 @@ import importlib.util
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -736,6 +736,62 @@ def _scaled(value: Any, field: str) -> int:
     return raw
 
 
+def _exact_decimal_wire(value: Any, field: str) -> tuple[dict[str, str | int], Decimal]:
+    """Encode the provider's decimal text without dropping digits beyond 1e-9."""
+    if value is None:
+        raise AshareProviderError(f"empty {field} value")
+    text = str(value).replace(",", "").strip()
+    try:
+        decimal = Decimal(text)
+    except InvalidOperation as exc:
+        raise AshareProviderError(f"invalid exact {field} value: {value!r}") from exc
+    if not decimal.is_finite():
+        raise AshareProviderError(f"invalid exact {field} value: {value!r}")
+
+    sign, digits, exponent = decimal.as_tuple()
+    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    if coefficient == 0:
+        return {"coefficient": "0", "scale": 0}, decimal
+    if sign:
+        coefficient = -coefficient
+
+    scale = -exponent
+    while scale > 0 and coefficient % 10 == 0:
+        coefficient //= 10
+        scale -= 1
+    if scale < 0:
+        decimal_places = -scale
+        if len(str(abs(coefficient))) + decimal_places > 39:
+            raise AshareProviderError(
+                f"exact {field} value exceeds the signed 128-bit coefficient range"
+            )
+        coefficient *= 10**decimal_places
+        scale = 0
+    if scale > 18:
+        raise AshareProviderError(
+            f"exact {field} value exceeds the supported 18 decimal places"
+        )
+    if not -(1 << 127) <= coefficient < (1 << 127):
+        raise AshareProviderError(
+            f"exact {field} value exceeds the signed 128-bit coefficient range"
+        )
+    return {"coefficient": str(coefficient), "scale": scale}, decimal
+
+
+def _exact_decimal_raw_projection(value: Mapping[str, str | int], field: str) -> int:
+    """Project v2 values to the legacy 1e-9 grid using the Rust contract's rule."""
+    coefficient = int(value["coefficient"])
+    scale = int(value["scale"])
+    if scale <= 9:
+        raw = coefficient * 10 ** (9 - scale)
+    else:
+        divisor = 10 ** (scale - 9)
+        raw = (abs(coefficient) // divisor) * (-1 if coefficient < 0 else 1)
+    if not -(1 << 127) <= raw < (1 << 127):
+        raise AshareProviderError(f"{field} raw projection exceeds the signed 128-bit range")
+    return raw
+
+
 def normalize_bar_rows(
     rows: Any,
     *,
@@ -751,7 +807,13 @@ def normalize_bar_rows(
     instrument = normalize_instrument(code)
     lower_bound = _timestamp(start) if start else None
     upper_bound = _timestamp(end) + 86_399_999 if end else None
-    dedup: dict[int, tuple[int, int, int, int, int]] = {}
+    dedup: dict[
+        int,
+        tuple[
+            tuple[int, int, int, int, int],
+            dict[str, dict[str, str | int]],
+        ],
+    ] = {}
     for row in _records(rows):
         timestamp_value = _pick(row, "ts")
         # Baostock 分钟结果通常同时提供 date/time；优先合并，避免所有分钟 K
@@ -763,13 +825,26 @@ def normalize_bar_rows(
             continue
         if upper_bound is not None and ts > upper_bound:
             continue
-        dedup[ts] = (
-            _scaled(_pick(row, "open"), "open"),
-            _scaled(_pick(row, "high"), "high"),
-            _scaled(_pick(row, "low"), "low"),
-            _scaled(_pick(row, "close"), "close"),
-            _scaled(_pick(row, "volume"), "volume"),
+        source_values = {
+            field: _pick(row, field)
+            for field in ("open", "high", "low", "close", "volume")
+        }
+        exact_pairs = {
+            field: _exact_decimal_wire(source_values[field], field)
+            for field in ("open", "high", "low", "close", "volume")
+        }
+        exact_values = {field: pair[0] for field, pair in exact_pairs.items()}
+        decimals = {field: pair[1] for field, pair in exact_pairs.items()}
+        prices = tuple(decimals[field] for field in ("open", "high", "low", "close"))
+        if min(prices) <= 0 or decimals["volume"] < 0:
+            raise AshareProviderError(f"invalid OHLCV value for {instrument} at {ts}")
+        if decimals["high"] < max(prices) or decimals["low"] > min(prices):
+            raise AshareProviderError(f"inconsistent OHLCV prices for {instrument} at {ts}")
+        raw_values = tuple(
+            _exact_decimal_raw_projection(exact_values[field], field)
+            for field in ("open", "high", "low", "close", "volume")
         )
+        dedup[ts] = (raw_values, exact_values)
     if not dedup:
         raise AshareProviderError(f"provider returned no bars for {instrument}")
     ordered = sorted(dedup.items())
@@ -777,11 +852,12 @@ def normalize_bar_rows(
         instrument=instrument,
         source=source,
         ts=tuple(item[0] for item in ordered),
-        open_raw=tuple(item[1][0] for item in ordered),
-        high_raw=tuple(item[1][1] for item in ordered),
-        low_raw=tuple(item[1][2] for item in ordered),
-        close_raw=tuple(item[1][3] for item in ordered),
-        volume_raw=tuple(item[1][4] for item in ordered),
+        open_raw=tuple(item[1][0][0] for item in ordered),
+        high_raw=tuple(item[1][0][1] for item in ordered),
+        low_raw=tuple(item[1][0][2] for item in ordered),
+        close_raw=tuple(item[1][0][3] for item in ordered),
+        volume_raw=tuple(item[1][0][4] for item in ordered),
+        exact_ohlcv=tuple(item[1][1] for item in ordered),
     )
     frame.validate()
     return frame

@@ -15,6 +15,9 @@ fn context(instrument: &InstrumentId) -> StrategyContext {
         venue_id: instrument.venue.to_string(),
         data_fingerprint: "bars-v1".into(),
         as_of: 1,
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         positions: BTreeMap::new(),
         cash: BTreeMap::new(),
         available_margin_raw: Some(1_000_000),
@@ -130,6 +133,7 @@ fn macd_signals_within_the_rolling_history_cap() {
                     low_raw: close - 1,
                     close_raw: close,
                     volume_raw: 1,
+                    exact_ohlcv: None,
                 },
             )
             .unwrap();
@@ -177,6 +181,7 @@ fn momentum_emits_a_target_order_after_warmup() {
                     low_raw: close,
                     close_raw: close,
                     volume_raw: 1,
+                    exact_ohlcv: None,
                 },
             )
             .unwrap();
@@ -231,6 +236,7 @@ fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior()
                     low_raw: close,
                     close_raw: close,
                     volume_raw: 1,
+                    exact_ohlcv: None,
                 },
             )
             .unwrap();
@@ -295,6 +301,7 @@ fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior()
                     low_raw: close,
                     close_raw: close,
                     volume_raw: 1,
+                    exact_ohlcv: None,
                 },
             )
             .expect("warmup bars do not calculate SMA sums early");
@@ -311,6 +318,7 @@ fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior()
                 low_raw: 1,
                 close_raw: 1,
                 volume_raw: 1,
+                exact_ohlcv: None,
             },
         )
         .is_err());
@@ -348,6 +356,7 @@ fn fixed_notional_sizing_uses_visible_price_and_emits_scaled_quantity() {
                     low_raw: close * qx_core::SCALE,
                     close_raw: close * qx_core::SCALE,
                     volume_raw: qx_core::SCALE,
+                    exact_ohlcv: None,
                 },
             )
             .unwrap();
@@ -395,6 +404,7 @@ fn available_margin_sizing_uses_a_fresh_context_snapshot() {
                         low_raw: close * qx_core::SCALE,
                         close_raw: close * qx_core::SCALE,
                         volume_raw: qx_core::SCALE,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap(),
@@ -474,6 +484,7 @@ fn every_builtin_strategy_survives_a_warmup_and_signal_cycle() {
                             low_raw: reference_close - 1,
                             close_raw: reference_close,
                             volume_raw: 1,
+                            exact_ohlcv: None,
                         },
                     )
                     .unwrap();
@@ -491,6 +502,7 @@ fn every_builtin_strategy_survives_a_warmup_and_signal_cycle() {
                         low_raw: close - 1,
                         close_raw: close,
                         volume_raw: 1,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap();

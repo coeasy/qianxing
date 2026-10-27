@@ -120,16 +120,19 @@ fn report_evidence_is_not_written_when_the_verification_chain_refuses() {
     let record_path = summary["run_record"]
         .as_str()
         .expect("v7 摘要要有 RunRecord");
-    let record =
-        qx_spec::RunRecord::from_json(&std::fs::read_to_string(record_path).unwrap()).unwrap();
-    let fills = record
-        .artifact_refs
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(record_path).unwrap()).unwrap();
+    let fills = record["artifact_refs"]
+        .as_array()
+        .unwrap()
         .iter()
-        .find(|artifact| artifact.name == "fills")
+        .find(|artifact| artifact["name"] == "fills")
         .expect("RunRecord 必须引用成交明细");
-    let mut bytes = std::fs::read(&fills.path).unwrap();
+    let fills_path = summary["artifact_locations"]["fills"].as_str().unwrap();
+    assert!(fills["artifact_id"].as_str().is_some());
+    let mut bytes = std::fs::read(fills_path).unwrap();
     bytes.extend_from_slice(b"tampered");
-    std::fs::write(&fills.path, bytes).unwrap();
+    std::fs::write(fills_path, bytes).unwrap();
 
     assert!(
         run_report_with_output(&runtime, false, false, true, None, &[]).is_err(),

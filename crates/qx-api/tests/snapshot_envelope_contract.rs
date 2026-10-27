@@ -1,7 +1,7 @@
 //! 快照包络必须满足**同一进程公布**的那份契约（V12 R4-h）。
 //!
 //! 缺陷形态：`/account/snapshot/envelope` 把 `AccountSnapshot` 的 serde 派生形状塞进
-//! `data`，而 `/schema/account-snapshot-v1` 公布的契约是 `to_json()` 线格式。派生形状
+//! `data`，而 `/schema/account-snapshot-v3` 公布的契约是 `to_json()` 线格式。派生形状
 //! 没有 `protocol`、没有顶层 `schema_version`，orders/fills 的 key 还从数字变成字符串
 //! —— 客户端照本进程自己的 schema 校验这份包络，第一道门就过不去。
 
@@ -31,16 +31,42 @@ fn get_json(service: &ApiService, path: &str) -> serde_json::Value {
 
 /// 取数点必须是路由本身，而不是编译期常量：客户端能读到的只有这条路由。
 fn published_schema(service: &ApiService) -> serde_json::Value {
-    let response = service.handle("GET", "/schema/account-snapshot-v1", "", 1);
+    let response = service.handle("GET", "/schema/account-snapshot-v3", "", 1);
     assert_eq!(response.status, 200, "契约路由必须可用");
     let schema: serde_json::Value =
         serde_json::from_str(&response.body).expect("公布的契约必须是 JSON");
     assert_eq!(
         schema["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v1.json"),
-        "契约路由必须真的在公布账户快照 schema，用例才谈得上按它校验"
+        Some("https://qianxing.dev/schema/account-snapshot-v3.json"),
+        "当前契约路由必须公布 v3 schema，用例才谈得上按它校验"
     );
     schema
+}
+
+#[test]
+fn v1_schema_endpoint_remains_a_legacy_contract() {
+    let service = service_with_snapshot();
+    let response = service.handle("GET", "/schema/account-snapshot-v1", "", 1);
+    assert_eq!(response.status, 200);
+    let schema: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 1);
+    assert_eq!(
+        schema["$id"].as_str(),
+        Some("https://qianxing.dev/schema/account-snapshot-v1.json")
+    );
+}
+
+#[test]
+fn v2_schema_endpoint_remains_a_legacy_contract() {
+    let service = service_with_snapshot();
+    let response = service.handle("GET", "/schema/account-snapshot-v2", "", 1);
+    assert_eq!(response.status, 200);
+    let schema: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 2);
+    assert_eq!(
+        schema["$id"].as_str(),
+        Some("https://qianxing.dev/schema/account-snapshot-v2.json")
+    );
 }
 
 #[test]

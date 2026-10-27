@@ -12,6 +12,11 @@ pub(crate) fn insert_static_app_routes(pairs: &mut BTreeSet<(String, String)>) {
         ),
         (
             "POST",
+            "/app/capabilities/query",
+            "capabilities::product_capability_query(body)",
+        ),
+        (
+            "POST",
             "/app/capabilities/providers/preflight",
             "capabilities::provider_preflight(body, provider_registry)",
         ),
@@ -19,6 +24,26 @@ pub(crate) fn insert_static_app_routes(pairs: &mut BTreeSet<(String, String)>) {
             "POST",
             "/app/research-artifacts",
             "research_artifacts::route(body, paths)",
+        ),
+        (
+            "POST",
+            "/app/read-provider-report",
+            "research_artifacts::provider_bar_report_route(body, paths)",
+        ),
+        (
+            "POST",
+            "/app/read-provider-depth-report",
+            "research_artifacts::provider_depth_report_route(body, paths)",
+        ),
+        (
+            "POST",
+            "/app/read-multi-account-joint-report",
+            "research_artifacts::multi_account_joint_report_route(",
+        ),
+        (
+            "POST",
+            "/app/read-multi-leg-report",
+            "research_artifacts::multi_leg_report_route(body, paths)",
         ),
     ] {
         let branch = format!("if let (\"{method}\", \"{route}\")");

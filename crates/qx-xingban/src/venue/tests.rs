@@ -33,7 +33,135 @@ fn reserved_order(qty: i64) -> Order {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
+}
+
+fn exact_order(client_id: u64, quantity: &str) -> Order {
+    Order {
+        client_id,
+        instrument: InstrumentId::parse("TEST.V").unwrap(),
+        side: qx_core::Side::Buy,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::Submitted,
+        filled: Quantity::ZERO,
+        account_id: "a".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity: qx_core::ExactDecimal::parse(quantity).unwrap(),
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: None,
+        }),
+    }
+}
+
+#[test]
+fn bar_matcher_fills_sub_nano_exact_quantity_and_retains_attempt_facts() {
+    let mut engine = BarMatchingEngine::new(
+        Box::new(crate::fill::NextBarOpenFillModel),
+        Box::new(qx_core::ZeroFeeModel),
+        1,
+    );
+    let quantity = qx_core::ExactDecimal::parse("0.0000000001").unwrap();
+    engine
+        .try_submit_at(exact_order(1, "0.0000000001"), 1)
+        .unwrap();
+
+    let bar = Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE);
+    let fills = engine.on_bar(&bar, bar.ts);
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].qty, Quantity::ZERO);
+    assert_eq!(fills[0].price, Price::ZERO);
+    assert_eq!(fills[0].exact_amounts.unwrap().quantity, quantity);
+    assert_eq!(
+        fills[0].exact_amounts.unwrap().price,
+        qx_core::ExactDecimal::parse("100").unwrap()
+    );
+    assert_eq!(engine.pending_count(), 0);
+
+    let attempt = &engine.execution_attempts()[0];
+    assert_eq!(attempt.requested_qty_exact, Some(quantity));
+    assert_eq!(attempt.filled_qty_exact, Some(quantity));
+    assert_eq!(
+        attempt.remaining_qty_exact,
+        Some(qx_core::ExactDecimal::ZERO)
+    );
+}
+
+#[test]
+fn exact_bar_participation_caps_share_volume_and_resume_partial_orders() {
+    let fill = crate::fill::BarVolumeParticipationLimit::new(
+        Box::new(crate::fill::NextBarOpenFillModel),
+        5_000,
+    )
+    .unwrap();
+    let mut engine = BarMatchingEngine::new(Box::new(fill), Box::new(qx_core::ZeroFeeModel), 1);
+    engine
+        .try_submit_at(exact_order(1, "0.0000000004"), 1)
+        .unwrap();
+    engine
+        .try_submit_at(exact_order(2, "0.0000000004"), 1)
+        .unwrap();
+
+    // Source volume is slightly above 1e-9 while its backwards-compatible raw projection is 1.
+    // The participation limit must use the exact source amount, not the rounded raw column.
+    let exact_volume = qx_core::ExactDecimal::parse("0.00000000100000001").unwrap();
+    let first_bar = Bar::new(2, SCALE, SCALE, SCALE, SCALE, 1)
+        .with_exact_ohlcv(qx_core::ExactOhlcv {
+            open: qx_core::ExactDecimal::parse("1").unwrap(),
+            high: qx_core::ExactDecimal::parse("1").unwrap(),
+            low: qx_core::ExactDecimal::parse("1").unwrap(),
+            close: qx_core::ExactDecimal::parse("1").unwrap(),
+            volume: exact_volume,
+        })
+        .unwrap();
+    let first = engine.on_bar(&first_bar, first_bar.ts);
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first[0].exact_amounts.unwrap().quantity,
+        qx_core::ExactDecimal::parse("0.0000000004").unwrap()
+    );
+    assert_eq!(
+        first[1].exact_amounts.unwrap().quantity,
+        qx_core::ExactDecimal::parse("0.000000000100000005").unwrap()
+    );
+    assert_eq!(engine.pending_count(), 1);
+    assert_eq!(
+        engine.execution_attempts()[1].reason,
+        ExecutionAttemptReason::BarParticipationPartial
+    );
+
+    let second_bar = Bar::new(3, SCALE, SCALE, SCALE, SCALE, 1)
+        .with_exact_ohlcv(qx_core::ExactOhlcv {
+            open: qx_core::ExactDecimal::parse("1").unwrap(),
+            high: qx_core::ExactDecimal::parse("1").unwrap(),
+            low: qx_core::ExactDecimal::parse("1").unwrap(),
+            close: qx_core::ExactDecimal::parse("1").unwrap(),
+            volume: exact_volume,
+        })
+        .unwrap();
+    let second = engine.on_bar(&second_bar, second_bar.ts);
+    assert_eq!(second.len(), 1);
+    assert_eq!(
+        second[0].exact_amounts.unwrap().quantity,
+        qx_core::ExactDecimal::parse("0.000000000299999995").unwrap()
+    );
+    assert_eq!(engine.pending_count(), 0);
+}
+
+#[test]
+fn legacy_fill_model_rejects_unrepresentable_exact_quantity_before_queuing() {
+    let mut engine = BarMatchingEngine::new(Box::new(HalfFill), Box::new(qx_core::ZeroFeeModel), 1);
+    let error = engine
+        .try_submit_at(exact_order(1, "0.0000000001"), 1)
+        .unwrap_err();
+    assert!(error.contains("不支持该精确数量精度"));
+    assert_eq!(engine.pending_count(), 0);
 }
 
 #[test]
@@ -45,7 +173,9 @@ fn pending_orders_hold_funding_until_filled() {
     );
     let mut order = reserved_order(1);
     order.limit = Some(Price::from_i64(50));
-    engine.submit_with_funding_reservation_at(order, 1, 100 * SCALE);
+    engine
+        .submit_with_funding_reservation_at(order, 1, 100 * SCALE)
+        .unwrap();
 
     let no_fill = Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE);
     assert!(engine.on_bar(&no_fill, no_fill.ts).is_empty());
@@ -63,7 +193,9 @@ fn pending_orders_hold_funding_until_filled() {
 #[test]
 fn partial_fills_release_only_the_filled_share_of_funding() {
     let mut engine = BarMatchingEngine::new(Box::new(HalfFill), Box::new(qx_core::ZeroFeeModel), 1);
-    engine.submit_with_funding_reservation_at(reserved_order(2), 1, 100 * SCALE);
+    engine
+        .submit_with_funding_reservation_at(reserved_order(2), 1, 100 * SCALE)
+        .unwrap();
     let bar = Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE);
 
     let first = engine.on_bar(&bar, bar.ts);
@@ -98,6 +230,7 @@ fn order_fills_on_next_bar_open() {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     e.submit(o);
     let bar = Bar::new(20, 100, 110, 90, 105, 1000);
@@ -172,6 +305,7 @@ fn default_fee_multiplier_charges_real_scale_fees() {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     e.submit(o);
     let bar = Bar::new(20, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 1_000);
@@ -204,6 +338,7 @@ fn fractional_fee_multiplier_stays_in_fixed_scale() {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     e.submit(o);
     let bar = Bar::new(20, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 1_000);
@@ -225,6 +360,7 @@ fn market_order(client_id: u64) -> Order {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -244,6 +380,7 @@ fn limit_order(client_id: u64, post_only: bool) -> Order {
             post_only: true,
             ..Default::default()
         }),
+        exact_amounts: None,
     }
 }
 
@@ -297,6 +434,7 @@ fn ashare_fees_charge_commission_stamp_and_transfer() {
             account_id: "a".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         });
         e.on_bar(&bar, 20)[0].fee.raw()
     };
@@ -328,6 +466,7 @@ fn latency_delays_order_eligibility() {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     e.submit_at(o, 0);
     assert!(e.on_bar(&Bar::new(4, 100, 100, 100, 100, 1), 4).is_empty());

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-error-v1.json",
+  "title": "Qianxing Strategy Error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "stage",
+    "strategy_id",
+    "strategy_version",
+    "timestamp",
+    "instrument",
+    "message"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "initialization",
+        "history_requirements",
+        "warmup_complete",
+        "start",
+        "market_event",
+        "order_update",
+        "fill_update",
+        "account_update",
+        "stop"
+      ]
+    },
+    "strategy_id": { "type": "string", "minLength": 1 },
+    "strategy_version": { "type": "string", "minLength": 1 },
+    "timestamp": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "null" }
+      ]
+    },
+    "instrument": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 16384 }
+  }
+}

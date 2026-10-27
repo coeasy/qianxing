@@ -1,4 +1,4 @@
-//! 地基规格对象（qx-spec）的进程内冒烟：八类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
+//! 地基规格对象（qx-spec）的进程内冒烟：九类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
 //!
 //! 规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §6.2 / §7）把
 //! ProjectManifest / DatasetManifest v2 / ExperimentSpec / RunRecord / CapabilityManifest /
@@ -35,7 +35,7 @@ pub(crate) fn verify_foundation_specs() -> Result<String, String> {
 
 /// `plan` 命令的唯一实现：读一份地基规格对象，按严格 schema 解析、自洽校验、算出稳定指纹。
 ///
-/// 这是八类「统一身份」文档对使用者开放的唯一读入口——`qx_spec::describe` 是同一份漏斗，
+/// 这是九类「统一身份」文档对使用者开放的唯一读入口——`qx_spec::describe` 是同一份漏斗，
 /// 这里只负责取文件、印摘要（`--json` 时改印规范化正文）。告警一律走 stderr，不污染 stdout。
 pub(crate) fn plan_readout(args: &PlanArgs) -> Result<(), String> {
     let payload = std::fs::read_to_string(&args.file)
@@ -73,7 +73,7 @@ fn corrupt(kind: FoundationKind, payload: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-/// 八类对象各一份最小合法夹具。
+/// 九类对象各一份最小合法夹具。
 fn fixture(kind: FoundationKind) -> Option<String> {
     let value = match kind {
         FoundationKind::Project => serde_json::json!({
@@ -249,6 +249,33 @@ fn fixture(kind: FoundationKind) -> Option<String> {
                 "golden_fixtures": ["crates/qx-strategy/tests/fixture.json"]
             }]
         }),
+        FoundationKind::CanonicalRunSpec => serde_json::json!({
+            "schema_version": 1,
+            "run_type": "bar_backtest",
+            "code_revision": "smoke-commit",
+            "strategies": [{
+                "strategy_id": "sma",
+                "strategy_version": "sma-v1",
+                "parameters": {"fast_window": 2, "slow_window": 3}
+            }],
+            "datasets": [{
+                "role": "bars",
+                "instrument": "DEMO.SIM",
+                "content_fingerprint": "barframe:smoke",
+                "start_ts_ms": 1,
+                "end_ts_ms": 2
+            }],
+            "market_rules": {"DEMO.SIM": "instrument-spec:none"},
+            "clock": {
+                "start_ts_ms": 1,
+                "end_ts_ms": 2,
+                "timestamp_unit": "unix_ms",
+                "timezone": "UTC"
+            },
+            "random_seed": "1",
+            "behavior": {"instrument": "DEMO.SIM", "seed": "1"},
+            "execution_model": {"runtime_version": "qx-cli-smoke"}
+        }),
     };
     Some(value.to_string())
 }
@@ -281,7 +308,7 @@ mod tests {
         }
     }
 
-    /// 八类地基对象都必须能被 `plan` 读入：这是「统一身份」对使用者开放的唯一入口。
+    /// 九类地基对象都必须能被 `plan` 读入：这是「统一身份」对使用者开放的唯一入口。
     #[test]
     fn plan_reads_every_foundation_kind() {
         for kind in FoundationKind::ALL {

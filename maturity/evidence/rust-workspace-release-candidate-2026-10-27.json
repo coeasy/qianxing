@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "rust-workspace-release-candidate-v1",
+  "generated_at_utc": "2026-10-27T08:33:44Z",
+  "source": {
+    "head_commit": "2643979d24421b7ab38e2ae0a7ca9db60920eade",
+    "working_tree_changes_included": true
+  },
+  "command": "cargo test --workspace --offline -j 1",
+  "environment": {
+    "os": "Windows 11 Pro build 22631",
+    "target": "x86_64-pc-windows-msvc",
+    "temporary_directory": ".codex-tmp-build"
+  },
+  "result": {
+    "exit_code": 0,
+    "test_targets_passed": 178,
+    "tests_passed": 2578,
+    "tests_failed": 0,
+    "tests_ignored": 2,
+    "rustfmt_check": "passed"
+  },
+  "limitations": [
+    "This records an uncommitted release candidate, not a published release.",
+    "Windows Microsandbox local VM acceptance is pending a Windows restart because WHP is enabled but the hypervisor is not active in the current boot."
+  ],
+  "release_status": "candidate_tests_passed_not_published"
+}

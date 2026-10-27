@@ -39,6 +39,20 @@ fn run(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+fn run_with_temp(args: &[&str], temp: &Path) -> (i32, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(args)
+        .env("TEMP", temp)
+        .env("TMP", temp)
+        .output()
+        .expect("start qx-cli with isolated temp directory");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 fn summary_path(root: &Path) -> PathBuf {
     let runs = root.join("runs");
     std::fs::read_dir(runs)
@@ -56,7 +70,8 @@ fn summary_path(root: &Path) -> PathBuf {
 #[test]
 fn depth_manifest_is_generated_bound_reported_and_rejects_quality_drift() {
     let root = temp_root();
-    let frame = fixture();
+    let frame = root.join("source-depth-frame.json");
+    std::fs::copy(fixture(), &frame).expect("copy DepthFrame into source workspace");
     let frame_text = frame.to_string_lossy().into_owned();
     let manifest = root.join("depth.dataset-manifest-v2.json");
     let manifest_text = manifest.to_string_lossy().into_owned();
@@ -102,6 +117,11 @@ fn depth_manifest_is_generated_bound_reported_and_rejects_quality_drift() {
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summary_path).expect("read quality-bound summary"))
             .expect("summary is JSON");
+    assert_eq!(summary["run_id"], "book-l2-sma_cross-BTCUSDT.BINANCE");
+    assert_eq!(
+        summary["manifest_run_id"],
+        "depth-backtest:l2:sma_cross:BTCUSDT.BINANCE"
+    );
     assert_eq!(
         summary["dataset_quality"]["quality_report"]["row_count"],
         80
@@ -151,6 +171,22 @@ fn depth_manifest_is_generated_bound_reported_and_rejects_quality_drift() {
         manifest_fingerprint
     );
 
+    let original_summary = std::fs::read(&summary_path).expect("read original summary bytes");
+    let mut tampered_summary = summary.clone();
+    tampered_summary["manifest_run_id"] = serde_json::json!("depth-backtest:tampered");
+    std::fs::write(
+        &summary_path,
+        serde_json::to_vec_pretty(&tampered_summary).expect("serialize tampered summary"),
+    )
+    .expect("write tampered summary");
+    let (code, _, stderr) = run(&["report", &summary_text, "--evidence"]);
+    assert_ne!(code, 0, "tampered manifest identity was accepted");
+    assert!(
+        stderr.contains("manifest.run_id 不一致"),
+        "tampered manifest identity was not identified precisely: {stderr}"
+    );
+    std::fs::write(&summary_path, original_summary).expect("restore original summary");
+
     let mut drifted = manifest_json;
     drifted["quality_report"]["missing_intervals"] = serde_json::json!(1);
     let drifted_manifest = root.join("drifted.dataset-manifest-v2.json");
@@ -184,5 +220,74 @@ fn depth_manifest_is_generated_bound_reported_and_rejects_quality_drift() {
         "rejected run left artifacts behind"
     );
 
-    let _ = std::fs::remove_dir_all(root);
+    let evidence_text = evidence_path.to_string_lossy().into_owned();
+    let recompute_temp = root.join("recompute-temp");
+    std::fs::create_dir_all(&recompute_temp).expect("create isolated recompute temp directory");
+    let local_verify = run_with_temp(
+        &["evidence", "verify-run", &evidence_text, "--recompute"],
+        &recompute_temp,
+    );
+    assert_eq!(
+        local_verify.0, 0,
+        "single-market depth evidence must independently recompute: {}",
+        local_verify.2
+    );
+
+    let portable_root = root.join("portable-depth-run");
+    let portable_root_text = portable_root.to_string_lossy().into_owned();
+    let exported = run(&[
+        "evidence",
+        "export-run",
+        &evidence_text,
+        "--output-dir",
+        &portable_root_text,
+    ]);
+    assert_eq!(
+        exported.0, 0,
+        "single-market depth run export failed: {}",
+        exported.2
+    );
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relocated_root = root.with_file_name(format!(
+        "qianxing-depth-quality-relocated-{}-{stamp}",
+        std::process::id()
+    ));
+    let relocated_temp = root.with_file_name(format!(
+        "qianxing-depth-quality-recompute-temp-{}-{stamp}",
+        std::process::id()
+    ));
+    assert_eq!(relocated_root.parent(), root.parent());
+    assert!(!relocated_root.starts_with(&root));
+    assert_eq!(relocated_temp.parent(), root.parent());
+    assert!(!relocated_temp.starts_with(&root));
+    std::fs::create_dir_all(&relocated_temp).expect("create relocated recompute temp directory");
+    std::fs::rename(&portable_root, &relocated_root)
+        .expect("move portable depth evidence outside source workspace");
+    std::fs::remove_dir_all(&root).expect("remove DepthFrame, quality manifest and run artifacts");
+
+    let relocated_bundle = relocated_root.join("evidence.json");
+    let relocated_bundle_text = relocated_bundle.to_string_lossy().into_owned();
+    let relocated_verify = run_with_temp(
+        &[
+            "evidence",
+            "verify-run",
+            &relocated_bundle_text,
+            "--recompute",
+        ],
+        &relocated_temp,
+    );
+    assert_eq!(
+        relocated_verify.0, 0,
+        "portable single-market depth recompute must not depend on the source workspace: {}",
+        relocated_verify.2
+    );
+    let relocated_result: serde_json::Value =
+        serde_json::from_str(&relocated_verify.1).expect("portable recompute emits JSON");
+    assert_eq!(relocated_result["result_recomputed"], true);
+    let _ = std::fs::remove_dir_all(relocated_root);
+    let _ = std::fs::remove_dir_all(relocated_temp);
 }

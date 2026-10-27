@@ -69,6 +69,7 @@ mod tests {
             account_id: "acct".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }
     }
 
@@ -86,6 +87,24 @@ mod tests {
         assert!(TestVenue::can_submit(&order(OrderStatus::PendingSubmit)));
         assert!(TestVenue::can_submit(&order(OrderStatus::Submitted)));
         assert!(!TestVenue::can_submit(&order(OrderStatus::Working)));
+    }
+
+    #[test]
+    fn common_order_lifecycle_accepts_well_formed_exact_values() {
+        use qx_core::{ExactDecimal, ExactOrderAmounts};
+
+        let mut order = order(OrderStatus::PendingSubmit);
+        order.qty = Quantity::ZERO;
+        order.limit = None;
+        order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+            limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+            filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            quote_budget: None,
+            quote_filled: Default::default(),
+        });
+        assert!(TestVenue::validate_order_spec(&order).is_ok());
     }
 
     #[test]

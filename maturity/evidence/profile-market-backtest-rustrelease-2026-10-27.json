@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "product_spec_bound_cli_backtest_proxy",
+  "generated_at_utc": "2026-10-27T00:37:00Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "824212a677cd4604d41e144bb6768c7ffdd34f7322f1434394b94c2c5ce9020c",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "ed6bfe0958520a68d8e5b3e21bc808fac5a3d72a74b3b7efe6d0b1d460414053",
+  "scenario": "qx-cli backtest builtin sma_cross with fixture instrument + TradingInstrumentSpec",
+  "resource_measurement": {
+    "peak_rss_field": "peak_rss_bytes",
+    "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+    "method": "Windows process PeakWorkingSetSize; Linux VmHWM; macOS 10ms RSS sampling",
+    "process_tree_method": "optional psutil 10ms aggregate RSS sampling across qx-cli and descendants",
+    "scope": "process tree excludes shared-system cache; tree RSS may miss short spikes"
+  },
+  "profile_coverage_claim": false,
+  "market_workloads": [
+    {
+      "fixture": "ashare-equity",
+      "market_domain": "A-share equity instrument",
+      "instrument": "600519.SSE",
+      "product": "spot",
+      "settlement_currency": "CNY",
+      "quantity": 100,
+      "runtime_config_sha256": "33b87111dc311b5a116c246b1cfedc03dee2a8e683ade66c13e5e01f61f12e16",
+      "market_spec_sha256": "c23c1ae88f1c0a8745375246ad17b514c3ebbe956be54943f67e670a203fed35",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 2.082,
+          "input_bytes": 80195,
+          "persisted_output_bytes": 67931,
+          "p50_ms": 518.77,
+          "p95_ms": 525.648,
+          "peak_rss_bytes_max": 13217792,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 10649600,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": null,
+          "process_tree_io_read_bytes_max": 247809,
+          "process_tree_io_write_bytes_max": 762,
+          "result_hash": "d9f11a369af99630",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 7.88,
+          "input_bytes": 627711,
+          "persisted_output_bytes": 466935,
+          "p50_ms": 770.045,
+          "p95_ms": 783.553,
+          "peak_rss_bytes_max": 38645760,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 31793152,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.039,
+          "process_tree_io_read_bytes_max": 1890357,
+          "process_tree_io_write_bytes_max": 762,
+          "result_hash": "2bb527deab50b154",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "cn-futures",
+      "market_domain": "Chinese futures instrument",
+      "instrument": "rb2510.SHFE",
+      "product": "future",
+      "settlement_currency": "CNY",
+      "quantity": 1,
+      "runtime_config_sha256": "1396addffb4316e163fcdbe55b4ebcb0d1e4d943e27995a737ef93c63e2e81f0",
+      "market_spec_sha256": "b467d26b57abdff6f8e9a8b961f2692c54571974fb9175062baff88b286e308e",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 1.679,
+          "input_bytes": 84085,
+          "persisted_output_bytes": 65355,
+          "p50_ms": 509.973,
+          "p95_ms": 517.099,
+          "peak_rss_bytes_max": 13242368,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 10776576,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": null,
+          "process_tree_io_read_bytes_max": 259456,
+          "process_tree_io_write_bytes_max": 758,
+          "result_hash": "fa629c4f36f63b37",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 7.234,
+          "input_bytes": 658785,
+          "persisted_output_bytes": 445829,
+          "p50_ms": 734.803,
+          "p95_ms": 758.528,
+          "peak_rss_bytes_max": 39350272,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 38674432,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.055,
+          "process_tree_io_read_bytes_max": 2878342,
+          "process_tree_io_write_bytes_max": 2357,
+          "result_hash": "942e7f3397028ffa",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "global-equity",
+      "market_domain": "global equity instrument",
+      "instrument": "AAPL.NASDAQ",
+      "product": "spot",
+      "settlement_currency": "USD",
+      "quantity": 1,
+      "runtime_config_sha256": "27e7766c0b5bfd1ce2f44d3574996df6fd53e784af426b9ff4df01afe6cc02ee",
+      "market_spec_sha256": "b20e92a587309e100b6ce44ae6fe8808f1650596c05bf77b1ceb1b70c3a7185f",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 1.71,
+          "input_bytes": 78198,
+          "persisted_output_bytes": 67938,
+          "p50_ms": 541.012,
+          "p95_ms": 549.198,
+          "peak_rss_bytes_max": 13230080,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 9670656,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": null,
+          "process_tree_io_read_bytes_max": 241075,
+          "process_tree_io_write_bytes_max": 764,
+          "result_hash": "6391c6d1ec716f14",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 6.974,
+          "input_bytes": 611714,
+          "persisted_output_bytes": 466940,
+          "p50_ms": 706.383,
+          "p95_ms": 714.053,
+          "peak_rss_bytes_max": 38719488,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 31805440,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.078,
+          "process_tree_io_read_bytes_max": 1842365,
+          "process_tree_io_write_bytes_max": 764,
+          "result_hash": "20dd65c6eca1a2e4",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "fx-cfd",
+      "market_domain": "FX/CFD instrument",
+      "instrument": "EURUSD.FX",
+      "product": "margin",
+      "settlement_currency": "USD",
+      "quantity": 1,
+      "runtime_config_sha256": "76c931d927cc6edc8e359afe92040f9a7edf644048c8b71d3e3d55bdfbb528fe",
+      "market_spec_sha256": "0fdc72c3870a0733d50784f8a6db3e38667079a930da9537da9acaa98580cbac",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 1.728,
+          "input_bytes": 72066,
+          "persisted_output_bytes": 69772,
+          "p50_ms": 504.715,
+          "p95_ms": 515.985,
+          "peak_rss_bytes_max": 13365248,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 11149312,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.031,
+          "process_tree_io_read_bytes_max": 286473,
+          "process_tree_io_write_bytes_max": 746,
+          "result_hash": "ec3b5ab89d145a8b",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 6.669,
+          "input_bytes": 562766,
+          "persisted_output_bytes": 482774,
+          "p50_ms": 711.346,
+          "p95_ms": 728.305,
+          "peak_rss_bytes_max": 39301120,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 33349632,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.117,
+          "process_tree_io_read_bytes_max": 2171574,
+          "process_tree_io_write_bytes_max": 746,
+          "result_hash": "2cb5bc457a68773c",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "crypto-spot",
+      "market_domain": "crypto spot instrument",
+      "instrument": "BTCUSDT.BINANCE",
+      "product": "spot",
+      "settlement_currency": "USDT",
+      "quantity": 1,
+      "runtime_config_sha256": "369ab83f0bd13811760e0be8cd9b9a0bf8f755c313dcb38932e4ae7812694530",
+      "market_spec_sha256": "7108cf7a2afa6d1ea01ad17f9f0342e789ce8ebd1d1cb2a8815e9ec320b312ce",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 1.907,
+          "input_bytes": 85093,
+          "persisted_output_bytes": 67989,
+          "p50_ms": 506.978,
+          "p95_ms": 510.468,
+          "peak_rss_bytes_max": 13193216,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 9375744,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.016,
+          "process_tree_io_read_bytes_max": 401619,
+          "process_tree_io_write_bytes_max": 2386,
+          "result_hash": "3cd6f33975bfbfe7",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 7.223,
+          "input_bytes": 666793,
+          "persisted_output_bytes": 466992,
+          "p50_ms": 685.603,
+          "p95_ms": 691.935,
+          "peak_rss_bytes_max": 38572032,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 31715328,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.102,
+          "process_tree_io_read_bytes_max": 2468614,
+          "process_tree_io_write_bytes_max": 768,
+          "result_hash": "ea1f2249b0a7f729",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "crypto-perpetual",
+      "market_domain": "crypto perpetual instrument",
+      "instrument": "BTCUSDT-PERP.BINANCE",
+      "product": "perpetual",
+      "settlement_currency": "USDT",
+      "quantity": 1,
+      "runtime_config_sha256": "c467cd50d4fa4d3cfdecbddfc95a782e2de440a724765da1f24bc01fa86dd07b",
+      "market_spec_sha256": "7f2ce38ffcb9164413d69d7f08e5077913901382cffa24b96e0fe94294e4d454",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 1000,
+          "repeats": 2,
+          "input_generation_ms": 2.144,
+          "input_bytes": 85130,
+          "persisted_output_bytes": 68124,
+          "p50_ms": 487.788,
+          "p95_ms": 488.362,
+          "peak_rss_bytes_max": 13324288,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 11280384,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.016,
+          "process_tree_io_read_bytes_max": 344056,
+          "process_tree_io_write_bytes_max": 788,
+          "result_hash": "d58b9926d0ef9e25",
+          "deterministic_across_repeats": true
+        },
+        {
+          "bars": 8000,
+          "repeats": 2,
+          "input_generation_ms": 7.335,
+          "input_bytes": 666830,
+          "persisted_output_bytes": 467130,
+          "p50_ms": 717.276,
+          "p95_ms": 728.361,
+          "peak_rss_bytes_max": 39288832,
+          "peak_rss_samples": 2,
+          "process_tree_peak_rss_bytes_max": 33390592,
+          "process_tree_peak_rss_samples": 2,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.094,
+          "process_tree_io_read_bytes_max": 2945485,
+          "process_tree_io_write_bytes_max": 2464,
+          "result_hash": "15c0be6f8b1f9b52",
+          "deterministic_across_repeats": true
+        }
+      ]
+    }
+  ],
+  "unmeasured_profile_targets": {
+    "ashare-research": "the profile requires A-share rules, calendar, PIT and corporate-action behavior",
+    "ashare-paper": "the profile requires the Paper worker and virtual execution path",
+    "cn-futures-research": "the profile requires night-session calendar, margin, fees and rollover behavior",
+    "cn-options-research": "the profile requires options chain, exercise/assignment and seller-margin behavior",
+    "global-equity-paper": "the profile requires Paper execution, calendar, FX valuation and corporate actions",
+    "fx-paper": "the profile requires Paper execution, rollover, margin and hedge-mode behavior",
+    "crypto-paper": "the profile requires Paper execution, partial fills, rate limiting and funding behavior",
+    "crypto-testnet": "requires authenticated testnet order/ack/reconciliation evidence",
+    "multi-venue-arb": "requires paired venue pipeline, group state, compensation and reconciliation"
+  },
+  "unsupported_market_fixtures": [
+    {
+      "fixture": "cn-options",
+      "market_domain": "Chinese option contract",
+      "status": "not_measured",
+      "reason": "the Bar backtest rejects option contracts without chain, exercise and assignment inputs"
+    }
+  ],
+  "profile_target_statuses_updated": false
+}

@@ -69,7 +69,25 @@
     <section class="card" id="card-positions">
       <h2>持仓 <span class="hint">/account/positions</span></h2>
       <div class="tablewrap"><table id="positions-table"><thead>
-        <tr><th>标的</th><th>数量</th><th>当日量</th><th>均价</th><th>标记价</th><th>未实现盈亏</th><th>保证金</th></tr>
+        <tr><th>标的</th><th>结算币种</th><th>数量</th><th>当日量</th><th>均价</th><th>标记价</th><th>未实现盈亏</th><th>保证金</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card wide" id="card-account-activity">
+      <h2>账户活动报告 <span class="hint">/account/activity · 按账户与 venue 查询</span></h2>
+      <p class="foot">account_id 和 venue_id 自动填入默认快照值，也可查询其他账户。余额保留原币种；事件分页只覆盖该账户当前保留的投影日志，不代表交易所完整历史。跨币种估值请查看组合报告。</p>
+      <div class="actions">
+        <label for="account-activity-account-id">account_id <input id="account-activity-account-id" type="text" autocomplete="off" /></label>
+        <label for="account-activity-venue-id">venue_id <input id="account-activity-venue-id" type="text" autocomplete="off" /></label>
+        <button id="account-activity-load" type="button">读取账户</button>
+      </div>
+      <div class="rows" id="account-activity-meta"><span class="muted">未连接</span></div>
+      <div class="actions">
+        <button id="account-activity-prev" type="button" disabled>较早事件</button>
+        <button id="account-activity-next" type="button" disabled>较新事件</button>
+      </div>
+      <div class="tablewrap tall"><table id="account-activity-events-table"><thead>
+        <tr><th>seq</th><th>kind</th><th>ts</th><th>correlation</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 
@@ -152,6 +170,46 @@
       <pre id="extended-research-output" class="result" aria-live="polite">未运行</pre>
     </section>
 
+    <section class="card wide" id="card-capability-catalog">
+      <h2>产品能力与验收证据 <span class="hint">按交易所、产品、账户模式、操作或稳定 ID 查询</span></h2>
+      <p class="foot">范围来自仓内代码、配置和离线测试；“实现未验收”不表示已通过真实沙盒。验收证据会随匹配结果一起显示。</p>
+      <div class="form-grid">
+        <label for="product-capability-id">能力 ID（可选）
+          <input id="product-capability-id" list="product-capability-ids" autocomplete="off" placeholder="qx.venue.ccxt_process">
+          <datalist id="product-capability-ids"></datalist>
+        </label>
+        <label for="product-capability-venue">交易所
+          <input id="product-capability-venue" list="product-capability-venues" autocomplete="off" placeholder="BINANCE">
+          <datalist id="product-capability-venues"></datalist>
+        </label>
+        <label for="product-capability-product">产品
+          <input id="product-capability-product" list="product-capability-products" autocomplete="off" placeholder="spot 或 perpetual">
+          <datalist id="product-capability-products"></datalist>
+        </label>
+        <label for="product-capability-account-mode">账户模式
+          <input id="product-capability-account-mode" list="product-capability-account-modes" autocomplete="off" placeholder="cash、one_way 或 hedge">
+          <datalist id="product-capability-account-modes"></datalist>
+        </label>
+        <label for="product-capability-account-model">账户体系（可选）
+          <input id="product-capability-account-model" list="product-capability-account-models" autocomplete="off" placeholder="classic、unified 或 uta">
+          <datalist id="product-capability-account-models"></datalist>
+        </label>
+        <label for="product-capability-margin-mode">保证金模式（可选）
+          <input id="product-capability-margin-mode" list="product-capability-margin-modes" autocomplete="off" placeholder="cash、cross 或 isolated">
+          <datalist id="product-capability-margin-modes"></datalist>
+        </label>
+        <label for="product-capability-operation">操作（可选）
+          <input id="product-capability-operation" list="product-capability-operations" autocomplete="off" placeholder="submit、cancel 或 positions.read">
+          <datalist id="product-capability-operations"></datalist>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="product-capability-load" type="button">加载能力目录</button>
+        <button id="product-capability-query" type="button">查询匹配范围与证据</button>
+      </div>
+      <pre id="product-capability-output" class="result" aria-live="polite">连接服务后可按交易所、产品、账户模式、操作或稳定 ID 查询</pre>
+    </section>
+
     <section class="card wide" id="card-research-report" hidden>
       <h2>交互式研究结果 <span class="hint">服务端指标与排名 · 本地筛选和查看</span></h2>
       <p class="foot" id="research-report-identity"></p>
@@ -204,14 +262,14 @@
           </table></div>
           <p class="foot">选择账户行可切换到独立复核的净值、成交、事件与行情明细；各账户仍独立核算。</p>
           <details id="research-account-events">
-            <summary>跨账户合并事件时间线</summary>
+            <summary>账户事件时间线</summary>
             <p id="research-account-event-status" class="foot" aria-live="polite"></p>
             <div class="row">
               <button id="research-account-event-prev" type="button" class="ghost" disabled>上一页</button>
               <span id="research-account-event-page-status" class="foot" aria-live="polite"></span>
               <button id="research-account-event-next" type="button" class="ghost" disabled>下一页</button>
             </div>
-            <div class="row"><label>事件标的 <select id="research-account-event-instrument"><option value="">全部标的</option></select></label><label>筛选跨账户事件 <input id="research-account-event-filter" type="search" autocomplete="off" placeholder="账户、事件、时间、订单"></label><span id="research-account-event-count" class="foot" aria-live="polite"></span></div>
+            <div class="row"><label>事件标的 <select id="research-account-event-instrument"><option value="">全部标的</option></select></label><label>筛选账户事件 <input id="research-account-event-filter" type="search" autocomplete="off" placeholder="账户、事件、时间、订单"></label><span id="research-account-event-count" class="foot" aria-live="polite"></span></div>
             <div class="tablewrap"><table id="research-account-event-table"><thead><tr></tr></thead><tbody></tbody></table></div>
           </details>
         </div>
@@ -399,8 +457,9 @@
       <p class="foot">
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
-        本构建里只有 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code>
-        有派发者，其余类型的命令在<strong>受理那一步就被拒</strong>（<code>400</code>，理由点名"没有派发者"），
+        本构建里 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code>
+        有派发者；撤单只路由到匹配账户和交易所的 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
+        <strong>受理那一步就被拒</strong>（<code>400</code>），
         不会被记成 <code>Accepted</code>。
       </p>
     </section>

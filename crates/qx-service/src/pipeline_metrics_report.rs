@@ -14,8 +14,12 @@
 //! 不在这个出口里计的站点逐名登记在 `tests/pipeline_metrics_open_sites.rs` 的豁免名单里，并由那条
 //! 判据与本段双向核对 —— 名单改了文档不改、或者反过来，都会红：
 //! `open_account_pipeline`（统一入口委托）与 `open_runtime_pipeline`（共享底层打开器，不归单个 worker 进程）、
-//! `qx-service::api_host::hydrate_api_initial_state`、`query_api_models`、`load_api_account_snapshot_for_worker`、`qx-service::api_host::spawn_api_projection_bridge`、`handle_algo_execution_request`、
-//! `strategy_current_qty_for`、`strategy_account_context`（服务与读模型按请求各开一个只读 pipeline，
+//! `qx-service::api_host::hydrate_api_initial_state_with_market_specs`、`query_api_models`、`load_api_account_snapshot_for_worker_with_market_specs`、`qx-service::api_host::spawn_api_projection_bridge`、`handle_algo_execution_request`、
+//! `strategy_current_qty_for_account`、`strategy_current_qty_exact_for_account`、`strategy_account_context`、
+//! `collect_pending`（策略 worker 分别读取行情与账户 EventLog 的一次性只读快照）、
+//! `execution_updates_for_ranges`（策略重试分别按行情与账户 EventLog 的作业范围读取一次性只读快照）、
+//! `live_strategy_input_digest`（调度器读取最新行情 EventLog 生成策略输入触发摘要）、
+//! `populate_strategy_execution_positions`（策略服务按请求打开的只读持仓投影 pipeline，
 //! 存活期与「按 worker 进程累计」不符，接它要另立一份跨请求的身份），以及
 //! `run_paper_pipeline_once_with_report`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`
 //! （一次性验收入口，不是长驻 worker：
@@ -32,6 +36,7 @@ use qx_runtime::{
     LiveEventPipeline, PipelineMetricsSnapshot, RuntimeConfig, PIPELINE_INGEST_WARNING_BUDGET_NS,
 };
 
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::worker_metrics::{prometheus_label, worker_metrics_path, write_worker_metrics};
 
 /// 一个 worker 进程自启动以来的 pipeline 计数累计量，以及它落盘的那份 `.prom`。
@@ -50,6 +55,7 @@ pub struct PipelineMetricsReporter {
     ingest_duration_ns_max: u64,
     ingest_budget_warning_emitted: bool,
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
+    gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
     last_published_ms: Option<u64>,
 }
 
@@ -136,6 +142,19 @@ impl PipelineMetricsReporter {
         self.warn_if_over_budget();
     }
 
+    /// Record a port-specific business observation; process heartbeats remain a separate signal.
+    pub(crate) fn observe_gateway_port_business_status(
+        &mut self,
+        port: ExchangeGatewayPort,
+        status: GatewayBusinessHealthStatus,
+        now_ms: u64,
+    ) {
+        if status.metric_value().is_some() {
+            self.gateway_business_status
+                .insert(port, (status, now_ms / 1_000));
+        }
+    }
+
     fn warn_if_over_budget(&mut self) {
         if !self.ingest_budget_warning_emitted
             && self.ingest_duration_ns_max > PIPELINE_INGEST_WARNING_BUDGET_NS
@@ -182,7 +201,7 @@ impl PipelineMetricsReporter {
             prometheus_label(&self.worker_id),
             prometheus_label(&self.account_log)
         );
-        format!(
+        let mut body = format!(
             "qx_worker_up{{{label}}} {}\n\
 qx_worker_heartbeat_timestamp_seconds{{{label}}} {}\n\
 qx_pipeline_ingest_attempts_total{{{label}}} {}\n\
@@ -207,7 +226,18 @@ qx_pipeline_ingest_budget_exceeded{{{label}}} {}\n",
             self.ingest_duration_ns_max as f64 / 1_000_000_000.0,
             PIPELINE_INGEST_WARNING_BUDGET_NS as f64 / 1_000_000_000.0,
             u8::from(self.ingest_duration_ns_max > PIPELINE_INGEST_WARNING_BUDGET_NS),
-        )
+        );
+        for (port, (status, timestamp_seconds)) in &self.gateway_business_status {
+            let port_label = port.metric_label();
+            let value = status
+                .metric_value()
+                .expect("unobserved business status is not persisted as a probe");
+            body.push_str(&format!(
+                "qx_gateway_port_business_status{{{label},port=\"{port_label}\"}} {value}\n\
+qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {timestamp_seconds}\n"
+            ));
+        }
+        body
     }
 }
 
@@ -217,4 +247,123 @@ fn metric_delta(
     read: impl Fn(&PipelineMetricsSnapshot) -> u64,
 ) -> u64 {
     read(current).saturating_sub(previous.map_or(0, read))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
+    use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, QxError, Side};
+    use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
+
+    #[test]
+    fn worker_metrics_publish_gateway_business_status_separately_from_process_health() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "market-data", "");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::MarketData,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::AccountQuery,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::Reconciliation,
+            GatewayBusinessHealthStatus::Degraded,
+            91_000,
+        );
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains("qx_worker_up{worker=\"market-data\",account=\"\"} 1"));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"market_data\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_timestamp_seconds{worker=\"market-data\",account=\"\",port=\"market_data\"} 91"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"account_query\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"reconciliation\"} 1"
+        ));
+        assert!(!body.contains("port=\"venue_execution\""));
+    }
+
+    struct ProbeVenue {
+        submit_result: Result<Vec<VenueEvent>, QxError>,
+    }
+
+    impl Venue for ProbeVenue {
+        fn id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> &'static qx_zhenlu::venue_capabilities::VenueCapabilities {
+            &qx_zhenlu::venue_capabilities::BINANCE_SPOT_VENUE_CAPABILITIES
+        }
+
+        fn submit(&mut self, _order: Order, _ts: u64) -> Result<Vec<VenueEvent>, QxError> {
+            self.submit_result.clone()
+        }
+
+        fn cancel(&mut self, _client_order_id: u64, _ts: u64) -> Result<Vec<VenueEvent>, QxError> {
+            self.submit_result.clone()
+        }
+
+        fn snapshot(&self) -> Vec<VenueOrderSnapshot> {
+            Vec::new()
+        }
+
+        fn connected(&self) -> bool {
+            true
+        }
+    }
+
+    fn probe_order() -> Order {
+        Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument"),
+            side: Side::Buy,
+            qty: Quantity::from_raw(1_000_000_000),
+            limit: Some(Price::from_raw(50_000_000_000)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "alpha".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        }
+    }
+
+    #[test]
+    fn venue_submit_boundary_writes_connector_result_status_to_gateway_metrics() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-exec", "alpha");
+        let venue = ProbeVenue {
+            submit_result: Ok(vec![VenueEvent::Accepted {
+                client_order_id: 1,
+                venue_order_id: "remote-1".into(),
+                ts: 91_000,
+            }]),
+        };
+        let mut venue = GatewayExecutionProbeVenue::new(venue, &mut reporter);
+        venue
+            .submit(probe_order(), 91_000)
+            .expect("connector accepted order");
+        drop(venue);
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\"} 2"
+        ));
+    }
 }

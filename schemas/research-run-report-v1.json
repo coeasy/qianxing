@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-run-report-v1.json",
+  "title": "Qianxing ResearchRunReport v1",
+  "description": "Shared bounded Bar/depth report core. Presentation surfaces may attach replay-verified event, bar, depth, and multi-market projections after this core verdict.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "instrument", "verification", "summary", "equity", "fills"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "verification": {
+      "type": "object",
+      "required": ["run_id", "result_hash", "data_fingerprint", "verified", "checks", "mismatches"],
+      "properties": {
+        "run_id": {"type": "string"},
+        "result_hash": {"type": "string"},
+        "data_fingerprint": {"type": "string"},
+        "verified": {"type": "boolean"},
+        "checks": {"type": "array", "items": {"type": "string"}},
+        "mismatches": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "summary": {"type": ["object", "null"]},
+    "equity": {"$ref": "#/$defs/Rows"},
+    "fills": {"$ref": "#/$defs/Rows"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Rows": {
+      "type": "object",
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "truncated": {"type": "boolean"},
+        "rows": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

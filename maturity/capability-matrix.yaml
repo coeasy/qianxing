@@ -18,7 +18,7 @@
 #   * 每格必须给档位而不是布尔值；每条必须写限制；每个 `evidence` 里的仓库路径必须在盘。
 schema_version: 1
 kind: capability-matrix
-updated_at: "2026-10-18"
+updated_at: "2026-10-24"
 plan_doc: "docs/牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11.md"
 plan_sections: "方案 §2 基线复核 / §4.2 能力发现与限制表达"
 
@@ -58,48 +58,56 @@ provider_fields:
 
 domains:
   - name: rust_kernel
+    capability_id: qx.domain.rust_kernel
     level: implemented-and-verified
     evidence: [crates/qx-core, maturity/capabilities.yaml, maturity/backtest_acceptance.yaml]
     limitations: ["实盘轨的两档只对需要外部 venue 的能力有意义，对回测/Paper 主用法是不适用而不是待补（见 maturity/evidence/README.md）"]
     next_gate: "保持 tools/check_architecture.py 与 cargo test --workspace 全绿；内核不得长出对 UI/HTTP/CLI/Python/C++ 的依赖"
 
   - name: python_sdk
+    capability_id: qx.domain.python_sdk
     level: implemented-unverified
-    evidence: [python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml, maturity/quant_scenarios.yaml, crates/qx-api/src/app_surface/capabilities.rs, crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs, crates/qx-python/src/strategy_callback.rs, python/tests/test_app_use_cases.py, crates/qx-app/src/cases/run_multi_market_depth_backtest.rs, crates/qx-api/src/app_multi_market_tests.rs, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml]
+    evidence: [python/qianxing/cli.py, python/tests/test_cli_strategy_file.py, python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml, maturity/quant_scenarios.yaml, crates/qx-api/src/app_surface/capabilities.rs, crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs, crates/qx-python/src/strategy_callback.rs, python/tests/test_app_use_cases.py, crates/qx-app/src/cases/run_multi_market_depth_backtest.rs, crates/qx-api/src/app_multi_market_tests.rs, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml]
     limitations: ["Python ProviderResult v1 已支持 BarFrame 与 Quote OrderBookSnapshot→DepthFrame；Bar Provider 可经 run_backtest_with_manifest 自动冻结、校验 DatasetManifestV2 并运行共享回测；Quote Provider 可经 run_depth_backtest 冻结带来源指纹的 DepthFrame 并直接运行共享 Tick/OrderBook 内核。两条本地路径复用 Rust ProviderRegistry 与 qx-app。Rust SDK 的 ProviderRegistry→冻结→共享回测已由独立消费者用例覆盖；C++ 是远端 qx-api client，不承诺进程内 ProviderRegistry。任意文件导入和多组件 DatasetBundle 尚未覆盖。Provider 的历史分页/实时订阅/限流/修订恢复与各数据源 conformance 尚未全覆盖。同账户、单市场 Bar 与 Tick/OrderBook 组合已接入 qx-app/Rust SDK/Python SDK；同账户多市场 L1 Tick/L2 OrderBook 现货组合接入唯一 Rust OrderBook portfolio engine，支持 2..32 个市场和共享账簿；自定义 Rust/Python 回调按档位消费 Tick/OrderBook，内置经典策略复用 DepthBarStrategy 将盘口中间价/数量映射为 Bar 事件。混合 L1/L2 内置策略参数网格与本地 callback_parameter_space 网格均复用共享账簿，候选结果须有成交并验证 replay；远端 Python/C++ 支持内置参数/策略种类实验，不上传任意回调代码；多市场衍生品保证金、跨币种折算、多市场 Paper/Live 和 Web/桌面操作仍未贯通。共享组合账簿/风险/OMS/撮合/回放仍由 Rust 独占；双腿多标的 Bar 回测现由 Rust PortfolioBarEngine 按非对齐事件时间线统一运行，共享 OMS、Ledger、风险准入、购买力预留、撮合、成交回报与 replay；该用例已通过 Python/Rust 高层入口和应用级共享现金竞争用例。多腿 funding 已按 UTC 8 小时结算边界在执行期写入共享 Ledger/EventLog，并在结算后更新策略可见现金；费率是调用方提供的常量，要求最近标记价不超过一个结算周期；支持调用方提供逐标的历史费率序列，也支持 Rust ProviderRegistry 与 Python ProviderRegistry 从 Financial/funding_8h 请求获取并保留 provider/request/query/source/retry 指纹；尚无 venue 专用 funding adapter/conformance、跨币种 funding 与外部账单对账；跨账户组合风险、多市场 Paper/Live 组合及完整 Paper/Live 组合执行验收也未闭环。统一多交易所费率与撮合仍需逐 venue 认证", "GET /app/capabilities 返回共享 Rust 用例、路由目录及已配置 Provider 声明；POST /app/capabilities/providers/preflight 通过 Rust ProviderRegistry 按具体 DataRequest 排序匹配候选，不发起 I/O。两者仍不验证凭据、上游连通性，也不覆盖 Venue、订单限制、费用、账户权限与 sandbox/testnet readiness 的完整启动预检", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook 现支持 spot 现金比例、ATR 风险预算与 Kelly sizing，L1/L2 内核逐快照读取已结算现金且组合槽位受 reserved capital 限制；衍生品动态 sizing 因 free-margin 模型未认证而拒绝；多腿固定名义金额 sizing 仅在双腿永续/交割显式规格下可用；动态资金 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；本地 RunHandle.events 来自 Rust worker 的内存事件序列；HTTP /app/runs/{run_id}/events 将生命周期事件并入运行快照并支持 after_seq，Python/Rust/C++ 远端可按 Run 读取。它仍是快照持久化而非逐事件事务日志，未提供 occurred_at/订单成交事实、跨进程强一致追加或游标过期恢复语义", "单腿 Bar 与 Tick/OrderBook 自定义策略参数实验已通过 Rust factory 与 Python 高层 SDK 的同步、RunHandle、AsyncCoreClient 和隔离 wheel 验收；每个候选独立创建策略，候选配置与策略 ID/version/SHA-256 绑定进 Rust 实验指纹。该回调工厂仅是本地 Rust/Python SDK 能力，未通过远端 HTTP/C++ callback 托管验证", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "Windows x64 cp310-abi3 wheel 已在隔离 target 环境离线安装并确认 Python API 与 Rust 扩展可导入；Linux/macOS 及其他架构矩阵尚未建立"]
     next_gate: "Rust/Python custom strategy callbacks now cover single-leg Bar and Tick/OrderBook custom-strategy parameter experiments, same-account Bar and Tick/OrderBook portfolios, and multi-leg custom-strategy backtests and cancellable parameter experiments. Next: implement remote callback execution; durable per-run order/event log and cursor recovery; CPython 3.10+ Linux/macOS and additional architecture install matrix; Live remains unverified until venue testnet conformance."
 
   - name: cpp_sdk
+    capability_id: qx.domain.cpp_sdk
     level: partial
     evidence: [cpp/include/qianxing_app.hpp, cpp/tests/app_client_smoke.cpp, cpp/tests/consumer, maturity/language_api_contract.yaml]
     limitations: ["C++ 客户端依赖集成方自带 HTTP transport：默认传输（TLS 认证、keep-alive、截止时间、重试、SSE/WS、取消）未落地", "尚不是独立交易运行时——header-only client 不得被描述成本地交易引擎", "Windows/Linux/macOS x64 CI 已构建 C++ SDK、执行 Release CTest、安装并运行 find_package consumer，且在 Rust 宿主加载 C ABI 插件与验证 JSONL/shared-memory worker；其它 CPU 架构尚未认证"]
     next_gate: "落方案 §6.3 的默认 HTTP transport 与异步生命周期，并补安装后全链路测试与 ABI 版本检查"
 
   - name: rust_sdk
+    capability_id: qx.domain.rust_sdk
     level: implemented-unverified
     evidence: [crates/qx-sdk, crates/qx-sdk/tests/independent_consumer.rs, crates/qx-sdk/tests/consumer/custom_strategy.rs, crates/qx-app/src/cases/run_multi_market_depth_backtest.rs, crates/qx-sdk/tests/consumer/strategy_selection/multi_market.rs, crates/qx-api/src/app_multi_market_tests.rs, crates/qx-cli/src/app_commands.rs, crates/qx-cli/tests/command_surface.rs, crates/qx-execution/src/algo_execution.rs, docs/qx-sdk-migration.md]
     limitations: ["门面 crate qx-sdk 已落（方案 §6.1）：Rust `Strategy` trait 与 `StrategyArtifactIdentity` 已从门面公开；`Client::run_backtest_with_strategy` 与 `Client::run_depth_backtest_with_strategy` 把外部策略接入共享 Bar/Tick/OrderBook 风控/撮合/账簿/重放链，源码摘要进入 Run 身份并有独立消费者/端到端用例。同步与可取消句柄式 Bar/Tick/OrderBook 单策略运行均已验证；多腿策略回调与多腿参数实验现通过 Rust/Python 本地 SDK 调用共享内核，每个候选重新创建策略并将源码身份纳入实验指纹；同账户 Bar 与 Tick/OrderBook 组合均支持多个 Rust/Python 自定义 callback 与内置策略槽共享账簿、风险、OMS、撮合和回放，全部 callback 身份进入排序稳定的 Run 指纹；同账户多市场 L1 Tick/L2 OrderBook 现货组合支持 2..32 个市场与多语言策略槽，并经 Rust/Python 本地 SDK、Rust/Python/C++ HTTP 同步与 RunHandle 接入同一 Rust 引擎；本地 Rust/Python 自定义策略支持最多 256 个 callback_parameter_space 候选且复用共享账簿；远端仅支持内置参数/策略种类实验。多市场衍生品保证金、跨币种折算、多市场 Paper/Live 组合与 Web/桌面操作仍未贯通。远端自定义 callback 仍未支持。Client/Engine、capabilities、spec 构造校验、同步与句柄式异步 Run、RunHandle、取消等待取结果、report/verify、Provider/Venue 扩展端口与统一错误都在公开面上；Bar 回测 Kelly sizing 通过 BuiltinStrategySpec 可用；Rust SDK 已暴露可序列化 AlgoExecutionState 与共享 ExecutionGateway 端口，qx-runtime 提供原子父单 checkpoint 与单飞 step/cancel 存储；qx-cli 已接 Paper worker、API start/get/list/cancel 与父单成交聚合，Python/C++ 已接远端生命周期方法；qx-sdk RemoteApiClient 与 C++/Python AppClient 已接 Provider Quote→DepthFrame→共享深度回测 API；策略发现目录现由 qx-app 唯一定义并贯通 Rust/Python/C++ HTTP 远端；本地 RunHandle.events 来自 Rust worker 内存事件序列。按 Run 快照仍非逐事件事务日志，不含订单/成交事实及跨进程强一致游标恢复", "Rust/Python 自定义策略可经 qx-app/本地 Python SDK 在 Bar、Tick、OrderBook 单策略回测与可取消 RunHandle 中调用同一共享内核；Tick/OrderBook 自定义策略参数实验、多腿策略回调与多腿参数实验自定义策略已支持；同账户 Bar 与 Tick/OrderBook 组合支持多个自定义 callback 与内置附属策略共享账簿；远端 callback 仍未支持。Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook spot 现支持现金比例、ATR 风险预算与 Kelly sizing，逐快照读取已结算现金且组合槽位受 reserved capital 限制；衍生品动态 sizing 因 free-margin 模型未认证而拒绝；多腿固定名义金额 sizing 仅在双腿永续/交割显式规格下可用；动态资金 sizing 未接入，Live sizing 未经 testnet 验收", "门面的『异步』是句柄式不是 Future 式：qx-app 的引擎是线程加通道，没有 executor，硬套一个 Future 只会让 poll 里出现阻塞等待", "Git 固定提交的 workspace 外消费者已构建并执行数据校验、回测、结果复核；crates.io 实际发布仍未验证：工作区全部可发布 crate 的本地 path 依赖现已声明 registry version 要求，`registry_dependency_version_check` 守护该合同；`qx-sdk` 在临时本地 patch 将未上架依赖映射到工作区后通过 Cargo 默认打包/验证，但未向 configured registry 上传，注册表消费者安装仍待实际发布阶段验收", "Provider DataRequest 预检现已由 Rust API 及 Rust/Python/C++ 远端客户端共用；通用 §4.2 能力预检仍未闭环；market-aware Bar 已要求显式费用/tick/lot 和时间有效期，但 Provider/Venue、Tick/OrderBook 与实盘订阅/身份/风险权限的启动前统一匹配尚未落地"]
     next_gate: "将 CLI Provider 回测继续接入 Paper/Live 实时订阅链；若要求 crates.io 发布，先按依赖拓扑发布内部 crate 并完成临时 registry 消费；补齐持久化按 Run 事件/订单流与游标恢复；补 §4.2 启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
 
   - name: data_and_venues
+    capability_id: qx.domain.data_and_venues
     level: implemented-unverified
     evidence: [crates/qx-provider, crates/qx-adapter, crates/qx-service/src/provider_registry.rs, crates/qx-cli/src/app_commands.rs, crates/qx-cli/tests/command_surface.rs, maturity/capabilities.yaml]
     limitations: ["Rust/Python 高层 Bar BacktestSpec 现要求冻结 TradingInstrumentSpec 同时显式提供固定 MakerTakerFeeSchedule，并校验标的/结算币种/有效期、订单 tick/step/最小数量/quote 最小名义金额及成交 tick/lot；费用尚不由 Provider/Venue 自动解析，不含分层费率、返佣、税费或按时间生效的规则", "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
     next_gate: "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
 
   - name: accounts_and_strategies
+    capability_id: qx.domain.accounts_and_strategies
     level: partial
     evidence: [crates/qx-runtime/src/runtime_config/schema.rs, crates/qx-runtime/src/runtime_config/topology_validation.rs, crates/qx-cli/src/backtests/account_base.rs, crates/qx-cli/src/venue_runtime/paper_submit.rs, crates/qx-app/src/spec/portfolio.rs, crates/qx-app/tests/portfolio_backtest.rs, crates/qx-app/tests/multi_leg_experiment.rs, crates/qx-app/src/spec/depth.rs, crates/qx-app/tests/depth_backtest.rs, crates/qx-xingban/src/backtest/portfolio_strategy.rs, crates/qx-xingban/src/portfolio_orderbook.rs, crates/qx-cli/tests/app_three_entrypoints.rs, crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs, crates/qx-sdk/tests/consumer/strategy_selection.rs, crates/qx-zhenlu/src/portfolio/capital_allocation.rs, crates/qx-app/src/cases/run_multi_account_backtest.rs, crates/qx-app/tests/multi_account_backtest.rs, crates/qx-app/src/cases/run_multi_account_depth_backtest.rs, crates/qx-app/tests/multi_account_depth_backtest.rs, crates/qx-api/src/app_runs/starts.rs, crates/qx-api/src/app_runs/entry.rs, crates/qx-api/src/app_surface.rs, crates/qx-api/src/app_multi_leg_tests.rs, python/tests/test_app_use_cases.py, cpp/tests/app_client_smoke.cpp, crates/qx-app/src/cases/run_multi_market_backtest.rs, crates/qx-app/tests/multi_market_backtest.rs, crates/qx-cli/tests/app_three_entrypoints/multi_account.rs, crates/qx-risk/src/pending_exposure.rs, crates/qx-xingban/src/backtest/test_cases/portfolio_pending_risk.rs, crates/qx-xingban/src/orderbook_backtest/tests/pending_risk.rs, crates/qx-cli/tests/unit/paper_pending_exposure.rs, maturity/quant_scenarios.yaml, crates/qx-risk/src/pending_exposure.rs, maturity/app_use_cases.yaml]
-    limitations: ["同账户多策略 Bar 与单标的 Tick/OrderBook（L1/L2）组合回测接入共享 Rust 账簿、风险/OMS、撮合和 ReplayVerifier；确定性优先级、全局订单 ID、撤单/成交回调归属、共享资金预算及成交策略归因已由 Rust 引擎和 qx-app 测试覆盖。Tick/OrderBook 应用规格现支持 Rust/Python 自定义回调槽与内置单腿策略混合，Rust SDK 与 Python typed SDK 的同步/RunHandle 路径均有用例", "独立账户批量 Bar 与 Tick/OrderBook 回测已接入 qx-app，并通过 Rust、Python 本地/远端、CLI、HTTP API 与 C++ 远端入口复用同一 Rust 内核；结果保留各账户独立账簿，不进行跨账户净额或组合风控。规格现于执行前校验批次本金合计不溢出，避免运行后摘要不可表示；这不构成跨账户组合回测", "Paper、Bar 与 OrderBook 的同账户同标的 `MaxNotional` 均计入 OMS 非终态订单剩余名义额；限价与可用市场标记分别计算后的较高名义额用于预留，市价单缺少标记时拒绝计算；限额 150 下两笔各 100 的订单仅允许一笔通过；此预留仍不聚合不同标的或不同账户", "reserved_capital_raw 按确定性订单接受顺序约束策略持仓与每笔待成交订单；现货按逐笔价格下单后的名义额峰值、衍生品按产品初始保证金峰值核算；实际成交价突破额度时在入账前失败关闭。手续费及账户合计现金仍由共享账户账簿/资金闸门约束", "组合回测与账户净持仓级 protective_exit 暂时互斥；规格会前置拒绝，以免保护退出成交无法归属到策略虚拟持仓", "Bar 多腿回测现支持同一账户内两个不同标的/venue 的共享时间线、共享购买力和统一撮合；仍限单账户、双腿 Bar 场景。跨账户组合账簿与净额、更多市场类型/日历、组合风险限额、策略级组合权益/费用/回撤尚未实现；多腿 funding 已是执行期共享 Ledger 现金流，按已观察到且未过期的衍生品标记价在 UTC 8 小时边界结算并纳入 replay；费率为常量仿真，不代表任何 venue 已认证", "RunExperimentSpec.strategy_kinds 支持最多 256 个单腿内置策略/参数候选的确定性快速选择、共享 Rust 回测、稳定排序和比较，支持训练窗策略/参数选择及 OOS/走查，并经 Rust SDK、Python 本地/远端、C++ HTTP 透传和 HTTP API；Tick/OrderBook RunDepthExperimentSpec.strategy_kinds 现也支持经典单腿策略 × 参数网格（最多 256 候选），Rust L2 用例与 CLI/HTTP/Python 入口验证了稳定排序、结果哈希和错误隔离；RunMultiLegExperimentSpec.strategy_kinds 现可在同一 Rust 用例中确定性比较最多 256 个双腿策略/参数候选，并由 Rust SDK、Python SDK 与 CLI/HTTP 对照；这仍是逐个实验候选，不是多策略共享组合账簿", "CLI Paper 一次性主链现会运行全部启用的 Strategy worker；双策略同账户 fixture 已实测 Scheduler→两策略→Paper 执行→共享 Ledger，且重跑不重复成交。此证据尚未覆盖多市场/多账户、Rust/Python/C++ SDK 与 API/前端操作链", "N 市场同账户 Bar 与 L1/L2 OrderBook 组合已接 HTTP 同步/RunHandle、Rust/Python/C++ 远端内置策略入口，以及 Rust/Python 本地内置与自定义策略槽及 RunHandle；多市场深度混合档位策略/参数实验已由共享 Rust 引擎验证真实成交。远端任意代码 callback、跨账户组合净额、衍生品组合保证金、跨币种风险、venue 日历及多市场 Paper/Live 尚未贯通" , "Paper/Live 组合退出语义、真实交易所认证及 Web/桌面完整组合操作流程尚未通过端到端验收"]
+    limitations: ["同账户多策略 Bar 与单标的 Tick/OrderBook（L1/L2）组合回测接入共享 Rust 账簿、风险/OMS、撮合和 ReplayVerifier；确定性优先级、全局订单 ID、撤单/成交回调归属、共享资金预算及成交策略归因已由 Rust 引擎和 qx-app 测试覆盖。Tick/OrderBook 应用规格现支持 Rust/Python 自定义回调槽与内置单腿策略混合，Rust SDK 与 Python typed SDK 的同步/RunHandle 路径均有用例", "独立账户批量 Bar 与 Tick/OrderBook 回测已接入 qx-app，并通过 Rust、Python 本地/远端、CLI、HTTP API 与 C++ 远端入口复用同一 Rust 内核；结果保留各账户独立账簿，不进行跨账户净额或组合风控。规格现于执行前校验批次本金合计不溢出，避免运行后摘要不可表示；这不构成跨账户组合回测", "Paper、Bar 与 OrderBook 的同账户同标的 `MaxNotional` 均计入 OMS 非终态订单剩余名义额；限价与可用市场标记分别计算后的较高名义额用于预留，市价单缺少标记时拒绝计算；限额 150 下两笔各 100 的订单仅允许一笔通过；此预留仍不聚合不同标的或不同账户", "reserved_capital_raw 按确定性订单接受顺序约束策略持仓与每笔待成交订单；现货按逐笔价格下单后的名义额峰值、衍生品按产品初始保证金峰值核算；实际成交价突破额度时在入账前失败关闭。手续费及账户合计现金仍由共享账户账簿/资金闸门约束", "组合回测与账户净持仓级 protective_exit 暂时互斥；规格会前置拒绝，以免保护退出成交无法归属到策略虚拟持仓", "Bar 多腿回测现支持同一账户内两个不同标的/venue 的共享时间线、共享购买力和统一撮合；仍限单账户、双腿 Bar 场景。跨账户组合账簿与净额、更多市场类型/日历、组合风险限额、策略级组合权益/费用/回撤尚未实现；多腿 funding 已是执行期共享 Ledger 现金流，按已观察到且未过期的衍生品标记价在 UTC 8 小时边界结算并纳入 replay；费率为常量仿真，不代表任何 venue 已认证", "RunExperimentSpec.strategy_kinds 支持最多 256 个单腿内置策略/参数候选的确定性快速选择、共享 Rust 回测、稳定排序和比较，支持训练窗策略/参数选择及 OOS/走查，并经 Rust SDK、Python 本地/远端、C++ HTTP 透传和 HTTP API；Tick/OrderBook RunDepthExperimentSpec.strategy_kinds 现也支持经典单腿策略 × 参数网格（最多 256 候选），Rust L2 用例与 CLI/HTTP/Python 入口验证了稳定排序、结果哈希和错误隔离；RunMultiLegExperimentSpec.strategy_kinds 现可在同一 Rust 用例中确定性比较最多 256 个双腿策略/参数候选，并由 Rust SDK、Python SDK 与 CLI/HTTP 对照；这仍是逐个实验候选，不是多策略共享组合账簿", "CLI Paper 一次性主链现会运行全部启用的 Strategy worker；双策略同账户 fixture 已实测 Scheduler→两策略→Paper 执行→共享 Ledger，且重跑不重复成交。此证据尚未覆盖多市场/多账户、Rust/Python/C++ SDK 与 API/前端操作链", "N 市场同账户 Bar 与 L1/L2 OrderBook 组合已接 HTTP 同步/RunHandle、Rust/Python/C++ 远端内置策略入口，以及 Rust/Python 本地内置与自定义策略槽及 RunHandle；多市场深度混合档位策略/参数实验已由共享 Rust 引擎验证真实成交。Python strategy-file CLI 的 run-strategy 现支持同账户多市场 Bar spec，每个声明槽创建独立 callback 并绑定同一 bundle digest；search-strategy 已通过 RunMultiMarketExperimentSpec 支持目标槽的参数网格及 random/TPE/KDE-TPE/Pareto-TPE 自适应搜索，最多 256 候选、6 个参数维度；配置联合时间轴 SplitPlan 后仅用训练指标提案和选参，逐折记录 seed/训练指标并独立运行 OOS，候选身份绑定 bundle digest；本轮 Windows x64 cp310-abi3 wheel 隔离运行样例为 8/8 候选成功、两个 OOS 折均有完整报告（样例收益不构成策略有效性证据）。Linux/macOS wheel 矩阵未验收；跨标的共享 Python callback 状态仍未暴露。远端任意代码 callback、跨账户组合净额、衍生品组合保证金、跨币种风险、venue 日历及多市场 Paper/Live 尚未贯通" , "Paper/Live 组合退出语义、真实交易所认证及 Web/桌面完整组合操作流程尚未通过端到端验收"]
     next_gate: "扩展跨账户组合账簿、净额、组合风险及策略权益/费用/回撤归因；将 Paper 多策略接入共享版本化 SDK/API 与多市场/账户运行；再以 testnet 认证接入 Live，并补 Web/桌面组合 E2E"
 
   - name: web_api
+    capability_id: qx.domain.web_api
     level: implemented-unverified
     evidence: [crates/qx-api, web/console, deploy/README.md]
     limitations: ["路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"]
     next_gate: "落方案 §5.x 的逐操作可追溯验收与 Web/桌面 E2E"
 
   - name: release
+    capability_id: qx.domain.release
     level: partial
     evidence: [.github/workflows, tools/python_wheel_smoke.py, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, tools/check_architecture.py]
     limitations: ["当前 Windows 本地包不能代表全平台：跨平台消费者安装验证、实盘认证矩阵与产品能力清单需要补足", "SBOM、构建来源证明与三操作系统支持矩阵未建立"]
@@ -107,6 +115,7 @@ domains:
 
 venues:
   - name: PaperVenue
+    capability_id: qx.venue.paper
     impl: crates/qx-zhenlu/src/lib.rs
     kind: internal_simulation
     verified_version: "0.2.0"
@@ -128,6 +137,7 @@ venues:
     limitations: ["模拟 venue 与实盘 venue 不可伪装成同一执行模型：Paper 的成交由本地撮合产生，没有交易所侧的 ack/fill/partial/cancel 竞态", "运行时能力合同声明 paper/instrument-defined 市场范围、market/limit 订单、撤单/查询；不提供外部对账与行情数据档位", "没有实时行情源与订单簿深度，故 realtime 与 depth 两格 unsupported"]
 
   - name: BinanceSpotVenue
+    capability_id: qx.venue.binance_spot
     impl: crates/qx-adapter/src/binance.rs
     kind: external_venue
     verified_version: "0.2.0"
@@ -146,9 +156,42 @@ venues:
     sandbox: unsupported
     precision: implemented-unverified
     evidence: [maturity/evidence/testnet/20260920T005856Z-dryrun, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证", "testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified", "只覆盖现货；衍生品与多市场未声明"]
+    limitations: ["运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证", "余额与订单私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified", "只覆盖现货；衍生品与多市场未声明"]
+    account_query_scopes:
+      - venue: BINANCE
+        product: spot
+        account_models: [spot]
+        operations: [balance.read, orders.read]
+        maturity_refs: [binance_direct]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/binance/tests.rs]
+    execution_scopes:
+      - venue: BINANCE
+        product: spot
+        account_mode: cash
+        account_models: [spot]
+        margin_modes: [cash]
+        position_modes: [not_applicable]
+        order_shapes:
+          - order_type: market
+            quantity_unit: base
+            side: buy
+          - order_type: market
+            quantity_unit: base
+            side: sell
+          - order_type: limit
+            quantity_unit: base
+            side: buy
+          - order_type: limit
+            quantity_unit: base
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [binance_direct]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/binance/tests.rs, python/examples/ccxt-binance-spot.example.json]
 
   - name: CcxtProcessVenue
+    capability_id: qx.venue.ccxt_process
     impl: crates/qx-adapter/src/ccxt.rs
     kind: external_venue
     verified_version: "0.2.0"
@@ -167,10 +210,242 @@ venues:
     sandbox: unsupported
     precision: implemented-unverified
     evidence: [crates/qx-adapter/src/ccxt.rs, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 订单、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 订单、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+    account_query_scopes:
+      - venue: BINANCE
+        product: spot
+        account_models: [spot]
+        operations: [balance.read, orders.read, cashflows.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/private_probe.py]
+      - venue: BINANCE
+        product: perpetual
+        account_models: [usd_m_futures]
+        operations: [balance.read, orders.read, positions.read, cashflows.read, funding.read, account_settings.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/__init__.py, python/qianxing_ccxt/private_probe.py]
+      - venue: OKX
+        product: spot
+        account_models: [unified]
+        operations: [balance.read, orders.read, cashflows.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/private_probe.py]
+      - venue: OKX
+        product: perpetual
+        account_models: [unified]
+        operations: [balance.read, orders.read, positions.read, cashflows.read, funding.read, account_settings.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/__init__.py, python/qianxing_ccxt/private_probe.py]
+      - venue: BITGET
+        product: spot
+        account_models: [classic, uta]
+        operations: [balance.read, orders.read, cashflows.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/private_probe.py]
+      - venue: BITGET
+        product: perpetual
+        account_models: [classic, uta]
+        operations: [balance.read, orders.read, positions.read, cashflows.read, funding.read, account_settings.read]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/worker.py, python/qianxing_ccxt/__init__.py, python/qianxing_ccxt/private_probe.py]
+    execution_scopes:
+      - venue: BINANCE
+        product: spot
+        account_mode: cash
+        account_models: [spot]
+        margin_modes: [cash]
+        position_modes: [not_applicable]
+        order_shapes:
+          - order_type: market
+            quantity_unit: base
+            side: buy
+          - order_type: market
+            quantity_unit: base
+            side: sell
+          - order_type: limit
+            quantity_unit: base
+            side: buy
+          - order_type: limit
+            quantity_unit: base
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-spot.example.json]
+      - venue: BINANCE
+        product: perpetual
+        account_mode: one_way
+        account_models: [usd_m_futures]
+        margin_modes: [cross, isolated]
+        position_modes: [one_way]
+        order_shapes:
+          - order_type: market
+            quantity_unit: contracts
+            side: buy
+          - order_type: market
+            quantity_unit: contracts
+            side: sell
+          - order_type: limit
+            quantity_unit: contracts
+            side: buy
+          - order_type: limit
+            quantity_unit: contracts
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-usdm.example.json]
+      - venue: BINANCE
+        product: perpetual
+        account_mode: hedge
+        account_models: [usd_m_futures]
+        margin_modes: [cross, isolated]
+        position_modes: [hedge]
+        order_shapes:
+          - order_type: market
+            quantity_unit: contracts
+            side: buy
+          - order_type: market
+            quantity_unit: contracts
+            side: sell
+          - order_type: limit
+            quantity_unit: contracts
+            side: buy
+          - order_type: limit
+            quantity_unit: contracts
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-usdm.example.json]
+      - venue: OKX
+        product: spot
+        account_mode: cash
+        account_models: [unified]
+        margin_modes: [cash]
+        position_modes: [not_applicable]
+        order_shapes:
+          - order_type: market
+            quantity_unit: base
+            side: buy
+          - order_type: market
+            quantity_unit: base
+            side: sell
+          - order_type: limit
+            quantity_unit: base
+            side: buy
+          - order_type: limit
+            quantity_unit: base
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt.rs, python/examples/ccxt-okx-spot.example.json]
+      - venue: OKX
+        product: perpetual
+        account_mode: one_way
+        account_models: [unified]
+        margin_modes: [cross, isolated]
+        position_modes: [one_way]
+        order_shapes:
+          - order_type: market
+            quantity_unit: contracts
+            side: buy
+          - order_type: market
+            quantity_unit: contracts
+            side: sell
+          - order_type: limit
+            quantity_unit: contracts
+            side: buy
+          - order_type: limit
+            quantity_unit: contracts
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt.rs, deploy/qianxing.runtime.ccxt.example.json, python/examples/ccxt-okx-swap.example.json]
+      - venue: OKX
+        product: perpetual
+        account_mode: hedge
+        account_models: [unified]
+        margin_modes: [cross, isolated]
+        position_modes: [hedge]
+        order_shapes:
+          - order_type: market
+            quantity_unit: contracts
+            side: buy
+          - order_type: market
+            quantity_unit: contracts
+            side: sell
+          - order_type: limit
+            quantity_unit: contracts
+            side: buy
+          - order_type: limit
+            quantity_unit: contracts
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt.rs, deploy/qianxing.runtime.ccxt.example.json, python/examples/ccxt-okx-swap.example.json]
+      - venue: BITGET
+        product: spot
+        account_mode: cash
+        account_models: [classic, uta]
+        margin_modes: [cash]
+        position_modes: [not_applicable]
+        order_shapes:
+          - order_type: market
+            quantity_unit: base
+            side: buy
+          - order_type: market
+            quantity_unit: base
+            side: sell
+          - order_type: limit
+            quantity_unit: base
+            side: buy
+          - order_type: limit
+            quantity_unit: base
+            side: sell
+          - order_type: market
+            quantity_unit: quote
+            side: buy
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt.rs, python/examples/ccxt-bitget-spot.example.json, python/examples/ccxt-bitget-uta-spot.example.json]
+      - venue: BITGET
+        product: perpetual
+        account_mode: one_way
+        account_models: [classic, uta]
+        margin_modes: [cross, isolated]
+        position_modes: [one_way]
+        order_shapes:
+          - order_type: market
+            quantity_unit: contracts
+            side: buy
+          - order_type: market
+            quantity_unit: contracts
+            side: sell
+          - order_type: limit
+            quantity_unit: contracts
+            side: buy
+          - order_type: limit
+            quantity_unit: contracts
+            side: sell
+        operations: [submit, cancel]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-bitget-perpetual.example.json, python/examples/ccxt-bitget-uta-perpetual.example.json]
 
 providers:
   - name: CcxtBarDataProvider
+    capability_id: qx.provider.ccxt_bar
     impl: crates/qx-adapter/src/ccxt_provider.rs
     verified_version: "0.2.0"
     market: partial
@@ -183,6 +458,7 @@ providers:
     limitations: ["Provider capability 现显式声明 Bar 档位，Registry 按 DataKind 与档位在 I/O 前过滤候选；历史 Bar 经 fixture 与 Rust 共享回测验证，但真实交易所各自认证仍未完成", "不支持的复权与非严格质量语义会在 Provider I/O 前拒绝；只保留本机接收时间，不能证明历史点时可见性；不提供 realtime、Quote、深度或逐源频率保真认证"]
 
   - name: PythonDataProvider
+    capability_id: qx.provider.python
     impl: crates/qx-python/src/provider_bridge.rs
     verified_version: "0.2.0"
     market: partial
@@ -195,6 +471,7 @@ providers:
     limitations: ["这是 SDK 绑定适配器，不代表某个外部数据源已认证；当前贯通历史 Bar 与 Quote 订单簿快照到 Rust Bar/DepthFrame 及回测；实时订阅、分页、盘口增量合并、限流、修订与外部源 conformance 需逐源实现并验收"]
 
   - name: InMemoryProvider
+    capability_id: qx.provider.in_memory
     impl: crates/qx-provider/src/lib.rs
     verified_version: "0.2.0"
     market: implemented-and-verified
@@ -207,6 +484,7 @@ providers:
     limitations: ["确定性本地 Provider：按事件时间切片并保留原始血缘，不做实时订阅", "返回值仍是 RawRecord，必须过质量门与版本化标准化后才能进入研究或交易视图"]
 
   - name: JsonBarFrameProvider
+    capability_id: qx.provider.json_bar_frame
     impl: crates/qx-data/src/provider.rs
     verified_version: "0.2.0"
     market: implemented-and-verified
@@ -219,6 +497,7 @@ providers:
     limitations: ["文件与 JSON 载入式数据面，不含实时订阅与订单簿深度"]
 
   - name: DemoProvider
+    capability_id: qx.provider.demo
     impl: crates/qx-cli/src/ecosystem_smoke.rs
     verified_version: "0.2.0"
     market: implemented-unverified

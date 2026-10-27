@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-runtime-session-lifecycle-v1",
+  "generated_at_utc": "2026-10-26T22:02:11Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "python_mode": "local mock worker"
+  },
+  "contract": {
+    "durable_job_run": "one event batch within a persistent strategy session",
+    "runtime_clean_eof": "on_stop once with shutdown",
+    "runtime_worker_frame_or_stream_failure": "on_stop once with failed",
+    "strategy_request_decode_failure": "per-request error; session remains active",
+    "strategy_request_callback_failure": "on_error and rollback; session remains active",
+    "finite_backtest_terminal_reasons": ["completed", "cancelled", "failed"]
+  },
+  "regression": {
+    "requests": ["job-2", "job-3"],
+    "on_start_calls": 1,
+    "timer_callbacks": [
+      {"request_id": "job-2", "ts": 2},
+      {"request_id": "job-3", "ts": 3}
+    ],
+    "on_stop_calls": [
+      {"last_request_id": "job-3", "reason": "shutdown"}
+    ]
+  },
+  "validation": [
+    {
+      "command": "python -m unittest tests.test_strategy_process_adapter",
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile qianxing_strategy/worker.py tests/test_strategy_process_adapter.py",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "No per-JobRun on_stop control is sent because these runs share one strategy session and checkpoint.",
+    "No durable strategy-level stop command is available while the worker process remains running.",
+    "Remote provider services were not contacted."
+  ],
+  "release_status": "unpublished workspace"
+}

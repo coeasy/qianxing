@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/run-record-v2.json",
+  "title": "Qianxing Run Record v2",
+  "description": "Path-independent run identity. Artifacts are referenced by their SHA-256 content identity; storage locations are resolved outside this document.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "status", "input_digest", "code_identity", "config_fingerprint", "started_at_ms", "replay_verdict", "capability_level"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["pending", "running", "completed", "failed"]},
+    "input_digest": {"type": "string", "minLength": 1},
+    "code_identity": {"type": "string", "minLength": 1},
+    "config_fingerprint": {"type": "string", "minLength": 1},
+    "started_at_ms": {"type": "integer", "minimum": 0},
+    "finished_at_ms": {"type": ["integer", "null"], "minimum": 0},
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "artifact_id", "kind", "schema_version", "byte_len"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "artifact_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "kind": {"type": "string", "minLength": 1},
+          "schema_version": {"type": "integer", "minimum": 1},
+          "byte_len": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "replay_verdict": {"enum": ["verified", "mismatch", "not_run"]},
+    "capability_level": {"enum": ["L0", "L1", "L2", "L3", "L4"]}
+  },
+  "additionalProperties": false
+}

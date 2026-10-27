@@ -82,7 +82,7 @@ pub(crate) fn init_flow_tail(
 ) -> Option<String> {
     let program = cli_args::PROGRAM_NAME;
     let runtime = output.display().to_string();
-    if profile == "paper" {
+    if matches!(profile, "paper" | "crypto-paper") {
         return Some(format!("{program} paper-check {runtime}"));
     }
     bound_strategy(config).then(|| format!("{program} report {runtime} --json"))

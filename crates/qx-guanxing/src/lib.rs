@@ -5,7 +5,7 @@
 //! 前视偏差必须在**数据层封禁**，而不是靠策略自觉。
 //! 每个 `DataView` 都提供 `as_of(ts)`，策略只能访问该时刻及之前的数据。
 
-use qx_core::{InstrumentId, Price, Quantity};
+use qx_core::{ExactDecimal, ExactOhlcv, InstrumentId, Price, Quantity};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -28,6 +28,9 @@ pub struct Bar {
     pub low: i128,
     pub close: i128,
     pub volume: i128,
+    /// Optional exchange-precision values. Legacy raw columns remain a checked 1e-9 view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_ohlcv: Option<ExactOhlcv>,
 }
 
 impl Bar {
@@ -39,8 +42,56 @@ impl Bar {
             low,
             close,
             volume,
+            exact_ohlcv: None,
         }
     }
+
+    pub fn with_exact_ohlcv(mut self, exact_ohlcv: ExactOhlcv) -> Result<Self, String> {
+        exact_ohlcv.validate()?;
+        let raw = [self.open, self.high, self.low, self.close, self.volume];
+        let exact = exact_ohlcv.raw_projection()?;
+        for (raw, exact) in raw.into_iter().zip(exact) {
+            if exact != raw {
+                return Err("ExactOhlcv raw projection does not match Bar raw columns".into());
+            }
+        }
+        self.exact_ohlcv = Some(exact_ohlcv);
+        Ok(self)
+    }
+
+    pub fn open_exact(&self) -> ExactDecimal {
+        self.exact_ohlcv
+            .map(|values| values.open)
+            .unwrap_or_else(|| exact_raw(self.open))
+    }
+
+    pub fn high_exact(&self) -> ExactDecimal {
+        self.exact_ohlcv
+            .map(|values| values.high)
+            .unwrap_or_else(|| exact_raw(self.high))
+    }
+
+    pub fn low_exact(&self) -> ExactDecimal {
+        self.exact_ohlcv
+            .map(|values| values.low)
+            .unwrap_or_else(|| exact_raw(self.low))
+    }
+
+    pub fn close_exact(&self) -> ExactDecimal {
+        self.exact_ohlcv
+            .map(|values| values.close)
+            .unwrap_or_else(|| exact_raw(self.close))
+    }
+
+    pub fn volume_exact(&self) -> ExactDecimal {
+        self.exact_ohlcv
+            .map(|values| values.volume)
+            .unwrap_or_else(|| exact_raw(self.volume))
+    }
+}
+
+fn exact_raw(value: i128) -> ExactDecimal {
+    ExactDecimal::from_parts(value, 9).expect("legacy Bar raw values use supported scale 9")
 }
 
 /// L1 最优报价。没有深度时不得声称具备队列位置或完整盘口能力。
@@ -51,6 +102,16 @@ pub struct QuoteTick {
     pub bid_qty: Quantity,
     pub ask: Price,
     pub ask_qty: Quantity,
+    /// Exchange-native displayed quantity when it exceeds the legacy 1e9 scale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bid_qty_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_qty_exact: Option<ExactDecimal>,
+    /// Exact venue quote retained when the exchange precision exceeds `Price`'s 1e9 scale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bid_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_exact: Option<ExactDecimal>,
     pub source_seq: u64,
 }
 
@@ -69,8 +130,48 @@ impl QuoteTick {
             bid_qty,
             ask,
             ask_qty,
+            bid_qty_exact: None,
+            ask_qty_exact: None,
+            bid_exact: None,
+            ask_exact: None,
             source_seq,
         }
+    }
+
+    pub fn with_exact_prices(mut self, bid_exact: ExactDecimal, ask_exact: ExactDecimal) -> Self {
+        self.bid_exact = Some(bid_exact);
+        self.ask_exact = Some(ask_exact);
+        self
+    }
+
+    pub fn with_optional_exact_prices(
+        mut self,
+        bid_exact: Option<ExactDecimal>,
+        ask_exact: Option<ExactDecimal>,
+    ) -> Self {
+        self.bid_exact = bid_exact;
+        self.ask_exact = ask_exact;
+        self
+    }
+
+    pub fn with_exact_sizes(
+        mut self,
+        bid_qty_exact: ExactDecimal,
+        ask_qty_exact: ExactDecimal,
+    ) -> Self {
+        self.bid_qty_exact = Some(bid_qty_exact);
+        self.ask_qty_exact = Some(ask_qty_exact);
+        self
+    }
+
+    pub fn with_optional_exact_sizes(
+        mut self,
+        bid_qty_exact: Option<ExactDecimal>,
+        ask_qty_exact: Option<ExactDecimal>,
+    ) -> Self {
+        self.bid_qty_exact = bid_qty_exact;
+        self.ask_qty_exact = ask_qty_exact;
+        self
     }
 
     pub fn mid(self) -> Option<Price> {
@@ -379,6 +480,7 @@ pub enum QualityIssue {
     ZeroVolume { at: usize },
     DuplicateTimestamp { at: usize },
     NegativePrice { at: usize },
+    InvalidExactOhlcv { at: usize },
     InvalidMetadata,
     MetadataHashMismatch,
 }
@@ -412,6 +514,7 @@ impl QualityReport {
                     | QualityIssue::NegativePrice { .. }
                     | QualityIssue::HighLessThanLow { .. }
                     | QualityIssue::CloseOutOfRange { .. }
+                    | QualityIssue::InvalidExactOhlcv { .. }
             )
         });
         if fatal {
@@ -437,16 +540,42 @@ impl QualityGate {
             issues.push(QualityIssue::EmptyInput);
         }
         for (i, b) in bars.iter().enumerate() {
+            if b.exact_ohlcv.is_some_and(|exact| {
+                exact.validate().is_err()
+                    || exact.raw_projection().map_or(true, |raw| {
+                        raw != [b.open, b.high, b.low, b.close, b.volume]
+                    })
+            }) {
+                issues.push(QualityIssue::InvalidExactOhlcv { at: i });
+            }
             if b.open < 0 || b.high < 0 || b.low < 0 || b.close < 0 || b.volume < 0 {
                 issues.push(QualityIssue::NegativePrice { at: i });
             }
-            if b.high < b.low {
+            let (high, low, close, volume_is_zero) = match b.exact_ohlcv {
+                Some(exact) => (exact.high, exact.low, exact.close, exact.volume.is_zero()),
+                None => (
+                    ExactDecimal::from_parts(b.high, 9).expect("raw Bar scale is supported"),
+                    ExactDecimal::from_parts(b.low, 9).expect("raw Bar scale is supported"),
+                    ExactDecimal::from_parts(b.close, 9).expect("raw Bar scale is supported"),
+                    b.volume == 0,
+                ),
+            };
+            if high
+                .checked_cmp(low)
+                .is_some_and(|ordering| ordering.is_lt())
+            {
                 issues.push(QualityIssue::HighLessThanLow { at: i });
             }
-            if b.close > b.high || b.close < b.low {
+            if close
+                .checked_cmp(high)
+                .is_some_and(|ordering| ordering.is_gt())
+                || close
+                    .checked_cmp(low)
+                    .is_some_and(|ordering| ordering.is_lt())
+            {
                 issues.push(QualityIssue::CloseOutOfRange { at: i });
             }
-            if b.volume == 0 {
+            if volume_is_zero {
                 issues.push(QualityIssue::ZeroVolume { at: i });
             }
             if i > 0 {
@@ -477,6 +606,12 @@ fn bars_digest(source: &DataSourceId, bars: &[Bar]) -> u64 {
         hash.write_i128(bar.low);
         hash.write_i128(bar.close);
         hash.write_i128(bar.volume);
+        if let Some(exact) = bar.exact_ohlcv {
+            hash.write_u64(1);
+            for value in [exact.open, exact.high, exact.low, exact.close, exact.volume] {
+                hash.write_text(&value.to_string());
+            }
+        }
     }
     hash.finish()
 }
@@ -506,6 +641,59 @@ mod tests {
     fn clean_data_passes() {
         let r = QualityGate::check(&bars());
         assert_eq!(r.verdict(), Verdict::Ok);
+    }
+
+    #[test]
+    fn source_precision_changes_the_data_view_identity_even_when_raw_columns_match() {
+        let exact_bar = |volume: &str| {
+            Bar::new(10, 10, 12, 9, 10, 100)
+                .with_exact_ohlcv(ExactOhlcv {
+                    open: ExactDecimal::parse("0.0000000101").unwrap(),
+                    high: ExactDecimal::parse("0.0000000129").unwrap(),
+                    low: ExactDecimal::parse("0.0000000095").unwrap(),
+                    close: ExactDecimal::parse("0.0000000101").unwrap(),
+                    volume: ExactDecimal::parse(volume).unwrap(),
+                })
+                .unwrap()
+        };
+        let first = DataView::try_new(
+            vec![exact_bar("0.0000001001")],
+            DataSourceId::new("exact-source"),
+        )
+        .unwrap();
+        let second = DataView::try_new(
+            vec![exact_bar("0.0000001002")],
+            DataSourceId::new("exact-source"),
+        )
+        .unwrap();
+        assert_eq!(first.all()[0].volume, second.all()[0].volume);
+        assert_ne!(first.metadata().data_hash, second.metadata().data_hash);
+    }
+
+    #[test]
+    fn exact_positive_sub_nano_volume_is_not_misclassified_as_zero() {
+        let bar = Bar::new(
+            10,
+            qx_core::SCALE,
+            qx_core::SCALE,
+            qx_core::SCALE,
+            qx_core::SCALE,
+            0,
+        )
+        .with_exact_ohlcv(ExactOhlcv {
+            open: ExactDecimal::ONE,
+            high: ExactDecimal::ONE,
+            low: ExactDecimal::ONE,
+            close: ExactDecimal::ONE,
+            volume: ExactDecimal::parse("0.0000000001").unwrap(),
+        })
+        .unwrap();
+        let view = DataView::try_new(vec![bar], DataSourceId::new("tiny-volume"))
+            .expect("a positive exact source volume is not zero-volume data");
+        assert_eq!(
+            view.metadata().data_hash,
+            bars_digest(view.source(), view.all())
+        );
     }
 
     #[test]

@@ -61,18 +61,25 @@ pub(super) fn build_portfolio_strategy(
     };
     let mut slots = Vec::with_capacity(portfolio.additional_strategies.len() + 1);
     let primary = &spec.strategy;
+    let primary_reserved_capital_exact = portfolio
+        .primary_reserved_capital()
+        .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))?;
     let primary_strategy = build_member(
         primary,
         &build_context,
         portfolio.primary_reserved_capital_raw,
+        primary_reserved_capital_exact,
         injected.remove(&primary.strategy_id),
     )?;
-    slots.push(OrderBookStrategySlot::from_box(
-        portfolio.primary_priority,
-        primary.strategy_id.clone(),
-        portfolio.primary_reserved_capital_raw,
-        primary_strategy,
-    ));
+    slots.push(
+        OrderBookStrategySlot::from_box(
+            portfolio.primary_priority,
+            primary.strategy_id.clone(),
+            portfolio.primary_reserved_capital_raw,
+            primary_strategy,
+        )
+        .with_reserved_capital_exact(primary_reserved_capital_exact),
+    );
     for member in &portfolio.additional_strategies {
         slots.push(build_slot(member, &build_context, &mut injected)?);
     }
@@ -95,10 +102,14 @@ fn build_slot(
     context: &DepthPortfolioBuildContext<'_>,
     injected: &mut BTreeMap<String, InjectedDepthStrategy>,
 ) -> Result<OrderBookStrategySlot, AppError> {
+    let reserved_capital_exact = member
+        .reserved_capital()
+        .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))?;
     let strategy = build_member(
         &member.strategy,
         context,
         member.reserved_capital_raw,
+        reserved_capital_exact,
         injected.remove(&member.strategy.strategy_id),
     )?;
     Ok(OrderBookStrategySlot::from_box(
@@ -106,13 +117,15 @@ fn build_slot(
         member.strategy.strategy_id.clone(),
         member.reserved_capital_raw,
         strategy,
-    ))
+    )
+    .with_reserved_capital_exact(reserved_capital_exact))
 }
 
 fn build_member(
     member: &crate::spec::BuiltinStrategySpec,
     build: &DepthPortfolioBuildContext<'_>,
     reserved_capital_raw: i128,
+    reserved_capital_exact: qx_core::ExactDecimal,
     injected: Option<InjectedDepthStrategy>,
 ) -> Result<Box<dyn OrderBookStrategy>, AppError> {
     let cash = BTreeMap::from([(build.spec.settlement_currency.clone(), reserved_capital_raw)]);
@@ -133,6 +146,12 @@ fn build_member(
         ),
         cash,
         risk_state: "backtest".into(),
+        positions_exact: BTreeMap::new(),
+        cash_exact: BTreeMap::from([(
+            build.spec.settlement_currency.clone(),
+            reserved_capital_exact,
+        )]),
+        available_margin_exact: Some(reserved_capital_exact),
     };
     if let Some(injected) = injected {
         return CallbackOrderBookStrategy::new(

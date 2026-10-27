@@ -71,6 +71,7 @@ mod tests {
             low_raw: vec![9, 10],
             close_raw: vec![11, 12],
             volume_raw: vec![100, 110],
+            exact_ohlcv: None,
         }
     }
 

@@ -159,9 +159,34 @@ pub(crate) fn run() {
             force,
         } => quickstart::run(project, html, force),
         Command::Guide(args) => guide::run(args),
-        Command::Doctor { path, json } => {
-            let path = path.unwrap_or_else(default_runtime_path);
-            if let Err(error) = run_doctor(&path, json) {
+        Command::Doctor {
+            path,
+            json,
+            capabilities,
+            capability_id,
+            venue,
+            product,
+            account_mode,
+            account_model,
+            margin_mode,
+            operation,
+        } => {
+            let result = if capabilities {
+                run_doctor_capabilities(
+                    json,
+                    capability_id.as_deref(),
+                    venue.as_deref(),
+                    product.as_deref(),
+                    account_mode.as_deref(),
+                    account_model.as_deref(),
+                    margin_mode.as_deref(),
+                    operation.as_deref(),
+                )
+            } else {
+                let path = path.unwrap_or_else(default_runtime_path);
+                run_doctor(&path, json)
+            };
+            if let Err(error) = result {
                 eprintln!("[qx-cli · CLI] Doctor 失败: {error}");
                 std::process::exit(2);
             }

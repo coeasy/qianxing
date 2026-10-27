@@ -25,6 +25,7 @@ fn account_projection_checks_venue_less_facts_by_account_identity_only() {
             account_id: account_id.into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }
     }
     fn ledger_entry(account_id: &str) -> LedgerEntry {
@@ -42,6 +43,7 @@ fn account_projection_checks_venue_less_facts_by_account_identity_only() {
             multiplier: 1,
             position_side: None,
             leverage: None,
+            exact_amounts: None,
         }
     }
     fn fill(account_id: &str, venue_id: Option<&str>) -> qx_core::Fill {
@@ -186,6 +188,7 @@ fn unknown_projection_key_is_404_on_every_scoped_read_face() {
                     position_side: None,
 
                     leverage: None,
+                    exact_amounts: None,
                 },
             },
         ))

@@ -72,8 +72,80 @@
     "artifact_path": {
       "type": "string",
       "minLength": 1
+    },
+    "canonical_run_spec_json": {
+      "type": "string",
+      "minLength": 1
+    },
+    "canonical_run_spec_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "input_data_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "result_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "run_manifest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_record": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_locations": {
+      "type": "object",
+      "required": [
+        "experiment_report",
+        "run_manifest"
+      ],
+      "properties": {
+        "experiment_report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_manifest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_input": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          { "required": ["canonical_run_spec_json"] },
+          { "required": ["canonical_run_spec_fingerprint"] },
+          { "required": ["input_data_fingerprint"] },
+          { "required": ["result_hash"] },
+          { "required": ["run_manifest"] },
+          { "required": ["run_record"] },
+          { "required": ["artifact_locations"] }
+        ]
+      },
+      "then": {
+        "required": [
+          "canonical_run_spec_json",
+          "canonical_run_spec_fingerprint",
+          "input_data_fingerprint",
+          "result_hash",
+          "run_manifest",
+          "run_record",
+          "artifact_locations"
+        ]
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "Candidate": {

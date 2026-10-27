@@ -10,7 +10,7 @@ use crate::backtest_input_identity::{
 };
 use qx_datastruct::BarFrame;
 use qx_xingban::DepthFrame;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const MAX_PREVIEW_INPUT_BYTES: u64 = 128 * 1024 * 1024;
@@ -22,7 +22,7 @@ pub struct VerifiedBarFramePreview {
     pub rows: Vec<VerifiedBarFramePoint>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VerifiedBarFramePoint {
     pub ts: u64,
     pub open_raw: String,
@@ -40,14 +40,14 @@ pub struct VerifiedBarFrameEventContext {
     pub bar: VerifiedBarFramePoint,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct VerifiedDepthFramePreview {
     pub total: u64,
     pub truncated: bool,
     pub rows: Vec<VerifiedDepthFramePoint>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct VerifiedDepthFramePoint {
     pub ts: u64,
     pub sequence: u64,
@@ -56,7 +56,7 @@ pub struct VerifiedDepthFramePoint {
     pub levels_truncated: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct VerifiedDepthLevel {
     pub price_raw: String,
     pub qty_raw: String,

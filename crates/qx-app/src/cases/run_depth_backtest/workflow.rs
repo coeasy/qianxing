@@ -9,7 +9,7 @@ use crate::cases::risk_gate::{risk_gate_for, risk_rule_source_label};
 use crate::run_handle::CancellationToken;
 use crate::{AppError, AppErrorCategory, DepthBacktestOutcome, DepthBacktestSpec, RunContext};
 use qx_core::{Money, Quantity, ReplayVerifier};
-use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
+use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{
     depth_frame_to_ticks, DataTier, DepthBarStrategy, DepthFrame, MarketMakingStrategy,
     NativeOrderBookStrategy, NativeTickStrategy, OrderBookBacktestConfig, OrderBookBacktestEngine,
@@ -175,6 +175,10 @@ pub(in crate::cases) fn run_inner_with_strategy(
     let mut custom_identities: Vec<&crate::cases::StrategyArtifactIdentity> =
         injected.iter().map(|custom| &custom.identity).collect();
     custom_identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
+    let canonical_custom_identities = custom_identities
+        .iter()
+        .map(|identity| (*identity).clone())
+        .collect::<Vec<_>>();
     let config_hash = config_hash(
         spec,
         &frame,
@@ -214,6 +218,9 @@ pub(in crate::cases) fn run_inner_with_strategy(
         venue_id: instrument.venue.to_string(),
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots[0].ts,
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         positions: BTreeMap::new(),
         available_margin_raw: crate::cases::strategy_available_margin_raw(
             &cash,
@@ -257,7 +264,9 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 instrument_spec: spec.market_spec.clone(),
                 risk,
             })
-            .with_execution_model(model);
+            .with_execution_model(model)
+            .with_funding_bps(spec.funding_bps)
+            .with_funding_events(spec.funding_events.clone());
             match (cancellation, portfolio_strategy.as_mut(), standalone_custom) {
                 (_, _, Some(custom)) => {
                     let mut strategy = NativeTickStrategy::new(
@@ -310,7 +319,9 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 risk,
                 data_tier: DataTier::L2L3,
             })
-            .with_execution_model(model);
+            .with_execution_model(model)
+            .with_funding_bps(spec.funding_bps)
+            .with_funding_events(spec.funding_events.clone());
             if let Some(config) = spec.market_making {
                 let mut maker = MarketMakingStrategy::new(
                     config,
@@ -337,10 +348,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
                     CallbackStrategy(custom.strategy),
                     strategy_context.clone(),
                 );
-                strategy
-                    .strategy
-                    .on_init(&strategy.context)
-                    .map_err(invalid_input)?;
+                strategy.initialize().map_err(invalid_input)?;
                 match cancellation {
                     Some(cancellation) => engine
                         .run_with_cancel(&frame.snapshots, &mut strategy, || {
@@ -398,10 +406,12 @@ pub(in crate::cases) fn run_inner_with_strategy(
             "Tick/OrderBook 结果哈希与重放哈希不一致",
         ));
     }
-    if report.snapshot_ts.len() != report.equity.len() {
+    if report.snapshot_ts.len() != report.equity.len()
+        || report.equity_exact.len() != report.equity.len()
+    {
         return Err(AppError::new(
             AppErrorCategory::InternalInvariant,
-            "Tick/OrderBook 权益曲线与输入快照数量不一致",
+            "Tick/OrderBook raw/exact 权益曲线与输入快照数量不一致",
         ));
     }
 
@@ -418,6 +428,8 @@ pub(in crate::cases) fn run_inner_with_strategy(
         dataset_quality: dataset_quality.as_ref(),
         strategy_id: &strategy_id,
         strategy_version: &strategy_version,
+        custom_strategies: &canonical_custom_identities,
+        effective_account_id: &account_id,
         account_id: spec.account_id.as_deref(),
         portfolio: portfolio_fill_attribution(spec, &report.fills)?,
         context,
@@ -427,6 +439,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
 
     Ok(Some(DepthBacktestOutcome {
         run_id: spec.run_id.clone(),
+        manifest_run_id: spec.manifest_run_id.clone(),
         instrument: instrument.to_string(),
         tier: spec.tier.clone(),
         result_hash: format!("{:016x}", report.result_hash()),

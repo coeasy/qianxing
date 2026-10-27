@@ -289,6 +289,8 @@ fn run_inner(scope: Scope, as_json: bool) -> Result<(), String> {
         input_event_hash: format!("bars:{}", bars.len()),
         output_event_hash: format!("{:016x}", a.hash),
         runtime_version: build_identity::RUNTIME_VERSION.into(),
+        canonical_run_spec_json: None,
+        canonical_run_spec_fingerprint: None,
     };
     println!(
         "[更路 · RunManifest · DEMO 合成输入] digest={:016x}",

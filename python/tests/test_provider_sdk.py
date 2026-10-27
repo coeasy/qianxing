@@ -15,6 +15,8 @@ from qianxing.app import (
     InstrumentId,
     MultiLegBacktestSpec,
     TradingInstrumentSpec,
+    read_provider_depth_run_report_v1,
+    read_provider_run_report_v1,
     verify_depth_run,
     verify_run,
 )
@@ -30,6 +32,17 @@ from qianxing.data import (
     ProviderResponse,
 )
 from qianxing_bridge import native
+
+
+def _local_schema_registry(*schema_names: str):
+    from referencing import Registry, Resource
+
+    schema_root = Path(__file__).resolve().parents[2] / "schemas"
+    registry = Registry()
+    for name in schema_names:
+        schema = json.loads((schema_root / name).read_text(encoding="utf-8"))
+        registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
+    return registry
 
 
 class _Bars:
@@ -401,6 +414,27 @@ class ProviderSdkTest(unittest.TestCase):
             self.assertEqual(result.manifest["dataset"]["fingerprint"], manifest["dataset"]["fingerprint"])
             self.assertTrue(Path(result.manifest_path).is_file())
             self.assertTrue(verify_run(result.outcome).verified)
+            report = read_provider_run_report_v1(result)
+            self.assertEqual(report["schema_version"], 1)
+            self.assertTrue(report["report"]["verification"]["verified"])
+            self.assertEqual(report["manifest"], result.manifest)
+            from jsonschema import Draft202012Validator
+
+            report_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "provider-backtest-report-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(
+                report_schema,
+                registry=_local_schema_registry(
+                    "research-run-report-v1.json",
+                    "provider-backtest-result-v1.json",
+                    "dataset-manifest-v2.json",
+                ),
+            ).validate(report)
+            tampered = asdict(result)
+            tampered["manifest"]["provider_version"] = "tampered-version"
+            with self.assertRaises(Exception):
+                read_provider_run_report_v1(tampered)
 
     def test_quote_provider_to_depth_frame_and_shared_rust_tick_backtest(self) -> None:
         fixture = json.loads(
@@ -445,6 +479,7 @@ class ProviderSdkTest(unittest.TestCase):
             instrument_set=(instrument,),
         )
         frame = registry.fetch_depth_frame(query, "l1")
+        self.assertEqual(frame["schema_version"], 1)
         self.assertRegex(frame["source"], r"^quote-fixture#query=[0-9a-f]{16}$")
         self.assertEqual(len(frame["snapshots"]), len(rows))
         with tempfile.TemporaryDirectory() as directory:
@@ -484,10 +519,97 @@ class ProviderSdkTest(unittest.TestCase):
             depth_output_schema = json.loads(
                 (Path(__file__).resolve().parents[2] / "schemas" / "provider-depth-backtest-result-v1.json").read_text(encoding="utf-8")
             )
-            Draft202012Validator(depth_output_schema).validate(json.loads(json.dumps(asdict(provider_outcome))))
+            Draft202012Validator(
+                depth_output_schema,
+                registry=_local_schema_registry("depth-backtest-outcome-v1.json"),
+            ).validate(json.loads(json.dumps(asdict(provider_outcome))))
             self.assertEqual(provider_outcome.provider_id, "quote-fixture")
             self.assertEqual(provider_outcome.retry_chain, ("quote-fixture",))
             self.assertTrue(verify_depth_run(provider_outcome.outcome).verified)
+            report = read_provider_depth_run_report_v1(provider_outcome)
+            self.assertEqual(report["provider_id"], "quote-fixture")
+            self.assertTrue(report["report"]["verification"]["verified"])
+            self.assertRegex(report["query_digest"], r"^[0-9a-f]{16}$")
+            report_schema = json.loads(
+                (Path(__file__).resolve().parents[2] / "schemas" / "provider-depth-backtest-report-v1.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(
+                report_schema,
+                registry=_local_schema_registry("research-run-report-v1.json"),
+            ).validate(report)
+            tampered = asdict(provider_outcome)
+            tampered["source_hash"] = "0000000000000000"
+            with self.assertRaises(Exception):
+                read_provider_depth_run_report_v1(tampered)
+
+    def test_quote_provider_preserves_sub_nano_exact_levels_in_depth_frame_v2(self) -> None:
+        instrument = "TINYUSDT.BINANCE"
+        snapshot = {
+            "instrument": {"symbol": "TINYUSDT", "venue": "BINANCE"},
+            "ts": 1000,
+            "sequence": 1,
+            "bids": [
+                {
+                    "price": 0,
+                    "qty": 0,
+                    "price_exact": {"coefficient": "65", "scale": 11},
+                    "qty_exact": {"coefficient": "2", "scale": 10},
+                }
+            ],
+            "asks": [
+                {
+                    "price": 0,
+                    "qty": 0,
+                    "price_exact": {"coefficient": "66", "scale": 11},
+                    "qty_exact": {"coefficient": "3", "scale": 10},
+                }
+            ],
+        }
+        row = ProviderPayloadRow(
+            event_time=1000,
+            receive_time=1000,
+            instrument=instrument,
+            content_type=ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
+            json=json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
+        )
+        capability = ProviderCapability(
+            provider_id="quote-exact",
+            version="v1",
+            data_kinds=("Quote",),
+            asset_classes=("crypto",),
+            frequencies=("tick",),
+            auth_scope="public",
+            rate_limit_per_second=10,
+            freshness_seconds=60,
+            historical_start=1000,
+            historical_end=1000,
+            realtime=False,
+            priority=0,
+            quality_score=100,
+            cost_score=1,
+        )
+        registry = ProviderRegistry()
+        registry.register(capability, _Bars(capability, (row,)))
+        query = ProviderQuery(
+            kind="Quote",
+            asset_class="crypto",
+            frequency="tick",
+            start=1000,
+            end=1000,
+            instrument_set=(instrument,),
+        )
+
+        frame = registry.fetch_depth_frame(query, "l1")
+        self.assertEqual(frame["schema_version"], 2)
+        self.assertEqual(frame["snapshots"][0]["bids"][0]["price"], 0)
+        self.assertEqual(
+            frame["snapshots"][0]["bids"][0]["price_exact"],
+            {"coefficient": "65", "scale": 11},
+        )
+        self.assertEqual(
+            frame["snapshots"][0]["asks"][0]["qty_exact"],
+            {"coefficient": "3", "scale": 10},
+        )
 
     def test_depth_provider_rejects_event_time_mismatch(self) -> None:
         fixture = json.loads(

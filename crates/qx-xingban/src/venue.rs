@@ -3,11 +3,14 @@
 //! **结构性防作弊**：在 bar t 提交的订单，在 bar t+1 的 open 成交。
 //! 这从结构上杜绝了 cheat-on-close（用本根 bar 的收盘价成交本根 bar 的决策）。
 
-use qx_core::{FeeModel, Fill, Money, Order, OrderStatus, Price, Quantity, SCALE};
+use qx_core::{
+    DecimalRounding, ExactDecimal, ExactFillAmounts, ExactFillFee, FeeModel, Fill, Money, Order,
+    OrderStatus, Price, Quantity, TradingInstrumentSpec, SCALE,
+};
 use qx_guanxing::Bar;
 
 use crate::cost::{LatencyModel, ZeroLatency};
-use crate::fill::{FillContext, FillModel};
+use crate::fill::{ExactFillContext, FillContext, FillModel};
 use crate::rng::DeterministicRng;
 use crate::{ExecutionAttempt, ExecutionAttemptReason};
 
@@ -40,6 +43,10 @@ pub struct BarMatchingEngine {
     /// 反向（币本位）合约的费用基准不是 `qty × price`，而是
     /// `qty × contract_size / price`，与 `TradingInstrumentSpec::notional` 同源。
     inverse_fee_basis: bool,
+    /// Currency of the fee model's output; exact fills must carry this fact into the ledger.
+    exact_fee_currency: Option<String>,
+    /// Frozen market rules used for quote-budget sizing and lot-safe partial fills.
+    instrument_spec: Option<TradingInstrumentSpec>,
     rng: DeterministicRng,
     all_fills: Vec<Fill>,
     execution_attempts: Vec<ExecutionAttempt>,
@@ -47,7 +54,7 @@ pub struct BarMatchingEngine {
     block_buy: bool,
     block_sell: bool,
     volume_limit_bar_ts: Option<u64>,
-    volume_used_raw: i128,
+    volume_used_exact: ExactDecimal,
 }
 
 impl BarMatchingEngine {
@@ -60,6 +67,8 @@ impl BarMatchingEngine {
             latency_model: Box::new(ZeroLatency),
             fee_price_multiplier: SCALE,
             inverse_fee_basis: false,
+            exact_fee_currency: None,
+            instrument_spec: None,
             rng: DeterministicRng::new(seed),
             all_fills: Vec::new(),
             execution_attempts: Vec::new(),
@@ -67,7 +76,7 @@ impl BarMatchingEngine {
             block_buy: false,
             block_sell: false,
             volume_limit_bar_ts: None,
-            volume_used_raw: 0,
+            volume_used_exact: ExactDecimal::ZERO,
         }
     }
 
@@ -81,7 +90,11 @@ impl BarMatchingEngine {
     }
 
     pub fn submit_at(&mut self, o: Order, submitted_ts: u64) {
-        self.submit_with_funding_reservation_at(o, submitted_ts, 0);
+        let _ = self.try_submit_at(o, submitted_ts);
+    }
+
+    pub fn try_submit_at(&mut self, o: Order, submitted_ts: u64) -> Result<(), String> {
+        self.submit_with_funding_reservation_at(o, submitted_ts, 0)
     }
 
     /// Submit an order while retaining the account buying power reserved by the
@@ -91,7 +104,51 @@ impl BarMatchingEngine {
         o: Order,
         submitted_ts: u64,
         funding_reservation_raw: i128,
-    ) {
+    ) -> Result<(), String> {
+        o.validate()?;
+        if let Some(amounts) = o.exact_amounts {
+            let remaining = if let Some(budget) = amounts.quote_budget {
+                let spec = self.instrument_spec.as_ref().ok_or_else(|| {
+                    "Bar quote_budget 撮合缺少冻结 TradingInstrumentSpec".to_string()
+                })?;
+                if spec.instrument != o.instrument {
+                    return Err("Bar quote_budget 撮合规格与订单标的不一致".into());
+                }
+                spec.validate_exact_quote_budget(budget)
+                    .map_err(|error| error.to_string())?;
+                if !self.fill_model.supports_exact_amounts() {
+                    return Err(format!(
+                        "Bar quote_budget 订单要求 exact FillModel，当前模型 {} 未声明支持",
+                        self.fill_model.name()
+                    ));
+                }
+                // The actual base amount depends on the fill price and frozen lot step.
+                // A positive probe only validates that the model accepts this exact path.
+                ExactDecimal::ONE
+            } else {
+                o.remaining_decimal()
+                    .ok_or_else(|| "精确订单剩余数量计算溢出".to_string())?
+            };
+            if !remaining.is_positive() {
+                return Err("精确 Bar 订单没有剩余可成交数量".into());
+            }
+            let probe_bar = qx_guanxing::Bar::new(1, 1, 1, 1, 1, 0);
+            let context = ExactFillContext {
+                side: o.side,
+                qty: remaining,
+                limit: o.limit_price_decimal(),
+                bar: &probe_bar,
+                halted: false,
+            };
+            if !self.fill_model.can_evaluate_exact(&context) {
+                return Err(format!(
+                    "Bar 撮合模型 {} 不支持该精确数量精度",
+                    self.fill_model.name()
+                ));
+            }
+        } else {
+            o.require_legacy_amounts()?;
+        }
         let eligible_ts = submitted_ts.saturating_add(self.latency_model.delay_ms());
         let funding_reservation_raw = funding_reservation_raw.max(0);
         self.pending_funding_reservation_sum_raw = self
@@ -102,6 +159,7 @@ impl BarMatchingEngine {
             eligible_ts,
             funding_reservation_raw,
         });
+        Ok(())
     }
 
     pub fn pending_count(&self) -> usize {
@@ -160,7 +218,7 @@ impl BarMatchingEngine {
         let pending = std::mem::take(&mut self.pending);
         if self.volume_limit_bar_ts != Some(ts) {
             self.volume_limit_bar_ts = Some(ts);
-            self.volume_used_raw = 0;
+            self.volume_used_exact = ExactDecimal::ZERO;
         }
         // 停牌/非交易时段的闸门在引擎里，而不在各 FillModel 里：`FillModel` 是
         // 公开 trait，第三方实现忽略 `ctx.halted` 也不能获得成交。整段挂单原序
@@ -203,7 +261,54 @@ impl BarMatchingEngine {
                 });
                 continue;
             }
-            let ctx = FillContext {
+            let exact_order = o.exact_amounts.is_some();
+            let remaining_quote_budget = o.remaining_budget_decimal();
+            let requested_qty = if let Some(budget) = remaining_quote_budget {
+                let Some(spec) = self.instrument_spec.as_ref() else {
+                    self.record_attempt(
+                        &o,
+                        ts,
+                        0,
+                        None,
+                        ExecutionAttemptReason::InvalidModelOutput,
+                    );
+                    self.pending.push(PendingOrder {
+                        order: o,
+                        eligible_ts,
+                        funding_reservation_raw,
+                    });
+                    continue;
+                };
+                match spec.base_quantity_for_quote_budget(budget, bar.low_exact()) {
+                    Ok(quantity) if quantity.is_positive() => quantity,
+                    _ => {
+                        self.record_attempt(
+                            &o,
+                            ts,
+                            0,
+                            None,
+                            ExecutionAttemptReason::InvalidModelOutput,
+                        );
+                        self.pending.push(PendingOrder {
+                            order: o,
+                            eligible_ts,
+                            funding_reservation_raw,
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                o.remaining_decimal()
+                    .unwrap_or_else(|| raw_decimal(o.remaining().raw()))
+            };
+            let exact_ctx = ExactFillContext {
+                side: o.side,
+                qty: requested_qty,
+                limit: o.limit_price_decimal(),
+                bar,
+                halted: self.halted,
+            };
+            let legacy_ctx = FillContext {
                 side: o.side,
                 qty: o.remaining().raw(),
                 limit: o.limit.map(|p| p.raw()),
@@ -215,10 +320,12 @@ impl BarMatchingEngine {
                 self.fill_model
                     .bar_volume_participation_bps()
                     .map(|participation_bps| {
-                        let capacity = bar_volume_capacity(bar.volume, participation_bps);
-                        capacity.saturating_sub(self.volume_used_raw).max(0)
+                        exact_bar_volume_capacity(bar.volume_exact(), participation_bps)
+                            .and_then(|capacity| capacity.checked_sub(self.volume_used_exact))
+                            .filter(|capacity| capacity.is_positive())
+                            .unwrap_or(ExactDecimal::ZERO)
                     });
-            if remaining_bar_volume == Some(0) {
+            if remaining_bar_volume.is_some_and(|remaining| !remaining.is_positive()) {
                 self.record_attempt(
                     &o,
                     ts,
@@ -234,22 +341,36 @@ impl BarMatchingEngine {
                 continue;
             }
 
-            let requested_qty = o.remaining().raw();
-            let evaluation = self.fill_model.evaluate(&ctx, &mut self.rng);
-            match evaluation.fill {
-                Some((px, q)) => {
-                    // 成交量以订单剩余量为上限、成交价必须为正：`FillModel` 是公开
-                    // trait，而现货记账路径（`apply_fill_with_multiplier`）既不校验
-                    // 超额成交也不校验负价，滑点模型在低价标的上就能报出负的成交价。
-                    let q = remaining_bar_volume
-                        .map_or(q, |remaining| q.min(remaining))
-                        .min(requested_qty);
-                    if q <= 0 || px <= 0 {
+            let (model_fill, no_fill_reason) = if exact_order {
+                let evaluation = self.fill_model.evaluate_exact(&exact_ctx, &mut self.rng);
+                (evaluation.fill, evaluation.no_fill_reason)
+            } else {
+                let evaluation = self.fill_model.evaluate(&legacy_ctx, &mut self.rng);
+                (
+                    evaluation
+                        .fill
+                        .map(|(price, qty)| (raw_decimal(price), raw_decimal(qty))),
+                    evaluation.no_fill_reason,
+                )
+            };
+            match model_fill {
+                Some((price, model_qty)) => {
+                    let fill_target_qty = if let Some(budget) = remaining_quote_budget {
+                        self.instrument_spec
+                            .as_ref()
+                            .and_then(|spec| {
+                                spec.base_quantity_for_quote_budget(budget, price).ok()
+                            })
+                            .unwrap_or(ExactDecimal::ZERO)
+                    } else {
+                        requested_qty
+                    };
+                    if !fill_target_qty.is_positive() {
                         self.record_attempt(
                             &o,
                             ts,
                             0,
-                            Some(px),
+                            price.to_raw(9).ok(),
                             ExecutionAttemptReason::InvalidModelOutput,
                         );
                         self.pending.push(PendingOrder {
@@ -259,12 +380,133 @@ impl BarMatchingEngine {
                         });
                         continue;
                     }
-                    if self.fill_model.bar_volume_participation_bps().is_some() {
-                        self.volume_used_raw = self.volume_used_raw.saturating_add(q);
+                    let mut qty = if exact_order {
+                        model_qty
+                    } else {
+                        // Legacy orders retain their historical 1e-9 volume grid.
+                        floor_to_legacy_decimal(model_qty).unwrap_or(ExactDecimal::ZERO)
+                    };
+                    if qty
+                        .checked_cmp(fill_target_qty)
+                        .is_some_and(|ordering| ordering.is_gt())
+                    {
+                        qty = fill_target_qty;
                     }
-                    let remaining_before_fill = o.remaining().raw();
-                    let attempt_reason = if q < requested_qty {
-                        if remaining_bar_volume.is_some_and(|remaining| remaining < requested_qty) {
+                    if let Some(capacity) = remaining_bar_volume {
+                        let capacity = if exact_order {
+                            capacity
+                        } else {
+                            floor_to_legacy_decimal(capacity).unwrap_or(ExactDecimal::ZERO)
+                        };
+                        if qty
+                            .checked_cmp(capacity)
+                            .is_some_and(|ordering| ordering.is_gt())
+                        {
+                            qty = capacity;
+                        }
+                    }
+                    if qty
+                        .checked_cmp(requested_qty)
+                        .is_some_and(|ordering| ordering.is_gt())
+                    {
+                        qty = requested_qty;
+                    }
+                    if let Some(spec) = self.instrument_spec.as_ref().filter(|_| exact_order) {
+                        match spec.floor_exact_quantity_to_step(qty) {
+                            Ok(quantity) => qty = quantity,
+                            Err(_) => qty = ExactDecimal::ZERO,
+                        }
+                    }
+                    let limit_valid = match (o.side, o.limit_price_decimal()) {
+                        (_, None) => true,
+                        (qx_core::Side::Buy, Some(limit)) => price
+                            .checked_cmp(limit)
+                            .is_some_and(|ordering| !ordering.is_gt()),
+                        (qx_core::Side::Sell, Some(limit)) => price
+                            .checked_cmp(limit)
+                            .is_some_and(|ordering| !ordering.is_lt()),
+                    };
+                    if !qty.is_positive() || !price.is_positive() || !limit_valid {
+                        self.record_attempt(
+                            &o,
+                            ts,
+                            0,
+                            price.to_raw(9).ok(),
+                            ExecutionAttemptReason::InvalidModelOutput,
+                        );
+                        self.pending.push(PendingOrder {
+                            order: o,
+                            eligible_ts,
+                            funding_reservation_raw,
+                        });
+                        continue;
+                    }
+                    let quote_cost = if let Some(remaining_budget) = remaining_quote_budget {
+                        self.instrument_spec
+                            .as_ref()
+                            .and_then(|spec| {
+                                spec.quote_cash_exact(qty, price, DecimalRounding::AwayFromZero)
+                                    .ok()
+                            })
+                            .filter(|cost| {
+                                cost.is_positive()
+                                    && cost
+                                        .checked_cmp(remaining_budget)
+                                        .is_some_and(|ordering| !ordering.is_gt())
+                            })
+                    } else {
+                        None
+                    };
+                    if remaining_quote_budget.is_some() && quote_cost.is_none() {
+                        self.record_attempt(
+                            &o,
+                            ts,
+                            0,
+                            price.to_raw(9).ok(),
+                            ExecutionAttemptReason::InvalidModelOutput,
+                        );
+                        self.pending.push(PendingOrder {
+                            order: o,
+                            eligible_ts,
+                            funding_reservation_raw,
+                        });
+                        continue;
+                    }
+                    let used_next = if self.fill_model.bar_volume_participation_bps().is_some() {
+                        self.volume_used_exact.checked_add(qty)
+                    } else {
+                        Some(self.volume_used_exact)
+                    };
+                    let Some(used_next) = used_next else {
+                        self.record_attempt(
+                            &o,
+                            ts,
+                            0,
+                            price.to_raw(9).ok(),
+                            ExecutionAttemptReason::InvalidModelOutput,
+                        );
+                        self.pending.push(PendingOrder {
+                            order: o,
+                            eligible_ts,
+                            funding_reservation_raw,
+                        });
+                        continue;
+                    };
+                    let filled_raw = qty.to_raw(9).ok().unwrap_or(0);
+                    let price_raw = price.to_raw(9).ok();
+                    let was_capacity_limited = remaining_bar_volume.is_some_and(|capacity| {
+                        capacity
+                            .checked_cmp(model_qty)
+                            .is_some_and(|ordering| ordering.is_lt())
+                            && capacity
+                                .checked_cmp(fill_target_qty)
+                                .is_some_and(|ordering| ordering.is_lt())
+                    });
+                    let attempt_reason = if qty
+                        .checked_cmp(fill_target_qty)
+                        .is_some_and(|ordering| ordering.is_lt())
+                    {
+                        if was_capacity_limited {
                             ExecutionAttemptReason::BarParticipationPartial
                         } else {
                             ExecutionAttemptReason::ModelPartialFill
@@ -272,40 +514,220 @@ impl BarMatchingEngine {
                     } else {
                         ExecutionAttemptReason::Filled
                     };
-                    self.record_attempt(&o, ts, q, Some(px), attempt_reason);
-                    // maker/taker 由订单意图决定，而非是否有限价：本引擎的 FillModel
-                    // 只在成交价已可成交（limit_ok 通过）时返回成交，即限价单此刻是吃单方。
-                    // 只有显式 post_only 的挂单才是 maker。
-                    let fee = self.estimate_fee(q, px, &o);
-                    o.filled = Quantity::from_raw(o.filled.raw() + q);
-                    o.status = if o.filled.raw() >= o.qty.raw() {
-                        OrderStatus::Filled
+                    let remaining_before_fill = fill_target_qty;
+                    let quote_budget_complete = remaining_quote_budget.is_some()
+                        && !qty
+                            .checked_cmp(remaining_before_fill)
+                            .is_some_and(|ordering| ordering.is_lt());
+                    let (fee_raw, exact_fees) = if exact_order {
+                        match self.estimate_fee_exact(qty, price, &o) {
+                            Ok(fee) => (
+                                0,
+                                if fee.is_positive() {
+                                    vec![ExactFillFee {
+                                        amount: fee,
+                                        currency: self.exact_fee_currency.clone(),
+                                        source_trade_ids: Vec::new(),
+                                    }]
+                                } else {
+                                    Vec::new()
+                                },
+                            ),
+                            Err(_) => {
+                                self.record_attempt(
+                                    &o,
+                                    ts,
+                                    0,
+                                    price_raw,
+                                    ExecutionAttemptReason::InvalidModelOutput,
+                                );
+                                self.pending.push(PendingOrder {
+                                    order: o,
+                                    eligible_ts,
+                                    funding_reservation_raw,
+                                });
+                                continue;
+                            }
+                        }
                     } else {
-                        OrderStatus::PartiallyFilled
+                        let (Some(qty_raw), Some(price_raw)) =
+                            (qty.to_raw(9).ok(), price.to_raw(9).ok())
+                        else {
+                            self.record_attempt(
+                                &o,
+                                ts,
+                                0,
+                                price_raw,
+                                ExecutionAttemptReason::InvalidModelOutput,
+                            );
+                            self.pending.push(PendingOrder {
+                                order: o,
+                                eligible_ts,
+                                funding_reservation_raw,
+                            });
+                            continue;
+                        };
+                        match self.estimate_fee(qty_raw, price_raw, &o) {
+                            Ok(fee) => (fee, Vec::new()),
+                            Err(_) => {
+                                self.record_attempt(
+                                    &o,
+                                    ts,
+                                    0,
+                                    Some(price_raw),
+                                    ExecutionAttemptReason::InvalidModelOutput,
+                                );
+                                self.pending.push(PendingOrder {
+                                    order: o,
+                                    eligible_ts,
+                                    funding_reservation_raw,
+                                });
+                                continue;
+                            }
+                        }
                     };
 
-                    let f = Fill {
-                        order_id: o.client_id,
-                        qty: Quantity::from_raw(q),
-                        price: Price::from_raw(px),
-                        fee: Money::from_raw(fee),
-                        ts,
-                        account_id: o.account_id.clone(),
-                        ..Fill::default()
-                    };
-                    self.all_fills.push(f.clone());
-                    out.push(f);
+                    if exact_order {
+                        let Some(amounts) = o.exact_amounts.as_mut() else {
+                            unreachable!("exact_order checked above")
+                        };
+                        let Some(filled) = amounts.filled.checked_add(qty) else {
+                            self.record_attempt(
+                                &o,
+                                ts,
+                                0,
+                                price_raw,
+                                ExecutionAttemptReason::InvalidModelOutput,
+                            );
+                            self.pending.push(PendingOrder {
+                                order: o,
+                                eligible_ts,
+                                funding_reservation_raw,
+                            });
+                            continue;
+                        };
+                        let quote_budget_order = amounts.quote_budget.is_some();
+                        let next_quote_filled = match (amounts.quote_budget, quote_cost) {
+                            (Some(_), Some(cost)) => amounts.quote_filled.checked_add(cost),
+                            (Some(_), None) => None,
+                            (None, _) => Some(amounts.quote_filled),
+                        };
+                        let Some(next_quote_filled) = next_quote_filled else {
+                            self.record_attempt(
+                                &o,
+                                ts,
+                                0,
+                                price_raw,
+                                ExecutionAttemptReason::InvalidModelOutput,
+                            );
+                            self.pending.push(PendingOrder {
+                                order: o,
+                                eligible_ts,
+                                funding_reservation_raw,
+                            });
+                            continue;
+                        };
+                        amounts.filled = filled;
+                        amounts.quote_filled = next_quote_filled;
+                        let complete = if quote_budget_order {
+                            quote_budget_complete
+                        } else {
+                            filled
+                                .checked_cmp(amounts.quantity)
+                                .is_some_and(|ordering| !ordering.is_lt())
+                        };
+                        o.status = if complete {
+                            OrderStatus::Filled
+                        } else {
+                            OrderStatus::PartiallyFilled
+                        };
+                    } else {
+                        let Some(qty_raw) = qty.to_raw(9).ok() else {
+                            self.record_attempt(
+                                &o,
+                                ts,
+                                0,
+                                price_raw,
+                                ExecutionAttemptReason::InvalidModelOutput,
+                            );
+                            self.pending.push(PendingOrder {
+                                order: o,
+                                eligible_ts,
+                                funding_reservation_raw,
+                            });
+                            continue;
+                        };
+                        o.filled = Quantity::from_raw(o.filled.raw().saturating_add(qty_raw));
+                        o.status = if o.filled.raw() >= o.qty.raw() {
+                            OrderStatus::Filled
+                        } else {
+                            OrderStatus::PartiallyFilled
+                        };
+                    }
 
-                    // 部分成交的订单继续挂单
+                    if self.fill_model.bar_volume_participation_bps().is_some() {
+                        self.volume_used_exact = used_next;
+                    }
+                    if exact_order {
+                        self.record_exact_attempt(
+                            &o,
+                            ts,
+                            remaining_before_fill,
+                            qty,
+                            Some(price),
+                            attempt_reason,
+                        );
+                    } else {
+                        self.record_attempt(&o, ts, filled_raw, price_raw, attempt_reason);
+                    }
+                    if let Some(attempt) = self.execution_attempts.last_mut() {
+                        let requested_raw = remaining_before_fill.to_raw(9).unwrap_or(0);
+                        attempt.requested_qty_raw = requested_raw;
+                        attempt.filled_qty_raw = filled_raw;
+                        attempt.remaining_qty_raw = requested_raw.saturating_sub(filled_raw);
+                        if exact_order {
+                            attempt.requested_qty_exact = Some(remaining_before_fill);
+                            attempt.filled_qty_exact = Some(qty);
+                            attempt.remaining_qty_exact = remaining_before_fill.checked_sub(qty);
+                            attempt.price_exact = Some(price);
+                        }
+                    }
+
+                    let fill = if exact_order {
+                        Fill {
+                            order_id: o.client_id,
+                            fee: Money::from_raw(0),
+                            ts,
+                            account_id: o.account_id.clone(),
+                            exact_fees,
+                            exact_amounts: Some(ExactFillAmounts {
+                                quantity: qty,
+                                price,
+                                quote_cost,
+                                quote_budget_complete,
+                            }),
+                            ..Fill::default()
+                        }
+                    } else {
+                        Fill {
+                            order_id: o.client_id,
+                            qty: Quantity::from_raw(qty.to_raw(9).expect("legacy fill scale")),
+                            price: Price::from_raw(price.to_raw(9).expect("legacy price scale")),
+                            fee: Money::from_raw(fee_raw),
+                            ts,
+                            account_id: o.account_id.clone(),
+                            ..Fill::default()
+                        }
+                    };
+                    self.all_fills.push(fill.clone());
+                    out.push(fill);
+
                     if o.status != OrderStatus::Filled {
-                        // Release only the proportional share of the reservation.
-                        // If intermediate multiplication overflows, release zero:
-                        // that is conservative and cannot manufacture buying power.
-                        let consumed_reservation = funding_reservation_raw
-                            .checked_mul(q)
-                            .and_then(|value| value.checked_div(remaining_before_fill))
-                            .unwrap_or(0)
-                            .clamp(0, funding_reservation_raw);
+                        let consumed_reservation = proportional_reservation_raw(
+                            funding_reservation_raw,
+                            qty,
+                            remaining_before_fill,
+                        );
                         let remaining_reservation =
                             funding_reservation_raw.saturating_sub(consumed_reservation);
                         self.adjust_pending_funding_reservation(
@@ -322,8 +744,7 @@ impl BarMatchingEngine {
                     }
                 }
                 None => {
-                    // 未成交：继续挂单（真实排队语义）
-                    self.record_attempt(&o, ts, 0, None, evaluation.no_fill_reason);
+                    self.record_attempt(&o, ts, 0, None, no_fill_reason);
                     self.pending.push(PendingOrder {
                         order: o,
                         eligible_ts,
@@ -357,7 +778,19 @@ impl BarMatchingEngine {
             requested_qty_raw,
             filled_qty_raw,
             remaining_qty_raw: requested_qty_raw.saturating_sub(filled_qty_raw),
+            requested_qty_exact: order
+                .exact_amounts
+                .map(|_| order.remaining_decimal().unwrap_or(ExactDecimal::ZERO)),
+            filled_qty_exact: order.exact_amounts.map(|_| raw_decimal(filled_qty_raw)),
+            remaining_qty_exact: order.exact_amounts.map(|_| {
+                order
+                    .remaining_decimal()
+                    .unwrap_or(ExactDecimal::ZERO)
+                    .checked_sub(raw_decimal(filled_qty_raw))
+                    .unwrap_or(ExactDecimal::ZERO)
+            }),
             price_raw,
+            price_exact: price_raw.map(raw_decimal),
             reason,
             displayed_qty_raw: None,
             queue_ahead_before_raw: None,
@@ -368,20 +801,85 @@ impl BarMatchingEngine {
         });
     }
 
+    fn record_exact_attempt(
+        &mut self,
+        order: &Order,
+        ts: u64,
+        requested_qty: ExactDecimal,
+        filled_qty: ExactDecimal,
+        price: Option<ExactDecimal>,
+        reason: ExecutionAttemptReason,
+    ) {
+        self.record_attempt(
+            order,
+            ts,
+            filled_qty.to_raw(9).unwrap_or(0),
+            price.and_then(|price| price.to_raw(9).ok()),
+            reason,
+        );
+        if let Some(attempt) = self.execution_attempts.last_mut() {
+            attempt.requested_qty_exact = Some(requested_qty);
+            attempt.filled_qty_exact = Some(filled_qty);
+            attempt.remaining_qty_exact = requested_qty.checked_sub(filled_qty);
+            attempt.price_exact = price;
+        }
+    }
+
     /// 用本引擎自己的费率模型、合约乘数折算和 maker/taker 判定估计一笔成交的费用。
     /// 前置资金门禁必须与真实计费同源，否则"校验时以为免费、成交时才扣款"会让
     /// 现金充足的判定失真。`price` 传未折算的行情价。
-    pub fn estimate_fee(&self, qty: i128, price: i128, order: &Order) -> i128 {
+    pub fn estimate_fee(
+        &self,
+        qty: i128,
+        price: i128,
+        order: &Order,
+    ) -> Result<i128, qx_core::QxError> {
         let is_maker = order.policy.as_ref().is_some_and(|policy| policy.post_only);
         self.fee_model
-            .commission_for_side(qty, self.fee_price(price), order.side, is_maker)
+            .commission_for_side(qty, self.fee_price(price)?, order.side, is_maker)
+    }
+
+    pub fn estimate_fee_exact(
+        &self,
+        qty: ExactDecimal,
+        price: ExactDecimal,
+        order: &Order,
+    ) -> Result<ExactDecimal, String> {
+        if !qty.is_positive() || !price.is_positive() {
+            return Err("精确手续费的成交数量和价格必须为正".into());
+        }
+        let multiplier = raw_decimal(self.fee_price_multiplier);
+        let fee_price = if self.inverse_fee_basis {
+            multiplier.checked_div_at_scale(
+                price,
+                ExactDecimal::MAX_SCALE,
+                DecimalRounding::AwayFromZero,
+            )
+        } else {
+            price.checked_mul_at_scale(
+                multiplier,
+                ExactDecimal::MAX_SCALE,
+                DecimalRounding::AwayFromZero,
+            )
+        }
+        .filter(|value| value.is_positive())
+        .ok_or_else(|| "精确手续费价格基准计算失败".to_string())?;
+        let is_maker = order.policy.as_ref().is_some_and(|policy| policy.post_only);
+        let fee = self
+            .fee_model
+            .commission_exact(qty, fee_price, order.side, is_maker)
+            .map_err(|error| format!("精确手续费计算失败: {error}"))?;
+        if fee.is_negative() {
+            return Err("精确手续费模型不能返回负数".into());
+        }
+        Ok(fee)
     }
 
     /// 把行情价折算成费用模型看到的价格。费用模型按 `qty × price / SCALE` 计基，
     /// 所以线性合约用 `price × contract_size`，反向（币本位）合约用
     /// `contract_size × SCALE / price`——后者与 `TradingInstrumentSpec::notional`
     /// 的 `qty × contract_size / price` 口径一致，误用线性口径会让费用偏差 price² 量级。
-    fn fee_price(&self, price: i128) -> i128 {
+    fn fee_price(&self, price: i128) -> Result<i128, qx_core::QxError> {
         let basis = if self.inverse_fee_basis {
             self.fee_price_multiplier
                 .checked_mul(SCALE)
@@ -391,14 +889,24 @@ impl BarMatchingEngine {
                 .checked_mul(self.fee_price_multiplier)
                 .and_then(|value| value.checked_div(SCALE))
         };
-        // 溢出只可能出现在非法尺度的输入上（定点价与乘数均为正数）；退化到未折算的
-        // 行情价，与历史行为一致，绝不 panic。
-        basis.unwrap_or(price)
+        basis
+            .filter(|value| *value > 0)
+            .ok_or_else(|| qx_core::QxError::Invariant("手续费价格基准计算溢出或非正".into()))
     }
 
     /// 反向（币本位）结算的合约必须切换费用基准；现货与线性合约保持默认。
     pub fn set_inverse_fee_basis(&mut self, inverse: bool) {
         self.inverse_fee_basis = inverse;
+    }
+
+    /// Bind the currency returned by this engine's fee model for scale-aware fills.
+    pub fn set_exact_fee_currency(&mut self, currency: impl Into<String>) {
+        let currency = currency.into().trim().to_ascii_uppercase();
+        self.exact_fee_currency = (!currency.is_empty()).then_some(currency);
+    }
+
+    pub fn set_instrument_spec(&mut self, spec: Option<TradingInstrumentSpec>) {
+        self.instrument_spec = spec;
     }
 
     pub fn new_with_latency(
@@ -429,12 +937,55 @@ impl BarMatchingEngine {
 
 /// Compute a fixed-point volume allowance without multiplying the full raw volume by bps.
 /// The quotient/remainder form cannot overflow for a validated 0..=10,000 bps input.
-fn bar_volume_capacity(volume_raw: i128, participation_bps: u16) -> i128 {
-    if volume_raw <= 0 || participation_bps == 0 {
+fn raw_decimal(value: i128) -> ExactDecimal {
+    ExactDecimal::from_parts(value, 9).expect("legacy Bar values use supported scale 9")
+}
+
+fn floor_to_legacy_decimal(value: ExactDecimal) -> Option<ExactDecimal> {
+    value.checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+}
+
+fn exact_bar_volume_capacity(volume: ExactDecimal, participation_bps: u16) -> Option<ExactDecimal> {
+    if !volume.is_positive() || participation_bps == 0 {
+        return Some(ExactDecimal::ZERO);
+    }
+    let bps = ExactDecimal::from_parts(i128::from(participation_bps.min(10_000)), 0).ok()?;
+    let denominator = ExactDecimal::from_parts(10_000, 0).ok()?;
+    volume
+        .checked_mul_at_scale(bps, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)?
+        .checked_div_at_scale(
+            denominator,
+            ExactDecimal::MAX_SCALE,
+            DecimalRounding::TowardZero,
+        )
+}
+
+fn proportional_reservation_raw(
+    reservation_raw: i128,
+    filled: ExactDecimal,
+    remaining: ExactDecimal,
+) -> i128 {
+    if reservation_raw <= 0 || !filled.is_positive() || !remaining.is_positive() {
         return 0;
     }
-    let bps = i128::from(participation_bps.min(10_000));
-    (volume_raw / 10_000) * bps + ((volume_raw % 10_000) * bps) / 10_000
+    if filled
+        .checked_cmp(remaining)
+        .is_some_and(|ordering| !ordering.is_lt())
+    {
+        return reservation_raw;
+    }
+    let Some(ratio) = filled.checked_div_at_scale(
+        remaining,
+        ExactDecimal::MAX_SCALE,
+        DecimalRounding::TowardZero,
+    ) else {
+        return 0;
+    };
+    raw_decimal(reservation_raw)
+        .checked_mul_at_scale(ratio, 9, DecimalRounding::TowardZero)
+        .and_then(|consumed| consumed.to_raw(9).ok())
+        .unwrap_or(0)
+        .clamp(0, reservation_raw)
 }
 
 #[cfg(test)]

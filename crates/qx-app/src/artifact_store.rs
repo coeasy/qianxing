@@ -15,6 +15,7 @@ mod multi_leg_legs;
 mod multi_leg_verification;
 mod portable_build_attestation;
 mod portable_run_evidence;
+mod reader;
 mod run_evidence_assembly;
 mod run_evidence_files;
 mod run_evidence_readout;
@@ -31,12 +32,12 @@ pub use backtest_input_verification::{
 };
 pub use backtest_summary::{
     account_base_source_label, persist_backtest_artifacts, persist_backtest_artifacts_with_summary,
-    write_backtest_artifact, BacktestAccountBase, BacktestArtifacts, BacktestInputProvenance,
-    BacktestSampleTimestamps, BacktestSignalParams, PersistedBacktestArtifacts,
-    PortfolioFillAttribution, BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE,
-    BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE, BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE,
-    BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE, BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE,
-    BACKTEST_SUMMARY_SCHEMA_VERSION,
+    serialize_backtest_fills_csv, serialize_multi_leg_backtest_fills_csv, write_backtest_artifact,
+    BacktestAccountBase, BacktestArtifacts, BacktestInputProvenance, BacktestSampleTimestamps,
+    BacktestSignalParams, PersistedBacktestArtifacts, PortfolioFillAttribution,
+    BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE, BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE,
+    BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE, BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE,
+    BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE, BACKTEST_SUMMARY_SCHEMA_VERSION,
 };
 pub use evidence_bundle::serialize_verified_evidence_bundle;
 pub use multi_builtin_artifacts::{
@@ -66,6 +67,14 @@ pub use portable_run_evidence::{
     PortableRunEvidenceExportPlan, PortableRunEvidenceGeneratedFile,
     PortableRunEvidencePreparedFile, PortableRunEvidenceSource, PortableRunEvidenceSupplements,
 };
+pub(crate) use reader::{
+    artifact_too_large, read_text_bounded_by_id, scan_csv_artifact, scan_csv_artifact_by_id,
+    MAX_ARTIFACT_ROWS,
+};
+pub use reader::{
+    read_bounded_line, read_text_bounded, ArtifactId, ArtifactLocatorV1, ArtifactReader,
+    ArtifactStream, FileArtifactReader,
+};
 pub use run_evidence_assembly::{
     assemble_run_evidence_payload, persist_run_evidence_bundle, prepare_run_evidence_assembly,
     RunEvidenceAssembly, RunEvidencePreparation,
@@ -82,11 +91,50 @@ pub use run_evidence_readout::{
     run_evidence_summary_u64, run_evidence_unverified_rows,
 };
 pub use run_manifest::verify_declared_run_manifest;
+pub use run_manifest::{
+    verify_canonical_run_spec_for_manifest, verify_declared_run_manifest_with_reader,
+};
+pub(crate) use run_record::{declared_run_record_artifact_locators, RunRecordArtifactLocators};
 pub use run_record::{persist_verified_run_record, verify_declared_run_record};
+pub use run_record::{
+    verify_declared_run_record_with_reader, MULTI_ACCOUNT_JOINT_BACKTEST_ENVELOPE_KIND,
+    MULTI_ACCOUNT_JOINT_BACKTEST_ENVELOPE_SCHEMA_VERSION,
+};
 pub use strategy_backtest_artifacts::{
     persist_strategy_backtest_artifacts, StrategyBacktestArtifactsInput,
     StrategyBacktestArtifactsResult,
 };
+
+/// Verify a multi-account Bar batch's parent manifest against its child manifests and aggregate
+/// result. This local read-side helper uses the filesystem artifact adapter, like `verify_run`.
+pub fn verify_multi_account_backtest_result(
+    result: &crate::spec::MultiAccountBacktestResult,
+) -> Result<(), AppError> {
+    crate::cases::verify_multi_account_backtest_result(result)
+}
+
+/// Verify a multi-account Bar batch using an authorized artifact reader.
+pub fn verify_multi_account_backtest_result_with_reader(
+    result: &crate::spec::MultiAccountBacktestResult,
+    reader: &dyn ArtifactReader,
+) -> Result<(), AppError> {
+    crate::cases::verify_multi_account_backtest_result_with_reader(result, reader)
+}
+
+/// Verify a multi-account Depth batch's parent manifest against its child manifests and summary.
+pub fn verify_multi_account_depth_backtest_result(
+    result: &crate::spec::MultiAccountDepthBacktestResult,
+) -> Result<(), AppError> {
+    verify_multi_account_depth_backtest_result_with_reader(result, &FileArtifactReader)
+}
+
+/// Verify a multi-account Depth batch using an authorized artifact reader.
+pub fn verify_multi_account_depth_backtest_result_with_reader(
+    result: &crate::spec::MultiAccountDepthBacktestResult,
+    reader: &dyn ArtifactReader,
+) -> Result<(), AppError> {
+    crate::cases::verify_multi_account_depth_backtest_result(result, reader)
+}
 
 /// Persist the canonical identity and complete artifact set for one strategy run.
 ///

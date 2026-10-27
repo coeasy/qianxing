@@ -113,13 +113,11 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
     let component = &json["generation"]["run"]["dataset"]["components"][0];
     assert!(component["manifest_fingerprint"].as_str().is_some());
     assert_eq!(component["quality_report"]["interval_ms"], 1000);
-    assert_eq!(
-        json["generation"]["run"]["artifacts"]
-            .as_array()
-            .unwrap()
-            .len(),
-        6
-    );
+    let artifacts = json["generation"]["run"]["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 8);
+    assert!(artifacts
+        .iter()
+        .any(|artifact| artifact["name"] == "equity_exact"));
     let xlsx = root.join("multi-market-depth-quality.xlsx");
     let xlsx_text = xlsx.to_string_lossy().into_owned();
     let report = cli(&[
@@ -141,6 +139,28 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
     assert!(html.contains("质量清单指纹"));
     assert!(html.contains(component["manifest_fingerprint"].as_str().unwrap()));
     assert!(xlsx.is_file() && std::fs::metadata(&xlsx).unwrap().len() > 0);
+
+    let mut altered_summary: Value =
+        serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let original_manifest_path = altered_summary
+        .pointer("/market_data/0/dataset_quality/manifest_path")
+        .and_then(Value::as_str)
+        .unwrap();
+    let duplicate_manifest_path = root.join("depth-quality-identical-copy.json");
+    std::fs::copy(original_manifest_path, &duplicate_manifest_path).unwrap();
+    altered_summary["market_data"][0]["dataset_quality"]["manifest_path"] =
+        json!(duplicate_manifest_path);
+    let altered_summary_path = root.join("multi-market-depth-quality-altered.json");
+    std::fs::write(
+        &altered_summary_path,
+        serde_json::to_vec(&altered_summary).unwrap(),
+    )
+    .unwrap();
+    let altered_summary_text = altered_summary_path.to_string_lossy().into_owned();
+    let rejected_rebound_manifest = cli(&["report", &altered_summary_text, "--json"]);
+    assert!(!rejected_rebound_manifest.status.success());
+    assert!(String::from_utf8_lossy(&rejected_rebound_manifest.stderr)
+        .contains("质量清单路径与 spec 不一致"));
 
     let diagnostic_path = root.join("multi-market-depth-diagnostics.json");
     let diagnostic_path_text = diagnostic_path.to_string_lossy().into_owned();
@@ -543,4 +563,50 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
         "{}",
         String::from_utf8_lossy(&verified.stderr)
     );
+
+    let portable_root = root.join("portable-depth-run");
+    let portable_root_text = portable_root.to_string_lossy().into_owned();
+    let exported = cli(&[
+        "evidence",
+        "export-run",
+        &evidence_text,
+        "--output-dir",
+        &portable_root_text,
+    ]);
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relocated_root = root.with_file_name(format!(
+        "multi-market-depth-quality-relocated-{}-{stamp}",
+        std::process::id()
+    ));
+    assert_eq!(relocated_root.parent(), root.parent());
+    assert!(!relocated_root.starts_with(&root));
+    std::fs::rename(&portable_root, &relocated_root)
+        .expect("move portable multi-market depth evidence outside source workspace");
+    std::fs::remove_dir_all(&root).expect("remove multi-market depth source workspace");
+
+    let relocated_evidence = relocated_root.join("evidence.json");
+    let relocated_evidence_text = relocated_evidence.to_string_lossy().into_owned();
+    let relocated_verified = cli(&[
+        "evidence",
+        "verify-run",
+        &relocated_evidence_text,
+        "--recompute",
+    ]);
+    assert!(
+        relocated_verified.status.success(),
+        "portable multi-market depth recompute must not depend on the source workspace: {}",
+        String::from_utf8_lossy(&relocated_verified.stderr)
+    );
+    let relocated_result: Value = serde_json::from_slice(&relocated_verified.stdout).unwrap();
+    assert_eq!(relocated_result["result_recomputed"], true);
+    std::fs::remove_dir_all(&relocated_root).expect("remove relocated evidence fixture");
 }

@@ -392,8 +392,8 @@ impl RunEvidencePayload {
                 }
             }
             "multi-market-barframe" => {
-                if self.dataset.components.len() < 3 {
-                    return Err("multi-market-barframe 至少要登记三个 market 组成输入".into());
+                if !(1..=32).contains(&self.dataset.components.len()) {
+                    return Err("multi-market-barframe 必须登记 1..=32 个 market 组成输入".into());
                 }
                 let mut roles = std::collections::BTreeSet::new();
                 let mut total_rows = 0_u64;

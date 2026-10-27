@@ -286,6 +286,11 @@
       "variant": "AppCommand"
     },
     {
+      "name": "multi-account-depth-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
       "name": "multi-account-joint-backtest",
       "parent": "app",
       "variant": "AppCommand"
@@ -322,6 +327,71 @@
     },
     {
       "name": "provider-depth-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-depth-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-account-joint-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-account-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-leg-event-page",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-leg-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-leg-research-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-market-depth-event-page",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-market-depth-research-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-market-event-page",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-multi-market-research-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-provider-depth-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-provider-report",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
+      "name": "read-report",
       "parent": "app",
       "variant": "AppCommand"
     },
@@ -406,6 +476,26 @@
       "variant": "EvidenceCommand"
     },
     {
+      "name": "pack-depth-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-account-depth-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "pack-multi-account-joint-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
       "name": "pack-multi-account-run",
       "parent": "evidence",
       "variant": "EvidenceCommand"
@@ -436,6 +526,16 @@
       "variant": "EvidenceCommand"
     },
     {
+      "name": "recompute-depth-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "recompute-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
       "name": "recompute-multi-leg-experiment",
       "parent": "evidence",
       "variant": "EvidenceCommand"
@@ -457,6 +557,26 @@
     },
     {
       "name": "verify",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-depth-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-experiment",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-multi-account-depth-run",
+      "parent": "evidence",
+      "variant": "EvidenceCommand"
+    },
+    {
+      "name": "verify-multi-account-joint-run",
       "parent": "evidence",
       "variant": "EvidenceCommand"
     },

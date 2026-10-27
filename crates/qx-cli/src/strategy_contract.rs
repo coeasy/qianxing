@@ -7,7 +7,10 @@ use imports::*;
 mod account_context;
 mod execution_spec;
 pub(crate) use account_context::strategy_account_context;
-pub(crate) use execution_spec::strategy_execution_market_spec;
+pub(crate) use execution_spec::{
+    execution_worker_supports_instrument, strategy_execution_account_for_instrument,
+    strategy_execution_market_spec, strategy_execution_market_spec_for_account,
+};
 
 /// 把持久化 Python/C++ JSONL 策略和受信任 C ABI 策略接入与 Rust
 /// 原生策略相同的 Bar 回测循环。
@@ -46,8 +49,17 @@ impl ContractBarStrategy {
             ));
         }
         let client = if let Some(module) = config.strategy.python_module.as_deref() {
+            let audit_host_worker_id = format!(
+                "bar-backtest:{}:{}",
+                config.strategy.id.as_deref().unwrap_or("anonymous"),
+                config.strategy.version
+            );
+            let audit_path = crate::strategy_host::sandbox_audit_path(
+                std::path::Path::new(&config.storage.data_dir),
+                &audit_host_worker_id,
+            );
             ContractStrategyClient::Process(Box::new(
-                PythonStrategyClient::start_with_transport_config(
+                PythonStrategyClient::start_with_strategy_config_and_audit_path(
                     module,
                     config.strategy.python_timeout_ms,
                     config.strategy.transport,
@@ -56,6 +68,11 @@ impl ContractBarStrategy {
                         slot_bytes: config.strategy.shared_memory_slot_bytes,
                     },
                     config.strategy.strategy_artifact_sha256.as_deref(),
+                    config.strategy.python_strategy_spec.as_ref(),
+                    config.strategy.account_id.as_deref(),
+                    config.strategy.venue_id.as_deref(),
+                    Some(&audit_path),
+                    Some(&audit_host_worker_id),
                 )?,
             ))
         } else if let Some(executable) = config.strategy.external_executable.as_deref() {
@@ -124,6 +141,13 @@ impl BarStrategy for ContractBarStrategy {
             low_raw: history.iter().map(|bar| bar.low).collect(),
             close_raw: history.iter().map(|bar| bar.close).collect(),
             volume_raw: history.iter().map(|bar| bar.volume).collect(),
+            exact_ohlcv: {
+                let rows = history
+                    .iter()
+                    .map(|bar| bar.exact_ohlcv)
+                    .collect::<Vec<_>>();
+                rows.iter().any(Option::is_some).then_some(rows)
+            },
         };
         let strategy_id = self
             .config
@@ -131,7 +155,7 @@ impl BarStrategy for ContractBarStrategy {
             .id
             .clone()
             .unwrap_or_else(|| self.config.strategy.version.clone());
-        let input = StrategyContractInput {
+        let mut input = StrategyContractInput {
             schema_version: qx_runtime::STRATEGY_CONTRACT_SCHEMA_VERSION,
             request_id: format!(
                 "{strategy_id}:backtest:{visible_ts}",
@@ -143,12 +167,23 @@ impl BarStrategy for ContractBarStrategy {
             as_of: visible.ts,
             instrument: instrument.to_string(),
             positions: BTreeMap::from([(instrument.to_string(), position)]),
+            positions_exact: BTreeMap::new(),
             cash: BTreeMap::from([(self.currency.clone(), self.initial_cash.raw())]),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             available_margin_raw: Some(self.initial_cash.raw()),
             risk_state: "backtest-verified".into(),
             research_targets: BTreeMap::new(),
+            market_bars: BTreeMap::new(),
             bars: Some(bars),
+            execution_updates: Vec::new(),
+            fill_updates: Vec::new(),
+            strategy_checkpoint: None,
+            market_ticks: Vec::new(),
+            market_order_books: Vec::new(),
+            account_updates: Vec::new(),
         };
+        input.schema_version = input.schema_version_for_features();
         let output = match &mut self.client {
             ContractStrategyClient::Process(client) => client
                 .request(&input)
@@ -164,6 +199,7 @@ impl BarStrategy for ContractBarStrategy {
                     low_raw: visible.low,
                     close_raw: visible.close,
                     volume_raw: visible.volume,
+                    exact_ohlcv: visible.exact_ohlcv,
                 };
                 invoke_c_abi_strategy(
                     strategy,
@@ -175,6 +211,11 @@ impl BarStrategy for ContractBarStrategy {
                 .map_err(qx_core::QxError::BusinessViolation)?
             }
         };
+        if output.target_qty_exact.is_some() {
+            return Err(qx_core::QxError::BusinessViolation(
+                "Bar 回测暂不支持 target_qty_exact，请使用受支持的精确 Live intent 路径".into(),
+            ));
+        }
         let mut orders = Vec::with_capacity(output.intents.len().max(1));
         if output.intents.is_empty() {
             let rebalance = output
@@ -190,6 +231,7 @@ impl BarStrategy for ContractBarStrategy {
                 visible.ts,
                 position,
                 output.target_qty,
+                None,
                 Some(&output),
                 self.instrument_spec.as_ref(),
             )
@@ -199,19 +241,18 @@ impl BarStrategy for ContractBarStrategy {
             }
         } else {
             for intent in &output.intents {
-                orders.push(
-                    build_strategy_order_from_contract_intent(
-                        &self.config,
-                        &strategy_id,
-                        output.signal_id,
-                        &output.request_id,
-                        intent,
-                        visible.ts,
-                        position,
-                        self.instrument_spec.as_ref(),
-                    )
-                    .map_err(qx_core::QxError::BusinessViolation)?,
-                );
+                let order = build_strategy_order_from_contract_intent(
+                    &self.config,
+                    &strategy_id,
+                    output.signal_id,
+                    &output.request_id,
+                    intent,
+                    visible.ts,
+                    position,
+                    self.instrument_spec.as_ref(),
+                )
+                .map_err(qx_core::QxError::BusinessViolation)?;
+                orders.push(order);
             }
         }
         Ok(orders)
@@ -252,8 +293,15 @@ pub(crate) fn strategy_target_qty(
             .clone()
             .ok_or_else(|| "research snapshot 策略必须配置 venue_id".to_string())?;
         let data_fingerprint = research.candidate.config.data_fingerprint.clone();
-        let (positions, cash, available_margin_raw, risk_state) =
-            strategy_account_context(root, config, instrument)?;
+        let (
+            positions,
+            _positions_exact,
+            cash,
+            _cash_exact,
+            available_margin_raw,
+            _available_margin_exact,
+            risk_state,
+        ) = strategy_account_context(root, config, instrument)?;
         let context = StrategyContext {
             strategy_id: config
                 .strategy
@@ -309,8 +357,11 @@ pub(crate) fn strategy_target_qty(
 
 pub(crate) type StrategyAccountContext = (
     BTreeMap<String, i128>,
+    BTreeMap<String, String>,
     BTreeMap<String, i128>,
+    BTreeMap<String, String>,
     Option<i128>,
+    Option<String>,
     String,
 );
 
@@ -373,6 +424,12 @@ pub(crate) fn load_strategy_contract_bars(
             .iter()
             .map(|index| frame.volume_raw[*index])
             .collect(),
+        exact_ohlcv: frame.exact_ohlcv.as_ref().map(|exact_rows| {
+            visible
+                .iter()
+                .map(|index| Some(exact_rows[*index]))
+                .collect()
+        }),
     };
     bars.validate()?;
     Ok(Some((
@@ -398,6 +455,7 @@ pub(crate) fn build_strategy_order(
         now,
         current_qty,
         target_qty,
+        None,
         None,
         None,
     )
@@ -426,7 +484,10 @@ pub(crate) fn build_strategy_order_from_contract_intent(
             instrument: intent.instrument.clone(),
             side: intent.side.clone(),
             qty_raw: intent.qty_raw,
+            qty_exact: intent.qty_exact.clone(),
+            quote_budget_exact: intent.quote_budget_exact.clone(),
             limit_price_raw: intent.limit_price_raw,
+            limit_price_exact: intent.limit_price_exact.clone(),
             reduce_only: intent.reduce_only,
             post_only: intent.post_only,
             position_side: intent.position_side.clone(),
@@ -435,7 +496,11 @@ pub(crate) fn build_strategy_order_from_contract_intent(
             leverage: intent.leverage,
         },
         &qx_app::StrategyOrderBindings {
-            account_id: config.strategy.account_id.as_deref().unwrap_or_default(),
+            account_id: intent
+                .account_id
+                .as_deref()
+                .or(config.strategy.account_id.as_deref())
+                .unwrap_or_default(),
             strategy_id,
             signal_id,
             round_scope,
@@ -448,10 +513,14 @@ pub(crate) fn build_strategy_order_from_contract_intent(
         },
     )
     .map_err(|error| error.message().to_string())?;
-    let allow_short = strategy_allows_short(config, built.margin_mode);
-    let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
-    risk.check(&built.order, &OrderRiskPosition::new(current_qty, 0))
-        .map_err(|error| format!("Strategy API v1 RiskGate 拒绝 OrderIntent: {error:?}"))?;
+    if built.order.exact_amounts.is_none() {
+        let allow_short = strategy_allows_short(config, built.margin_mode);
+        let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
+        risk.check(&built.order, &OrderRiskPosition::new(current_qty, 0))
+            .map_err(|error| format!("Strategy API v1 RiskGate 拒绝 OrderIntent: {error:?}"))?;
+    }
+    // Exact live intents are checked later with the account-scoped exact balance/position
+    // snapshot in worker_risk_context. This builder has no authoritative live snapshot.
     Ok(built.order)
 }
 
@@ -463,6 +532,7 @@ pub(crate) fn build_strategy_order_with_signal(
     now: u64,
     current_qty: i128,
     target_qty: i128,
+    current_qty_exact: Option<&str>,
     contract_output: Option<&StrategyContractOutput>,
     market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Option<Order>, String> {
@@ -483,6 +553,8 @@ pub(crate) fn build_strategy_order_with_signal(
         now,
         current_qty,
         target_qty,
+        current_qty_exact: current_qty_exact,
+        target_qty_exact: contract_output.and_then(|output| output.target_qty_exact.as_deref()),
         signal_id: contract_output
             .map(|output| output.signal_id)
             .unwrap_or_else(|| run_id.max(1)),
@@ -514,8 +586,10 @@ pub(crate) fn build_strategy_order_with_signal(
         return Ok(None);
     };
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
-    risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
-        .map_err(|error| format!("Strategy RiskGate 拒绝 OrderIntent: {error:?}"))?;
+    if order.exact_amounts.is_none() {
+        risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
+            .map_err(|error| format!("Strategy RiskGate 拒绝 OrderIntent: {error:?}"))?;
+    }
     Ok(Some(order))
 }
 

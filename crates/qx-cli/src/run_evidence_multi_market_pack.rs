@@ -29,8 +29,15 @@ pub(crate) fn write_multi_market_run_evidence(
             .ok_or("多市场运行产物缺少 spec")?,
     )
     .map_err(|error| format!("多市场运行产物的 spec 无效: {error}"))?;
-    if spec.markets.len() < 3 {
-        return Err("multi-market EvidenceBundle 至少需要三个市场".into());
+    let outcome: qx_app::MultiMarketBacktestOutcome = serde_json::from_value(
+        artifact
+            .get("outcome")
+            .cloned()
+            .ok_or("多市场运行产物缺少 outcome")?,
+    )
+    .map_err(|error| format!("多市场运行产物 outcome 无效: {error}"))?;
+    if !(1..=32).contains(&spec.markets.len()) {
+        return Err("multi-market EvidenceBundle 必须包含 1..=32 个市场".into());
     }
     if artifact
         .get("replay_verified")
@@ -52,32 +59,85 @@ pub(crate) fn write_multi_market_run_evidence(
     if manifest.run_id != spec.run_id {
         return Err("多市场运行产物 spec.run_id 与 RunManifest 不一致".into());
     }
-    let events: Vec<qx_core::Event> = serde_json::from_value(
-        artifact
-            .get("event_log")
-            .cloned()
-            .ok_or("多市场运行产物缺少 event_log")?,
-    )
-    .map_err(|error| format!("多市场 event_log 无效: {error}"))?;
-    let (replayed_log, replayed_ledger) = qx_core::ReplayVerifier::replay_owned(events)
-        .map_err(|error| format!("多市场运行产物重放失败: {error}"))?;
-    replayed_log
-        .validate()
-        .map_err(|error| format!("多市场重放 EventLog 校验失败: {error}"))?;
-    let replayed_entries = serde_json::to_value(replayed_ledger.entries())
-        .map_err(|error| format!("序列化重放账簿失败: {error}"))?;
-    if artifact.get("ledger_entries") != Some(&replayed_entries) {
-        return Err("多市场运行产物账簿与事件流重放结果不一致".into());
-    }
-    let replayed_result_hash = format!("{:016x}", replayed_log.digest());
-    if replayed_result_hash != manifest.result_hash
-        || artifact
-            .pointer("/outcome/shared_result_hash")
-            .and_then(serde_json::Value::as_str)
-            != Some(manifest.result_hash.as_str())
-    {
-        return Err("多市场运行产物 replay hash、outcome 与 RunManifest 不一致".into());
-    }
+    let mut event_trace_path = None;
+    let streamed_fill_identity =
+        if artifact.get("schema_version").and_then(|v| v.as_u64()) == Some(2) {
+            if artifact.get("event_log").is_some() {
+                return Err("多市场 v2 运行产物不得内嵌完整 event_log".into());
+            }
+            let event_count = artifact
+                .get("event_count")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or("多市场 v2 运行产物缺少 event_count")?;
+            let trace = resolve_artifact_path(
+                artifact
+                    .get("event_trace_path")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("多市场 v2 运行产物缺少 event_trace_path")?,
+            )?;
+            let strategy_markets = spec
+                .markets
+                .iter()
+                .flat_map(|market| {
+                    market.strategies.iter().map(move |member| {
+                        (
+                            member.strategy.strategy_id.clone(),
+                            market.instrument.clone(),
+                        )
+                    })
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let report = qx_app::read_multi_market_event_report_v1_with_reader(
+                &trace.to_string_lossy(),
+                event_count,
+                &manifest.output_event_hash,
+                artifact
+                    .get("ledger_entries")
+                    .ok_or("多市场运行产物缺少 ledger_entries")?,
+                &strategy_markets,
+                Some((0, 1)),
+                &qx_app::artifact_store::FileArtifactReader,
+            )
+            .map_err(|error| format!("多市场 JSONL 事件轨迹核验失败: {error}"))?;
+            if manifest.output_event_hash != manifest.result_hash
+                || artifact
+                    .pointer("/outcome/shared_result_hash")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(manifest.result_hash.as_str())
+            {
+                return Err("多市场运行产物 replay hash、outcome 与 RunManifest 不一致".into());
+            }
+            event_trace_path = Some(trace);
+            Some((report.fill_count, report.fill_sequence_sha256))
+        } else {
+            let events: Vec<qx_core::Event> = serde_json::from_value(
+                artifact
+                    .get("event_log")
+                    .cloned()
+                    .ok_or("多市场运行产物缺少 event_log")?,
+            )
+            .map_err(|error| format!("多市场 event_log 无效: {error}"))?;
+            let (replayed_log, replayed_ledger) = qx_core::ReplayVerifier::replay_owned(events)
+                .map_err(|error| format!("多市场运行产物重放失败: {error}"))?;
+            replayed_log
+                .validate()
+                .map_err(|error| format!("多市场重放 EventLog 校验失败: {error}"))?;
+            let replayed_entries = serde_json::to_value(replayed_ledger.entries())
+                .map_err(|error| format!("序列化重放账簿失败: {error}"))?;
+            if artifact.get("ledger_entries") != Some(&replayed_entries) {
+                return Err("多市场运行产物账簿与事件流重放结果不一致".into());
+            }
+            let replayed_result_hash = format!("{:016x}", replayed_log.digest());
+            if replayed_result_hash != manifest.result_hash
+                || artifact
+                    .pointer("/outcome/shared_result_hash")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(manifest.result_hash.as_str())
+            {
+                return Err("多市场运行产物 replay hash、outcome 与 RunManifest 不一致".into());
+            }
+            None
+        };
     let equity_path = resolve_artifact_path(
         artifact
             .get("equity_path")
@@ -90,6 +150,86 @@ pub(crate) fn write_multi_market_run_evidence(
             .and_then(serde_json::Value::as_str)
             .ok_or("多市场运行产物缺少 fills_path")?,
     )?;
+    let equity_exact_path = artifact
+        .get("equity_exact_path")
+        .and_then(serde_json::Value::as_str)
+        .map(resolve_artifact_path)
+        .transpose()?;
+    let equity: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&equity_path)
+            .map_err(|error| format!("读取多市场权益 sidecar 失败: {error}"))?,
+    )
+    .map_err(|error| format!("多市场权益 sidecar JSON 无效: {error}"))?;
+    if artifact.get("equity") != Some(&equity) {
+        return Err("多市场权益 sidecar 与摘要内 equity 不一致".into());
+    }
+    let exact_equity = equity_exact_path
+        .as_ref()
+        .map(|path| -> Result<serde_json::Value, String> {
+            let bytes = std::fs::read(path)
+                .map_err(|error| format!("读取多市场精确权益 sidecar 失败: {error}"))?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("多市场精确权益 sidecar JSON 无效: {error}"))?;
+            if !value.is_array() {
+                return Err("多市场精确权益 sidecar 必须是数组".into());
+            }
+            Ok(value)
+        })
+        .transpose()?;
+    match (
+        equity_exact_path.as_ref(),
+        manifest.input_components.get("derived:equity-exact"),
+    ) {
+        (Some(path), Some(expected)) => {
+            let actual = qx_strategy::file_digest::sha256_file_hex(path)?;
+            if &actual != expected {
+                return Err("精确权益曲线 SHA-256 与 RunManifest 不一致".into());
+            }
+        }
+        (None, None) => {}
+        _ => return Err("精确权益曲线路径与 RunManifest 组件必须成对存在".into()),
+    }
+    let fills: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&fills_path)
+            .map_err(|error| format!("读取多市场成交 sidecar 失败: {error}"))?,
+    )
+    .map_err(|error| format!("多市场成交 sidecar JSON 无效: {error}"))?;
+    if let Some((fill_count, fill_sequence_sha256)) = streamed_fill_identity.as_ref() {
+        qx_app::verify_multi_market_bar_sidecars_from_event_report_with_exact_v1(
+            &equity,
+            exact_equity.as_ref(),
+            &fills,
+            *fill_count,
+            fill_sequence_sha256,
+            &spec,
+            outcome.equity_points,
+            outcome.final_equity_raw,
+            outcome.return_bps,
+            outcome.max_drawdown_bps,
+        )
+        .map_err(|error| format!("多市场权益/成交 sidecar 核验失败: {error}"))?;
+    } else {
+        let inline_events: Vec<serde_json::Value> = serde_json::from_value(
+            artifact
+                .get("event_log")
+                .cloned()
+                .ok_or("多市场运行产物缺少 event_log")?,
+        )
+        .map_err(|error| format!("多市场 event_log 无效: {error}"))?;
+        qx_app::verify_multi_market_bar_sidecars_with_exact_v1(
+            &equity,
+            exact_equity.as_ref(),
+            &fills,
+            &inline_events,
+            &spec,
+            outcome.equity_points,
+            outcome.successful_fills,
+            outcome.final_equity_raw,
+            outcome.return_bps,
+            outcome.max_drawdown_bps,
+        )
+        .map_err(|error| format!("多市场权益/成交 sidecar 核验失败: {error}"))?;
+    }
     let instrument_equity_path = artifact
         .get("instrument_equity_contributions_path")
         .and_then(serde_json::Value::as_str)
@@ -233,8 +373,14 @@ pub(crate) fn write_multi_market_run_evidence(
         ("equity", equity_path),
         ("fills", fills_path),
     ];
+    if let Some(path) = event_trace_path {
+        artifact_paths.push(("event_trace", path));
+    }
     if let Some(path) = instrument_equity_path {
         artifact_paths.push(("instrument_equity_contributions", path));
+    }
+    if let Some(path) = equity_exact_path {
+        artifact_paths.push(("equity_exact", path));
     }
     let mut artifact_refs = artifact_paths
         .into_iter()

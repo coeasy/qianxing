@@ -6,6 +6,18 @@ use std::{path::Path, process::Command};
 fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
     let root = scratch("legacy-builtin-parity");
     let bars = sample_bars();
+    let mut runtime: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("deploy/qianxing.runtime.builtin-strategy.example.json"))
+            .expect("read builtin strategy runtime template"),
+    )
+    .expect("parse builtin strategy runtime template");
+    runtime["storage"]["data_dir"] = json!(root.join("legacy-data").to_string_lossy());
+    let runtime_path = root.join("legacy-runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec_pretty(&runtime).expect("serialize isolated runtime"),
+    )
+    .expect("write isolated runtime");
     // Refreshed after the result identity began including native strategy-decision and risk facts.
     let strategies = [
         ("sma_cross", "092fdc46817956a3"),
@@ -25,7 +37,8 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
     ];
     for (kind, expected_hash) in strategies {
         let legacy_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-            .args(["backtest", "builtin", kind, &bars])
+            .args(["backtest", "builtin", kind, &bars, "--config"])
+            .arg(&runtime_path)
             .output()
             .expect("start legacy builtin backtest");
         assert_eq!(
@@ -116,6 +129,7 @@ fn configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding() {
     runtime["strategy"]["builtin_fast_window"] = json!(2);
     runtime["strategy"]["builtin_slow_window"] = json!(3);
     runtime["strategy"]["fill_model"] = json!("best_price");
+    runtime["storage"]["data_dir"] = json!(root.join("legacy-data").to_string_lossy());
     let runtime_path = root.join("runtime.json");
     std::fs::write(
         &runtime_path,

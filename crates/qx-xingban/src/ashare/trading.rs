@@ -179,7 +179,9 @@ impl AshareRuleConfig {
     }
 
     pub fn day_key(ts: u64) -> u64 {
-        ts.saturating_add(SHANGHAI_OFFSET_MS) / DAY_MS
+        let utc_day = ts / DAY_MS;
+        let utc_day_remainder = ts % DAY_MS;
+        utc_day + u64::from(utc_day_remainder >= DAY_MS - SHANGHAI_OFFSET_MS)
     }
 
     /// 生效涨停带：配置未声明（0）时按板块表推导，声明值优先。
@@ -200,21 +202,40 @@ impl AshareRuleConfig {
         }
     }
 
-    pub fn limits(&self, previous_close: i128) -> (i128, i128) {
-        let up = previous_close.saturating_mul(i128::from(10_000 + self.effective_limit_up_bp()))
-            / 10_000;
-        let down = previous_close
-            .saturating_mul(i128::from(10_000 - self.effective_limit_down_bp()))
-            / 10_000;
-        (self.align_down(up), self.align_up(down))
+    pub fn limits(&self, previous_close: i128) -> Result<(i128, i128), String> {
+        if previous_close <= 0 || self.price_tick <= 0 {
+            return Err("涨跌停计算要求昨收价和最小价位为正".into());
+        }
+        let up_factor = 10_000_i128
+            .checked_add(i128::from(self.effective_limit_up_bp()))
+            .ok_or_else(|| "涨停带宽比例溢出".to_string())?;
+        let down_factor = 10_000_i128
+            .checked_sub(i128::from(self.effective_limit_down_bp()))
+            .filter(|factor| *factor >= 0)
+            .ok_or_else(|| "跌停带宽比例非法".to_string())?;
+        let up = checked_mul_div_floor(previous_close, up_factor, 10_000)?;
+        let down = checked_mul_div_floor(previous_close, down_factor, 10_000)?;
+        Ok((self.align_down(up)?, self.align_up(down)?))
     }
 
-    fn align_down(&self, value: i128) -> i128 {
-        value / self.price_tick * self.price_tick
+    fn align_down(&self, value: i128) -> Result<i128, String> {
+        (value / self.price_tick)
+            .checked_mul(self.price_tick)
+            .ok_or_else(|| "涨跌停价格向下对齐溢出".into())
     }
 
-    fn align_up(&self, value: i128) -> i128 {
-        (value + self.price_tick - 1) / self.price_tick * self.price_tick
+    fn align_up(&self, value: i128) -> Result<i128, String> {
+        let units = value / self.price_tick;
+        let units = if value % self.price_tick == 0 {
+            units
+        } else {
+            units
+                .checked_add(1)
+                .ok_or_else(|| "涨跌停价格向上取整溢出".to_string())?
+        };
+        units
+            .checked_mul(self.price_tick)
+            .ok_or_else(|| "涨跌停价格向上对齐溢出".into())
     }
 
     pub fn validate_order(
@@ -273,7 +294,10 @@ impl AshareRuleConfig {
         let Some(previous_close) = previous_close else {
             return false;
         };
-        let (up, down) = self.limits(previous_close);
+        let Ok((up, down)) = self.limits(previous_close) else {
+            // Invalid or unrepresentable limits must never make a fill look eligible.
+            return true;
+        };
         match side {
             Side::Buy => bar.open >= up && bar.high <= up && bar.low >= up,
             Side::Sell => bar.open <= down && bar.high <= down && bar.low >= down,
@@ -306,9 +330,35 @@ impl AshareRuleConfig {
     }
 }
 
+fn checked_mul_div_floor(value: i128, numerator: i128, denominator: i128) -> Result<i128, String> {
+    if value < 0 || numerator < 0 || denominator <= 0 {
+        return Err("涨跌停比例输入非法".into());
+    }
+    let quotient = value / denominator;
+    let remainder = value % denominator;
+    let whole = quotient
+        .checked_mul(numerator)
+        .ok_or_else(|| "涨跌停比例计算溢出".to_string())?;
+    let partial = remainder
+        .checked_mul(numerator)
+        .ok_or_else(|| "涨跌停比例余数计算溢出".to_string())?
+        / denominator;
+    whole
+        .checked_add(partial)
+        .ok_or_else(|| "涨跌停比例累计溢出".into())
+}
+
 #[cfg(test)]
 mod corporate_action_schedule_tests {
     use super::*;
+
+    #[test]
+    fn shanghai_day_key_handles_the_largest_timestamp_without_saturation() {
+        let quotient = u64::MAX / DAY_MS;
+        let remainder = u64::MAX % DAY_MS;
+        let expected = quotient + u64::from(remainder >= DAY_MS - SHANGHAI_OFFSET_MS);
+        assert_eq!(AshareRuleConfig::day_key(u64::MAX), expected);
+    }
 
     #[test]
     fn date_only_actions_resolve_to_the_first_bar_of_the_same_shanghai_day() {

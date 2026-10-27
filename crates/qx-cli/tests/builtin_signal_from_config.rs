@@ -40,10 +40,16 @@ fn temp_dir(label: &str) -> PathBuf {
 }
 
 fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-        .args(args)
-        .output()
-        .expect("启动 qx-cli 失败");
+    run_in(args, None)
+}
+
+fn run_in<A: AsRef<OsStr>>(args: &[A], current_dir: Option<&Path>) -> (i32, String, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+    command.args(args);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    let output = command.output().expect("启动 qx-cli 失败");
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -121,7 +127,15 @@ fn builtin(kind: &str, quantity: &str, config: Option<&Path>) -> (i32, String, S
     if let Some(config) = config {
         args.extend(["--config".into(), config.to_string_lossy().into_owned()]);
     }
-    run(&args)
+    if config.is_some() {
+        run(&args)
+    } else {
+        // The no-config fallback reads the repository's default runtime template, whose data_dir
+        // is relative. Give each baseline its own cwd so parallel integration tests cannot race
+        // while writing the same default artifact identity into deploy/data.
+        let root = temp_dir(&format!("default-{}", kind));
+        run_in(&args, Some(&root))
+    }
 }
 
 /// 窗口对：默认 5/20 在这 6 根 Bar 上永远不交叉，配置里的 2/3 会成交。

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/python-strategy-manifest-v1.json",
+  "title": "Qianxing Python Strategy Manifest v1",
+  "description": "Normalized strategy metadata emitted by qianxing inspect-strategy. The bundle digest binds the entry file and local Python dependencies; completeness=partial means parameter, instrument, data-level, or warmup metadata was not fully declared.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "strategy_id",
+    "strategy_version",
+    "entrypoint",
+    "parameters",
+    "instrument_requirements",
+    "data_level",
+    "warmup_bars",
+    "dependencies",
+    "completeness",
+    "source_sha256",
+    "bundle_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "qianxing-python-strategy-manifest"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "entrypoint": {"const": "create_strategy(spec)"},
+    "parameters": {
+      "type": "object",
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"$ref": "#/$defs/parameter"}
+    },
+    "instrument_requirements": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/instrument_requirements"}
+      ]
+    },
+    "data_level": {"enum": ["bar", "tick", "orderbook", "timer", null]},
+    "warmup_bars": {"type": ["integer", "null"], "minimum": 0},
+    "dependencies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\.\\.).+\\.py$"}
+    },
+    "completeness": {"enum": ["complete", "partial"]},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "parameter": {
+      "type": "object",
+      "required": ["type", "required"],
+      "properties": {
+        "type": {"enum": ["integer", "number", "string", "boolean"]},
+        "required": {"type": "boolean"},
+        "default": {},
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"},
+        "choices": {"type": "array", "minItems": 1}
+      },
+      "additionalProperties": false
+    },
+    "instrument_requirements": {
+      "type": "object",
+      "required": ["asset_classes", "products", "venues", "requires_explicit_spec"],
+      "properties": {
+        "asset_classes": {"$ref": "#/$defs/string_set"},
+        "products": {"$ref": "#/$defs/string_set"},
+        "venues": {"$ref": "#/$defs/string_set"},
+        "requires_explicit_spec": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "string_set": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

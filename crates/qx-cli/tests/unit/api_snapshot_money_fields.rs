@@ -15,11 +15,14 @@
 use super::*;
 
 fn paper_snapshot(config: &RuntimeConfig) -> AccountSnapshot {
-    load_api_account_snapshots(config)
-        .unwrap()
-        .into_iter()
-        .find(|snapshot| snapshot.header.account_id == "main")
-        .expect("paper 拓扑必须投影出 main 账户快照")
+    qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        config,
+        &workspace_binance_spot_market_specs(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|snapshot| snapshot.header.account_id == "main")
+    .expect("paper 拓扑必须投影出 main 账户快照")
 }
 
 /// 成交费用合计与权益里的持仓价值是两回事：把 `available_raw` 抄成 `equity_raw`，
@@ -192,8 +195,11 @@ fn overflowing_fee_total_is_refused_instead_of_wrapping() {
         assert_eq!(pipeline.ledger().cash_for("main", "USDT"), i128::MIN);
     }
 
-    let error =
-        load_api_account_snapshots(&config).expect_err("费用合计回绕时不能发布一个口径错误的快照");
+    let error = qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        &config,
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("费用合计回绕时不能发布一个口径错误的快照");
     assert!(
         error.contains("溢出") && error.contains("main"),
         "溢出必须点名账户和溢出本身: {error}"
@@ -379,6 +385,7 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
                     venue_id: "paper".into(),
                     positions: vec![AccountPositionSnapshot {
                         instrument: instrument.clone(),
+                        settlement_currency: None,
                         quantity: Quantity::from_i64(1),
                         average_price: Some(Price::from_i64(100)),
                         mark_price: Some(Price::from_i64(105)),
@@ -390,6 +397,7 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
                         leverage: None,
                         margin_mode: None,
                         position_side: Some("long".into()),
+                        exact_amounts: None,
                     }],
                 },
                 1,

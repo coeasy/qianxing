@@ -7,8 +7,8 @@
 //!    不做"尽力而为"的字段猜测。
 //! 2. **严格**：`deny_unknown_fields`。多一个键就是拼错了字段名，静默忽略等于让
 //!    用户以为设上了。
-//! 3. **定点原值显式**：金额/数量走 `*_raw`（i128 定点），与仓内 wire 风格一致；
-//!    应用层不接受浮点，也不替调用方做单位换算。
+//! 3. **定点原值显式**：历史字段走 `*_raw`（1e-9），新版高精度金额走带 scale 的
+//!    `ExactDecimal`；应用层不接受浮点，也不替调用方做单位换算或隐式舍入。
 //!
 //! 还有第 4 条只对身份字段成立：`run_id`/`dataset_id` 必须落在 `[A-Za-z0-9._-]` 里。
 //! 它们会变成产物**文件名**的一部分，也会出现在三个入口的 URL/命令行里；放行 `/`、`\`
@@ -24,8 +24,10 @@ use serde::{Deserialize, Serialize};
 /// `DatasetSpec` 的 schema 版本。改形状必须抬它，否则旧调用方会静默按新语义读。
 pub const DATASET_SPEC_SCHEMA_VERSION: u32 = 1;
 
-/// `BacktestSpec` 的 schema 版本。
+/// Legacy `BacktestSpec` raw-capital schema version.
 pub const BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
+/// Scale-aware initial capital schema version; selected by `with_initial_cash_exact`.
+pub const BACKTEST_SPEC_EXACT_SCHEMA_VERSION: u32 = 2;
 
 /// Bar 回测对样本量的下限：少于这个数，"指标"不是指标而是噪声。
 /// 它是一道**档位闸**而不是礼貌检查：样本不足时正确行为是
@@ -291,13 +293,13 @@ impl BuiltinStrategySpec {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
                     "Kelly sizing 必须配置 30..=1000 根 kelly_lookback_bars",
-                ))
+                ));
             }
             (None, Some(_)) => {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
                     "kelly_lookback_bars 只能与 Kelly sizing 一起配置",
-                ))
+                ));
             }
             (None, None) => {}
         }
@@ -357,7 +359,7 @@ pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCH
 mod multi_leg;
 pub use multi_leg::{
     MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
-    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 mod multi_builtin;
 pub use multi_builtin::{

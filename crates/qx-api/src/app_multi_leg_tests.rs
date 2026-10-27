@@ -1,6 +1,6 @@
 use crate::*;
 use qx_app::MultiLegBacktestOutcome;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn fixture_paths() -> (app_surface::AppPaths, String) {
@@ -231,8 +231,11 @@ fn multi_leg_http_facade_uses_service_paths_and_the_same_outcome_contract() {
     assert_eq!(response.status, 200, "{}", response.body);
     let outcome: MultiLegBacktestOutcome = serde_json::from_str(&response.body).unwrap();
     assert_eq!(outcome.run_id, "api-multi-leg");
-    assert!(PathBuf::from(&outcome.attribution_artifact)
-        .starts_with(paths.artifact_root.join(&outcome.run_id)));
+    let attribution_path = std::fs::canonicalize(&outcome.attribution_artifact)
+        .expect("multi-leg attribution path resolves");
+    let expected_run_root = std::fs::canonicalize(paths.artifact_root.join(&outcome.run_id))
+        .expect("API-owned multi-leg run root resolves");
+    assert!(attribution_path.starts_with(expected_run_root));
     assert!(Path::new(&outcome.attribution_artifact).is_file());
 }
 

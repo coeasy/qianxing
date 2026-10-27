@@ -101,10 +101,14 @@ struct ScriptedCcxtRpc {
 impl CcxtRpc for ScriptedCcxtRpc {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         match request.get("op").and_then(Value::as_str) {
+            Some("fetch_contract_settings") => Ok(json!({"settings": {"contract": false}})),
             Some("create_order") => {
                 Ok(json!({"order": {"order_id": self.remote.lock().unwrap().order_id}}))
             }
-            Some("cancel_order") => Ok(json!({"cancelled": true})),
+            Some("cancel_order") => {
+                self.remote.lock().unwrap().status = "canceled".into();
+                Ok(json!({"cancelled": true}))
+            }
             Some("fetch_my_trades") => Ok(json!({"trades": []})),
             Some("fetch_order") => {
                 let remote = self.remote.lock().unwrap();

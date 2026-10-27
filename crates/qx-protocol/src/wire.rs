@@ -24,6 +24,10 @@ pub struct SnapshotHeader {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PositionSnapshot {
     pub instrument: InstrumentId,
+    /// Settlement currency declared by the venue market metadata. Older snapshots omit it;
+    /// portfolio equity must remain incomplete when a derivative position has no currency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_currency: Option<String>,
     pub quantity_raw: i128,
     pub today_quantity_raw: i128,
     pub average_price_raw: i128,
@@ -33,18 +37,23 @@ pub struct PositionSnapshot {
     /// `0` 表达"没有"；钱没有这个性质，必须显式缺席。
     pub unrealized_pnl_raw: Option<i128>,
     pub margin_raw: Option<i128>,
+    /// Scale-aware venue amounts. Legacy raw fields remain the 1e9 projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_amounts: Option<qx_core::ExactAccountPositionAmounts>,
 }
 
 impl Default for PositionSnapshot {
     fn default() -> Self {
         Self {
             instrument: InstrumentId::new("UNKNOWN", qx_core::VenueId::new("UNKNOWN")),
+            settlement_currency: None,
             quantity_raw: 0,
             today_quantity_raw: 0,
             average_price_raw: 0,
             mark_price_raw: 0,
             unrealized_pnl_raw: None,
             margin_raw: None,
+            exact_amounts: None,
         }
     }
 }
@@ -58,6 +67,18 @@ pub struct OrderSnapshot {
     pub quantity_raw: i128,
     pub filled_raw: i128,
     pub status: OrderStatus,
+    /// Scale-aware amount payload. Omitted for legacy 1e9 orders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_amounts: Option<qx_core::ExactOrderAmounts>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct FillFeeSnapshot {
+    pub amount_raw: i128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_trade_ids: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -67,6 +88,18 @@ pub struct FillSnapshot {
     pub quantity_raw: i128,
     pub price_raw: i128,
     pub fee_raw: i128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_currency: Option<String>,
+    /// Exact venue-reported fee legs. Consumers should use these rows when present; the scalar
+    /// fields remain for clients that only understand a single fee currency.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fees: Vec<FillFeeSnapshot>,
+    /// Scale-aware amount payload. Omitted for legacy 1e9 fills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_amounts: Option<qx_core::ExactFillAmounts>,
+    /// Scale-aware per-currency fee rows. Legacy `fees` remain unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exact_fees: Vec<qx_core::ExactFillFee>,
     pub ts: u64,
 }
 
@@ -117,12 +150,14 @@ impl From<&AccountPositionSnapshot> for PositionSnapshot {
     fn from(observation: &AccountPositionSnapshot) -> Self {
         Self {
             instrument: observation.instrument.clone(),
+            settlement_currency: observation.settlement_currency.clone(),
             quantity_raw: observation.quantity.raw(),
             today_quantity_raw: observation.quantity.raw(),
             average_price_raw: observation.average_price.map(Price::raw).unwrap_or(0),
             mark_price_raw: observation.mark_price.map(Price::raw).unwrap_or(0),
             unrealized_pnl_raw: observation.unrealized_pnl.map(Money::raw),
             margin_raw: observation.initial_margin.map(Money::raw),
+            exact_amounts: observation.exact_amounts,
         }
     }
 }
@@ -136,6 +171,7 @@ impl From<&PositionSnapshot> for AccountPositionSnapshot {
     fn from(wire: &PositionSnapshot) -> Self {
         Self {
             instrument: wire.instrument.clone(),
+            settlement_currency: wire.settlement_currency.clone(),
             quantity: Quantity::from_raw(wire.quantity_raw),
             average_price: (wire.average_price_raw != 0)
                 .then_some(Price::from_raw(wire.average_price_raw)),
@@ -147,6 +183,7 @@ impl From<&PositionSnapshot> for AccountPositionSnapshot {
             leverage: None,
             margin_mode: None,
             position_side: None,
+            exact_amounts: wire.exact_amounts,
         }
     }
 }
@@ -165,6 +202,7 @@ impl From<&Order> for OrderSnapshot {
             quantity_raw: order.qty.raw(),
             filled_raw: order.filled.raw(),
             status: order.status,
+            exact_amounts: order.exact_amounts,
         }
     }
 }
@@ -181,6 +219,18 @@ impl FillSnapshot {
             quantity_raw: fill.qty.raw(),
             price_raw: fill.price.raw(),
             fee_raw: fill.fee.raw(),
+            fee_currency: fill.fee_currency.clone(),
+            fees: fill
+                .fees
+                .iter()
+                .map(|fee| FillFeeSnapshot {
+                    amount_raw: fee.amount.raw(),
+                    currency: fee.currency.clone(),
+                    source_trade_ids: fee.source_trade_ids.clone(),
+                })
+                .collect(),
+            exact_amounts: fill.exact_amounts,
+            exact_fees: fill.exact_fees.clone(),
             ts: fill.ts,
         }
     }
@@ -192,27 +242,41 @@ impl AccountSnapshot {
     ///
     /// 溢出时 fail-closed 返回 `Err`，不静默截断。
     pub fn upsert_balance(&mut self, balance: &AccountBalance) -> Result<(), ProtocolError> {
-        let raw = balance
-            .net_cash_raw()
+        let exact = balance
+            .net_cash_exact()
+            .ok_or_else(|| ProtocolError::Invalid("账户余额精确净现金折算溢出".into()))?;
+        let raw = exact_raw_projection(&exact)
             .ok_or_else(|| ProtocolError::Invalid("账户余额净现金折算溢出".into()))?;
         self.cash_raw.insert(balance.asset.clone(), raw);
+        self.cash_exact.insert(balance.asset.clone(), exact);
         Ok(())
     }
 
     /// 批量写入余额观察；任何一条溢出都不部分生效。
     pub fn upsert_balances(&mut self, balances: &[AccountBalance]) -> Result<(), ProtocolError> {
-        let staged: Vec<(String, i128)> = balances
+        let staged: Vec<(String, i128, qx_core::ExactDecimal)> = balances
             .iter()
             .map(|balance| {
-                balance
-                    .net_cash_raw()
-                    .map(|raw| (balance.asset.clone(), raw))
-                    .ok_or_else(|| ProtocolError::Invalid("账户余额净现金折算溢出".into()))
+                let exact = balance
+                    .net_cash_exact()
+                    .ok_or_else(|| ProtocolError::Invalid("账户余额精确净现金折算溢出".into()))?;
+                let raw = exact_raw_projection(&exact)
+                    .ok_or_else(|| ProtocolError::Invalid("账户余额净现金折算溢出".into()))?;
+                Ok((balance.asset.clone(), raw, exact))
             })
             .collect::<Result<Vec<_>, ProtocolError>>()?;
-        for (asset, raw) in staged {
-            self.cash_raw.insert(asset, raw);
+        for (asset, raw, exact) in staged {
+            self.cash_raw.insert(asset.clone(), raw);
+            self.cash_exact.insert(asset, exact);
         }
         Ok(())
     }
+}
+
+pub(crate) fn exact_raw_projection(value: &qx_core::ExactDecimal) -> Option<i128> {
+    let one = qx_core::ExactDecimal::from_parts(1, 0).ok()?;
+    value
+        .checked_mul_at_scale(one, 9, qx_core::DecimalRounding::TowardZero)?
+        .to_raw(9)
+        .ok()
 }

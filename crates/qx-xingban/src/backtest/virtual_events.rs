@@ -31,7 +31,9 @@ pub(super) fn apply_virtual_events(
                 state.multiplier,
             )?;
             let signed = if position > 0 { -1 } else { 1 };
-            qx_core::bp_amount(notional, event.rate_bp).saturating_mul(signed)
+            qx_core::bp_amount(notional, event.rate_bp)?
+                .checked_mul(signed)
+                .ok_or_else(|| QxError::Invariant("资金费率方向换算溢出".into()))?
         };
         if amount != 0 {
             let entry_id = state.ledger.apply_funding(
@@ -45,7 +47,7 @@ pub(super) fn apply_virtual_events(
     }
     for event in events_at(&config.interest, bar.ts, |event| event.ts) {
         let cash = state.ledger.cash_for(state.account_id, state.currency);
-        let amount = qx_core::bp_amount(cash, event.rate_bp);
+        let amount = qx_core::bp_amount(cash, event.rate_bp)?;
         if amount != 0 {
             let entry_id = state.ledger.apply_interest(
                 state.account_id,

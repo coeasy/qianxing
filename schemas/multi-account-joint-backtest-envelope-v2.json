@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-joint-backtest-envelope-v2.json",
+  "title": "Qianxing MultiAccountJointBacktestArtifactEnvelope v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "spec",
+    "outcome",
+    "shared_result_hash",
+    "result_hash",
+    "input_data_hash",
+    "data_fingerprint",
+    "clock_start",
+    "clock_end",
+    "run_manifest",
+    "run_manifest_path",
+    "account_run_verifications",
+    "joint_equity_path",
+    "joint_fills_path",
+    "aggregation"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "spec": { "$ref": "multi-account-joint-backtest-spec-v1.json" },
+    "outcome": { "$ref": "multi-account-joint-backtest-result-v1.json" },
+    "shared_result_hash": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+    "result_hash": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+    "input_data_hash": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+    "data_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+    "clock_start": { "type": "integer", "minimum": 0 },
+    "clock_end": { "type": "integer", "minimum": 0 },
+    "run_manifest": { "type": "string", "minLength": 1 },
+    "run_manifest_path": { "type": "string", "minLength": 1 },
+    "account_run_verifications": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["exchange_id", "account_id", "run_manifest", "identity"],
+        "properties": {
+          "exchange_id": { "enum": ["okx", "binance", "bitget"] },
+          "account_id": { "type": "string", "minLength": 1 },
+          "run_manifest": { "type": "object" },
+          "identity": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "joint_equity_path": { "type": "string", "minLength": 1 },
+    "joint_fills_path": { "type": "string", "minLength": 1 },
+    "aggregation": {
+      "const": "sum_of_independent_exchange_account_equity_no_cross_account_margin_netting"
+    }
+  },
+  "additionalProperties": false
+}

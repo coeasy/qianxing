@@ -24,12 +24,18 @@ mod multi_account_entrypoints;
 mod multi_builtin_parity;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
+#[path = "app_three_entrypoints/multi_leg_report.rs"]
+mod multi_leg_report_entrypoints;
 #[path = "app_three_entrypoints/multi_market_experiment.rs"]
 mod multi_market_experiment_entrypoints;
+#[path = "app_three_entrypoints/multi_market_report.rs"]
+mod multi_market_report_entrypoints;
 #[path = "app_three_entrypoints/portfolio.rs"]
 mod portfolio_entrypoints;
 #[path = "app_three_entrypoints/protective_exit.rs"]
 mod protective_exit_entrypoints;
+#[path = "app_three_entrypoints/provider_reports.rs"]
+mod provider_report_entrypoints;
 #[path = "app_three_entrypoints/python_native.rs"]
 mod python_native;
 #[path = "app_three_entrypoints/risk_parity.rs"]
@@ -357,6 +363,83 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     assert_eq!(
         cli_verification, http,
         "CLI and HTTP verify use-case result"
+    );
+
+    let cli_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["app", "read-report"])
+        .arg(&outcome_path)
+        .output()
+        .expect("run CLI shared Bar report reader");
+    assert_eq!(
+        cli_report_output.status.code(),
+        Some(0),
+        "CLI shared report reader must succeed: {}",
+        String::from_utf8_lossy(&cli_report_output.stderr)
+    );
+    let cli_report: Value =
+        serde_json::from_slice(&cli_report_output.stdout).expect("CLI shared report JSON");
+    assert_eq!(cli_report["schema_version"], 1);
+    assert_eq!(cli_report["run_id"], outcome["run_id"]);
+    assert_eq!(cli_report["verification"]["verified"], true);
+    match python_native::via_python_json_value(
+        &repo_root(),
+        "read_run_report_v1",
+        &outcome_document,
+    ) {
+        None => eprintln!("[skip] Python report leg: the PyO3 extension is not built."),
+        Some(Ok(python_report)) => assert_eq!(
+            python_report, cli_report,
+            "Python and Rust CLI must return the same shared Bar report DTO"
+        ),
+        Some(Err(error)) => panic!("Python shared Bar report reader failed: {error}"),
+    }
+
+    let summary_path = PathBuf::from(
+        outcome["artifacts"]["summary"]
+            .as_str()
+            .expect("BacktestOutcome summary path"),
+    );
+    let interactive_report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["report"])
+        .arg(&summary_path)
+        .args(["--json"])
+        .output()
+        .expect("run top-level Bar research report");
+    assert_eq!(
+        interactive_report.status.code(),
+        Some(0),
+        "top-level Bar report must use the shared qx-app verifier: {}",
+        String::from_utf8_lossy(&interactive_report.stderr)
+    );
+    let interactive_report: Value =
+        serde_json::from_slice(&interactive_report.stdout).expect("top-level Bar report JSON");
+    assert_eq!(interactive_report["run_kind"], "bar");
+    assert_eq!(interactive_report["verification"]["verified"], true);
+    assert_eq!(interactive_report["summary"]["run_id"], outcome["run_id"]);
+
+    let original_summary = std::fs::read(&summary_path).expect("read original Bar summary");
+    let mut tampered_summary: Value =
+        serde_json::from_slice(&original_summary).expect("decode Bar summary");
+    tampered_summary["result_hash"] = json!("0000000000000000");
+    std::fs::write(
+        &summary_path,
+        serde_json::to_vec(&tampered_summary).expect("encode tampered Bar summary"),
+    )
+    .expect("write tampered Bar summary");
+    let refused = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["report"])
+        .arg(&summary_path)
+        .args(["--json"])
+        .output()
+        .expect("verify tampered top-level Bar report");
+    std::fs::write(&summary_path, original_summary).expect("restore original Bar summary");
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "top-level Bar report must reject a summary whose result hash was changed"
     );
 
     // 数据集校验同样三入口一致。

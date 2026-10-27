@@ -17,6 +17,7 @@ fn registered_account_cash_is_seeded_once_across_workers() {
         id: "main".into(),
         settlement_currency: Some("USDT".into()),
         initial_cash_raw: Some(2_500),
+        portfolio_id: None,
     });
     let mut worker = config
         .workers

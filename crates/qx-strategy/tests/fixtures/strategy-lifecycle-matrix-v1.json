@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "name": "strategy-normalized-cross-host-contract-matrix",
+  "warmup_bars": 2,
+  "instrument": "BTCUSDT.BINANCE",
+  "bar_timestamps": [9, 10],
+  "warmup_observed_bars": 2,
+  "scenario_fixtures": {
+    "bar_warmup": "strategy-warmup-complete-v1.json",
+    "execution_updates": "strategy-execution-sequence-v1.json",
+    "account_updates": "strategy-account-update-sequence-v1.json",
+    "order_book": "strategy-market-orderbook-v1.json",
+    "timer": "strategy-market-timer-v1.json",
+    "error": "strategy-error-v1.json",
+    "stop": "strategy-stop-context-v1.json"
+  },
+  "additional_scenarios": [
+    "durable Bar checkpoint restart and warmup state restoration",
+    "account EventLog cursor restore, duplicate replay suppression and new snapshot delivery",
+    "unknown MarketEvent tag rejection and fail-closed exact OrderBook capability refusal"
+  ],
+  "checkpoint_golden_keys": [
+    "expected_checkpoint_after_first_batch",
+    "expected_checkpoint_after_restart",
+    "expected_checkpoint_resume_callbacks",
+    "expected_account_checkpoint_after_first_batch",
+    "expected_account_checkpoint_after_restart",
+    "expected_account_checkpoint_resume_callbacks"
+  ],
+  "unsupported_event_kind": "Trade",
+  "unsupported_event_error_category": "unsupported or malformed MarketEvent",
+  "unsupported_exact_orderbook": {
+    "required_callback_export": "qx_strategy_on_market_event_v3",
+    "error_contains": "qx_strategy_on_market_event_v3",
+    "must_not_downgrade_to_raw": true
+  },
+  "expected_normalized_callback_order": [
+    "on_init",
+    "on_start",
+    "market:Bar:9",
+    "warmup_complete:BTCUSDT.BINANCE:2",
+    "market:Bar:10",
+    "on_stop"
+  ],
+  "expected_execution_update_callbacks": [
+    "paper:BTCUSDT.BINANCE:24:order_status",
+    "paper:BTCUSDT.BINANCE:24:fill",
+    "paper:BTCUSDT.BINANCE:25:order_status",
+    "paper:BTCUSDT.BINANCE:25:fill",
+    "paper-b:ETHUSDT.OKX:24:order_status",
+    "paper-b:ETHUSDT.OKX:24:fill"
+  ],
+  "expected_account_update_callbacks": [
+    "paper:BINANCE:0:account_snapshot",
+    "paper:BINANCE:23:position_snapshot"
+  ],
+  "expected_market_order_book_callbacks": [
+    "market:OrderBook:10"
+  ],
+  "expected_timer_callbacks": [
+    "market:Timer:1000"
+  ],
+  "expected_error_callbacks": [
+    "on_error_v1:market_event"
+  ],
+  "expected_stop_callbacks": [
+    "on_stop:host_stop"
+  ],
+  "expected_checkpoint_after_first_batch": {
+    "schema_version": 1,
+    "strategy_id": "checkpoint-golden",
+    "strategy_version": "1.0",
+    "adapter_state": {
+      "schema_version": 1,
+      "bars_seen": {"BTCUSDT.BINANCE": 2},
+      "last_bar_ts": {"BTCUSDT.BINANCE": 10},
+      "warmup_completed": ["BTCUSDT.BINANCE"],
+      "update_cursors": []
+    },
+    "strategy_state": {"bars_processed": 2}
+  },
+  "expected_checkpoint_after_restart": {
+    "schema_version": 1,
+    "strategy_id": "checkpoint-golden",
+    "strategy_version": "1.0",
+    "adapter_state": {
+      "schema_version": 1,
+      "bars_seen": {"BTCUSDT.BINANCE": 3},
+      "last_bar_ts": {"BTCUSDT.BINANCE": 11},
+      "warmup_completed": ["BTCUSDT.BINANCE"],
+      "update_cursors": []
+    },
+    "strategy_state": {"bars_processed": 3}
+  },
+  "expected_checkpoint_resume_callbacks": [
+    "on_restore",
+    "market:Bar:11"
+  ],
+  "expected_account_checkpoint_after_first_batch": {
+    "schema_version": 1,
+    "strategy_id": "update-test",
+    "strategy_version": "1.0",
+    "adapter_state": {
+      "schema_version": 1,
+      "bars_seen": {"BTCUSDT.BINANCE": 2},
+      "last_bar_ts": {"BTCUSDT.BINANCE": 2},
+      "warmup_completed": ["BTCUSDT.BINANCE"],
+      "update_cursors": [
+        {
+          "account_id": "paper",
+          "venue_id": "BINANCE",
+          "event_seq": 23,
+          "kinds": ["position_snapshot"]
+        }
+      ]
+    },
+    "strategy_state": {
+      "events": [
+        "paper:BINANCE:0:account_snapshot",
+        "paper:BINANCE:23:position_snapshot"
+      ]
+    }
+  },
+  "expected_account_checkpoint_after_restart": {
+    "schema_version": 1,
+    "strategy_id": "update-test",
+    "strategy_version": "1.0",
+    "adapter_state": {
+      "schema_version": 1,
+      "bars_seen": {"BTCUSDT.BINANCE": 2},
+      "last_bar_ts": {"BTCUSDT.BINANCE": 2},
+      "warmup_completed": ["BTCUSDT.BINANCE"],
+      "update_cursors": [
+        {
+          "account_id": "paper",
+          "venue_id": "BINANCE",
+          "event_seq": 24,
+          "kinds": ["position_snapshot"]
+        }
+      ]
+    },
+    "strategy_state": {
+      "events": [
+        "paper:BINANCE:0:account_snapshot",
+        "paper:BINANCE:23:position_snapshot",
+        "paper:BINANCE:24:position_snapshot"
+      ]
+    }
+  },
+  "expected_account_checkpoint_resume_callbacks": [
+    "on_restore",
+    "paper:BINANCE:24:position_snapshot"
+  ],
+  "expected_cpp_plugin_host_callback_order": [
+    "on_init",
+    "on_start",
+    "market:Bar:9",
+    "warmup_complete:BTCUSDT.BINANCE:2",
+    "market:Bar:10",
+    "market:OrderBook:10",
+    "market:Timer:1000",
+    "on_error_v1:market_event",
+    "order_status:24",
+    "fill:24",
+    "order_status:25",
+    "fill:25",
+    "order_status:24",
+    "fill:24",
+    "account_snapshot:0",
+    "position_snapshot:23",
+    "on_stop:host_stop"
+  ]
+}

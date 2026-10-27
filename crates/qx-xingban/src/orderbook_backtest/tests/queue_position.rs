@@ -25,6 +25,7 @@ impl OrderBookStrategy for PassiveLimitBuyOnce {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }])
     }
 }
@@ -36,6 +37,8 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
             ts: 1,
             sequence: 1,
             bids: vec![crate::BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(99),
                 qty: Quantity::from_i64(8),
             }],
@@ -45,6 +48,8 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
             ts: 2,
             sequence: 2,
             bids: vec![crate::BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(99),
                 qty: Quantity::from_i64(8),
             }],
@@ -54,6 +59,8 @@ fn fifo_queue_report_exposes_same_data_limit_fill_rate_sensitivity() {
             ts: 3,
             sequence: 3,
             bids: vec![crate::BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(99),
                 qty: Quantity::from_i64(2),
             }],

@@ -7,9 +7,9 @@
 use super::{Ledger, PositionState};
 use crate::error::{QxError, QxResult};
 use crate::identity::InstrumentId;
-use crate::numeric::{Money, Price, Quantity, SCALE};
-use crate::trading::TradingInstrumentSpec;
-use crate::valuation::{ValuationContext, ValuationResult};
+use crate::numeric::{DecimalRounding, ExactDecimal, Money, Price, Quantity, SCALE};
+use crate::trading::{PositionSide, TradingInstrumentSpec};
+use crate::valuation::{ExactValuationContext, ValuationContext, ValuationResult};
 use std::collections::BTreeMap;
 
 impl Ledger {
@@ -34,13 +34,20 @@ impl Ledger {
             ));
         }
 
-        let mut cash_by_currency = BTreeMap::<String, i128>::new();
+        let mut cash_by_currency = BTreeMap::<String, ExactDecimal>::new();
         for entry in self.entries.iter().filter(|entry| {
             entry.account_id == account_id && entry.instrument.as_ref() == Some(instrument)
         }) {
             let amount = cash_by_currency.entry(entry.currency.clone()).or_default();
+            let entry_amount = entry
+                .exact_amounts
+                .map(|exact| exact.amount)
+                .unwrap_or_else(|| {
+                    ExactDecimal::from_parts(entry.amount.raw(), 9)
+                        .expect("legacy ledger amounts use scale 9")
+                });
             *amount = amount
-                .checked_add(entry.amount.raw())
+                .checked_add(entry_amount)
                 .ok_or_else(|| QxError::Invariant("标的现金归因累计溢出".into()))?;
         }
         let marks = mark
@@ -50,7 +57,10 @@ impl Ledger {
         let context = ValuationContext::spot(account_id, &marks, reporting_currency)
             .with_spec(Some(spec))
             .with_fx(fx_rates);
-        self.instrument_equity_contribution_from_cash(&context, &cash_by_currency)
+        self.instrument_equity_contribution_from_exact_cash(&context, &cash_by_currency)?
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+            .and_then(|amount| amount.to_raw(9).ok())
+            .ok_or_else(|| QxError::Invariant("标的精确权益贡献 raw 投影溢出".into()))
     }
 
     /// Value an instrument's P&L contribution using a caller-maintained cumulative ledger-cash
@@ -108,6 +118,73 @@ impl Ledger {
             if account == account_id && candidate == instrument {
                 add_position(position)?;
             }
+        }
+        Ok(contribution)
+    }
+
+    /// Exact scale-aware form of [`Self::instrument_equity_contribution_from_cash`].
+    ///
+    /// The result remains in the reporting currency without projecting to the legacy 1e-9
+    /// `Money` scale. Cash contributions are supplied by the caller so an event loop can keep
+    /// per-instrument attribution incrementally while the ledger remains the position source.
+    pub fn instrument_equity_contribution_from_exact_cash(
+        &self,
+        context: &ValuationContext<'_>,
+        cash_by_currency: &BTreeMap<String, ExactDecimal>,
+    ) -> QxResult<ExactDecimal> {
+        let spec = context.spec.ok_or_else(|| {
+            QxError::BusinessViolation("标的权益归因估值上下文缺少单标的规格".into())
+        })?;
+        spec.validate()?;
+        let instrument = &spec.instrument;
+        let mark = context
+            .marks
+            .get(instrument)
+            .copied()
+            .map(|price| {
+                ExactDecimal::from_parts(price.raw(), 9)
+                    .map_err(|error| QxError::Invariant(error.into()))
+            })
+            .transpose()?;
+        let mut contribution = ExactDecimal::ZERO;
+        for (currency, amount) in cash_by_currency {
+            let converted = Self::convert_equity_currency_exact(
+                *amount,
+                currency,
+                context.reporting_currency,
+                context.fx_rates,
+            )?;
+            contribution = contribution
+                .checked_add(converted)
+                .ok_or_else(|| QxError::Invariant("精确标的现金归因估值溢出".into()))?;
+        }
+        for side in [PositionSide::Net, PositionSide::Long, PositionSide::Short] {
+            let state = self.position_for_side_exact(context.account_id, instrument, side);
+            if state.quantity.is_zero() {
+                continue;
+            }
+            let mark = mark.ok_or_else(|| {
+                QxError::ReconcileRequired(format!("标的精确权益归因缺少标记价: {instrument}"))
+            })?;
+            let position = PositionState {
+                quantity: Quantity::ZERO,
+                average_entry: Price::ZERO,
+                realized_pnl: Money::ZERO,
+                margin_ratio_raw: None,
+                exact_quantity: Some(state.quantity),
+                exact_average_entry: Some(state.average_entry),
+                exact_realized_pnl: Some(state.realized_pnl),
+            };
+            let (value, currency) = Self::market_position_value_exact(spec, &position, mark)?;
+            let converted = Self::convert_equity_currency_exact(
+                value,
+                currency,
+                context.reporting_currency,
+                context.fx_rates,
+            )?;
+            contribution = contribution
+                .checked_add(converted)
+                .ok_or_else(|| QxError::Invariant("精确标的持仓归因估值溢出".into()))?;
         }
         Ok(contribution)
     }
@@ -305,6 +382,93 @@ impl Ledger {
         Some(value)
     }
 
+    /// Scale-aware form of [`Self::equity_for_with_multiplier`]. It values exact cash and exact
+    /// position quantities directly, then converts cash with the same frozen FX rates used by
+    /// the legacy valuation path. This is intended for reporting and does not change the legacy
+    /// `Money` projection consumed by old callers.
+    pub fn equity_for_with_multiplier_exact(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, Price>,
+        reporting_currency: &str,
+        multiplier: i128,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<ExactDecimal> {
+        if multiplier <= 0 {
+            return Err(QxError::BusinessViolation("回测合约乘数必须为正".into()));
+        }
+        let mut value = ExactDecimal::ZERO;
+        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+            value = value
+                .checked_add(Self::convert_equity_currency_exact(
+                    amount,
+                    &currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("精确现金权益累计溢出".into()))?;
+        }
+        let multiplier = ExactDecimal::from_parts(multiplier, 0)
+            .map_err(|error| QxError::Invariant(error.into()))?;
+        for ((account, instrument), _) in self.iter_positions() {
+            if account != account_id {
+                continue;
+            }
+            let position = self.position_for_side_exact(account_id, instrument, PositionSide::Net);
+            if position.quantity.is_zero() {
+                continue;
+            }
+            let mark = marks.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("精确权益估值缺少标记价: {instrument}"))
+            })?;
+            let mark = ExactDecimal::from_parts(mark.raw(), 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            let notional = position
+                .quantity
+                .checked_mul_at_scale(mark, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+                .and_then(|amount| {
+                    amount.checked_mul_at_scale(
+                        multiplier,
+                        ExactDecimal::MAX_SCALE,
+                        DecimalRounding::TowardZero,
+                    )
+                })
+                .ok_or_else(|| QxError::Invariant("精确持仓市值计算溢出".into()))?;
+            value = value
+                .checked_add(notional)
+                .ok_or_else(|| QxError::Invariant("精确持仓权益累计溢出".into()))?;
+        }
+        for ((account, instrument, side), _) in self.iter_hedge_positions() {
+            if account != account_id {
+                continue;
+            }
+            let position = self.position_for_side_exact(account_id, instrument, side);
+            if position.quantity.is_zero() {
+                continue;
+            }
+            let mark = marks.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!("精确权益估值缺少标记价: {instrument}"))
+            })?;
+            let mark = ExactDecimal::from_parts(mark.raw(), 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            let notional = position
+                .quantity
+                .checked_mul_at_scale(mark, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+                .and_then(|amount| {
+                    amount.checked_mul_at_scale(
+                        multiplier,
+                        ExactDecimal::MAX_SCALE,
+                        DecimalRounding::TowardZero,
+                    )
+                })
+                .ok_or_else(|| QxError::Invariant("精确对冲持仓市值计算溢出".into()))?;
+            value = value
+                .checked_add(notional)
+                .ok_or_else(|| QxError::Invariant("精确对冲持仓权益累计溢出".into()))?;
+        }
+        Ok(value)
+    }
+
     pub fn equity_for_with_spec(
         &self,
         account_id: &str,
@@ -499,6 +663,174 @@ impl Ledger {
         Ok(equity)
     }
 
+    /// Exact scale-aware shared-account equity for frozen per-market specifications.
+    ///
+    /// Unlike the legacy raw projection, this includes sub-nano cash and position amounts. FX
+    /// rates retain their existing 1e-9 precision, while valuation arithmetic remains decimal.
+    pub fn equity_for_with_market_specs_and_fx_exact(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, Price>,
+        reporting_currency: &str,
+        specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<ExactDecimal> {
+        for (instrument, spec) in specs {
+            spec.validate()?;
+            if instrument != &spec.instrument {
+                return Err(QxError::BusinessViolation(
+                    "多市场精确估值规格的 map key 必须等于 TradingInstrumentSpec.instrument".into(),
+                ));
+            }
+        }
+        let mut equity = ExactDecimal::ZERO;
+        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    amount,
+                    &currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确现金权益溢出".into()))?;
+        }
+        for ((account, instrument), position) in self.iter_positions() {
+            if account != account_id {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 规格: {instrument}"
+                ))
+            })?;
+            let mark = marks.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 标记价: {instrument}"
+                ))
+            })?;
+            let mark = ExactDecimal::from_parts(mark.raw(), 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            let (value, currency) = Self::market_position_value_exact(spec, position, mark)?;
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    value,
+                    currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确持仓权益溢出".into()))?;
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account != account_id {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 规格: {instrument}"
+                ))
+            })?;
+            let mark = marks.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 标记价: {instrument}"
+                ))
+            })?;
+            let mark = ExactDecimal::from_parts(mark.raw(), 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            let (value, currency) = Self::market_position_value_exact(spec, position, mark)?;
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    value,
+                    currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确对冲持仓权益溢出".into()))?;
+        }
+        Ok(equity)
+    }
+
+    /// Exact scale-aware shared-account equity using exact market marks.
+    ///
+    /// This is the lossless valuation entry point for DepthFrame v2 and other inputs
+    /// whose mark prices carry more precision than the legacy `Price` raw grid.
+    pub fn equity_for_with_market_specs_and_exact_marks_and_fx_exact(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, ExactDecimal>,
+        reporting_currency: &str,
+        specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
+        fx_rates: &BTreeMap<String, Price>,
+    ) -> QxResult<ExactDecimal> {
+        for (instrument, spec) in specs {
+            spec.validate()?;
+            if instrument != &spec.instrument {
+                return Err(QxError::BusinessViolation(
+                    "多市场精确估值规格的 map key 必须等于 TradingInstrumentSpec.instrument".into(),
+                ));
+            }
+        }
+        let mut equity = ExactDecimal::ZERO;
+        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    amount,
+                    &currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确现金权益溢出".into()))?;
+        }
+        for ((account, instrument), position) in self.iter_positions() {
+            if account != account_id {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 规格: {instrument}"
+                ))
+            })?;
+            let mark = marks.get(instrument).copied().ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 精确标记价: {instrument}"
+                ))
+            })?;
+            let (value, currency) = Self::market_position_value_exact(spec, position, mark)?;
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    value,
+                    currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确持仓权益溢出".into()))?;
+        }
+        for ((account, instrument, _), position) in self.iter_hedge_positions() {
+            if account != account_id {
+                continue;
+            }
+            let spec = specs.get(instrument).ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 规格: {instrument}"
+                ))
+            })?;
+            let mark = marks.get(instrument).copied().ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "多市场精确估值缺少 instrument 精确标记价: {instrument}"
+                ))
+            })?;
+            let (value, currency) = Self::market_position_value_exact(spec, position, mark)?;
+            equity = equity
+                .checked_add(Self::convert_equity_currency_exact(
+                    value,
+                    currency,
+                    reporting_currency,
+                    fx_rates,
+                )?)
+                .ok_or_else(|| QxError::Invariant("多市场精确对冲持仓权益溢出".into()))?;
+        }
+        Ok(equity)
+    }
+
     /// 估值单点（P1-6）：按上下文派发到正确的权益原语，再叠上保证金占用。
     ///
     /// 派发规则（**全仓唯一一份**）：
@@ -547,6 +879,62 @@ impl Ledger {
             ctx.margin_required,
             ctx.maintenance_required,
             ctx.reporting_currency,
+        )
+    }
+
+    /// Scale-aware counterpart to [`Self::valuate`].
+    ///
+    /// This is the only application-facing dispatcher for exact ledger equity. Exact marks
+    /// require frozen instrument rules; legacy marks can use the same rules or the configured
+    /// spot multiplier. The raw and exact projections therefore select the same market model.
+    pub fn valuate_exact(&self, ctx: &ExactValuationContext<'_>) -> QxResult<ExactDecimal> {
+        let valuation = &ctx.valuation;
+        if let Some(exact_marks) = ctx.exact_marks {
+            let owned_specs;
+            let specs = if let Some(specs) = valuation.market_specs {
+                specs
+            } else if let Some(spec) = valuation.spec {
+                owned_specs = BTreeMap::from([(spec.instrument.clone(), spec.clone())]);
+                &owned_specs
+            } else {
+                return Err(QxError::BusinessViolation(
+                    "精确标记价估值必须提供冻结的市场规格".into(),
+                ));
+            };
+            return self.equity_for_with_market_specs_and_exact_marks_and_fx_exact(
+                valuation.account_id,
+                exact_marks,
+                valuation.reporting_currency,
+                specs,
+                valuation.fx_rates,
+            );
+        }
+
+        if let Some(specs) = valuation.market_specs {
+            return self.equity_for_with_market_specs_and_fx_exact(
+                valuation.account_id,
+                valuation.marks,
+                valuation.reporting_currency,
+                specs,
+                valuation.fx_rates,
+            );
+        }
+        if let Some(spec) = valuation.spec {
+            let specs = BTreeMap::from([(spec.instrument.clone(), spec.clone())]);
+            return self.equity_for_with_market_specs_and_fx_exact(
+                valuation.account_id,
+                valuation.marks,
+                valuation.reporting_currency,
+                &specs,
+                valuation.fx_rates,
+            );
+        }
+        self.equity_for_with_multiplier_exact(
+            valuation.account_id,
+            valuation.marks,
+            valuation.reporting_currency,
+            valuation.multiplier,
+            valuation.fx_rates,
         )
     }
 

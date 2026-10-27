@@ -156,6 +156,10 @@
           "type": "string",
           "minLength": 1
         },
+        "manifest_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "instrument": {
           "type": "string",
           "minLength": 1

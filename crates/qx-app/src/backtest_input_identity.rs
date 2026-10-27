@@ -42,23 +42,89 @@ fn barframe_dataset_identity_with_version(
     frame: &BarFrame,
     dataset_version: String,
 ) -> Result<(Vec<Bar>, qx_data::DatasetManifest), String> {
-    let bars: Vec<Bar> = frame.into();
+    frame
+        .validate()
+        .map_err(|error| format!("BarFrame 列式输入无效: {error:?}"))?;
+    let start = *frame
+        .ts
+        .first()
+        .ok_or_else(|| "BarFrame 列式输入不能为空".to_string())?;
+    let end = *frame
+        .ts
+        .last()
+        .ok_or_else(|| "BarFrame 列式输入不能为空".to_string())?;
+    let instrument = frame.instrument.to_string();
     let provider = JsonBarFrameProvider::new(frame.source.0.clone(), dataset_version, frame_path);
     let (provider_bars, manifest) = provider.load_bars_with_manifest(
-        &format!("strategy-bars:{}", frame.instrument),
-        &frame.instrument.to_string(),
-        bars.first().map(|bar| bar.ts).unwrap_or(1),
-        bars.last().map(|bar| bar.ts).unwrap_or(1),
+        &format!("strategy-bars:{instrument}"),
+        &instrument,
+        start,
+        end,
     )?;
-    if provider_bars.len() != bars.len()
+    if provider_bars.len() != frame.ts.len()
         || !provider_bars
             .iter()
-            .zip(&bars)
-            .all(|(ingest, market)| ingest_bar_matches_market_bar(ingest, market))
+            .enumerate()
+            .all(|(index, ingest)| ingest_bar_matches_frame(ingest, frame, &instrument, index))
     {
         return Err("qx-data Provider 与 BarFrame 列式输入不一致，拒绝开始回测".into());
     }
+    // Reuse the provider's already validated rows as the engine input instead of
+    // building a second full Bar vector from the same columnar frame.
+    let bars = provider_bars
+        .into_iter()
+        .map(|ingest| Bar {
+            ts: ingest.timestamp,
+            open: ingest.open_raw,
+            high: ingest.high_raw,
+            low: ingest.low_raw,
+            close: ingest.close_raw,
+            volume: ingest.volume_raw,
+            exact_ohlcv: ingest.exact_ohlcv,
+        })
+        .collect();
     Ok((bars, manifest))
+}
+
+fn ingest_bar_matches_frame(
+    ingest: &qx_data::Bar,
+    frame: &BarFrame,
+    instrument: &str,
+    index: usize,
+) -> bool {
+    let exact_matches = frame
+        .exact_ohlcv
+        .as_ref()
+        .map_or(ingest.exact_ohlcv.is_none(), |rows| {
+            rows.get(index)
+                .is_some_and(|value| ingest.exact_ohlcv == Some(*value))
+        });
+    ingest.instrument == instrument
+        && frame
+            .ts
+            .get(index)
+            .is_some_and(|timestamp| ingest.timestamp == *timestamp)
+        && frame
+            .open_raw
+            .get(index)
+            .is_some_and(|value| ingest.open_raw == *value)
+        && frame
+            .high_raw
+            .get(index)
+            .is_some_and(|value| ingest.high_raw == *value)
+        && frame
+            .low_raw
+            .get(index)
+            .is_some_and(|value| ingest.low_raw == *value)
+        && frame
+            .close_raw
+            .get(index)
+            .is_some_and(|value| ingest.close_raw == *value)
+        && frame
+            .volume_raw
+            .get(index)
+            .is_some_and(|value| ingest.volume_raw == *value)
+        && exact_matches
 }
 
 /// Compare the ingestion and market representations cell by cell.
@@ -69,6 +135,7 @@ pub fn ingest_bar_matches_market_bar(ingest: &qx_data::Bar, market: &Bar) -> boo
         && ingest.low_raw == market.low
         && ingest.close_raw == market.close
         && ingest.volume_raw == market.volume
+        && ingest.exact_ohlcv == market.exact_ohlcv
 }
 
 pub fn barframe_input_provenance(
@@ -118,6 +185,7 @@ mod tests {
             low_raw: 9,
             close_raw: 11,
             volume_raw: 4,
+            exact_ohlcv: None,
         };
         assert!(ingest_bar_matches_market_bar(&ingest(10), &market));
         assert!(!ingest_bar_matches_market_bar(&ingest(9), &market));

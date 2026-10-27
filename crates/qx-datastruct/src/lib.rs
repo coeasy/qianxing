@@ -4,8 +4,8 @@
 //! raw 定点语义；边界层同时提供 Arrow C Data Interface 借用视图和 JSON/Python 转换，
 //! 不能重新解释领域数据。
 
-use qx_core::Fnv1a;
 use qx_core::InstrumentId;
+use qx_core::{ExactDecimal, ExactOhlcv, Fnv1a};
 use qx_guanxing::{Bar, DataSourceId, DataView};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -258,6 +258,8 @@ pub struct BarFrame {
     pub low_raw: Vec<i128>,
     pub close_raw: Vec<i128>,
     pub volume_raw: Vec<i128>,
+    /// Version 2 source-precision OHLCV sidecar; raw columns are exact 1e-9 projections.
+    pub exact_ohlcv: Option<Vec<ExactOhlcv>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -311,13 +313,12 @@ impl TransformManifest {
 /// BarFrame JSON 文档当前支持的契约版本：写侧印它，读侧遇到更高版本必须拒绝，不能降级成
 /// 宽松解析。`qianxing_bridge.BAR_FRAME_SCHEMA_VERSION` 与 `qx-data` 的
 /// `BAR_FRAME_SCHEMA_VERSION` 是同一个数字，由架构自检的跨语言常量项钉住（V11 R16）。
-pub const BAR_FRAME_JSON_SCHEMA_VERSION: u32 = 1;
+pub const BAR_FRAME_JSON_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Deserialize)]
 struct BarFrameWire {
-    /// 旧文档可以完全没有这一格（`0` = 兼容分支）；本 crate 的写侧从 R16 起总是印上版本号。
     #[serde(default)]
-    schema_version: u32,
+    schema_version: Option<serde_json::Value>,
     instrument: String,
     source: String,
     ts: Vec<u64>,
@@ -326,17 +327,47 @@ struct BarFrameWire {
     low_raw: Vec<i128>,
     close_raw: Vec<i128>,
     volume_raw: Vec<i128>,
+    #[serde(default)]
+    exact_ohlcv: Option<Vec<ExactOhlcv>>,
+    #[serde(flatten)]
+    extra_fields: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 impl BarFrame {
     pub fn from_json(input: &str) -> Result<Self, FrameError> {
+        // Decode directly into typed column vectors. Parsing into `Value` first
+        // materialized a second tree containing every Bar before `from_value`
+        // allocated the final vectors, multiplying peak memory for large frames.
         let wire: BarFrameWire = serde_json::from_str(input)
             .map_err(|error| FrameError::InvalidJson(error.to_string()))?;
-        if wire.schema_version > BAR_FRAME_JSON_SCHEMA_VERSION {
+        let schema_version = wire
+            .schema_version
+            .as_ref()
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        if schema_version > BAR_FRAME_JSON_SCHEMA_VERSION {
             return Err(FrameError::InvalidJson(format!(
                 "unsupported BarFrame schema_version={} (supported: 0 legacy, 1..={BAR_FRAME_JSON_SCHEMA_VERSION})",
-                wire.schema_version
+                schema_version
             )));
+        }
+        if schema_version > 0 {
+            if let Some(unknown) = wire.extra_fields.keys().next() {
+                return Err(FrameError::InvalidJson(format!(
+                    "BarFrame schema_version={schema_version} contains unknown field {unknown}"
+                )));
+            }
+        }
+        if schema_version < 2 && wire.exact_ohlcv.is_some() {
+            return Err(FrameError::InvalidJson(
+                "BarFrame exact_ohlcv requires schema_version=2".into(),
+            ));
+        }
+        if schema_version == 2 && wire.exact_ohlcv.is_none() {
+            return Err(FrameError::InvalidJson(
+                "BarFrame schema_version=2 requires exact_ohlcv".into(),
+            ));
         }
         let instrument = InstrumentId::parse(&wire.instrument)
             .ok_or_else(|| FrameError::InvalidInstrument(wire.instrument.clone()))?;
@@ -349,6 +380,7 @@ impl BarFrame {
             low_raw: wire.low_raw,
             close_raw: wire.close_raw,
             volume_raw: wire.volume_raw,
+            exact_ohlcv: wire.exact_ohlcv,
         };
         frame.validate()?;
         Ok(frame)
@@ -372,6 +404,23 @@ impl BarFrame {
             low_raw: bars.iter().map(|bar| bar.low).collect(),
             close_raw: bars.iter().map(|bar| bar.close).collect(),
             volume_raw: bars.iter().map(|bar| bar.volume).collect(),
+            exact_ohlcv: if bars.iter().any(|bar| bar.exact_ohlcv.is_some()) {
+                Some(
+                    bars.iter()
+                        .map(|bar| {
+                            bar.exact_ohlcv.unwrap_or_else(|| ExactOhlcv {
+                                open: exact_raw(bar.open),
+                                high: exact_raw(bar.high),
+                                low: exact_raw(bar.low),
+                                close: exact_raw(bar.close),
+                                volume: exact_raw(bar.volume),
+                            })
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            },
         };
         frame.validate()?;
         Ok(frame)
@@ -393,6 +442,31 @@ impl BarFrame {
         .any(|length| *length != n)
         {
             return Err(FrameError::ColumnLengthMismatch);
+        }
+        if let Some(exact) = &self.exact_ohlcv {
+            if exact.len() != n {
+                return Err(FrameError::ColumnLengthMismatch);
+            }
+            for (index, values) in exact.iter().enumerate() {
+                values.validate().map_err(FrameError::InvalidJson)?;
+                let raw = [
+                    self.open_raw[index],
+                    self.high_raw[index],
+                    self.low_raw[index],
+                    self.close_raw[index],
+                    self.volume_raw[index],
+                ];
+                for (raw, precise) in raw
+                    .into_iter()
+                    .zip(values.raw_projection().map_err(FrameError::InvalidJson)?)
+                {
+                    if precise != raw {
+                        return Err(FrameError::InvalidJson(format!(
+                            "exact_ohlcv raw projection mismatch at row {index}"
+                        )));
+                    }
+                }
+            }
         }
         if self.ts.windows(2).any(|window| window[0] >= window[1]) {
             return Err(FrameError::NotMonotonic);
@@ -519,6 +593,14 @@ impl BarFrame {
             hash.write_i128(self.close_raw[index]);
             hash.write_i128(self.volume_raw[index]);
         }
+        if let Some(exact) = &self.exact_ohlcv {
+            hash.write_u64(1);
+            for row in exact {
+                for value in [row.open, row.high, row.low, row.close, row.volume] {
+                    write_text(&mut hash, &value.to_string());
+                }
+            }
+        }
         hash.finish()
     }
 
@@ -545,6 +627,10 @@ impl BarFrame {
             low_raw: indexes.iter().map(|i| self.low_raw[*i]).collect(),
             close_raw: indexes.iter().map(|i| self.close_raw[*i]).collect(),
             volume_raw: indexes.iter().map(|i| self.volume_raw[*i]).collect(),
+            exact_ohlcv: self
+                .exact_ohlcv
+                .as_ref()
+                .map(|values| indexes.iter().map(|index| values[*index]).collect()),
         };
         frame.validate()?;
         Ok(frame)
@@ -583,22 +669,67 @@ impl BarFrame {
                 .ok_or(FrameError::NumericOverflow)?;
             match rows.last_mut() {
                 Some(last) if last.ts == bucket => {
-                    last.high = last.high.max(self.high_raw[index]);
-                    last.low = last.low.min(self.low_raw[index]);
-                    last.close = self.close_raw[index];
-                    last.volume = last
-                        .volume
-                        .checked_add(self.volume_raw[index])
-                        .ok_or(FrameError::NumericOverflow)?;
+                    if let Some(exact_rows) = self.exact_ohlcv.as_ref() {
+                        let current = exact_rows[index];
+                        let mut aggregate = last.exact_ohlcv.ok_or_else(|| {
+                            FrameError::InvalidJson("resample exact row is missing".into())
+                        })?;
+                        if current
+                            .high
+                            .checked_cmp(aggregate.high)
+                            .is_some_and(|order| order.is_gt())
+                        {
+                            aggregate.high = current.high;
+                        }
+                        if current
+                            .low
+                            .checked_cmp(aggregate.low)
+                            .is_some_and(|order| order.is_lt())
+                        {
+                            aggregate.low = current.low;
+                        }
+                        aggregate.close = current.close;
+                        aggregate.volume = aggregate
+                            .volume
+                            .checked_add(current.volume)
+                            .ok_or(FrameError::NumericOverflow)?;
+                        aggregate.validate().map_err(FrameError::InvalidJson)?;
+                        let [open, high, low, close, volume] = aggregate
+                            .raw_projection()
+                            .map_err(|_| FrameError::NumericOverflow)?;
+                        last.open = open;
+                        last.high = high;
+                        last.low = low;
+                        last.close = close;
+                        last.volume = volume;
+                        last.exact_ohlcv = Some(aggregate);
+                    } else {
+                        last.high = last.high.max(self.high_raw[index]);
+                        last.low = last.low.min(self.low_raw[index]);
+                        last.close = self.close_raw[index];
+                        last.volume = last
+                            .volume
+                            .checked_add(self.volume_raw[index])
+                            .ok_or(FrameError::NumericOverflow)?;
+                    }
                 }
-                _ => rows.push(Bar::new(
-                    bucket,
-                    self.open_raw[index],
-                    self.high_raw[index],
-                    self.low_raw[index],
-                    self.close_raw[index],
-                    self.volume_raw[index],
-                )),
+                _ => {
+                    let bar = Bar::new(
+                        bucket,
+                        self.open_raw[index],
+                        self.high_raw[index],
+                        self.low_raw[index],
+                        self.close_raw[index],
+                        self.volume_raw[index],
+                    );
+                    let bar = match self.exact_ohlcv.as_ref().map(|values| values[index]) {
+                        Some(exact) => bar
+                            .with_exact_ohlcv(exact)
+                            .map_err(FrameError::InvalidJson)?,
+                        None => bar,
+                    };
+                    rows.push(bar);
+                }
             }
         }
         let frame = Self {
@@ -610,6 +741,19 @@ impl BarFrame {
             low_raw: rows.iter().map(|bar| bar.low).collect(),
             close_raw: rows.iter().map(|bar| bar.close).collect(),
             volume_raw: rows.iter().map(|bar| bar.volume).collect(),
+            exact_ohlcv: if self.exact_ohlcv.is_some() {
+                Some(
+                    rows.iter()
+                        .map(|bar| {
+                            bar.exact_ohlcv.ok_or_else(|| {
+                                FrameError::InvalidJson("resample exact row is missing".into())
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else {
+                None
+            },
         };
         frame.validate()?;
         Ok(frame)
@@ -639,9 +783,20 @@ impl BarFrame {
     /// `parse_bar_frame` 与 Python 的 `BarFrame.from_json`）当成旧格式，从而绕开它们各自
     /// 的严格分支——Rust 自己写的帧因此一直走宽松口径（V11 R16）。
     pub fn to_json(&self) -> String {
+        let schema_version = if self.exact_ohlcv.is_some() { 2 } else { 1 };
+        let exact_json = self
+            .exact_ohlcv
+            .as_ref()
+            .map(|values| {
+                format!(
+                    ",\"exact_ohlcv\":{}",
+                    serde_json::to_string(values).expect("ExactOhlcv is serializable")
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "{{\"schema_version\":{},\"instrument\":\"{}\",\"source\":\"{}\",\"ts\":{},\"open_raw\":{},\"high_raw\":{},\"low_raw\":{},\"close_raw\":{},\"volume_raw\":{}}}",
-            BAR_FRAME_JSON_SCHEMA_VERSION,
+            "{{\"schema_version\":{},\"instrument\":\"{}\",\"source\":\"{}\",\"ts\":{},\"open_raw\":{},\"high_raw\":{},\"low_raw\":{},\"close_raw\":{},\"volume_raw\":{}{}}}",
+            schema_version,
             escape_json(&self.instrument.to_string()),
             escape_json(&self.source.0),
             json_array(&self.ts),
@@ -650,6 +805,7 @@ impl BarFrame {
             json_array(&self.low_raw),
             json_array(&self.close_raw),
             json_array(&self.volume_raw),
+            exact_json,
         )
     }
 }
@@ -679,17 +835,27 @@ impl From<&BarFrame> for Vec<Bar> {
     fn from(frame: &BarFrame) -> Self {
         (0..frame.len())
             .map(|index| {
-                Bar::new(
+                let bar = Bar::new(
                     frame.ts[index],
                     frame.open_raw[index],
                     frame.high_raw[index],
                     frame.low_raw[index],
                     frame.close_raw[index],
                     frame.volume_raw[index],
-                )
+                );
+                match frame.exact_ohlcv.as_ref().map(|values| values[index]) {
+                    Some(exact) => bar
+                        .with_exact_ohlcv(exact)
+                        .expect("validated exact BarFrame projection remains consistent"),
+                    None => bar,
+                }
             })
             .collect()
     }
+}
+
+fn exact_raw(value: i128) -> ExactDecimal {
+    ExactDecimal::from_parts(value, 9).expect("legacy BarFrame values use supported scale 9")
 }
 
 fn json_array<T: std::fmt::Display>(values: &[T]) -> String {

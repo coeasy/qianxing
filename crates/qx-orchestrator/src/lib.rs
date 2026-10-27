@@ -42,9 +42,47 @@ pub fn spawn_strategy_process(
     env: &std::collections::BTreeMap<String, String>,
     transport: qx_strategy::transport::StrategyTransport,
 ) -> Result<StrategyProcessPipes, String> {
+    spawn_strategy_process_with_host_provider_env(
+        executable,
+        args,
+        env,
+        &std::collections::BTreeMap::new(),
+        transport,
+    )
+}
+
+/// Spawn a trusted host-side provider bridge with a separate, tightly allowlisted
+/// provider credential environment. Strategy-configured environment variables still
+/// pass the normal credential rejection rules; only explicit sandbox-provider SDK
+/// keys are admitted through this channel, and bridges must keep them out of sandboxes.
+pub fn spawn_strategy_process_with_host_provider_env(
+    executable: &str,
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+    host_provider_env: &std::collections::BTreeMap<String, String>,
+    transport: qx_strategy::transport::StrategyTransport,
+) -> Result<StrategyProcessPipes, String> {
     use qx_strategy::transport::StrategyTransport;
 
-    let child_env = qx_runtime::strategy_child_environment(env)?;
+    let mut child_env = qx_runtime::strategy_child_environment(env)?;
+    for (key, value) in host_provider_env {
+        if !matches!(
+            key.as_str(),
+            "E2B_API_KEY" | "MICROSANDBOX_API_KEY" | "OPEN_SANDBOX_API_KEY"
+        ) {
+            return Err(format!(
+                "unsupported host provider credential environment variable: {key}"
+            ));
+        }
+        if value.trim().is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '\0' | '\n' | '\r'))
+        {
+            return Err(format!("{key} must be a non-empty single-line value"));
+        }
+        child_env.insert(key.clone(), value.clone());
+    }
     let shared = matches!(
         transport,
         StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar

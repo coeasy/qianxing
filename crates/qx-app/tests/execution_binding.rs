@@ -115,6 +115,7 @@ fn app_backtest_binds_explicit_exchange_tiered_margin() {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     spec.margin_model = Some(BacktestMarginConfig::Tiers {
         tiers: vec![BacktestMarginTier {

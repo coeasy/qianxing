@@ -216,6 +216,7 @@ impl MarketMakingStrategy {
                 rule_version: Some("market-making-v1".into()),
             }),
             policy: self.policy,
+            exact_amounts: None,
         })
     }
 }

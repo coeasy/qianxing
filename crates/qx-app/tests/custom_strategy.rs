@@ -40,6 +40,10 @@ impl Strategy for BuyOnce {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             });
         }
         Ok(StrategyDecision {
@@ -89,6 +93,8 @@ fn injected_strategy_runs_through_shared_replay_and_artifact_chain() {
         serde_json::from_str(&std::fs::read_to_string(&outcome.artifacts.summary).unwrap())
             .unwrap();
     assert_eq!(summary["strategy_version"], "python-example-1.0.0");
+    assert_eq!(summary["metrics_exact"]["turnover"]["currency"], "USDT");
+    assert_ne!(summary["metrics_exact"]["turnover"]["amount"], "0");
 }
 
 #[test]
@@ -101,9 +107,11 @@ fn injected_strategy_can_share_a_portfolio_ledger_with_builtin_strategies() {
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: cash / 2,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: cash / 2,
+            reserved_capital_exact: None,
             strategy: BuiltinStrategySpec {
                 kind: qx_strategy::BuiltinStrategyKind::Momentum,
                 strategy_id: "builtin-secondary".into(),
@@ -143,9 +151,11 @@ fn multiple_injected_strategies_share_portfolio_and_bind_all_artifact_identities
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: cash / 2,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: cash / 2,
+            reserved_capital_exact: None,
             strategy: BuiltinStrategySpec::new(
                 qx_strategy::BuiltinStrategyKind::Momentum,
                 "custom-secondary",

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/strategy-api-input-v1.json",
   "title": "Qianxing Strategy API v1 — Input",
-  "description": "运行时交给策略进程的只读 input 载荷（`StrategyContractInput` / `StrategyContractBars`）。与 `strategy_api_v1.schema.json` 合起来构成策略契约的双向机器可读定义：规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §4.2 第 8 条 / §18 M0）此前只有 output 方向有 schema，输入方向「Rust 有结构、靠文档」——本文件补上另一半。required 逐项等于 Rust 侧**实际必填**的字段：`bars` 带 `#[serde(default)]`，`available_margin_raw` 是 `Option<i128>`（serde 对 `Option` 字段的缺省语义就是 `None`），所以这两格都不得出现在 required 里——这一条不是照抄结构体字段表，而是由 `strategy_contract_input_schema.rs` 的「删键看 serde 认不认」实测钉住的。顶层 `additionalProperties: false` 等于 `StrategyContractInput` 的 `#[serde(deny_unknown_fields)]`。定点金额/数量按 Rust i128 交换，只允许 JSON 整数：Rust 读写都是整数（含 i64 范围外），Python SDK 写的也是整数；十进制字符串会被运行时判 invalid number，所以这里不放行字符串形态（见 $defs 的 raw_signed）。`bars` 上的 `additionalProperties: false` 比 Rust 严：`StrategyContractBars` 本身没有 `deny_unknown_fields`，schema 更严不会放行坏载荷，只会拦住作者侧多写的键——这是有意的。",
+  "description": "运行时交给策略进程的只读 input 载荷（`StrategyContractInput` / `StrategyContractBars`）。与 `strategy_api_v1.schema.json` 合起来构成策略契约的双向机器可读定义。required 逐项等于 Rust 侧**实际必填**的字段：`bars`、`market_bars`、`positions_exact` 带 `#[serde(default)]`，`available_margin_raw` 是 `Option<i128>`，所以这些格可缺省。定点 raw 金额/数量按 Rust i128 交换，只允许 JSON 整数；`positions_exact` 是支持 18 位小数的有符号十进制字符串，与 positions 的 raw 兼容投影并存。多账户仓位可用 `account_id|InstrumentId` 键读取；运行时只提供已配置 Execution worker 且账户 EventLog 已存在的仓位。`market_bars` 按完整 InstrumentId 提供其他市场已校验、时间不晚于 as_of 的 Bar。",
   "type": "object",
   "required": [
     "schema_version",
@@ -26,12 +26,18 @@
     "as_of": {"type": "integer", "minimum": 1},
     "instrument": {"type": "string", "minLength": 1},
     "positions": {"$ref": "#/$defs/raw_ledger"},
+    "positions_exact": {"$ref": "#/$defs/exact_signed_ledger"},
     "cash": {"$ref": "#/$defs/raw_ledger"},
     "available_margin_raw": {"$ref": "#/$defs/optional_raw_non_negative"},
     "risk_state": {"type": "string", "minLength": 1},
     "research_targets": {"$ref": "#/$defs/raw_ledger"},
     "bars": {
       "oneOf": [{"type": "null"}, {"$ref": "#/$defs/bars"}]
+    },
+    "market_bars": {
+      "description": "主 bars 之外的市场历史，键为完整 InstrumentId；所有 Bar 都不得晚于 as_of。",
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/bars"}
     }
   },
   "additionalProperties": false,
@@ -50,9 +56,17 @@
       "oneOf": [{"type": "null"}, {"$ref": "#/$defs/raw_non_negative"}]
     },
     "raw_ledger": {
-      "description": "以 instrument 字符串为键、定点 raw 值为值的账（持仓 / 现金 / 研究目标）。键不在 schema 里做 InstrumentId 词法约束：那是运行时 validate 的职责，schema 只钉形态。",
+      "description": "以 InstrumentId 为键，或以 `account_id|InstrumentId` 为键（多账户持仓）的定点 raw 值账。键不在 schema 里做词法约束：那是运行时 validate 的职责，schema 只钉形态。",
       "type": "object",
       "additionalProperties": {"$ref": "#/$defs/raw_signed"}
+    },
+    "exact_signed_ledger": {
+      "description": "精确的有符号十进制持仓数量，以 InstrumentId 或 `account_id|InstrumentId` 为键；十进制字符串最多 18 位小数。",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+      }
     },
     "bars": {
       "type": "object",

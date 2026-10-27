@@ -10,28 +10,43 @@
 //! 反向合约都能用同一签名：线性折算为 `price × contract_size`，反向折算为
 //! `contract_size / price`。
 
-use crate::{QxError, Side, SCALE};
+use crate::{DecimalRounding, ExactDecimal, QxError, QxResult, Side};
 use serde::{Deserialize, Serialize};
 
 /// 名义额 = qty * price / SCALE（两者均为定点原始值）。
-pub fn notional(qty: i128, price: i128) -> i128 {
-    qty.saturating_mul(price) / SCALE
+pub fn notional(qty: i128, price: i128) -> QxResult<i128> {
+    if qty < 0 || price < 0 {
+        return Err(QxError::BusinessViolation(
+            "名义额数量和价格不能为负数".into(),
+        ));
+    }
+    // A raw projection may be zero even when the exact source value is positive.
+    // Callers with exact amounts use the exact path; the legacy projection is 0 here.
+    if qty == 0 || price == 0 {
+        return Ok(0);
+    }
+    let quantity = ExactDecimal::from_parts(qty, 9)
+        .map_err(|error| QxError::BusinessViolation(error.into()))?;
+    let price = ExactDecimal::from_parts(price, 9)
+        .map_err(|error| QxError::BusinessViolation(error.into()))?;
+    quantity
+        .checked_mul_at_scale(price, 9, DecimalRounding::TowardZero)
+        .and_then(|value| value.to_raw(9).ok())
+        .ok_or_else(|| QxError::Invariant("名义额计算溢出".into()))
 }
 
 /// 按基点取金额（1 bp = 万分之一）。
-pub fn bp_amount(x: i128, bp: i64) -> i128 {
+pub fn bp_amount(x: i128, bp: i64) -> QxResult<i128> {
     bp_amount_checked(x, i128::from(bp))
-        .unwrap_or_else(|_| x.saturating_mul(i128::from(bp)) / 10_000)
 }
 
-/// Compute a non-negative basis-point amount without overflowing the
-/// intermediate `amount * bps` product. The supported fee/risk range is
-/// 0..=10000 bps, so splitting into quotient and remainder preserves the
-/// exact integer-floor semantics while keeping intermediates representable.
+/// Compute a signed basis-point amount without overflowing the intermediate product.
+/// The supported rate range is -10000..=10000 bps; quotient/remainder decomposition
+/// preserves truncation-toward-zero semantics for both positive and negative rates.
 pub fn bp_amount_checked(amount: i128, bps: i128) -> Result<i128, QxError> {
-    if amount < 0 || !(0..=10_000).contains(&bps) {
+    if !(-10_000..=10_000).contains(&bps) {
         return Err(QxError::BusinessViolation(
-            "基点金额要求 amount 非负且 bps 在 0..=10000".into(),
+            "基点费率必须在 -10000..=10000 bps".into(),
         ));
     }
     let quotient = amount / 10_000;
@@ -57,11 +72,49 @@ pub trait FeeModel {
         "v1"
     }
     /// 返回费用（定点原始值）。`is_maker` 区分挂单/吃单。
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128;
+    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> QxResult<i128>;
 
-    fn commission_for_side(&self, qty: i128, price: i128, side: Side, is_maker: bool) -> i128 {
+    fn commission_for_side(
+        &self,
+        qty: i128,
+        price: i128,
+        side: Side,
+        is_maker: bool,
+    ) -> QxResult<i128> {
         let _ = side;
-        self.commission(qty, price, is_maker)
+        let fee = self.commission(qty, price, is_maker)?;
+        if fee < 0 {
+            return Err(QxError::BusinessViolation(
+                "费用模型不能返回负手续费".into(),
+            ));
+        }
+        Ok(fee)
+    }
+
+    /// Compute a fee without projecting quantity or price onto the legacy 1e-9 grid.
+    /// Custom models inherit a conservative compatibility implementation: it succeeds only
+    /// when both inputs are exactly representable at scale 9. Models that support finer
+    /// arithmetic should override this method.
+    fn commission_exact(
+        &self,
+        qty: ExactDecimal,
+        price: ExactDecimal,
+        side: Side,
+        is_maker: bool,
+    ) -> QxResult<ExactDecimal> {
+        let qty = qty.to_raw(9).map_err(|error| {
+            QxError::BusinessViolation(format!("费用数量无法精确兼容: {error}"))
+        })?;
+        let price = price.to_raw(9).map_err(|error| {
+            QxError::BusinessViolation(format!("费用价格无法精确兼容: {error}"))
+        })?;
+        let fee = self.commission_for_side(qty, price, side, is_maker)?;
+        if fee < 0 {
+            return Err(QxError::BusinessViolation(
+                "费用模型不能返回负手续费".into(),
+            ));
+        }
+        ExactDecimal::from_parts(fee, 9).map_err(|error| QxError::Invariant(error.into()))
     }
 
     fn parameters(&self) -> String {
@@ -78,14 +131,57 @@ pub trait FeeModel {
     }
 }
 
+fn exact_notional(qty: ExactDecimal, price: ExactDecimal) -> QxResult<ExactDecimal> {
+    if qty.is_negative() || !price.is_positive() {
+        return Err(QxError::BusinessViolation("精确费用名义额输入非法".into()));
+    }
+    qty.checked_mul_at_scale(price, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+        .ok_or_else(|| QxError::Invariant("精确费用名义额计算溢出".into()))
+}
+
+fn validate_raw_fee_inputs(qty: i128, price: i128) -> QxResult<()> {
+    if qty < 0 || price <= 0 {
+        return Err(QxError::BusinessViolation(
+            "手续费数量不能为负数且价格必须为正".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn exact_bp_amount(amount: ExactDecimal, bp: i64) -> QxResult<ExactDecimal> {
+    let bps = ExactDecimal::from_parts(i128::from(bp), 0)
+        .map_err(|error| QxError::Invariant(error.into()))?;
+    let denominator =
+        ExactDecimal::from_parts(10_000, 0).map_err(|error| QxError::Invariant(error.into()))?;
+    amount
+        .checked_mul_at_scale(bps, ExactDecimal::MAX_SCALE, DecimalRounding::TowardZero)
+        .and_then(|value| {
+            value.checked_div_at_scale(
+                denominator,
+                ExactDecimal::MAX_SCALE,
+                DecimalRounding::TowardZero,
+            )
+        })
+        .ok_or_else(|| QxError::Invariant("精确手续费基点计算溢出".into()))
+}
+
 pub struct ZeroFeeModel;
 
 impl FeeModel for ZeroFeeModel {
     fn name(&self) -> &'static str {
         "ZeroFee"
     }
-    fn commission(&self, _q: i128, _p: i128, _maker: bool) -> i128 {
-        0
+    fn commission(&self, _q: i128, _p: i128, _maker: bool) -> QxResult<i128> {
+        Ok(0)
+    }
+    fn commission_exact(
+        &self,
+        _qty: ExactDecimal,
+        _price: ExactDecimal,
+        _side: Side,
+        _is_maker: bool,
+    ) -> QxResult<ExactDecimal> {
+        Ok(ExactDecimal::ZERO)
     }
 }
 
@@ -164,13 +260,32 @@ impl FeeModel for MakerTakerFeeModel {
     fn validate(&self) -> crate::QxResult<()> {
         MakerTakerFeeModel::validate(self)
     }
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
-        let n = notional(qty, price);
+    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> QxResult<i128> {
+        self.validate()?;
+        validate_raw_fee_inputs(qty, price)?;
+        let n = notional(qty, price)?;
         if is_maker {
             bp_amount(n, self.maker_bp)
         } else {
             bp_amount(n, self.taker_bp)
         }
+    }
+    fn commission_exact(
+        &self,
+        qty: ExactDecimal,
+        price: ExactDecimal,
+        _side: Side,
+        is_maker: bool,
+    ) -> QxResult<ExactDecimal> {
+        self.validate()?;
+        exact_bp_amount(
+            exact_notional(qty, price)?,
+            if is_maker {
+                self.maker_bp
+            } else {
+                self.taker_bp
+            },
+        )
     }
     fn parameters(&self) -> String {
         format!("maker_bp={};taker_bp={}", self.maker_bp, self.taker_bp)
@@ -210,18 +325,57 @@ impl FeeModel for AShareFeeModel {
         }
         Ok(())
     }
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
+    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> QxResult<i128> {
         self.commission_for_side(qty, price, Side::Buy, is_maker)
     }
-    fn commission_for_side(&self, qty: i128, price: i128, side: Side, _is_maker: bool) -> i128 {
-        let n = notional(qty, price);
-        let mut fee = bp_amount(n, self.commission_bp)
+    fn commission_for_side(
+        &self,
+        qty: i128,
+        price: i128,
+        side: Side,
+        _is_maker: bool,
+    ) -> QxResult<i128> {
+        self.validate()?;
+        validate_raw_fee_inputs(qty, price)?;
+        let n = notional(qty, price)?;
+        let mut fee = bp_amount(n, self.commission_bp)?
             .max(self.min_commission)
-            .saturating_add(bp_amount(n, self.transfer_fee_bp));
+            .checked_add(bp_amount(n, self.transfer_fee_bp)?)
+            .ok_or_else(|| QxError::Invariant("A 股佣金与过户费累计溢出".into()))?;
         if side == Side::Sell {
-            fee = fee.saturating_add(bp_amount(n, self.stamp_duty_bp));
+            fee = fee
+                .checked_add(bp_amount(n, self.stamp_duty_bp)?)
+                .ok_or_else(|| QxError::Invariant("A 股印花税累计溢出".into()))?;
         }
-        fee
+        Ok(fee)
+    }
+    fn commission_exact(
+        &self,
+        qty: ExactDecimal,
+        price: ExactDecimal,
+        side: Side,
+        _is_maker: bool,
+    ) -> QxResult<ExactDecimal> {
+        self.validate()?;
+        let notional = exact_notional(qty, price)?;
+        let minimum = ExactDecimal::from_parts(self.min_commission, 9)
+            .map_err(|error| QxError::Invariant(error.into()))?;
+        let commission = exact_bp_amount(notional, self.commission_bp)?;
+        let transfer = exact_bp_amount(notional, self.transfer_fee_bp)?;
+        let commission = match commission.checked_cmp(minimum) {
+            Some(std::cmp::Ordering::Less) => minimum,
+            Some(_) => commission,
+            None => return Err(QxError::Invariant("精确 A 股最低佣金比较失败".into())),
+        };
+        let mut fee = commission
+            .checked_add(transfer)
+            .ok_or_else(|| QxError::Invariant("精确 A 股费用累计溢出".into()))?;
+        if side == Side::Sell {
+            fee = fee
+                .checked_add(exact_bp_amount(notional, self.stamp_duty_bp)?)
+                .ok_or_else(|| QxError::Invariant("精确 A 股印花税累计溢出".into()))?;
+        }
+        Ok(fee)
     }
     fn parameters(&self) -> String {
         format!(
@@ -234,6 +388,7 @@ impl FeeModel for AShareFeeModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SCALE;
 
     #[test]
     fn maker_cheaper_than_taker() {
@@ -243,7 +398,7 @@ mod tests {
         };
         let qty = 1_000_000_000i128; // 1.0
         let px = 100_000_000_000i128; // 100.0
-        assert!(m.commission(qty, px, true) < m.commission(qty, px, false));
+        assert!(m.commission(qty, px, true).unwrap() < m.commission(qty, px, false).unwrap());
     }
 
     #[test]
@@ -306,10 +461,54 @@ mod tests {
         let amount = i128::MAX;
         assert_eq!(bp_amount_checked(amount, 10_000).unwrap(), amount);
         assert_eq!(bp_amount_checked(amount, 5_000).unwrap(), amount / 2);
-        assert_eq!(bp_amount(amount, 5_000), amount / 2);
+        assert_eq!(bp_amount(amount, 5_000).unwrap(), amount / 2);
         assert_eq!(bp_amount_checked(19_999, 1).unwrap(), 1);
-        assert!(bp_amount_checked(-1, 1).is_err());
+        assert_eq!(bp_amount_checked(-20_000, 5_000).unwrap(), -10_000);
+        assert_eq!(bp_amount_checked(20_000, -5_000).unwrap(), -10_000);
         assert!(bp_amount_checked(1, 10_001).is_err());
+        assert!(bp_amount_checked(1, -10_001).is_err());
+    }
+
+    #[test]
+    fn raw_notional_is_checked_without_saturating_intermediate_products() {
+        assert_eq!(notional(i128::MAX, SCALE).unwrap(), i128::MAX);
+        assert!(notional(-1, SCALE).is_err());
+        assert!(notional(SCALE, -1).is_err());
+        assert_eq!(notional(SCALE, 0).unwrap(), 0);
+        assert!(notional(i128::MAX, 2 * SCALE).is_err());
+    }
+
+    #[test]
+    fn fee_models_fail_closed_for_invalid_rates_and_arithmetic() {
+        let invalid = MakerTakerFeeModel {
+            maker_bp: -1,
+            taker_bp: 5,
+        };
+        assert!(invalid.commission(SCALE, 100 * SCALE, true).is_err());
+        let valid = MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 5,
+        };
+        assert!(valid.commission(i128::MAX, 2 * SCALE, true).is_err());
+        assert!(valid
+            .commission_for_side(SCALE, -1, Side::Buy, false)
+            .is_err());
+        assert!(valid
+            .commission_for_side(SCALE, 0, Side::Buy, false)
+            .is_err());
+
+        struct NegativeCustomFee;
+        impl FeeModel for NegativeCustomFee {
+            fn name(&self) -> &'static str {
+                "NegativeCustomFee"
+            }
+            fn commission(&self, _qty: i128, _price: i128, _is_maker: bool) -> QxResult<i128> {
+                Ok(-1)
+            }
+        }
+        assert!(NegativeCustomFee
+            .commission_for_side(SCALE, SCALE, Side::Buy, false)
+            .is_err());
     }
 
     #[test]
@@ -320,7 +519,7 @@ mod tests {
             stamp_duty_bp: 0,
             transfer_fee_bp: 0,
         };
-        assert_eq!(m.commission(1, 1, true), 5_000_000_000);
+        assert_eq!(m.commission(1, 1, true).unwrap(), 5_000_000_000);
     }
 
     #[test]
@@ -331,8 +530,12 @@ mod tests {
             stamp_duty_bp: 5,
             transfer_fee_bp: 0,
         };
-        let buy = m.commission_for_side(1_000_000_000, 100_000_000_000, crate::Side::Buy, false);
-        let sell = m.commission_for_side(1_000_000_000, 100_000_000_000, crate::Side::Sell, false);
+        let buy = m
+            .commission_for_side(1_000_000_000, 100_000_000_000, crate::Side::Buy, false)
+            .unwrap();
+        let sell = m
+            .commission_for_side(1_000_000_000, 100_000_000_000, crate::Side::Sell, false)
+            .unwrap();
         assert_eq!(buy, 0);
         assert_eq!(sell, 50_000_000);
     }

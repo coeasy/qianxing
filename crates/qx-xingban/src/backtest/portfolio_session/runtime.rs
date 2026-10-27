@@ -1,6 +1,7 @@
 use super::*;
 use crate::venue::BarMatchingEngine;
 use qx_core::{Fnv1a, SCALE};
+use std::sync::Arc;
 
 pub(super) struct RuntimeMarket<'a> {
     pub(super) instrument: InstrumentId,
@@ -8,7 +9,7 @@ pub(super) struct RuntimeMarket<'a> {
     pub(super) bars: &'a [Bar],
     pub(super) spec: TradingInstrumentSpec,
     pub(super) matcher: BarMatchingEngine,
-    pub(super) margin: Box<dyn MarginRule>,
+    pub(super) margin: Arc<dyn MarginRule>,
 }
 
 pub(super) struct RuntimeMarkets<'a> {
@@ -77,7 +78,7 @@ pub(super) fn build_runtime<'a>(markets: Vec<PortfolioBarMarket<'a>>) -> Runtime
             bars: market.bars,
             spec: market.spec,
             matcher,
-            margin: market.margin,
+            margin: Arc::from(market.margin),
         });
     }
     runtime
@@ -86,12 +87,12 @@ pub(super) fn build_runtime<'a>(markets: Vec<PortfolioBarMarket<'a>>) -> Runtime
 pub(super) fn initialize_ledger(
     account_id: &str,
     currency: &str,
-    initial_cash: Money,
+    initial_cash: ExactDecimal,
     start: u64,
     has_start_settlement: bool,
 ) -> Result<(Ledger, EventLog), qx_core::QxError> {
     let mut ledger = Ledger::new();
-    let deposit_id = ledger.deposit(account_id, currency, initial_cash, start)?;
+    let deposit_id = ledger.deposit_exact(account_id, currency, initial_cash, start)?;
     let deposit_entry = ledger
         .entry(deposit_id)
         .cloned()

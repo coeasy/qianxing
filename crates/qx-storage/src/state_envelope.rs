@@ -362,7 +362,7 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         let error = std::io::Error::last_os_error();
         if !matches!(
             error.raw_os_error(),
-            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+            Some(ERROR_ACCESS_DENIED) | Some(ERROR_SHARING_VIOLATION) | Some(ERROR_LOCK_VIOLATION)
         ) || attempt + 1 == REPLACE_WAIT_ATTEMPTS
         {
             return Err(error);

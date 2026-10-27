@@ -724,6 +724,11 @@ pub enum AdapterReconcileIssue {
         local: qx_core::Quantity,
         venue: qx_core::Quantity,
     },
+    FilledExactMismatch {
+        client_order_id: u64,
+        local: qx_core::ExactDecimal,
+        venue: qx_core::ExactDecimal,
+    },
 }
 
 #[cfg(test)]

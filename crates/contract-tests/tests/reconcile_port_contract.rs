@@ -35,6 +35,7 @@ impl ReconcileHarness for LiveEventPipeline {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         // 走应用层端口注册，与 worker 生产路径一致（带 correlation 审计）。
         <Self as OrderStore>::register_order(self, order, 1, Some("contract-order".into()))

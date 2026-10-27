@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "stage": "market_event",
+  "strategy_id": "error-test",
+  "strategy_version": "1.0.0",
+  "timestamp": 101,
+  "instrument": "BTCUSDT.BINANCE",
+  "message": "test callback failed"
+}

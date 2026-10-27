@@ -58,6 +58,17 @@ fn comparable(value: &Value) -> Value {
         "total_candidates": value["total_candidates"],
         "succeeded_candidates": value["succeeded_candidates"],
         "failed_candidates": value["failed_candidates"],
+        "canonical_run_spec_fingerprint": value["canonical_run_spec_fingerprint"],
+        "input_data_fingerprint": value["input_data_fingerprint"],
+        "result_hash": value["result_hash"],
+        "artifact_location_names": value["artifact_locations"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        "has_run_manifest": value["run_manifest"].is_string(),
+        "has_run_record": value["run_record"].is_string(),
         "ranking": value["ranking"].as_array().unwrap().iter().map(|item| json!({
             "ordinal": item["ordinal"],
             "return_bps": item["return_bps"],
@@ -72,6 +83,28 @@ fn comparable(value: &Value) -> Value {
             "error": item["error"],
         })).collect::<Vec<_>>(),
     })
+}
+
+fn assert_experiment_input_is_bound(label: &str, value: &Value) {
+    let input_path = value["artifact_locations"]["experiment_input"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{label} experiment input sidecar location missing: {value}"));
+    let input_bytes = std::fs::read(input_path).expect("read experiment input sidecar");
+    let record_path = value["run_record"].as_str().expect("RunRecord V2 path");
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(record_path).expect("read RunRecord V2"))
+            .expect("RunRecord V2 JSON");
+    let input_ref = record["artifact_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artifact| artifact["name"] == "experiment_input")
+        .expect("RunRecord V2 binds experiment input");
+    assert_eq!(input_ref["byte_len"], input_bytes.len() as u64);
+    assert_eq!(
+        input_ref["artifact_id"],
+        qx_strategy::sha256_hex(&input_bytes)
+    );
 }
 
 #[test]
@@ -95,10 +128,15 @@ fn multi_market_parameter_experiment_is_shared_by_cli_http_and_python() {
     let (status, http) = via_http("/app/run-multi-market-experiment", &spec);
     assert_eq!(status, 200, "HTTP experiment failed: {http}");
     assert_eq!(cli["succeeded_candidates"], 4, "{cli}");
+    assert_experiment_input_is_bound("CLI", &cli);
+    assert_experiment_input_is_bound("HTTP", &http);
     assert_eq!(comparable(&cli), comparable(&http));
     match python_native::via_python(&repo_root(), "run_multi_market_experiment", &spec) {
         None => eprintln!("[skip] Python leg: PyO3 extension not built"),
-        Some(Ok(python)) => assert_eq!(comparable(&python), comparable(&cli)),
+        Some(Ok(python)) => {
+            assert_experiment_input_is_bound("Python", &python);
+            assert_eq!(comparable(&python), comparable(&cli));
+        }
         Some(Err(payload)) => panic!("Python multi-market experiment failed: {payload}"),
     }
 }

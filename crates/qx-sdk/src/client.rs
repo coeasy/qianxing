@@ -475,6 +475,38 @@ impl Client {
         spec.start_with_strategy_factory(identity, factory, self.context.clone())
     }
 
+    pub fn run_multi_market_experiment_with_parameter_factory<F>(
+        &self,
+        spec: &RunMultiMarketExperimentSpec,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+    ) -> Result<RunMultiMarketExperimentResult, AppError>
+    where
+        F: FnMut(
+            &qx_app::MultiMarketBacktestSpec,
+            &std::collections::BTreeMap<String, i128>,
+        ) -> Result<Box<dyn Strategy>, String>,
+    {
+        spec.run_with_parameter_factory(identity, factory, &self.context)
+    }
+
+    pub fn start_multi_market_experiment_with_parameter_factory<F>(
+        &self,
+        spec: RunMultiMarketExperimentSpec,
+        identity: StrategyArtifactIdentity,
+        factory: F,
+    ) -> Result<RunHandle<RunMultiMarketExperimentResult>, AppError>
+    where
+        F: FnMut(
+                &qx_app::MultiMarketBacktestSpec,
+                &std::collections::BTreeMap<String, i128>,
+            ) -> Result<Box<dyn Strategy>, String>
+            + Send
+            + 'static,
+    {
+        spec.start_with_parameter_factory(identity, factory, self.context.clone())
+    }
+
     /// Start a cancellable experiment with a freshly constructed strategy per candidate.
     pub fn start_multi_leg_experiment_with_strategy_factory<F>(
         &self,

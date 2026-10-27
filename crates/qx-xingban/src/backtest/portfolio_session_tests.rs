@@ -46,6 +46,7 @@ impl BarStrategy for SubmitToSharedTargetFromEachMarket {
                 rule_version: Some("same-visible-batch-v1".into()),
             }),
             policy: None,
+            exact_amounts: None,
         }]
     }
 
@@ -87,6 +88,7 @@ impl BarStrategy for SubmitBoth {
                 account_id: "shared-account".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect()
     }
@@ -100,6 +102,49 @@ impl BarStrategy for SubmitBoth {
 struct NoopStrategy;
 
 impl BarStrategy for NoopStrategy {}
+
+struct ExactMultiMarketBudgetBuyer {
+    quantities: BTreeMap<(u64, InstrumentId), qx_core::ExactDecimal>,
+    submitted: std::collections::BTreeSet<(u64, InstrumentId)>,
+}
+
+impl BarStrategy for ExactMultiMarketBudgetBuyer {
+    fn on_bar_orders(
+        &mut self,
+        _history: &[Bar],
+        instrument: &InstrumentId,
+        ts: u64,
+        _position: i128,
+    ) -> Vec<Order> {
+        let key = (ts, instrument.clone());
+        let Some(quantity) = self.quantities.get(&key).copied() else {
+            return Vec::new();
+        };
+        if !self.submitted.insert(key) {
+            return Vec::new();
+        }
+        vec![Order {
+            client_id: 0,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "shared-account".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(qx_core::ExactOrderAmounts {
+                quantity,
+                limit_price: None,
+                filled: qx_core::ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: qx_core::ExactDecimal::ZERO,
+                market_reference_price: None,
+            }),
+        }]
+    }
+}
 
 fn spot_spec(instrument: &InstrumentId, base: &str) -> TradingInstrumentSpec {
     TradingInstrumentSpec {
@@ -119,6 +164,7 @@ fn spot_spec(instrument: &InstrumentId, base: &str) -> TradingInstrumentSpec {
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -139,6 +185,242 @@ fn market<'a>(
         margin: Box::new(NoMargin),
         seed: 7,
     }
+}
+
+fn exact_spot_market<'a>(
+    instrument: InstrumentId,
+    priority: u32,
+    bars: &'a [Bar],
+    base: &str,
+) -> PortfolioBarMarket<'a> {
+    let mut result = market(instrument, priority, bars, base);
+    result.spec.exact_rules = Some(qx_core::ExactTradingRules {
+        contract_size: qx_core::ExactDecimal::ONE,
+        price_tick: qx_core::ExactDecimal::parse("0.000000001").unwrap(),
+        quantity_step: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+        minimum_quantity: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+        minimum_notional: qx_core::ExactDecimal::ZERO,
+    });
+    result
+}
+
+#[test]
+fn shared_session_strategy_budget_aggregates_exact_exposure_across_same_currency_markets() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+    let bars = [
+        Bar::new(
+            1,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            10 * SCALE,
+        ),
+        Bar::new(
+            2,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            10 * SCALE,
+        ),
+        Bar::new(
+            3,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            100 * SCALE,
+            10 * SCALE,
+        ),
+    ];
+    let btc_bars = bars;
+    let eth_bars = bars;
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            exact_spot_market(btc.clone(), 0, &btc_bars, "BTC"),
+            exact_spot_market(eth.clone(), 1, &eth_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = PortfolioBarStrategy::new(vec![PortfolioStrategySlot::new(
+        0,
+        "alpha",
+        20 * SCALE,
+        ExactMultiMarketBudgetBuyer {
+            quantities: BTreeMap::from([
+                (
+                    (2, btc.clone()),
+                    qx_core::ExactDecimal::parse("0.1").unwrap(),
+                ),
+                (
+                    (2, eth.clone()),
+                    qx_core::ExactDecimal::parse("0.15").unwrap(),
+                ),
+            ]),
+            submitted: Default::default(),
+        },
+    )])
+    .unwrap();
+
+    let report = engine.run(&mut strategy).unwrap();
+
+    assert_eq!(report.fills.len(), 1);
+    assert_eq!(report.fills_by_instrument[&btc].len(), 1);
+    assert!(report.fills_by_instrument[&eth].is_empty());
+    assert!(report.event_log.events().iter().any(|event| matches!(
+        event.kind,
+        EventKind::Rejected { ref reason, .. }
+            if reason.contains("reserved_capital_raw")
+    )));
+    report.verify().unwrap();
+}
+
+#[test]
+fn shared_session_strategy_budget_aggregates_filled_positions_across_markets() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+    let bars = (1..=5)
+        .map(|ts| {
+            Bar::new(
+                ts,
+                100 * SCALE,
+                100 * SCALE,
+                100 * SCALE,
+                100 * SCALE,
+                10 * SCALE,
+            )
+        })
+        .collect::<Vec<_>>();
+    let btc_bars = bars.clone();
+    let eth_bars = bars;
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            exact_spot_market(btc.clone(), 0, &btc_bars, "BTC"),
+            exact_spot_market(eth.clone(), 1, &eth_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = PortfolioBarStrategy::new(vec![PortfolioStrategySlot::new(
+        0,
+        "alpha",
+        20 * SCALE,
+        ExactMultiMarketBudgetBuyer {
+            quantities: BTreeMap::from([
+                (
+                    (2, btc.clone()),
+                    qx_core::ExactDecimal::parse("0.1").unwrap(),
+                ),
+                (
+                    (2, eth.clone()),
+                    qx_core::ExactDecimal::parse("0.1").unwrap(),
+                ),
+                (
+                    (4, btc.clone()),
+                    qx_core::ExactDecimal::parse("0.1").unwrap(),
+                ),
+            ]),
+            submitted: Default::default(),
+        },
+    )])
+    .unwrap();
+
+    let report = engine.run(&mut strategy).unwrap();
+
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills_by_instrument[&btc].len(), 1);
+    assert_eq!(report.fills_by_instrument[&eth].len(), 1);
+    assert!(report.event_log.events().iter().any(|event| matches!(
+        event.kind,
+        EventKind::Rejected { ref reason, .. }
+            if reason.contains("reserved_capital_raw")
+    )));
+    report.verify().unwrap();
+}
+
+#[test]
+fn shared_session_reports_subnano_cash_and_position_attribution_exactly() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+    let bars = [
+        Bar::new(1, SCALE, SCALE, SCALE, SCALE, 10 * SCALE),
+        Bar::new(2, SCALE, SCALE, SCALE, SCALE, 10 * SCALE),
+        Bar::new(3, SCALE, 2 * SCALE, SCALE, 2 * SCALE, 10 * SCALE),
+    ];
+    let btc_bars = bars;
+    let eth_bars = bars;
+    let quantity = qx_core::ExactDecimal::parse("0.0000000001").unwrap();
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(100 * SCALE),
+            initial_cash_exact: None,
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
+        },
+        vec![
+            exact_spot_market(btc.clone(), 0, &btc_bars, "BTC"),
+            exact_spot_market(eth.clone(), 1, &eth_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = PortfolioBarStrategy::new(vec![PortfolioStrategySlot::new(
+        0,
+        "alpha",
+        20 * SCALE,
+        ExactMultiMarketBudgetBuyer {
+            quantities: BTreeMap::from([
+                ((2, btc.clone()), quantity),
+                ((2, eth.clone()), quantity),
+            ]),
+            submitted: Default::default(),
+        },
+    )])
+    .unwrap();
+
+    let report = engine.run(&mut strategy).unwrap();
+
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(
+        report.equity_exact.last().unwrap().2,
+        qx_core::ExactDecimal::parse("100.0000000002").unwrap()
+    );
+    assert_eq!(
+        report.instrument_equity_contributions_exact[&btc]
+            .last()
+            .unwrap()
+            .2,
+        quantity
+    );
+    assert_eq!(
+        report.instrument_equity_contributions_exact[&eth]
+            .last()
+            .unwrap()
+            .2,
+        quantity
+    );
+    assert_eq!(report.equity.last().unwrap().1, 100 * SCALE - 1);
+    report.verify().unwrap();
 }
 
 fn run_with_priorities(btc_priority: u32, eth_priority: u32) -> PortfolioBarSessionReport {
@@ -177,6 +459,7 @@ fn run_with_priorities(btc_priority: u32, eth_priority: u32) -> PortfolioBarSess
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: Vec::new(),
@@ -248,6 +531,7 @@ fn shared_session_bounds_instrument_equity_samples_and_keeps_terminal_points() {
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: Vec::new(),
@@ -308,6 +592,7 @@ fn same_visible_timestamp_orders_from_multiple_callbacks_share_one_stable_batch(
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: Vec::new(),
@@ -423,6 +708,7 @@ fn shared_session_uses_ordered_fallback_for_unaligned_visible_timestamps() {
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: Vec::new(),
@@ -490,6 +776,7 @@ fn explicit_zero_funding_rate_is_valid_for_a_spot_market() {
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: [(btc.clone(), 0)].into_iter().collect(),
             funding_events: Vec::new(),
@@ -545,6 +832,7 @@ impl BarStrategy for BuyDerivativeOnce {
             account_id: "shared-account".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }]
     }
 }
@@ -588,6 +876,7 @@ fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_rep
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::from([(instrument.clone(), 100)]),
             funding_events: Vec::new(),
@@ -639,6 +928,7 @@ fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_rep
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::from([(instrument.clone(), -100)]),
             funding_events: Vec::new(),
@@ -703,6 +993,7 @@ fn historical_funding_events_apply_each_signed_rate_at_its_own_settlement() {
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: vec![
@@ -710,11 +1001,13 @@ fn historical_funding_events_apply_each_signed_rate_at_its_own_settlement() {
                     instrument: instrument.clone(),
                     settlement_ts: first_settlement,
                     rate_bps: 100,
+                    funding_interval_ms: None,
                 },
                 qx_core::FundingRateEvent {
                     instrument: instrument.clone(),
                     settlement_ts: second_settlement,
                     rate_bps: -50,
+                    funding_interval_ms: None,
                 },
             ],
         },
@@ -757,12 +1050,14 @@ fn historical_funding_events_reject_nonzero_spot_rates_before_execution() {
             account_id: "shared-account".into(),
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
+            initial_cash_exact: None,
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
             funding_events: vec![qx_core::FundingRateEvent {
                 instrument: btc.clone(),
                 settlement_ts: qx_core::FUNDING_INTERVAL_MS,
                 rate_bps: 1,
+                funding_interval_ms: None,
             }],
         },
         vec![

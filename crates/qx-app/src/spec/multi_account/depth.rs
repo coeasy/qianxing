@@ -5,6 +5,16 @@ use crate::error::{AppError, AppErrorCategory};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub const MULTI_ACCOUNT_DEPTH_BACKTEST_RESULT_SCHEMA_VERSION: u32 = 2;
+
+fn legacy_multi_account_depth_backtest_result_schema_version() -> u32 {
+    1
+}
+
+fn multi_account_depth_backtest_result_kind() -> String {
+    "multi_account_depth".into()
+}
+
 /// A multi-account batch whose members run the existing depth backtest use case independently.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,11 +118,20 @@ pub struct MultiAccountDepthBacktestSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiAccountDepthBacktestResult {
+    /// Embedded response version; historical v1 JSON without this field remains readable.
+    #[serde(default = "legacy_multi_account_depth_backtest_result_schema_version")]
+    pub schema_version: u32,
+    /// Discriminator keeps all-failed batches distinguishable from Bar batches in generic reports.
+    #[serde(default = "multi_account_depth_backtest_result_kind")]
+    pub result_kind: String,
     pub batch_id: String,
     pub settlement_currency: String,
     pub spec_fingerprint: String,
     pub runs: Vec<MultiAccountDepthRunResult>,
     pub summary: MultiAccountDepthBacktestSummary,
+    /// Parent-level identity over successful depth runs and their aggregate summary.
+    #[serde(default)]
+    pub run_manifest: Option<qx_core::RunManifest>,
 }
 
 impl MultiAccountDepthBacktestResult {

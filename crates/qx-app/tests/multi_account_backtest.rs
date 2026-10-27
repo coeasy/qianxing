@@ -2,8 +2,9 @@ mod common;
 
 use common::{backtest_spec, scratch, write_frame};
 use qx_app::{
-    run_backtest, run_multi_account_backtest, verify_run, AppErrorCategory, CallerCapability,
-    MultiAccountBacktestSpec, RunContext,
+    read_multi_account_report_v1, run_backtest, run_multi_account_backtest,
+    verify_multi_account_backtest_result, verify_run, AppErrorCategory, CallerCapability,
+    MultiAccountBacktestSpec, MultiAccountResearchStatusV1, RunContext,
 };
 
 fn research(id: &str) -> RunContext {
@@ -34,11 +35,47 @@ fn independent_accounts_run_different_markets_and_keep_verifiable_ledgers() {
         .expect("independent multi-account research runs");
 
     assert_eq!(result.runs.len(), 2);
+    assert_eq!(result.schema_version, 2);
     assert!(result.summary.complete);
     assert_eq!(result.summary.accounts_succeeded, 2);
     assert_eq!(result.summary.accounts_failed, 0);
     assert!(result.summary.successful_fills > 0);
     assert!(result.summary.weighted_return_bps.is_some());
+    let manifest = result
+        .run_manifest
+        .as_ref()
+        .expect("successful batch carries a parent RunManifest");
+    assert_eq!(manifest.run_id, result.batch_id);
+    assert_eq!(manifest.config_hash, result.spec_fingerprint);
+    let canonical: serde_json::Value =
+        serde_json::from_str(manifest.canonical_run_spec_json.as_deref().unwrap()).unwrap();
+    assert_eq!(canonical["run_type"], "multi_account_backtest");
+    assert_eq!(canonical["datasets"].as_array().unwrap().len(), 2);
+    assert!(!canonical["execution_model"]
+        .get("cross_account_margin_netting")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap());
+    verify_multi_account_backtest_result(&result)
+        .expect("parent identity binds child runs and aggregate summary");
+    let report = read_multi_account_report_v1(
+        &serde_json::to_value(&result).unwrap(),
+        &research("batch-two-markets"),
+    )
+    .expect("shared report reads and verifies every Bar child");
+    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.run_id, result.batch_id);
+    assert_eq!(report.summary.accounts_succeeded, 2);
+    assert!(report.verification.verified);
+    assert!(report.accounts.iter().all(|account| {
+        account.status == MultiAccountResearchStatusV1::Succeeded
+            && account
+                .report
+                .as_ref()
+                .is_some_and(|report| report.verification.verified)
+    }));
+    let mut altered = result.clone();
+    altered.summary.successful_fills += 1;
+    assert!(verify_multi_account_backtest_result(&altered).is_err());
     assert_eq!(result.runs[0].account_id, "account-btc");
     assert_eq!(result.runs[1].account_id, "account-eth");
     assert_eq!(
@@ -137,6 +174,58 @@ fn one_account_failure_is_reported_without_erasing_successful_runs() {
     assert!(result.summary.weighted_return_bps.is_some());
     assert!(result.runs.iter().any(|run| run.outcome.is_some()));
     assert!(result.runs.iter().any(|run| run.error_json.is_some()));
+    assert!(
+        result.run_manifest.is_some(),
+        "partial batch keeps parent identity"
+    );
+    verify_multi_account_backtest_result(&result)
+        .expect("partial batch identity binds success and failure status");
+    let report = read_multi_account_report_v1(
+        &serde_json::to_value(&result).unwrap(),
+        &research("batch-partial"),
+    )
+    .expect("shared report preserves partial account success");
+    assert_eq!(report.summary.accounts_failed, 1);
+    assert_eq!(
+        report
+            .accounts
+            .iter()
+            .filter(|account| account.status == MultiAccountResearchStatusV1::Failed)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn all_failed_batch_has_no_dataset_run_manifest_and_still_verifies_as_a_failure_result() {
+    let root = scratch("multi-account-all-failed");
+    let mut spec = two_account_spec(&root);
+    for run in &mut spec.runs {
+        run.bars_path = root
+            .join(format!(
+                "missing-{}.json",
+                run.account_id.as_deref().unwrap()
+            ))
+            .to_string_lossy()
+            .into_owned();
+    }
+    let result = run_multi_account_backtest(&spec, &research("batch-all-failed"))
+        .expect("each account failure is retained in the batch result");
+    assert_eq!(result.summary.accounts_succeeded, 0);
+    assert_eq!(result.summary.accounts_failed, 2);
+    assert!(result.run_manifest.is_none());
+    verify_multi_account_backtest_result(&result)
+        .expect("an all-failed batch makes no dataset-backed run claim");
+    let report = read_multi_account_report_v1(
+        &serde_json::to_value(&result).unwrap(),
+        &research("batch-all-failed"),
+    )
+    .expect("shared report retains an all-failed batch without inventing child outcomes");
+    assert!(!report.summary.complete);
+    assert_eq!(report.summary.accounts_failed, 2);
+    assert!(report.accounts.iter().all(|account| {
+        account.status == MultiAccountResearchStatusV1::Failed && account.report.is_none()
+    }));
 }
 
 #[test]

@@ -20,7 +20,7 @@ pub(crate) use qx_runtime::{
 pub(crate) use qx_scheduler::{
     unsupported_dispatch_shape, JobSpec, JobStatus, JobWindow, RetryPolicy, Scheduler, Trigger,
 };
-pub(crate) use qx_storage::{FileJobQueue, JobLease, QueuedJob};
+pub(crate) use qx_storage::{FileJobQueue, QueuedJob};
 pub(crate) use qx_strategy::SharedRingConfig;
 pub(crate) use qx_xingban::{AshareRuleConfig, DepthFrame, ExecutionCostRules};
 pub(crate) use qx_zhenlu::{SpreadOrderGroup, SpreadOrderGroupStatus, SpreadOrderLeg};

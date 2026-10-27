@@ -1,4 +1,4 @@
-//! `qx-cli app` 的参数表：三个应用层用例各一条入口（T2-2 / 退出门 G1）。
+//! `qx-cli app` 的参数表：每个应用层入口各一条命令（T2-2 / 退出门 G1）。
 //!
 //! 与 `data_validate_args.rs` / `plan_args.rs` / `console_args.rs` 同因：`cli_args.rs` 处在行数
 //! 棘轮顶格，新增命令的参数结构单独成文件。与它们不同的是，这是本仓**第一个自带子命令**的
@@ -66,6 +66,84 @@ pub(crate) enum AppCommand {
     Verify {
         /// `BacktestOutcome` JSON 的路径（取 `app backtest` 的 stdout）。
         outcome: PathBuf,
+    },
+    /// 读取并复核 Bar 运行的共享版本化研究报告核心 DTO（`qx_app::read_run_report_v1`）。
+    #[command(name = "read-report")]
+    ReadReport {
+        /// `BacktestOutcome` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核 Tick/OrderBook 运行的共享版本化研究报告核心 DTO。
+    #[command(name = "read-depth-report")]
+    ReadDepthReport {
+        /// `DepthBacktestOutcome` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核 Provider Bar 回测封装与共享报告核心 DTO。
+    #[command(name = "read-provider-report")]
+    ReadProviderReport {
+        /// `ProviderBacktestOutcome` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核 Provider Tick/OrderBook 回测封装与冻结输入。
+    #[command(name = "read-provider-depth-report")]
+    ReadProviderDepthReport {
+        /// `ProviderDepthBacktestOutcome` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核 Bar/Depth 多账户批次的共享版本化研究报告核心 DTO。
+    #[command(name = "read-multi-account-report")]
+    ReadMultiAccountReport {
+        /// `MultiAccountBacktestResult` 或 `MultiAccountDepthBacktestResult` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核多交易所联合账户 Bar 回测的共享版本化研究报告核心 DTO。
+    #[command(name = "read-multi-account-joint-report")]
+    ReadMultiAccountJointReport {
+        /// `MultiAccountJointBacktestOutcome` 或含 outcome 与 joint_account_event_pages 的 JSON 路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核多腿 Bar 回测的共享版本化报告事实 DTO。
+    #[command(name = "read-multi-leg-report")]
+    ReadMultiLegReport {
+        /// `MultiLegBacktestOutcome` JSON 的路径。
+        outcome: PathBuf,
+    },
+    /// 读取并复核完整、有界的多腿 Bar 研究报告 DTO。
+    #[command(name = "read-multi-leg-research-report")]
+    ReadMultiLegResearchReport {
+        /// `MultiLegResearchReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
+    },
+    /// 复核并读取多腿 Bar EventLog 的有界共享页面。
+    #[command(name = "read-multi-leg-event-page")]
+    ReadMultiLegEventPage {
+        /// `MultiLegEventReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
+    },
+    /// 复核并读取多市场 Bar EventLog 的有界共享页面。
+    #[command(name = "read-multi-market-event-page")]
+    ReadMultiMarketEventPage {
+        /// `MultiMarketEventReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
+    },
+    /// 读取并复核完整、有界的共享账户多市场 Bar 研究报告 DTO。
+    #[command(name = "read-multi-market-research-report")]
+    ReadMultiMarketResearchReport {
+        /// `MultiMarketResearchReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
+    },
+    /// 读取并复核完整、有界的共享账户多市场 L1/L2 研究报告 DTO。
+    #[command(name = "read-multi-market-depth-research-report")]
+    ReadMultiMarketDepthResearchReport {
+        /// `MultiMarketDepthResearchReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
+    },
+    /// 复核并读取多市场 Depth EventLog 的有界共享页面。
+    #[command(name = "read-multi-market-depth-event-page")]
+    ReadMultiMarketDepthEventPage {
+        /// `MultiMarketDepthEventReportReadRequestV1` JSON 的路径。
+        request: PathBuf,
     },
     /// 确定性比较同一标的与同一数据指纹下的多组已完成回测。
     #[command(name = "compare-runs")]
@@ -143,6 +221,12 @@ pub(crate) enum AppCommand {
     #[command(name = "multi-account-backtest")]
     MultiAccountBacktest {
         /// `MultiAccountBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
+    /// 多账户独立 Tick/OrderBook 回测（每账户拥有独立账本，不进行跨账户净额）。
+    #[command(name = "multi-account-depth-backtest")]
+    MultiAccountDepthBacktest {
+        /// `MultiAccountDepthBacktestSpec` JSON 的路径。
         spec: PathBuf,
     },
     /// 多交易所多账户分别保留账本并生成汇总权益曲线的 Bar 联合回测。

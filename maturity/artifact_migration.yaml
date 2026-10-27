@@ -10,19 +10,33 @@
 # 或多登记一份不存在的产物，都红）。
 schema_version: 1
 kind: artifact-migration
-updated_at: "2026-10-15"
+updated_at: "2026-10-26"
 registry: maturity/schema-registry.json
 # 关系图的边：一行 = 一份产物 → 一个读侧文件 → 一个版本常量 → 一条版本处置 → 一条常驻用例。
-# `on_unknown_version` 当前只有 `refuse` 一态：本仓 10 份现行契约都有版本号，读侧都在解析
+# `on_unknown_version` 当前只有 `refuse` 一态：本仓 11 份现行契约都有版本号，读侧都在解析
 # 之前显式比对常量。将来若出现没有版本号的契约（只靠字段集合拒绝未知键），要**同时**扩这里与
 # `artifact_migration_check` 的允许集 —— 两处一起改，不许只改表（只改表会让那一态没有任何牙齿）。
 artifacts:
   - schema_id: account-snapshot-v1
     reader: crates/qx-protocol/src/lib.rs
     version_field: schema_version
+    version_const: ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
+    refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
+  - schema_id: account-snapshot-v2
+    reader: crates/qx-protocol/src/lib.rs
+    version_field: schema_version
     version_const: ACCOUNT_SNAPSHOT_SCHEMA_VERSION
     on_unknown_version: refuse
-    refusal_reason: "账户快照 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
+    refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
+  - schema_id: account-snapshot-v3
+    reader: crates/qx-protocol/src/lib.rs
+    version_field: schema_version
+    version_const: ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
     refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
   - schema_id: strategy-api-v1
     reader: crates/qx-strategy/src/contract.rs
@@ -36,7 +50,63 @@ artifacts:
     version_field: schema_version
     version_const: STRATEGY_CONTRACT_SCHEMA_VERSION
     on_unknown_version: refuse
-    refusal_reason: "策略输入契约 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v2
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V2_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v3
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V3_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v4
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V4_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v5
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V5_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v6
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V6_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v7
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V7_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v8
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V8_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: strategy-api-input-v9
+    reader: crates/qx-strategy/src/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_INPUT_V9_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={version} 不受支持（本构建只认 1、2、3、4、5、6、7、8 和 9）"
     refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
   - schema_id: project-manifest-v1
     reader: crates/qx-spec/src/project.rs
@@ -66,6 +136,13 @@ artifacts:
     on_unknown_version: refuse
     refusal_reason: "运行记录 schema_version={} 不受支持（本构建只认 {}）"
     refusal_case: run_record_refuses_an_unsupported_schema_version
+  - schema_id: multi-account-joint-backtest-envelope-v2
+    reader: crates/qx-app/src/artifact_store/run_record.rs
+    version_field: schema_version
+    version_const: MULTI_ACCOUNT_JOINT_BACKTEST_ENVELOPE_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "联合账户父产物 envelope schema_version 不受支持"
+    refusal_case: joint_portfolio_envelope_refuses_unsupported_schema_version
   - schema_id: capability-manifest-v1
     reader: crates/qx-spec/src/capability.rs
     version_field: schema_version
@@ -90,6 +167,10 @@ artifacts:
 # 显式迁移表：venue/run v1 与统一 EvidenceBundle v2 均迁到 v3。未知版本仍在读入口具名拒绝
 # （fail-closed）；`artifact_migration_check` 会核「登记了迁移就必须有在盘的迁移函数」。
 migrations:
+  - from_version: "multi-account-joint-backtest-result-json@1"
+    to_version: "multi-account-joint-backtest-envelope-json@2"
+    migration_fn: normalize_legacy_joint_portfolio_artifact_ref
+    reader: crates/qx-app/src/artifact_store/run_record.rs
   - from_version: "run-evidence-v1@1"
     to_version: "evidence-bundle-v3@3"
     migration_fn: migrate_legacy_evidence_bundle

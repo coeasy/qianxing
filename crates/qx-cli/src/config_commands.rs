@@ -499,3 +499,118 @@ pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
         Err(format!("Doctor 发现 {failures} 个必须修复的问题"))
     }
 }
+
+pub(crate) fn run_doctor_capabilities(
+    as_json: bool,
+    capability_id: Option<&str>,
+    venue: Option<&str>,
+    product: Option<&str>,
+    account_mode: Option<&str>,
+    account_model: Option<&str>,
+    margin_mode: Option<&str>,
+    operation: Option<&str>,
+) -> Result<(), String> {
+    let catalog = qx_api::product_capability_catalog_document()
+        .map_err(|error| format!("读取产品能力目录失败: {error}"))?;
+    let filters_provided = venue.is_some()
+        || product.is_some()
+        || account_mode.is_some()
+        || account_model.is_some()
+        || margin_mode.is_some()
+        || operation.is_some();
+    let payload = if capability_id.is_some() || filters_provided {
+        let mut query = serde_json::Map::new();
+        for (name, value) in [
+            ("capability_id", capability_id),
+            ("venue", venue),
+            ("product", product),
+            ("account_mode", account_mode),
+            ("account_model", account_model),
+            ("margin_mode", margin_mode),
+            ("operation", operation),
+        ] {
+            if let Some(value) = value {
+                query.insert(name.into(), serde_json::Value::String(value.into()));
+            }
+        }
+        qx_api::product_capability_query_document(&serde_json::Value::Object(query).to_string())
+            .map_err(|error| {
+                if error == "capability_not_found" {
+                    "能力 ID 不存在".to_string()
+                } else {
+                    format!("查询产品能力失败: {error}")
+                }
+            })?
+    } else {
+        serde_json::json!({
+            "schema_version": catalog["schema_version"],
+            "source_updated_at": catalog["source_updated_at"],
+            "capabilities": catalog["index"],
+        })
+    };
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload)
+                .map_err(|error| format!("编码产品能力目录失败: {error}"))?
+        );
+    } else if let Some(capability) = payload.get("capability") {
+        println!(
+            "[Product Capability] {}",
+            capability["id"].as_str().unwrap_or("unknown")
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(capability)
+                .map_err(|error| format!("编码产品能力详情失败: {error}"))?
+        );
+        println!("静态能力与验收登记不代表当前环境连通、凭据可用或沙盒验收通过。");
+    } else if let Some(matches) = payload.get("matches").and_then(serde_json::Value::as_array) {
+        println!("[Product Capability Scopes] count={}", matches.len());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload)
+                .map_err(|error| format!("编码产品能力查询结果失败: {error}"))?
+        );
+        println!("范围仅代表仓内配置与代码证据；外部 sandbox/生产验收状态见匹配能力的成熟度证据。");
+    } else {
+        let entries = payload
+            .get("capabilities")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "生成目录缺少 capabilities 索引".to_string())?;
+        println!(
+            "[Product Capabilities] schema={} count={}",
+            payload["schema_version"],
+            entries.len()
+        );
+        for entry in entries {
+            let id = entry["id"].as_str().unwrap_or("unknown");
+            let kind = entry["kind"].as_str().unwrap_or("unknown");
+            let name = entry["name"].as_str().unwrap_or("unknown");
+            let status =
+                serde_json::to_string(&entry["matrix_status"]).unwrap_or_else(|_| "{}".to_string());
+            let maturity_refs = entry
+                .get("maturity_refs")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len)
+                .ok_or_else(|| format!("能力 {id} 缺少 maturity_refs 数组"))?;
+            let evidence_count = entry
+                .get("evidence_path_count")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format!("能力 {id} 缺少 evidence_path_count 数值"))?;
+            println!(
+                "{id}  [{kind}] {name}  status={status}  maturity_refs={maturity_refs} evidence_paths={evidence_count}"
+            );
+        }
+        println!("静态能力与验收登记不代表当前环境连通、凭据可用或沙盒验收通过。");
+        println!("查看详情：qx-cli doctor --capabilities --capability-id <能力 ID>");
+        println!(
+            "按交易范围查询：qx-cli doctor --capabilities --venue BINANCE --product perpetual"
+        );
+        println!(
+            "按账户读取能力查询：qx-cli doctor --capabilities --venue OKX --product perpetual --account-model unified --operation positions.read"
+        );
+    }
+    Ok(())
+}

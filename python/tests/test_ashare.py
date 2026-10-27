@@ -131,6 +131,59 @@ class AshareTest(unittest.TestCase):
         self.assertEqual(len(frame.ts), 2)
         self.assertEqual(frame.close_raw[-1], 1_600_000_000)
         self.assertLess(frame.ts[0], frame.ts[1])
+        self.assertIsNotNone(frame.exact_ohlcv)
+
+    def test_normalize_rows_preserves_exact_decimal_ohlcv_beyond_raw_scale(self):
+        frame = normalize_bar_rows(
+            [
+                {
+                    "date": "2024-01-02",
+                    "open": "0.0000000101",
+                    "high": "0.0000000105",
+                    "low": "0.0000000095",
+                    "close": "0.0000000102",
+                    "volume": "0.0000000015",
+                }
+            ],
+            code="sz.000001",
+            source="test-exact",
+        )
+
+        self.assertEqual(frame.open_raw, (10,))
+        self.assertEqual(frame.low_raw, (9,))
+        self.assertEqual(frame.volume_raw, (1,))
+        self.assertEqual(
+            frame.exact_ohlcv,
+            (
+                {
+                    "open": {"coefficient": "101", "scale": 10},
+                    "high": {"coefficient": "105", "scale": 10},
+                    "low": {"coefficient": "95", "scale": 10},
+                    "close": {"coefficient": "102", "scale": 10},
+                    "volume": {"coefficient": "15", "scale": 10},
+                },
+            ),
+        )
+        encoded = json.loads(frame.to_json())
+        self.assertEqual(encoded["schema_version"], 2)
+        self.assertEqual(encoded["exact_ohlcv"][0]["close"]["coefficient"], "102")
+
+    def test_normalize_rows_rejects_exact_ohlcv_scale_outside_contract(self):
+        with self.assertRaisesRegex(AshareProviderError, "18 decimal places"):
+            normalize_bar_rows(
+                [
+                    {
+                        "date": "2024-01-02",
+                        "open": "1.0000000000000000001",
+                        "high": "2",
+                        "low": "1",
+                        "close": "1.1",
+                        "volume": "1",
+                    }
+                ],
+                code="sz.000001",
+                source="test-exact",
+            )
 
     def test_intraday_date_and_time_are_not_collapsed(self):
         frame = normalize_bar_rows(

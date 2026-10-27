@@ -6,6 +6,10 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/account/activity"
+    },
+    {
+      "method": "GET",
       "path": "/account/balances"
     },
     {
@@ -15,6 +19,10 @@
     {
       "method": "GET",
       "path": "/account/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/account/portfolio"
     },
     {
       "method": "GET",
@@ -82,6 +90,14 @@
     },
     {
       "method": "GET",
+      "path": "/schema/account-snapshot-v2"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/account-snapshot-v3"
+    },
+    {
+      "method": "GET",
       "path": "/schema/contract-matrix"
     },
     {
@@ -95,6 +111,10 @@
     {
       "method": "POST",
       "path": "/app/capabilities/providers/preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/app/capabilities/query"
     },
     {
       "method": "POST",
@@ -195,6 +215,22 @@
     {
       "method": "POST",
       "path": "/app/provider-depth-backtest"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-multi-account-joint-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-multi-leg-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-provider-depth-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-provider-report"
     },
     {
       "method": "POST",

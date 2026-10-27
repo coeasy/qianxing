@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "run_id": "tick-moving-average-local",
+  "depth_path": "../deploy/qianxing.depth-frame.l1.example.json",
+  "tier": "l1",
+  "settlement_currency": "USDT",
+  "initial_cash_raw": 100000000000000,
+  "latency_snapshots": 0,
+  "queue_position_bps": 0,
+  "market_impact_bps": 0,
+  "output_dir": "./runs/tick-moving-average-local",
+  "strategy": {
+    "kind": "sma_cross",
+    "strategy_id": "tick-moving-average",
+    "quantity_raw": 1000000000,
+    "fast_window": 5,
+    "slow_window": 20
+  }
+}

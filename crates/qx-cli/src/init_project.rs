@@ -65,7 +65,7 @@ pub(crate) fn copy_init_asset(
 /// `init --profile` 的可用值。help 的 `<...>` 表、两处错误文案和实际接受的集合都由这一份来
 /// （V11 S5）：`builtin` 此前只在 match 里存在，帮助和"未知 profile"提示都不提它，
 /// 用户被告知的取值集合里恰好少了那个真正能用的取值。
-pub(crate) const INIT_PROFILES: [&str; 7] = [
+pub(crate) const INIT_PROFILES: [&str; 10] = [
     "base",
     "builtin",
     "paper",
@@ -73,6 +73,9 @@ pub(crate) const INIT_PROFILES: [&str; 7] = [
     "ashare",
     "multi-venue",
     "backtest",
+    "research-local",
+    "crypto-paper",
+    "crypto-sandbox-acceptance",
 ];
 
 pub(crate) fn init_profile_template(
@@ -150,17 +153,40 @@ pub(crate) fn init_profile_template(
         "multi-venue" => Ok((
             "qianxing.runtime.multi-venue-arbitrage.example.json",
             vec![
+                "qianxing.ccxt.binance.usdm.example.json",
                 "qianxing.ccxt.binance.spot.example.json",
                 "qianxing.ccxt.okx.swap.example.json",
                 "qianxing.binance.spot.spec.json",
                 "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.crypto.multi-venue-perpetual-spec.example.json",
                 "qianxing.scheduler.jobs.example.json",
+                "data/qianxing-multi-venue-arbitrage/btc-usdt-okx.bar-frame.json",
+                "data/qianxing-multi-venue-arbitrage/btc-usdt-binance.bar-frame.json",
             ],
             selected,
         )),
         "backtest" => Ok((
             "qianxing.runtime.strategy-backtest.example.json",
             vec!["qianxing.bar-frame.example.json"],
+            selected,
+        )),
+        "research-local" => Ok((
+            "qianxing.runtime.strategy-backtest.example.json",
+            vec!["qianxing.bar-frame.example.json"],
+            selected,
+        )),
+        "crypto-paper" => Ok((
+            "qianxing.runtime.paper-strategy.example.json",
+            common,
+            selected,
+        )),
+        "crypto-sandbox-acceptance" => Ok((
+            "qianxing.runtime.ccxt.example.json",
+            vec![
+                "qianxing.ccxt.exchange.example.json",
+                "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.scheduler.jobs.example.json",
+            ],
             selected,
         )),
         _ => Err(format!(

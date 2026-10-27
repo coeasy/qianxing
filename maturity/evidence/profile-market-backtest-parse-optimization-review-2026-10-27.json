@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "barframe_json_single_pass_and_vector_reuse_exploratory_performance_review",
+  "generated_at_utc": "2026-10-27T01:09:41Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "baseline_evidence": "maturity/evidence/profile-market-backtest-rustrelease-64k-2026-10-27.json",
+  "candidate_evidence": [
+    "maturity/evidence/profile-market-backtest-rustrelease-64k-final-7rep-2026-10-27.json",
+    "maturity/evidence/profile-market-backtest-rustrelease-64k-final-7rep-repeat-2026-10-27.json"
+  ],
+  "baseline_binary_sha256": "824212a677cd4604d41e144bb6768c7ffdd34f7322f1434394b94c2c5ce9020c",
+  "candidate_binary_sha256": "a06b0b7561ad97867da070cef8c2f974d39db01d9e7c51a6ae38d73cea17ea68",
+  "candidate_source_fingerprint": "da2e0c7ff520c304c891904f92736ba001391acfa913c2eead87a0b15166d824",
+  "same_hardware": true,
+  "same_candidate_binary_and_source_across_repeat_runs": true,
+  "scope": "Synthetic product-spec-bound CLI Bar backtest proxy; 6 supported market fixtures, 64k Bars each; baseline 3 timed repeats and candidate 7 timed repeats in each of two independent runs.",
+  "limitations": [
+    "Process startup, JSON input, runtime/storage initialization, backtest and artifacts are measured together.",
+    "Windows PeakWorkingSetSize includes resident code pages and does not isolate private heap allocations.",
+    "Independent same-binary candidate runs show material wall-clock drift; no stable end-to-end performance effect can be attributed to the code change.",
+    "This proxy does not exercise complete Paper, calendar, corporate action, funding, testnet, or multi-venue product profiles."
+  ],
+  "claims": {
+    "wall_time_improvement": false,
+    "peak_rss_improvement": false,
+    "result_determinism_preserved": true,
+    "profile_targets_updated": false
+  },
+  "markets": [
+    {
+      "fixture": "ashare-equity",
+      "instrument": "600519.SSE",
+      "bars": 64000,
+      "baseline_p50_ms": 2151.924,
+      "candidate_run1_p50_ms": 2365.762,
+      "candidate_run2_p50_ms": 2124.849,
+      "same_candidate_binary_cross_run_delta_pct": -10.18,
+      "baseline_peak_rss_bytes": 244383744,
+      "candidate_peak_rss_bytes_runs": [
+        245645312,
+        245620736
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    },
+    {
+      "fixture": "cn-futures",
+      "instrument": "rb2510.SHFE",
+      "bars": 64000,
+      "baseline_p50_ms": 2513.456,
+      "candidate_run1_p50_ms": 2503.483,
+      "candidate_run2_p50_ms": 2445.257,
+      "same_candidate_binary_cross_run_delta_pct": -2.33,
+      "baseline_peak_rss_bytes": 249999360,
+      "candidate_peak_rss_bytes_runs": [
+        251031552,
+        251256832
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    },
+    {
+      "fixture": "global-equity",
+      "instrument": "AAPL.NASDAQ",
+      "bars": 64000,
+      "baseline_p50_ms": 2138.179,
+      "candidate_run1_p50_ms": 2066.116,
+      "candidate_run2_p50_ms": 2178.595,
+      "same_candidate_binary_cross_run_delta_pct": 5.44,
+      "baseline_peak_rss_bytes": 244531200,
+      "candidate_peak_rss_bytes_runs": [
+        245534720,
+        245579776
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    },
+    {
+      "fixture": "fx-cfd",
+      "instrument": "EURUSD.FX",
+      "bars": 64000,
+      "baseline_p50_ms": 2257.632,
+      "candidate_run1_p50_ms": 2358.156,
+      "candidate_run2_p50_ms": 2338.424,
+      "same_candidate_binary_cross_run_delta_pct": -0.84,
+      "baseline_peak_rss_bytes": 250056704,
+      "candidate_peak_rss_bytes_runs": [
+        251092992,
+        251035648
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    },
+    {
+      "fixture": "crypto-spot",
+      "instrument": "BTCUSDT.BINANCE",
+      "bars": 64000,
+      "baseline_p50_ms": 2186.08,
+      "candidate_run1_p50_ms": 2304.703,
+      "candidate_run2_p50_ms": 2223.461,
+      "same_candidate_binary_cross_run_delta_pct": -3.53,
+      "baseline_peak_rss_bytes": 244662272,
+      "candidate_peak_rss_bytes_runs": [
+        245411840,
+        245403648
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    },
+    {
+      "fixture": "crypto-perpetual",
+      "instrument": "BTCUSDT-PERP.BINANCE",
+      "bars": 64000,
+      "baseline_p50_ms": 2455.03,
+      "candidate_run1_p50_ms": 2507.949,
+      "candidate_run2_p50_ms": 2427.012,
+      "same_candidate_binary_cross_run_delta_pct": -3.23,
+      "baseline_peak_rss_bytes": 250486784,
+      "candidate_peak_rss_bytes_runs": [
+        251502592,
+        251346944
+      ],
+      "result_hash_preserved": true,
+      "deterministic_within_each_run": true
+    }
+  ]
+}

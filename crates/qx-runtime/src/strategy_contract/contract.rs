@@ -1,9 +1,17 @@
 //! Runtime-only operations over the Strategy SDK's stable wire contract.
 
 pub use qx_strategy::contract::{
-    encode_strategy_columnar_input, StrategyContractBars, StrategyContractInput,
-    StrategyContractIntent, StrategyContractOutput, STRATEGY_COLUMNAR_HEADER_LEN,
-    STRATEGY_COLUMNAR_MAGIC, STRATEGY_COLUMNAR_VERSION, STRATEGY_CONTRACT_SCHEMA_VERSION,
+    encode_strategy_columnar_input, StrategyAccountUpdateV1, StrategyCheckpointV1,
+    StrategyContractBars, StrategyContractInput, StrategyContractIntent,
+    StrategyContractMarketOrderBookV1, StrategyContractMarketTickV1,
+    StrategyContractOrderBookLevelV1, StrategyContractOutput, STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+    STRATEGY_COLUMNAR_EXACT_OHLCV_FLAG, STRATEGY_COLUMNAR_EXACT_VERSION,
+    STRATEGY_COLUMNAR_HEADER_LEN, STRATEGY_COLUMNAR_MAGIC, STRATEGY_COLUMNAR_VERSION,
+    STRATEGY_CONTRACT_INPUT_V2_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V3_SCHEMA_VERSION,
+    STRATEGY_CONTRACT_INPUT_V4_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V5_SCHEMA_VERSION,
+    STRATEGY_CONTRACT_INPUT_V6_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V7_SCHEMA_VERSION,
+    STRATEGY_CONTRACT_INPUT_V8_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V9_SCHEMA_VERSION,
+    STRATEGY_CONTRACT_SCHEMA_VERSION,
 };
 
 /// Normalize a native Rust strategy decision into the same response contract used by process
@@ -53,6 +61,11 @@ impl StrategyContractRebalanceExt for StrategyContractOutput {
         self.validate_for(input)?;
         if !self.intents.is_empty() {
             return Err("包含 intents[] 的策略输出不能再次转换为 target_qty 调仓计划".into());
+        }
+        if self.target_qty_exact.is_some() {
+            return Err(
+                "target_qty_exact 需要按精确仓位构造 Live 订单，不能投影为 raw 调仓计划".into(),
+            );
         }
         let current = qx_zhenlu::portfolio::PortfolioState {
             portfolio_id: input.strategy_id.clone(),

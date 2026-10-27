@@ -7,7 +7,7 @@ use qx_xingban::AshareIssuerCapitalSnapshot;
 
 /// Build the persisted A-share read model only from balances and issuer facts actually
 /// produced by this run. Raw fixed-point amounts are strings to preserve all i128 digits.
-pub fn ashare_analysis_json(
+pub(crate) fn ashare_analysis_json(
     ledger: &Ledger,
     issuer_capital: &[AshareIssuerCapitalSnapshot],
     issuer_capital_at_end: Option<&AshareIssuerCapitalSnapshot>,

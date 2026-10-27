@@ -35,6 +35,7 @@ fn bench_l2_matching(c: &mut Criterion) {
                             account_id: "criterion".into(),
                             trace: None,
                             policy: None,
+                            exact_amounts: None,
                         })
                         .expect("valid deterministic order");
                     let snapshot = OrderBookSnapshot {
@@ -42,10 +43,14 @@ fn bench_l2_matching(c: &mut Criterion) {
                         ts: id,
                         sequence: id,
                         bids: vec![BookLevel {
+                            price_exact: None,
+                            qty_exact: None,
                             price: Price::from_i64(99),
                             qty: Quantity::from_i64(1),
                         }],
                         asks: vec![BookLevel {
+                            price_exact: None,
+                            qty_exact: None,
                             price: Price::from_i64(100),
                             qty: Quantity::from_i64(1),
                         }],
@@ -81,12 +86,16 @@ fn bench_l2_queue_position_depth_lookup(c: &mut Criterion) {
             sequence: 1,
             bids: (0..depth)
                 .map(|index| BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
                     price: Price::from_i64(10_000 - index as i64),
                     qty: Quantity::from_i64(100),
                 })
                 .collect(),
             asks: (0..depth)
                 .map(|index| BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
                     price: Price::from_i64(20_000 + index as i64),
                     qty: Quantity::from_i64(100),
                 })
@@ -111,6 +120,7 @@ fn bench_l2_queue_position_depth_lookup(c: &mut Criterion) {
                                 account_id: "criterion-queue".into(),
                                 trace: None,
                                 policy: None,
+                                exact_amounts: None,
                             })
                             .expect("valid passive order");
                     }
@@ -160,12 +170,16 @@ fn bench_l2_queue_price_lookup_algorithm(c: &mut Criterion) {
             sequence: 1,
             bids: (0..depth)
                 .map(|index| BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
                     price: Price::from_i64(10_000 - index as i64),
                     qty: Quantity::from_i64(index as i64 + 1),
                 })
                 .collect(),
             asks: (0..depth)
                 .map(|index| BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
                     price: Price::from_i64(20_000 + index as i64),
                     qty: Quantity::from_i64(index as i64 + 1),
                 })
@@ -232,9 +246,9 @@ fn bench_ashare_previous_close(c: &mut Criterion) {
     for size in SIZES {
         let bars = ashare_minute_bars(size);
         let pointwise: Vec<_> = (0..bars.len())
-            .map(|index| rules.previous_close(&bars, index))
+            .map(|index| rules.previous_close(&bars, index).unwrap())
             .collect();
-        let precomputed = rules.previous_close_series(&bars);
+        let precomputed = rules.previous_close_series(&bars).unwrap();
         assert_eq!(
             pointwise, precomputed,
             "A-share anchors must remain equivalent"
@@ -244,13 +258,13 @@ fn bench_ashare_previous_close(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("pointwise", size), &bars, |b, bars| {
             b.iter(|| {
                 let anchors: Vec<_> = (0..bars.len())
-                    .map(|index| rules.previous_close(black_box(bars), index))
+                    .map(|index| rules.previous_close(black_box(bars), index).unwrap())
                     .collect();
                 black_box(anchors);
             });
         });
         group.bench_with_input(BenchmarkId::new("precomputed", size), &bars, |b, bars| {
-            b.iter(|| black_box(rules.previous_close_series(black_box(bars))));
+            b.iter(|| black_box(rules.previous_close_series(black_box(bars)).unwrap()));
         });
     }
     group.finish();
@@ -278,7 +292,7 @@ fn bench_ashare_previous_close(c: &mut Criterion) {
             })
             .collect();
         let legacy = ashare_previous_close_series_legacy(&rules, &bars);
-        let indexed = rules.previous_close_series(&bars);
+        let indexed = rules.previous_close_series(&bars).unwrap();
         assert_eq!(legacy, indexed, "ex-rights anchors must remain equivalent");
 
         group.throughput(Throughput::Elements(size as u64));
@@ -298,7 +312,7 @@ fn bench_ashare_previous_close(c: &mut Criterion) {
             BenchmarkId::new("production_adaptive", size),
             &bars,
             |b, bars| {
-                b.iter(|| black_box(rules.previous_close_series(black_box(bars))));
+                b.iter(|| black_box(rules.previous_close_series(black_box(bars)).unwrap()));
             },
         );
     }
@@ -315,7 +329,11 @@ fn ashare_previous_close_series_legacy(
     for (index, bar) in bars.iter().enumerate() {
         let day = AshareRuleConfig::day_key(bar.ts);
         if current_day != Some(day) {
-            adjusted_previous_close = current_day.and_then(|_| rules.previous_close(bars, index));
+            adjusted_previous_close = current_day.and_then(|_| {
+                rules
+                    .previous_close(bars, index)
+                    .expect("benchmark inputs are valid")
+            });
             current_day = Some(day);
         }
         output.push(

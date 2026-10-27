@@ -125,6 +125,8 @@ mod run_evidence_experiment_recompute;
 mod run_evidence_export;
 mod run_evidence_multi;
 mod run_evidence_multi_account;
+mod run_evidence_multi_account_depth;
+mod run_evidence_multi_account_joint;
 mod run_evidence_multi_market;
 mod run_evidence_recompute;
 mod run_evidence_verify;

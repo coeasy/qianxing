@@ -1,0 +1,42 @@
+{
+  "kind": "qianxing_market_spec_set",
+  "schema_version": 1,
+  "markets": {
+    "BTC/USDT:USDT.OKX": {
+      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "OKX"},
+      "product": "perpetual",
+      "base_currency": "BTC",
+      "quote_currency": "USDT",
+      "settlement_currency": "USDT",
+      "contract_size": 1000000,
+      "linear": true,
+      "inverse": false,
+      "price_tick": 100000000,
+      "qty_step": 1000000000,
+      "min_qty": 1000000000,
+      "min_notional_raw": 0,
+      "max_leverage": 100,
+      "maintenance_margin_bps": 500,
+      "valid_from": 0,
+      "valid_to": null
+    },
+    "ETH/USDT:USDT.OKX": {
+      "instrument": {"symbol": "ETH/USDT:USDT", "venue": "OKX"},
+      "product": "perpetual",
+      "base_currency": "ETH",
+      "quote_currency": "USDT",
+      "settlement_currency": "USDT",
+      "contract_size": 100000000,
+      "linear": true,
+      "inverse": false,
+      "price_tick": 10000000,
+      "qty_step": 1000000000,
+      "min_qty": 1000000000,
+      "min_notional_raw": 0,
+      "max_leverage": 100,
+      "maintenance_margin_bps": 500,
+      "valid_from": 0,
+      "valid_to": null
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "microsandbox-local-windows-runtime-attempt-v1",
+  "generated_at_utc": "2026-10-27T07:33:46Z",
+  "environment": {
+    "os": "Windows 11 Pro",
+    "build": "22631",
+    "architecture": "x86_64",
+    "cpu": "AMD Ryzen 7 8700G",
+    "microsandbox_sdk": "0.7.11",
+    "backend": "local",
+    "windows_optional_feature": "HypervisorPlatform enabled; restart required",
+    "active_hypervisor": false
+  },
+  "attempt": {
+    "image": "alpine:3.20",
+    "network_policy": "deny_all",
+    "operation": "Sandbox.create followed by a local guest command",
+    "outcome": "blocked_before_vm_start",
+    "error": "Windows Hypervisor Platform is not available: WHP is installed but the hypervisor is not active for this Windows boot session.",
+    "guest_command_executed": false,
+    "sandbox_acceptance": false
+  },
+  "interpretation": "The Windows optional feature has been enabled, but WHP is not active in the current boot session. Restart Windows and rerun tools/microsandbox_local_smoke.py before recording local runtime acceptance. This attempt does not mark the Microsandbox provider sandbox_tested.",
+  "release_status": "blocked_pending_windows_restart_and_local_runtime_pass"
+}

@@ -8,7 +8,7 @@ pub(super) struct PreparedTimeline {
     pub start: u64,
     pub end: u64,
     pub events: Vec<OwnedTimelineEvent>,
-    pub settlements: BTreeMap<u64, BTreeMap<InstrumentId, i64>>,
+    pub settlements: BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>,
 }
 
 pub(super) fn prepare_timeline(
@@ -57,7 +57,7 @@ pub(super) fn scheduled_settlements(
     rates: &BTreeMap<InstrumentId, i64>,
     funding_events: &[FundingRateEvent],
     specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
-) -> Result<BTreeMap<u64, BTreeMap<InstrumentId, i64>>, qx_core::QxError> {
+) -> Result<BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>, qx_core::QxError> {
     if funding_events.len() > MAX_FUNDING_SETTLEMENTS as usize {
         return Err(qx_core::QxError::BusinessViolation(format!(
             "历史资金费事件数 {} 超过上限 {MAX_FUNDING_SETTLEMENTS}",
@@ -89,7 +89,8 @@ pub(super) fn scheduled_settlements(
         };
         if !(-10_000..=10_000).contains(&event.rate_bps)
             || (event.rate_bps != 0 && !spec.product.is_derivative())
-            || event.settlement_ts % FUNDING_INTERVAL_MS != 0
+            || event.settlement_ts == 0
+            || !event.has_valid_funding_interval()
         {
             return Err(qx_core::QxError::BusinessViolation(format!(
                 "历史资金费事件无效: instrument={}, settlement_ts={}, rate_bps={}",
@@ -112,7 +113,7 @@ pub(super) fn scheduled_settlements(
             "同一标的不能混用常量资金费率与历史资金费事件".into(),
         ));
     }
-    let mut events = BTreeMap::<u64, BTreeMap<InstrumentId, i64>>::new();
+    let mut events = BTreeMap::<u64, BTreeMap<InstrumentId, (i64, u64)>>::new();
     if rates.values().any(|rate| *rate != 0) {
         let first = start
             .checked_div(FUNDING_INTERVAL_MS)
@@ -133,7 +134,9 @@ pub(super) fn scheduled_settlements(
                     rates
                         .iter()
                         .filter(|(_, rate)| **rate != 0)
-                        .map(|(instrument, rate)| (instrument.clone(), *rate))
+                        .map(|(instrument, rate)| {
+                            (instrument.clone(), (*rate, FUNDING_INTERVAL_MS))
+                        })
                         .collect(),
                 );
                 let Some(next) = ts.checked_add(FUNDING_INTERVAL_MS) else {
@@ -154,7 +157,10 @@ pub(super) fn scheduled_settlements(
                 event.instrument, event.settlement_ts
             )));
         }
-        settlements.insert(event.instrument.clone(), event.rate_bps);
+        settlements.insert(
+            event.instrument.clone(),
+            (event.rate_bps, event.effective_funding_interval_ms()),
+        );
     }
     if events.len() as u64 > MAX_FUNDING_SETTLEMENTS {
         return Err(qx_core::QxError::BusinessViolation(format!(
@@ -167,7 +173,7 @@ pub(super) fn scheduled_settlements(
 
 pub(super) struct SettlementContext<'a> {
     pub(super) ts: u64,
-    pub(super) settlements: &'a BTreeMap<InstrumentId, i64>,
+    pub(super) settlements: &'a BTreeMap<InstrumentId, (i64, u64)>,
     pub(super) account_id: &'a str,
     pub(super) currency: &'a str,
     pub(super) specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
@@ -193,7 +199,7 @@ pub(super) fn apply_settlements(context: SettlementContext<'_>) -> Result<(), qx
         totals,
         cashflows,
     } = context;
-    for (instrument, rate_bps) in settlements {
+    for (instrument, (rate_bps, funding_interval_ms)) in settlements {
         let position = ledger.position_for(account_id, instrument).quantity.raw();
         if position == 0 {
             continue;
@@ -207,7 +213,7 @@ pub(super) fn apply_settlements(context: SettlementContext<'_>) -> Result<(), qx
             .get(instrument)
             .copied()
             .ok_or_else(|| qx_core::QxError::Invariant("资金费结算缺少标记时间".into()))?;
-        if ts.saturating_sub(mark_ts) > FUNDING_INTERVAL_MS {
+        if ts.saturating_sub(mark_ts) > *funding_interval_ms {
             return Err(qx_core::QxError::BusinessViolation(format!(
                 "资金费结算标记价已过期: instrument={instrument}, mark_ts={mark_ts}, settlement_ts={ts}"
             )));

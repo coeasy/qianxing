@@ -388,6 +388,7 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         id: "main".into(),
         settlement_currency: Some("USD".into()),
         initial_cash_raw: Some(0),
+        portfolio_id: None,
     });
     assert!(invalid
         .validate()
@@ -399,6 +400,7 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         id: "main".into(),
         settlement_currency: Some("USD".into()),
         initial_cash_raw: Some(100_000),
+        portfolio_id: None,
     });
     unknown_binding.workers[0].account_id = Some("missing".into());
     assert!(unknown_binding
@@ -411,6 +413,7 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         id: "main".into(),
         settlement_currency: Some("USDT".into()),
         initial_cash_raw: Some(100_000),
+        portfolio_id: None,
     });
     duplicated_funding.workers[0].account_id = Some("main".into());
     for (id, venue) in [("paper-exec", "paper"), ("binance-exec", "binance")] {

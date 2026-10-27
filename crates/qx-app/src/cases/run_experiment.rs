@@ -11,7 +11,9 @@
 //! `.experiment.json` 的规格指纹不会漂移。切分与基准的算法在 [`super::experiment_split`]，
 //! 本模块只负责在读侧把它们接进来。
 
-use super::artifacts::{artifact_paths, equity_series, read_text, write_text};
+use super::artifacts::{
+    artifact_paths, equity_series, persist_run_manifest, read_text, write_text,
+};
 use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
 use super::experiment_fold_search::{
     artifact_fingerprint, evaluate_fold_local_search, fold_local_execution_count,
@@ -28,6 +30,9 @@ use super::experiment_search::{
     DrawdownPruningWindow, ExperimentCandidatePruning, ExperimentSearchAlgorithm,
     ExperimentSearchObjective, ExperimentSearchPlan, ExperimentSearchReport, ExperimentSearchTrial,
     SearchBacktestAttempt, SearchState,
+};
+use super::experiment_spec_artifact::{
+    serialize_experiment_input, verify_spec_artifact, write_spec_artifact,
 };
 pub use super::experiment_split::EXPERIMENT_BASELINE_NAMES;
 use super::experiment_split::{
@@ -47,12 +52,17 @@ use crate::{
     AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsResult,
     CompareRunsSpec, ComparedRun, RunContext, RunHandle, StrategyArtifactIdentity,
 };
-use qx_core::Fnv1a;
+use qx_core::{Fnv1a, RunManifest};
 use qx_datastruct::BarFrame;
+use qx_spec::{
+    ArtifactRefV2, CanonicalDatasetIdentity, CanonicalRunClock, CanonicalRunSpec,
+    CanonicalStrategyIdentity, ReplayVerdict, RunRecordV2, RunStatus,
+};
 use qx_strategy::BuiltinStrategyKind;
 use qx_strategy::Strategy;
 use qx_xingban::{AshareRuleConfig, ExecutionCostRules};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -612,9 +622,22 @@ pub struct RunExperimentResult {
     pub schema_version: u32,
     pub experiment_id: String,
     pub spec_fingerprint: String,
+    /// Path-independent identity of the experiment inputs. Legacy reports omit both fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_fingerprint: Option<String>,
     /// Identity of the actual BarFrame, including bars that are outside scoring windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_data_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<BTreeMap<String, String>>,
     pub total_candidates: usize,
     pub completed_candidates: usize,
     pub succeeded_candidates: usize,
@@ -638,15 +661,20 @@ pub struct RunExperimentResult {
 
 impl RunExperimentResult {
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
-        serde_json::from_str(payload).map_err(|error| {
+        let result: Self = serde_json::from_str(payload).map_err(|error| {
             AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("RunExperimentResult JSON 无法读取: {error}"),
             )
-        })
+        })?;
+        validate_experiment_run_identity(&result)?;
+        validate_experiment_artifact_envelope(&result)?;
+        Ok(result)
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
+        validate_experiment_run_identity(self)?;
+        validate_experiment_artifact_envelope(self)?;
         serde_json::to_string(self).map_err(|error| {
             AppError::new(
                 AppErrorCategory::InternalInvariant,
@@ -771,20 +799,85 @@ fn run_experiment_inner(
             )
         })?
     );
+    let canonical_run_spec = build_experiment_canonical_run_spec(
+        spec,
+        identity,
+        &spec_json,
+        &input_frame,
+        &input_data_fingerprint,
+        context,
+    )?;
+    let canonical_run_spec_json = canonical_run_spec.canonical_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 CanonicalRunSpec 规范化失败: {error}"),
+        )
+    })?;
+    let canonical_run_spec_fingerprint = canonical_run_spec.fingerprint().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 CanonicalRunSpec 指纹失败: {error}"),
+        )
+    })?;
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
-    let artifact_path = root
+    let report_index_path = root
         .join(format!("{}.experiment.json", spec.experiment_id))
         .to_string_lossy()
         .into_owned();
-    match std::fs::read_to_string(&artifact_path) {
+    let spec_artifact_path = root
+        .join(format!("{}.experiment.spec.json", spec.experiment_id))
+        .to_string_lossy()
+        .into_owned();
+    let persisted_input = serialize_experiment_input(&spec_json, context.code_commit(), identity)?;
+    match std::fs::read_to_string(&report_index_path) {
         Ok(existing) => {
-            let previous = existing_result(
+            let mut previous = existing_result(
                 &existing,
                 &spec_fingerprint,
+                &canonical_run_spec_fingerprint,
                 &input_data_fingerprint,
                 &spec.experiment_id,
             )?;
             if !has_retryable_search_failures(&previous) {
+                previous.input_data_fingerprint = Some(input_data_fingerprint.clone());
+                previous.canonical_run_spec_json = Some(canonical_run_spec_json.clone());
+                previous.canonical_run_spec_fingerprint =
+                    Some(canonical_run_spec_fingerprint.clone());
+                verify_experiment_candidate_outcomes(&previous, context)?;
+                if previous.run_manifest.is_none()
+                    && previous.run_record.is_none()
+                    && previous.result_hash.is_none()
+                    && previous.artifact_locations.is_none()
+                {
+                    write_spec_artifact(&spec_artifact_path, &persisted_input, "参数实验")?;
+                    let upgraded = persist_experiment_result(
+                        previous,
+                        &canonical_run_spec,
+                        &root,
+                        &report_index_path,
+                        &spec_artifact_path,
+                    )?;
+                    return Ok(Some(upgraded));
+                }
+                verify_persisted_experiment_result(&previous)?;
+                let has_input_artifact = previous
+                    .artifact_locations
+                    .as_ref()
+                    .and_then(|locations| locations.get("experiment_input"))
+                    .is_some_and(|path| path == &spec_artifact_path);
+                if has_input_artifact {
+                    verify_spec_artifact(&spec_artifact_path, &persisted_input, "参数实验")?;
+                } else {
+                    write_spec_artifact(&spec_artifact_path, &persisted_input, "参数实验")?;
+                    let upgraded = persist_experiment_result(
+                        previous,
+                        &canonical_run_spec,
+                        &root,
+                        &report_index_path,
+                        &spec_artifact_path,
+                    )?;
+                    return Ok(Some(upgraded));
+                }
                 return Ok(Some(previous));
             }
             // Successful candidate/scenario checkpoints remain the source of truth. A prior
@@ -838,11 +931,11 @@ fn run_experiment_inner(
                     .is_none_or(|runs| runs > MAX_FOLD_LOCAL_RUNS)
                 {
                     return Err(AppError::new(
-                            AppErrorCategory::InvalidInput,
-                            format!(
-                                "全局搜索候选与成本/邻域压力情景合计最多允许 {MAX_FOLD_LOCAL_RUNS} 次回测"
-                            ),
-                        ));
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "全局搜索候选与成本/邻域压力情景合计最多允许 {MAX_FOLD_LOCAL_RUNS} 次回测"
+                        ),
+                    ));
                 }
             }
         }
@@ -1930,7 +2023,13 @@ fn run_experiment_inner(
         schema_version: RUN_EXPERIMENT_SCHEMA_VERSION,
         experiment_id: spec.experiment_id.clone(),
         spec_fingerprint,
+        canonical_run_spec_json: Some(canonical_run_spec_json),
+        canonical_run_spec_fingerprint: Some(canonical_run_spec_fingerprint.clone()),
         input_data_fingerprint: Some(input_data_fingerprint),
+        result_hash: None,
+        run_manifest: None,
+        run_record: None,
+        artifact_locations: None,
         total_candidates: total,
         completed_candidates: candidates.len(),
         succeeded_candidates: successful.len(),
@@ -1948,32 +2047,318 @@ fn run_experiment_inner(
         baselines,
         search: search_report,
         cost_sensitivity,
-        artifact_path: artifact_path.clone(),
+        artifact_path: report_index_path.clone(),
     };
     if cancellation.is_some_and(CancellationToken::is_cancelled) {
         return Ok(None);
     }
-    let report_json = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建实验产物目录", &error))?;
-    if let Err(write_error) = super::artifacts::write_text(&artifact_path, &report_json) {
-        // Concurrent identical requests can finish their candidates together. The first report
-        // wins; accept it only after reading and validating the exact experiment identity.
-        if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
-            return existing_result(
-                &existing,
-                &result.spec_fingerprint,
-                result
-                    .input_data_fingerprint
-                    .as_deref()
-                    .expect("new result identity"),
-                &result.experiment_id,
-            )
-            .map(Some);
-        }
-        return Err(write_error);
+    write_spec_artifact(&spec_artifact_path, &persisted_input, "参数实验")?;
+    verify_experiment_candidate_outcomes(&result, context)?;
+    let persisted = persist_experiment_result(
+        result,
+        &canonical_run_spec,
+        &root,
+        &report_index_path,
+        &spec_artifact_path,
+    )?;
+    verify_persisted_experiment_result(&persisted)?;
+    Ok(Some(persisted))
+}
+
+fn persist_experiment_result(
+    mut result: RunExperimentResult,
+    canonical_spec: &CanonicalRunSpec,
+    root: &Path,
+    report_index_path: &str,
+    spec_artifact_path: &str,
+) -> Result<RunExperimentResult, AppError> {
+    let result_hash = experiment_result_hash(&result)?;
+    result.result_hash = Some(result_hash.clone());
+    let manifest =
+        build_experiment_run_manifest(&result.experiment_id, canonical_spec, &result_hash)?;
+    let manifest_path = persist_run_manifest(root, &manifest)?;
+    let report_path = root.join(format!(
+        "{}-{result_hash}-input-v1.experiment.json",
+        result.experiment_id
+    ));
+    let record_path = root.join(format!(
+        "{}-{result_hash}-input-v1.record.json",
+        result.experiment_id
+    ));
+    // Keep artifact_path as the stable read/write index. The immutable report is exposed by the
+    // RunRecord-backed artifact_locations map.
+    result.artifact_path = report_index_path.to_owned();
+    result.run_manifest = Some(manifest_path.to_string_lossy().into_owned());
+    result.run_record = Some(record_path.to_string_lossy().into_owned());
+    result.artifact_locations = Some(BTreeMap::from([
+        (
+            "experiment_report".into(),
+            report_path.to_string_lossy().into_owned(),
+        ),
+        (
+            "run_manifest".into(),
+            result.run_manifest.clone().expect("manifest set above"),
+        ),
+        ("experiment_input".into(), spec_artifact_path.to_owned()),
+    ]));
+
+    let report_payload = result.to_json()?;
+    let manifest_payload = manifest.to_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 RunManifest 编码失败: {error}"),
+        )
+    })?;
+    let report_bytes = report_payload.as_bytes();
+    let manifest_bytes = manifest_payload.as_bytes();
+    let spec_bytes = std::fs::read(spec_artifact_path)
+        .map_err(|error| AppError::from_io("读取参数实验输入规格 sidecar", &error))?;
+    let record = RunRecordV2 {
+        schema_version: qx_spec::RUN_RECORD_V2_SCHEMA_VERSION,
+        run_id: result.experiment_id.clone(),
+        status: RunStatus::Completed,
+        input_digest: result
+            .input_data_fingerprint
+            .clone()
+            .ok_or_else(|| experiment_storage_error("实验输入数据指纹缺失"))?,
+        code_identity: format!("{}:{}", manifest.code_commit, manifest.runtime_version),
+        config_fingerprint: result
+            .canonical_run_spec_fingerprint
+            .clone()
+            .ok_or_else(|| experiment_storage_error("实验 CanonicalRunSpec 指纹缺失"))?,
+        started_at_ms: manifest.clock_start,
+        finished_at_ms: Some(manifest.clock_end),
+        artifact_refs: vec![
+            ArtifactRefV2 {
+                name: "experiment_report".into(),
+                artifact_id: qx_strategy::sha256_hex(report_bytes),
+                kind: "run-experiment-result-json".into(),
+                schema_version: RUN_EXPERIMENT_SCHEMA_VERSION,
+                byte_len: report_bytes.len() as u64,
+            },
+            ArtifactRefV2 {
+                name: "run_manifest".into(),
+                artifact_id: qx_strategy::sha256_hex(manifest_bytes),
+                kind: "run-manifest-json".into(),
+                schema_version: 1,
+                byte_len: manifest_bytes.len() as u64,
+            },
+            ArtifactRefV2 {
+                name: "experiment_input".into(),
+                artifact_id: qx_strategy::sha256_hex(&spec_bytes),
+                kind: "run-experiment-input-json".into(),
+                schema_version: 1,
+                byte_len: spec_bytes.len() as u64,
+            },
+        ],
+        replay_verdict: ReplayVerdict::Verified,
+        capability_level: qx_spec::CapabilityLevel::L1,
+    };
+    let record_payload = record.to_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 RunRecord V2 编码失败: {error}"),
+        )
+    })?;
+    let readback = RunRecordV2::from_json(&record_payload).map_err(|error| {
+        experiment_storage_error(format!("参数实验 RunRecord V2 无效: {error}"))
+    })?;
+    if readback != record {
+        return Err(experiment_storage_error(
+            "参数实验 RunRecord V2 规范化读回与写入对象不一致",
+        ));
     }
-    Ok(Some(result))
+
+    std::fs::create_dir_all(root)
+        .map_err(|error| AppError::from_io("创建参数实验产物目录", &error))?;
+    let record_publish = crate::artifact_store::sink::publish(
+        &record_path,
+        &record_payload,
+        crate::artifact_store::sink::PublishMode::Idempotent,
+    );
+    map_experiment_publish_result(record_publish, "参数实验 RunRecord V2")?;
+    let report_publish = crate::artifact_store::sink::publish(
+        &report_path,
+        &report_payload,
+        crate::artifact_store::sink::PublishMode::Idempotent,
+    );
+    map_experiment_publish_result(report_publish, "参数实验报告")?;
+    write_text(report_index_path, &report_payload)?;
+    Ok(result)
+}
+
+pub(crate) fn build_experiment_run_manifest(
+    experiment_id: &str,
+    canonical_spec: &CanonicalRunSpec,
+    result_hash: &str,
+) -> Result<RunManifest, AppError> {
+    let dataset = canonical_spec
+        .datasets
+        .first()
+        .ok_or_else(|| experiment_storage_error("实验 CanonicalRunSpec 缺少数据身份"))?;
+    let runtime_version = canonical_spec
+        .execution_model
+        .get("runtime_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| experiment_storage_error("实验执行模型缺少 runtime_version"))?;
+    let global_seed = canonical_spec
+        .random_seed
+        .parse::<u64>()
+        .map_err(|error| experiment_storage_error(format!("实验随机种子无效: {error}")))?;
+    let model_bytes = serde_json::to_vec(&canonical_spec.execution_model)
+        .map_err(|error| experiment_storage_error(format!("实验执行模型规范化失败: {error}")))?;
+    let instrument_spec_version = canonical_spec
+        .market_rules
+        .get(&dataset.instrument)
+        .cloned()
+        .unwrap_or_else(|| "legacy-default-v1".into());
+    let strategy_version = if canonical_spec.run_type == "depth_experiment" {
+        "depth-experiment-strategy-set-v1".into()
+    } else if canonical_spec.strategies.len() == 1 {
+        canonical_spec.strategies[0].strategy_version.clone()
+    } else {
+        "experiment-strategy-set-v1".into()
+    };
+    let canonical_json = canonical_spec.canonical_json().map_err(|error| {
+        experiment_storage_error(format!("实验 CanonicalRunSpec 规范化失败: {error}"))
+    })?;
+    let canonical_fingerprint = canonical_spec.fingerprint().map_err(|error| {
+        experiment_storage_error(format!("实验 CanonicalRunSpec 指纹失败: {error}"))
+    })?;
+    let input_components = canonical_spec
+        .datasets
+        .iter()
+        .map(|dataset| (dataset.role.clone(), dataset.content_fingerprint.clone()))
+        .collect::<BTreeMap<_, _>>();
+    Ok(RunManifest {
+        run_id: experiment_id.to_owned(),
+        code_commit: canonical_spec.code_revision.clone(),
+        config_hash: canonical_fingerprint.clone(),
+        data_fingerprint: dataset.content_fingerprint.clone(),
+        input_components,
+        clock_start: canonical_spec.clock.start_ts_ms,
+        clock_end: canonical_spec.clock.end_ts_ms,
+        global_seed,
+        determinism_mode: true,
+        result_hash: result_hash.to_owned(),
+        strategy_version,
+        instrument_spec_version,
+        model_fingerprint: qx_strategy::sha256_hex(&model_bytes),
+        input_event_hash: dataset.content_fingerprint.clone(),
+        output_event_hash: result_hash.to_owned(),
+        runtime_version: runtime_version.to_owned(),
+        canonical_run_spec_json: Some(canonical_json),
+        canonical_run_spec_fingerprint: Some(canonical_fingerprint),
+    })
+}
+
+fn verify_experiment_candidate_outcomes(
+    result: &RunExperimentResult,
+    context: &RunContext,
+) -> Result<(), AppError> {
+    let mut run_ids = BTreeSet::new();
+    for candidate in &result.candidates {
+        if let Some(outcome) = &candidate.outcome {
+            verify_one_experiment_outcome(outcome, context, &mut run_ids)?;
+        }
+    }
+    for scenario in &result.cost_sensitivity {
+        verify_cost_sensitivity_outcomes(scenario, context, &mut run_ids)?;
+    }
+    if let Some(search) = &result.search {
+        for fold in &search.fold_searches {
+            for candidate in &fold.candidates {
+                if let Some(outcome) = &candidate.outcome {
+                    verify_one_experiment_outcome(outcome, context, &mut run_ids)?;
+                }
+            }
+            for scenario in &fold.cost_sensitivity {
+                verify_cost_sensitivity_outcomes(scenario, context, &mut run_ids)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_cost_sensitivity_outcomes(
+    scenario: &ExecutionCostSensitivityResult,
+    context: &RunContext,
+    verified_run_ids: &mut BTreeSet<String>,
+) -> Result<(), AppError> {
+    if let Some(outcome) = &scenario.outcome {
+        verify_one_experiment_outcome(outcome, context, verified_run_ids)?;
+    }
+    if let Some(neighborhood) = &scenario.neighborhood_cost_robustness {
+        for candidate in &neighborhood.candidates {
+            if let Some(outcome) = &candidate.outcome {
+                verify_one_experiment_outcome(outcome, context, verified_run_ids)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_one_experiment_outcome(
+    outcome: &BacktestOutcome,
+    context: &RunContext,
+    verified_run_ids: &mut BTreeSet<String>,
+) -> Result<(), AppError> {
+    if !verified_run_ids.insert(outcome.run_id.clone()) {
+        return Ok(());
+    }
+    let verification = verify_run(outcome, context)?;
+    if !verification.verified {
+        return Err(experiment_storage_error(format!(
+            "实验候选 {} 产物复核失败: {}",
+            outcome.run_id,
+            verification.mismatches.join("; ")
+        )));
+    }
+    Ok(())
+}
+
+fn verify_persisted_experiment_result(result: &RunExperimentResult) -> Result<(), AppError> {
+    let value = serde_json::json!({
+        "schema_version": result.schema_version,
+        "experiment_id": result.experiment_id,
+        "spec_fingerprint": result.spec_fingerprint,
+        "canonical_run_spec_json": result.canonical_run_spec_json,
+        "canonical_run_spec_fingerprint": result.canonical_run_spec_fingerprint,
+        "input_data_fingerprint": result.input_data_fingerprint,
+        "result_hash": result.result_hash,
+        "run_manifest": result.run_manifest,
+        "run_record": result.run_record,
+        "artifact_locations": result.artifact_locations,
+        "artifact_path": result.artifact_path,
+    });
+    let reader = crate::artifact_store::FileArtifactReader;
+    crate::artifact_store::verify_declared_run_record_with_reader(&value, &reader).map_err(
+        |error| experiment_storage_error(format!("参数实验 RunRecord V2 复核失败: {error}")),
+    )?;
+    crate::artifact_store::verify_declared_run_manifest_with_reader(&value, &reader).map_err(
+        |error| experiment_storage_error(format!("参数实验 RunManifest 复核失败: {error}")),
+    )
+}
+
+fn map_experiment_publish_result(
+    result: Result<(), crate::artifact_store::sink::PublishError>,
+    label: &str,
+) -> Result<(), AppError> {
+    result.map_err(|error| match error {
+        crate::artifact_store::sink::PublishError::Conflict(message) => AppError::new(
+            AppErrorCategory::Conflict,
+            format!("{label}冲突: {message}"),
+        ),
+        crate::artifact_store::sink::PublishError::Io(error) => {
+            AppError::from_io(&format!("发布{label}"), &error)
+        }
+    })
+}
+
+fn experiment_storage_error(message: impl Into<String>) -> AppError {
+    AppError::new(AppErrorCategory::StorageFailure, message)
 }
 
 // The explicit identity fields are all part of the checkpoint cache key.
@@ -2041,12 +2426,19 @@ fn load_search_candidate_checkpoint(
 fn existing_result(
     payload: &str,
     expected_fingerprint: &str,
+    expected_canonical_fingerprint: &str,
     expected_data_fingerprint: &str,
     experiment_id: &str,
 ) -> Result<RunExperimentResult, AppError> {
     let previous = RunExperimentResult::from_json(payload)?;
-    if previous.experiment_id != experiment_id || previous.spec_fingerprint != expected_fingerprint
-    {
+    let same_spec = previous
+        .canonical_run_spec_fingerprint
+        .as_deref()
+        .map_or_else(
+            || previous.spec_fingerprint == expected_fingerprint,
+            |fingerprint| fingerprint == expected_canonical_fingerprint,
+        );
+    if previous.experiment_id != experiment_id || !same_spec {
         return Err(AppError::new(
             AppErrorCategory::Conflict,
             format!("experiment_id {experiment_id} 已绑定不同实验规格"),
@@ -2075,6 +2467,579 @@ fn existing_result(
         ));
     }
     Ok(previous)
+}
+
+fn build_experiment_canonical_run_spec(
+    spec: &RunExperimentSpec,
+    identity: Option<&StrategyArtifactIdentity>,
+    spec_json: &str,
+    frame: &BarFrame,
+    data_fingerprint: &str,
+    context: &RunContext,
+) -> Result<CanonicalRunSpec, AppError> {
+    let start_ts_ms =
+        frame.ts.first().copied().ok_or_else(|| {
+            experiment_identity_invalid("CanonicalRunSpec 缺少 BarFrame 开始时间")
+        })?;
+    let end_ts_ms =
+        frame.ts.last().copied().ok_or_else(|| {
+            experiment_identity_invalid("CanonicalRunSpec 缺少 BarFrame 结束时间")
+        })?;
+
+    let portable_spec_json = quote_unsafe_integer_tokens(spec_json);
+    let mut behavior: Value = serde_json::from_str(&portable_spec_json).map_err(|error| {
+        experiment_identity_invalid(format!("RunExperimentSpec 规范化 JSON 无效: {error}"))
+    })?;
+    let fields = behavior
+        .as_object_mut()
+        .ok_or_else(|| experiment_identity_invalid("RunExperimentSpec 规范化结果不是 JSON 对象"))?;
+    fields.remove("experiment_id");
+    let base = fields
+        .get_mut("base")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| experiment_identity_invalid("实验 CanonicalRunSpec 缺少 base"))?;
+    for field in ["run_id", "bars_path", "output_dir"] {
+        base.remove(field);
+    }
+    if let Some(dimensions) = fields
+        .get_mut("parameter_space")
+        .and_then(Value::as_array_mut)
+    {
+        for dimension in dimensions {
+            if let Some(values) = dimension.get_mut("values").and_then(Value::as_array_mut) {
+                for value in values {
+                    canonicalize_integer(value);
+                }
+            }
+        }
+    }
+    if let Some(ranges) = fields
+        .get_mut("search")
+        .and_then(|search| search.get_mut("continuous_parameter_space"))
+        .and_then(Value::as_array_mut)
+    {
+        for range in ranges {
+            for field in ["min", "max", "step"] {
+                if let Some(value) = range.get_mut(field) {
+                    canonicalize_integer(value);
+                }
+            }
+        }
+    }
+    normalize_experiment_identity_values(&mut behavior, "behavior")?;
+
+    let mut kinds = if spec.strategy_kinds.is_empty() {
+        vec![spec.base.strategy.kind]
+    } else {
+        spec.strategy_kinds.clone()
+    };
+    kinds.sort_by_key(|kind| kind.name());
+    let mut strategies = Vec::with_capacity(kinds.len());
+    for kind in kinds {
+        let mut strategy = spec.base.strategy.clone();
+        strategy.kind = kind;
+        let mut parameters = serde_json::to_value(&strategy).map_err(|error| {
+            experiment_identity_invalid(format!("实验策略参数转 JSON 失败: {error}"))
+        })?;
+        normalize_experiment_identity_values(&mut parameters, "strategies.parameters")?;
+        let strategy_id = if spec.strategy_kinds.is_empty() {
+            strategy.strategy_id.clone()
+        } else {
+            format!("{}#{}", strategy.strategy_id, kind.name())
+        };
+        strategies.push(CanonicalStrategyIdentity {
+            strategy_id,
+            strategy_version: identity
+                .map(|identity| identity.strategy_version.clone())
+                .unwrap_or_else(|| super::run_backtest::strategy_slot::strategy_version(&strategy)),
+            source_sha256: identity.map(|identity| identity.source_sha256.clone()),
+            parameters,
+        });
+    }
+
+    let mut market_rules = std::collections::BTreeMap::new();
+    if let Some(market_spec) = &spec.base.market_spec {
+        let mut market_rules_value = serde_json::to_value(market_spec)
+            .map_err(|error| experiment_identity_invalid(format!("市场规则转换失败: {error}")))?;
+        normalize_experiment_identity_values(&mut market_rules_value, "market_rules")?;
+        let bytes = serde_json::to_vec(&market_rules_value)
+            .map_err(|error| experiment_identity_invalid(format!("市场规则编码失败: {error}")))?;
+        market_rules.insert(
+            spec.base.instrument.clone(),
+            qx_strategy::sha256_hex(&bytes),
+        );
+    }
+
+    let runtime_version = format!("qx-app-{}", env!("CARGO_PKG_VERSION"));
+    let execution_model = serde_json::json!({
+        "runtime_version": runtime_version,
+        "matching_kernel": crate::cases::kernels::BAR_MATCHING_KERNEL,
+        "fill_model": match spec.base.fill_model.unwrap_or(crate::BacktestFillModel::NextBarOpen) {
+            crate::BacktestFillModel::NextBarOpen => "next_bar_open",
+            crate::BacktestFillModel::BestPrice => "best_price",
+            crate::BacktestFillModel::OneTickSlippage => "one_tick_slippage",
+        },
+        "risk_rule_set_version": spec.base.risk_rules.as_ref().map(|rules| rules.version.as_str()).unwrap_or("runtime-risk-v1"),
+        "account_id": spec.base.account_id.as_deref().unwrap_or("app"),
+        "settlement_currency": spec.base.settlement_currency,
+    });
+    CanonicalRunSpec::new(
+        "experiment",
+        context.code_commit(),
+        strategies,
+        vec![CanonicalDatasetIdentity {
+            role: "bars".into(),
+            instrument: spec.base.instrument.clone(),
+            content_fingerprint: data_fingerprint.into(),
+            start_ts_ms,
+            end_ts_ms,
+        }],
+        market_rules,
+        CanonicalRunClock {
+            start_ts_ms,
+            end_ts_ms,
+            timestamp_unit: "unix_ms".into(),
+            timezone: "UTC".into(),
+        },
+        spec.base.seed,
+        behavior,
+        execution_model,
+        std::collections::BTreeMap::new(),
+    )
+    .map_err(|error| experiment_identity_invalid(format!("实验 CanonicalRunSpec 无效: {error}")))
+}
+
+pub(crate) fn normalize_experiment_identity_values(
+    value: &mut Value,
+    path: &str,
+) -> Result<(), AppError> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
+        Value::Number(number) if number.is_f64() => Err(experiment_identity_invalid(format!(
+            "{path} 含浮点值；CanonicalRunSpec 精确数值必须使用十进制文本"
+        ))),
+        Value::Number(number) => {
+            if number
+                .as_i64()
+                .is_some_and(|integer| integer.unsigned_abs() > 9_007_199_254_740_991)
+                || number
+                    .as_u64()
+                    .is_some_and(|integer| integer > 9_007_199_254_740_991)
+            {
+                canonicalize_integer(value);
+            }
+            Ok(())
+        }
+        Value::Array(values) => {
+            for (index, child) in values.iter_mut().enumerate() {
+                normalize_experiment_identity_values(child, &format!("{path}[{index}]"))?;
+            }
+            Ok(())
+        }
+        Value::Object(fields) => {
+            for (name, child) in fields.iter_mut() {
+                if name.ends_with("_raw") || name == "seed" {
+                    canonicalize_integer(child);
+                }
+                normalize_experiment_identity_values(child, &format!("{path}.{name}"))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn canonicalize_integer(value: &mut Value) {
+    if value.is_number() {
+        *value = Value::String(value.to_string());
+    }
+}
+
+pub(crate) fn quote_unsafe_integer_tokens(json: &str) -> String {
+    let bytes = json.as_bytes();
+    let mut output = String::with_capacity(json.len());
+    let mut segment_start = 0;
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if byte.is_ascii_digit() || byte == b'-' {
+            let start = index;
+            while index < bytes.len()
+                && !matches!(
+                    bytes[index],
+                    b',' | b']' | b'}' | b':' | b' ' | b'\n' | b'\r' | b'\t'
+                )
+            {
+                index += 1;
+            }
+            let token = &json[start..index];
+            let is_unsafe_integer = !token.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+                && token
+                    .parse::<i128>()
+                    .map(|number| number.unsigned_abs() > 9_007_199_254_740_991)
+                    .unwrap_or_else(|_| {
+                        token
+                            .parse::<u128>()
+                            .is_ok_and(|number| number > 9_007_199_254_740_991)
+                    });
+            if is_unsafe_integer {
+                output.push_str(&json[segment_start..start]);
+                output.push('"');
+                output.push_str(token);
+                output.push('"');
+                segment_start = index;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    output.push_str(&json[segment_start..]);
+    output
+}
+
+fn validate_experiment_run_identity(result: &RunExperimentResult) -> Result<(), AppError> {
+    match (
+        result.canonical_run_spec_json.as_deref(),
+        result.canonical_run_spec_fingerprint.as_deref(),
+    ) {
+        (None, None) => Ok(()),
+        (Some(payload), Some(expected_fingerprint)) => {
+            let canonical = CanonicalRunSpec::from_json(payload)
+                .map_err(|error| AppError::new(AppErrorCategory::StorageFailure, error))?;
+            let canonical_json = canonical
+                .canonical_json()
+                .map_err(|error| AppError::new(AppErrorCategory::StorageFailure, error))?;
+            let fingerprint = canonical
+                .fingerprint()
+                .map_err(|error| AppError::new(AppErrorCategory::StorageFailure, error))?;
+            if canonical_json != payload
+                || fingerprint != expected_fingerprint
+                || canonical.run_type != "experiment"
+                || canonical.datasets.len() != 1
+                || result.input_data_fingerprint.as_deref()
+                    != canonical
+                        .datasets
+                        .first()
+                        .map(|dataset| dataset.content_fingerprint.as_str())
+                || result
+                    .candidates
+                    .iter()
+                    .filter_map(|candidate| candidate.outcome.as_ref())
+                    .any(|outcome| canonical.datasets[0].instrument != outcome.instrument)
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::StorageFailure,
+                    "参数实验 CanonicalRunSpec 与报告数据身份或指纹不一致",
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(AppError::new(
+            AppErrorCategory::StorageFailure,
+            "参数实验 CanonicalRunSpec JSON 与 fingerprint 必须同时存在或同时缺省",
+        )),
+    }
+}
+
+fn validate_experiment_artifact_envelope(result: &RunExperimentResult) -> Result<(), AppError> {
+    match (
+        result.result_hash.as_deref(),
+        result.run_manifest.as_deref(),
+        result.run_record.as_deref(),
+        result.artifact_locations.as_ref(),
+    ) {
+        (None, None, None, None) => Ok(()),
+        (Some(result_hash), Some(manifest), Some(record), Some(locations)) => {
+            let is_hash = |value: &str| {
+                value.len() == 16
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            };
+            if !is_hash(result_hash)
+                || manifest.trim().is_empty()
+                || record.trim().is_empty()
+                || result.canonical_run_spec_json.is_none()
+                || result.canonical_run_spec_fingerprint.is_none()
+                || result.input_data_fingerprint.is_none()
+                || !matches!(locations.len(), 2 | 3)
+                || (locations.len() == 3
+                    && locations
+                        .get("experiment_input")
+                        .is_none_or(|path| path.trim().is_empty()))
+                || locations
+                    .get("experiment_report")
+                    .is_none_or(|path| path.trim().is_empty())
+                || locations.get("run_manifest").map(String::as_str) != Some(manifest)
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::StorageFailure,
+                    "参数实验标准产物指针或 ArtifactLocations 无效",
+                ));
+            }
+            if experiment_result_hash(result)? != result_hash {
+                return Err(AppError::new(
+                    AppErrorCategory::StorageFailure,
+                    "参数实验 result_hash 与报告事实不一致",
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(AppError::new(
+            AppErrorCategory::StorageFailure,
+            "参数实验 result_hash、RunManifest、RunRecord 和 ArtifactLocations 必须全部存在或全部缺省",
+        )),
+    }
+}
+
+fn experiment_result_hash(result: &RunExperimentResult) -> Result<String, AppError> {
+    let serialized = serde_json::to_string(result).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验事实摘要编码失败: {error}"),
+        )
+    })?;
+    experiment_result_hash_from_json(&serialized).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验事实摘要规范化失败: {error}"),
+        )
+    })
+}
+
+pub(crate) fn experiment_result_hash_from_value(value: &Value) -> Result<String, String> {
+    let payload = serde_json::to_string(value)
+        .map_err(|error| format!("参数实验事实摘要编码失败: {error}"))?;
+    experiment_result_hash_from_json(&payload)
+}
+
+pub(crate) fn experiment_result_hash_from_json(payload: &str) -> Result<String, String> {
+    let mut parser = ExperimentJsonParser::new(payload);
+    let value = parser.parse_value()?;
+    parser.skip_whitespace();
+    if parser.cursor != parser.bytes.len() {
+        return Err("参数实验 JSON 存在尾随内容".into());
+    }
+    let mut canonical = String::new();
+    value.write_canonical(&mut canonical);
+    let mut digest = Fnv1a::new();
+    digest.write_bytes(canonical.as_bytes());
+    Ok(format!("{:016x}", digest.finish()))
+}
+
+#[derive(Debug)]
+enum ExperimentJsonValue {
+    Raw(String),
+    Array(Vec<ExperimentJsonValue>),
+    Object(BTreeMap<String, ExperimentJsonValue>),
+}
+
+impl ExperimentJsonValue {
+    fn write_canonical(&self, output: &mut String) {
+        match self {
+            Self::Raw(value) => output.push_str(value),
+            Self::Array(items) => {
+                output.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    item.write_canonical(output);
+                }
+                output.push(']');
+            }
+            Self::Object(fields) => {
+                output.push('{');
+                for (index, (name, value)) in fields.iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    output.push_str(&serde_json::to_string(name).expect("string key serializes"));
+                    output.push(':');
+                    value.write_canonical(output);
+                }
+                output.push('}');
+            }
+        }
+    }
+}
+
+struct ExperimentJsonParser<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> ExperimentJsonParser<'a> {
+    fn new(payload: &'a str) -> Self {
+        Self {
+            bytes: payload.as_bytes(),
+            cursor: 0,
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self
+            .bytes
+            .get(self.cursor)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.cursor += 1;
+        }
+    }
+
+    fn parse_value(&mut self) -> Result<ExperimentJsonValue, String> {
+        self.skip_whitespace();
+        match self.bytes.get(self.cursor).copied() {
+            Some(b'{') => self.parse_object(),
+            Some(b'[') => self.parse_array(),
+            Some(b'"') => self.parse_raw_string(),
+            Some(_) => self.parse_raw_scalar(),
+            None => Err("参数实验 JSON 意外结束".into()),
+        }
+    }
+
+    fn parse_object(&mut self) -> Result<ExperimentJsonValue, String> {
+        self.cursor += 1;
+        let mut fields = BTreeMap::new();
+        self.skip_whitespace();
+        if self.consume(b'}') {
+            return Ok(ExperimentJsonValue::Object(fields));
+        }
+        loop {
+            self.skip_whitespace();
+            let key_start = self.cursor;
+            let key_end = self.scan_string()?;
+            let key: String = serde_json::from_slice(&self.bytes[key_start..key_end])
+                .map_err(|error| format!("参数实验 JSON 对象键无效: {error}"))?;
+            self.skip_whitespace();
+            if !self.consume(b':') {
+                return Err("参数实验 JSON 对象缺少冒号".into());
+            }
+            let value = self.parse_value()?;
+            if !is_experiment_location_key(&key) {
+                fields.insert(key, value);
+            }
+            self.skip_whitespace();
+            if self.consume(b'}') {
+                break;
+            }
+            if !self.consume(b',') {
+                return Err("参数实验 JSON 对象缺少逗号".into());
+            }
+        }
+        Ok(ExperimentJsonValue::Object(fields))
+    }
+
+    fn parse_array(&mut self) -> Result<ExperimentJsonValue, String> {
+        self.cursor += 1;
+        let mut values = Vec::new();
+        self.skip_whitespace();
+        if self.consume(b']') {
+            return Ok(ExperimentJsonValue::Array(values));
+        }
+        loop {
+            values.push(self.parse_value()?);
+            self.skip_whitespace();
+            if self.consume(b']') {
+                break;
+            }
+            if !self.consume(b',') {
+                return Err("参数实验 JSON 数组缺少逗号".into());
+            }
+        }
+        Ok(ExperimentJsonValue::Array(values))
+    }
+
+    fn parse_raw_string(&mut self) -> Result<ExperimentJsonValue, String> {
+        let start = self.cursor;
+        let end = self.scan_string()?;
+        let raw = std::str::from_utf8(&self.bytes[start..end])
+            .map_err(|error| format!("参数实验 JSON 字符串不是 UTF-8: {error}"))?;
+        Ok(ExperimentJsonValue::Raw(raw.to_owned()))
+    }
+
+    fn scan_string(&mut self) -> Result<usize, String> {
+        if !self.consume(b'"') {
+            return Err("参数实验 JSON 对象键必须是字符串".into());
+        }
+        let mut escaped = false;
+        while let Some(byte) = self.bytes.get(self.cursor).copied() {
+            self.cursor += 1;
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                return Ok(self.cursor);
+            }
+        }
+        Err("参数实验 JSON 字符串没有结束".into())
+    }
+
+    fn parse_raw_scalar(&mut self) -> Result<ExperimentJsonValue, String> {
+        let start = self.cursor;
+        while self
+            .bytes
+            .get(self.cursor)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b',' | b']' | b'}'))
+        {
+            self.cursor += 1;
+        }
+        if start == self.cursor {
+            return Err("参数实验 JSON 标量为空".into());
+        }
+        let raw = std::str::from_utf8(&self.bytes[start..self.cursor])
+            .map_err(|error| format!("参数实验 JSON 标量不是 UTF-8: {error}"))?;
+        Ok(ExperimentJsonValue::Raw(raw.to_owned()))
+    }
+
+    fn consume(&mut self, expected: u8) -> bool {
+        if self.bytes.get(self.cursor) == Some(&expected) {
+            self.cursor += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn is_experiment_location_key(name: &str) -> bool {
+    matches!(
+        name,
+        "experiment_id"
+            | "spec_fingerprint"
+            | "artifact_path"
+            | "artifacts"
+            | "run_id"
+            | "run_manifest"
+            | "run_record"
+            | "artifact_locations"
+            | "result_hash"
+            | "selected_run_manifest"
+    ) || name.ends_with("_path")
+        || name.ends_with("_file")
+        || name.ends_with("_dir")
+}
+
+fn experiment_identity_invalid(message: impl Into<String>) -> AppError {
+    AppError::new(AppErrorCategory::InvalidInput, message)
 }
 
 fn has_retryable_search_failures(result: &RunExperimentResult) -> bool {

@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-api-input-v5.json",
+  "title": "Qianxing Strategy API v5 — Input",
+  "description": "策略输入 v5 增加来源精度 OHLCV；可同时携带已提交订单状态、成交事实和 durable Python BaseStrategy checkpoint。所有决策仍由宿主校验。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "strategy_id",
+    "strategy_version",
+    "data_fingerprint",
+    "as_of",
+    "instrument",
+    "positions",
+    "cash",
+    "risk_state",
+    "research_targets"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 5
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data_fingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "as_of": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "positions": {
+      "$ref": "#/$defs/raw_ledger"
+    },
+    "positions_exact": {
+      "$ref": "#/$defs/exact_signed_ledger"
+    },
+    "cash": {
+      "$ref": "#/$defs/raw_ledger"
+    },
+    "available_margin_raw": {
+      "$ref": "#/$defs/optional_raw_non_negative"
+    },
+    "risk_state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "research_targets": {
+      "$ref": "#/$defs/raw_ledger"
+    },
+    "bars": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/bars"
+        }
+      ]
+    },
+    "market_bars": {
+      "description": "主 bars 之外的市场历史，键为完整 InstrumentId；所有 Bar 都不得晚于 as_of。",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/bars"
+      }
+    },
+    "execution_updates": {
+      "type": "array",
+      "items": {
+        "$ref": "strategy-order-status-update-v1.json"
+      }
+    },
+    "fill_updates": {
+      "type": "array",
+      "items": {
+        "$ref": "strategy-fill-update-v2.json"
+      }
+    },
+    "strategy_checkpoint": {
+      "$ref": "#/$defs/checkpoint"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "raw_signed": {
+      "description": "核心定点 raw 值（Rust i128，可负）：只允许 JSON 整数。持仓可为空头、现金在保证金账户可为负，所以这里不能收窄成非负。",
+      "type": "integer"
+    },
+    "raw_non_negative": {
+      "description": "必须非负的定点 raw 值（Rust 侧 `available_margin_raw` 的 validate 同样拒绝负数）。",
+      "type": "integer",
+      "minimum": 0
+    },
+    "optional_raw_non_negative": {
+      "description": "可缺省的可用保证金：null 表示运行时未计算这一格，而不是算出来是零（与产物里 Option<i128> 的诚实语义一致）。",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/raw_non_negative"
+        }
+      ]
+    },
+    "raw_ledger": {
+      "description": "以 InstrumentId 为键，或以 `account_id|InstrumentId` 为键（多账户持仓）的定点 raw 值账。键不在 schema 里做词法约束：那是运行时 validate 的职责，schema 只钉形态。",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/raw_signed"
+      }
+    },
+    "exact_signed_ledger": {
+      "description": "精确的有符号十进制持仓数量，以 InstrumentId 或 `account_id|InstrumentId` 为键；十进制字符串最多 18 位小数。",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+      }
+    },
+    "bars": {
+      "type": "object",
+      "required": [
+        "source",
+        "ts",
+        "open_raw",
+        "high_raw",
+        "low_raw",
+        "close_raw",
+        "volume_raw"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ts": {
+          "description": "严格递增的毫秒时间戳（Rust 侧 `StrategyContractBars::validate` 同样拒绝重复与倒序）。",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "open_raw": {
+          "$ref": "#/$defs/raw_series"
+        },
+        "high_raw": {
+          "$ref": "#/$defs/raw_series"
+        },
+        "low_raw": {
+          "$ref": "#/$defs/raw_series"
+        },
+        "close_raw": {
+          "$ref": "#/$defs/raw_series"
+        },
+        "volume_raw": {
+          "$ref": "#/$defs/raw_series"
+        },
+        "exact_ohlcv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/exact_ohlcv"
+              }
+            ]
+          },
+          "description": "Optional row-aligned exact source values; v5 input requires at least one non-null row across bars and market_bars."
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw_series": {
+      "description": "一列定点 raw 值；Rust 侧只校验五列等长，不校验正负，故这里保持 raw_signed。",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/raw_signed"
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "strategy_id",
+        "strategy_version",
+        "adapter_state",
+        "strategy_state"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "strategy_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapter_state": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "strategy_state": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "description": "Runtime additionally checks identity binding and a maximum encoded size of 64 KiB."
+    },
+    "exact_decimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(?:0|[1-9][0-9]*)$",
+          "maxLength": 40
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false,
+      "description": "ExactDecimal uses a normalized signed i128 coefficient encoded as text and a decimal scale."
+    },
+    "exact_ohlcv": {
+      "type": "object",
+      "required": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "properties": {
+        "open": {
+          "$ref": "#/$defs/exact_decimal"
+        },
+        "high": {
+          "$ref": "#/$defs/exact_decimal"
+        },
+        "low": {
+          "$ref": "#/$defs/exact_decimal"
+        },
+        "close": {
+          "$ref": "#/$defs/exact_decimal"
+        },
+        "volume": {
+          "$ref": "#/$defs/exact_decimal"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Authoritative source-precision OHLCV. Rust and Python also validate value ranges and each 1e-9 raw projection."
+    }
+  }
+}

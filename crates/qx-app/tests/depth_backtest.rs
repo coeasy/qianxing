@@ -24,6 +24,22 @@ fn l1_tick_use_case_runs_the_rust_engine_and_publishes_verifiable_artifacts() {
     let summary: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&first.artifacts.summary).expect("summary"))
             .expect("summary JSON");
+    assert!(summary.pointer("/metrics_exact/equity/final").is_some());
+    let equity_csv = std::fs::read_to_string(&first.artifacts.equity).expect("equity CSV");
+    assert!(equity_csv.starts_with("index,ts,equity_raw,equity_exact,position_raw\n"));
+    let final_exact = equity_csv
+        .lines()
+        .last()
+        .unwrap()
+        .split(',')
+        .nth(3)
+        .unwrap();
+    assert_eq!(
+        final_exact,
+        summary["metrics_exact"]["equity"]["final"]
+            .as_str()
+            .expect("exact final equity")
+    );
     assert_eq!(first.display_summary, summary);
     let public_outcome = serde_json::to_value(&first).expect("stable depth outcome JSON");
     assert!(public_outcome.get("display_summary").is_none());
@@ -45,6 +61,73 @@ fn l1_tick_use_case_runs_the_rust_engine_and_publishes_verifiable_artifacts() {
     assert!(Path::new(&first.artifacts.summary).is_file());
     assert!(Path::new(&first.artifacts.equity).is_file());
     assert!(Path::new(&first.artifacts.fills).is_file());
+}
+
+#[test]
+fn depth_canonical_identity_binds_the_run_and_ignores_local_paths() {
+    let first_root = scratch("depth-canonical-first");
+    let second_root = scratch("depth-canonical-second");
+    let first_spec = spec("depth-canonical-first", &first_root, "l1", 1);
+    let second_spec = spec("depth-canonical-second", &second_root, "l1", 1);
+    let first_context = RunContext::new(CallerCapability::Research, "depth-canonical-first");
+    let second_context = RunContext::new(CallerCapability::Research, "depth-canonical-second");
+
+    let first = run_depth_backtest(&first_spec, &first_context).expect("first depth run");
+    let second = run_depth_backtest(&second_spec, &second_context).expect("second depth run");
+    let first_manifest = qx_core::RunManifest::from_json(
+        &std::fs::read_to_string(&first.artifacts.run_manifest).expect("first manifest"),
+    )
+    .expect("valid first manifest");
+    let second_manifest = qx_core::RunManifest::from_json(
+        &std::fs::read_to_string(&second.artifacts.run_manifest).expect("second manifest"),
+    )
+    .expect("valid second manifest");
+    let first_spec = qx_spec::CanonicalRunSpec::from_json(
+        first_manifest
+            .canonical_run_spec_json
+            .as_deref()
+            .expect("canonical spec"),
+    )
+    .expect("valid canonical spec");
+    let second_spec = qx_spec::CanonicalRunSpec::from_json(
+        second_manifest
+            .canonical_run_spec_json
+            .as_deref()
+            .expect("canonical spec"),
+    )
+    .expect("valid canonical spec");
+
+    assert_eq!(
+        first_spec.fingerprint().unwrap(),
+        second_spec.fingerprint().unwrap()
+    );
+    assert_eq!(first_spec.datasets[0].role, "depth_snapshots");
+    assert_eq!(first_spec.random_seed, "0");
+    assert_eq!(
+        first_spec.strategies[0].parameters["quantity_raw"],
+        SCALE.to_string()
+    );
+    assert!(first_spec.datasets[0]
+        .content_fingerprint
+        .starts_with("depth-frame-fnv1a64:"));
+    let canonical_json = first_spec.canonical_json().unwrap();
+    assert!(!canonical_json.contains(&first_root.join("depth.json").to_string_lossy().to_string()));
+    assert!(!canonical_json.contains(&first_root.join("runs").to_string_lossy().to_string()));
+    assert!(first_spec.behavior.get("depth_path").is_none());
+    assert!(first_spec.behavior.get("output_dir").is_none());
+    assert!(first_spec.behavior.get("run_id").is_none());
+    let first_verification = verify_depth_run(&first, &first_context).unwrap();
+    let second_verification = verify_depth_run(&second, &second_context).unwrap();
+    assert!(
+        first_verification.verified,
+        "{:?}",
+        first_verification.mismatches
+    );
+    assert!(
+        second_verification.verified,
+        "{:?}",
+        second_verification.mismatches
+    );
 }
 
 #[test]
@@ -224,9 +307,11 @@ fn depth_portfolio_runs_multiple_strategies_through_the_shared_tick_and_book_eng
         request.portfolio = Some(PortfolioBacktestConfig {
             primary_priority: 0,
             primary_reserved_capital_raw: 500_000 * SCALE,
+            primary_reserved_capital_exact: None,
             additional_strategies: vec![PortfolioStrategySpec {
                 priority: 1,
                 reserved_capital_raw: 500_000 * SCALE,
+                reserved_capital_exact: None,
                 strategy: BuiltinStrategySpec {
                     kind: BuiltinStrategyKind::Momentum,
                     strategy_id: "depth-momentum".into(),
@@ -248,7 +333,9 @@ fn depth_portfolio_runs_multiple_strategies_through_the_shared_tick_and_book_eng
         let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fills artifact");
         assert_eq!(
             fills.lines().next(),
-            Some("order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id")
+            Some(
+                "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json"
+            )
         );
         let owners = fills
             .lines()

@@ -39,6 +39,10 @@ impl Strategy for ParameterizedBuy {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         } else {
             Vec::new()

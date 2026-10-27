@@ -13,9 +13,34 @@ impl<'a> PortfolioBarEngine<'a> {
                 "共享 Bar session 至少需要一个市场".into(),
             ));
         }
-        if config.account_id.trim().is_empty() || config.initial_cash.raw() <= 0 {
+        if config.account_id.trim().is_empty() {
             return Err(qx_core::QxError::BusinessViolation(
                 "共享 Bar session 账户身份和初始资金必须有效".into(),
+            ));
+        }
+        let initial_cash_exact = match config.initial_cash_exact {
+            Some(amount) => amount,
+            None if config.initial_cash.raw() > 0 => {
+                qx_core::ExactDecimal::from_parts(config.initial_cash.raw(), 9)
+                    .map_err(|error| qx_core::QxError::BusinessViolation(error.to_string()))?
+            }
+            None => {
+                return Err(qx_core::QxError::BusinessViolation(
+                    "共享 Bar session 账户身份和初始资金必须有效".into(),
+                ));
+            }
+        };
+        let projected_raw = initial_cash_exact
+            .checked_mul_at_scale(
+                qx_core::ExactDecimal::ONE,
+                9,
+                qx_core::DecimalRounding::TowardZero,
+            )
+            .and_then(|value| value.to_raw(9).ok());
+        if !initial_cash_exact.is_positive() || projected_raw != Some(config.initial_cash.raw()) {
+            return Err(qx_core::QxError::BusinessViolation(
+                "共享 Bar session initial_cash_exact 必须为正，且与 initial_cash 的向零投影一致"
+                    .into(),
             ));
         }
         let currency = config.currency.trim().to_ascii_uppercase();
@@ -66,6 +91,7 @@ impl<'a> PortfolioBarEngine<'a> {
         }
         let mut config = config;
         config.currency = currency;
+        config.initial_cash_exact = Some(initial_cash_exact);
         Ok(Self { config, markets })
     }
 }

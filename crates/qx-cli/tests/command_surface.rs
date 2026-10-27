@@ -146,6 +146,8 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             queue_position_bps: 0,
             queue_position_model: Default::default(),
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir: "target/provider-depth/run".into(),
             strategy: BuiltinStrategySpec::new(
                 qx_strategy::BuiltinStrategyKind::SmaCross,

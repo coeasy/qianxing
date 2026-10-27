@@ -21,14 +21,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const LOG_NAME: &str = "binance-main";
 
 fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-backend-switch-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-temp")
+        .join(format!(
+            "qianxing-backend-switch-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -60,6 +62,7 @@ fn seeded_log() -> EventLog {
                 position_side: None,
 
                 leverage: None,
+                exact_amounts: None,
             },
         },
     ))
@@ -264,5 +267,6 @@ fn order(seq: u64) -> qx_core::Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }

@@ -9,7 +9,27 @@
     "schema_version": {"const": 1},
     "experiment_id": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._-]+$"},
     "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "canonical_run_spec_json": {
+      "type": "string",
+      "minLength": 2,
+      "contentMediaType": "application/json",
+      "contentSchema": {"$ref": "canonical-run-spec-v1.json"}
+    },
+    "canonical_run_spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
     "input_data_fingerprint": {"type": "string", "pattern": "^barframe:[0-9a-f]{16}$"},
+    "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "run_manifest": {"type": "string", "minLength": 1},
+    "run_record": {"type": "string", "minLength": 1},
+    "artifact_locations": {
+      "type": "object",
+      "required": ["experiment_report", "run_manifest"],
+      "properties": {
+        "experiment_report": {"type": "string", "minLength": 1},
+        "run_manifest": {"type": "string", "minLength": 1},
+        "experiment_input": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "total_candidates": {"type": "integer", "minimum": 1, "maximum": 256},
     "completed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "succeeded_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
@@ -23,6 +43,32 @@
     "cost_sensitivity": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/CostSensitivityResult"}},
     "artifact_path": {"type": "string", "minLength": 1}
   },
+  "allOf": [
+    {
+      "if": {"required": ["canonical_run_spec_json"]},
+      "then": {"required": ["canonical_run_spec_fingerprint"]}
+    },
+    {
+      "if": {"required": ["canonical_run_spec_fingerprint"]},
+      "then": {"required": ["canonical_run_spec_json"]}
+    },
+    {
+      "if": {"required": ["result_hash"]},
+      "then": {"required": ["run_manifest", "run_record", "artifact_locations", "canonical_run_spec_json", "canonical_run_spec_fingerprint", "input_data_fingerprint"]}
+    },
+    {
+      "if": {"required": ["run_manifest"]},
+      "then": {"required": ["result_hash", "run_record", "artifact_locations"]}
+    },
+    {
+      "if": {"required": ["run_record"]},
+      "then": {"required": ["result_hash", "run_manifest", "artifact_locations"]}
+    },
+    {
+      "if": {"required": ["artifact_locations"]},
+      "then": {"required": ["result_hash", "run_manifest", "run_record"]}
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "CostSensitivityResult": {
@@ -222,7 +268,7 @@
       "required": ["ordinal", "proposal", "parameters", "training_score_bps"],
       "properties": {
         "ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
-        "proposal": {"enum": ["random", "tpe_random_startup", "tpe", "tpe_kde_random_startup", "tpe_kde", "pareto_tpe_random_startup", "pareto_tpe"]},
+        "proposal": {"enum": ["random", "tpe_random_startup", "tpe", "tpe_kde_random_startup", "tpe_kde", "pareto_tpe_random_startup", "pareto_tpe", "random_continuous", "tpe_continuous_random_startup", "tpe_continuous", "tpe_kde_continuous_random_startup", "tpe_kde_continuous", "pareto_tpe_continuous_random_startup", "pareto_tpe_continuous"]},
         "parameters": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -170141183460469231731687303715884105728, "maximum": 170141183460469231731687303715884105727}},
         "training_score_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
         "training_max_drawdown_bps": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},

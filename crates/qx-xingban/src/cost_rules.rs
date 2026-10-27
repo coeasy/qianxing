@@ -153,7 +153,8 @@ mod tests {
         assert_eq!(
             rules
                 .fee_model()
-                .commission_for_side(SCALE, 100 * SCALE, Side::Buy, true),
+                .commission_for_side(SCALE, 100 * SCALE, Side::Buy, true)
+                .unwrap(),
             0
         );
     }

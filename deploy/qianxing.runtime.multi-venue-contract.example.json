@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "environment": "sandbox",
+  "api": {
+    "bind": "127.0.0.1:18084",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-multi-venue-contract",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "market-binance-usdm",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "binance",
+      "endpoint": "../python/examples/ccxt-binance-usdm.example.json",
+      "symbols": ["BTC/USDT:USDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "market-okx-swap",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "okx",
+      "endpoint": "../python/examples/ccxt-okx-swap.example.json",
+      "symbols": ["BTC/USDT:USDT.OKX"],
+      "credential_env": null
+    },
+    {
+      "id": "execution-binance-usdm",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "binance-usdm-sandbox",
+      "venue_id": "binance",
+      "endpoint": "../python/examples/ccxt-binance-usdm.example.json",
+      "symbols": ["BTC/USDT:USDT.BINANCE"],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      },
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json"
+    },
+    {
+      "id": "execution-okx-swap",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "okx-demo-swap",
+      "venue_id": "okx",
+      "endpoint": "../python/examples/ccxt-okx-swap.example.json",
+      "symbols": ["BTC/USDT:USDT.OKX"],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      },
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json"
+    },
+    {
+      "id": "reconcile-binance-usdm",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "binance-usdm-sandbox",
+      "venue_id": "binance",
+      "endpoint": "../python/examples/ccxt-binance-usdm.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      }
+    },
+    {
+      "id": "reconcile-okx-swap",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "okx-demo-swap",
+      "venue_id": "okx",
+      "endpoint": "../python/examples/ccxt-okx-swap.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      }
+    },
+    {
+      "id": "spread-recovery-binance-usdm",
+      "role": "spread_recovery",
+      "enabled": true,
+      "account_id": "binance-usdm-sandbox",
+      "venue_id": "binance",
+      "endpoint": "../python/examples/ccxt-binance-usdm.example.json",
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      }
+    },
+    {
+      "id": "spread-recovery-okx-swap",
+      "role": "spread_recovery",
+      "enabled": true,
+      "account_id": "okx-demo-swap",
+      "venue_id": "okx",
+      "endpoint": "../python/examples/ccxt-okx-swap.example.json",
+      "instrument_spec_path": "qianxing.crypto.multi-venue-perpetual-spec.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_OKX_API_KEY",
+        "secret": "QX_CCXT_OKX_SECRET"
+      }
+    },
+    {
+      "id": "strategy-cross-venue-contract",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "okx-demo-swap",
+      "venue_id": "okx",
+      "endpoint": null,
+      "symbols": ["BTC/USDT:USDT.BINANCE", "BTC/USDT:USDT.OKX"],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "qianxing.scheduler.jobs.example.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "id": "strategy-cross-venue-contract",
+    "version": "cross-venue-contract-v1",
+    "max_orders": 1000,
+    "account_id": "okx-demo-swap",
+    "venue_id": "okx",
+    "instrument": "BTC/USDT:USDT.OKX",
+    "target_qty": 0,
+    "python_module": "examples.strategy_multi_venue_contract",
+    "python_timeout_ms": 2000,
+    "live_enabled": false,
+    "live_timeframe": "1m",
+    "live_history_limit": 200,
+    "live_closed_only": true,
+    "bars_snapshot_path": "data/qianxing-multi-venue-contract/btc-usdt-okx.bar-frame.json",
+    "builtin_reference_instrument": "BTC/USDT:USDT.BINANCE",
+    "builtin_reference_bars_snapshot_path": "data/qianxing-multi-venue-contract/btc-usdt-binance.bar-frame.json",
+    "product": "perpetual",
+    "margin_mode": "isolated",
+    "position_mode": "one_way",
+    "leverage": 2,
+    "allow_short": true
+  },
+  "accounts": [
+    {
+      "id": "binance-usdm-sandbox",
+      "settlement_currency": "USDT",
+      "portfolio_id": "multi-venue-demo"
+    },
+    {
+      "id": "okx-demo-swap",
+      "settlement_currency": "USDT",
+      "portfolio_id": "multi-venue-demo"
+    }
+  ],
+  "shutdown_timeout_ms": 30000
+}

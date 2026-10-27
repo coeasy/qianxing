@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "python-file-sma-nextstyle",
+  "instrument": "BTCUSDT.BINANCE",
+  "asset_class": "crypto",
+  "bars_path": "deploy/qianxing.bar-frame.example.json",
+  "settlement_currency": "USDT",
+  "initial_cash_raw": 100000000000000,
+  "seed": 7,
+  "output_dir": "runs/python-file-sma-nextstyle",
+  "strategy": {
+    "kind": "sma_cross",
+    "strategy_id": "file-sma-nextstyle",
+    "quantity_raw": 1000000000,
+    "fast_window": 5,
+    "slow_window": 20
+  },
+  "market_spec": {
+    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+    "product": "spot",
+    "base_currency": "BTC",
+    "quote_currency": "USDT",
+    "settlement_currency": "USDT",
+    "contract_size": 1000000000,
+    "linear": true,
+    "inverse": false,
+    "price_tick": 1000000,
+    "qty_step": 1000000,
+    "min_qty": 1000000,
+    "max_leverage": 1,
+    "maintenance_margin_bps": 0,
+    "valid_from": 0,
+    "valid_to": null
+  },
+  "fee_schedule": {"maker_fee_bps": 10, "taker_fee_bps": 10},
+  "allow_short": false
+}

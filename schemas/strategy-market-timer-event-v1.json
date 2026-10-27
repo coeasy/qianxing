@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-market-timer-event-v1.json",
+  "title": "Qianxing Strategy Market Timer Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Timer"],
+  "properties": {
+    "Timer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ts"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "ts": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 }
+      }
+    }
+  }
+}

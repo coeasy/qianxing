@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-fill-update-v2.json",
+  "title": "Qianxing Strategy Fill Update v2",
+  "description": "Committed fill fact bound to its authoritative EventLog sequence. Legacy strategies receive a v1 compatibility projection unless they opt into the v2 callback.",
+  "type": "object",
+  "required": ["schema_version", "event", "event_seq", "ts", "order", "fill"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "event": {"const": "fill"},
+    "event_seq": {"type": "integer", "minimum": 0},
+    "ts": {"type": "integer", "minimum": 1},
+    "order": {"$ref": "#/$defs/order_update"},
+    "fill": {"$ref": "#/$defs/fill"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "raw_signed": {"type": "integer"},
+    "exact_decimal": {
+      "type": "object",
+      "required": ["coefficient", "scale"],
+      "properties": {
+        "coefficient": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)$"},
+        "scale": {"type": "integer", "minimum": 0, "maximum": 18}
+      },
+      "additionalProperties": false
+    },
+    "exact_order_amounts": {
+      "type": "object",
+      "required": ["quantity", "limit_price", "filled", "quote_filled"],
+      "properties": {
+        "quantity": {"$ref": "#/$defs/exact_decimal"},
+        "limit_price": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/exact_decimal"}]},
+        "filled": {"$ref": "#/$defs/exact_decimal"},
+        "quote_budget": {"$ref": "#/$defs/exact_decimal"},
+        "quote_filled": {"$ref": "#/$defs/exact_decimal"},
+        "market_reference_price": {"$ref": "#/$defs/exact_decimal"}
+      },
+      "additionalProperties": false
+    },
+    "exact_fill_amounts": {
+      "type": "object",
+      "required": ["quantity", "price"],
+      "properties": {
+        "quantity": {"$ref": "#/$defs/exact_decimal"},
+        "price": {"$ref": "#/$defs/exact_decimal"},
+        "quote_cost": {"$ref": "#/$defs/exact_decimal"},
+        "quote_budget_complete": {"type": "boolean", "default": false}
+      },
+      "additionalProperties": false
+    },
+    "order_update": {
+      "type": "object",
+      "required": ["order_id", "account_id", "instrument", "side", "qty_raw", "filled_raw", "strategy_id"],
+      "properties": {
+        "order_id": {"type": "integer", "minimum": 1},
+        "account_id": {"type": "string", "minLength": 1},
+        "instrument": {"type": "string", "minLength": 1},
+        "side": {"enum": ["Buy", "Sell"]},
+        "qty_raw": {"$ref": "#/$defs/raw_signed", "minimum": 0},
+        "filled_raw": {"$ref": "#/$defs/raw_signed", "minimum": 0},
+        "strategy_id": {"type": "string", "minLength": 1},
+        "exact_amounts": {"$ref": "#/$defs/exact_order_amounts"}
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {"properties": {"qty_raw": {"minimum": 1}}, "not": {"required": ["exact_amounts"]}},
+        {"required": ["exact_amounts"], "properties": {"qty_raw": {"const": 0}}}
+      ]
+    },
+    "fill": {
+      "type": "object",
+      "required": ["order_id", "qty", "price", "fee", "ts", "account_id", "strategy_id", "signal_id", "intent_id", "venue_id", "venue_order_id", "rule_version", "fee_currency"],
+      "properties": {
+        "order_id": {"type": "integer", "minimum": 1},
+        "qty": {"$ref": "#/$defs/raw_signed"},
+        "price": {"$ref": "#/$defs/raw_signed"},
+        "fee": {"$ref": "#/$defs/raw_signed"},
+        "ts": {"type": "integer", "minimum": 1},
+        "account_id": {"type": "string", "minLength": 1},
+        "strategy_id": {"type": ["string", "null"]},
+        "signal_id": {"type": ["integer", "null"]},
+        "intent_id": {"type": ["integer", "null"]},
+        "venue_id": {"type": ["string", "null"]},
+        "venue_order_id": {"type": ["string", "null"]},
+        "rule_version": {"type": ["string", "null"]},
+        "fee_currency": {"type": ["string", "null"]},
+        "fees": {"type": "array"},
+        "exact_fees": {"type": "array"},
+        "exact_amounts": {"$ref": "#/$defs/exact_fill_amounts"}
+      },
+      "additionalProperties": true,
+      "anyOf": [
+        {"properties": {"qty": {"minimum": 1}}, "not": {"required": ["exact_amounts"]}},
+        {"required": ["exact_amounts"], "properties": {"qty": {"const": 0}}}
+      ]
+    }
+  }
+}

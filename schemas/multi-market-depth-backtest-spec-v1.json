@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/multi-market-depth-backtest-spec-v1.json",
   "title": "Qianxing MultiMarketDepthBacktestSpec v1",
-  "description": "qx-app same-account multi-market L1/L2 backtest input. Runtime validation additionally enforces canonical unique instruments/strategies, spot-only matching contract identity, and shared settlement currency.",
+  "description": "qx-app same-account multi-market L1/L2 backtest input. Runtime validation enforces canonical unique instruments/strategies, homogeneous Spot or derivative portfolios, shared settlement currency, and derivative funding semantics.",
   "type": "object",
   "required": [
     "schema_version",
@@ -159,6 +159,9 @@
         "min_notional_raw": {
           "type": "integer",
           "minimum": 0
+        },
+        "exact_rules": {
+          "$ref": "#/$defs/ExactTradingRules"
         }
       }
     },
@@ -602,12 +605,25 @@
         },
         "reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "strategy": {
           "$ref": "#/$defs/BuiltinStrategySpec"
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["reserved_capital_exact"] },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["reserved_capital_exact"] } },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "PortfolioBacktestConfig": {
@@ -623,7 +639,10 @@
         },
         "primary_reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "primary_reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "additional_strategies": {
           "type": "array",
@@ -633,6 +652,16 @@
           }
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["primary_reserved_capital_exact"] },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["primary_reserved_capital_exact"] } },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "ProtectiveExitSpec": {
@@ -1143,12 +1172,32 @@
           "maximum": 4294967295
         },
         "market_spec": {
-          "$ref": "#/$defs/MultiMarketSpotInstrumentSpec"
+          "$ref": "#/$defs/TradingInstrumentSpec"
         },
         "fee_bps": {
           "type": "integer",
           "minimum": 0,
           "maximum": 10000
+        },
+        "funding_bps": {
+          "type": "integer",
+          "minimum": -10000,
+          "maximum": 10000
+        },
+        "funding_events": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "required": ["instrument", "settlement_ts", "rate_bps"],
+            "properties": {
+              "instrument": { "$ref": "#/$defs/InstrumentId" },
+            "settlement_ts": { "type": "integer", "minimum": 1 },
+            "rate_bps": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+            "funding_interval_ms": { "type": "integer", "minimum": 60000, "maximum": 86400000 }
+            },
+            "additionalProperties": false
+          }
         },
         "latency_snapshots": {
           "type": "integer",
@@ -1218,6 +1267,53 @@
           }
         }
       ]
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactTradingRules": {
+      "type": "object",
+      "required": [
+        "contract_size",
+        "price_tick",
+        "quantity_step",
+        "minimum_quantity",
+        "minimum_notional"
+      ],
+      "properties": {
+        "contract_size": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "price_tick": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "quantity_step": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_quantity": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_notional": {
+          "$ref": "#/$defs/ExactDecimal"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

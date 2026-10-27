@@ -359,39 +359,62 @@ fn build_targets(
         ),
         cash,
         risk_state: "multi-leg-backtest".into(),
+        positions_exact: BTreeMap::new(),
+        cash_exact: BTreeMap::new(),
+        available_margin_exact: None,
     };
     strategy.on_init(&context).map_err(invalid)?;
-    let mut targets = TargetSchedules {
-        primary: BTreeMap::new(),
-        reference: BTreeMap::new(),
-    };
-    for (primary_bar, reference_bar) in primary_bars.iter().zip(reference_bars) {
-        context.as_of = primary_bar.ts;
-        let reference_decision = strategy
-            .on_event(&context, &bar_event(&reference.instrument, reference_bar))
-            .map_err(invalid)?;
-        record_targets(
-            &mut context,
-            &mut targets,
-            &reference_decision,
-            primary,
-            reference,
-            reference_bar.ts,
-        )?;
-        let primary_decision = strategy
-            .on_event(&context, &bar_event(&primary.instrument, primary_bar))
-            .map_err(invalid)?;
-        record_targets(
-            &mut context,
-            &mut targets,
-            &primary_decision,
-            primary,
-            reference,
-            primary_bar.ts,
-        )?;
+    if let Err(start_error) = strategy.on_start(&context) {
+        let stop_error = strategy.on_stop().err();
+        return Err(invalid(match stop_error {
+            Some(stop_error) => {
+                format!("多腿策略 on_start 失败: {start_error}; on_stop 也失败: {stop_error}")
+            }
+            None => format!("多腿策略 on_start 失败: {start_error}"),
+        }));
     }
-    strategy.on_stop().map_err(invalid)?;
-    Ok(targets)
+    let targets_result = (|| {
+        let mut targets = TargetSchedules {
+            primary: BTreeMap::new(),
+            reference: BTreeMap::new(),
+        };
+        for (primary_bar, reference_bar) in primary_bars.iter().zip(reference_bars) {
+            context.as_of = primary_bar.ts;
+            let reference_decision = strategy
+                .on_event(&context, &bar_event(&reference.instrument, reference_bar))
+                .map_err(invalid)?;
+            record_targets(
+                &mut context,
+                &mut targets,
+                &reference_decision,
+                primary,
+                reference,
+                reference_bar.ts,
+            )?;
+            let primary_decision = strategy
+                .on_event(&context, &bar_event(&primary.instrument, primary_bar))
+                .map_err(invalid)?;
+            record_targets(
+                &mut context,
+                &mut targets,
+                &primary_decision,
+                primary,
+                reference,
+                primary_bar.ts,
+            )?;
+        }
+        Ok(targets)
+    })();
+    let stop_result = strategy.on_stop().map_err(invalid);
+    match (targets_result, stop_result) {
+        (Ok(targets), Ok(())) => Ok(targets),
+        (Err(primary_error), Ok(())) => Err(primary_error),
+        (Ok(_), Err(stop_error)) => Err(stop_error),
+        (Err(primary_error), Err(stop_error)) => Err(AppError::new(
+            primary_error.category(),
+            format!("{primary_error}; 多腿策略 on_stop 失败: {stop_error}"),
+        )),
+    }
 }
 
 fn record_targets(
@@ -442,6 +465,7 @@ fn bar_event(instrument: &InstrumentId, bar: &Bar) -> MarketEvent {
         low_raw: bar.low,
         close_raw: bar.close,
         volume_raw: bar.volume,
+        exact_ohlcv: None,
     }
 }
 
@@ -485,6 +509,7 @@ impl BarStrategy for ScheduledTargetStrategy {
             account_id: self.account_id.clone(),
             trace: None,
             policy: self.policy,
+            exact_amounts: None,
         })
     }
 }

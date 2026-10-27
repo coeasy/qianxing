@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-joint-run-evidence-v1.json",
+  "title": "Qianxing MultiAccountJointRunEvidenceManifest v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "run_id",
+    "settlement_currency",
+    "spec_fingerprint",
+    "result_hash",
+    "result",
+    "spec",
+    "parent_artifacts",
+    "accounts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "qianxing-multi-account-joint-run-evidence" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "settlement_currency": { "type": "string", "minLength": 1 },
+    "spec_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "result_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "result": { "$ref": "#/$defs/fileDigest" },
+    "spec": { "$ref": "#/$defs/fileDigest" },
+    "parent_artifacts": {
+      "type": "object",
+      "required": [
+        "joint_portfolio",
+        "joint_equity",
+        "joint_fills",
+        "run_manifest",
+        "run_record"
+      ],
+      "properties": {
+        "joint_portfolio": { "$ref": "#/$defs/fileDigest" },
+        "joint_equity": { "$ref": "#/$defs/fileDigest" },
+        "joint_fills": { "$ref": "#/$defs/fileDigest" },
+        "run_manifest": { "$ref": "#/$defs/fileDigest" },
+        "run_record": { "$ref": "#/$defs/fileDigest" }
+      },
+      "additionalProperties": false
+    },
+    "accounts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/account" }
+    }
+  },
+  "$defs": {
+    "fileDigest": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "exchange_id",
+        "account_id",
+        "run_id",
+        "result_hash",
+        "markets_total",
+        "evidence_dir",
+        "evidence_sha256"
+      ],
+      "properties": {
+        "exchange_id": { "enum": ["okx", "binance", "bitget"] },
+        "account_id": { "type": "string", "minLength": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "result_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "markets_total": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "evidence_dir": { "type": "string", "pattern": "^accounts/[0-9a-f]{64}$" },
+        "evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

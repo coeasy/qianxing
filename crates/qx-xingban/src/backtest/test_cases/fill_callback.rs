@@ -33,6 +33,7 @@ impl BarStrategy for FillObserver {
                 rule_version: Some("test-v1".into()),
             }),
             policy: None,
+            exact_amounts: None,
         })
     }
 
@@ -83,6 +84,7 @@ fn strategy_fill_callback_runs_after_authoritative_fill_and_preserves_attributio
 struct FillDrivenStrategy {
     submitted: bool,
     updates: Vec<serde_json::Value>,
+    event_sequences: Vec<u64>,
     positions_at_update: Vec<i128>,
     cash_at_update: Vec<i128>,
 }
@@ -107,6 +109,10 @@ impl qx_strategy::Strategy for FillDrivenStrategy {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         } else {
             Vec::new()
@@ -161,8 +167,24 @@ impl qx_strategy::Strategy for FillDrivenStrategy {
                 policy: None,
                 reduce_only: true,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }],
         }))
+    }
+
+    fn on_strategy_fill_update_v2(
+        &mut self,
+        context: &qx_strategy::StrategyContext,
+        update: &qx_strategy::StrategyFillUpdateV2,
+    ) -> Result<Option<qx_strategy::StrategyDecision>, String> {
+        update.validate_for(context)?;
+        self.event_sequences.push(update.event_seq);
+        let legacy = serde_json::to_string(&update.legacy_projection())
+            .map_err(|error| error.to_string())?;
+        self.on_order_update(context, &legacy)
     }
 }
 
@@ -172,6 +194,7 @@ fn native_strategy_order_update_decision_is_risk_checked_and_filled_on_next_bar(
         FillDrivenStrategy {
             submitted: false,
             updates: Vec::new(),
+            event_sequences: Vec::new(),
             positions_at_update: Vec::new(),
             cash_at_update: Vec::new(),
         },
@@ -182,6 +205,9 @@ fn native_strategy_order_update_decision_is_risk_checked_and_filled_on_next_bar(
             venue_id: "SIM".into(),
             data_fingerprint: "fill-callback-bars".into(),
             as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             positions: std::collections::BTreeMap::new(),
             cash: std::collections::BTreeMap::from([("USD".into(), 1_000 * SCALE)]),
             available_margin_raw: Some(1_000 * SCALE),
@@ -201,11 +227,26 @@ fn native_strategy_order_update_decision_is_risk_checked_and_filled_on_next_bar(
         .unwrap();
 
     assert_eq!(strategy.strategy.updates.len(), 2);
+    assert_eq!(strategy.strategy.event_sequences.len(), 2);
     assert_eq!(strategy.strategy.updates[0]["event"], "fill");
     assert_eq!(
         strategy.strategy.updates[0]["fill"]["order_id"],
         report.fills[0].order_id
     );
+    let committed_fill_seq = report
+        .event_log
+        .events()
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.kind,
+                qx_core::EventKind::Filled { fill }
+                    if fill.order_id == report.fills[0].order_id
+            )
+        })
+        .map(|event| event.seq)
+        .expect("the authoritative fill must be present in the EventLog");
+    assert_eq!(strategy.strategy.event_sequences[0], committed_fill_seq);
     assert_eq!(
         strategy.strategy.positions_at_update[0],
         Quantity::from_i64(1).raw(),

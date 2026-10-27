@@ -35,6 +35,12 @@ impl MultiBuiltinBacktestSpec {
         }
         self.primary.validate()?;
         self.reference.validate()?;
+        if self.primary.initial_cash_exact.is_some() || self.reference.initial_cash_exact.is_some()
+        {
+            return Err(invalid(
+                "MultiBuiltin 两腿的本金按各自定资规则生成，暂不接受 BacktestSpec v2 initial_cash_exact",
+            ));
+        }
         if self.primary.account_id.is_none() || self.reference.account_id.is_none() {
             return Err(invalid("多腿内置回测必须显式声明每条腿的独立账户"));
         }

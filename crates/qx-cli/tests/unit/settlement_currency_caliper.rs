@@ -135,7 +135,11 @@ fn api_account_snapshot_reports_the_worker_settlement_currency() {
     let config = usdc_paper_runtime(&data_dir);
     seed_usdc_account_cash(&data_dir, 1_000);
 
-    let snapshots = load_api_account_snapshots(&config).unwrap();
+    let snapshots = qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        &config,
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
     let snapshot = snapshots
         .iter()
         .find(|snapshot| snapshot.header.account_id == "main")
@@ -163,18 +167,20 @@ fn strategy_account_context_reads_the_worker_settlement_currency() {
     seed_usdc_account_cash(&data_dir, 1_000);
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
 
-    let (_, cash, available_margin, provenance) =
+    let (_, _, cash, cash_exact, available_margin, available_margin_exact, provenance) =
         strategy_account_context(&data_dir, &config, &instrument).unwrap();
     assert_eq!(
         provenance,
         "ledger-replayed-account-state+paper-market-spec-buying-power"
     );
     assert_eq!(cash.get("USDC").copied(), Some(1_000 * SCALE));
+    assert_eq!(cash_exact.get("USDC").map(String::as_str), Some("1000"));
     assert_eq!(
         available_margin,
         Some(1_000 * SCALE),
         "保证金口径必须与账户日志的结算账簿一致"
     );
+    assert_eq!(available_margin_exact.as_deref(), Some("1000"));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -338,6 +344,7 @@ fn risk_context_refuses_a_spec_currency_that_is_not_the_ledger_book() {
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let spec_path = root.join("spot.spec.json");
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
@@ -384,7 +391,11 @@ fn api_snapshots_deduplicate_by_normalized_account_identity() {
     config.workers.push(twin);
     seed_usdc_account_cash(&data_dir, 1_000);
 
-    let snapshots = load_api_account_snapshots(&config).unwrap();
+    let snapshots = qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        &config,
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
     let paper: Vec<(String, String)> = snapshots
         .iter()
         .map(|snapshot| {

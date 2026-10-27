@@ -52,6 +52,64 @@ class RemoteStrategyCatalogTest(unittest.TestCase):
             self.assertEqual(asyncio.run(client.async_application_capabilities()), payload)
         call.assert_called_once_with()
 
+    def test_product_capability_query_uses_the_shared_stable_id_route(self) -> None:
+        result = {"schema_version": 1, "capability": {"id": "qx.venue.binance_spot"}}
+        client = AppClient("https://localhost")
+        with patch.object(client, "_request_json", return_value=result) as request:
+            self.assertEqual(client.query_product_capability("qx.venue.binance_spot"), result)
+        self.assertEqual(
+            request.call_args.args[0], APP_ROUTE_TEMPLATES["product_capability_query"]
+        )
+        self.assertEqual(request.call_args.kwargs["method"], "POST")
+        self.assertEqual(
+            request.call_args.kwargs["payload"],
+            {"capability_id": "qx.venue.binance_spot"},
+        )
+
+    def test_product_capability_query_accepts_exact_execution_scope_filters(self) -> None:
+        result = {"schema_version": 2, "match_count": 1, "matches": []}
+        client = AppClient("https://localhost")
+        with patch.object(client, "_request_json", return_value=result) as request:
+            self.assertEqual(
+                client.query_product_capability(
+                    venue="BINANCE",
+                    product="perpetual",
+                    account_mode="hedge",
+                    account_model="usd_m_futures",
+                ),
+                result,
+            )
+        self.assertEqual(
+            request.call_args.kwargs["payload"],
+            {
+                "venue": "BINANCE",
+                "product": "perpetual",
+                "account_mode": "hedge",
+                "account_model": "usd_m_futures",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "scope filter"):
+            client.query_product_capability()
+
+    def test_product_capability_query_rejects_empty_id_and_async_delegates(self) -> None:
+        client = AppClient("https://localhost")
+        with self.assertRaisesRegex(ValueError, "capability_id"):
+            client.query_product_capability("  ")
+        result = {"schema_version": 1, "capability": {"id": "qx.venue.paper"}}
+        with patch.object(client, "query_product_capability", return_value=result) as query:
+            self.assertEqual(
+                asyncio.run(client.async_query_product_capability("qx.venue.paper")),
+                result,
+            )
+        query.assert_called_once_with(
+            "qx.venue.paper",
+            venue=None,
+            product=None,
+            account_mode=None,
+            account_model=None,
+            margin_mode=None,
+        )
+
     def test_remote_catalog_is_typed_and_uses_the_canonical_route(self) -> None:
         payload = [
             {

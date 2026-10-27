@@ -4,7 +4,7 @@ use crate::{
     DataTier, OrderBookExecutionDescriptor, OrderBookExecutionModel, OrderBookMatchingEngine,
     OrderBookSnapshot,
 };
-use qx_core::{EventLog, Fill, Fnv1a, Ledger, Money, Price, TradingInstrumentSpec};
+use qx_core::{EventLog, ExactDecimal, Fill, Fnv1a, Ledger, Price, TradingInstrumentSpec};
 use std::collections::BTreeMap;
 
 pub struct OrderBookPortfolioMarket<'a> {
@@ -70,8 +70,7 @@ pub(super) fn write_market_identity(
         hash.write_u64(snapshot.bids.len() as u64);
         hash.write_u64(snapshot.asks.len() as u64);
         for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
-            hash.write_i128(level.price.raw());
-            hash.write_i128(level.qty.raw());
+            level.write_identity(hash);
         }
     }
     Ok(())
@@ -80,9 +79,13 @@ pub(super) fn write_market_identity(
 pub struct OrderBookPortfolioBacktestEngine<'a> {
     pub(super) account_id: String,
     pub(super) currency: String,
-    pub(super) initial_cash: Money,
+    pub(super) initial_cash_raw: i128,
+    pub(super) initial_cash_exact: ExactDecimal,
+    pub(super) exact_initial_cash_contract: bool,
     pub(super) risk: qx_zhenlu::RiskGate,
     pub(super) markets: Vec<OrderBookPortfolioMarket<'a>>,
+    pub(super) funding_bps: BTreeMap<qx_core::InstrumentId, i64>,
+    pub(super) funding_events: Vec<qx_core::FundingRateEvent>,
 }
 
 pub struct OrderBookPortfolioBacktestReport {
@@ -92,9 +95,14 @@ pub struct OrderBookPortfolioBacktestReport {
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub equity: Vec<(u64, i128)>,
+    pub equity_exact: Vec<(u64, ExactDecimal)>,
+    pub initial_equity_exact: ExactDecimal,
     pub pending_orders: usize,
     pub fees_raw: i128,
     pub turnover_raw: i128,
+    pub fees_exact_by_currency: BTreeMap<String, ExactDecimal>,
+    pub turnover_exact: ExactDecimal,
+    pub turnover_currency: String,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub input_data_hash: u64,
@@ -105,6 +113,65 @@ pub struct OrderBookPortfolioBacktestReport {
 impl OrderBookPortfolioBacktestReport {
     pub fn result_hash(&self) -> u64 {
         self.event_log.digest()
+    }
+
+    pub fn exact_metrics_json(&self) -> Result<serde_json::Value, String> {
+        let values = self
+            .equity_exact
+            .iter()
+            .map(|(_, equity)| *equity)
+            .collect::<Vec<_>>();
+        let mut metrics =
+            super::super::report::exact_equity_metrics_json(self.initial_equity_exact, &values)?;
+        metrics["turnover"] = serde_json::json!({
+            "amount": self.turnover_exact.to_string(),
+            "currency": self.turnover_currency,
+        });
+        metrics["fees_by_currency"] = serde_json::json!(self
+            .fees_exact_by_currency
+            .iter()
+            .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+            .collect::<BTreeMap<_, _>>());
+        metrics["legacy_raw_projection"] = serde_json::json!({
+            "fees_raw": self.fees_raw.to_string(),
+            "turnover_raw": self.turnover_raw.to_string(),
+        });
+        let mut funding_by_currency = BTreeMap::<String, ExactDecimal>::new();
+        let mut funding_count = 0_u64;
+        for entry in self
+            .ledger
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind == qx_core::LedgerEntryKind::Funding)
+        {
+            funding_count = funding_count
+                .checked_add(1)
+                .ok_or_else(|| "资金费结算计数溢出".to_string())?;
+            let amount = entry
+                .exact_amounts
+                .map_or_else(
+                    || ExactDecimal::from_parts(entry.amount.raw(), 9),
+                    |exact| Ok(exact.amount),
+                )
+                .map_err(|error| error.to_string())?;
+            let total = funding_by_currency
+                .entry(entry.currency.clone())
+                .or_insert(ExactDecimal::ZERO);
+            *total = total
+                .checked_add(amount)
+                .ok_or_else(|| "资金费现金流累计溢出".to_string())?;
+        }
+        metrics["funding"] = serde_json::json!({
+            "settlement_count": funding_count,
+            "cashflow_by_currency": funding_by_currency
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>(),
+        });
+        metrics["input_precision"] = serde_json::json!(
+            "Shared-account multi-market DepthFrame v2 supports either spec-bound Spot base-quantity portfolios with exact cash/inventory reservations or homogeneous linear/inverse derivative portfolios with one settlement currency and aggregate exact margin/fee projection; derivative fills recheck actual-price margin, funding cashflows preserve exact quantity and mark values, queue estimation is disabled, and mixed Spot/derivative or cross-currency portfolios fail closed. v1 inputs keep the 1e-9 projection."
+        );
+        Ok(metrics)
     }
 
     pub fn verify(&self) -> Result<(), qx_core::QxError> {
@@ -121,6 +188,7 @@ pub(super) struct MarketRuntime<'a> {
     pub(super) strategy: &'a mut dyn OrderBookStrategy,
     pub(super) matcher: OrderBookMatchingEngine,
     pub(super) reservations: SpotCashReservations,
+    pub(super) exact_queue_estimation_enabled: bool,
     pub(super) cancellations_for_next_snapshot: Vec<u64>,
 }
 
@@ -132,12 +200,27 @@ pub(super) fn total_reserved_cash(markets: &[MarketRuntime<'_>]) -> Result<i128,
     })
 }
 
+pub(super) fn total_reserved_cash_exact(
+    markets: &[MarketRuntime<'_>],
+) -> Result<ExactDecimal, qx_core::QxError> {
+    markets
+        .iter()
+        .try_fold(ExactDecimal::ZERO, |total, market| {
+            total
+                .checked_add(market.reservations.total_cash_exact()?)
+                .ok_or_else(|| qx_core::QxError::Invariant("共享精确盘口现金预留求和溢出".into()))
+        })
+}
+
 pub(super) fn reference_price(snapshot: &OrderBookSnapshot) -> Option<Price> {
     match (
         snapshot.bids.first().map(|level| level.price),
         snapshot.asks.first().map(|level| level.price),
     ) {
-        (Some(bid), Some(ask)) => Some(Price::from_raw(bid.raw().saturating_add(ask.raw()) / 2)),
+        (Some(bid), Some(ask)) => {
+            let spread = ask.raw().checked_sub(bid.raw())?;
+            Some(Price::from_raw(bid.raw().checked_add(spread / 2)?))
+        }
         (Some(bid), None) => Some(bid),
         (None, Some(ask)) => Some(ask),
         (None, None) => None,

@@ -12,12 +12,13 @@ import json
 import math
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from decimal import Decimal, InvalidOperation
 from importlib.metadata import PackageNotFoundError, version
 from ssl import SSLContext
 from typing import Any, Generic, Literal, TypedDict, TypeVar
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from qianxing_bridge import native
@@ -28,12 +29,17 @@ from qianxing_bridge import native
 # 调用侧用 `.format(run_id=...)` 填。
 APP_ROUTE_TEMPLATES: dict[str, str] = {
     "application_capabilities": "/app/capabilities",
+    "product_capability_query": "/app/capabilities/query",
     "provider_preflight": "/app/capabilities/providers/preflight",
     "builtin_strategy_catalog": "/app/strategies",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
     "provider_depth_backtest": "/app/provider-depth-backtest",
+    "read_provider_report": "/app/read-provider-report",
+    "read_provider_depth_report": "/app/read-provider-depth-report",
+    "read_multi_account_joint_report": "/app/read-multi-account-joint-report",
+    "read_multi_leg_report": "/app/read-multi-leg-report",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
     "multi_account_joint_backtest": "/app/multi-account-joint-backtest",
@@ -76,6 +82,18 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "run_events": "/app/runs/{run_id}/events",
     "run_cancel": "/app/runs/{run_id}/cancel",
     "live_events": "/events/live",
+    "account_activity": "/account/activity",
+}
+
+_ACCOUNT_READ_PATHS = {
+    "snapshot": "/account/snapshot",
+    "activity": APP_ROUTE_TEMPLATES["account_activity"],
+    "balances": "/account/balances",
+    "positions": "/account/positions",
+    "orders": "/account/orders",
+    "ledger": "/account/ledger",
+    "reconcile_reports": "/reconcile/reports",
+    "portfolio": "/account/portfolio",
 }
 
 
@@ -173,9 +191,14 @@ def _encode_payload(value: Any) -> str:
     )
 
 
-def _invoke(call: Any, value: Any) -> dict[str, Any]:
+def _invoke(call: Any, value: Any, *extra_values: Any) -> dict[str, Any]:
     try:
-        return json.loads(call(_encode_payload(value)))
+        return json.loads(
+            call(
+                _encode_payload(value),
+                *(None if extra is None else _encode_payload(extra) for extra in extra_values),
+            )
+        )
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 
@@ -305,13 +328,17 @@ class PortfolioStrategySpec:
     priority: int
     reserved_capital_raw: int
     strategy: BuiltinStrategySpec
+    reserved_capital_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "priority": self.priority,
             "reserved_capital_raw": self.reserved_capital_raw,
             "strategy": self.strategy.to_dict(),
         }
+        if self.reserved_capital_exact is not None:
+            result["reserved_capital_exact"] = dict(self.reserved_capital_exact)
+        return result
 
 
 @dataclass(frozen=True)
@@ -327,6 +354,7 @@ class MultiMarketBacktestMarket:
     margin_model: BacktestMarginConfig | dict[str, Any] | None = None
     funding_bps: int = 0
     funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
+    asset_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -337,6 +365,8 @@ class MultiMarketBacktestMarket:
         }
         if self.dataset_manifest_path is not None:
             value["dataset_manifest_path"] = self.dataset_manifest_path
+        if self.asset_class is not None:
+            value["asset_class"] = self.asset_class
         for key in ("market_spec", "fee_schedule", "order_policy", "margin_model"):
             item = getattr(self, key)
             if item is not None:
@@ -361,9 +391,16 @@ class MultiMarketBacktestSpec:
     markets: tuple[MultiMarketBacktestMarket, ...]
     seed: int = 0
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        if self.schema_version not in (1, 2):
+            raise ValueError("MultiMarketBacktestSpec schema_version must be 1 or 2")
+        if (self.schema_version == 1 and self.initial_cash_exact is not None) or (
+            self.schema_version == 2 and self.initial_cash_exact is None
+        ):
+            raise ValueError("initial_cash_exact must be present only for MultiMarketBacktestSpec schema_version=2")
+        value = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "account_id": self.account_id,
@@ -373,6 +410,28 @@ class MultiMarketBacktestSpec:
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
         }
+        if self.initial_cash_exact is not None:
+            coefficient = self.initial_cash_exact.get("coefficient")
+            scale = self.initial_cash_exact.get("scale")
+            if (
+                not isinstance(coefficient, str)
+                or not coefficient.isdigit()
+                or int(coefficient) <= 0
+                or coefficient != str(int(coefficient))
+                or not isinstance(scale, int)
+                or isinstance(scale, bool)
+                or not 0 <= scale <= 18
+            ):
+                raise ValueError("initial_cash_exact must contain a positive coefficient and scale 0..18")
+            projected = (
+                int(coefficient) * 10 ** (9 - scale)
+                if scale <= 9
+                else int(coefficient) // 10 ** (scale - 9)
+            )
+            if projected != self.initial_cash_raw:
+                raise ValueError("initial_cash_raw must equal initial_cash_exact's toward-zero 1e-9 projection")
+            value["initial_cash_exact"] = dict(self.initial_cash_exact)
+        return value
 
 
 @dataclass(frozen=True)
@@ -426,6 +485,8 @@ class MultiMarketDepthBacktestMarket:
     data_tier: str | None = None
     dataset_manifest_path: str | None = None
     queue_position_model: QueuePositionDisabled | QueuePositionFifoVolumeEstimate | dict[str, Any] | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -451,6 +512,13 @@ class MultiMarketDepthBacktestMarket:
             value["order_policy"] = self.order_policy.to_dict() if hasattr(self.order_policy, "to_dict") else dict(self.order_policy)
         if self.data_tier is not None:
             value["data_tier"] = self.data_tier
+        if self.funding_bps:
+            value["funding_bps"] = self.funding_bps
+        if self.funding_events:
+            value["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
         return value
 
 
@@ -463,9 +531,42 @@ class MultiMarketDepthBacktestSpec:
     output_dir: str
     markets: tuple[MultiMarketDepthBacktestMarket, ...]
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        if self.schema_version not in {1, 2}:
+            raise ValueError("MultiMarketDepthBacktestSpec schema_version must be 1 or 2")
+        if (self.schema_version == 1 and self.initial_cash_exact is not None) or (
+            self.schema_version == 2 and self.initial_cash_exact is None
+        ):
+            raise ValueError("initial_cash_exact must be present only for MultiMarketDepthBacktestSpec schema_version=2")
+        if self.initial_cash_exact is None:
+            if self.initial_cash_raw <= 0:
+                raise ValueError("initial_cash_raw must be positive for schema_version=1")
+        else:
+            exact = self.initial_cash_exact
+            coefficient = exact.get("coefficient")
+            scale = exact.get("scale")
+            if (
+                set(exact) != {"coefficient", "scale"}
+                or not isinstance(coefficient, str)
+                or not coefficient.isascii()
+                or not coefficient.isdecimal()
+                or str(int(coefficient)) != coefficient
+                or int(coefficient) <= 0
+                or isinstance(scale, bool)
+                or not isinstance(scale, int)
+                or not 0 <= scale <= 18
+            ):
+                raise ValueError("initial_cash_exact must contain a positive coefficient and scale 0..18")
+            projected = (
+                int(coefficient) * 10 ** (9 - scale)
+                if scale <= 9
+                else int(coefficient) // 10 ** (scale - 9)
+            )
+            if projected != self.initial_cash_raw:
+                raise ValueError("initial_cash_raw must equal initial_cash_exact's toward-zero 1e-9 projection")
+        value = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "account_id": self.account_id,
@@ -474,6 +575,9 @@ class MultiMarketDepthBacktestSpec:
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
         }
+        if self.initial_cash_exact is not None:
+            value["initial_cash_exact"] = dict(self.initial_cash_exact)
+        return value
 
 
 @dataclass(frozen=True)
@@ -505,15 +609,21 @@ class PortfolioBacktestConfig:
     primary_priority: int
     primary_reserved_capital_raw: int
     additional_strategies: tuple[PortfolioStrategySpec, ...]
+    primary_reserved_capital_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "primary_priority": self.primary_priority,
             "primary_reserved_capital_raw": self.primary_reserved_capital_raw,
             "additional_strategies": [
                 member.to_dict() for member in self.additional_strategies
             ],
         }
+        if self.primary_reserved_capital_exact is not None:
+            result["primary_reserved_capital_exact"] = dict(
+                self.primary_reserved_capital_exact
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -677,6 +787,7 @@ class BacktestSpec:
     strategy: BuiltinStrategySpec
     seed: int = 0
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
     protective_exit: ProtectiveExitSpec | dict[str, Any] | None = None
     account_id: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
@@ -689,8 +800,15 @@ class BacktestSpec:
     max_bar_volume_participation_bps: int | None = None
     risk_rules: BacktestRiskRules | dict[str, Any] | None = None
     allow_short: bool | None = None
+    asset_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        if self.schema_version not in (1, 2):
+            raise ValueError("BacktestSpec schema_version must be 1 or 2")
+        if self.initial_cash_exact is not None and self.schema_version != 2:
+            raise ValueError("initial_cash_exact requires BacktestSpec schema_version=2")
+        if self.schema_version == 2 and self.initial_cash_exact is None:
+            raise ValueError("BacktestSpec schema_version=2 requires initial_cash_exact")
         value = {key: item for key, item in asdict(self).items() if item is not None}
         value["strategy"] = self.strategy.to_dict()
         if isinstance(self.protective_exit, ProtectiveExitSpec):
@@ -747,6 +865,8 @@ class MultiAccountBacktestResult:
     spec_fingerprint: str
     runs: tuple[MultiAccountRunResult, ...]
     summary: dict[str, Any]
+    run_manifest: dict[str, Any] | None = None
+    schema_version: int = 1
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiAccountBacktestResult":
@@ -756,6 +876,8 @@ class MultiAccountBacktestResult:
             spec_fingerprint=value["spec_fingerprint"],
             runs=tuple(MultiAccountRunResult.from_dict(item) for item in value["runs"]),
             summary=dict(value["summary"]),
+            run_manifest=(dict(value["run_manifest"]) if value.get("run_manifest") is not None else None),
+            schema_version=int(value.get("schema_version", 1)),
         )
 
 
@@ -798,6 +920,9 @@ class MultiAccountDepthBacktestResult:
     spec_fingerprint: str
     runs: tuple[MultiAccountDepthRunResult, ...]
     summary: dict[str, Any]
+    run_manifest: dict[str, Any] | None = None
+    schema_version: int = 1
+    result_kind: str = "multi_account_depth"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiAccountDepthBacktestResult":
@@ -807,6 +932,9 @@ class MultiAccountDepthBacktestResult:
             spec_fingerprint=value["spec_fingerprint"],
             runs=tuple(MultiAccountDepthRunResult.from_dict(item) for item in value["runs"]),
             summary=dict(value["summary"]),
+            run_manifest=(dict(value["run_manifest"]) if value.get("run_manifest") is not None else None),
+            schema_version=int(value.get("schema_version", 1)),
+            result_kind=str(value.get("result_kind", "multi_account_depth")),
         )
 
 
@@ -936,20 +1064,21 @@ class ExperimentParameterSpace:
 
 
 @dataclass(frozen=True)
+class CallbackParameterSpace:
+    """Numeric parameter domain passed to a user strategy factory."""
+
+    name: str
+    values: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "values": list(self.values)}
+
+
+@dataclass(frozen=True)
 class ExperimentParameterRange:
     """Inclusive stepped integer domain used by adaptive single-strategy search."""
 
-    name: Literal[
-        "fast_window",
-        "slow_window",
-        "period",
-        "threshold_bps",
-        "quantity_raw",
-        "target_notional_raw",
-        "target_available_margin_bps",
-        "target_volatility_bps",
-        "target_kelly_fraction_bps",
-    ]
+    name: str
     min: int
     max: int
     step: int = 1
@@ -1223,9 +1352,12 @@ class RunMultiMarketExperimentSpec:
     experiment_id: str
     target_strategy_id: str
     base: MultiMarketBacktestSpec
-    parameter_space: tuple[ExperimentParameterSpace, ...]
+    parameter_space: tuple[ExperimentParameterSpace, ...] = ()
     schema_version: int = 1
     strategy_kinds: tuple[str, ...] = ()
+    callback_parameter_space: tuple[CallbackParameterSpace, ...] = ()
+    split_plan: ExperimentSplitPlan | None = None
+    search: ExperimentSearchPlan | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -1237,6 +1369,14 @@ class RunMultiMarketExperimentSpec:
         }
         if self.strategy_kinds:
             value["strategy_kinds"] = sorted(self.strategy_kinds)
+        if self.callback_parameter_space:
+            value["callback_parameter_space"] = [
+                dimension.to_dict() for dimension in self.callback_parameter_space
+            ]
+        if self.split_plan is not None:
+            value["split_plan"] = self.split_plan.to_dict()
+        if self.search is not None:
+            value["search"] = self.search.to_dict()
         return value
 
 
@@ -1245,10 +1385,10 @@ class RunMultiMarketDepthExperimentSpec:
     experiment_id: str
     target_strategy_id: str
     base: MultiMarketDepthBacktestSpec
-    parameter_space: tuple[ExperimentParameterSpace, ...]
+    parameter_space: tuple[ExperimentParameterSpace, ...] = ()
     schema_version: int = 1
     strategy_kinds: tuple[str, ...] = ()
-    callback_parameter_space: tuple[ExperimentParameterSpace, ...] = ()
+    callback_parameter_space: tuple[CallbackParameterSpace, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -1543,6 +1683,8 @@ class ExperimentFoldReport:
     in_sample_return_bps: int
     out_of_sample_return_bps: int
     selected_training_robustness_score_bps: int | None = None
+    selected_training_max_drawdown_bps: int | None = None
+    max_training_drawdown_bps: int | None = None
     selected_strategy_kind: str | None = None
     purge_range: tuple[int, int] | None = None
     embargo_range: tuple[int, int] | None = None
@@ -1558,6 +1700,8 @@ class ExperimentFoldReport:
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
             selected_training_robustness_score_bps=value.get("selected_training_robustness_score_bps"),
+            selected_training_max_drawdown_bps=value.get("selected_training_max_drawdown_bps"),
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
             selected_strategy_kind=value.get("selected_strategy_kind"),
             purge_range=tuple(value["purge_range"]) if value.get("purge_range") else None,
             embargo_range=tuple(value["embargo_range"]) if value.get("embargo_range") else None,
@@ -1628,7 +1772,13 @@ class RunExperimentResult:
     candidates: tuple[ExperimentCandidateResult, ...]
     comparison: CompareRunsResult | None
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
     input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
     pruned_candidates: int = 0
     out_of_sample: ExperimentOutOfSampleReport | None = None
     baselines: tuple[ExperimentBaselineReport, ...] = ()
@@ -1646,7 +1796,13 @@ class RunExperimentResult:
             succeeded_candidates=value["succeeded_candidates"],
             failed_candidates=value["failed_candidates"],
             spec_fingerprint=value["spec_fingerprint"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
             input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
             pruned_candidates=value.get("pruned_candidates", 0),
             candidates=tuple(
                 ExperimentCandidateResult.from_dict(item) for item in value["candidates"]
@@ -1754,9 +1910,20 @@ class DepthBacktestSpec:
     account_base_source: str | None = None
     signal_source: str | None = None
     signal_declared_unused: str | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.funding_bps == 0:
+            payload.pop("funding_bps", None)
+        if self.funding_events:
+            payload["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
+        else:
+            payload.pop("funding_events", None)
         if isinstance(self.market_making, MarketMakingSpec):
             payload["market_making"] = self.market_making.to_dict()
         if isinstance(self.portfolio, PortfolioBacktestConfig):
@@ -1811,6 +1978,7 @@ class DepthBacktestOutcome:
     account_id: str | None = None
     snapshots: int = 0
     manifest_digest: str = ""
+    manifest_run_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
@@ -1859,6 +2027,13 @@ class RunDepthExperimentResult:
     candidates: tuple[DepthExperimentCandidateResult, ...]
     ranking: tuple[DepthExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunDepthExperimentResult":
@@ -1873,6 +2048,13 @@ class RunDepthExperimentResult:
             candidates=tuple(DepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(DepthExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -1914,16 +2096,25 @@ class TradingInstrumentSpec:
 
 @dataclass(frozen=True)
 class FundingRateEvent:
-    """Historical derivative funding rate applied at its UTC 8-hour settlement."""
+    """Historical derivative funding rate at an exchange-declared settlement time."""
 
     instrument: InstrumentId | dict[str, str]
     settlement_ts: int
     rate_bps: int
+    funding_interval_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         if isinstance(self.instrument, InstrumentId):
             value["instrument"] = self.instrument.to_dict()
+        if self.funding_interval_ms is None:
+            value.pop("funding_interval_ms", None)
+        elif (
+            isinstance(self.funding_interval_ms, bool)
+            or not isinstance(self.funding_interval_ms, int)
+            or not 60_000 <= self.funding_interval_ms <= 86_400_000
+        ):
+            raise ValueError("funding_interval_ms must be between 60000 and 86400000")
         return value
 
 
@@ -1937,6 +2128,8 @@ class MultiLegBacktestSpec:
     reference_initial_cash_raw: int
     output_dir: str
     strategy: BuiltinStrategySpec
+    primary_initial_cash_exact: dict[str, Any] | None = None
+    reference_initial_cash_exact: dict[str, Any] | None = None
     seed: int = 0
     primary_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     reference_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
@@ -1954,8 +2147,30 @@ class MultiLegBacktestSpec:
     primary_dataset_manifest_path: str | None = None
     reference_dataset_manifest_path: str | None = None
 
+    def with_initial_cash_exact(
+        self, primary: str | int | Decimal, reference: str | int | Decimal
+    ) -> "MultiLegBacktestSpec":
+        """Return a v2 spec with exact leg principals and toward-zero raw projections."""
+        primary_wire, primary_raw = _multi_leg_exact_cash(primary)
+        reference_wire, reference_raw = _multi_leg_exact_cash(reference)
+        if primary_raw < 0 or reference_raw < 0:
+            raise ValueError("exact multi-leg principal raw projection must be non-negative")
+        _validate_multi_leg_exact_cash_total(primary_wire, reference_wire)
+        return replace(
+            self,
+            schema_version=2,
+            primary_initial_cash_raw=primary_raw,
+            reference_initial_cash_raw=reference_raw,
+            primary_initial_cash_exact=primary_wire,
+            reference_initial_cash_exact=reference_wire,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.primary_initial_cash_exact is None:
+            payload.pop("primary_initial_cash_exact")
+        if self.reference_initial_cash_exact is None:
+            payload.pop("reference_initial_cash_exact")
         if self.funding_events:
             payload["funding_events"] = [
                 event.to_dict() if isinstance(event, FundingRateEvent) else dict(event)
@@ -1970,6 +2185,47 @@ class MultiLegBacktestSpec:
         if self.reference_dataset_manifest_path is None:
             payload.pop("reference_dataset_manifest_path")
         return payload
+
+
+def _multi_leg_exact_cash(value: str | int | Decimal) -> tuple[dict[str, Any], int]:
+    try:
+        decimal = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("exact multi-leg principal must be a decimal value") from error
+    if not decimal.is_finite() or decimal <= 0:
+        raise ValueError("exact multi-leg principal must be finite and positive")
+    sign, digits, exponent = decimal.as_tuple()
+    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    if sign:
+        coefficient = -coefficient
+    scale = max(-exponent, 0)
+    if exponent > 0:
+        coefficient *= 10**exponent
+    while scale and coefficient % 10 == 0:
+        coefficient //= 10
+        scale -= 1
+    if scale > 18 or coefficient <= 0 or coefficient > (1 << 127) - 1:
+        raise ValueError("exact multi-leg principal is outside supported decimal range")
+    raw = coefficient * 10 ** (9 - scale) if scale <= 9 else coefficient // 10 ** (scale - 9)
+    if raw > (1 << 127) - 1:
+        raise ValueError("exact multi-leg principal raw projection is outside i128 range")
+    return {"coefficient": str(coefficient), "scale": scale}, raw
+
+
+def _validate_multi_leg_exact_cash_total(
+    primary: Mapping[str, Any], reference: Mapping[str, Any]
+) -> None:
+    scale = max(int(primary["scale"]), int(reference["scale"]))
+    total = int(primary["coefficient"]) * 10 ** (scale - int(primary["scale"]))
+    total += int(reference["coefficient"]) * 10 ** (scale - int(reference["scale"]))
+    while scale and total % 10 == 0:
+        total //= 10
+        scale -= 1
+    if scale > 18 or total <= 0 or total > (1 << 127) - 1:
+        raise ValueError("combined exact multi-leg principal is outside supported decimal range")
+    raw = total * 10 ** (9 - scale) if scale <= 9 else total // 10 ** (scale - 9)
+    if raw > (1 << 127) - 1:
+        raise ValueError("combined exact multi-leg principal raw projection is outside i128 range")
 
 
 @dataclass(frozen=True)
@@ -2032,6 +2288,13 @@ class RunMultiLegExperimentResult:
     candidates: tuple[MultiLegExperimentCandidateResult, ...]
     ranking: tuple[MultiLegExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiLegExperimentResult":
@@ -2049,6 +2312,13 @@ class RunMultiLegExperimentResult:
             ),
             ranking=tuple(MultiLegExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -2083,6 +2353,58 @@ class MultiMarketExperimentRankedCandidate:
 
 
 @dataclass(frozen=True)
+class MultiMarketExperimentFoldCandidateFailure:
+    fold: int
+    ordinal: int
+    error: str
+
+
+@dataclass(frozen=True)
+class MultiMarketExperimentFoldSearchReport:
+    fold: int
+    seed: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    trials: tuple[ExperimentSearchTrial, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketExperimentFoldSearchReport":
+        return cls(
+            fold=value["fold"],
+            seed=value["seed"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+        )
+
+
+@dataclass(frozen=True)
+class MultiMarketExperimentSearchReport:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    objective: Literal["return", "pareto_return_drawdown"]
+    seed: int
+    budget: int
+    fold_local_search: bool
+    fold_searches: tuple[MultiMarketExperimentFoldSearchReport, ...]
+    max_training_drawdown_bps: int | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketExperimentSearchReport":
+        return cls(
+            algorithm=value["algorithm"],
+            objective=value["objective"],
+            seed=value["seed"],
+            budget=value["budget"],
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
+            fold_local_search=value["fold_local_search"],
+            fold_searches=tuple(
+                MultiMarketExperimentFoldSearchReport.from_dict(item)
+                for item in value["fold_searches"]
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class RunMultiMarketExperimentResult:
     schema_version: int
     experiment_id: str
@@ -2095,6 +2417,16 @@ class RunMultiMarketExperimentResult:
     candidates: tuple[MultiMarketExperimentCandidateResult, ...]
     ranking: tuple[MultiMarketExperimentRankedCandidate, ...]
     artifact_path: str
+    out_of_sample: ExperimentOutOfSampleReport | None = None
+    fold_candidate_failures: tuple[MultiMarketExperimentFoldCandidateFailure, ...] = ()
+    search: MultiMarketExperimentSearchReport | None = None
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiMarketExperimentResult":
@@ -2109,7 +2441,28 @@ class RunMultiMarketExperimentResult:
             failed_candidates=value["failed_candidates"],
             candidates=tuple(MultiMarketExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(MultiMarketExperimentRankedCandidate(**item) for item in value["ranking"]),
+            out_of_sample=(
+                ExperimentOutOfSampleReport.from_dict(value["out_of_sample"])
+                if value.get("out_of_sample") is not None
+                else None
+            ),
+            fold_candidate_failures=tuple(
+                MultiMarketExperimentFoldCandidateFailure(**item)
+                for item in value.get("fold_candidate_failures", ())
+            ),
+            search=(
+                MultiMarketExperimentSearchReport.from_dict(value["search"])
+                if value.get("search") is not None
+                else None
+            ),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -2156,6 +2509,13 @@ class RunMultiMarketDepthExperimentResult:
     candidates: tuple[MultiMarketDepthExperimentCandidateResult, ...]
     ranking: tuple[MultiMarketDepthExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiMarketDepthExperimentResult":
@@ -2171,6 +2531,13 @@ class RunMultiMarketDepthExperimentResult:
             candidates=tuple(MultiMarketDepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(MultiMarketDepthExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -3004,6 +3371,59 @@ class AppClient(_HttpJsonClient):
     async def async_application_capabilities(self) -> dict[str, Any]:
         return await asyncio.to_thread(self.application_capabilities)
 
+    def query_product_capability(
+        self,
+        capability_id: str | None = None,
+        *,
+        venue: str | None = None,
+        product: str | None = None,
+        account_mode: str | None = None,
+        account_model: str | None = None,
+        margin_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Query capability evidence by stable ID or declared execution scope."""
+        query = {
+            name: value
+            for name, value in (
+                ("capability_id", capability_id),
+                ("venue", venue),
+                ("product", product),
+                ("account_mode", account_mode),
+                ("account_model", account_model),
+                ("margin_mode", margin_mode),
+            )
+            if value is not None
+        }
+        if not query:
+            raise ValueError("provide capability_id or at least one scope filter")
+        for name, value in query.items():
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        return self._post(
+            APP_ROUTE_TEMPLATES["product_capability_query"],
+            query,
+        )
+
+    async def async_query_product_capability(
+        self,
+        capability_id: str | None = None,
+        *,
+        venue: str | None = None,
+        product: str | None = None,
+        account_mode: str | None = None,
+        account_model: str | None = None,
+        margin_mode: str | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.query_product_capability,
+            capability_id,
+            venue=venue,
+            product=product,
+            account_mode=account_mode,
+            account_model=account_model,
+            margin_mode=margin_mode,
+        )
+
     def provider_preflight(self, data_request: Mapping[str, Any]) -> dict[str, Any]:
         """Check a data request against configured Rust Providers without I/O."""
         return self._post(APP_ROUTE_TEMPLATES["provider_preflight"], data_request)
@@ -3046,6 +3466,202 @@ class AppClient(_HttpJsonClient):
     async def async_get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.get_live_events, after_seq)
 
+    @staticmethod
+    def _account_scope_query(
+        account_id: str | None, venue_id: str | None
+    ) -> str:
+        if (account_id is None) != (venue_id is None):
+            raise ValueError("account_id and venue_id must be supplied together")
+        if account_id is None:
+            return ""
+        if (
+            not isinstance(account_id, str)
+            or not isinstance(venue_id, str)
+            or not account_id.strip()
+            or not venue_id.strip()
+        ):
+            raise ValueError("account_id and venue_id must be non-empty")
+        return "?" + urlencode((
+            ("account_id", account_id),
+            ("venue_id", venue_id),
+        ))
+
+    def _get_account_list(
+        self, key: str, *, account_id: str | None, venue_id: str | None
+    ) -> list[dict[str, Any]]:
+        path = _ACCOUNT_READ_PATHS[key] + self._account_scope_query(account_id, venue_id)
+        value = self._request_json_value(path, method="GET")
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise QianxingError(f"Rust API returned an invalid {key} read model")
+        return value
+
+    def get_account_snapshot(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> dict[str, Any]:
+        """Read the current account projection, optionally scoped to one account/venue pair."""
+        path = _ACCOUNT_READ_PATHS["snapshot"] + self._account_scope_query(account_id, venue_id)
+        return self._request_json(path, method="GET")
+
+    async def async_get_account_snapshot(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.get_account_snapshot, account_id=account_id, venue_id=venue_id
+        )
+
+    def get_account_balances(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> dict[str, Any]:
+        """Read the balance summary, preserving per-currency cash and nullable totals."""
+        path = _ACCOUNT_READ_PATHS["balances"] + self._account_scope_query(
+            account_id, venue_id
+        )
+        return self._request_json(path, method="GET")
+
+    async def async_get_account_balances(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.get_account_balances, account_id=account_id, venue_id=venue_id
+        )
+
+    def get_account_positions(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read positions from one account or the configured default projection."""
+        return self._get_account_list(
+            "positions", account_id=account_id, venue_id=venue_id
+        )
+
+    async def async_get_account_positions(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self.get_account_positions, account_id=account_id, venue_id=venue_id
+        )
+
+    def get_account_orders(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read the account's current order projection."""
+        return self._get_account_list("orders", account_id=account_id, venue_id=venue_id)
+
+    async def async_get_account_orders(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self.get_account_orders, account_id=account_id, venue_id=venue_id
+        )
+
+    def get_account_ledger(self, *, account_id: str | None = None) -> list[dict[str, Any]]:
+        """Read ledger facts; the API scopes ledger rows by account_id only."""
+        path = _ACCOUNT_READ_PATHS["ledger"]
+        if account_id is not None:
+            if not isinstance(account_id, str) or not account_id.strip():
+                raise ValueError("account_id must be non-empty")
+            path += "?" + urlencode((("account_id", account_id),))
+        value = self._request_json_value(path, method="GET")
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise QianxingError("Rust API returned an invalid ledger read model")
+        return value
+
+    async def async_get_account_ledger(
+        self, *, account_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self.get_account_ledger, account_id=account_id)
+
+    def get_reconcile_reports(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read reconciliation reports, optionally filtered by account and venue."""
+        return self._get_account_list(
+            "reconcile_reports", account_id=account_id, venue_id=venue_id
+        )
+
+    async def async_get_reconcile_reports(
+        self, *, account_id: str | None = None, venue_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self.get_reconcile_reports, account_id=account_id, venue_id=venue_id
+        )
+
+    def get_account_portfolio(
+        self, portfolio_id: str, *, reporting_currency: str | None = None
+    ) -> dict[str, Any]:
+        """Read a portfolio rollup while preserving each account's native currency rows."""
+        if not isinstance(portfolio_id, str) or not portfolio_id.strip():
+            raise ValueError("portfolio_id must be non-empty")
+        query = [("portfolio_id", portfolio_id)]
+        if reporting_currency is not None:
+            if (
+                not isinstance(reporting_currency, str)
+                or not reporting_currency.strip()
+            ):
+                raise ValueError("reporting_currency must be non-empty")
+            query.append(("reporting_currency", reporting_currency))
+        path = _ACCOUNT_READ_PATHS["portfolio"] + "?" + urlencode(query)
+        return self._request_json(path, method="GET")
+
+    async def async_get_account_portfolio(
+        self, portfolio_id: str, *, reporting_currency: str | None = None
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.get_account_portfolio,
+            portfolio_id,
+            reporting_currency=reporting_currency,
+        )
+
+    def get_account_activity(
+        self,
+        *,
+        account_id: str,
+        venue_id: str,
+        after: int | None = None,
+        before: int | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Read one account's bounded activity report and retained event-log page."""
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("account_id must be non-empty")
+        if not isinstance(venue_id, str) or not venue_id.strip():
+            raise ValueError("venue_id must be non-empty")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        for name, value in (("after", after), ("before", before)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 300:
+            raise ValueError("limit must be between 1 and 300")
+
+        query = [("account_id", account_id), ("venue_id", venue_id)]
+        if after is not None:
+            query.append(("after", str(after)))
+        if before is not None:
+            query.append(("before", str(before)))
+        query.append(("limit", str(limit)))
+        path = _ACCOUNT_READ_PATHS["activity"] + "?" + urlencode(query)
+        return self._request_json(path, method="GET")
+
+    async def async_get_account_activity(
+        self,
+        *,
+        account_id: str,
+        venue_id: str,
+        after: int | None = None,
+        before: int | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.get_account_activity,
+            account_id=account_id,
+            venue_id=venue_id,
+            after=after,
+            before=before,
+            limit=limit,
+        )
+
     def _start(self, route: str, spec: Any, result_type: type[_ResultT]) -> RemoteRunHandle[_ResultT]:
         document = self._post(route, spec)
         run_id = document.get("run_id")
@@ -3083,6 +3699,48 @@ class AppClient(_HttpJsonClient):
     def run_provider_depth_backtest(self, spec: Mapping[str, Any]) -> dict[str, Any]:
         """Fetch Provider Quote snapshots and run the shared Rust depth backtest."""
         return self._post(APP_ROUTE_TEMPLATES["provider_depth_backtest"], spec)
+
+    def read_provider_run_report_v1(self, outcome: Mapping[str, Any]) -> dict[str, Any]:
+        """Read the shared verified Provider Bar report DTO through the Rust API."""
+        return self._post(APP_ROUTE_TEMPLATES["read_provider_report"], outcome)
+
+    async def async_read_provider_run_report_v1(
+        self, outcome: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.read_provider_run_report_v1, outcome)
+
+    def read_provider_depth_run_report_v1(
+        self, outcome: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Read the shared verified Provider Depth report DTO through the Rust API."""
+        return self._post(APP_ROUTE_TEMPLATES["read_provider_depth_report"], outcome)
+
+    async def async_read_provider_depth_run_report_v1(
+        self, outcome: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.read_provider_depth_run_report_v1, outcome)
+
+    def read_multi_account_joint_report_v1(
+        self, outcome: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Read the replay-verified, versioned joint-account report DTO through Rust."""
+        return self._post(APP_ROUTE_TEMPLATES["read_multi_account_joint_report"], outcome)
+
+    async def async_read_multi_account_joint_report_v1(
+        self, outcome: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.read_multi_account_joint_report_v1, outcome)
+
+    def read_multi_leg_research_report_v1(
+        self, request: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Read the replay-verified, versioned multi-leg report DTO through Rust."""
+        return self._post(APP_ROUTE_TEMPLATES["read_multi_leg_report"], request)
+
+    async def async_read_multi_leg_research_report_v1(
+        self, request: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.read_multi_leg_research_report_v1, request)
 
     def start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
         return self._start(APP_ROUTE_TEMPLATES["backtest_start"], spec, BacktestOutcome)
@@ -3413,6 +4071,33 @@ def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
 
 
+def validate_strategy_execution_preflight_v1(
+    strategy_manifest: Mapping[str, Any],
+    execution_spec: Mapping[str, Any],
+    *,
+    purpose: Literal["run", "search", "diagnose"],
+    target_strategy_id: str | None = None,
+    split_plan: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preflight a file strategy through the shared Rust application boundary.
+
+    The result includes the Rust-validated Bar identities and row counts. Complete manifests fail
+    closed on parameter, market, data-level, and warmup mismatches; partial manifests preserve
+    the historical strategy behavior and explicitly report that no dataset checks were made.
+    """
+    return _invoke(
+        native.app_validate_strategy_execution_preflight_v1,
+        {
+            "schema_version": 1,
+            "strategy_manifest": strategy_manifest,
+            "execution_spec": execution_spec,
+            "purpose": purpose,
+            "target_strategy_id": target_strategy_id,
+            "split_plan": split_plan,
+        },
+    )
+
+
 def run_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
     """Run the deterministic single-instrument Bar backtest."""
     return BacktestOutcome.from_dict(_invoke(native.app_run_backtest, spec))
@@ -3518,6 +4203,107 @@ def verify_run(outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
     return VerificationResult.from_dict(_invoke(native.app_verify_run, value))
 
 
+def read_run_report_v1(outcome: BacktestOutcome | dict[str, Any]) -> dict[str, Any]:
+    """Read the shared, versioned bounded report core for a verified Bar run."""
+    value = asdict(outcome) if isinstance(outcome, BacktestOutcome) else outcome
+    return _invoke(native.app_read_run_report_v1, value)
+
+
+def read_depth_run_report_v1(
+    outcome: DepthBacktestOutcome | dict[str, Any],
+) -> dict[str, Any]:
+    """Read the shared, versioned bounded report core for a verified Depth run."""
+    value = asdict(outcome) if isinstance(outcome, DepthBacktestOutcome) else outcome
+    return _invoke(native.app_read_depth_run_report_v1, value)
+
+
+def read_provider_run_report_v1(outcome: Any) -> dict[str, Any]:
+    """Read a Provider Bar outcome and verify its outer manifest against shared run identity."""
+    value = asdict(outcome) if is_dataclass(outcome) else outcome
+    return _invoke(native.app_read_provider_backtest_report_v1, value)
+
+
+def read_provider_depth_run_report_v1(outcome: Any) -> dict[str, Any]:
+    """Read a Provider depth outcome and recompute its frozen input fingerprint."""
+    value = asdict(outcome) if is_dataclass(outcome) else outcome
+    return _invoke(native.app_read_provider_depth_backtest_report_v1, value)
+
+
+def read_multi_account_report_v1(
+    outcome: MultiAccountBacktestResult | MultiAccountDepthBacktestResult | dict[str, Any],
+) -> dict[str, Any]:
+    """Read the shared bounded Bar/Depth report for an independently funded account batch."""
+    return _invoke(native.app_read_multi_account_report_v1, outcome)
+
+
+def read_multi_account_joint_report_v1(
+    outcome: MultiAccountJointBacktestOutcome | dict[str, Any],
+    *,
+    joint_account_event_pages: dict[str, dict[str, dict[str, int]]] | None = None,
+) -> dict[str, Any]:
+    """Read verified joint-account facts with independent exchange/account event pages."""
+    if isinstance(outcome, dict) and "outcome" in outcome:
+        unknown = set(outcome) - {"outcome", "joint_account_event_pages"}
+        if unknown or joint_account_event_pages is not None:
+            raise ValueError("joint report wrapper contains unknown fields or duplicate page options")
+        joint_account_event_pages = outcome.get("joint_account_event_pages")
+        outcome = outcome["outcome"]
+    options = (
+        None
+        if joint_account_event_pages is None
+        else {"joint_account_event_pages": joint_account_event_pages}
+    )
+    return _invoke(native.app_read_multi_account_joint_report_v1, outcome, options)
+
+
+def read_multi_leg_report_facts_v1(
+    outcome: MultiLegBacktestOutcome | dict[str, Any],
+) -> dict[str, Any]:
+    """Read replay-verified ledger and per-leg accounting facts for a multi-leg run."""
+    return _invoke(native.app_read_multi_leg_report_facts_v1, outcome)
+
+
+def read_multi_leg_research_report_v1(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Read a complete bounded multi-leg report.
+
+    The request is a versioned object containing ``outcome`` and an optional event ``page``.
+    Equity/fill panels, execution assumptions, and run/data identities are verified together.
+    """
+    return _invoke(native.app_read_multi_leg_research_report_v1, request)
+
+
+def read_multi_leg_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Replay and verify a bounded page from a multi-leg Bar EventLog."""
+    return _invoke(native.app_read_multi_leg_event_report_page_v1, request)
+
+
+def read_multi_market_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Replay and verify a bounded page from a multi-market EventLog.
+
+    The request binds the event trace to its expected count, RunManifest digest, replay ledger,
+    strategy-to-market mapping, and optional page. The reader validates the complete trace before
+    returning the requested rows.
+    """
+    return _invoke(native.app_read_multi_market_event_report_page_v1, request)
+
+
+def read_multi_market_depth_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read and replay-verify a bounded multi-market L1/L2 event page."""
+    return _invoke(native.app_read_multi_market_depth_event_report_page_v1, request)
+
+
+def read_multi_market_research_report_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read a fully verified, bounded shared-account multi-market Bar report."""
+    return _invoke(native.app_read_multi_market_research_report_v1, request)
+
+
+def read_multi_market_depth_research_report_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read a fully verified, bounded shared-account multi-market L1/L2 report."""
+    return _invoke(native.app_read_multi_market_depth_research_report_v1, request)
+
+
 def compare_runs(spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
     """Rank completed runs from identical market data using the shared Rust use case."""
     return CompareRunsResult.from_dict(_invoke(native.app_compare_runs, spec))
@@ -3545,6 +4331,13 @@ def plan_algo_execution(spec: dict[str, Any]) -> dict[str, Any]:
 def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
     """Run a bounded Cartesian grid through Rust backtests and return their Rust comparison."""
     return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
+
+
+def _prepare_quick_research_spec(
+    spec: RunExperimentSpec | RunMultiMarketExperimentSpec | dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the guided OOS preset and apply the single-market baseline default in Rust."""
+    return _invoke(native.app_prepare_quick_research_spec_v1, spec)
 
 
 def run_experiment_with_strategy(
@@ -3848,6 +4641,10 @@ class MultiAccountJointBacktestOutcome:
     fills_path: str
     artifact_path: str
     accounts: tuple[JointAccountBacktestResult, ...]
+    run_manifest_path: str | None = None
+    result_hash: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiAccountJointBacktestOutcome":
@@ -4209,28 +5006,7 @@ def doctor() -> dict[str, Any]:
         "native_extension_available": extension_available,
         "application_use_cases_available": app_available,
         "implemented_use_cases": (
-            [
-                "dataset.validate.bar.v1",
-                "backtest.bar.v1",
-                "backtest.bar.run-handle.v1",
-                "run.verify.v1",
-                "backtest.compare.v1",
-                "portfolio.risk-parity.plan.v1",
-                "experiment.grid.bar.v1",
-                "experiment.grid.bar.run-handle.v1",
-                "experiment.grid.multi-leg.bar.v1",
-                "experiment.grid.multi-leg.bar.run-handle.v1",
-                "experiment.grid.depth.tick-orderbook.v1",
-                "experiment.grid.depth.tick-orderbook.run-handle.v1",
-                "backtest.depth.l1.v1",
-                "backtest.depth.l2.v1",
-                "backtest.depth.run-handle.v1",
-                "run.verify.depth.v1",
-                "backtest.multi-leg.bar.v1",
-                "backtest.multi-leg.bar.run-handle.v1",
-            ]
-            if app_available
-            else []
+            native.app_implemented_use_cases() if app_available else []
         ),
         "remote_workflows": ["control.paper.v1", "control.live.v1"],
         "limitations": [

@@ -54,6 +54,12 @@ pub fn live_strategy_bar_specs(
         if !strategy.live_enabled {
             continue;
         }
+        let data_level = strategy
+            .python_strategy_spec
+            .as_ref()
+            .and_then(|spec| spec.get("data_level"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("bar");
         let instrument_text = strategy
             .instrument
             .as_deref()
@@ -67,7 +73,7 @@ pub fn live_strategy_bar_specs(
         let primary_matches = worker.symbols.iter().any(|symbol| {
             InstrumentId::parse(symbol).is_some_and(|configured| configured == instrument)
         });
-        if primary_matches {
+        if primary_matches && data_level == "bar" {
             let configured_path = strategy
                 .bars_snapshot_path
                 .as_deref()
@@ -82,27 +88,29 @@ pub fn live_strategy_bar_specs(
                 snapshot_path: resolve_runtime_relative_path(runtime_config_path, configured_path),
             });
         }
-        if let (Some(reference_text), Some(reference_path)) = (
-            strategy.builtin_reference_instrument.as_deref(),
-            strategy.builtin_reference_bars_snapshot_path.as_deref(),
-        ) {
-            let reference = InstrumentId::parse(reference_text)
-                .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
-            if worker.symbols.iter().any(|symbol| {
-                InstrumentId::parse(symbol).is_some_and(|configured| configured == reference)
-            }) {
-                specs.push(LiveStrategyBarSpec {
-                    instrument: reference,
-                    timeframe: strategy.live_timeframe.clone(),
-                    timeframe_ms,
-                    max_staleness_ms,
-                    history_limit: strategy.live_history_limit,
-                    closed_only: strategy.live_closed_only,
-                    snapshot_path: resolve_runtime_relative_path(
-                        runtime_config_path,
-                        reference_path,
-                    ),
-                });
+        if data_level == "bar" {
+            if let (Some(reference_text), Some(reference_path)) = (
+                strategy.builtin_reference_instrument.as_deref(),
+                strategy.builtin_reference_bars_snapshot_path.as_deref(),
+            ) {
+                let reference = InstrumentId::parse(reference_text)
+                    .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
+                if worker.symbols.iter().any(|symbol| {
+                    InstrumentId::parse(symbol).is_some_and(|configured| configured == reference)
+                }) {
+                    specs.push(LiveStrategyBarSpec {
+                        instrument: reference,
+                        timeframe: strategy.live_timeframe.clone(),
+                        timeframe_ms,
+                        max_staleness_ms,
+                        history_limit: strategy.live_history_limit,
+                        closed_only: strategy.live_closed_only,
+                        snapshot_path: resolve_runtime_relative_path(
+                            runtime_config_path,
+                            reference_path,
+                        ),
+                    });
+                }
             }
         }
     }
@@ -116,6 +124,95 @@ pub fn live_strategy_bar_specs(
         left.instrument == right.instrument && left.snapshot_path == right.snapshot_path
     });
     Ok(specs)
+}
+
+pub fn live_strategy_order_book_instruments(
+    config: &RuntimeConfig,
+    worker: &WorkerConfig,
+) -> Result<Vec<InstrumentId>, String> {
+    let strategies = if config.strategies.is_empty() {
+        vec![config.strategy.clone()]
+    } else {
+        config.strategies.clone()
+    };
+    let mut instruments = Vec::new();
+    for strategy in strategies {
+        if !strategy.live_enabled
+            || strategy
+                .python_strategy_spec
+                .as_ref()
+                .and_then(|spec| spec.get("data_level"))
+                .and_then(serde_json::Value::as_str)
+                != Some("orderbook")
+        {
+            continue;
+        }
+        let text = strategy
+            .instrument
+            .as_deref()
+            .ok_or_else(|| "实时 OrderBook 策略必须配置 instrument".to_string())?;
+        let instrument = InstrumentId::parse(text)
+            .ok_or_else(|| format!("实时 OrderBook 策略 instrument 非法: {text}"))?;
+        if worker
+            .symbols
+            .iter()
+            .any(|symbol| InstrumentId::parse(symbol).as_ref() == Some(&instrument))
+        {
+            instruments.push(instrument);
+        }
+    }
+    instruments.sort_by_key(ToString::to_string);
+    instruments.dedup();
+    Ok(instruments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{live_strategy_bar_specs, live_strategy_order_book_instruments};
+    use qx_core::InstrumentId;
+    use qx_runtime::{RuntimeConfig, WorkerConfig, WorkerRole};
+
+    #[test]
+    fn orderbook_strategy_does_not_schedule_primary_or_reference_ohlcv_reads() {
+        let mut config = RuntimeConfig::from_json(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../deploy/qianxing.runtime.strategy-backtest.example.json"
+        )))
+        .expect("runtime fixture is valid");
+        config.strategy.live_enabled = true;
+        config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+        config.strategy.python_strategy_spec = Some(serde_json::json!({"data_level": "orderbook"}));
+        config.strategy.builtin_reference_instrument = Some("ETHUSDT.BINANCE".into());
+        config.strategy.builtin_reference_bars_snapshot_path =
+            Some("data/reference-bars.json".into());
+
+        let worker = WorkerConfig {
+            id: "market-data".into(),
+            role: WorkerRole::MarketData,
+            enabled: true,
+            account_id: None,
+            venue_id: Some("BINANCE".into()),
+            endpoint: Some("ccxt.json".into()),
+            symbols: vec!["BTCUSDT.BINANCE".into(), "ETHUSDT.BINANCE".into()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+
+        assert!(
+            live_strategy_bar_specs(&config, std::path::Path::new("runtime.json"), &worker)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            live_strategy_order_book_instruments(&config, &worker).unwrap(),
+            [InstrumentId::parse("BTCUSDT.BINANCE").unwrap()]
+        );
+    }
 }
 
 pub fn live_frame_is_fresh(
@@ -196,6 +293,10 @@ pub fn closed_live_frame(
             .iter()
             .map(|(index, _)| frame.volume_raw[*index])
             .collect(),
+        exact_ohlcv: frame
+            .exact_ohlcv
+            .as_ref()
+            .map(|values| visible.iter().map(|(index, _)| values[*index]).collect()),
     };
     result
         .validate()

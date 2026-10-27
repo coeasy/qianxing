@@ -7,7 +7,9 @@ Python 侧只消费版本化 JSON；它不会把可变 DataFrame 写回 Kernel�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any
 
 # 子模块入口（T2-2）：`app` 是应用层用例的 Python 门面，`native` 是 PyO3 扩展桥。
@@ -19,7 +21,7 @@ from . import app, native  # noqa: F401
 #: BarFrame JSON 契约版本。落盘/交换文档在顶层显式携带该值，Rust 侧
 #: （``qx-data`` 的 ``JsonBarFrameProvider``）据此切换兼容分支与严格模式：
 #: 缺省/0 表示旧格式（允许未知列、不强制 ``source``），``>=1`` 表示严格模式。
-BAR_FRAME_SCHEMA_VERSION = 1
+BAR_FRAME_SCHEMA_VERSION = 2
 
 #: v1 BarFrame JSON 的完整字段集合；两侧任何新增列都必须同步更新这里。
 BAR_FRAME_JSON_FIELDS = (
@@ -36,6 +38,7 @@ BAR_FRAME_JSON_FIELDS = (
 #: v1 允许的顶层键：内容列 + 契约版本。Rust 严格模式的 `deny_unknown_fields`
 #: 使用同一集合（`qx-data/src/provider.rs` 的 `StrictBarFrameJson`）。
 BAR_FRAME_STRICT_FIELDS = ("schema_version", *BAR_FRAME_JSON_FIELDS)
+BAR_FRAME_EXACT_FIELDS = (*BAR_FRAME_JSON_FIELDS, "exact_ohlcv")
 
 
 def read_bar_frame_schema_version(payload: "str | dict[str, Any]") -> int:
@@ -50,6 +53,48 @@ def read_bar_frame_schema_version(payload: "str | dict[str, Any]") -> int:
     if raw < 0 or raw > BAR_FRAME_SCHEMA_VERSION:
         raise ValueError(f"unsupported BarFrame schema_version: {raw}")
     return raw
+
+
+def _exact_decimal(value: Any) -> Fraction:
+    if not isinstance(value, dict) or set(value) != {"coefficient", "scale"}:
+        raise ValueError("exact OHLCV values require coefficient and scale")
+    coefficient = value["coefficient"]
+    scale = value["scale"]
+    if (
+        not isinstance(coefficient, str)
+        or re.fullmatch(r"-?(?:0|[1-9][0-9]*)", coefficient) is None
+        or isinstance(scale, bool)
+        or not isinstance(scale, int)
+        or not 0 <= scale <= 18
+    ):
+        raise ValueError("exact OHLCV decimal coefficient or scale is invalid")
+    return Fraction(int(coefficient), 10**scale)
+
+
+def _exact_decimal_to_raw(value: dict[str, Any]) -> int:
+    coefficient = int(value["coefficient"])
+    scale = value["scale"]
+    if scale <= 9:
+        return coefficient * 10 ** (9 - scale)
+    divisor = 10 ** (scale - 9)
+    magnitude = abs(coefficient) // divisor
+    return -magnitude if coefficient < 0 else magnitude
+
+
+def _validate_exact_ohlcv_row(row: Any) -> tuple[dict[str, str | int], ...]:
+    names = ("open", "high", "low", "close", "volume")
+    if not isinstance(row, dict) or set(row) != set(names):
+        raise ValueError("each exact_ohlcv row requires exactly open/high/low/close/volume")
+    decimals = tuple(row[name] for name in names)
+    values = tuple(_exact_decimal(value) for value in decimals)
+    open_value, high_value, low_value, close_value, volume_value = values
+    if min(open_value, high_value, low_value, close_value) <= 0 or volume_value < 0:
+        raise ValueError("exact OHLCV prices must be positive and volume non-negative")
+    if high_value < max(open_value, low_value, close_value):
+        raise ValueError("exact OHLCV high must contain open, low and close")
+    if low_value > min(open_value, high_value, close_value):
+        raise ValueError("exact OHLCV low must contain open, high and close")
+    return decimals
 
 
 @dataclass(frozen=True)
@@ -107,6 +152,7 @@ class BarFrame:
     low_raw: tuple[int, ...]
     close_raw: tuple[int, ...]
     volume_raw: tuple[int, ...]
+    exact_ohlcv: tuple[dict[str, dict[str, str | int]], ...] | None = None
 
     @classmethod
     def from_json(cls, payload: str) -> "BarFrame":
@@ -120,9 +166,18 @@ class BarFrame:
             missing = sorted(set(BAR_FRAME_JSON_FIELDS).difference(value))
             if missing:
                 raise ValueError(f"BarFrame schema_version={schema_version} missing {missing}")
-            unknown = sorted(set(value).difference(BAR_FRAME_STRICT_FIELDS))
+            allowed = (
+                set(BAR_FRAME_STRICT_FIELDS)
+                if schema_version == 1
+                else {"schema_version", *BAR_FRAME_EXACT_FIELDS}
+            )
+            unknown = sorted(set(value).difference(allowed))
             if unknown:
                 raise ValueError(f"BarFrame schema_version={schema_version} unknown {unknown}")
+        if schema_version == 2 and "exact_ohlcv" not in value:
+            raise ValueError("BarFrame schema_version=2 requires exact_ohlcv")
+        if schema_version < 2 and "exact_ohlcv" in value:
+            raise ValueError("BarFrame exact_ohlcv requires schema_version=2")
         frame = cls(
             instrument=value["instrument"],
             source=value["source"],
@@ -132,6 +187,11 @@ class BarFrame:
             low_raw=tuple(value["low_raw"]),
             close_raw=tuple(value["close_raw"]),
             volume_raw=tuple(value["volume_raw"]),
+            exact_ohlcv=(
+                tuple(value["exact_ohlcv"])
+                if schema_version == 2 and isinstance(value["exact_ohlcv"], list)
+                else None
+            ),
         )
         frame.validate()
         return frame
@@ -153,21 +213,39 @@ class BarFrame:
             raise ValueError("column length mismatch")
         if any(left >= right for left, right in zip(self.ts, self.ts[1:])):
             raise ValueError("timestamps must be strictly increasing")
+        if self.exact_ohlcv is not None:
+            if len(self.exact_ohlcv) != len(self.ts):
+                raise ValueError("exact_ohlcv row count must match BarFrame")
+            for index, row in enumerate(self.exact_ohlcv):
+                exact = _validate_exact_ohlcv_row(row)
+                raw = (
+                    self.open_raw[index],
+                    self.high_raw[index],
+                    self.low_raw[index],
+                    self.close_raw[index],
+                    self.volume_raw[index],
+                )
+                if tuple(_exact_decimal_to_raw(value) for value in exact) != raw:
+                    raise ValueError(f"exact_ohlcv raw projection mismatch at row {index}")
 
     def to_json(self) -> str:
         self.validate()
+        schema_version = 2 if self.exact_ohlcv is not None else 1
+        value = {
+            "schema_version": schema_version,
+            "instrument": self.instrument,
+            "source": self.source,
+            "ts": list(self.ts),
+            "open_raw": list(self.open_raw),
+            "high_raw": list(self.high_raw),
+            "low_raw": list(self.low_raw),
+            "close_raw": list(self.close_raw),
+            "volume_raw": list(self.volume_raw),
+        }
+        if self.exact_ohlcv is not None:
+            value["exact_ohlcv"] = list(self.exact_ohlcv)
         return json.dumps(
-            {
-                "schema_version": BAR_FRAME_SCHEMA_VERSION,
-                "instrument": self.instrument,
-                "source": self.source,
-                "ts": list(self.ts),
-                "open_raw": list(self.open_raw),
-                "high_raw": list(self.high_raw),
-                "low_raw": list(self.low_raw),
-                "close_raw": list(self.close_raw),
-                "volume_raw": list(self.volume_raw),
-            },
+            value,
             separators=(",", ":"),
             ensure_ascii=False,
         )
@@ -191,6 +269,11 @@ class BarFrame:
             low_raw=tuple(self.low_raw[i] for i in indexes),
             close_raw=tuple(self.close_raw[i] for i in indexes),
             volume_raw=tuple(self.volume_raw[i] for i in indexes),
+            exact_ohlcv=(
+                tuple(self.exact_ohlcv[i] for i in indexes)
+                if self.exact_ohlcv is not None
+                else None
+            ),
         )
         selected.validate()
         return selected
@@ -305,7 +388,7 @@ class BarFrame:
 def load_account_snapshot(payload: str) -> dict[str, Any]:
     """解析 Qianxing account wire JSON，并执行最小 schema 级校验。
 
-    必填集合与 ``schemas/account-snapshot-v1.json`` 的 ``required`` 是同一份口径（含
+    必填集合与 v1/v2/v3 account snapshot schema 的 ``required`` 是同一份口径（含
     ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。必填说的是**键必须在**，不是值必须算得出——八个汇总钱字段在协议上全是 ``Option``，未算那一格写侧印 ``null``。
     """
 
@@ -325,6 +408,47 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
     missing = sorted(required.difference(value))
     if missing:
         raise ValueError(f"missing snapshot fields: {missing}")
-    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] != 1:
+    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] not in (1, 2, 3):
         raise ValueError("unsupported account snapshot schema")
+    header_version = value["header"].get("schema_version", value["schema_version"])
+    if header_version != value["schema_version"]:
+        raise ValueError("account snapshot schema version mismatch")
+    if value["schema_version"] == 1 and any(
+        position.get("settlement_currency") is not None
+        for position in value["positions"].values()
+    ):
+        raise ValueError("v1 account snapshot cannot declare position settlement_currency")
+    if value["schema_version"] < 3 and (
+        value.get("cash_exact")
+        or any(position.get("exact_amounts") is not None for position in value["positions"].values())
+    ):
+        raise ValueError("v1/v2 account snapshot cannot declare exact balances or positions")
+    cash_exact = value.get("cash_exact", {})
+    if not isinstance(cash_exact, dict):
+        raise ValueError("cash_exact must be an object")
+    for currency, exact in cash_exact.items():
+        if not isinstance(exact, dict) or set(exact) != {"coefficient", "scale"}:
+            raise ValueError(f"cash_exact.{currency} must be an exact decimal")
+        coefficient_text = exact["coefficient"]
+        digits = coefficient_text[1:] if isinstance(coefficient_text, str) and coefficient_text.startswith("-") else coefficient_text
+        if (
+            not isinstance(coefficient_text, str)
+            or not digits
+            or not digits.isascii()
+            or not digits.isdigit()
+            or (len(digits) > 1 and digits.startswith("0"))
+        ):
+            raise ValueError(f"cash_exact.{currency}.coefficient is invalid")
+        coefficient = int(coefficient_text)
+        scale = exact["scale"]
+        if not isinstance(scale, int) or isinstance(scale, bool) or not 0 <= scale <= 18:
+            raise ValueError(f"cash_exact.{currency}.scale is invalid")
+        raw = value["cash_raw"].get(currency)
+        if not isinstance(raw, int) or isinstance(raw, bool):
+            raise ValueError(f"cash_exact.{currency} has no integer cash_raw projection")
+        projected = coefficient * 10 ** (9 - scale) if scale <= 9 else (
+            abs(coefficient) // 10 ** (scale - 9)
+        ) * (-1 if coefficient < 0 else 1)
+        if projected != raw:
+            raise ValueError(f"cash_exact.{currency} disagrees with cash_raw projection")
     return value

@@ -1,15 +1,21 @@
 //! Batch isolated-account Bar backtests through the existing shared engine.
 
 use super::{
-    attach, guard::guard_panics, run_backtest::run_backtest_inner,
-    run_depth_backtest::run_inner as run_depth_inner,
+    attach,
+    guard::guard_panics,
+    run_backtest::run_backtest_inner,
+    run_depth_backtest::{run_inner as run_depth_inner, DEPTH_RUNTIME_VERSION},
 };
+mod canonical_spec;
+mod depth_canonical_spec;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountBacktestSummary,
     MultiAccountDepthBacktestResult, MultiAccountDepthBacktestSpec,
     MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
+    MULTI_ACCOUNT_BACKTEST_RESULT_SCHEMA_VERSION,
+    MULTI_ACCOUNT_DEPTH_BACKTEST_RESULT_SCHEMA_VERSION,
 };
 use qx_core::Fnv1a;
 use std::collections::BTreeMap;
@@ -39,6 +45,33 @@ pub fn run_multi_account_backtest(
         })
 }
 
+/// Verify the batch identity, ordered account set, child run manifests and aggregate summary.
+/// Historical results without a parent RunManifest are accepted only when every account failed.
+pub(crate) fn verify_multi_account_backtest_result(
+    result: &MultiAccountBacktestResult,
+) -> Result<(), AppError> {
+    verify_multi_account_backtest_result_with_reader(
+        result,
+        &crate::artifact_store::FileArtifactReader,
+    )
+}
+
+pub(crate) fn verify_multi_account_backtest_result_with_reader(
+    result: &MultiAccountBacktestResult,
+    reader: &dyn crate::artifact_store::ArtifactReader,
+) -> Result<(), AppError> {
+    canonical_spec::verify_multi_account_backtest_result(result, reader)
+        .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))
+}
+
+pub(crate) fn verify_multi_account_depth_backtest_result(
+    result: &MultiAccountDepthBacktestResult,
+    reader: &dyn crate::artifact_store::ArtifactReader,
+) -> Result<(), AppError> {
+    depth_canonical_spec::verify_multi_account_depth_backtest_result(result, reader)
+        .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))
+}
+
 pub(super) fn run_depth_batch_inner(
     spec: &MultiAccountDepthBacktestSpec,
     context: &RunContext,
@@ -55,6 +88,11 @@ pub(super) fn run_depth_batch_inner(
     for run in &mut canonical.runs {
         run.depth_path.clear();
         run.output_dir.clear();
+        // These are storage/provenance locators; the content identity and quality fingerprint
+        // are recorded by each successful child RunManifest.
+        run.quality_manifest_path = None;
+        run.runtime_config_path = None;
+        run.market_spec_path = None;
     }
     let input = canonical.to_json()?;
     let mut hasher = Fnv1a::new();
@@ -73,8 +111,7 @@ pub(super) fn run_depth_batch_inner(
     }
     let settlement_currency = spec.runs[0].settlement_currency.clone();
     let mut results = Vec::with_capacity(ordered.len());
-    let mut successful_initial_cash_raw = 0_i128;
-    let mut weighted_return_numerator = 0_i128;
+    let mut weighted_returns = crate::report_analysis::WeightedReturnAccumulatorV1::default();
     let mut successful_fills = 0_u64;
     for (account_id, run) in ordered {
         if cancellation.is_some_and(|token| token.is_cancelled()) {
@@ -87,31 +124,9 @@ pub(super) fn run_depth_batch_inner(
         .with_code_commit(context.code_commit());
         match run_depth_inner(run, &member_context, cancellation) {
             Ok(Some(outcome)) => {
-                successful_initial_cash_raw = successful_initial_cash_raw
-                    .checked_add(run.initial_cash_raw)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorCategory::InternalInvariant,
-                            "多账户成功本金求和溢出",
-                        )
-                    })?;
-                weighted_return_numerator = weighted_return_numerator
-                    .checked_add(
-                        i128::from(outcome.return_bps)
-                            .checked_mul(run.initial_cash_raw)
-                            .ok_or_else(|| {
-                                AppError::new(
-                                    AppErrorCategory::InternalInvariant,
-                                    "多账户加权收益乘法溢出",
-                                )
-                            })?,
-                    )
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorCategory::InternalInvariant,
-                            "多账户加权收益求和溢出",
-                        )
-                    })?;
+                weighted_returns
+                    .push(outcome.return_bps, run.initial_cash_raw)
+                    .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
                 successful_fills =
                     successful_fills.checked_add(outcome.fills).ok_or_else(|| {
                         AppError::new(AppErrorCategory::InternalInvariant, "多账户成交数求和溢出")
@@ -135,21 +150,13 @@ pub(super) fn run_depth_batch_inner(
         .filter(|result| result.outcome.is_some())
         .count();
     let accounts_failed = results.len() - accounts_succeeded;
-    let weighted_return_bps = if successful_initial_cash_raw == 0 {
-        None
-    } else {
-        Some(
-            i32::try_from(weighted_return_numerator / successful_initial_cash_raw).map_err(
-                |_| {
-                    AppError::new(
-                        AppErrorCategory::InternalInvariant,
-                        "多账户加权收益超出 i32 范围",
-                    )
-                },
-            )?,
-        )
-    };
-    Ok(Some(MultiAccountDepthBacktestResult {
+    let successful_initial_cash_raw = weighted_returns.initial_cash_raw();
+    let weighted_return_bps = weighted_returns
+        .finish()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
+    let mut result = MultiAccountDepthBacktestResult {
+        schema_version: MULTI_ACCOUNT_DEPTH_BACKTEST_RESULT_SCHEMA_VERSION,
+        result_kind: "multi_account_depth".into(),
         batch_id: spec.batch_id.clone(),
         settlement_currency,
         spec_fingerprint,
@@ -163,7 +170,25 @@ pub(super) fn run_depth_batch_inner(
             complete: accounts_failed == 0,
         },
         runs: results,
-    }))
+        run_manifest: None,
+    };
+    result.run_manifest = depth_canonical_spec::build_multi_account_depth_run_manifest(
+        spec,
+        &result,
+        context.code_commit(),
+        super::run_depth_backtest::DEPTH_RUNTIME_VERSION,
+    )?;
+    depth_canonical_spec::verify_multi_account_depth_backtest_result(
+        &result,
+        &crate::artifact_store::FileArtifactReader,
+    )
+    .map_err(|message| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("多账户 Depth 父结果发布前自校验失败: {message}"),
+        )
+    })?;
+    Ok(Some(result))
 }
 
 impl MultiAccountBacktestSpec {
@@ -191,21 +216,9 @@ fn run_inner(
         return Ok(None);
     }
     spec.validate()?;
-    let mut canonical = spec.clone();
-    canonical
-        .runs
-        .sort_by(|left, right| left.account_id.cmp(&right.account_id));
-    for run in &mut canonical.runs {
-        // Local paths are deployment details. Dataset identity is carried
-        // by each outcome's content fingerprint, so transport adapters may
-        // safely resolve roots without changing the batch configuration id.
-        run.bars_path.clear();
-        run.output_dir.clear();
-    }
-    let input = canonical.to_json()?;
-    let mut hasher = Fnv1a::new();
-    hasher.write_text(&input);
-    let spec_fingerprint = format!("{:016x}", hasher.finish());
+    // Local paths are deployment details. Dataset identity is carried by each outcome's content
+    // fingerprint, so transport adapters may resolve roots without changing this configuration id.
+    let spec_fingerprint = canonical_spec::legacy_spec_fingerprint(spec)?;
 
     let mut ordered: BTreeMap<&str, &_> = BTreeMap::new();
     for run in &spec.runs {
@@ -220,8 +233,7 @@ fn run_inner(
 
     let settlement_currency = spec.runs[0].settlement_currency.clone();
     let mut results = Vec::with_capacity(ordered.len());
-    let mut successful_initial_cash_raw = 0_i128;
-    let mut weighted_return_numerator = 0_i128;
+    let mut weighted_returns = crate::report_analysis::WeightedReturnAccumulatorV1::default();
     let mut successful_fills = 0_u64;
 
     for (account_id, run) in ordered {
@@ -235,30 +247,9 @@ fn run_inner(
         .with_code_commit(context.code_commit());
         match run_backtest_inner(run, &member_context, cancellation) {
             Ok(Some(outcome)) => {
-                successful_initial_cash_raw = successful_initial_cash_raw
-                    .checked_add(run.initial_cash_raw)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorCategory::InternalInvariant,
-                            "多账户成功本金求和溢出",
-                        )
-                    })?;
-                let weighted = i128::from(outcome.return_bps)
-                    .checked_mul(run.initial_cash_raw)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorCategory::InternalInvariant,
-                            "多账户加权收益乘法溢出",
-                        )
-                    })?;
-                weighted_return_numerator = weighted_return_numerator
-                    .checked_add(weighted)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorCategory::InternalInvariant,
-                            "多账户加权收益求和溢出",
-                        )
-                    })?;
+                weighted_returns
+                    .push(outcome.return_bps, run.initial_cash_raw)
+                    .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
                 successful_fills =
                     successful_fills.checked_add(outcome.fills).ok_or_else(|| {
                         AppError::new(AppErrorCategory::InternalInvariant, "多账户成交数求和溢出")
@@ -283,19 +274,13 @@ fn run_inner(
         .filter(|result| result.outcome.is_some())
         .count();
     let accounts_failed = results.len() - accounts_succeeded;
-    let weighted_return_bps = if successful_initial_cash_raw == 0 {
-        None
-    } else {
-        let value = weighted_return_numerator / successful_initial_cash_raw;
-        Some(i32::try_from(value).map_err(|_| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                "多账户加权收益超出 i32 范围",
-            )
-        })?)
-    };
+    let successful_initial_cash_raw = weighted_returns.initial_cash_raw();
+    let weighted_return_bps = weighted_returns
+        .finish()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
 
-    Ok(Some(MultiAccountBacktestResult {
+    let mut result = MultiAccountBacktestResult {
+        schema_version: MULTI_ACCOUNT_BACKTEST_RESULT_SCHEMA_VERSION,
         batch_id: spec.batch_id.clone(),
         settlement_currency,
         spec_fingerprint,
@@ -309,7 +294,15 @@ fn run_inner(
             complete: accounts_failed == 0,
         },
         runs: results,
-    }))
+        run_manifest: None,
+    };
+    result.run_manifest = canonical_spec::build_multi_account_run_manifest(
+        spec,
+        &result,
+        context.code_commit(),
+        &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
+    )?;
+    Ok(Some(result))
 }
 
 #[cfg(test)]

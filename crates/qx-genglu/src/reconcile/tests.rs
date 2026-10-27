@@ -5,13 +5,28 @@
 //! 投影若改回独立判定，这里都会有用例变红。
 
 use super::*;
-use qx_core::OrderStatus;
+use qx_core::{ExactDecimal, OrderStatus};
 
 fn fact(client_order_id: u64, status: Option<OrderStatus>, filled_raw: i128) -> OrderReconcileFact {
     OrderReconcileFact {
         client_order_id,
         status,
         filled_raw,
+        filled_exact: None,
+    }
+}
+
+fn exact_fact(
+    client_order_id: u64,
+    status: Option<OrderStatus>,
+    filled_raw: i128,
+    filled_exact: &str,
+) -> OrderReconcileFact {
+    OrderReconcileFact {
+        client_order_id,
+        status,
+        filled_raw,
+        filled_exact: Some(ExactDecimal::parse(filled_exact).unwrap()),
     }
 }
 
@@ -174,4 +189,42 @@ fn canonical_reports_directional_presence_and_duplicates() {
         remote_duplicates[0],
         OrderReconcileDiff::DuplicateRemote { .. }
     ));
+}
+
+#[test]
+fn exact_filled_reconciliation_detects_sub_nano_progress_and_regression() {
+    let local = exact_fact(8, Some(OrderStatus::PartiallyFilled), 0, "0.0000000001");
+    let progressed = exact_fact(8, Some(OrderStatus::PartiallyFilled), 0, "0.0000000002");
+    let diffs = reconcile_order_facts(
+        std::slice::from_ref(&local),
+        std::slice::from_ref(&progressed),
+    );
+    assert_eq!(
+        diffs,
+        vec![OrderReconcileDiff::FilledExactMismatch {
+            client_order_id: 8,
+            local: ExactDecimal::parse("0.0000000001").unwrap(),
+            venue: ExactDecimal::parse("0.0000000002").unwrap(),
+        }]
+    );
+    assert_eq!(
+        order_reconcile_verdict(&local, Some(&progressed)).action(),
+        VerdictAction::Resync
+    );
+
+    let regressed = exact_fact(8, Some(OrderStatus::PartiallyFilled), 0, "0.00000000005");
+    assert_eq!(
+        order_reconcile_verdict(&progressed, Some(&regressed)).action(),
+        VerdictAction::ManualReview
+    );
+}
+
+#[test]
+fn exact_filled_reconciliation_compares_mixed_exact_and_legacy_facts_numerically() {
+    let local = exact_fact(9, Some(OrderStatus::PartiallyFilled), 0, "1.0000000001");
+    let venue = fact(9, Some(OrderStatus::PartiallyFilled), 1_000_000_000);
+    assert_eq!(
+        order_reconcile_verdict(&local, Some(&venue)).action(),
+        VerdictAction::ManualReview
+    );
 }

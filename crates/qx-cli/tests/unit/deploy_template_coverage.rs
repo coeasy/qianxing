@@ -22,8 +22,12 @@ enum Reader {
     Runtime,
     /// `market_spec_from_value`：Some(frame) 与 BarFrame 配对，None 使用规格自身标的。
     MarketSpec(Option<&'static str>),
+    /// 通过实际 worker 配置读取多标的规格集合，并复用启动预检校验每个条目。
+    MarketSpecSet(&'static str),
     /// `validate_ccxt_worker_binding`；配 for (runtime 模板, 该 runtime 里实际挂载的 endpoint)。
     Ccxt(&'static str, &'static str),
+    /// endpoint 尚未被 runtime 示例挂载时，按同交易所 worker 校验生产配置形状与 venue 绑定。
+    CcxtVenue(&'static str, &'static str),
     /// 单标的回测链的那一对读点：`read_bar_frame_for_backtest` + `barframe_dataset_identity`。
     BarFrame,
     /// `qx_xingban::DepthFrame::from_json`。
@@ -56,7 +60,7 @@ enum Reader {
 /// 新增模板必须在这里登记，否则 `every_deploy_template_is_registered_with_a_reader` 变红；
 /// `tools/check_architecture.py` 的模板覆盖判据用同一份清单和磁盘核对，双向都不许漏。
 const COVERAGE: &[(&str, Reader, Expected)] = &[
-    // —— 运行时配置（19）：`config validate` 的完整引用体检 ——
+    // —— 运行时配置（20）：`config validate` 的完整引用体检 ——
     (
         "qianxing.runtime.example.json",
         Reader::Runtime,
@@ -134,6 +138,11 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
         Expected::Ok,
     ),
     (
+        "qianxing.runtime.multi-venue-contract.example.json",
+        Reader::Runtime,
+        Expected::Ok,
+    ),
+    (
         "qianxing.runtime.strategy-backtest.example.json",
         Reader::Runtime,
         Expected::Ok,
@@ -158,7 +167,7 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
         Reader::Runtime,
         Expected::Ok,
     ),
-    // —— 产品规格（5）：回测与 worker 共用的唯一读法 ——
+    // —— 单市场产品规格（5）：回测与 worker 共用的唯一读法 ——
     (
         "qianxing.binance.spot.spec.json",
         Reader::MarketSpec(None),
@@ -184,7 +193,21 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
         Reader::MarketSpec(Some("qianxing.bar-frame.pairs-reference.example.json")),
         Expected::Ok,
     ),
-    // —— CCXT endpoint 配置（4）：worker 绑定体检 ——
+    // —— 多标的产品规格集合：通过 worker 启动预检逐条校验 ——
+    (
+        "qianxing.crypto.multi-venue-perpetual-spec.example.json",
+        Reader::MarketSpecSet("qianxing.runtime.multi-venue-contract.example.json"),
+        Expected::Ok,
+    ),
+    // —— CCXT endpoint 配置（5）：worker 绑定体检 ——
+    (
+        "qianxing.ccxt.binance.usdm.example.json",
+        Reader::Ccxt(
+            "qianxing.runtime.multi-venue-arbitrage.example.json",
+            "qianxing.ccxt.binance.usdm.example.json",
+        ),
+        Expected::Ok,
+    ),
     (
         "qianxing.ccxt.exchange.example.json",
         Reader::Ccxt(
@@ -195,9 +218,9 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     ),
     (
         "qianxing.ccxt.binance.spot.example.json",
-        Reader::Ccxt(
+        Reader::CcxtVenue(
             "qianxing.runtime.multi-venue-arbitrage.example.json",
-            "qianxing.ccxt.binance.spot.example.json",
+            "binance",
         ),
         Expected::Ok,
     ),
@@ -213,9 +236,9 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     // 这里钉的是 exchange_id 与凭据引用形状，钉不出"哪个 worker 该用它"。
     (
         "qianxing.ccxt.binance.public.example.json",
-        Reader::Ccxt(
+        Reader::CcxtVenue(
             "qianxing.runtime.multi-venue-arbitrage.example.json",
-            "qianxing.ccxt.binance.spot.example.json",
+            "binance",
         ),
         Expected::Ok,
     ),
@@ -405,6 +428,21 @@ fn worker_mounting_endpoint(runtime: &str, endpoint_of: &str) -> Result<WorkerCo
         .ok_or_else(|| format!("runtime 模板 {runtime} 里已没有挂载 {endpoint_of} 的 worker"))
 }
 
+/// 找到同交易所的真实 worker。仅用于仓库目前没有 runtime 挂载的独立 endpoint 样例。
+fn worker_for_venue(runtime: &str, venue: &str) -> Result<WorkerConfig, String> {
+    let config = runtime_config(runtime)?;
+    config
+        .workers
+        .into_iter()
+        .find(|worker| {
+            worker
+                .venue_id
+                .as_deref()
+                .is_some_and(|configured| configured.eq_ignore_ascii_case(venue))
+        })
+        .ok_or_else(|| format!("runtime 模板 {runtime} 里没有 venue={venue} 的 worker"))
+}
+
 /// 按登记的读法解析一份模板；`Err` 的字符串就是生产读法给出的报错。
 fn load_through_registered_reader(
     name: &str,
@@ -453,6 +491,34 @@ fn load_through_registered_reader(
                 spec.instrument, spec.product, spec.settlement_currency
             ))
         }
+        Reader::MarketSpecSet(runtime) => {
+            let config = runtime_config(runtime)?;
+            let target_name = Path::new(name)
+                .file_name()
+                .ok_or_else(|| format!("{name} 缺少文件名"))?;
+            let runtime_path = deploy_template(runtime);
+            let mut matched_workers = 0usize;
+            let mut failures = Vec::new();
+            for mut worker in config.workers.into_iter().filter(|worker| {
+                worker
+                    .instrument_spec_path
+                    .as_deref()
+                    .and_then(|configured| Path::new(configured).file_name())
+                    == Some(target_name)
+            }) {
+                matched_workers += 1;
+                // 让健康文件与坏内容探针都走生产 worker 预检；坏副本的绝对路径覆盖配置引用。
+                worker.instrument_spec_path = Some(path.to_string_lossy().into_owned());
+                failures.extend(worker_market_spec_failures(&runtime_path, &worker));
+            }
+            if matched_workers == 0 {
+                return Err(format!("{name} 未被 {runtime} 的任何 worker 引用"));
+            }
+            if !failures.is_empty() {
+                return Err(failures.join("；"));
+            }
+            Ok(format!("runtime={runtime} workers={matched_workers}"))
+        }
         Reader::Ccxt(runtime, endpoint_of) => {
             let worker = worker_mounting_endpoint(runtime, endpoint_of)?;
             validate_ccxt_worker_binding(&worker, path)?;
@@ -463,6 +529,19 @@ fn load_through_registered_reader(
                 .to_string();
             Ok(format!(
                 "worker={} venue={:?} exchange_id={exchange_id}",
+                worker.id, worker.venue_id
+            ))
+        }
+        Reader::CcxtVenue(runtime, venue) => {
+            let worker = worker_for_venue(runtime, venue)?;
+            validate_ccxt_worker_binding(&worker, path)?;
+            let exchange_id = parse_json(path)?
+                .get("exchange_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(format!(
+                "worker={} venue={:?} exchange_id={exchange_id} (standalone endpoint)",
                 worker.id, worker.venue_id
             ))
         }
@@ -725,9 +804,14 @@ fn reader_classes() -> Vec<Reader> {
     vec![
         Reader::Runtime,
         Reader::MarketSpec(None),
+        Reader::MarketSpecSet("qianxing.runtime.multi-venue-contract.example.json"),
         Reader::Ccxt(
             "qianxing.runtime.ccxt.example.json",
             "qianxing.ccxt.exchange.example.json",
+        ),
+        Reader::CcxtVenue(
+            "qianxing.runtime.multi-venue-arbitrage.example.json",
+            "binance",
         ),
         Reader::MarketSpec(Some("qianxing.ashare.bar-frame.example.json")),
         Reader::BarFrame,

@@ -1,5 +1,8 @@
 use crate::{DataTier, OrderBookExecutionDescriptor, OrderBookExecutionModel, RunManifestIdentity};
-use qx_core::{EventLog, Fill, Fnv1a, Ledger, RunManifest, TradingInstrumentSpec};
+use qx_core::{
+    DecimalRounding, EventLog, ExactDecimal, Fill, Fnv1a, Ledger, RunManifest,
+    TradingInstrumentSpec,
+};
 use serde::{Deserialize, Serialize};
 
 pub struct OrderBookBacktestReport {
@@ -10,13 +13,21 @@ pub struct OrderBookBacktestReport {
     pub pending_orders: usize,
     /// 与 Bar 回测同形的统一产物：每个快照结束后的账户权益、净持仓与时间。
     pub equity: Vec<i128>,
+    /// Scale-aware marked equity parallel to the legacy raw curve.
+    pub equity_exact: Vec<ExactDecimal>,
     pub positions: Vec<i128>,
     pub snapshot_ts: Vec<u64>,
     pub fees_raw: i128,
     pub turnover_raw: i128,
+    /// Exact native-currency fee totals. `fees_raw` remains the legacy 1e-9 projection.
+    pub fees_exact_by_currency: BTreeMap<String, ExactDecimal>,
+    /// Exact traded notional in the configured quote/settlement currency.
+    pub turnover_exact: ExactDecimal,
+    pub turnover_currency: String,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub initial_equity_raw: i128,
+    pub initial_equity_exact: ExactDecimal,
     pub input_data_hash: u64,
     pub clock_start: u64,
     pub clock_end: u64,
@@ -42,7 +53,9 @@ pub(super) fn execution_model_descriptors(
             model.fee_bps,
             model.latency_snapshots,
             model.queue_position_bps,
-            model.queue_position_model.descriptor(model.queue_position_bps),
+            model
+                .queue_position_model
+                .descriptor(model.queue_position_bps),
             model.market_impact_bps
         ),
         format!("risk_rule_set={risk_rule_set_version}"),
@@ -110,6 +123,67 @@ impl OrderBookBacktestReport {
         *self.equity.last().unwrap_or(&self.initial_equity_raw)
     }
 
+    pub fn final_equity_exact(&self) -> ExactDecimal {
+        self.equity_exact
+            .last()
+            .copied()
+            .unwrap_or(self.initial_equity_exact)
+    }
+
+    /// Scale-aware equity facts used by reports and downstream research readers.
+    pub fn exact_metrics_json(&self) -> Result<serde_json::Value, String> {
+        let mut metrics = serde_json::json!({
+            "equity": exact_equity_metrics_json(self.initial_equity_exact, &self.equity_exact)?,
+            "turnover": {
+                "amount": self.turnover_exact.to_string(),
+                "currency": self.turnover_currency,
+            },
+            "fees_by_currency": self.fees_exact_by_currency.iter().map(|(currency, amount)| {
+                (currency.clone(), amount.to_string())
+            }).collect::<BTreeMap<_, _>>(),
+            "legacy_raw_projection": {
+                "fees_raw": self.fees_raw.to_string(),
+                "turnover_raw": self.turnover_raw.to_string(),
+            },
+        });
+        let mut funding_by_currency = BTreeMap::<String, ExactDecimal>::new();
+        let mut funding_count = 0_u64;
+        for entry in self
+            .ledger
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind == qx_core::LedgerEntryKind::Funding)
+        {
+            funding_count = funding_count
+                .checked_add(1)
+                .ok_or_else(|| "资金费结算计数溢出".to_string())?;
+            let amount = entry
+                .exact_amounts
+                .map_or_else(
+                    || ExactDecimal::from_parts(entry.amount.raw(), 9),
+                    |exact| Ok(exact.amount),
+                )
+                .map_err(|error| error.to_string())?;
+            let total = funding_by_currency
+                .entry(entry.currency.clone())
+                .or_insert(ExactDecimal::ZERO);
+            *total = total
+                .checked_add(amount)
+                .ok_or_else(|| "资金费现金流累计溢出".to_string())?;
+        }
+        metrics["funding"] = serde_json::json!({
+            "settlement_count": funding_count,
+            "cashflow_by_currency": funding_by_currency
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>(),
+        });
+        metrics["input_precision"] = serde_json::json!(
+            "DepthFrame v2 exact path covers spec-bound single-market Spot and linear/inverse derivative quantity orders, exact risk checks, Spot cash/inventory reservations, derivative aggregate margin/fee projections, funding cashflows, fills, fees, and ledger when queue estimation is disabled. Shared multi-market exact risk/reservations are not enabled; v1 inputs retain the 1e-9 grid."
+        );
+        Ok(metrics)
+    }
+
     /// Build the same run fingerprint contract used by bar backtests.
     pub fn run_manifest(
         &self,
@@ -140,10 +214,150 @@ impl OrderBookBacktestReport {
             input_event_hash: format!("{:016x}", self.input_data_hash),
             output_event_hash: format!("{:016x}", self.result_hash()),
             runtime_version: identity.runtime_version.into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         manifest.validate()?;
         Ok(manifest)
     }
+}
+
+pub(super) fn accumulate_exact_fees(
+    totals: &mut BTreeMap<String, ExactDecimal>,
+    fill: &Fill,
+    default_currency: &str,
+) -> Result<(), String> {
+    if !fill.exact_fees.is_empty() {
+        if fill.fee.raw() != 0 || !fill.fees.is_empty() {
+            return Err("同一精确成交不能混用 raw fees 与 exact_fees".into());
+        }
+        for charge in &fill.exact_fees {
+            if charge.amount.is_negative() {
+                return Err("精确手续费不能为负数".into());
+            }
+            if charge.amount.is_zero() {
+                continue;
+            }
+            let currency = charge
+                .currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "非零精确手续费必须声明币种".to_string())?
+                .to_ascii_uppercase();
+            add_exact_fee(totals, currency, charge.amount)?;
+        }
+        return Ok(());
+    }
+
+    for charge in fill.fee_charges()? {
+        if charge.amount.raw() == 0 {
+            continue;
+        }
+        let currency = charge
+            .currency
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(default_currency)
+            .to_ascii_uppercase();
+        let amount =
+            ExactDecimal::from_parts(charge.amount.raw(), 9).map_err(|error| error.to_string())?;
+        add_exact_fee(totals, currency, amount)?;
+    }
+    Ok(())
+}
+
+fn add_exact_fee(
+    totals: &mut BTreeMap<String, ExactDecimal>,
+    currency: String,
+    amount: ExactDecimal,
+) -> Result<(), String> {
+    let current = totals.entry(currency).or_insert(ExactDecimal::ZERO);
+    *current = current
+        .checked_add(amount)
+        .ok_or_else(|| "按币种汇总手续费溢出".to_string())?;
+    Ok(())
+}
+
+pub(super) fn exact_equity_metrics_json(
+    initial: ExactDecimal,
+    curve: &[ExactDecimal],
+) -> Result<serde_json::Value, String> {
+    let metrics = exact_equity_metrics(initial, curve)?;
+    Ok(serde_json::json!({
+        "initial": metrics.initial.to_string(),
+        "final": metrics.final_equity.to_string(),
+        "return": metrics.return_amount.to_string(),
+        "return_bps": metrics.return_bps.map(|value| value.to_string()),
+        "max_drawdown": metrics.max_drawdown.to_string(),
+        "max_drawdown_bps": metrics.max_drawdown_bps.to_string(),
+    }))
+}
+
+pub(super) struct ExactEquityMetrics {
+    pub initial: ExactDecimal,
+    pub final_equity: ExactDecimal,
+    pub return_amount: ExactDecimal,
+    pub return_bps: Option<i128>,
+    pub max_drawdown: ExactDecimal,
+    pub max_drawdown_bps: i128,
+}
+
+pub(super) fn exact_equity_metrics(
+    initial: ExactDecimal,
+    curve: &[ExactDecimal],
+) -> Result<ExactEquityMetrics, String> {
+    let final_equity = curve.last().copied().unwrap_or(initial);
+    let return_amount = final_equity
+        .checked_sub(initial)
+        .ok_or_else(|| "精确深度回测收益计算溢出".to_string())?;
+    let return_bps = exact_ratio_bps(return_amount, initial);
+    let mut peak = initial;
+    let mut max_drawdown = ExactDecimal::ZERO;
+    let mut max_drawdown_bps = 0_i128;
+    for equity in curve {
+        if peak
+            .checked_cmp(*equity)
+            .is_some_and(|ordering| ordering.is_lt())
+        {
+            peak = *equity;
+        }
+        let drawdown = peak
+            .checked_sub(*equity)
+            .ok_or_else(|| "精确深度回撤计算溢出".to_string())?;
+        if drawdown
+            .checked_cmp(max_drawdown)
+            .is_some_and(|ordering| ordering.is_gt())
+        {
+            max_drawdown = drawdown;
+        }
+        if peak.is_positive() {
+            max_drawdown_bps = max_drawdown_bps.max(exact_ratio_bps(drawdown, peak).unwrap_or(0));
+        }
+    }
+    Ok(ExactEquityMetrics {
+        initial,
+        final_equity,
+        return_amount,
+        return_bps,
+        max_drawdown,
+        max_drawdown_bps,
+    })
+}
+
+fn exact_ratio_bps(numerator: ExactDecimal, denominator: ExactDecimal) -> Option<i128> {
+    if !denominator.is_positive() {
+        return None;
+    }
+    numerator
+        .checked_mul_at_scale(
+            ExactDecimal::from_parts(10_000, 0).ok()?,
+            ExactDecimal::MAX_SCALE,
+            DecimalRounding::TowardZero,
+        )?
+        .checked_div_at_scale(denominator, 0, DecimalRounding::TowardZero)
+        .map(ExactDecimal::coefficient)
 }
 
 impl QueuePositionSensitivityReport {
@@ -241,4 +455,24 @@ fn matching_model_parts(descriptor: &str) -> Result<(String, String), String> {
         return Err("matching descriptor uses an unsupported queue model".into());
     };
     Ok((before_queue.to_string(), after_queue.trim().to_string()))
+}
+
+#[cfg(test)]
+mod exact_metrics_tests {
+    use super::exact_equity_metrics_json;
+    use qx_core::ExactDecimal;
+
+    #[test]
+    fn exact_depth_return_and_drawdown_keep_sub_nano_changes() {
+        let initial = ExactDecimal::parse("0.0000000019").unwrap();
+        let curve = [
+            ExactDecimal::parse("0.0000000020").unwrap(),
+            ExactDecimal::parse("0.0000000019").unwrap(),
+            ExactDecimal::parse("0.0000000020").unwrap(),
+        ];
+        let metrics = exact_equity_metrics_json(initial, &curve).unwrap();
+        assert_eq!(metrics["return_bps"], "526");
+        assert_eq!(metrics["max_drawdown_bps"], "500");
+        assert_eq!(metrics["final"], "0.000000002");
+    }
 }

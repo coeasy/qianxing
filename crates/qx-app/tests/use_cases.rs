@@ -9,12 +9,13 @@
 mod common;
 
 use common::{backtest_spec, dataset_spec, experiment_spec, frame_json, scratch, write_frame};
+use qx_app::artifact_store::{ArtifactId, ArtifactReader, ArtifactStream};
 use qx_app::{
-    run_backtest, run_experiment, validate_dataset, verify_run, AppErrorCategory,
-    BacktestArtifacts, BacktestOutcome, CallerCapability, ExperimentParameterSpace, RunContext,
-    RunExperimentSpec,
+    read_run_report_v1, read_run_report_v1_with_reader, run_backtest, run_experiment,
+    validate_dataset, verify_run, AppError, AppErrorCategory, BacktestArtifacts, BacktestOutcome,
+    CallerCapability, ExperimentParameterSpace, RunContext, RunExperimentSpec,
 };
-use std::path::PathBuf;
+use std::{collections::HashMap, io::Cursor, path::PathBuf};
 
 /// 三个用例都用 R 档（研究）：本切片没有外部副作用。
 fn research(id: &str) -> RunContext {
@@ -127,6 +128,37 @@ fn a_backtest_run_writes_four_core_artifacts_and_replay_verified_event_trace() {
         ),
         "回测 RunManifest 必须引用与 qx-data 相同的输入内容身份"
     );
+    let manifest = qx_core::RunManifest::from_json(
+        &std::fs::read_to_string(&outcome.artifacts.run_manifest).expect("RunManifest JSON"),
+    )
+    .expect("RunManifest parses");
+    let canonical_json = manifest
+        .canonical_run_spec_json
+        .as_deref()
+        .expect("new Bar runs carry CanonicalRunSpec");
+    let canonical =
+        qx_spec::CanonicalRunSpec::from_json(canonical_json).expect("canonical run spec parses");
+    assert_eq!(canonical.run_type, "bar_backtest");
+    assert_eq!(
+        canonical.datasets[0].content_fingerprint,
+        manifest.data_fingerprint
+    );
+    assert_eq!(canonical.clock.start_ts_ms, manifest.clock_start);
+    assert_eq!(canonical.clock.end_ts_ms, manifest.clock_end);
+    assert_eq!(canonical.random_seed, manifest.global_seed.to_string());
+    assert_eq!(
+        manifest.canonical_run_spec_fingerprint.as_deref(),
+        Some(
+            canonical
+                .fingerprint()
+                .expect("canonical fingerprint")
+                .as_str()
+        )
+    );
+    let canonical_behavior = canonical.behavior.as_object().expect("behavior object");
+    assert!(!canonical_behavior.contains_key("run_id"));
+    assert!(!canonical_behavior.contains_key("bars_path"));
+    assert!(!canonical_behavior.contains_key("output_dir"));
     for path in [
         &outcome.artifacts.run_manifest,
         &outcome.artifacts.summary,
@@ -157,6 +189,166 @@ fn a_backtest_run_writes_four_core_artifacts_and_replay_verified_event_trace() {
     assert_eq!(verification.data_fingerprint, outcome.data_fingerprint);
     assert!(!verification.checks.is_empty(), "核过的口径要列出来");
     assert!(verification.mismatches.is_empty());
+}
+
+#[test]
+fn canonical_run_identity_ignores_run_and_local_paths_for_same_inputs() {
+    let root = scratch("canonical-path-independent");
+    let first_bars = write_frame(&root, "first-bars.json", "BTCUSDT.BINANCE", 60);
+    let second_bars = write_frame(&root, "second-bars.json", "BTCUSDT.BINANCE", 60);
+    let first = run_backtest(
+        &backtest_spec("canonical-first", &first_bars, &root.join("first-output")),
+        &research("canonical-first"),
+    )
+    .expect("first equivalent run");
+    let second = run_backtest(
+        &backtest_spec(
+            "canonical-second",
+            &second_bars,
+            &root.join("second-output"),
+        ),
+        &research("canonical-second"),
+    )
+    .expect("second equivalent run");
+    let read_fingerprint = |path: &str| {
+        qx_core::RunManifest::from_json(&std::fs::read_to_string(path).expect("manifest"))
+            .expect("valid manifest")
+            .canonical_run_spec_fingerprint
+            .expect("canonical fingerprint")
+    };
+    assert_eq!(
+        read_fingerprint(&first.artifacts.run_manifest),
+        read_fingerprint(&second.artifacts.run_manifest),
+        "canonical identity must not depend on run id, input path, or output directory"
+    );
+}
+
+#[test]
+fn versioned_run_report_returns_verified_bounded_core_rows() {
+    let root = scratch("bt-report-core-v1");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let outcome = run_backtest(
+        &backtest_spec("report-core-v1", &bars, &root.join("out")),
+        &research("report-core-v1"),
+    )
+    .expect("run backtest");
+
+    let report = read_run_report_v1(&outcome, &research("report-core-v1-read"))
+        .expect("read shared versioned report");
+
+    struct MemoryArtifactReader {
+        legacy: HashMap<String, Vec<u8>>,
+        by_id: HashMap<String, Vec<u8>>,
+    }
+    impl ArtifactReader for MemoryArtifactReader {
+        fn open(&self, reference: &str) -> Result<ArtifactStream, AppError> {
+            let body = self.legacy.get(reference).cloned().ok_or_else(|| {
+                AppError::new(AppErrorCategory::DataUnavailable, "memory artifact missing")
+            })?;
+            Ok(ArtifactStream::new(body.len() as u64, Cursor::new(body)))
+        }
+
+        fn open_by_id(
+            &self,
+            artifact_id: &ArtifactId,
+            _legacy_reference: Option<&str>,
+        ) -> Result<ArtifactStream, AppError> {
+            let body = self
+                .by_id
+                .get(artifact_id.as_str())
+                .cloned()
+                .ok_or_else(|| {
+                    AppError::new(
+                        AppErrorCategory::DataUnavailable,
+                        "memory ArtifactId missing",
+                    )
+                })?;
+            Ok(ArtifactStream::new(body.len() as u64, Cursor::new(body)))
+        }
+    }
+    let summary_value: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&outcome.artifacts.summary).expect("read test summary"),
+    )
+    .expect("parse test summary");
+    let run_record_path = summary_value["run_record"]
+        .as_str()
+        .expect("summary declares RunRecord");
+    let legacy = [
+        outcome.artifacts.run_manifest.clone(),
+        outcome.artifacts.summary.clone(),
+        outcome.artifacts.equity.clone(),
+        outcome.artifacts.fills.clone(),
+        run_record_path.to_owned(),
+    ]
+    .into_iter()
+    .map(|path| {
+        (
+            path.clone(),
+            std::fs::read(&path).expect("read test artifact"),
+        )
+    })
+    .collect::<HashMap<_, _>>();
+    let run_record: serde_json::Value = serde_json::from_slice(
+        legacy
+            .get(run_record_path)
+            .expect("RunRecord locator is available"),
+    )
+    .expect("parse RunRecord");
+    let locations = summary_value["artifact_locations"]
+        .as_object()
+        .expect("summary artifact locations");
+    let by_id = run_record["artifact_refs"]
+        .as_array()
+        .expect("RunRecord artifact refs")
+        .iter()
+        .map(|reference| {
+            let name = reference["name"].as_str().expect("artifact name");
+            let path = locations[name].as_str().expect("artifact location");
+            let digest = reference["artifact_id"]
+                .as_str()
+                .or_else(|| reference.get("digest").and_then(serde_json::Value::as_str))
+                .expect("artifact content identity");
+            (
+                digest.to_owned(),
+                legacy
+                    .get(path)
+                    .cloned()
+                    .expect("artifact bytes by legacy path"),
+            )
+        })
+        .collect();
+    let artifacts = MemoryArtifactReader { legacy, by_id };
+    let memory_report = read_run_report_v1_with_reader(
+        &outcome,
+        &research("report-core-v1-memory-read"),
+        &artifacts,
+    )
+    .expect("read report through non-filesystem adapter");
+    assert_eq!(memory_report, report);
+
+    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.run_id, outcome.run_id);
+    assert_eq!(report.instrument, outcome.instrument);
+    assert!(
+        report.verification.verified,
+        "{:?}",
+        report.verification.mismatches
+    );
+    assert_eq!(report.equity.total, outcome.equity_points);
+    assert_eq!(report.fills.total, outcome.fills);
+    assert!(!report.equity.rows.is_empty());
+    let final_equity = report.summary["final_equity_raw"].to_string();
+    assert_eq!(
+        report
+            .equity
+            .rows
+            .last()
+            .and_then(|row| row["equity_raw"].as_str()),
+        Some(final_equity.trim_matches('"')),
+        "the sampled equity curve must include the verified final point"
+    );
+    assert!(report.equity.rows.len() <= 1_000);
+    assert!(report.fills.rows.len() <= 200);
 }
 
 #[test]
@@ -335,6 +527,40 @@ fn verification_rejects_manifest_metadata_drift_and_nondeterministic_runs() {
             .expect("复核结论不应转成调用错误");
         assert!(!verification.verified, "{label} 篡改必须拒绝");
     }
+}
+
+#[test]
+fn verification_checks_run_record_digests_for_all_core_artifacts() {
+    let root = scratch("bt-run-record-digest");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let spec = backtest_spec("run-record-digest", &bars, &root.join("out"));
+    let outcome = run_backtest(&spec, &research("run-record-digest")).expect("回测跑通");
+    assert!(
+        verify_run(&outcome, &research("verify-record-before-tamper"))
+            .expect("初始产物复核")
+            .verified
+    );
+
+    let fills_path = PathBuf::from(&outcome.artifacts.fills);
+    let fills = std::fs::read_to_string(&fills_path).expect("读取 fills");
+    let tampered = fills.replacen("order_id", "order_ix", 1);
+    assert_ne!(
+        tampered, fills,
+        "fixture must contain the canonical fills header"
+    );
+    std::fs::write(&fills_path, tampered).expect("保留行数并篡改 fills header");
+
+    let verification = verify_run(&outcome, &research("verify-record-after-tamper"))
+        .expect("产物不一致应返回复核结论");
+    assert!(!verification.verified);
+    assert!(
+        verification
+            .mismatches
+            .iter()
+            .any(|item| item.starts_with("RunRecord SHA-256 复核失败")),
+        "RunRecord should identify same-row-count artifact tampering: {:?}",
+        verification.mismatches
+    );
 }
 
 #[test]

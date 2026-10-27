@@ -9,6 +9,46 @@ pub(super) fn via_python(
     function: &str,
     argument: &str,
 ) -> Option<Result<Value, String>> {
+    run_python(
+        root,
+        function,
+        format!("{argument:?}"),
+        "from qianxing_bridge import app",
+    )
+}
+
+pub(super) fn via_python_json_value(
+    root: &Path,
+    function: &str,
+    argument_json: &str,
+) -> Option<Result<Value, String>> {
+    run_python(
+        root,
+        function,
+        format!("json.loads({argument_json:?})"),
+        "from qianxing_bridge import app",
+    )
+}
+
+pub(super) fn via_python_sdk_json_value(
+    root: &Path,
+    function: &str,
+    argument_json: &str,
+) -> Option<Result<Value, String>> {
+    run_python(
+        root,
+        function,
+        format!("json.loads({argument_json:?})"),
+        "import qianxing as app",
+    )
+}
+
+fn run_python(
+    root: &Path,
+    function: &str,
+    argument_expression: String,
+    app_import: &str,
+) -> Option<Result<Value, String>> {
     let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
         if cfg!(windows) {
             root.join("python/.venv/Scripts/python.exe")
@@ -68,7 +108,8 @@ pub(super) fn via_python(
          try:\n\
          \x20   import _qianxing_native\n\
          \x20   sys.modules['qianxing_bridge._qianxing_native'] = _qianxing_native\n\
-         \x20   from qianxing_bridge import app, native\n\
+         \x20   {app_import}\n\
+         \x20   from qianxing_bridge import native\n\
          except Exception as error:\n\
          \x20   print('QX_APP_PYTHON_UNAVAILABLE: ' + str(error), file=sys.stderr)\n\
          \x20   sys.exit(3)\n\
@@ -76,14 +117,16 @@ pub(super) fn via_python(
          \x20   print('QX_APP_PYTHON_UNAVAILABLE: native app facade unavailable', file=sys.stderr)\n\
          \x20   sys.exit(3)\n\
          try:\n\
-         \x20   result = app.{function}({argument:?})\n\
+         \x20   result = app.{function}({argument_expression})\n\
          except Exception as error:\n\
-         \x20   payload = app.app_error_payload(error)\n\
+         \x20   payload = app.app_error_payload(error) if hasattr(app, 'app_error_payload') else str(error)\n\
          \x20   print(json.dumps({{'qx_app_error': payload if payload is not None else str(error)}}))\n\
          \x20   sys.exit(4)\n\
          print(json.dumps(result))\n",
         native_dir = import_dir.to_string_lossy(),
         python_dir = root.join("python").to_string_lossy(),
+        argument_expression = argument_expression,
+        app_import = app_import,
     );
     let output = Command::new(&python)
         .arg("-c")

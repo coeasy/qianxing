@@ -43,6 +43,9 @@ def available() -> bool:
 APP_ENTRYPOINTS = (
     "app_screen_ashare_bars",
     "app_validate_dataset",
+    "app_assemble_dataset_bundle",
+    "app_prepare_quick_research_spec_v1",
+    "app_validate_strategy_execution_preflight_v1",
     "app_run_backtest",
     "app_run_backtest_with_strategy",
     "app_start_backtest_with_strategy",
@@ -62,6 +65,19 @@ APP_ENTRYPOINTS = (
     "app_start_multi_account_depth_backtest",
     "app_start_backtest",
     "app_verify_run",
+    "app_read_run_report_v1",
+    "app_read_depth_run_report_v1",
+    "app_read_provider_backtest_report_v1",
+    "app_read_provider_depth_backtest_report_v1",
+    "app_read_multi_account_report_v1",
+    "app_read_multi_account_joint_report_v1",
+    "app_read_multi_leg_report_facts_v1",
+    "app_read_multi_leg_research_report_v1",
+    "app_read_multi_leg_event_report_page_v1",
+    "app_read_multi_market_event_report_page_v1",
+    "app_read_multi_market_depth_event_report_page_v1",
+    "app_read_multi_market_research_report_v1",
+    "app_read_multi_market_depth_research_report_v1",
     "app_compare_runs",
     "app_plan_risk_parity",
     "app_plan_capital_allocation",
@@ -101,6 +117,61 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_experiment_with_strategy",
 )
 
+CAPABILITY_ENTRYPOINTS = (
+    "app_account_query_capability_preflight_v1",
+)
+
+# Public application capabilities are grouped by the native entrypoints required to execute them.
+# Keep this catalog next to APP_ENTRYPOINTS so doctor never reports an older hand-written subset.
+APP_USE_CASE_ENTRYPOINTS = (
+    ("dataset.validate.bar.v1", ("app_validate_dataset",)),
+    ("dataset.bundle.assemble.v1", ("app_assemble_dataset_bundle",)),
+    ("strategy.execution.preflight.v1", ("app_validate_strategy_execution_preflight_v1",)),
+    ("backtest.bar.v1", ("app_run_backtest", "app_start_backtest")),
+    ("backtest.bar.python-strategy.v1", ("app_run_backtest_with_strategy", "app_start_backtest_with_strategy")),
+    ("run.verify.v1", ("app_verify_run",)),
+    ("report.read.bar.v1", ("app_read_run_report_v1",)),
+    ("report.read.depth.v1", ("app_read_depth_run_report_v1",)),
+    ("report.read.provider-bar.v1", ("app_read_provider_backtest_report_v1",)),
+    ("report.read.provider-depth.v1", ("app_read_provider_depth_backtest_report_v1",)),
+    ("report.read.multi-account.v1", ("app_read_multi_account_report_v1",)),
+    ("report.read.multi-account-joint.v1", ("app_read_multi_account_joint_report_v1",)),
+    ("report.read.multi-leg.facts.v1", ("app_read_multi_leg_report_facts_v1",)),
+    ("report.read.multi-leg.v1", ("app_read_multi_leg_research_report_v1",)),
+    ("report.read.multi-leg.event-page.v1", ("app_read_multi_leg_event_report_page_v1",)),
+    ("report.read.multi-market.event-page.v1", ("app_read_multi_market_event_report_page_v1",)),
+    ("report.read.multi-market-depth.event-page.v1", ("app_read_multi_market_depth_event_report_page_v1",)),
+    ("report.read.multi-market.bar.v1", ("app_read_multi_market_research_report_v1",)),
+    ("report.read.multi-market-depth.v1", ("app_read_multi_market_depth_research_report_v1",)),
+    ("backtest.compare.v1", ("app_compare_runs",)),
+    ("portfolio.risk-parity.plan.v1", ("app_plan_risk_parity",)),
+    ("portfolio.capital-allocation.plan.v1", ("app_plan_capital_allocation",)),
+    ("execution.algo.plan.v1", ("app_plan_algo_execution",)),
+    ("experiment.grid.bar.v1", ("app_run_experiment", "app_start_experiment")),
+    ("experiment.grid.bar.python-strategy.v1", ("app_run_experiment_with_strategy", "app_start_experiment_with_strategy")),
+    ("backtest.depth.tick-orderbook.v1", ("app_run_depth_backtest", "app_start_depth_backtest")),
+    ("backtest.depth.python-strategy.v1", ("app_run_depth_backtest_with_strategy", "app_start_depth_backtest_with_strategy")),
+    ("backtest.depth.strategy-slots.v1", ("app_run_depth_backtest_with_strategy_slots", "app_start_depth_backtest_with_strategy_slots")),
+    ("experiment.grid.depth.tick-orderbook.v1", ("app_run_depth_experiment", "app_start_depth_experiment")),
+    ("experiment.grid.depth.python-strategy.v1", ("app_run_depth_experiment_with_strategy", "app_start_depth_experiment_with_strategy")),
+    ("run.verify.depth.v1", ("app_verify_depth_run",)),
+    ("backtest.multi-leg.bar.v1", ("app_run_multi_leg_backtest", "app_start_multi_leg_backtest")),
+    ("backtest.multi-leg.python-strategy.v1", ("app_run_multi_leg_backtest_with_strategy", "app_start_multi_leg_backtest_with_strategy")),
+    ("experiment.grid.multi-leg.bar.v1", ("app_run_multi_leg_experiment", "app_start_multi_leg_experiment")),
+    ("experiment.grid.multi-leg.python-strategy.v1", ("app_run_multi_leg_experiment_with_strategy", "app_start_multi_leg_experiment_with_strategy")),
+    ("backtest.multi-market.bar.v1", ("app_run_multi_market_backtest", "app_start_multi_market_backtest")),
+    ("backtest.multi-market.strategy-slots.v1", ("app_run_multi_market_backtest_with_strategy_slots", "app_start_multi_market_backtest_with_strategy_slots")),
+    ("experiment.grid.multi-market.bar.v1", ("app_run_multi_market_experiment", "app_start_multi_market_experiment")),
+    ("experiment.grid.multi-market.python-strategy.v1", ("app_run_multi_market_experiment_with_strategy", "app_start_multi_market_experiment_with_strategy")),
+    ("backtest.multi-market.depth.v1", ("app_run_multi_market_depth_backtest", "app_start_multi_market_depth_backtest")),
+    ("backtest.multi-market.depth.strategy-slots.v1", ("app_run_multi_market_depth_backtest_with_strategy_slots", "app_start_multi_market_depth_backtest_with_strategy_slots")),
+    ("experiment.grid.multi-market.depth.v1", ("app_run_multi_market_depth_experiment", "app_start_multi_market_depth_experiment")),
+    ("experiment.grid.multi-market.depth.python-strategy.v1", ("app_run_multi_market_depth_experiment_with_strategy", "app_start_multi_market_depth_experiment_with_strategy")),
+    ("backtest.multi-account.bar.v1", ("app_run_multi_account_backtest", "app_start_multi_account_backtest")),
+    ("backtest.multi-account.depth.v1", ("app_run_multi_account_depth_backtest", "app_start_multi_account_depth_backtest")),
+    ("backtest.multi-account.joint.v1", ("app_run_multi_account_joint_backtest", "app_start_multi_account_joint_backtest")),
+)
+
 
 def app_available() -> bool:
     """这个扩展是不是**带应用层用例**的那一代。
@@ -114,6 +185,19 @@ def app_available() -> bool:
     except RuntimeError:
         return False
     return all(hasattr(extension, name) for name in APP_ENTRYPOINTS)
+
+
+def app_implemented_use_cases() -> list[str]:
+    """Return only application capabilities whose full native entrypoint set is present."""
+    try:
+        extension = _extension()
+    except RuntimeError:
+        return []
+    return [
+        use_case
+        for use_case, entrypoints in APP_USE_CASE_ENTRYPOINTS
+        if all(hasattr(extension, entrypoint) for entrypoint in entrypoints)
+    ]
 
 
 def frame_digest(payload: str) -> int:
@@ -255,9 +339,28 @@ def app_validate_dataset(spec_json: str) -> str:
     return str(_extension().app_validate_dataset(spec_json))
 
 
+def app_validate_strategy_execution_preflight_v1(payload_json: str) -> str:
+    """Validate a complete strategy manifest and its selected execution inputs in Rust."""
+    return str(_extension().app_validate_strategy_execution_preflight_v1(payload_json))
+
+
+def app_account_query_capability_preflight_v1(payload_json: str) -> str:
+    """Evaluate a private account-read request using the shared Rust capability gate."""
+
+    extension = _extension()
+    if not hasattr(extension, "app_account_query_capability_preflight_v1"):
+        raise RuntimeError("_qianxing_native lacks account query capability preflight support")
+    return str(extension.app_account_query_capability_preflight_v1(payload_json))
+
+
 def app_assemble_dataset_bundle(payload: str) -> str:
     """Assemble and validate DatasetBundleManifest in the shared Rust app layer."""
     return str(_extension().app_assemble_dataset_bundle(payload))
+
+
+def app_prepare_quick_research_spec_v1(spec_json: str) -> str:
+    """Normalize and validate the guided local/remote research preset in Rust."""
+    return str(_extension().app_prepare_quick_research_spec_v1(spec_json))
 
 
 def app_run_backtest(spec_json: str) -> str:
@@ -455,6 +558,73 @@ def app_verify_run(outcome_json: str) -> str:
     ``outcome_json`` 直接取 ``app_run_backtest`` 的返回值——各入口的交接面是同一份文档。
     """
     return str(_extension().app_verify_run(outcome_json))
+
+
+def app_read_run_report_v1(outcome_json: str) -> str:
+    """Read the shared bounded version-1 research report core through qx-app."""
+    return str(_extension().app_read_run_report_v1(outcome_json))
+
+
+def app_read_depth_run_report_v1(outcome_json: str) -> str:
+    """Read the shared bounded version-1 Depth research report core through qx-app."""
+    return str(_extension().app_read_depth_run_report_v1(outcome_json))
+
+
+def app_read_provider_backtest_report_v1(outcome_json: str) -> str:
+    """Read and verify the Provider Bar envelope against its shared run identity."""
+    return str(_extension().app_read_provider_backtest_report_v1(outcome_json))
+
+
+def app_read_provider_depth_backtest_report_v1(outcome_json: str) -> str:
+    """Read and verify the Provider DepthFrame identity and shared run report."""
+    return str(_extension().app_read_provider_depth_backtest_report_v1(outcome_json))
+
+
+def app_read_multi_account_report_v1(outcome_json: str) -> str:
+    """Read the shared bounded version-1 multi-account report through qx-app."""
+    return str(_extension().app_read_multi_account_report_v1(outcome_json))
+
+
+def app_read_multi_account_joint_report_v1(
+    outcome_json: str, options_json: str | None = None
+) -> str:
+    """Read the verified report with optional independent account event pages."""
+    return str(_extension().app_read_multi_account_joint_report_v1(outcome_json, options_json))
+
+
+def app_read_multi_leg_report_facts_v1(outcome_json: str) -> str:
+    """Read replay-verified multi-leg accounting facts through qx-app."""
+    return str(_extension().app_read_multi_leg_report_facts_v1(outcome_json))
+
+
+def app_read_multi_leg_research_report_v1(request_json: str) -> str:
+    """Read the complete bounded multi-leg research report through qx-app."""
+    return str(_extension().app_read_multi_leg_research_report_v1(request_json))
+
+
+def app_read_multi_leg_event_report_page_v1(request_json: str) -> str:
+    """Read a bounded replay-verified multi-leg EventLog page through qx-app."""
+    return str(_extension().app_read_multi_leg_event_report_page_v1(request_json))
+
+
+def app_read_multi_market_event_report_page_v1(request_json: str) -> str:
+    """Read a replay-verified bounded multi-market EventLog page through qx-app."""
+    return str(_extension().app_read_multi_market_event_report_page_v1(request_json))
+
+
+def app_read_multi_market_depth_event_report_page_v1(request_json: str) -> str:
+    """Read a replay-verified bounded multi-market Depth EventLog page through qx-app."""
+    return str(_extension().app_read_multi_market_depth_event_report_page_v1(request_json))
+
+
+def app_read_multi_market_research_report_v1(request_json: str) -> str:
+    """Read the complete bounded shared-account multi-market Bar report through qx-app."""
+    return str(_extension().app_read_multi_market_research_report_v1(request_json))
+
+
+def app_read_multi_market_depth_research_report_v1(request_json: str) -> str:
+    """Read the complete bounded shared-account multi-market L1/L2 report through qx-app."""
+    return str(_extension().app_read_multi_market_depth_research_report_v1(request_json))
 
 
 def app_compare_runs(spec_json: str) -> str:

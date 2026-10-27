@@ -159,6 +159,22 @@ fn multi_builtin_cli_preserves_stdout_and_artifacts_with_fractional_price_sizing
     assert_eq!(composition["schema_version"], 7);
     assert_eq!(composition["input"]["kind"], "multi-barframe");
     assert_eq!(composition["legs"].as_array().map(Vec::len), Some(2));
+    let combined_return_bps = composition["totals"]["combined_return_bps"]
+        .as_i64()
+        .expect("combined return is an integer")
+        .to_string();
+    assert_eq!(
+        composition["metrics_exact"]["equity"]["return_bps"].as_str(),
+        Some(combined_return_bps.as_str())
+    );
+    let equity_path = composition["artifact_locations"]["equity"]
+        .as_str()
+        .expect("composition declares exact equity CSV");
+    let equity_csv = std::fs::read_to_string(equity_path).expect("read composition equity CSV");
+    assert_eq!(
+        equity_csv.lines().next(),
+        Some("index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact")
+    );
     let evidence_name = entries
         .iter()
         .find(|name| name.ends_with(".evidence.json"))

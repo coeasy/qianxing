@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/backtest-equity-csv-v2.json",
+  "title": "Qianxing Backtest Equity CSV row v2",
+  "description": "A normalized row view of the v2 CSV header ts,equity_raw,equity_exact,position_raw. The raw columns retain their historical 1e-9 units; equity_exact is a canonical decimal string.",
+  "type": "object",
+  "required": ["ts", "equity_raw", "equity_exact", "position_raw"],
+  "properties": {
+    "ts": {"type": "string", "pattern": "^[0-9]+$"},
+    "equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "equity_exact": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"},
+    "position_raw": {"type": "string", "pattern": "^-?[0-9]+$"}
+  },
+  "additionalProperties": false
+}

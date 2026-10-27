@@ -11,16 +11,16 @@
 #     避免把「表达式」误当成「版本号」冻结。
 
 schema_version: 1
-updated_at: "2026-10-23"
-release_version: "0.2.2"
+updated_at: "2026-10-27"
+release_version: "0.3.0"
 
 # ---- 冻结的 schema 版本（u32 / u16 字面量） ----
 frozen_versions:
   event_metadata: "crates/qx-core/src/event.rs::EVENT_METADATA_SCHEMA_VERSION=2"
-  data_schema: "crates/qx-data/src/schema.rs::DATA_SCHEMA_VERSION=1"
-  bar_frame_json: "crates/qx-datastruct/src/lib.rs::BAR_FRAME_JSON_SCHEMA_VERSION=1"
+  data_schema: "crates/qx-data/src/schema.rs::DATA_SCHEMA_VERSION=2"
+  bar_frame_json: "crates/qx-datastruct/src/lib.rs::BAR_FRAME_JSON_SCHEMA_VERSION=2"
   factor_execution_plan: "crates/qx-factor/src/execution_plan.rs::FACTOR_EXECUTION_PLAN_SCHEMA_VERSION=1"
-  account_snapshot: "crates/qx-protocol/src/lib.rs::ACCOUNT_SNAPSHOT_SCHEMA_VERSION=1"
+  account_snapshot: "crates/qx-protocol/src/lib.rs::ACCOUNT_SNAPSHOT_SCHEMA_VERSION=3"
   projection_envelope: "crates/qx-protocol/src/lib.rs::PROJECTION_ENVELOPE_SCHEMA_VERSION=1"
   runtime_config: "crates/qx-runtime/src/runtime_config/schema.rs::RUNTIME_SCHEMA_VERSION=1"
   strategy_api: "crates/qx-strategy/src/lib.rs::STRATEGY_API_VERSION=1"
@@ -28,11 +28,13 @@ frozen_versions:
   c_abi_strategy: "crates/qx-strategy/src/c_api.rs::QX_C_STRATEGY_API_VERSION=1"
   ashare: "crates/qx-xingban/src/ashare.rs::ASHARE_SCHEMA_VERSION=1"
   storage_schema: "crates/qx-storage/src/lib.rs::LATEST_SCHEMA_VERSION=1"
-  # 地基规格对象（规划 §6.2）：七类声明式文档各一个版本常量，与 schemas/ 下同名 Schema 同源。
+  # 地基规格对象（规划 §6.2）：每个登记版本常量均与 schemas/ 下对应版本 Schema 同源。
   project_manifest: "crates/qx-spec/src/project.rs::PROJECT_MANIFEST_SCHEMA_VERSION=1"
   dataset_manifest_v2: "crates/qx-data/src/catalog_v2.rs::DATASET_MANIFEST_V2_SCHEMA_VERSION=1"
   experiment_spec: "crates/qx-spec/src/experiment.rs::EXPERIMENT_SPEC_SCHEMA_VERSION=1"
   run_record: "crates/qx-spec/src/run_record.rs::RUN_RECORD_SCHEMA_VERSION=1"
+  run_record_v2: "crates/qx-spec/src/run_record.rs::RUN_RECORD_V2_SCHEMA_VERSION=2"
+  canonical_run_spec: "crates/qx-spec/src/canonical_run_spec.rs::CANONICAL_RUN_SPEC_SCHEMA_VERSION=1"
   capability_manifest: "crates/qx-spec/src/capability.rs::CAPABILITY_MANIFEST_SCHEMA_VERSION=1"
   evidence_bundle: "crates/qx-spec/src/evidence.rs::EVIDENCE_BUNDLE_SCHEMA_VERSION=3"
   schema_registry: "crates/qx-spec/src/schema_registry.rs::SCHEMA_REGISTRY_SCHEMA_VERSION=1"

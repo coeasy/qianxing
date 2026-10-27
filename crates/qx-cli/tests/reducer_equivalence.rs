@@ -66,6 +66,7 @@ fn spot_spec() -> TradingInstrumentSpec {
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -88,6 +89,7 @@ fn perpetual_spec() -> TradingInstrumentSpec {
         maintenance_margin_bps: 50,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -119,6 +121,7 @@ impl BarStrategy for BuyTwice {
             account_id: ACCOUNT.into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }
@@ -191,6 +194,7 @@ fn replay_in_live(
                     account_id: ACCOUNT.into(),
                     trace: None,
                     policy: None,
+                    exact_amounts: None,
                 },
                 fill.ts,
             )

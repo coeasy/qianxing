@@ -32,7 +32,70 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
     assert!(result.candidates[0].outcome.is_some());
     assert!(result.candidates[1].error.is_some());
     assert!(Path::new(&result.artifact_path).is_file());
+    assert!(result.canonical_run_spec_json.is_some());
+    assert!(result.input_data_fingerprint.is_some());
+    assert!(result.result_hash.is_some());
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&result.artifact_path).unwrap()).unwrap();
+    let report_path = result
+        .artifact_locations
+        .as_ref()
+        .unwrap()
+        .get("experiment_report")
+        .unwrap();
+    let input_spec_path = result
+        .artifact_locations
+        .as_ref()
+        .unwrap()
+        .get("experiment_input")
+        .expect("full depth experiment spec sidecar");
+    assert!(Path::new(report_path).is_file());
+    assert!(Path::new(input_spec_path).is_file());
+    qx_app::artifact_store::verify_declared_run_manifest(&report)
+        .expect("the depth experiment RunRecord and RunManifest should verify");
     assert_eq!(run_depth_experiment(&spec, &context).unwrap(), result);
+    let relocated_data = root.join("same-depth-frame-different-path.json");
+    std::fs::copy(&spec.base.depth_path, &relocated_data).unwrap();
+    let mut relocated_spec = spec.clone();
+    relocated_spec.base.depth_path = relocated_data.to_string_lossy().into_owned();
+    assert_eq!(
+        run_depth_experiment(&relocated_spec, &context).unwrap(),
+        result
+    );
+
+    let mut legacy_report = report.clone();
+    let legacy_object = legacy_report.as_object_mut().unwrap();
+    for field in [
+        "canonical_run_spec_json",
+        "canonical_run_spec_fingerprint",
+        "input_data_fingerprint",
+        "result_hash",
+        "run_manifest",
+        "run_record",
+        "artifact_locations",
+    ] {
+        legacy_object.remove(field);
+    }
+    std::fs::write(
+        &result.artifact_path,
+        serde_json::to_vec(&legacy_report).unwrap(),
+    )
+    .unwrap();
+    let upgraded = run_depth_experiment(&spec, &context).expect("verified legacy report upgrades");
+    assert!(upgraded.run_record.is_some());
+    let upgraded_report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&upgraded.artifact_path).unwrap()).unwrap();
+    qx_app::artifact_store::verify_declared_run_manifest(&upgraded_report)
+        .expect("the upgraded standard artifacts should verify");
+
+    let immutable_report = upgraded
+        .artifact_locations
+        .as_ref()
+        .unwrap()
+        .get("experiment_report")
+        .unwrap();
+    std::fs::write(immutable_report, b"tampered").unwrap();
+    assert!(qx_app::artifact_store::verify_declared_run_manifest(&upgraded_report).is_err());
 
     let mut changed = spec;
     changed.parameter_space[0].values = vec![2, 3];
@@ -42,6 +105,42 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
             .category(),
         AppErrorCategory::Conflict
     );
+}
+
+#[test]
+fn depth_experiment_preserves_i128_candidate_facts_in_standard_artifacts() {
+    let root = scratch("depth-experiment-i128");
+    let spec = RunDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "depth-i128-grid".into(),
+        base: spec("unused-depth-i128-grid", &root, "l1", 1),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![i128::MAX],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let context = RunContext::new(CallerCapability::Research, "depth-i128-grid");
+    let result = run_depth_experiment(&spec, &context)
+        .expect("i128 candidate values should persist without Value precision loss");
+    assert_eq!(result.candidates[0].parameters["quantity_raw"], i128::MAX);
+    assert!(result.run_record.is_some());
+    let report_payload = std::fs::read_to_string(&result.artifact_path).unwrap();
+    let report = qx_app::RunDepthExperimentResult::from_json(&report_payload).unwrap();
+    let verification_summary = serde_json::json!({
+        "schema_version": report.schema_version,
+        "experiment_id": report.experiment_id,
+        "artifact_path": report.artifact_path,
+        "canonical_run_spec_json": report.canonical_run_spec_json,
+        "canonical_run_spec_fingerprint": report.canonical_run_spec_fingerprint,
+        "input_data_fingerprint": report.input_data_fingerprint,
+        "result_hash": report.result_hash,
+        "run_manifest": report.run_manifest,
+        "run_record": report.run_record,
+        "artifact_locations": report.artifact_locations,
+    });
+    qx_app::artifact_store::verify_declared_run_manifest(&verification_summary)
+        .expect("typed record verification should retain the i128 candidate value");
 }
 
 struct BuyOnFirstDepthEvent {
@@ -68,6 +167,10 @@ impl Strategy for BuyOnFirstDepthEvent {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         };
         Ok(StrategyDecision {
@@ -119,10 +222,12 @@ fn caller_strategy_factory_runs_fresh_tick_candidates_and_cancellable_handle() {
         .expect("custom Tick strategy candidates use the shared Rust depth engine");
     assert_eq!(*seen.lock().unwrap(), vec![SCALE, 2 * SCALE]);
     assert_eq!(result.succeeded_candidates, 2);
-    assert!(result.candidates.iter().all(|candidate| candidate
-        .outcome
-        .as_ref()
-        .is_some_and(|outcome| outcome.fills > 0)));
+    assert!(result.candidates.iter().all(|candidate| {
+        candidate
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.fills > 0)
+    }));
 
     let mut handle_spec = spec;
     handle_spec.experiment_id = "tick-custom-strategy-grid-handle".into();

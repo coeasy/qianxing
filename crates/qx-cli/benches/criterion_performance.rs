@@ -45,6 +45,7 @@ fn deterministic_adjustment_entries(size: usize) -> Vec<LedgerEntry> {
             position_side: None,
 
             leverage: None,
+            exact_amounts: None,
         })
         .collect()
 }
@@ -494,6 +495,9 @@ fn bench_strategy_decision_order_buffer(c: &mut Criterion) {
         venue_id: "XSHG".into(),
         data_fingerprint: "bench-bars".into(),
         as_of: 10,
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         positions: BTreeMap::new(),
         cash: BTreeMap::from([("CNY".into(), 1_000_000_000)]),
         available_margin_raw: Some(1_000_000_000),
@@ -519,6 +523,10 @@ fn bench_strategy_decision_order_buffer(c: &mut Criterion) {
                     policy: None,
                     reduce_only: false,
                     post_only: false,
+
+                    qty_exact: None,
+                    limit_price_exact: None,
+                    quote_budget: None,
                 }],
             })
             .collect::<Vec<_>>();

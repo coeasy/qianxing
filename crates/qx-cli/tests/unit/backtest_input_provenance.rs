@@ -10,7 +10,6 @@
 //! 产物被拆开换掉一半——摘要留着、清单换成别一轮的——也照样能出报告。
 
 use super::*;
-use qx_spec::FoundationDocument;
 
 /// 把仓库示例 BarFrame 复制到用例自己的目录，让产物声明的是副本路径而不是仓库文件。
 fn bar_frame_copy(dir: &Path, label: &str) -> PathBuf {
@@ -71,7 +70,7 @@ fn run_bar_chain_and_read(
     let summary = read_first_backtest_summary(root);
     let manifest = read_first_artifact(root, ".run.json");
     let record_payload = read_first_artifact(root, ".record.json");
-    let record = qx_spec::RunRecord::from_json(&record_payload.to_string())
+    let record = qx_spec::RunRecordV2::from_json(&record_payload.to_string())
         .expect("回测必须写出符合规格的 completed RunRecord");
     assert_eq!(record.status, qx_spec::RunStatus::Completed);
     assert_eq!(record.replay_verdict, qx_spec::ReplayVerdict::Verified);
@@ -86,8 +85,12 @@ fn run_bar_chain_and_read(
     }
     assert!(summary["metrics"]["win_rate"].is_number());
     for artifact in &record.artifact_refs {
-        let bytes = std::fs::read(&artifact.path).expect("RunRecord 引用的产物必须存在");
-        assert_eq!(artifact.digest, qx_strategy::sha256_hex(&bytes));
+        let path = summary["artifact_locations"][&artifact.name]
+            .as_str()
+            .expect("V2 摘要必须为每个内容身份提供存储定位");
+        let bytes = std::fs::read(path).expect("RunRecord V2 引用的产物必须存在");
+        assert_eq!(artifact.byte_len, bytes.len() as u64);
+        assert_eq!(artifact.artifact_id, qx_strategy::sha256_hex(&bytes));
     }
     assert!(summary["run_record"].as_str().is_some());
     (summary, manifest)
@@ -364,14 +367,14 @@ fn report_refuses_when_the_sibling_run_manifest_no_longer_matches() {
         });
         let error = recompute_declared_backtest_input(&summary).unwrap_err();
         assert!(
-            error.contains("RunManifest 不一致") && error.contains(field),
-            "对账要指名是 {field} 与清单不符: {error}"
+            error.contains("ArtifactId 内容摘要不匹配"),
+            "内容寻址层应先拒绝被改写的 RunManifest（原本要对账 {field}）: {error}"
         );
     }
     let report_error = run_report(&runtime, false, false).unwrap_err();
     assert!(
-        report_error.contains("RunManifest 不一致"),
-        "qx report 必须把清单对账失败原样抛给使用者: {report_error}"
+        report_error.contains("ArtifactId 内容摘要不匹配"),
+        "qx report 必须把内容寻址完整性失败原样抛给使用者: {report_error}"
     );
     clean_up(dirs);
 }
@@ -397,8 +400,8 @@ fn report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable() {
     std::fs::write(&pointer, "{\"run_id\":\"only-half-a-manifest\"}").unwrap();
     let error = recompute_declared_backtest_input(&summary).unwrap_err();
     assert!(
-        error.contains("RunManifest 无效"),
-        "残缺清单要按无效处理: {error}"
+        error.contains("ArtifactId 内容摘要不匹配"),
+        "被改写成残缺内容的不可变清单应先按摘要不匹配拒绝: {error}"
     );
     clean_up(dirs);
 }
@@ -421,7 +424,7 @@ fn summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_che
     clean_up(dirs);
 }
 
-/// v5 报告侧对 RunRecord 引用的每个文件重算 SHA-256；篡改权益曲线不能继续展示可信报告。
+/// v7 报告侧对 RunRecord V2 引用的每个文件重算长度和 SHA-256；篡改权益曲线不能继续展示可信报告。
 #[test]
 fn report_refuses_when_a_run_record_artifact_digest_no_longer_matches() {
     let (summary, runtime, dirs) = bar_chain_products("v5-record-artifact-tampered");
@@ -429,19 +432,24 @@ fn report_refuses_when_a_run_record_artifact_digest_no_longer_matches() {
         .as_str()
         .expect("v7 摘要要有 RunRecord");
     let record_payload = std::fs::read_to_string(record_path).unwrap();
-    let record = qx_spec::RunRecord::from_json(&record_payload).unwrap();
+    let record = qx_spec::RunRecordV2::from_json(&record_payload).unwrap();
     let equity = record
         .artifact_refs
         .iter()
         .find(|artifact| artifact.name == "equity")
         .expect("RunRecord 必须引用权益曲线");
-    let mut bytes = std::fs::read(&equity.path).unwrap();
-    bytes.extend_from_slice(b"tampered");
-    std::fs::write(&equity.path, bytes).unwrap();
+    let equity_path = summary["artifact_locations"]["equity"]
+        .as_str()
+        .expect("V2 摘要要声明权益产物存储定位");
+    let mut bytes = std::fs::read(equity_path).unwrap();
+    assert_eq!(equity.byte_len, bytes.len() as u64);
+    assert_eq!(equity.artifact_id.len(), 64);
+    bytes[0] = if bytes[0] == b't' { b'T' } else { b't' };
+    std::fs::write(equity_path, bytes).unwrap();
 
     let error = run_report(&runtime, false, false).unwrap_err();
     assert!(
-        error.contains("RunRecord 产物摘要不匹配") && error.contains(&equity.path),
+        error.contains("RunRecord 产物摘要不匹配") && error.contains(equity_path),
         "报告必须点名被篡改的产物: {error}"
     );
     clean_up(dirs);

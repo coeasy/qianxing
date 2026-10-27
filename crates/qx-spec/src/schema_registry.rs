@@ -18,6 +18,10 @@ pub enum SchemaCompatibility {
     Forward,
     Full,
     None,
+    /// Different major schema versions are maintained side by side without claiming
+    /// backward/forward wire compatibility between them.
+    #[serde(rename = "parallel-version")]
+    ParallelVersion,
 }
 
 impl SchemaCompatibility {
@@ -27,6 +31,7 @@ impl SchemaCompatibility {
             SchemaCompatibility::Forward => "forward",
             SchemaCompatibility::Full => "full",
             SchemaCompatibility::None => "none",
+            SchemaCompatibility::ParallelVersion => "parallel-version",
         }
     }
 }

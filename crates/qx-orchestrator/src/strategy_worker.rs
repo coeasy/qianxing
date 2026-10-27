@@ -1,8 +1,8 @@
 //! Request/response lifecycle for external strategy workers.
 
 use crate::{
-    pump_strategy_process, spawn_strategy_process, stop_strategy_process, StrategySharedRings,
-    StrategyWorkerResponse,
+    pump_strategy_process, spawn_strategy_process_with_host_provider_env, stop_strategy_process,
+    StrategySharedRings, StrategyWorkerResponse,
 };
 use qx_process_io::write_all_within;
 use qx_strategy::transport::StrategyTransport;
@@ -42,6 +42,13 @@ pub struct StrategyWorkerSpawnConfig<'a> {
 
 impl StrategyWorkerProcess {
     pub fn spawn(config: StrategyWorkerSpawnConfig<'_>) -> Result<Self, String> {
+        Self::spawn_with_host_provider_env(config, &std::collections::BTreeMap::new())
+    }
+
+    pub fn spawn_with_host_provider_env(
+        config: StrategyWorkerSpawnConfig<'_>,
+        host_provider_env: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
         let StrategyWorkerSpawnConfig {
             executable,
             args,
@@ -75,10 +82,20 @@ impl StrategyWorkerProcess {
         } else {
             None
         };
-        let pipes =
-            spawn_strategy_process(executable, &actual_args, env, transport).map_err(|error| {
-                format!("启动 {label} worker 失败（程序={diagnostic_program}）: {error}")
-            })?;
+        let spawn_result = if host_provider_env.is_empty() {
+            crate::spawn_strategy_process(executable, &actual_args, env, transport)
+        } else {
+            spawn_strategy_process_with_host_provider_env(
+                executable,
+                &actual_args,
+                env,
+                host_provider_env,
+                transport,
+            )
+        };
+        let pipes = spawn_result.map_err(|error| {
+            format!("启动 {label} worker 失败（程序={diagnostic_program}）: {error}")
+        })?;
         let pumped = pump_strategy_process(pipes.stdout, pipes.stderr, transport);
         Ok(Self {
             child: Some(pipes.child),

@@ -6,7 +6,7 @@
 use crate::error::QxResult;
 use crate::event::{Event, EventKind};
 use crate::ledger::Ledger;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// FNV-1a 64：零依赖、跨平台稳定。
 ///
@@ -88,6 +88,13 @@ pub struct RunManifest {
     pub input_event_hash: String,
     pub output_event_hash: String,
     pub runtime_version: String,
+    /// Optional path-free canonical run input snapshot. Omitted in historical manifests so their
+    /// serialized form and digest remain unchanged during the v1-to-canonical migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_json: Option<String>,
+    /// FNV-1a digest over the exact canonical JSON bytes above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_fingerprint: Option<String>,
 }
 
 impl RunManifest {
@@ -117,6 +124,28 @@ impl RunManifest {
         }
         if self.clock_start > self.clock_end {
             return Err("RunManifest 时钟范围非法".into());
+        }
+        match (
+            self.canonical_run_spec_json.as_deref(),
+            self.canonical_run_spec_fingerprint.as_deref(),
+        ) {
+            (None, None) => {}
+            (Some(payload), Some(fingerprint)) => {
+                if payload.trim().is_empty() || !is_fnv1a_hex(fingerprint) {
+                    return Err("RunManifest canonical_run_spec JSON 或指纹格式无效".into());
+                }
+                let mut hash = Fnv1a::new();
+                hash.write_bytes(payload.as_bytes());
+                if format!("{:016x}", hash.finish()) != fingerprint {
+                    return Err("RunManifest canonical_run_spec_fingerprint 与 JSON 不匹配".into());
+                }
+            }
+            _ => {
+                return Err(
+                    "RunManifest canonical_run_spec_json 与 fingerprint 必须同时存在或同时缺省"
+                        .into(),
+                );
+            }
         }
         Ok(())
     }
@@ -155,8 +184,23 @@ impl RunManifest {
         write_text(&mut h, &self.input_event_hash);
         write_text(&mut h, &self.output_event_hash);
         write_text(&mut h, &self.runtime_version);
+        if let (Some(payload), Some(fingerprint)) = (
+            self.canonical_run_spec_json.as_deref(),
+            self.canonical_run_spec_fingerprint.as_deref(),
+        ) {
+            write_text(&mut h, "canonical-run-spec-v1");
+            write_text(&mut h, payload);
+            write_text(&mut h, fingerprint);
+        }
         h.finish()
     }
+}
+
+fn is_fnv1a_hex(value: &str) -> bool {
+    value.len() == 16
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn write_text(hash: &mut Fnv1a, value: &str) {
@@ -176,6 +220,90 @@ pub struct ReplayFacts {
     pub log_digest: u64,
     pub events: usize,
     pub ledger_entries: usize,
+}
+
+/// Incremental replay state for large persisted logs.
+///
+/// It preserves `ReplayVerifier`'s checked append and ledger semantics without retaining every
+/// `Event` in an `EventLog`. The expected count is known from the bounded run summary and seeds
+/// the same stable digest format used by `EventLog::digest`.
+pub struct StreamingReplayVerifier {
+    expected_events: usize,
+    event_count: usize,
+    previous: Option<(u64, u8, u64)>,
+    seen_seqs: BTreeSet<u64>,
+    digest: Fnv1a,
+    ledger: Ledger,
+}
+
+pub struct StreamingReplayResult {
+    pub log_digest: u64,
+    pub event_count: usize,
+    pub ledger: Ledger,
+}
+
+impl StreamingReplayVerifier {
+    pub fn new(expected_events: usize) -> Self {
+        let mut digest = Fnv1a::new();
+        digest.write_u64(expected_events as u64);
+        Self {
+            expected_events,
+            event_count: 0,
+            previous: None,
+            seen_seqs: BTreeSet::new(),
+            digest,
+            ledger: Ledger::new(),
+        }
+    }
+
+    pub fn append(&mut self, event: Event) -> QxResult<()> {
+        if self.event_count >= self.expected_events {
+            return Err(crate::error::QxError::Invariant(format!(
+                "事件重放实际事件数超过声明值 {}",
+                self.expected_events
+            )));
+        }
+        event
+            .metadata
+            .validate()
+            .map_err(crate::error::QxError::Invariant)?;
+        if self.seen_seqs.contains(&event.seq) {
+            return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
+        }
+        let key = (event.ts, event.prio, event.seq);
+        if self.previous.is_some_and(|previous| key <= previous) {
+            return Err(crate::error::QxError::Invariant(
+                "事件追加违反时间/优先级/序号顺序".into(),
+            ));
+        }
+        event
+            .seq
+            .checked_add(1)
+            .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?;
+
+        if let EventKind::LedgerApplied { entry } = &event.kind {
+            self.ledger.apply_entry(entry.clone())?;
+        }
+        self.seen_seqs.insert(event.seq);
+        event.digest(&mut self.digest);
+        self.previous = Some(key);
+        self.event_count += 1;
+        Ok(())
+    }
+
+    pub fn finish(self) -> QxResult<StreamingReplayResult> {
+        if self.event_count != self.expected_events {
+            return Err(crate::error::QxError::Invariant(format!(
+                "事件轨迹行数与声明不一致: 实际={} 声明={}",
+                self.event_count, self.expected_events
+            )));
+        }
+        Ok(StreamingReplayResult {
+            log_digest: self.digest.finish(),
+            event_count: self.event_count,
+            ledger: self.ledger,
+        })
+    }
 }
 
 impl ReplayVerifier {
@@ -318,6 +446,8 @@ mod tests {
             input_event_hash: "in".into(),
             output_event_hash: "out".into(),
             runtime_version: "test".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         let restored = RunManifest::from_json(&manifest.to_json().unwrap()).unwrap();
         assert_eq!(restored, manifest);
@@ -338,12 +468,116 @@ mod tests {
     }
 
     #[test]
+    fn legacy_manifest_json_and_digest_remain_unchanged_without_canonical_spec() {
+        let payload = r#"{"run_id":"legacy-1","code_commit":"abc","config_hash":"cfg","data_fingerprint":"bars","input_components":{},"clock_start":10,"clock_end":20,"global_seed":7,"determinism_mode":true,"result_hash":"result","strategy_version":"strategy-v1","instrument_spec_version":"rules-v1","model_fingerprint":"model-v1","input_event_hash":"input","output_event_hash":"output","runtime_version":"qx-app-test"}"#;
+        let manifest = RunManifest::from_json(payload).unwrap();
+        assert_eq!(manifest.canonical_run_spec_json, None);
+        assert_eq!(manifest.canonical_run_spec_fingerprint, None);
+        let serialized = manifest.to_json().unwrap();
+        assert!(!serialized.contains("canonical_run_spec"));
+
+        // This is the exact pre-migration digest sequence. Optional fields are appended only when
+        // present, so old manifest references continue to verify against their historical digest.
+        let mut historical = Fnv1a::new();
+        write_text(&mut historical, "legacy-1");
+        write_text(&mut historical, "abc");
+        write_text(&mut historical, "cfg");
+        write_text(&mut historical, "bars");
+        historical.write_u64(0); // no input components
+        historical.write_u64(10);
+        historical.write_u64(20);
+        historical.write_u64(7);
+        historical.write_u64(1);
+        write_text(&mut historical, "result");
+        write_text(&mut historical, "strategy-v1");
+        write_text(&mut historical, "rules-v1");
+        write_text(&mut historical, "model-v1");
+        write_text(&mut historical, "input");
+        write_text(&mut historical, "output");
+        write_text(&mut historical, "qx-app-test");
+        assert_eq!(manifest.digest(), historical.finish());
+    }
+
+    #[test]
     fn replay_rederives_the_digest_through_the_checked_path() {
         let log = sample(4);
         let facts = ReplayVerifier::replay_facts(log.events()).unwrap();
         assert_eq!(facts.log_digest, log.digest());
         assert_eq!(facts.events, 4);
         assert_eq!(facts.ledger_entries, 0);
+    }
+
+    #[test]
+    fn streaming_replay_matches_eventlog_digest_without_retaining_event_rows() {
+        let source = sample(12);
+        let mut replay = StreamingReplayVerifier::new(source.len());
+        for event in source.events() {
+            replay.append(event.clone()).unwrap();
+        }
+        let replayed = replay.finish().unwrap();
+        assert_eq!(replayed.log_digest, source.digest());
+        assert_eq!(replayed.event_count, source.len());
+        assert!(replayed.ledger.entries().is_empty());
+    }
+
+    #[test]
+    fn streaming_replay_rebuilds_the_same_ledger_from_ledger_facts() {
+        let mut source_ledger = Ledger::new();
+        source_ledger
+            .deposit("main", "USD", crate::Money::from_i64(100), 10)
+            .unwrap();
+        source_ledger
+            .deposit("main", "USD", crate::Money::from_i64(50), 20)
+            .unwrap();
+        let mut source_log = EventLog::new();
+        for entry in source_ledger.entries() {
+            source_log
+                .append_checked(Event::new(
+                    entry.id,
+                    entry.ts,
+                    2,
+                    EventKind::LedgerApplied {
+                        entry: entry.clone(),
+                    },
+                ))
+                .unwrap();
+        }
+
+        let mut replay = StreamingReplayVerifier::new(source_log.len());
+        for event in source_log.events() {
+            replay.append(event.clone()).unwrap();
+        }
+        let replayed = replay.finish().unwrap();
+        assert_eq!(replayed.log_digest, source_log.digest());
+        assert_eq!(replayed.ledger.entries(), source_ledger.entries());
+    }
+
+    #[test]
+    fn streaming_replay_rejects_duplicate_and_out_of_order_events() {
+        let mut replay = StreamingReplayVerifier::new(2);
+        replay
+            .append(Event::new(0, 10, 2, EventKind::Settle))
+            .unwrap();
+        assert!(replay
+            .append(Event::new(0, 20, 2, EventKind::Settle))
+            .is_err());
+
+        let mut replay = StreamingReplayVerifier::new(2);
+        replay
+            .append(Event::new(0, 20, 2, EventKind::Settle))
+            .unwrap();
+        assert!(replay
+            .append(Event::new(1, 10, 2, EventKind::Settle))
+            .is_err());
+    }
+
+    #[test]
+    fn streaming_replay_rejects_a_count_that_differs_from_the_summary() {
+        let mut replay = StreamingReplayVerifier::new(2);
+        replay
+            .append(Event::new(0, 10, 2, EventKind::Settle))
+            .unwrap();
+        assert!(replay.finish().is_err());
     }
 
     /// 旧的 `rebuild_from` 只是把切片再哈希一遍：换序照样给出同一个"重放哈希"。

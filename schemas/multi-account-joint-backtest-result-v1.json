@@ -18,6 +18,20 @@
     "equity_path": {"type": "string", "minLength": 1},
     "fills_path": {"type": "string", "minLength": 1},
     "artifact_path": {"type": "string", "minLength": 1},
+    "run_manifest_path": {"type": "string", "minLength": 1},
+    "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "run_record": {"type": "string", "minLength": 1},
+    "artifact_locations": {
+      "type": "object",
+      "required": ["joint_portfolio", "joint_equity", "joint_fills", "run_manifest"],
+      "properties": {
+        "joint_portfolio": {"type": "string", "minLength": 1},
+        "joint_equity": {"type": "string", "minLength": 1},
+        "joint_fills": {"type": "string", "minLength": 1},
+        "run_manifest": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "accounts": {"type": "array", "minItems": 2, "maxItems": 32, "items": {"$ref": "#/$defs/JointAccountBacktestResult"}}
   },
   "additionalProperties": false,

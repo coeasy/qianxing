@@ -10,11 +10,11 @@ use super::{app_error, research_context, NativeRun, PyRunHandle};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 use qx_app::{
-    run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots,
-    run_multi_leg_backtest_with_strategy, start_depth_backtest_with_strategy,
-    start_depth_backtest_with_strategy_slots, BacktestSpec, DepthBacktestSpec,
-    MultiLegBacktestSpec, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
-    RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
+    prepare_quick_research_spec_v1, run_depth_backtest_with_strategy,
+    run_depth_backtest_with_strategy_slots, run_multi_leg_backtest_with_strategy,
+    start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, BacktestSpec,
+    DepthBacktestSpec, MultiLegBacktestSpec, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
 use strategy_slots::strategy_slots;
@@ -299,6 +299,11 @@ fn app_run_experiment_with_strategy(
 }
 
 #[pyfunction]
+fn app_prepare_quick_research_spec_v1(spec_json: &str) -> PyResult<String> {
+    prepare_quick_research_spec_v1(spec_json).map_err(app_error)
+}
+
+#[pyfunction]
 fn app_start_experiment_with_strategy(
     spec_json: &str,
     strategy_id: &str,
@@ -416,6 +421,10 @@ fn app_start_multi_leg_experiment_with_strategy(
 }
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(
+        app_prepare_quick_research_spec_v1,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_run_experiment_with_strategy, module)?)?;
     module.add_function(wrap_pyfunction!(
         app_start_experiment_with_strategy,

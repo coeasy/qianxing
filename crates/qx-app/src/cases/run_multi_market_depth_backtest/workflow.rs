@@ -1,9 +1,11 @@
 use super::super::artifacts::{read_text, write_text};
 use crate::{
-    AppError, AppErrorCategory, MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome,
-    MultiMarketDepthBacktestSpec, RunContext, StrategyArtifactIdentity,
+    multi_market_depth_input_set_identity_v1, multi_market_depth_spec_fingerprint_v1, AppError,
+    AppErrorCategory, MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome,
+    MultiMarketDepthBacktestSpec, MultiMarketDepthInputIdentityV1, RunContext,
+    StrategyArtifactIdentity,
 };
-use qx_core::{Fnv1a, Money, Quantity, ReplayVerifier};
+use qx_core::{Money, Quantity, ReplayVerifier};
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
 use qx_xingban::{
     DepthBarStrategy, DepthFrame, NativeOrderBookStrategy, OrderBookExecutionModel,
@@ -15,6 +17,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 mod execution_models;
+use super::canonical_spec::build_multi_market_depth_canonical_run_spec;
 use execution_models::from_report as execution_model_descriptors;
 
 pub(super) struct InjectedStrategy {
@@ -30,6 +33,8 @@ struct DataIdentity {
     source: String,
     content_hash: String,
     snapshot_count: usize,
+    start_ts_ms: u64,
+    end_ts_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     dataset_quality: Option<serde_json::Value>,
 }
@@ -66,16 +71,7 @@ pub(super) fn run_inner_with_strategies(
         return Ok(None);
     }
     spec.validate()?;
-    let mut identity_spec = spec.clone();
-    identity_spec.output_dir.clear();
-    for market in &mut identity_spec.markets {
-        market.depth_path.clear();
-        market.dataset_manifest_path = None;
-    }
-    let spec_json = identity_spec.to_json()?;
-    let mut spec_hasher = Fnv1a::new();
-    spec_hasher.write_text(&spec_json);
-    let mut data_hasher = Fnv1a::new();
+    let initial_cash_exact = spec.initial_cash_exact_value()?;
     let mut identities = Vec::new();
     let mut prepared = Vec::with_capacity(spec.markets.len());
 
@@ -138,10 +134,6 @@ pub(super) fn run_inner_with_strategies(
         }
         let frame_hash = frame.input_hash();
         let data_fingerprint = format!("depth:{data_tier}:{}:{frame_hash:016x}", frame.source);
-        data_hasher.write_text(&request.instrument);
-        data_hasher.write_text(data_tier);
-        data_hasher.write_text(&frame.source);
-        data_hasher.write_u64(frame_hash);
         let dataset_quality = request
             .dataset_manifest_path
             .as_deref()
@@ -154,9 +146,6 @@ pub(super) fn run_inner_with_strategies(
             .and_then(|quality| quality.get("manifest_fingerprint"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
-        if let Some(fingerprint) = &quality_manifest_fingerprint {
-            data_hasher.write_text(fingerprint);
-        }
 
         let external = injected.remove(&request.strategy.strategy_id);
         let (strategy_id, strategy_version, strategy) = match external {
@@ -199,6 +188,10 @@ pub(super) fn run_inner_with_strategies(
             }
         };
         let cash = BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]);
+        let cash_exact = spec
+            .initial_cash_exact
+            .map(|amount| BTreeMap::from([(spec.settlement_currency.clone(), amount)]))
+            .unwrap_or_default();
         let strategy_context = StrategyContext {
             strategy_id,
             strategy_version,
@@ -206,6 +199,9 @@ pub(super) fn run_inner_with_strategies(
             venue_id: frame.instrument.venue.to_string(),
             data_fingerprint,
             as_of: first.ts,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact,
+            available_margin_exact: spec.initial_cash_exact,
             positions: BTreeMap::new(),
             available_margin_raw: crate::cases::strategy_available_margin_raw(
                 &cash,
@@ -230,10 +226,7 @@ pub(super) fn run_inner_with_strategies(
                 let mut adapter =
                     NativeOrderBookStrategy::new(CallbackStrategy(strategy), strategy_context)
                         .with_data_tier(tier);
-                adapter
-                    .strategy
-                    .on_init(&adapter.context)
-                    .map_err(invalid)?;
+                adapter.initialize().map_err(invalid)?;
                 Box::new(adapter)
             }
         };
@@ -249,6 +242,8 @@ pub(super) fn run_inner_with_strategies(
             source: frame.source.clone(),
             content_hash: format!("{frame_hash:016x}"),
             snapshot_count: frame.snapshots.len(),
+            start_ts_ms: first.ts,
+            end_ts_ms: last.ts,
             dataset_quality,
         };
         prepared.push(PreparedMarket {
@@ -264,13 +259,36 @@ pub(super) fn run_inner_with_strategies(
         return Err(invalid("多市场盘口自定义策略包含未消费的孤儿槽"));
     }
     identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
-    for identity in &identities {
-        spec_hasher.write_text(&identity.strategy_id);
-        spec_hasher.write_text(&identity.strategy_version);
-        spec_hasher.write_text(&identity.source_sha256);
-    }
-    let spec_fingerprint = format!("{:016x}", spec_hasher.finish());
-    let data_fingerprint = format!("{:016x}", data_hasher.finish());
+    let spec_fingerprint = multi_market_depth_spec_fingerprint_v1(spec, &identities)?;
+    let depth_input_identities = prepared
+        .iter()
+        .map(|market| MultiMarketDepthInputIdentityV1 {
+            instrument: market.data_identity.instrument.clone(),
+            data_tier: market.data_identity.data_tier.clone(),
+            source: market.data_identity.source.clone(),
+            input_hash: market.frame.input_hash(),
+            start_ts_ms: market.data_identity.start_ts_ms,
+            end_ts_ms: market.data_identity.end_ts_ms,
+            quality_fingerprint: market.quality_manifest_fingerprint.clone(),
+        })
+        .collect::<Vec<_>>();
+    let depth_input_identity =
+        multi_market_depth_input_set_identity_v1(spec, &depth_input_identities)?;
+    let data_fingerprint = depth_input_identity.data_fingerprint.clone();
+    let funding_bps = prepared
+        .iter()
+        .filter(|market| market.request.funding_bps != 0)
+        .map(|market| {
+            (
+                market.request.market_spec.instrument.clone(),
+                market.request.funding_bps,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let funding_events = prepared
+        .iter()
+        .flat_map(|market| market.request.funding_events.iter().cloned())
+        .collect::<Vec<_>>();
     let mut markets = prepared
         .iter_mut()
         .map(|market| OrderBookPortfolioMarket {
@@ -286,16 +304,30 @@ pub(super) fn run_inner_with_strategies(
             strategy: market.strategy.as_mut(),
         })
         .collect::<Vec<_>>();
-    let report = OrderBookPortfolioBacktestEngine::new(
-        spec.account_id.clone(),
-        spec.settlement_currency.clone(),
-        Money::from_raw(spec.initial_cash_raw),
-        RiskGate::conservative_default(),
-        std::mem::take(&mut markets),
-    )
+    let engine = if spec.initial_cash_exact.is_some() {
+        OrderBookPortfolioBacktestEngine::new_with_exact_initial_cash(
+            spec.account_id.clone(),
+            spec.settlement_currency.clone(),
+            spec.initial_cash_raw,
+            initial_cash_exact,
+            RiskGate::conservative_default(),
+            std::mem::take(&mut markets),
+        )
+    } else {
+        OrderBookPortfolioBacktestEngine::new(
+            spec.account_id.clone(),
+            spec.settlement_currency.clone(),
+            Money::from_raw(spec.initial_cash_raw),
+            RiskGate::conservative_default(),
+            std::mem::take(&mut markets),
+        )
+    }
     .map_err(|error| AppError::from_qx_error(&error))?
-    .run_with_cancel(|| cancellation.is_some_and(|token| token.is_cancelled()))
-    .map_err(|error| AppError::from_qx_error(&error))?;
+    .with_funding_bps(funding_bps)
+    .with_funding_events(funding_events);
+    let report = engine
+        .run_with_cancel(|| cancellation.is_some_and(|token| token.is_cancelled()))
+        .map_err(|error| AppError::from_qx_error(&error))?;
     let Some(report) = report else {
         return Ok(None);
     };
@@ -312,17 +344,24 @@ pub(super) fn run_inner_with_strategies(
             "多市场盘口回测结果哈希与 ReplayVerifier 不一致",
         ));
     }
+    if report.equity.len() != report.equity_exact.len()
+        || report
+            .equity
+            .iter()
+            .zip(&report.equity_exact)
+            .any(|((raw_ts, _), (exact_ts, _))| raw_ts != exact_ts)
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            "多市场盘口 raw/exact 权益曲线坐标不一致",
+        ));
+    }
     let final_equity_raw = report
         .equity
         .last()
         .map(|(_, value)| *value)
         .unwrap_or(spec.initial_cash_raw);
-    let return_bps = final_equity_raw
-        .checked_sub(spec.initial_cash_raw)
-        .and_then(|pnl| pnl.checked_mul(10_000))
-        .and_then(|value| value.checked_div(spec.initial_cash_raw))
-        .and_then(|value| i32::try_from(value).ok())
-        .ok_or_else(|| invalid("多市场盘口收益无法表示"))?;
+    let return_bps = report.return_bps;
     std::fs::create_dir_all(&spec.output_dir)
         .map_err(|error| AppError::from_io("创建多市场盘口产物目录", &error))?;
     let output_root = PathBuf::from(&spec.output_dir)
@@ -331,7 +370,13 @@ pub(super) fn run_inner_with_strategies(
     let outcome_path = output_root.join(format!("{}.multi-market-depth.json", spec.run_id));
     let manifest_path = output_root.join(format!("{}.multi-market-depth.run.json", spec.run_id));
     let equity_path = output_root.join(format!("{}.multi-market-depth.equity.json", spec.run_id));
+    let equity_exact_path = output_root.join(format!(
+        "{}.multi-market-depth.equity-exact.json",
+        spec.run_id
+    ));
     let fills_path = output_root.join(format!("{}.multi-market-depth.fills.json", spec.run_id));
+    let event_trace_path =
+        output_root.join(format!("{}.multi-market-depth.events.jsonl", spec.run_id));
     let artifact_path = outcome_path.to_string_lossy().into_owned();
     let outcome = MultiMarketDepthBacktestOutcome {
         run_id: spec.run_id.clone(),
@@ -368,29 +413,24 @@ pub(super) fn run_inner_with_strategies(
     }
     let config_bytes = serde_json::to_vec(&identity_spec)
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
-    let input_components: BTreeMap<String, String> = prepared
-        .iter()
-        .map(|market| {
-            (
-                format!("depthframe:{}", market.data_identity.instrument),
-                format!(
-                    "depth:{}:{}:{}",
-                    market.data_identity.data_tier,
-                    market.data_identity.source,
-                    market.data_identity.content_hash
-                ),
-            )
-        })
-        .collect();
-    let mut input_components = input_components;
-    for market in &prepared {
-        if let Some(fingerprint) = &market.quality_manifest_fingerprint {
-            input_components.insert(
-                format!("dataset-quality:{}", market.data_identity.instrument),
-                fingerprint.clone(),
-            );
-        }
-    }
+    let runtime_version = format!("qx-app-{}", env!("CARGO_PKG_VERSION"));
+    let canonical_spec = build_multi_market_depth_canonical_run_spec(
+        spec,
+        &identities,
+        &depth_input_identities,
+        &outcome.execution_models,
+        context.code_commit(),
+        &runtime_version,
+        report.clock_start,
+        report.clock_end,
+    )?;
+    let canonical_spec_json = canonical_spec
+        .canonical_json()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let canonical_spec_fingerprint = canonical_spec
+        .fingerprint()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let input_components = depth_input_identity.input_components;
     let manifest = qx_core::RunManifest {
         run_id: spec.run_id.clone(),
         code_commit: context.code_commit().to_string(),
@@ -409,31 +449,63 @@ pub(super) fn run_inner_with_strategies(
         ),
         input_event_hash: data_fingerprint.clone(),
         output_event_hash: format!("{:016x}", report.event_log.digest()),
-        runtime_version: format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
+        runtime_version,
+        canonical_run_spec_json: Some(canonical_spec_json),
+        canonical_run_spec_fingerprint: Some(canonical_spec_fingerprint),
     };
     let manifest_json = manifest
         .to_json()
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
     let equity_json = serde_json::to_string(&report.equity)
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let equity_exact_json = serde_json::to_string(
+        &report
+            .equity_exact
+            .iter()
+            .enumerate()
+            .map(|(equity_index, (ts, equity_exact))| {
+                serde_json::json!({
+                    "equity_index": equity_index,
+                    "ts": ts,
+                    "equity_exact": equity_exact.to_string()
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let metrics_exact = report
+        .exact_metrics_json()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
     let fills_json = serde_json::to_string(&report.fills)
         .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
     let manifest_artifact_path = manifest_path.to_string_lossy().into_owned();
     let equity_artifact_path = equity_path.to_string_lossy().into_owned();
+    let equity_exact_artifact_path = equity_exact_path.to_string_lossy().into_owned();
     let fills_artifact_path = fills_path.to_string_lossy().into_owned();
+    let event_trace_artifact_path = event_trace_path.to_string_lossy().into_owned();
     let artifact_json = serde_json::to_string(&serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 4,
         "spec": spec,
         "outcome": outcome,
         "market_data": data_identities,
         "strategy_identities": identities,
         "per_market_fills": per_market_fills,
         "equity": report.equity,
-        "event_log": report.event_log.events(),
+        "equity_exact": report.equity_exact.iter().enumerate().map(|(equity_index, (ts, equity_exact))| serde_json::json!({
+            "equity_index": equity_index,
+            "ts": ts,
+            "equity_exact": equity_exact.to_string()
+        })).collect::<Vec<_>>(),
+        "metrics_exact": metrics_exact,
+        "event_count": report.event_log.events().len(),
+        "clock_start": report.clock_start,
+        "clock_end": report.clock_end,
+        "event_trace_path": event_trace_artifact_path,
         "ledger_entries": report.ledger.entries(),
         "replay_verified": true,
         "run_manifest_path": manifest_artifact_path,
         "equity_path": equity_artifact_path,
+        "equity_exact_path": equity_exact_artifact_path,
         "fills_path": fills_artifact_path,
     }))
     .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
@@ -447,6 +519,11 @@ pub(super) fn run_inner_with_strategies(
         &equity_json,
         "权益曲线",
     )?;
+    let equity_exact_exists = super::super::run_multi_market_manifest::existing_identical(
+        &equity_exact_path,
+        &equity_exact_json,
+        "精确权益曲线",
+    )?;
     let fills_exists = super::super::run_multi_market_manifest::existing_identical(
         &fills_path,
         &fills_json,
@@ -454,11 +531,19 @@ pub(super) fn run_inner_with_strategies(
     )?;
     match std::fs::read_to_string(&outcome_path) {
         Ok(existing) if existing == artifact_json => {
+            super::super::run_multi_market_manifest::ensure_event_trace_jsonl(
+                &event_trace_path,
+                report.event_log.events(),
+                "盘口事件轨迹",
+            )?;
             if !manifest_exists {
                 write_text(&manifest_artifact_path, &manifest_json)?;
             }
             if !equity_exists {
                 write_text(&equity_artifact_path, &equity_json)?;
+            }
+            if !equity_exact_exists {
+                write_text(&equity_exact_artifact_path, &equity_exact_json)?;
             }
             if !fills_exists {
                 write_text(&fills_artifact_path, &fills_json)?;
@@ -480,9 +565,17 @@ pub(super) fn run_inner_with_strategies(
     if !equity_exists {
         write_text(&equity_artifact_path, &equity_json)?;
     }
+    if !equity_exact_exists {
+        write_text(&equity_exact_artifact_path, &equity_exact_json)?;
+    }
     if !fills_exists {
         write_text(&fills_artifact_path, &fills_json)?;
     }
+    super::super::run_multi_market_manifest::ensure_event_trace_jsonl(
+        &event_trace_path,
+        report.event_log.events(),
+        "盘口事件轨迹",
+    )?;
     write_text(&artifact_path, &artifact_json)?;
     Ok(Some(outcome))
 }
@@ -601,6 +694,10 @@ impl Strategy for CallbackStrategy {
         self.0.on_init(context)
     }
 
+    fn on_start(&mut self, context: &StrategyContext) -> Result<(), String> {
+        self.0.on_start(context)
+    }
+
     fn on_event(
         &mut self,
         context: &StrategyContext,
@@ -619,6 +716,13 @@ impl Strategy for CallbackStrategy {
 
     fn on_stop(&mut self) -> Result<(), String> {
         self.0.on_stop()
+    }
+
+    fn on_stop_with_context(
+        &mut self,
+        stop: &qx_strategy::StrategyStopContextV1,
+    ) -> Result<(), String> {
+        self.0.on_stop_with_context(stop)
     }
 }
 

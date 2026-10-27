@@ -10,9 +10,9 @@ mod common;
 use common::{backtest_spec, dataset_spec, scratch};
 use qx_app::{
     AppError, AppErrorCategory, BacktestArtifacts, BacktestOutcome, BacktestSpec,
-    BuiltinStrategySpec, DatasetSpec, DatasetVerdict, DepthBacktestSpec, MultiLegBacktestSpec,
-    VerificationResult, BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION,
-    MIN_BACKTEST_BARS,
+    BuiltinStrategySpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
+    MultiLegBacktestSpec, VerificationResult, BACKTEST_SPEC_EXACT_SCHEMA_VERSION,
+    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS,
 };
 use qx_strategy::BuiltinStrategyKind;
 use serde_json::Value;
@@ -51,6 +51,35 @@ fn the_backtest_spec_round_trips_through_json_without_losing_a_field() {
     let back = BacktestSpec::from_json(&payload).expect("反序列化");
     assert_eq!(back, spec, "spec 过一遍 JSON 必须逐字段回来");
     assert_eq!(back.schema_version, BACKTEST_SPEC_SCHEMA_VERSION);
+}
+
+#[test]
+fn exact_initial_capital_uses_v2_and_checks_its_legacy_projection() {
+    let root = scratch("exact-capital-v2");
+    let bars = root.join("bars.json").to_string_lossy().into_owned();
+    let base = backtest_spec("exact-capital", &bars, &root);
+    let exact = qx_core::ExactDecimal::parse("100000.0000000001").expect("decimal text");
+    let spec = base
+        .with_initial_cash_exact(exact)
+        .expect("v2 capital projection fits");
+
+    assert_eq!(spec.schema_version, BACKTEST_SPEC_EXACT_SCHEMA_VERSION);
+    assert_eq!(spec.initial_cash_exact, Some(exact));
+    assert_eq!(spec.initial_cash_raw, 100_000 * qx_core::SCALE);
+    spec.validate().expect("v2 exact capital validates");
+
+    let payload = spec.to_json().expect("serialize v2 spec");
+    assert_eq!(
+        BacktestSpec::from_json(&payload).expect("parse v2 spec"),
+        spec
+    );
+
+    let mut mismatched = spec;
+    mismatched.initial_cash_raw += 1;
+    assert_eq!(
+        rejected(mismatched.validate(), "mismatched exact capital projection"),
+        AppErrorCategory::InvalidInput
+    );
 }
 
 #[test]
@@ -120,6 +149,7 @@ fn bar_market_spec_must_match_the_run_instrument_and_settlement_currency() {
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     };
 
     spec.market_spec = Some(market("ETHUSDT.BINANCE", "USDT"));
@@ -265,6 +295,61 @@ fn depth_backtest_spec_uses_the_registered_strict_v1_wire_contract() {
 }
 
 #[test]
+fn depth_outcome_keeps_manifest_identity_optional_for_legacy_payloads() {
+    let legacy = serde_json::json!({
+        "run_id": "friendly-run-id",
+        "instrument": "BTCUSDT.BINANCE",
+        "tier": "l2",
+        "result_hash": "0123456789abcdef",
+        "data_fingerprint": "depthframe:0123456789abcdef",
+        "fills": 0,
+        "equity_points": 1,
+        "snapshots": 1,
+        "return_bps": 0,
+        "max_drawdown_bps": 0,
+        "artifacts": {
+            "run_manifest": "runs/depth.run.json",
+            "summary": "runs/depth.summary.json",
+            "equity": "runs/depth.equity.csv",
+            "fills": "runs/depth.fills.csv"
+        }
+    });
+    let legacy_outcome = DepthBacktestOutcome::from_json(&legacy.to_string())
+        .expect("legacy outcome without manifest_run_id remains readable");
+    assert_eq!(legacy_outcome.manifest_run_id, None);
+    assert!(!legacy_outcome
+        .to_json()
+        .expect("serialize legacy outcome")
+        .contains("manifest_run_id"));
+
+    let current = serde_json::json!({
+        "run_id": "friendly-run-id",
+        "manifest_run_id": "depth-backtest:l2:sma_cross:BTCUSDT.BINANCE",
+        "instrument": "BTCUSDT.BINANCE",
+        "tier": "l2",
+        "result_hash": "0123456789abcdef",
+        "data_fingerprint": "depthframe:0123456789abcdef",
+        "fills": 0,
+        "equity_points": 1,
+        "snapshots": 1,
+        "return_bps": 0,
+        "max_drawdown_bps": 0,
+        "artifacts": {
+            "run_manifest": "runs/depth.run.json",
+            "summary": "runs/depth.summary.json",
+            "equity": "runs/depth.equity.csv",
+            "fills": "runs/depth.fills.csv"
+        }
+    });
+    let current_outcome = DepthBacktestOutcome::from_json(&current.to_string())
+        .expect("current outcome carries a distinct manifest identity");
+    assert_eq!(
+        current_outcome.manifest_run_id.as_deref(),
+        Some("depth-backtest:l2:sma_cross:BTCUSDT.BINANCE")
+    );
+}
+
+#[test]
 fn multi_leg_backtest_spec_uses_the_registered_strict_v1_wire_contract() {
     let payload = r#"{
         "schema_version": 1,
@@ -300,6 +385,43 @@ fn multi_leg_backtest_spec_uses_the_registered_strict_v1_wire_contract() {
             .category(),
         AppErrorCategory::InvalidInput
     );
+}
+
+#[test]
+fn multi_leg_backtest_spec_v2_preserves_subnano_principal_per_leg() {
+    let spec = MultiLegBacktestSpec::new(
+        qx_app::MultiLegDatasetInput {
+            run_id: "multi-leg-v2".into(),
+            primary_bars_path: "primary.json".into(),
+            reference_bars_path: "reference.json".into(),
+        },
+        "USDT",
+        1,
+        1,
+        0,
+        "runs",
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "multi-leg-v2"),
+    )
+    .with_initial_cash_exact(
+        qx_core::ExactDecimal::parse("0.0000000002").unwrap(),
+        qx_core::ExactDecimal::parse("0.0000000002").unwrap(),
+    )
+    .expect("build exact v2 spec");
+    assert_eq!(
+        spec.schema_version,
+        qx_app::MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION
+    );
+    assert_eq!(spec.primary_initial_cash_raw, 0);
+    assert_eq!(spec.reference_initial_cash_raw, 0);
+    let (total, raw) = spec.combined_initial_cash().unwrap();
+    assert_eq!(total.to_string(), "0.0000000004");
+    assert_eq!(raw, 0);
+    let json = spec.to_json().unwrap();
+    assert_eq!(MultiLegBacktestSpec::from_json(&json).unwrap(), spec);
+
+    let mut mismatched_projection = spec;
+    mismatched_projection.primary_initial_cash_raw = 1;
+    assert!(mismatched_projection.validate().is_err());
 }
 
 #[test]

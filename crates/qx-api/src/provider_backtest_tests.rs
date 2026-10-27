@@ -214,6 +214,8 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
             queue_position_bps: 0,
             queue_position_model: Default::default(),
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir: root
                 .join("provider-depth-run")
                 .to_string_lossy()
@@ -411,11 +413,57 @@ fn provider_depth_backtest_http_route_runs_freezes_and_returns_artifacts() {
     let outcome: ProviderDepthBacktestOutcome = serde_json::from_str(&response.body).unwrap();
     assert_eq!(outcome.provider_id, "quote-fixture");
     assert_eq!(outcome.provider_version, "v1");
-    assert!(PathBuf::from(outcome.depth_path).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.run_manifest).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.summary).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.equity).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.fills).is_file());
+    assert!(PathBuf::from(&outcome.depth_path).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.run_manifest).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.summary).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.equity).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.fills).is_file());
+
+    let request = serde_json::json!({"outcome": &outcome});
+    let detail = service.handle("POST", "/app/research-artifacts", &request.to_string(), 2);
+    assert_eq!(detail.status, 200, "{}", detail.body);
+    let view: serde_json::Value = serde_json::from_str(&detail.body).unwrap();
+    assert_eq!(view["run_kind"], "provider_depth");
+    assert_eq!(view["verification"]["verified"], true);
+    assert_eq!(view["depth"]["source_status"], "verified");
+    assert_eq!(view["summary"]["provider"]["provider_id"], "quote-fixture");
+
+    let report_response = service.handle(
+        "POST",
+        "/app/read-provider-depth-report",
+        &serde_json::to_string(&outcome).unwrap(),
+        3,
+    );
+    assert_eq!(report_response.status, 200, "{}", report_response.body);
+    let api_report: serde_json::Value = serde_json::from_str(&report_response.body).unwrap();
+    let expected_report = qx_app::read_provider_depth_backtest_report_v1(
+        &outcome,
+        &qx_app::RunContext::new(
+            qx_app::CallerCapability::Research,
+            outcome.outcome.run_id.clone(),
+        ),
+    )
+    .unwrap();
+    assert_eq!(api_report, serde_json::to_value(expected_report).unwrap());
+
+    let mut escaped = outcome;
+    escaped.depth_path = workspace_root()
+        .join("Cargo.toml")
+        .to_string_lossy()
+        .into_owned();
+    let request = serde_json::json!({"outcome": &escaped});
+    let rejected = service.handle("POST", "/app/research-artifacts", &request.to_string(), 3);
+    assert_eq!(rejected.status, 400, "{}", rejected.body);
+    assert!(rejected.body.contains("产物根目录"));
+
+    let report_rejected = service.handle(
+        "POST",
+        "/app/read-provider-depth-report",
+        &serde_json::to_string(&escaped).unwrap(),
+        4,
+    );
+    assert_eq!(report_rejected.status, 400, "{}", report_rejected.body);
+    assert!(report_rejected.body.contains("产物根目录"));
     let _ = fs::remove_dir_all(path);
 }
 
@@ -437,11 +485,60 @@ fn provider_backtest_http_route_runs_freezes_and_returns_artifacts() {
     assert!(outcome.dataset_verdict.usable);
     assert_eq!(outcome.dataset_verdict.rows, 64);
     assert_eq!(outcome.manifest.source_lineage.primary_source, "fixture");
-    assert!(PathBuf::from(outcome.manifest_path).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.run_manifest).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.summary).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.equity).is_file());
-    assert!(PathBuf::from(outcome.outcome.artifacts.fills).is_file());
+    assert!(PathBuf::from(&outcome.manifest_path).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.run_manifest).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.summary).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.equity).is_file());
+    assert!(PathBuf::from(&outcome.outcome.artifacts.fills).is_file());
+
+    let request = serde_json::json!({"outcome": &outcome});
+    let detail = service.handle("POST", "/app/research-artifacts", &request.to_string(), 2);
+    assert_eq!(detail.status, 200, "{}", detail.body);
+    let view: serde_json::Value = serde_json::from_str(&detail.body).unwrap();
+    assert_eq!(view["run_kind"], "provider_bar");
+    assert_eq!(view["verification"]["verified"], true);
+    assert_eq!(view["bars"]["source_status"], "verified");
+    assert_eq!(
+        view["summary"]["provider"]["dataset_verdict"]["usable"],
+        true
+    );
+
+    let report_response = service.handle(
+        "POST",
+        "/app/read-provider-report",
+        &serde_json::to_string(&outcome).unwrap(),
+        3,
+    );
+    assert_eq!(report_response.status, 200, "{}", report_response.body);
+    let api_report: serde_json::Value = serde_json::from_str(&report_response.body).unwrap();
+    let expected_report = qx_app::read_provider_backtest_report_v1(
+        &outcome,
+        &qx_app::RunContext::new(
+            qx_app::CallerCapability::Research,
+            outcome.outcome.run_id.clone(),
+        ),
+    )
+    .unwrap();
+    assert_eq!(api_report, serde_json::to_value(expected_report).unwrap());
+
+    let mut escaped = outcome;
+    escaped.manifest_path = workspace_root()
+        .join("Cargo.toml")
+        .to_string_lossy()
+        .into_owned();
+    let request = serde_json::json!({"outcome": &escaped});
+    let rejected = service.handle("POST", "/app/research-artifacts", &request.to_string(), 3);
+    assert_eq!(rejected.status, 400, "{}", rejected.body);
+    assert!(rejected.body.contains("产物根目录"));
+
+    let report_rejected = service.handle(
+        "POST",
+        "/app/read-provider-report",
+        &serde_json::to_string(&escaped).unwrap(),
+        4,
+    );
+    assert_eq!(report_rejected.status, 400, "{}", report_rejected.body);
+    assert!(report_rejected.body.contains("产物根目录"));
 }
 
 #[test]
@@ -468,6 +565,43 @@ fn capabilities_route_includes_configured_provider_declarations() {
                     .as_array()
                     .unwrap()
                     .contains(&serde_json::json!("/app/capabilities/providers/preflight"))
+        }));
+    assert!(document["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| {
+            entry["id"] == "research.multi_account_joint_report_v1"
+                && entry["routes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("/app/read-multi-account-joint-report"))
+        }));
+    assert!(document["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| {
+            entry["id"] == "research.multi_leg_report_v1"
+                && entry["routes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("/app/read-multi-leg-report"))
+        }));
+    assert!(document["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| {
+            entry["id"] == "research.provider_report_v1"
+                && entry["routes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("/app/read-provider-report"))
+                && entry["routes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("/app/read-provider-depth-report"))
         }));
     assert_eq!(
         document["provider_capabilities"].as_array().unwrap().len(),

@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-10-14"
+updated_at: "2026-10-25"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -28,6 +28,34 @@ python_native_helpers:
     note: "能力探测：报告本次安装里哪些 Rust 应用入口可用；不是用例，是安装自检"
   - name: list_builtin_strategies
     note: "策略发现：从共享 qx-strategy 返回名称、说明、信号旋钮和多腿限制；不执行回测用例"
+  - name: read_run_report_v1
+    note: "报告读取：委托 qx-app 版本化报告读模型，复用 VerifyRun 并返回有界核心样本；不是新的回测执行用例"
+  - name: read_depth_run_report_v1
+    note: "深度报告读取：委托 qx-app 版本化报告读模型，复用 VerifyDepthRun 并返回有界核心样本；不是新的回测执行用例"
+  - name: read_provider_run_report_v1
+    note: "Provider Bar 报告读取：复用共享 Bar 报告并核对 Provider 冻结 manifest 与来源身份；不是新的回测执行用例"
+  - name: read_provider_depth_run_report_v1
+    note: "Provider 深度报告读取：重读冻结 DepthFrame 并复算来源与输入指纹后返回共享报告；不是新的回测执行用例"
+  - name: read_multi_account_report_v1
+    note: "多账户 Bar/Depth 报告读取：委托 qx-app 版本化读模型逐账户复核并返回批次 DTO；不是新的回测执行用例"
+  - name: read_multi_account_joint_report_v1
+    note: "联合多交易所账户研究报告读取：委托 qx-app 核验父子身份、重放成员事件并重算联合曲线；不是新的回测执行用例"
+  - name: read_multi_leg_report_facts_v1
+    note: "多腿回测报告事实读取：委托 qx-app 版本化 reader 复核共享账簿、逐腿成交与收益、成本和权益事实；不是新的回测执行用例"
+  - name: read_multi_leg_research_report_v1
+    note: "完整多腿研究报告读取：统一返回精度安全的报告摘要、执行假设、两腿输入身份、有界权益/成交面板与可选事件页；CLI、Python 和 API 使用同一 qx-app DTO"
+  - name: read_multi_leg_event_report_page_v1
+    note: "多腿 EventLog 分页读取：委托 qx-app 完整复核运行身份、数据与质量输入、共享账本后返回有界事件页；不是新的回测执行用例"
+  - name: read_multi_market_event_report_page_v1
+    note: "多市场事件报告分页读取：委托 qx-app 完整重放 EventLog 并校验摘要、账簿后返回有界 DTO；不是新的回测执行用例"
+  - name: read_multi_market_depth_event_report_page_v1
+    note: "多市场 Depth 事件报告分页读取：委托 qx-app 校验 outcome/spec/RunManifest 并完整重放 L1/L2 EventLog 后返回有界 DTO；不是新的回测执行用例"
+  - name: read_multi_market_depth_research_report_v1
+    note: "完整多市场 L1/L2 研究报告读取：复核输入质量、执行假设、RunManifest、EventLog/账簿与权益成交 sidecar，并返回有界报告 DTO"
+  - name: read_multi_market_research_report_v1
+    note: "完整多市场 Bar 研究报告读取：统一校验输入质量、运行身份、账簿、权益/成交副产物与因果 Bar 上下文，并返回有界报告 DTO"
+  - name: validate_strategy_execution_preflight_v1
+    note: "策略边界预检：CLI/Python 将规范化 manifest 和运行配置交给 qx-app；Rust 单点校验参数、市场要求、Bar 身份与 warmup 后才允许执行"
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:
@@ -65,28 +93,66 @@ python_remote_lifecycle_methods:
 python_remote_helpers:
   - name: application_capabilities
     note: "Python 远端读取共享 Rust 应用用例目录；venue/provider readiness 仍需运行时预检"
+  - name: query_product_capability
+    note: "Python 远端按稳定 capability ID 读取产品支持范围、限制和成熟度证据"
   - name: async_application_capabilities
     note: "Python 远端能力目录查询的 asyncio 委托入口"
   - name: provider_preflight
     note: "Python 远端按 DataRequest 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: research_artifacts
     note: "Python 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
+  - name: read_provider_run_report_v1
+    note: "Python 远端读取经过 qx-app 核验的 Provider Bar 版本化报告；它是报告读面，不是回测执行用例"
+  - name: read_provider_depth_run_report_v1
+    note: "Python 远端读取经过 qx-app 核验的 Provider Depth 版本化报告；它是报告读面，不是回测执行用例"
+  - name: read_multi_account_joint_report_v1
+    note: "Python 远端读取 qx-app 重放核验后的联合账户报告 DTO；逐账户事件分页仍走交互报告接口"
+  - name: read_multi_leg_research_report_v1
+    note: "Python 远端读取 qx-app 重放核验后的多腿完整版本化报告 DTO；数据与工件分别受双根授权"
   - name: async_provider_preflight
     note: "Python Provider 预检的 asyncio 委托入口"
   - name: list_builtin_strategies
     note: "Python 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
   - name: async_list_builtin_strategies
     note: "Python 远端策略发现的 asyncio 委托入口"
+  - name: get_account_snapshot
+    note: "按 account_id 与 venue_id 查询账户的一致性快照"
+  - name: get_account_balances
+    note: "按 account_id 与 venue_id 查询账户余额读模型"
+  - name: get_account_positions
+    note: "按 account_id 与 venue_id 查询账户持仓读模型"
+  - name: get_account_orders
+    note: "按 account_id 与 venue_id 查询账户订单读模型"
+  - name: get_account_ledger
+    note: "按 account_id 查询账户账本事件"
+  - name: get_reconcile_reports
+    note: "按 account_id 与 venue_id 查询交易所对账报告"
+  - name: get_account_portfolio
+    note: "按账户组合查询跨账户投资组合，并保留币种维度"
+  - name: get_account_activity
+    note: "按显式 account_id 与 venue_id 查询有界账户活动页；游标仅在该范围内有效"
 
 cpp_remote_helpers:
   - name: application_capabilities
     note: "C++ 远端读取共享 Rust 应用用例目录；venue/provider readiness 仍需运行时预检"
+  - name: query_product_capability
+    note: "C++ 远端按稳定 capability ID 读取产品支持范围、限制和成熟度证据"
   - name: provider_preflight
     note: "C++ 远端按 DataRequest JSON 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: builtin_strategy_catalog
     note: "C++ 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
   - name: research_artifacts
     note: "C++ 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
+  - name: read_provider_run_report
+    note: "C++ 远端读取经过 qx-app 核验的 Provider Bar 版本化报告；它是报告读面，不是回测执行用例"
+  - name: read_provider_depth_run_report
+    note: "C++ 远端读取经过 qx-app 核验的 Provider Depth 版本化报告；它是报告读面，不是回测执行用例"
+  - name: read_multi_account_joint_report
+    note: "C++ 远端读取 qx-app 重放核验后的联合账户报告 DTO；逐账户事件分页仍走交互报告接口"
+  - name: read_multi_leg_research_report
+    note: "C++ 远端读取 qx-app 重放核验后的多腿完整版本化报告 DTO；数据与工件分别受双根授权"
+  - name: get_account_activity
+    note: "按显式 account_id 与 venue_id 查询有界账户活动页；游标仅在该范围内有效"
 
 rust_remote_lifecycle_methods:
   - name: get_run_events

@@ -10,7 +10,10 @@ fn manifest_profile(profile: &str) -> &'static str {
     match profile {
         "ashare" => "ashare-research",
         "multi-venue" => "multi-venue-arb",
-        "base" | "builtin" | "paper" | "ccxt" | "backtest" => "crypto-paper",
+        "research-local" | "base" | "builtin" | "paper" | "ccxt" | "backtest" | "crypto-paper" => {
+            "crypto-paper"
+        }
+        "crypto-sandbox-acceptance" => "crypto-testnet",
         _ => "crypto-paper",
     }
 }

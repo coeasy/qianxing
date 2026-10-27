@@ -60,6 +60,8 @@ pub(crate) fn write_multi_account_report_xlsx(
     if accounts.len() < 2 || accounts.len() > 32 {
         return Err("多账户 XLSX 报告的账户数必须为 2..=32".into());
     }
+    let is_depth_report =
+        report.get("report_kind").and_then(Value::as_str) == Some("multi_account_depth_backtest");
     let mut overview = vec![vec![t("Field"), t("Value")]];
     for (label, pointer) in [
         ("Batch ID", "/batch_id"),
@@ -84,7 +86,7 @@ pub(crate) fn write_multi_account_report_xlsx(
             .unwrap_or("unknown")),
     ]);
 
-    let mut account_rows = vec![vec![
+    let mut account_header = vec![
         t("account_id"),
         t("status"),
         t("instrument"),
@@ -96,15 +98,22 @@ pub(crate) fn write_multi_account_report_xlsx(
         t("run_id"),
         t("result_hash"),
         t("data_fingerprint"),
-    ]];
+    ];
+    if is_depth_report {
+        account_header.splice(3..3, [t("tier"), t("snapshots")]);
+    }
+    let mut account_rows = vec![account_header];
     let mut equity_rows = vec![vec![t("account_id"), t("timestamp_ms"), t("equity_raw")]];
     let mut fill_rows = vec![vec![
         t("account_id"),
         t("timestamp_ms"),
         t("order_id"),
         t("qty_raw"),
+        t("qty_exact"),
         t("price_raw"),
+        t("price_exact"),
         t("fee_raw"),
+        t("exact_fees_json"),
         t("strategy_id"),
         t("event_id"),
         t("event_seq"),
@@ -125,7 +134,7 @@ pub(crate) fn write_multi_account_report_xlsx(
             .get("account_id")
             .and_then(Value::as_str)
             .ok_or("多账户 XLSX 报告含缺少 account_id 的条目")?;
-        account_rows.push(vec![
+        let mut row = vec![
             t(account_id),
             report_cell(&account["status"]),
             report_cell(&account["instrument"]),
@@ -137,7 +146,17 @@ pub(crate) fn write_multi_account_report_xlsx(
             report_cell(&account["run_id"]),
             report_cell(&account["result_hash"]),
             report_cell(&account["data_fingerprint"]),
-        ]);
+        ];
+        if is_depth_report {
+            row.splice(
+                3..3,
+                [
+                    report_cell(&account["tier"]),
+                    report_cell(&account["snapshots"]),
+                ],
+            );
+        }
+        account_rows.push(row);
         for point in account
             .get("equity_series")
             .and_then(Value::as_array)
@@ -161,8 +180,11 @@ pub(crate) fn write_multi_account_report_xlsx(
                 report_cell(&fill["timestamp_ms"]),
                 report_cell(&fill["order_id"]),
                 report_cell(&fill["qty_raw"]),
+                report_cell(&fill["qty_exact"]),
                 report_cell(&fill["price_raw"]),
+                report_cell(&fill["price_exact"]),
                 report_cell(&fill["fee_raw"]),
+                report_cell(&fill["exact_fees_json"]),
                 report_cell(&fill["strategy_id"]),
                 report_cell(&fill["event_id"]),
                 report_cell(&fill["event_seq"]),
@@ -654,8 +676,11 @@ fn fill_rows(fills: &[crate::report_html::FillPoint]) -> Vec<Vec<Cell>> {
         t("venue_id"),
         t("venue_order_id"),
         t("quantity_raw"),
+        t("quantity_exact"),
         t("price_raw"),
+        t("price_exact"),
         t("fee_raw"),
+        t("exact_fees_json"),
     ]];
     rows.extend(fills.iter().map(|fill| {
         vec![
@@ -669,8 +694,11 @@ fn fill_rows(fills: &[crate::report_html::FillPoint]) -> Vec<Vec<Cell>> {
             optional_text(fill.venue_id.as_deref()),
             optional_text(fill.venue_order_id.as_deref()),
             t(fill.qty_raw.to_string()),
+            optional_text(fill.qty_exact.as_deref()),
             t(fill.price_raw.to_string()),
+            optional_text(fill.price_exact.as_deref()),
             optional_text(fill.fee_raw.map(|value| value.to_string()).as_deref()),
+            optional_text(fill.exact_fees_json.as_deref()),
         ]
     }));
     rows
@@ -763,6 +791,41 @@ fn report_cell(value: &Value) -> Cell {
         Value::Number(value) => n(value.to_string()),
         Value::String(value) => t(value),
         Value::Array(_) | Value::Object(_) => t(value.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod exact_fill_xlsx_tests {
+    use super::{fill_rows, Cell};
+    use crate::report_html::FillPoint;
+
+    #[test]
+    fn xlsx_fill_sheet_exports_exact_quantity_price_and_fees() {
+        let rows = fill_rows(&[FillPoint {
+            ts: 1_700_000_000_000,
+            order_id: 7,
+            leg: Some("reference".into()),
+            qty_raw: 0,
+            price_raw: 0,
+            fee_raw: Some(0),
+            qty_exact: Some("0.001".into()),
+            price_exact: Some("0.00001234".into()),
+            exact_fees_json: Some(r#"[{"currency":"USDT","amount":"0.00000001"}]"#.into()),
+            account_id: Some("account-1".into()),
+            strategy_id: "strategy-1".into(),
+            signal_id: None,
+            intent_id: None,
+            venue_id: Some("OKX".into()),
+            venue_order_id: Some("venue-7".into()),
+        }]);
+
+        assert!(matches!(&rows[0][10], Cell::Text(value) if value == "quantity_exact"));
+        assert!(matches!(&rows[0][12], Cell::Text(value) if value == "price_exact"));
+        assert!(matches!(&rows[0][14], Cell::Text(value) if value == "exact_fees_json"));
+        assert!(matches!(&rows[1][9], Cell::Text(value) if value == "0"));
+        assert!(matches!(&rows[1][10], Cell::Text(value) if value == "0.001"));
+        assert!(matches!(&rows[1][12], Cell::Text(value) if value == "0.00001234"));
+        assert!(matches!(&rows[1][14], Cell::Text(value) if value.contains("0.00000001")));
     }
 }
 

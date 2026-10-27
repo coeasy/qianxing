@@ -56,6 +56,25 @@ fn doctor_config_check_passes(runtime: &Path) {
         .any(|check| { check["name"] == "config" && check["status"] == "pass" }));
 }
 
+fn runtime_check_config_passes(runtime: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args([
+            "runtime-check",
+            runtime.to_string_lossy().as_ref(),
+            "--json",
+        ])
+        .output()
+        .expect("启动 qx-cli runtime-check 失败");
+    assert!(
+        output.status.success(),
+        "runtime-check 应能预检初始化配置:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["network_accessed"], false);
+    assert_eq!(report["orders_sent"], false);
+}
+
 #[test]
 fn init_creates_self_contained_project_assets_and_builtin_strategy() {
     let root = temp_case_dir("init-process");
@@ -100,7 +119,16 @@ fn init_creates_self_contained_project_assets_and_builtin_strategy() {
 
 #[test]
 fn init_profiles_rewrite_deploy_paths_and_validate_references() {
-    for profile in ["paper", "ccxt", "ashare", "multi-venue", "backtest"] {
+    for profile in [
+        "paper",
+        "ccxt",
+        "ashare",
+        "multi-venue",
+        "backtest",
+        "research-local",
+        "crypto-paper",
+        "crypto-sandbox-acceptance",
+    ] {
         let root = temp_case_dir(&format!("profile-{profile}"));
         let runtime = root.join("qianxing.runtime.json");
         init(&runtime, Some(profile), None);
@@ -110,6 +138,39 @@ fn init_profiles_rewrite_deploy_paths_and_validate_references() {
             "profile={profile} leaked repository-relative deploy paths"
         );
         doctor_config_check_passes(&runtime);
+    }
+}
+
+#[test]
+fn release_profiles_generate_the_expected_offline_and_sandbox_configs() {
+    for (profile, environment) in [
+        ("research-local", "paper"),
+        ("crypto-paper", "paper"),
+        ("crypto-sandbox-acceptance", "sandbox"),
+    ] {
+        let root = temp_case_dir(&format!("release-profile-{profile}"));
+        let runtime = root.join("qianxing.runtime.json");
+        init(&runtime, Some(profile), None);
+        doctor_config_check_passes(&runtime);
+        runtime_check_config_passes(&runtime);
+
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        assert_eq!(config["environment"], environment, "profile={profile}");
+        if profile == "crypto-sandbox-acceptance" {
+            let exchange: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(exchange["sandbox"], true);
+            assert_eq!(exchange["exchange_id"], "okx");
+            assert_eq!(exchange["credential_env"]["api_key"], "QX_CCXT_OKX_API_KEY");
+            assert_eq!(exchange["credential_env"]["secret"], "QX_CCXT_OKX_SECRET");
+            assert_eq!(
+                exchange["credential_env"]["password"],
+                "QX_CCXT_OKX_PASSWORD"
+            );
+        }
     }
 }
 

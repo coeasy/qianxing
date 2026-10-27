@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "qianxing"
-version = "0.2.2"
+version = "0.3.0"
 description = "Qianxing quantitative research and trading platform SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,10 +38,10 @@ qianxing-strategy-diagnose = "qianxing_strategy.diagnostics:main"
 [project.optional-dependencies]
 # 交易所适配：公共 ccxt（REST/交易）；实时 watch_* 另需 ccxt Pro。
 ccxt = [
-    "ccxt>=4.4.0",
+    "ccxt==4.5.89",
 ]
 ccxt-pro = [
-    "ccxt>=4.4.0",
+    "ccxt==4.5.89",
     "ccxtpro>=1.0.0",
 ]
 # A 股时间戳按 Asia/Shanghai 解释；Windows 没有系统 IANA 时区库时需要 tzdata。
@@ -66,6 +66,19 @@ a-share = [
     "easy-tdx>=0.1.0",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
+# Remote strategy research only; the base install and local strategy workflow do not load E2B.
+sandbox-e2b = [
+    "e2b>=2.51,<3",
+]
+sandbox-llm = [
+    "llm-sandbox[docker]==0.3.13",
+]
+sandbox-opensandbox = [
+    "opensandbox>=1.1.1,<2",
+]
+sandbox-microsandbox = [
+    "microsandbox==0.7.11",
+]
 
 [tool.maturin]
 manifest-path = "../crates/qx-python/Cargo.toml"
@@ -73,7 +86,18 @@ cargo-extra-args = "--features extension-module"
 python-source = "."
 module-name = "qianxing_bridge._qianxing_native"
 python-packages = ["qianxing", "qianxing_ashare", "qianxing_ccxt", "qianxing_strategy"]
-exclude = ["**/__pycache__/**", "**/*.pyc", "**/.venv/**"]
+exclude = [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/.venv/**",
+    "**/.tmp/**",
+    "**/.codex-tmp-build/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/.uv-cache/**",
+    "build/**",
+    "runs/**",
+]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"

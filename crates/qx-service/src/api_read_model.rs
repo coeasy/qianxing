@@ -2,13 +2,13 @@
 
 use qx_api::ApiQueryModels;
 use qx_api::ReconcileReportSnapshot;
-use qx_core::{EventKind, InstrumentId, LedgerEntry};
+use qx_core::{EventKind, ExactDecimal, InstrumentId, LedgerEntry, LedgerEntryKind, PositionSide};
 use qx_protocol::AccountSnapshot;
 use qx_runtime::{
     account_event_log_name, owns_account_event_log, settlement_currency_for_log,
-    worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig,
+    worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::pipeline::{event_log_exists, PipelineStorage};
@@ -51,8 +51,13 @@ pub fn query_api_models(config: &RuntimeConfig) -> Result<ApiQueryModels, String
     )
 }
 
-/// Load one snapshot per existing canonical account EventLog.
-pub fn load_api_account_snapshots(config: &RuntimeConfig) -> Result<Vec<AccountSnapshot>, String> {
+/// Load snapshots using market specifications resolved by the runtime host.
+/// Symbols such as `BTCUSDT.BINANCE` do not distinguish spot from perpetual contracts, so
+/// valuation must use an explicit frozen product specification instead of guessing from names.
+pub fn load_api_account_snapshots_with_market_specs(
+    config: &RuntimeConfig,
+    market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
+) -> Result<Vec<AccountSnapshot>, String> {
     let reports = load_reconcile_reports(Path::new(&config.storage.data_dir))?;
     let mut seen = BTreeSet::new();
     let mut snapshots = Vec::new();
@@ -67,18 +72,23 @@ pub fn load_api_account_snapshots(config: &RuntimeConfig) -> Result<Vec<AccountS
         if !seen.insert(identity) {
             continue;
         }
-        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker, &reports)? {
+        if let Some(snapshot) = load_api_account_snapshot_for_worker_with_market_specs(
+            config,
+            worker,
+            &reports,
+            market_specs,
+        )? {
             snapshots.push(snapshot);
         }
     }
     Ok(snapshots)
 }
 
-/// Open and project one account log for an API snapshot read.
-pub fn load_api_account_snapshot_for_worker(
+fn load_api_account_snapshot_for_worker_with_market_specs(
     config: &RuntimeConfig,
     worker: &WorkerConfig,
     reports: &[ReconcileReportSnapshot],
+    market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
 ) -> Result<Option<AccountSnapshot>, String> {
     let account_id = worker.account_id.as_deref().unwrap_or_default().trim();
     let venue_id = worker.venue_id.as_deref().unwrap_or_default().trim();
@@ -93,9 +103,99 @@ pub fn load_api_account_snapshot_for_worker(
     let pipeline = PipelineStorage::from_config(config)?
         .open_read_only(log_name.clone(), currency)
         .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
-    Ok(Some(project_api_account_snapshot(
-        worker, &log_name, &pipeline, reports,
-    )?))
+    let portfolio_id = config
+        .account(account_id)
+        .map(|account| {
+            account
+                .portfolio_id
+                .as_deref()
+                .unwrap_or(account.id.as_str())
+        })
+        // Legacy configs may omit the account registry. Keep each worker isolated by its
+        // configured account id instead of silently merging every legacy account into one
+        // synthetic "default" portfolio.
+        .unwrap_or(account_id);
+    Ok(Some(
+        project_api_account_snapshot_with_portfolio_and_market_specs(
+            worker,
+            &log_name,
+            &pipeline,
+            reports,
+            portfolio_id,
+            market_specs,
+        )?,
+    ))
+}
+
+pub(crate) fn configured_market_specs(
+    config: &RuntimeConfig,
+    runtime_config_path: Option<&Path>,
+) -> Result<BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>, String> {
+    let mut specs = BTreeMap::new();
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.instrument_spec_path.is_some())
+    {
+        for instrument in configured_market_spec_candidates(config, worker)? {
+            let Some(spec) = crate::worker_market_spec::load_worker_market_spec_for_instrument(
+                worker,
+                &instrument,
+                runtime_config_path,
+            )?
+            else {
+                continue;
+            };
+            if let Some(existing) = specs.get(&instrument) {
+                if existing != &spec {
+                    return Err(format!("标的 {instrument} 配置了冲突的冻结市场规格"));
+                }
+            } else {
+                specs.insert(instrument, spec);
+            }
+        }
+    }
+    Ok(specs)
+}
+
+fn configured_market_spec_candidates(
+    config: &RuntimeConfig,
+    worker: &WorkerConfig,
+) -> Result<BTreeSet<InstrumentId>, String> {
+    let mut instruments = worker
+        .symbols
+        .iter()
+        .map(|symbol| {
+            InstrumentId::parse(symbol)
+                .ok_or_else(|| format!("worker {} 的 instrument 非法: {symbol}", worker.id))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let identity = (worker.account_id.as_deref(), worker.venue_id.as_deref());
+    if identity.0.is_some() && identity.1.is_some() {
+        for strategy in config.workers.iter().filter(|candidate| {
+            candidate.enabled
+                && candidate.role == WorkerRole::Strategy
+                && candidate.account_id.as_deref() == identity.0
+                && candidate.venue_id.as_deref() == identity.1
+        }) {
+            for symbol in &strategy.symbols {
+                let instrument = InstrumentId::parse(symbol).ok_or_else(|| {
+                    format!("worker {} 的 instrument 非法: {symbol}", strategy.id)
+                })?;
+                instruments.insert(instrument);
+            }
+        }
+        if config.strategy.account_id.as_deref() == identity.0
+            && config.strategy.venue_id.as_deref() == identity.1
+        {
+            if let Some(symbol) = config.strategy.instrument.as_deref() {
+                let instrument = InstrumentId::parse(symbol)
+                    .ok_or_else(|| format!("策略 instrument 非法: {symbol}"))?;
+                instruments.insert(instrument);
+            }
+        }
+    }
+    Ok(instruments)
 }
 
 /// Assemble the read-only API models from service-owned persisted state and the ledger projection
@@ -182,13 +282,41 @@ pub fn project_api_account_snapshot(
     pipeline: &LiveEventPipeline,
     reports: &[ReconcileReportSnapshot],
 ) -> Result<AccountSnapshot, String> {
+    project_api_account_snapshot_with_portfolio(worker, log_name, pipeline, reports, "default")
+}
+
+pub fn project_api_account_snapshot_with_portfolio(
+    worker: &WorkerConfig,
+    log_name: &str,
+    pipeline: &LiveEventPipeline,
+    reports: &[ReconcileReportSnapshot],
+    portfolio_id: &str,
+) -> Result<AccountSnapshot, String> {
+    project_api_account_snapshot_with_portfolio_and_market_specs(
+        worker,
+        log_name,
+        pipeline,
+        reports,
+        portfolio_id,
+        &BTreeMap::new(),
+    )
+}
+
+pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
+    worker: &WorkerConfig,
+    log_name: &str,
+    pipeline: &LiveEventPipeline,
+    reports: &[ReconcileReportSnapshot],
+    portfolio_id: &str,
+    market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
+) -> Result<AccountSnapshot, String> {
     let account_id = worker.account_id.as_deref().unwrap_or_default().trim();
     let venue_id = worker.venue_id.as_deref().unwrap_or_default().trim();
     let runtime_snapshot = pipeline.snapshot();
     let mut snapshot = AccountSnapshot::new(
         1,
         account_id,
-        "default",
+        portfolio_id,
         venue_id,
         runtime_snapshot.last_engine_ts.max(1),
     );
@@ -198,16 +326,70 @@ pub fn project_api_account_snapshot(
         .last()
         .map(|event| event.seq)
         .unwrap_or(0);
-    snapshot.cash_raw = pipeline.ledger().cash_balances_for(account_id);
-    snapshot.equity_raw =
-        pipeline
-            .ledger()
-            .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency());
-    snapshot.available_raw = Some(
-        pipeline
-            .ledger()
-            .cash_for(account_id, pipeline.settlement_currency()),
+    let account_balances = runtime_snapshot
+        .account_balances
+        .get(&(account_id.to_string(), venue_id.to_string()));
+    if let Some(balances) = account_balances {
+        snapshot
+            .upsert_balances(balances)
+            .map_err(|error| format!("账户 {account_id} 精确余额投影失败: {error:?}"))?;
+    } else {
+        snapshot.cash_raw = pipeline.ledger().cash_balances_for(account_id);
+        snapshot.cash_exact = pipeline.ledger().cash_balances_exact_for(account_id);
+    }
+    let single_quote_spot = account_is_single_quote_spot(
+        pipeline,
+        account_id,
+        pipeline.settlement_currency(),
+        &snapshot.cash_raw,
+        &snapshot.cash_exact,
+        market_specs,
     );
+    snapshot.equity_raw = if single_quote_spot {
+        if account_balances.is_some() {
+            // An exchange balance snapshot already contains the base-asset cash for spot holdings.
+            // Adding ledger position value would count that asset twice, so only value a flat
+            // account here; non-flat or multi-asset accounts need the FX/spec-aware portfolio path.
+            (!account_has_open_positions(pipeline, account_id, venue_id, &runtime_snapshot))
+                .then_some(
+                    snapshot
+                        .cash_raw
+                        .get(pipeline.settlement_currency())
+                        .copied()
+                        .unwrap_or(0),
+                )
+        } else {
+            pipeline.ledger().equity_for(
+                account_id,
+                pipeline.marks(),
+                pipeline.settlement_currency(),
+            )
+        }
+    } else {
+        None
+    };
+    snapshot.available_raw = Some(if let Some(balances) = account_balances {
+        balances
+            .iter()
+            .find(|balance| {
+                balance
+                    .asset
+                    .eq_ignore_ascii_case(pipeline.settlement_currency())
+            })
+            .map(|balance| {
+                balance
+                    .free
+                    .raw()
+                    .checked_sub(balance.borrowed.raw())
+                    .ok_or_else(|| format!("账户 {account_id} 可用余额折算溢出"))
+            })
+            .transpose()?
+            .unwrap_or(0)
+    } else {
+        pipeline
+            .ledger()
+            .cash_for(account_id, pipeline.settlement_currency())
+    });
     let fill_facts = pipeline
         .log()
         .events()
@@ -221,17 +403,46 @@ pub fn project_api_account_snapshot(
         })
         .collect::<Vec<_>>();
     let mut fees_raw = 0_i128;
-    for (_, fill) in &fill_facts {
-        fees_raw = fill.fee_raw.checked_add(fees_raw).ok_or_else(|| {
-            format!("账户 {account_id} 的成交费用合计溢出，拒绝发布费用口径错误的快照")
-        })?;
+    let mut fees_in_one_currency = true;
+    let mut fees_by_currency_raw = BTreeMap::<String, i128>::new();
+    for entry in pipeline.ledger().entries().iter().filter(|entry| {
+        entry.account_id == account_id && matches!(&entry.kind, LedgerEntryKind::Fee)
+    }) {
+        let currency = entry.currency.trim().to_ascii_uppercase();
+        if currency.is_empty() {
+            return Err(format!("账户 {account_id} 的成交费用缺少币种"));
+        }
+        let fee = entry
+            .amount
+            .raw()
+            .checked_neg()
+            .ok_or_else(|| format!("账户 {account_id} 的成交费用取反溢出"))?;
+        let currency_total = fees_by_currency_raw.entry(currency.clone()).or_default();
+        *currency_total = currency_total
+            .checked_add(fee)
+            .ok_or_else(|| format!("账户 {account_id} 的 {currency} 成交费用合计溢出"))?;
+        if !currency.eq_ignore_ascii_case(pipeline.settlement_currency()) {
+            fees_in_one_currency = false;
+            continue;
+        }
+        fees_raw = fees_raw
+            .checked_add(fee)
+            .ok_or_else(|| format!("账户 {account_id} 的成交费用合计溢出"))?;
     }
-    snapshot.fees_raw = Some(fees_raw);
-    snapshot.realized_pnl_raw = pipeline.ledger().realized_pnl_for(account_id);
-    snapshot.unrealized_pnl_raw =
-        pipeline
-            .ledger()
-            .unrealized_pnl_for(account_id, pipeline.marks(), 1);
+    // The wire scalar has no currency tag. Publishing a sum across (for example) USDT and BTC
+    // would be dimensionally wrong, so expose it only when every fee is in the log's currency.
+    snapshot.fees_raw = fees_in_one_currency.then_some(fees_raw);
+    snapshot.fees_by_currency_raw = fees_by_currency_raw;
+    snapshot.realized_pnl_raw = single_quote_spot
+        .then(|| pipeline.ledger().realized_pnl_for(account_id))
+        .flatten();
+    snapshot.unrealized_pnl_raw = single_quote_spot
+        .then(|| {
+            pipeline
+                .ledger()
+                .unrealized_pnl_for(account_id, pipeline.marks(), 1)
+        })
+        .flatten();
     snapshot.orders = runtime_snapshot
         .orders
         .iter()
@@ -261,6 +472,23 @@ pub fn project_api_account_snapshot(
     );
     for instrument in instruments {
         let position = pipeline.ledger().position_for(account_id, &instrument);
+        let exact_position =
+            pipeline
+                .ledger()
+                .position_for_side_exact(account_id, &instrument, PositionSide::Net);
+        let exact_quantity = if exact_position.quantity.is_zero() && position.quantity.raw() != 0 {
+            ExactDecimal::from_parts(position.quantity.raw(), 9)
+                .expect("legacy quantity scale is supported")
+        } else {
+            exact_position.quantity
+        };
+        let exact_average_entry =
+            if exact_position.average_entry.is_zero() && position.average_entry.raw() != 0 {
+                ExactDecimal::from_parts(position.average_entry.raw(), 9)
+                    .expect("legacy price scale is supported")
+            } else {
+                exact_position.average_entry
+            };
         let venue_position = runtime_snapshot
             .account_positions
             .get(&(account_id.to_string(), venue_id.to_string()))
@@ -269,6 +497,7 @@ pub fn project_api_account_snapshot(
             .map(qx_protocol::PositionSnapshot::from)
             .unwrap_or_else(|| qx_protocol::PositionSnapshot {
                 instrument: instrument.clone(),
+                settlement_currency: None,
                 quantity_raw: position.quantity.raw(),
                 today_quantity_raw: position.quantity.raw(),
                 average_price_raw: position.average_entry.raw(),
@@ -279,8 +508,26 @@ pub fn project_api_account_snapshot(
                     .unwrap_or(0),
                 unrealized_pnl_raw: None,
                 margin_raw: None,
+                exact_amounts: Some(qx_core::ExactAccountPositionAmounts {
+                    quantity: exact_quantity,
+                    average_price: (position.average_entry.raw() != 0)
+                        .then_some(exact_average_entry),
+                    mark_price: pipeline
+                        .marks()
+                        .get(&instrument)
+                        .and_then(|price| ExactDecimal::from_parts(price.raw(), 9).ok()),
+                    liquidation_price: None,
+                    unrealized_pnl: None,
+                    initial_margin: None,
+                    maintenance_margin: None,
+                }),
             });
-        if wire.quantity_raw == 0 && venue_position.is_none() {
+        if wire.quantity_raw == 0
+            && venue_position.is_none()
+            && wire
+                .exact_amounts
+                .is_none_or(|amounts| amounts.quantity.is_zero())
+        {
             continue;
         }
         if wire.average_price_raw == 0 {
@@ -300,18 +547,109 @@ pub fn project_api_account_snapshot(
     Ok(snapshot)
 }
 
+/// The legacy account wire scalars do not carry a currency or product specification. Keep the
+/// simple spot/single-quote presentation valid and leave equity/PnL absent for derivatives,
+/// alternate quote currencies, or unparseable native symbols until an FX/spec-aware projection
+/// is available. This prevents plausible-looking but incorrect totals in multi-market accounts.
+fn account_is_single_quote_spot(
+    pipeline: &LiveEventPipeline,
+    account_id: &str,
+    reporting_currency: &str,
+    cash_by_currency: &BTreeMap<String, i128>,
+    cash_by_currency_exact: &BTreeMap<String, ExactDecimal>,
+    market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
+) -> bool {
+    if cash_by_currency_exact.iter().any(|(currency, amount)| {
+        !amount.is_zero() && !currency.eq_ignore_ascii_case(reporting_currency)
+    }) {
+        return false;
+    }
+    if cash_by_currency.iter().any(|(currency, amount)| {
+        *amount != 0 && !currency.eq_ignore_ascii_case(reporting_currency)
+    }) {
+        return false;
+    }
+    let instruments = pipeline
+        .ledger()
+        .entries()
+        .iter()
+        .filter(|entry| entry.account_id == account_id)
+        .filter_map(|entry| entry.instrument.as_ref())
+        .collect::<BTreeSet<_>>();
+    instruments.into_iter().all(|instrument| {
+        if let Some(spec) = market_specs.get(instrument) {
+            return spec.product == qx_core::TradingProduct::Spot
+                && spec.quote_currency.eq_ignore_ascii_case(reporting_currency)
+                && spec
+                    .settlement_currency
+                    .eq_ignore_ascii_case(reporting_currency);
+        }
+        let Some((_, quote)) = instrument.symbol.split_once('/') else {
+            return false;
+        };
+        !quote.contains(':') && quote.eq_ignore_ascii_case(reporting_currency)
+    })
+}
+
+fn account_has_open_positions(
+    pipeline: &LiveEventPipeline,
+    account_id: &str,
+    venue_id: &str,
+    snapshot: &qx_runtime::LivePipelineSnapshot,
+) -> bool {
+    let venue_has_position = snapshot
+        .account_positions
+        .get(&(account_id.to_string(), venue_id.to_string()))
+        .is_some_and(|positions| {
+            positions.iter().any(|position| {
+                position
+                    .exact_amounts
+                    .map_or(!position.quantity.is_zero(), |amounts| {
+                        !amounts.quantity.is_zero()
+                    })
+            })
+        });
+    if venue_has_position {
+        return true;
+    }
+    pipeline
+        .ledger()
+        .entries()
+        .iter()
+        .filter(|entry| entry.account_id == account_id)
+        .filter_map(|entry| entry.instrument.as_ref())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .any(|instrument| {
+            [PositionSide::Net, PositionSide::Long, PositionSide::Short]
+                .into_iter()
+                .any(|side| {
+                    !pipeline
+                        .ledger()
+                        .position_for_side_exact(account_id, instrument, side)
+                        .quantity
+                        .is_zero()
+                })
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_reconcile_reports, default_account_event_log, load_api_account_snapshots,
-        load_api_query_models, load_reconcile_reports, query_api_models,
+        apply_reconcile_reports, default_account_event_log,
+        load_api_account_snapshots_with_market_specs, load_api_query_models,
+        load_reconcile_reports, query_api_models,
     };
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
-    use qx_core::{InstrumentId, Price, Quantity, VenueId};
+    use qx_core::{
+        AccountBalance, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId, Money, Price,
+        Quantity, VenueId,
+    };
     use qx_guanxing::QuoteTick;
     use qx_protocol::AccountSnapshot;
-    use qx_runtime::{RuntimeConfig, RuntimeEventEnvelope};
+    use qx_runtime::{RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent};
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     fn temp_root(label: &str) -> PathBuf {
@@ -460,6 +798,31 @@ mod tests {
                 "service-api-read-test",
             ))
             .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountBalanceSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "paper".into(),
+                    balances: vec![AccountBalance {
+                        asset: "USDT".into(),
+                        free: Money::ZERO,
+                        locked: Money::ZERO,
+                        borrowed: Money::ZERO,
+                        net_cash_balance: None,
+                        exact_amounts: Some(ExactAccountBalanceAmounts {
+                            free: ExactDecimal::parse("0.0000000003").unwrap(),
+                            locked: ExactDecimal::ZERO,
+                            borrowed: ExactDecimal::ZERO,
+                            net_cash_balance: None,
+                        }),
+                    }],
+                },
+                12,
+                12,
+                2,
+                "service-api-read-balance-test",
+            ))
+            .unwrap();
         drop(pipeline);
 
         assert_eq!(
@@ -468,10 +831,13 @@ mod tests {
                 .as_deref(),
             Some(log_name)
         );
-        let snapshots = load_api_account_snapshots(&config).unwrap();
+        let snapshots =
+            load_api_account_snapshots_with_market_specs(&config, &BTreeMap::new()).unwrap();
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].header.account_id, "main");
         assert_eq!(snapshots[0].header.venue_id, "paper");
+        assert_eq!(snapshots[0].cash_raw["USDT"], 0);
+        assert_eq!(snapshots[0].cash_exact["USDT"].to_string(), "0.0000000003");
         assert!(query_api_models(&config).unwrap().ledger_entries.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -517,7 +883,12 @@ mod tests {
                 .as_deref(),
             Some(log_name)
         );
-        assert_eq!(load_api_account_snapshots(&config).unwrap().len(), 1);
+        assert_eq!(
+            load_api_account_snapshots_with_market_specs(&config, &BTreeMap::new())
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(query_api_models(&config).unwrap().ledger_entries.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }

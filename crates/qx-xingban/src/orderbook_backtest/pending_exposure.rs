@@ -1,4 +1,6 @@
 use super::*;
+use qx_core::ExactDecimal;
+use qx_risk::ExactOrderRiskPosition;
 
 pub(super) struct PendingExposureContext<'a> {
     pub risk: &'a RiskGate,
@@ -69,6 +71,75 @@ pub(super) fn position_snapshot(
         )
     } else {
         Ok(OrderRiskPosition::new(one_way_qty, 0).with_hedge_legs(long_qty, short_qty))
+    }
+}
+
+pub(super) fn exact_position_snapshot(
+    ledger: &Ledger,
+    context: PendingExposureContext<'_>,
+    reference_price: ExactDecimal,
+) -> Result<ExactOrderRiskPosition, qx_core::QxError> {
+    let net_qty = ledger
+        .position_for_side_exact(
+            context.account_id,
+            context.instrument,
+            qx_core::PositionSide::Net,
+        )
+        .quantity;
+    let long_qty = ledger
+        .position_for_side_exact(
+            context.account_id,
+            context.instrument,
+            qx_core::PositionSide::Long,
+        )
+        .quantity;
+    let short_qty = ledger
+        .position_for_side_exact(
+            context.account_id,
+            context.instrument,
+            qx_core::PositionSide::Short,
+        )
+        .quantity;
+    let mut gross_notional = ExactDecimal::ZERO;
+    if let Some(spec) = context.spec {
+        for quantity in [net_qty, long_qty, short_qty] {
+            let magnitude = exact_abs(quantity)?;
+            if magnitude.is_positive() {
+                gross_notional = gross_notional
+                    .checked_add(spec.notional_exact(magnitude, reference_price)?)
+                    .ok_or_else(|| {
+                        qx_core::QxError::Invariant("精确订单簿持仓名义额溢出".into())
+                    })?;
+            }
+        }
+        gross_notional = gross_notional
+            .checked_add(
+                qx_risk::pending_order_gross_notional_exact_at_reference_mark(
+                    context.oms.all_orders_ref(),
+                    context.candidate_order_id,
+                    context.account_id,
+                    context.instrument,
+                    spec,
+                    Some(reference_price),
+                )?,
+            )
+            .ok_or_else(|| qx_core::QxError::Invariant("精确在途风险名义额溢出".into()))?;
+    }
+    Ok(ExactOrderRiskPosition {
+        net_qty,
+        gross_notional,
+        long_qty,
+        short_qty,
+    })
+}
+
+fn exact_abs(value: ExactDecimal) -> Result<ExactDecimal, qx_core::QxError> {
+    if value.is_negative() {
+        value
+            .checked_neg()
+            .ok_or_else(|| qx_core::QxError::Invariant("精确持仓绝对值溢出".into()))
+    } else {
+        Ok(value)
     }
 }
 

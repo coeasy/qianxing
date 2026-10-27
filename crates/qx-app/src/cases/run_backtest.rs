@@ -8,9 +8,9 @@
 //! 同一 `run_id` 仅当 `config_hash` 与 `data_fingerprint` 都相同才允许幂等重跑；否则
 //! 返回 `Conflict`，避免两个不同运行共用一个身份。
 use crate::cases::artifacts::{
-    artifact_paths, ensure_output_dir, equity_csv, event_trace_jsonl, existing_manifest, fills_csv,
-    read_text, summary_json, write_text, ProtectiveExitSummary, RunReplaySummary, RunSummary,
-    DATA_TIER, SUMMARY_SCHEMA_VERSION,
+    artifact_paths, ensure_output_dir, equity_csv, equity_csv_with_exact, event_trace_jsonl,
+    existing_manifest, fills_csv, read_text, summary_json, write_text, ProtectiveExitSummary,
+    RunReplaySummary, RunSummary, DATA_TIER, SUMMARY_SCHEMA_VERSION,
 };
 use crate::cases::attach;
 use crate::cases::experiment_search::{DrawdownPruningWindow, SearchBacktestAttempt};
@@ -19,7 +19,7 @@ use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::run_handle::CancellationToken;
 use crate::spec::{BacktestOutcome, BacktestSpec, MIN_BACKTEST_BARS};
-use qx_core::{Fnv1a, InstrumentId, Money, ReplayVerifier, RunManifest};
+use qx_core::{ExactDecimal, Fnv1a, InstrumentId, Money, ReplayVerifier, RunManifest};
 use qx_datastruct::BarFrame;
 use qx_xingban::{
     BacktestConfig, BacktestEngine, BarStrategy, DataTier, PortfolioBarStrategy,
@@ -30,6 +30,7 @@ use std::path::Path;
 
 mod bar_strategy;
 mod cancellation;
+mod canonical_spec;
 mod custom_strategy;
 mod execution_binding;
 pub(in crate::cases) mod strategy_slot;
@@ -60,10 +61,22 @@ pub fn run_backtest(
     spec: &BacktestSpec,
     context: &RunContext,
 ) -> Result<BacktestOutcome, AppError> {
+    run_backtest_with_identity_extensions(spec, context, BTreeMap::new())
+}
+
+/// Run the shared Bar engine while binding extra source lineage into CanonicalRunSpec.
+/// This is used by Provider workflows whose selected source is not represented by BacktestSpec.
+pub(crate) fn run_backtest_with_identity_extensions(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    identity_extensions: BTreeMap<String, serde_json::Value>,
+) -> Result<BacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    let outcome = guard_panics(&correlation_id, || run_backtest_inner(spec, context, None))
-        .map_err(|error| attach(error, &correlation_id))?;
+    let outcome = guard_panics(&correlation_id, || {
+        run_backtest_inner_with_identity_extensions(spec, context, None, identity_extensions)
+    })
+    .map_err(|error| attach(error, &correlation_id))?;
     outcome.ok_or_else(|| {
         attach(
             AppError::new(
@@ -95,7 +108,22 @@ pub(super) fn run_backtest_inner(
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
-    run_backtest_inner_with_strategies(spec, context, cancellation, Vec::new())
+    run_backtest_inner_with_identity_extensions(spec, context, cancellation, BTreeMap::new())
+}
+
+fn run_backtest_inner_with_identity_extensions(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    identity_extensions: BTreeMap<String, serde_json::Value>,
+) -> Result<Option<BacktestOutcome>, AppError> {
+    bar_strategy::run_backtest_inner_unchecked_with_identity_extensions(
+        spec,
+        context,
+        cancellation,
+        Vec::new(),
+        identity_extensions,
+    )
 }
 
 fn run_backtest_inner_with_strategies(
@@ -114,6 +142,7 @@ fn run_backtest_inner_unchecked_with_details(
     injected: Vec<InjectedStrategy>,
     bar_strategy: Option<Box<dyn BarStrategy>>,
     drawdown_pruning: Option<DrawdownPruningWindow>,
+    identity_extensions: BTreeMap<String, serde_json::Value>,
 ) -> Result<SearchBacktestAttempt<BacktestRunDetails>, AppError> {
     spec.validate()?;
     let identities = injected
@@ -152,11 +181,10 @@ fn run_backtest_inner_unchecked_with_details(
             ),
         ));
     }
-    // `Bar` 的类型不在这里点名：转换目标就是引擎要吃的那个类型，写死等于给两处留一个漂移点。
-    let bars: Vec<_> = (&frame).into();
     if spec.market_spec.as_ref().is_some_and(|market| {
-        bars.iter().any(|bar| {
-            bar.ts < market.valid_from || market.valid_to.is_some_and(|until| bar.ts >= until)
+        frame.ts.iter().any(|timestamp| {
+            *timestamp < market.valid_from
+                || market.valid_to.is_some_and(|until| *timestamp >= until)
         })
     }) {
         return Err(AppError::new(
@@ -164,18 +192,18 @@ fn run_backtest_inner_unchecked_with_details(
             "Bar 数据时间超出 BacktestSpec.market_spec 的有效期",
         ));
     }
-    if bars.len() < MIN_BACKTEST_BARS {
+    if frame.ts.len() < MIN_BACKTEST_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
             format!(
                 "样本过短：{} 根 Bar，Bar 回测下限 {} 根",
-                bars.len(),
+                frame.ts.len(),
                 MIN_BACKTEST_BARS
             ),
         ));
     }
     let frame_path = Path::new(&spec.bars_path);
-    let (_, input_manifest) = crate::backtest_input_identity::barframe_dataset_identity(
+    let (bars, input_manifest) = crate::backtest_input_identity::barframe_dataset_identity(
         frame_path, &frame,
     )
     .map_err(|error| {
@@ -198,6 +226,10 @@ fn run_backtest_inner_unchecked_with_details(
     }
     let input_provenance =
         crate::backtest_input_identity::barframe_input_provenance(frame_path, &input_manifest);
+    let mut input_provenance_json = input_provenance.to_json();
+    if let Some(provider_lineage) = identity_extensions.get("provider_lineage") {
+        input_provenance_json["provider_lineage"] = provider_lineage.clone();
+    }
     let data_fingerprint = format!("barframe:{}", input_manifest.fingerprint);
     let risk = backtest_risk_gate(spec);
     let risk_rule_set_version = risk.rule_set().version().to_string();
@@ -234,6 +266,15 @@ fn run_backtest_inner_unchecked_with_details(
         .as_ref()
         .map(|portfolio| portfolio.primary_reserved_capital_raw)
         .unwrap_or(spec.initial_cash_raw);
+    let primary_allocation_exact = match &spec.portfolio {
+        Some(portfolio) => portfolio
+            .primary_reserved_capital()
+            .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))?,
+        None => spec.initial_cash_exact.unwrap_or_else(|| {
+            ExactDecimal::from_parts(spec.initial_cash_raw, 9)
+                .expect("validated initial cash fits ExactDecimal")
+        }),
+    };
     let primary_priority = spec
         .portfolio
         .as_ref()
@@ -264,6 +305,13 @@ fn run_backtest_inner_unchecked_with_details(
             .map_err(|error| AppError::from_qx_error(&error))?,
         None => BacktestEngine::new(config),
     };
+    let engine = if let Some(initial_cash_exact) = spec.initial_cash_exact {
+        engine
+            .with_initial_cash_exact(initial_cash_exact)
+            .map_err(|error| AppError::from_qx_error(&error))?
+    } else {
+        engine
+    };
     let (report, pruning) = if let Some(mut strategy) = bar_strategy {
         run_candidate_engine(
             engine,
@@ -278,6 +326,7 @@ fn run_backtest_inner_unchecked_with_details(
             StrategySlotContext {
                 priority: primary_priority,
                 reserved_capital_raw: primary_allocation,
+                reserved_capital_exact: primary_allocation_exact,
                 instrument: &instrument,
                 account_id: &account_id,
                 currency: &currency,
@@ -293,6 +342,7 @@ fn run_backtest_inner_unchecked_with_details(
             StrategySlotContext {
                 priority: primary_priority,
                 reserved_capital_raw: primary_allocation,
+                reserved_capital_exact: primary_allocation_exact,
                 instrument: &instrument,
                 account_id: &account_id,
                 currency: &currency,
@@ -306,11 +356,15 @@ fn run_backtest_inner_unchecked_with_details(
         )?];
         if let Some(portfolio) = &spec.portfolio {
             for member in &portfolio.additional_strategies {
+                let reserved_capital_exact = member
+                    .reserved_capital()
+                    .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))?;
                 strategy_slots.push(build_strategy_slot(
                     &member.strategy,
                     StrategySlotContext {
                         priority: member.priority,
                         reserved_capital_raw: member.reserved_capital_raw,
+                        reserved_capital_exact,
                         instrument: &instrument,
                         account_id: &account_id,
                         currency: &currency,
@@ -354,7 +408,10 @@ fn run_backtest_inner_unchecked_with_details(
         ));
     }
     let timestamps: Vec<u64> = bars.iter().map(|bar| bar.ts).collect();
-    if timestamps.len() != report.equity.len() || timestamps.len() != report.positions.len() {
+    if timestamps.len() != report.equity.len()
+        || timestamps.len() != report.equity_exact.len()
+        || timestamps.len() != report.positions.len()
+    {
         return Err(AppError::new(
             AppErrorCategory::InternalInvariant,
             format!(
@@ -367,12 +424,6 @@ fn run_backtest_inner_unchecked_with_details(
     }
 
     let artifacts = artifact_paths(spec);
-    reject_conflicting_run(
-        spec,
-        &artifacts.run_manifest,
-        &config_hash,
-        &data_fingerprint,
-    )?;
     let manifest = crate::build_backtest_run_manifest(
         &report,
         crate::BacktestRunManifestInput {
@@ -392,6 +443,61 @@ fn run_backtest_inner_unchecked_with_details(
             format!("RunManifest 构建失败: {error}"),
         )
     })?;
+    let runtime_version = format!("qx-app-{}", env!("CARGO_PKG_VERSION"));
+    let canonical_run_spec = canonical_spec::build_bar_canonical_run_spec(
+        spec,
+        &identities,
+        context.code_commit(),
+        &data_fingerprint,
+        &frame,
+        &report,
+        &runtime_version,
+        &instrument_spec_version,
+        &risk_rule_set_version,
+        &account_id,
+        identity_extensions.clone(),
+    )?;
+    let canonical_run_spec_json = canonical_run_spec.canonical_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("CanonicalRunSpec 序列化失败: {error}"),
+        )
+    })?;
+    let canonical_run_spec_fingerprint = canonical_run_spec.fingerprint().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("CanonicalRunSpec 指纹计算失败: {error}"),
+        )
+    })?;
+    reject_conflicting_run(
+        spec,
+        &artifacts.run_manifest,
+        &config_hash,
+        &data_fingerprint,
+        &canonical_run_spec_fingerprint,
+        !identity_extensions.is_empty(),
+    )?;
+    let legacy_manifest_without_canonical_spec = existing_manifest(&artifacts.run_manifest)?
+        .map(|payload| RunManifest::from_json(&payload))
+        .transpose()
+        .map_err(|error| {
+            AppError::new(
+                AppErrorCategory::StorageFailure,
+                format!("已有 RunManifest 无法识别 CanonicalRunSpec 迁移状态: {error}"),
+            )
+        })?
+        .is_some_and(|manifest| manifest.canonical_run_spec_json.is_none());
+    let mut manifest = manifest;
+    if !legacy_manifest_without_canonical_spec {
+        manifest.canonical_run_spec_json = Some(canonical_run_spec_json);
+        manifest.canonical_run_spec_fingerprint = Some(canonical_run_spec_fingerprint);
+        manifest.validate().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("RunManifest 的 CanonicalRunSpec 无效: {error}"),
+            )
+        })?;
+    }
     ensure_output_dir(spec)?;
     let run_record_path = artifacts
         .summary
@@ -419,14 +525,21 @@ fn run_backtest_inner_unchecked_with_details(
         equity_points: report.equity.len() as u64,
         result_hash: format!("{:016x}", report.result_hash()),
         data_fingerprint: data_fingerprint.clone(),
-        input: Some(input_provenance.to_json()),
+        input: Some(input_provenance_json),
         input_data_hash: Some(manifest.input_event_hash.clone()),
         run_manifest: Some(artifacts.run_manifest.clone()),
         run_record: Some(run_record_path.clone()),
+        artifact_locations: Some(serde_json::json!({
+            "summary": artifacts.summary,
+            "equity": artifacts.equity,
+            "fills": artifacts.fills,
+            "run_manifest": artifacts.run_manifest,
+        })),
         config_hash: config_hash.clone(),
         matching_kernel: Some(crate::cases::kernels::BAR_MATCHING_KERNEL.to_string()),
         account: Some(serde_json::json!({
             "initial_cash_raw": spec.initial_cash_raw.to_string(),
+            "initial_cash_exact": report.initial_cash_exact.to_string(),
             "source": "backtest-spec",
         })),
         risk_rules: Some(serde_json::json!({
@@ -449,6 +562,7 @@ fn run_backtest_inner_unchecked_with_details(
         final_equity_raw: report.final_equity(),
         fees_raw: report.fees_raw,
         turnover_raw: report.turnover_raw,
+        metrics_exact: Some(report.exact_metrics_json()),
         replay_events: replay.events as u64,
         replay: Some(RunReplaySummary {
             log_digest: format!("{:016x}", replay.log_digest),
@@ -486,11 +600,23 @@ fn run_backtest_inner_unchecked_with_details(
             .collect(),
     };
     write_text(&artifacts.summary, &summary_json(&summary)?)?;
-    write_text(
-        &artifacts.equity,
-        &equity_csv(&timestamps, &report.equity, &report.positions),
-    )?;
-    write_text(&artifacts.fills, &fills_csv(&report.fills))?;
+    let exact_curve_needed = report
+        .equity
+        .iter()
+        .zip(&report.equity_exact)
+        .any(|(raw, exact)| exact.to_raw(9).ok() != Some(*raw));
+    let equity_payload = if exact_curve_needed {
+        equity_csv_with_exact(
+            &timestamps,
+            &report.equity,
+            &report.equity_exact,
+            &report.positions,
+        )?
+    } else {
+        equity_csv(&timestamps, &report.equity, &report.positions)
+    };
+    write_text(&artifacts.equity, &equity_payload)?;
+    write_text(&artifacts.fills, &fills_csv(&report.fills)?)?;
     write_text(
         artifacts
             .event_trace
@@ -561,6 +687,7 @@ pub(super) fn run_backtest_inner_for_experiment(
             injected,
             None,
             pruning,
+            BTreeMap::new(),
         )? {
             SearchBacktestAttempt::Completed(details) => {
                 SearchBacktestAttempt::Completed(details.map(|details| details.outcome))
@@ -604,6 +731,8 @@ fn reject_conflicting_run(
     manifest_path: &str,
     config_hash: &str,
     data_fingerprint: &str,
+    canonical_run_spec_fingerprint: &str,
+    require_canonical_identity: bool,
 ) -> Result<(), AppError> {
     let Some(existing) = existing_manifest(manifest_path)? else {
         return Ok(());
@@ -614,20 +743,32 @@ fn reject_conflicting_run(
             format!("既有 run manifest 无法解析 {manifest_path}: {error}"),
         )
     })?;
-    if existing.config_hash == config_hash && existing.data_fingerprint == data_fingerprint {
+    let canonical_identity_matches = match existing.canonical_run_spec_fingerprint.as_deref() {
+        Some(existing) => existing == canonical_run_spec_fingerprint,
+        None => !require_canonical_identity,
+    };
+    if existing.config_hash == config_hash
+        && existing.data_fingerprint == data_fingerprint
+        && canonical_identity_matches
+    {
         return Ok(());
     }
     Err(AppError::new(
         AppErrorCategory::Conflict,
         format!(
-            "run_id {} 已存在且身份不同（config_hash {} -> {}、data_fingerprint {} -> {}）；\
+            "run_id {} 已存在且身份不同（config_hash {} -> {}、data_fingerprint {} -> {}、canonical_spec {} -> {}）；\
              换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，\
              而引用它的报告、对比与台账说的可能是前一次",
             spec.run_id,
             existing.config_hash,
             config_hash,
             existing.data_fingerprint,
-            data_fingerprint
+            data_fingerprint,
+            existing
+                .canonical_run_spec_fingerprint
+                .as_deref()
+                .unwrap_or("legacy"),
+            canonical_run_spec_fingerprint,
         ),
     ))
 }

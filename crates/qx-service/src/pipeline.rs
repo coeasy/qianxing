@@ -331,6 +331,7 @@ mod tests {
             id: "main".into(),
             settlement_currency: Some("USDT".into()),
             initial_cash_raw: None,
+            portfolio_id: None,
         });
         let log_name = qx_runtime::account_event_log_name("main", "paper").unwrap();
         let pipeline = open_account_pipeline(&config, &root, &log_name, OutboxRecovery::ReadOnly)

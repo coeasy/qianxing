@@ -20,7 +20,13 @@
       "$ref": "multi-account-backtest-result-v1.json"
     },
     {
+      "$ref": "multi-account-backtest-result-v2.json"
+    },
+    {
       "$ref": "multi-account-depth-backtest-result-v1.json"
+    },
+    {
+      "$ref": "multi-account-depth-backtest-result-v2.json"
     },
     {
       "type": "object",
@@ -46,7 +52,13 @@
               "$ref": "multi-account-backtest-result-v1.json"
             },
             {
+              "$ref": "multi-account-backtest-result-v2.json"
+            },
+            {
               "$ref": "multi-account-depth-backtest-result-v1.json"
+            },
+            {
+              "$ref": "multi-account-depth-backtest-result-v2.json"
             }
           ]
         },

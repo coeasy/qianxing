@@ -1,7 +1,7 @@
 //! qx-spec：声明式规格对象层（地基对象）。
 //!
-//! 本 crate 只承载「身份/声明」文档——项目清单、数据集清单 v2、实验规格、运行记录、
-//! 能力清单、证据包与模式登记册。它们描述「打算做什么、依据是什么、结果能否复核」，
+//! 本 crate 只承载「身份/声明」文档——项目清单、实验规格、运行记录、能力清单、
+//! 证据包、模式登记册与 Canonical RunSpec。它们描述「打算做什么、依据是什么、结果能否复核」，
 //! **不是账簿事实**，也不产生订单、成交或资金语义；因此本 crate 不依赖 adapter、
 //! storage、API 或任何具体策略语言，只用 serde 与 `qx-core` 的稳定哈希。
 //!
@@ -10,6 +10,7 @@
 //! 常量本身另在 `maturity/baseline.yaml` 冻结。`describe` 是 CLI `plan <kind> <file>`
 //! 的唯一读入漏斗：任何对象都先按严格 schema 解析、再自洽校验、最后算出稳定指纹。
 
+pub mod canonical_run_spec;
 pub mod capability;
 pub mod evidence;
 pub mod experiment;
@@ -19,6 +20,10 @@ pub mod run_evidence_fidelity;
 pub mod run_record;
 pub mod schema_registry;
 
+pub use canonical_run_spec::{
+    CanonicalDatasetIdentity, CanonicalRunClock, CanonicalRunSpec, CanonicalStrategyIdentity,
+    CANONICAL_RUN_SPEC_SCHEMA_VERSION,
+};
 pub use capability::{CapabilityLevel, CapabilityManifest, CAPABILITY_MANIFEST_SCHEMA_VERSION};
 pub use evidence::{
     EvidenceBundle, EvidenceClaim, EvidenceEnvironment, EvidenceGeneration, EvidenceWindow,
@@ -35,7 +40,10 @@ pub use run_evidence::{
     RunEvidenceRecompute, RunEvidenceReportAnalysis, RunEvidenceRun,
     RunEvidenceStrategyDiagnostics, RunEvidenceVerification, RUN_EVIDENCE_REQUIRED_ARTIFACTS,
 };
-pub use run_record::{ArtifactRef, ReplayVerdict, RunRecord, RunStatus, RUN_RECORD_SCHEMA_VERSION};
+pub use run_record::{
+    ArtifactRef, ArtifactRefV2, ReplayVerdict, RunRecord, RunRecordV2, RunStatus,
+    RUN_RECORD_SCHEMA_VERSION, RUN_RECORD_V2_SCHEMA_VERSION,
+};
 pub use schema_registry::{
     SchemaCompatibility, SchemaEntry, SchemaRegistry, SCHEMA_REGISTRY_SCHEMA_VERSION,
 };
@@ -54,11 +62,12 @@ pub enum FoundationKind {
     Capability,
     Evidence,
     SchemaRegistry,
+    CanonicalRunSpec,
 }
 
 impl FoundationKind {
     /// 帮助文本与错误文案共用的完整取值清单（顺序即打印顺序）。
-    pub const ALL: [FoundationKind; 8] = [
+    pub const ALL: [FoundationKind; 9] = [
         FoundationKind::Project,
         FoundationKind::Dataset,
         FoundationKind::Experiment,
@@ -67,6 +76,7 @@ impl FoundationKind {
         FoundationKind::Capability,
         FoundationKind::Evidence,
         FoundationKind::SchemaRegistry,
+        FoundationKind::CanonicalRunSpec,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -79,6 +89,7 @@ impl FoundationKind {
             FoundationKind::Capability => "capability",
             FoundationKind::Evidence => "evidence",
             FoundationKind::SchemaRegistry => "schema-registry",
+            FoundationKind::CanonicalRunSpec => "canonical-run-spec",
         }
     }
 
@@ -87,7 +98,7 @@ impl FoundationKind {
     }
 }
 
-/// 七种「住在 qx-spec 里」的规格对象共用的读写契约。
+/// 八种「住在 qx-spec 里」的规格对象共用的读写契约。
 ///
 /// `DatasetManifestV2` 是第八种，但它属于数据平面（`qx-data`），本 crate 只依赖它、
 /// 不给它加反向依赖，因此它按固有方法在 `describe` 里单独接进来，不实现本 trait。
@@ -132,11 +143,41 @@ pub fn describe(kind: &str, payload: &str) -> Result<DocumentReadout, String> {
         FoundationKind::Project => readout::<ProjectManifest>(kind, payload),
         FoundationKind::Dataset => dataset_readout(payload),
         FoundationKind::Experiment => readout::<ExperimentSpec>(kind, payload),
-        FoundationKind::RunRecord => readout::<RunRecord>(kind, payload),
+        FoundationKind::RunRecord => run_record_readout(payload),
         FoundationKind::RunEvidence => readout::<EvidenceBundle>(kind, payload),
         FoundationKind::Capability => readout::<CapabilityManifest>(kind, payload),
         FoundationKind::Evidence => readout::<EvidenceBundle>(kind, payload),
         FoundationKind::SchemaRegistry => readout::<SchemaRegistry>(kind, payload),
+        FoundationKind::CanonicalRunSpec => readout::<CanonicalRunSpec>(kind, payload),
+    }
+}
+
+fn run_record_readout(payload: &str) -> Result<DocumentReadout, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(payload).map_err(|error| format!("运行记录解析失败: {error}"))?;
+    match value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+    {
+        Some(version) if version == u64::from(RUN_RECORD_SCHEMA_VERSION) => {
+            readout::<RunRecord>(FoundationKind::RunRecord, payload)
+        }
+        Some(version) if version == u64::from(RUN_RECORD_V2_SCHEMA_VERSION) => {
+            let record = RunRecordV2::from_json(payload)?;
+            Ok(DocumentReadout {
+                kind: FoundationKind::RunRecord.as_str().to_string(),
+                identity: record.identity(),
+                schema_version: RUN_RECORD_V2_SCHEMA_VERSION,
+                fingerprint: record.fingerprint()?,
+                warnings: Vec::new(),
+                canonical_json: record.to_json()?,
+            })
+        }
+        Some(version) => Err(format!(
+            "运行记录 schema_version={version} 不受支持（本构建只认 {} / {}）",
+            RUN_RECORD_SCHEMA_VERSION, RUN_RECORD_V2_SCHEMA_VERSION
+        )),
+        None => Err("运行记录缺少有效 schema_version".into()),
     }
 }
 

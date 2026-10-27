@@ -1,7 +1,8 @@
 use crate::cost::{LatencyModel, MarginRule};
 use crate::fill::FillModel;
 use qx_core::{
-    EventLog, FeeModel, Fill, FundingRateEvent, InstrumentId, Ledger, Money, TradingInstrumentSpec,
+    EventLog, ExactDecimal, FeeModel, Fill, FundingRateEvent, InstrumentId, Ledger, Money,
+    TradingInstrumentSpec,
 };
 use qx_guanxing::Bar;
 use qx_zhenlu::RiskGate;
@@ -23,10 +24,12 @@ pub struct PortfolioBarSessionConfig {
     pub account_id: String,
     pub currency: String,
     pub initial_cash: Money,
+    /// Authoritative scale-aware principal; `initial_cash` remains the 1e-9 raw projection.
+    pub initial_cash_exact: Option<ExactDecimal>,
     pub risk: RiskGate,
     /// Constant funding rate in basis points per UTC 8-hour settlement, keyed by derivative.
     pub funding_bps: BTreeMap<InstrumentId, i64>,
-    /// Optional variable historical funding rates at explicit UTC 8-hour settlements.
+    /// Optional historical funding rates at exchange-declared settlement timestamps.
     pub funding_events: Vec<FundingRateEvent>,
 }
 
@@ -35,10 +38,16 @@ pub struct PortfolioBarSessionReport {
     pub fills_by_instrument: BTreeMap<InstrumentId, Vec<Fill>>,
     pub rejections_by_instrument: BTreeMap<InstrumentId, EventLog>,
     pub equity: Vec<(u64, i128)>,
+    /// Exact shared-account equity samples `(equity_index, timestamp, equity)`.
+    pub equity_exact: Vec<(u64, u64, ExactDecimal)>,
     /// Bounded samples of each instrument's marked P&L contribution above initial cash.
     /// Each point is `(equity_index, timestamp, contribution_raw)`; all curves share one axis.
     pub instrument_equity_contributions: BTreeMap<InstrumentId, Vec<(u64, u64, i128)>>,
+    /// Exact per-instrument PnL contributions `(equity_index, timestamp, contribution)`.
+    pub instrument_equity_contributions_exact:
+        BTreeMap<InstrumentId, Vec<(u64, u64, ExactDecimal)>>,
     pub initial_cash_raw: i128,
+    pub initial_cash_exact: ExactDecimal,
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,

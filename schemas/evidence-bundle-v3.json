@@ -399,7 +399,7 @@
             "components": {
               "type": "array",
               "description": "多输入运行的有序组成项；multi-barframe 必须为 primary、reference 两项，多市场 BarFrame/DepthFrame 按唯一 market:<instrument> 登记，普通输入省略。",
-              "minItems": 2,
+              "minItems": 1,
               "items": {
                 "type": "object",
                 "required": [
@@ -490,6 +490,34 @@
           "allOf": [
             {
               "if": {
+                "not": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "multi-barframe",
+                        "multi-market-barframe",
+                        "multi-market-depthframe"
+                      ]
+                    }
+                  },
+                  "required": ["kind"]
+                }
+              },
+              "then": {
+                "properties": { "components": { "maxItems": 0 } }
+              }
+            },
+            {
+              "if": {
+                "properties": { "kind": { "const": "multi-barframe" } },
+                "required": ["kind"]
+              },
+              "then": {
+                "properties": { "components": { "minItems": 2, "maxItems": 2 } }
+              }
+            },
+            {
+              "if": {
                 "properties": {
                   "kind": {
                     "const": "multi-market-barframe"
@@ -500,7 +528,8 @@
               "then": {
                 "properties": {
                   "components": {
-                    "minItems": 3
+                    "minItems": 1,
+                    "maxItems": 32
                   }
                 }
               }

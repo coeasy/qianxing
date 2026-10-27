@@ -44,6 +44,10 @@ impl Strategy for BuyEachLeg {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         } else {
             Vec::new()
@@ -83,6 +87,27 @@ impl Strategy for ObserveLegCash {
             .lock()
             .map_err(|_| "cash observer poisoned")?
             .insert(instrument, cash);
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents: Vec::new(),
+        })
+    }
+}
+
+struct NoOrders;
+
+impl Strategy for NoOrders {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
         Ok(StrategyDecision {
             schema_version: STRATEGY_API_VERSION,
             request_id: format!("{}:{}", context.strategy_id, event.ts()),
@@ -149,6 +174,13 @@ fn multi_leg_quality_manifests_are_verified_and_bound_into_the_artifact() {
         Some(reference_manifest_path.to_string_lossy().into_owned());
     let outcome = run_multi_leg_backtest(&spec, &context("multi-leg-quality"))
         .expect("run with verified manifests");
+    let report_facts =
+        qx_app::read_multi_leg_report_facts_v1(&outcome, &context("multi-leg-quality-report"))
+            .expect("report reader verifies both quality manifests through the artifact port");
+    assert_eq!(
+        report_facts.total_fills,
+        outcome.primary_fills + outcome.reference_fills
+    );
     let artifact: Value = serde_json::from_str(
         &std::fs::read_to_string(outcome.attribution_artifact).expect("artifact exists"),
     )
@@ -165,6 +197,35 @@ fn multi_leg_quality_manifests_are_verified_and_bound_into_the_artifact() {
             reference_manifest.manifest.fingerprint().unwrap()
         ))
     );
+    let primary_frame = qx_datastruct::BarFrame::from_json(
+        &std::fs::read_to_string(&spec.primary_bars_path).expect("read primary frame"),
+    )
+    .expect("valid primary frame");
+    let primary_evidence = &artifact["dataset_quality"]["primary"];
+    let primary_fingerprint = qx_data::fingerprint_bar_frame(&primary_frame).unwrap();
+    assert_eq!(
+        qx_app::verify_multi_leg_report_quality_evidence_v1(
+            primary_manifest_path.to_str().unwrap(),
+            &spec.primary_bars_path,
+            &primary_frame,
+            &primary_fingerprint,
+            primary_manifest_path.to_str().unwrap(),
+            primary_evidence,
+        )
+        .expect("application report verifier accepts the published quality evidence"),
+        primary_manifest.manifest.fingerprint().unwrap()
+    );
+    let mut changed_evidence = primary_evidence.clone();
+    changed_evidence["manifest_sha256"] = Value::String("0".repeat(64));
+    assert!(qx_app::verify_multi_leg_report_quality_evidence_v1(
+        primary_manifest_path.to_str().unwrap(),
+        &spec.primary_bars_path,
+        &primary_frame,
+        &primary_fingerprint,
+        primary_manifest_path.to_str().unwrap(),
+        &changed_evidence,
+    )
+    .is_err());
     assert!(artifact["data_fingerprint"]
         .as_str()
         .unwrap()
@@ -180,6 +241,84 @@ fn multi_leg_quality_manifests_are_verified_and_bound_into_the_artifact() {
         .expect_err("tampered quality report is rejected");
     assert_eq!(error.category(), AppErrorCategory::InvalidInput);
     assert!(!root.join("tampered-out").exists());
+}
+
+#[test]
+fn multi_leg_exact_principal_runs_and_report_reader_keeps_subnano_cash() {
+    let root = scratch("multi-leg-exact-principal");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let primary = fixtures.join("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixtures.join("qianxing.bar-frame.pairs-reference.example.json");
+    let spec = MultiLegBacktestSpec::new(
+        qx_app::MultiLegDatasetInput {
+            run_id: "multi-leg-exact-principal".into(),
+            primary_bars_path: primary.to_string_lossy().into_owned(),
+            reference_bars_path: reference.to_string_lossy().into_owned(),
+        },
+        "USDT",
+        1,
+        1,
+        7,
+        root.join("out").to_string_lossy(),
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "exact-cash"),
+    )
+    .with_initial_cash_exact(
+        qx_core::ExactDecimal::parse("0.0000000002").unwrap(),
+        qx_core::ExactDecimal::parse("0.0000000002").unwrap(),
+    )
+    .expect("valid exact principal v2");
+    let identity = qx_app::StrategyArtifactIdentity {
+        strategy_id: "exact-cash".into(),
+        strategy_version: "test-v1".into(),
+        source_sha256: "a".repeat(64),
+    };
+    let outcome = qx_app::run_multi_leg_backtest_with_strategy(
+        &spec,
+        &identity,
+        Box::new(NoOrders),
+        &context("multi-leg-exact-principal"),
+    )
+    .expect("exact v2 run succeeds with zero raw projection");
+    let artifact: Value =
+        serde_json::from_str(&std::fs::read_to_string(&outcome.attribution_artifact).unwrap())
+            .unwrap();
+    assert_eq!(artifact["schema_version"], 6);
+    assert_eq!(artifact["initial_cash_exact"], "0.0000000004");
+    assert_eq!(
+        artifact["leg_initial_cash_exact"]["primary"],
+        "0.0000000002"
+    );
+    assert_eq!(artifact["equity_curve"][0][1], "0");
+    assert_eq!(artifact["equity_curve_exact"][0][2], "0.0000000004");
+    let report = qx_app::read_multi_leg_report_facts_v1(
+        &outcome,
+        &context("multi-leg-exact-principal-report"),
+    )
+    .expect("reader verifies exact principal, ledger, and equity sidecar");
+    assert_eq!(report.initial_cash_raw, 0);
+    assert_eq!(report.initial_cash_exact.as_deref(), Some("0.0000000004"));
+    assert_eq!(report.primary.return_bps, 0);
+    assert_eq!(report.reference.return_bps, 0);
+    let research_report = qx_app::read_multi_leg_research_report_v1(
+        &qx_app::MultiLegResearchReportReadRequestV1 {
+            schema_version: 1,
+            outcome,
+            page: None,
+        },
+        &context("multi-leg-exact-principal-interactive-report"),
+    )
+    .expect("interactive research report includes exact principal");
+    assert_eq!(
+        research_report.summary.initial_cash_exact.as_deref(),
+        Some("0.0000000004")
+    );
+    assert_eq!(
+        research_report.summary.account_ledger_summary["initial_cash_exact"],
+        "0.0000000004"
+    );
 }
 
 #[test]
@@ -451,6 +590,7 @@ fn derivative_spec(instrument: &str) -> TradingInstrumentSpec {
         maintenance_margin_bps: 500,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

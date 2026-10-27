@@ -313,8 +313,26 @@ impl PyProviderRegistry {
                 "depth snapshots must have strictly increasing timestamps and sequences",
             ));
         }
+        let exact_level_count = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bids.iter().chain(&snapshot.asks))
+            .filter(|level| level.price_exact.is_some())
+            .count();
+        let level_count = snapshots
+            .iter()
+            .map(|snapshot| snapshot.bids.len() + snapshot.asks.len())
+            .sum::<usize>();
+        let schema_version = if exact_level_count == 0 {
+            DepthFrame::LEGACY_SCHEMA_VERSION
+        } else if exact_level_count == level_count {
+            DepthFrame::SUPPORTED_SCHEMA_VERSION
+        } else {
+            return Err(PyValueError::new_err(
+                "provider depth snapshots must either all carry exact price/quantity or all use the legacy 1e-9 projection",
+            ));
+        };
         let frame = DepthFrame {
-            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            schema_version,
             source: format!("{}#query={:016x}", result.provider_id, query.digest()),
             instrument: snapshots
                 .first()

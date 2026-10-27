@@ -59,7 +59,7 @@
 | HTTP 路由 | 18（17 条 `GET` 读面 + 1 条 `POST` 写面） | 门禁 `api_surface_doc_check` 与 `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs`：`deploy/README.md` 的端点表 ≡ `handle_inner` 的路由集合 |
 | WebSocket 事件流 | 1（任意路径 + `Upgrade: websocket`） | `admit_websocket` 的准入判定，口径见 `deploy/README.md` 的 WS 段 |
 | `deploy/` 顶层示例配置模板 | 53 | `crates/qx-cli/tests/unit/deploy_template_coverage.rs`：登记表与磁盘清单逐名相等，新增不登记即红 |
-| Cargo workspace 成员 | 25（24 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
+| Cargo workspace 成员 | 29（28 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
 | 静态架构不变量 | `tools/check_architecture.py` 中的具名契约检查 | 每条检查验证具体行为、边界或实现归属；不以检查数/测试数作为验收质量 |
 | Rust 用例 | 以实际测试执行结果为准 | `cargo test --workspace --no-fail-fast` |
 
@@ -72,6 +72,7 @@
 模块职责与 crate 边界见[模块地图](docs/module-map.md)。
 
 Rust、Python 与 C++ 策略入口以及动量、SMA 和均值回归示例见[多语言策略示例](docs/multi-language-strategies.md)。
+Python `BaseStrategy` 本地接入、回测/研究命令和服务器沙箱边界也见该指南；本地可信策略默认直跑。
 Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差诊断说明](docs/策略未来数据与预热偏差诊断.md)，命令为 `qianxing-strategy-diagnose`。
 参数实验支持固定种子的随机搜索、分类 TPE 与有限网格核密度 TPE 候选提议，入口和训练/OOS 边界见[自适应参数搜索说明](docs/自适应参数搜索.md)。
 
@@ -92,7 +93,7 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.2.2 qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.3.0 qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -238,9 +239,12 @@ Windows 下用 `build.bat`（cmd.exe 里跑），POSIX 下用 `bash build.sh`。
 
 能力证据按 `implementation` / `code_tested` / `sandbox_tested` / `production_approved` 四档分级（见[项目指南](docs/project-guide.md)里的 `maturity/capabilities.yaml`）。默认 `single_node` 使用 SQLite/Files；PostgreSQL、NATS、真实交易所沙盒和券商柜台不会因为代码或 feature 存在而被标记为生产批准。
 
+产品支持范围与内部成熟度证据通过稳定 capability ID 关联；生成目录同时供 API、Python/C++ 客户端、Web 控制台和本地 CLI 使用。离线查看能力清单运行 `qx-cli doctor --capabilities`，查看单项详情运行 `qx-cli doctor --capabilities --capability-id qx.venue.binance_spot`，按具体交易范围筛选运行 `qx-cli doctor --capabilities --venue BINANCE --product perpetual --account-mode hedge --json`；静态支持登记不代表当前环境连通或真实沙盒验收通过。详见[生成的产品能力目录](docs/capability-catalog.md)及其[矩阵](maturity/capability-matrix.yaml)、[成熟度登记](maturity/capabilities.yaml)和[稳定 ID 关联表](maturity/capability-crosswalk.yaml)。
+
 ## 持续集成与文档
 
 CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
+研究、Paper、交易所 sandbox 三种初始化与验收场景见[发布场景与验收入口](docs/发布场景与验收入口-V1.md)。
 
 ### 发布产物身份
 
@@ -292,12 +296,12 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
   （COLLATERAL 0 / EQUIVALENT 0 / BAD 0），被改文件跑完逐份按 sha256 回原字节；
   口径与空枪披露见 V13 §17.11（R27）与 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` §18（R28）。
 
-能力矩阵把每条能力钉在四档证据上（机器可读的那份是 `maturity/capabilities.yaml`，2026-10-09 现读）：
-顶层能力条目 **25** 个，**25** 个都带 `implementation` 键，其中 `true` 的 **21** 个
+内部成熟度登记把每条代码能力钉在四档证据上（机器可读的那份是 `maturity/capabilities.yaml`，2026-10-24 现读；产品支持矩阵另见[能力目录](docs/capability-catalog.md)）：
+成熟度条目 **33** 个，其中 `implementation=true` 的 **29** 个
 （`postgres` / `nats` / `broker_gateway` 三格写的是可选与"没有厂商协议就没有实现"，
-`merge_c07ad22_rollback_register` 按裁定写 `false`）；`code_tested` 为真的 **21** 个；
-**`sandbox_tested` 与 `production_approved` 无一为真**；limitations 合计 **162** 条，
-以仓库内路径开头的证据行 **387** 条（逐行经门禁核对存在性）。因此可宣称的交付边界是：
+`merge_c07ad22_rollback_register` 按裁定写 `false`）；`code_tested` 为真的 **29** 个；
+**`sandbox_tested` 与 `production_approved` 无一为真**；limitations 合计 **168** 条，
+证据路径 **697** 条（逐行经门禁核对存在性）。因此可宣称的交付边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 
 | 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |

@@ -82,6 +82,9 @@ fn advertised_commands_only_name_files_the_profile_generated() {
         ("ashare", None),
         ("multi-venue", None),
         ("backtest", None),
+        ("research-local", None),
+        ("crypto-paper", None),
+        ("crypto-sandbox-acceptance", None),
     ] {
         let root = temp_case_dir(&format!("q55-onboard-{profile}"));
         let runtime = root.join("runtime.json").to_string_lossy().into_owned();
@@ -129,6 +132,8 @@ fn advertised_backtest_commands_run_as_printed() {
         ("builtin", Some("macd")),
         ("paper", None),
         ("ashare", None),
+        ("research-local", None),
+        ("crypto-paper", None),
     ] {
         let root = temp_case_dir(&format!("q55-run-{profile}"));
         let runtime = root.join("runtime.json").to_string_lossy().into_owned();
@@ -170,6 +175,8 @@ fn readme_recommended_flow_runs_line_by_line() {
         ("builtin", Some("macd")),
         ("paper", None),
         ("ashare", None),
+        ("research-local", None),
+        ("crypto-paper", None),
     ] {
         let root = temp_case_dir(&format!("u4-readme-flow-{profile}"));
         let runtime = root.join("runtime.json").to_string_lossy().into_owned();
@@ -211,7 +218,7 @@ fn readme_recommended_flow_runs_line_by_line() {
         let tail = *commands
             .last()
             .expect("README flow has at least one command");
-        if profile == "paper" {
+        if matches!(profile, "paper" | "crypto-paper") {
             assert!(
                 tail.starts_with(&format!("{program} paper-check")),
                 "{tail}"

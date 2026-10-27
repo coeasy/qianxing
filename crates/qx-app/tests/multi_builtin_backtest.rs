@@ -69,6 +69,7 @@ fn spec_for(instrument: &str, product: TradingProduct) -> TradingInstrumentSpec 
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -99,6 +100,23 @@ fn validation_spec() -> MultiBuiltinBacktestSpec {
         funding_bps: 0,
         declared_product: None,
     }
+}
+
+#[test]
+fn multi_builtin_rejects_exact_starting_capital_that_its_sizer_does_not_support() {
+    let mut spec = validation_spec();
+    spec.primary = spec
+        .primary
+        .with_initial_cash_exact(
+            qx_core::ExactDecimal::parse("0.0010000001").expect("decimal text"),
+        )
+        .expect("v2 input shape");
+
+    let error = spec
+        .validate()
+        .expect_err("multi-builtin must not ignore exact cash");
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.to_string().contains("不接受 BacktestSpec v2"));
 }
 
 #[test]

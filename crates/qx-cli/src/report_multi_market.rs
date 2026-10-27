@@ -11,6 +11,8 @@ const MAX_MARKET_DIAGNOSTIC_BARS_PER_STRATEGY: usize = 65_536;
 const MAX_MARKET_DIAGNOSTIC_STRATEGY_BAR_EVENTS: usize = 1_000_000;
 const MAX_MARKET_DIAGNOSTIC_LOOKAHEAD_WORK: usize = 8_000_000;
 const MAX_MARKET_DIAGNOSTIC_STARTUP_WORK: usize = 8_000_000;
+const MAX_MULTI_MARKET_EVENTS: u64 = 5_000_000;
+const MAX_MULTI_MARKET_EVENT_PAGE: usize = 300;
 
 fn read_artifact(path: &Path) -> Result<Option<Value>, String> {
     if !path.is_file() {
@@ -21,11 +23,25 @@ fn read_artifact(path: &Path) -> Result<Option<Value>, String> {
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return Ok(None);
     };
-    if value.get("schema_version").and_then(Value::as_u64) == Some(1)
+    let version = value.get("schema_version").and_then(Value::as_u64);
+    let has_event_source = match version {
+        Some(1) => value.get("event_log").and_then(Value::as_array).is_some(),
+        Some(2) => {
+            value
+                .get("event_trace_path")
+                .and_then(Value::as_str)
+                .is_some()
+                && value.get("event_count").and_then(Value::as_u64).is_some()
+                && value.get("event_log").is_none()
+        }
+        _ => false,
+    };
+    if matches!(version, Some(1 | 2))
         && value.pointer("/outcome/shared_result_hash").is_some()
         && value.pointer("/outcome/pending_orders").is_none()
         && value.get("market_data").and_then(Value::as_array).is_some()
         && value.pointer("/spec/markets").is_some()
+        && has_event_source
     {
         Ok(Some(value))
     } else {
@@ -559,100 +575,134 @@ fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
     if artifact["replay_verified"] != true {
         return Err("多市场 Bar 产物缺少 ReplayVerifier 成功标记".into());
     }
-    let mut hasher = qx_core::Fnv1a::new();
-    let mut components = std::collections::BTreeMap::new();
-    let qualities = artifact
+    let backtest_spec: qx_app::MultiMarketBacktestSpec =
+        serde_json::from_value(artifact["spec"].clone())
+            .map_err(|error| format!("多市场 Bar spec 无效: {error}"))?;
+    backtest_spec
+        .validate()
+        .map_err(|error| format!("多市场 Bar spec 无效: {error}"))?;
+    let quality_records = artifact
         .get("dataset_quality")
-        .and_then(Value::as_object)
         .cloned()
-        .unwrap_or_default();
-    let market_specs = artifact["spec"]["markets"]
+        .unwrap_or_else(|| json!({}));
+    qx_app::validate_multi_market_quality_manifest_set_v1(&backtest_spec, &quality_records)
+        .map_err(|error| error.to_string())?;
+    let qualities = quality_records
+        .as_object()
+        .ok_or("多市场数据质量记录必须是对象")?;
+    let configured_markets = artifact["spec"]["markets"]
         .as_array()
         .ok_or("回测 spec 缺少 markets")?;
-    let mut markets = Vec::new();
-    let mut input_artifacts = vec![path.to_path_buf()];
-    for market in artifact["market_data"]
+    let market_data = artifact["market_data"]
         .as_array()
-        .ok_or("产物缺少 market_data")?
-    {
+        .ok_or("产物缺少 market_data")?;
+    if market_data.len() != backtest_spec.markets.len() {
+        return Err("多市场输入数量与 spec 不一致".into());
+    }
+    let mut markets = Vec::new();
+    let mut typed_market_specs = std::collections::BTreeMap::new();
+    let mut final_market_marks = std::collections::BTreeMap::new();
+    let mut verified_market_inputs = Vec::with_capacity(backtest_spec.markets.len());
+    let mut seen_instruments = std::collections::BTreeSet::new();
+    let mut input_artifacts = vec![path.to_path_buf()];
+    for market in market_data {
         let instrument = market["instrument"]
             .as_str()
             .ok_or("market_data 缺少 instrument")?;
+        if !seen_instruments.insert(instrument.to_owned()) {
+            return Err(format!("多市场输入存在重复标的: {instrument}"));
+        }
+        let configured = backtest_spec
+            .markets
+            .iter()
+            .find(|candidate| candidate.instrument == instrument)
+            .ok_or_else(|| format!("回测 spec 缺少市场配置: {instrument}"))?;
         let source = market["path"]
             .as_str()
             .ok_or("market_data 缺少 BarFrame 路径")?;
         let frame_path = resolve_path(source, path);
         input_artifacts.push(frame_path.clone());
-        let frame = crate::read_bar_frame_for_backtest(&frame_path)?;
-        let fingerprint = qx_data::fingerprint_bar_frame(&frame)?;
-        let row_count = frame.ts.len();
-        if frame.instrument.to_string() != instrument
-            || market["content_hash"].as_str() != Some(fingerprint.as_str())
-            || market["row_count"].as_u64() != Some(row_count as u64)
+        let frame_payload = crate::read_example_json(&frame_path, "BarFrame")?;
+        let frame = qx_datastruct::BarFrame::from_json(&frame_payload)
+            .map_err(|error| format!("{instrument} BarFrame 无效: {error:?}"))?;
+        let quality_record = qualities.get(instrument);
+        let quality_path = quality_record
+            .map(|record| {
+                let source = record
+                    .get("manifest_path")
+                    .and_then(Value::as_str)
+                    .ok_or("质量清单缺少路径")?;
+                Ok::<_, String>(resolve_path(source, path))
+            })
+            .transpose()?;
+        let quality_payload = quality_path
+            .as_deref()
+            .map(|quality_path| {
+                input_artifacts.push(quality_path.to_path_buf());
+                crate::read_example_json(quality_path, "数据质量清单")
+            })
+            .transpose()?;
+        let verified = qx_app::verify_multi_market_bar_input_v1(
+            configured,
+            market,
+            &frame_payload,
+            &frame,
+            quality_record,
+            quality_payload.as_deref(),
+        )
+        .map_err(|error| error.to_string())?;
+        let fingerprint = verified.fingerprint.clone();
+        verified_market_inputs.push(qx_app::MultiMarketInputIdentityV1 {
+            instrument: verified.instrument.clone(),
+            bar_fingerprint: fingerprint.clone(),
+            quality_fingerprint: verified.quality_fingerprint.clone(),
+        });
+        let market_spec = configured
+            .market_spec
+            .as_ref()
+            .map(|snapshot| qx_app::market_spec_from_value(&frame.instrument, snapshot))
+            .transpose()
+            .map_err(|error| format!("{instrument} market spec 无效: {error}"))?
+            .unwrap_or_else(|| {
+                qx_core::TradingInstrumentSpec::spot_default(
+                    &frame.instrument,
+                    &backtest_spec.settlement_currency,
+                )
+            });
+        if typed_market_specs
+            .insert(frame.instrument.clone(), market_spec)
+            .is_some()
         {
-            return Err(format!("{instrument} BarFrame 输入身份与运行产物不一致"));
+            return Err(format!("多市场输入存在重复标的: {instrument}"));
         }
-        hasher.write_text(instrument);
-        hasher.write_text(&fingerprint);
-        components.insert(format!("barframe:{instrument}"), fingerprint.clone());
-        let quality = if let Some(q) = qualities.get(instrument) {
-            let p = q["manifest_path"].as_str().ok_or("质量清单缺少路径")?;
-            let quality_path = resolve_path(p, path);
-            input_artifacts.push(quality_path.clone());
-            let bytes = std::fs::read(&quality_path)
-                .map_err(|e| format!("读取 {instrument} 质量清单失败: {e}"))?;
-            let sha = qx_data::sha256_hex_bytes(&bytes);
-            if q["manifest_sha256"].as_str() != Some(sha.as_str()) {
-                return Err(format!("{instrument} 质量清单 SHA-256 不匹配"));
-            }
-            let manifest = qx_data::DatasetManifestV2::from_json(
-                std::str::from_utf8(&bytes).map_err(|e| e.to_string())?,
-            )?;
-            let frame_bytes = std::fs::read(&frame_path)
-                .map_err(|e| format!("读取 {instrument} BarFrame 原文失败: {e}"))?;
-            let interval = manifest
-                .quality_report
-                .interval_ms
-                .filter(|v| *v > 0)
-                .ok_or("BarFrame 质量清单缺少有效 interval_ms")?;
-            let missing = frame
-                .ts
-                .windows(2)
-                .try_fold(0_u64, |total, pair| {
-                    total.checked_add((pair[1] - pair[0]).div_ceil(interval).saturating_sub(1))
-                })
-                .ok_or("BarFrame 缺口计数溢出")?;
-            if manifest.instrument != instrument
-                || manifest.tier != qx_data::DatasetTier::Bar
-                || manifest.provider_version != qx_data::BARFRAME_DATASET_VERSION
-                || manifest.dataset.fingerprint != fingerprint
-                || manifest.content_hash != qx_data::sha256_hex_bytes(&frame_bytes)
-                || manifest.quality_report.row_count != row_count as u64
-                || manifest.dataset.start_timestamp != frame.ts.first().copied().unwrap_or_default()
-                || manifest.dataset.end_timestamp != frame.ts.last().copied().unwrap_or_default()
-                || manifest.quality_report.missing_intervals != missing
-                || manifest.quality_report.duplicate_rows != 0
-                || manifest.quality_report.out_of_order_rows != 0
-                || q["manifest_fingerprint"].as_str() != Some(manifest.fingerprint()?.as_str())
-                || q["quality_report"]
-                    != serde_json::to_value(&manifest.quality_report).map_err(|e| e.to_string())?
-            {
-                return Err(format!("{instrument} 质量清单与 BarFrame 不一致"));
-            }
-            let fp = manifest.fingerprint()?;
-            hasher.write_text(&fp);
-            components.insert(format!("dataset-quality:{instrument}"), fp.clone());
-            json!({"status":"verified","manifest_path":quality_path,"manifest_fingerprint":fp,"quality_report":manifest.quality_report})
+        final_market_marks.insert(
+            frame.instrument.clone(),
+            qx_core::Price::from_raw(verified.final_close_raw),
+        );
+        let quality = if let (Some(record), Some(quality_path)) = (quality_record, quality_path) {
+            json!({
+                "status": verified.quality_status,
+                "manifest_path": quality_path,
+                "manifest_fingerprint": verified.quality_fingerprint,
+                "quality_report": record["quality_report"],
+            })
         } else {
             json!({"status":"not_provided"})
         };
-        let spec = market_specs
+        let spec = configured_markets
             .iter()
             .find(|item| item["instrument"].as_str() == Some(instrument))
             .ok_or_else(|| format!("回测 spec 缺少市场配置: {instrument}"))?;
-        markets.push(json!({"instrument":instrument,"path":source,"content_hash":fingerprint,"data_fingerprint":fingerprint,"row_count":row_count,"source_end_ts":frame.ts.last(),"fills":artifact.pointer(&format!("/per_market_fills/{instrument}")).cloned().unwrap_or(json!(0)),"quality_status":quality["status"],"dataset_quality":quality,"risk_market_spec":spec["market_spec"],"fee_schedule":spec["fee_schedule"],"strategies":spec["strategies"]}));
+        markets.push(json!({"instrument":instrument,"path":source,"content_hash":fingerprint,"data_fingerprint":fingerprint,"row_count":verified.row_count,"source_end_ts":verified.source_end_ts,"fills":artifact.pointer(&format!("/per_market_fills/{instrument}")).cloned().unwrap_or(json!(0)),"quality_status":quality["status"],"dataset_quality":quality,"risk_market_spec":spec["market_spec"],"fee_schedule":spec["fee_schedule"],"strategies":spec["strategies"]}));
     }
-    let composed = format!("{:016x}", hasher.finish());
+    if seen_instruments.len() != backtest_spec.markets.len() {
+        return Err("spec 中有未进入 market_data 的标的".into());
+    }
+    let input_identity =
+        qx_app::multi_market_input_set_identity_v1(&backtest_spec, &verified_market_inputs)
+            .map_err(|error| error.to_string())?;
+    let composed = input_identity.data_fingerprint;
+    let mut components = input_identity.input_components;
     let manifest_path = artifact["run_manifest_path"]
         .as_str()
         .ok_or("产物缺少 RunManifest")?;
@@ -662,6 +712,8 @@ fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
         &std::fs::read_to_string(&manifest_path)
             .map_err(|e| format!("读取 RunManifest 失败: {e}"))?,
     )?;
+    qx_app::artifact_store::verify_canonical_run_spec_for_manifest(&manifest, &artifact)
+        .map_err(|error| format!("多市场 CanonicalRunSpec 复核失败: {error}"))?;
     let instrument_equity_path = artifact
         .get("instrument_equity_contributions_path")
         .and_then(Value::as_str)
@@ -686,6 +738,30 @@ fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
     {
         return Err("RunManifest 声明了按标的权益贡献，但运行产物缺少其文件路径".into());
     }
+    let exact_equity_path = artifact
+        .get("equity_exact_path")
+        .and_then(Value::as_str)
+        .map(|source| resolve_path(source, path));
+    let mut exact_equity = Value::Null;
+    if let Some(exact_equity_path) = exact_equity_path.as_ref() {
+        input_artifacts.push(exact_equity_path.clone());
+        let bytes = std::fs::read(exact_equity_path)
+            .map_err(|error| format!("读取精确权益曲线失败: {error}"))?;
+        exact_equity = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("精确权益曲线 JSON 无效: {error}"))?;
+        if !exact_equity.is_array() {
+            return Err("精确权益曲线必须是数组".into());
+        }
+        components.insert(
+            "derived:equity-exact".into(),
+            qx_data::sha256_hex_bytes(&bytes),
+        );
+    } else if manifest
+        .input_components
+        .contains_key("derived:equity-exact")
+    {
+        return Err("RunManifest 声明了精确权益曲线，但运行产物缺少其文件路径".into());
+    }
     if composed != outcome["data_fingerprint"].as_str().unwrap_or("")
         || manifest.data_fingerprint != composed
         || manifest.input_components != components
@@ -693,19 +769,67 @@ fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
     {
         return Err("多市场 Bar 输入与 RunManifest 身份不一致".into());
     }
-    let events = artifact["event_log"]
-        .as_array()
-        .ok_or("多市场 Bar 产物缺少事件流")?;
-    let typed_events = serde_json::from_value::<Vec<qx_core::Event>>(artifact["event_log"].clone())
-        .map_err(|error| format!("多市场 Bar 事件流无效: {error}"))?;
-    let (replayed_log, replayed_ledger) = qx_core::ReplayVerifier::replay_owned(typed_events)
-        .map_err(|error| format!("多市场 Bar 事件流重放失败: {error}"))?;
-    if format!("{:016x}", replayed_log.digest()) != manifest.output_event_hash
-        || serde_json::to_value(replayed_ledger.entries()).map_err(|e| e.to_string())?
-            != artifact["ledger_entries"]
-    {
-        return Err("多市场 Bar 事件流或账本与 RunManifest 不一致".into());
-    }
+    let strategy_markets = backtest_spec
+        .markets
+        .iter()
+        .flat_map(|market| {
+            market.strategies.iter().map(move |member| {
+                (
+                    member.strategy.strategy_id.clone(),
+                    market.instrument.clone(),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let (events, event_count, event_offset, streamed_fill_identity, ledger) =
+        if artifact.get("schema_version").and_then(Value::as_u64) == Some(2) {
+            let event_count = artifact["event_count"]
+                .as_u64()
+                .filter(|count| *count <= MAX_MULTI_MARKET_EVENTS)
+                .ok_or("多市场 Bar event_count 无效或超过 500 万行")?;
+            let event_trace = resolve_path(
+                artifact["event_trace_path"]
+                    .as_str()
+                    .ok_or("多市场 Bar v2 产物缺少 event_trace_path")?,
+                path,
+            );
+            let page_offset = event_count.saturating_sub(MAX_MULTI_MARKET_EVENT_PAGE as u64);
+            let event_report = qx_app::read_multi_market_event_report_v1_with_reader(
+                &event_trace.to_string_lossy(),
+                event_count,
+                &manifest.output_event_hash,
+                &artifact["ledger_entries"],
+                &strategy_markets,
+                Some((page_offset, MAX_MULTI_MARKET_EVENT_PAGE)),
+                &qx_app::artifact_store::FileArtifactReader,
+            )
+            .map_err(|error| format!("多市场 Bar JSONL 事件流核验失败: {error}"))?;
+            let ledger = event_report.ledger;
+            (
+                event_report.rows,
+                event_report.total,
+                event_report.offset,
+                Some((event_report.fill_count, event_report.fill_sequence_sha256)),
+                ledger,
+            )
+        } else {
+            let event_rows = artifact["event_log"]
+                .as_array()
+                .filter(|events| events.len() as u64 <= MAX_MULTI_MARKET_EVENTS)
+                .ok_or("多市场 Bar v1 事件流缺失或超过 500 万行")?;
+            let event_report = qx_app::read_multi_market_legacy_event_report_v1(
+                event_rows,
+                &manifest.output_event_hash,
+                &artifact["ledger_entries"],
+                &strategy_markets,
+                None,
+            )
+            .map_err(|error| format!("多市场 Bar v1 事件流核验失败: {error}"))?;
+            // Keep the legacy CLI report's full event projection. Replay, order attribution and
+            // ledger facts are still owned by qx-app; the v2 path remains page-bounded.
+            let ledger = event_report.ledger;
+            (event_rows.clone(), event_report.total, 0, None, ledger)
+        };
     let equity_path = resolve_path(
         artifact["equity_path"]
             .as_str()
@@ -729,152 +853,112 @@ fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
     )
     .map_err(|e| format!("成交明细 JSON 无效: {e}"))?;
     if !instrument_equity_contributions.is_null() {
-        let initial_cash_raw = raw_i128_value(&artifact["spec"]["initial_cash_raw"])
-            .filter(|value| *value > 0)
-            .ok_or("多市场 Bar spec 缺少有效 initial_cash_raw")?;
-        verify_market_equity_contributions(
+        let equity_rows = equity.as_array().ok_or("共享权益曲线为空或格式无效")?;
+        let exact_rows = exact_equity.as_array().map(Vec::as_slice);
+        let verified = qx_app::verify_multi_market_pnl_contributions_with_exact_v1(
             &instrument_equity_contributions,
-            &markets,
-            &equity,
-            initial_cash_raw,
-        )?;
+            equity_rows,
+            exact_rows,
+            &backtest_spec,
+            &ledger,
+            &typed_market_specs,
+            &final_market_marks,
+        )
+        .map_err(|error| format!("按标的权益贡献核验失败: {error}"))?;
+        instrument_equity_contributions = Value::Object(
+            verified
+                .curves
+                .into_iter()
+                .map(|(instrument, samples)| {
+                    let rows = samples
+                        .into_iter()
+                        .map(|sample| {
+                            json!({
+                                "equity_index": sample.equity_index,
+                                "ts": sample.ts,
+                                "pnl_contribution_raw": sample.pnl_contribution_raw.to_string(),
+                                "pnl_contribution_exact": sample.pnl_contribution_exact.map(|value| value.to_string())
+                            })
+                        })
+                        .collect();
+                    (instrument, Value::Array(rows))
+                })
+                .collect(),
+        );
     }
-    let event_fills = events
-        .iter()
-        .filter_map(|event| event.pointer("/kind/Filled/fill").cloned())
-        .collect::<Vec<_>>();
+    if let Some((fill_count, fill_sequence_sha256)) = streamed_fill_identity.as_ref() {
+        let final_equity_raw = serde_json::from_value::<i128>(outcome["final_equity_raw"].clone())
+            .map_err(|_| "多市场 outcome final_equity_raw 非法")?;
+        qx_app::verify_multi_market_bar_sidecars_from_event_report_with_exact_v1(
+            &equity,
+            (!exact_equity.is_null()).then_some(&exact_equity),
+            &fills,
+            *fill_count,
+            fill_sequence_sha256,
+            &backtest_spec,
+            outcome["equity_points"]
+                .as_u64()
+                .ok_or("多市场 outcome 缺少 equity_points")?,
+            final_equity_raw,
+            outcome["return_bps"]
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or("多市场 outcome return_bps 非法")?,
+            outcome["max_drawdown_bps"]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or("多市场 outcome max_drawdown_bps 非法")?,
+        )
+        .map_err(|error| format!("多市场 Bar 权益/成交 sidecar 核验失败: {error}"))?;
+    } else {
+        let final_equity_raw = serde_json::from_value::<i128>(outcome["final_equity_raw"].clone())
+            .map_err(|_| "多市场 outcome final_equity_raw 非法")?;
+        qx_app::verify_multi_market_bar_sidecars_with_exact_v1(
+            &equity,
+            (!exact_equity.is_null()).then_some(&exact_equity),
+            &fills,
+            &events,
+            &backtest_spec,
+            outcome["equity_points"]
+                .as_u64()
+                .ok_or("多市场 outcome 缺少 equity_points")?,
+            outcome["successful_fills"]
+                .as_u64()
+                .ok_or("多市场 outcome 缺少 successful_fills")?,
+            final_equity_raw,
+            outcome["return_bps"]
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or("多市场 outcome return_bps 非法")?,
+            outcome["max_drawdown_bps"]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or("多市场 outcome max_drawdown_bps 非法")?,
+        )
+        .map_err(|error| format!("多市场 Bar 权益/成交 sidecar 核验失败: {error}"))?;
+    }
+    let event_fills = if streamed_fill_identity.is_none() {
+        Some(
+            events
+                .iter()
+                .filter_map(|event| event.pointer("/kind/Filled/fill").cloned())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
     if equity != artifact["equity"]
         || !fills.is_array()
         || fills.as_array().map_or(0, Vec::len) as u64
             != outcome["successful_fills"].as_u64().unwrap_or(u64::MAX)
-        || fills != Value::Array(event_fills)
+        || event_fills.is_some_and(|event_fills| fills != Value::Array(event_fills))
     {
         return Err("多市场 Bar 权益/成交产物与摘要不一致".into());
     }
+    let events_truncated = event_offset.saturating_add(events.len() as u64) < event_count;
     Ok(
-        json!({"run_id":outcome["run_id"],"account_id":outcome["account_id"],"settlement_currency":artifact["spec"]["settlement_currency"],"initial_cash_raw":artifact["spec"]["initial_cash_raw"].to_string(),"result_hash":outcome["shared_result_hash"],"data_fingerprint":composed,"markets_total":outcome["markets_total"],"strategies_total":outcome["strategies_total"],"successful_fills":outcome["successful_fills"],"equity_points":outcome["equity_points"],"final_equity_raw":outcome["final_equity_raw"],"return_bps":outcome["return_bps"],"max_drawdown_bps":outcome["max_drawdown_bps"],"summary_path":path,"input_artifacts":input_artifacts,"strategy_identities":artifact["strategy_identities"],"equity":equity,"instrument_equity_contributions":instrument_equity_contributions,"fills":fills,"events":events,"event_count":events.len(),"event_log_digest":manifest.output_event_hash,"markets":markets}),
+        json!({"run_id":outcome["run_id"],"account_id":outcome["account_id"],"settlement_currency":artifact["spec"]["settlement_currency"],"initial_cash_raw":artifact["spec"]["initial_cash_raw"].to_string(),"result_hash":outcome["shared_result_hash"],"data_fingerprint":composed,"markets_total":outcome["markets_total"],"strategies_total":outcome["strategies_total"],"successful_fills":outcome["successful_fills"],"equity_points":outcome["equity_points"],"final_equity_raw":outcome["final_equity_raw"],"return_bps":outcome["return_bps"],"max_drawdown_bps":outcome["max_drawdown_bps"],"summary_path":path,"input_artifacts":input_artifacts,"strategy_identities":artifact["strategy_identities"],"equity":equity,"equity_exact":exact_equity,"instrument_equity_contributions":instrument_equity_contributions,"fills":fills,"events":events,"event_count":event_count,"event_offset":event_offset,"events_truncated":events_truncated,"event_log_digest":manifest.output_event_hash,"markets":markets}),
     )
-}
-
-fn raw_i128_value(value: &Value) -> Option<i128> {
-    value
-        .as_i64()
-        .map(i128::from)
-        .or_else(|| value.as_u64().map(i128::from))
-        .or_else(|| value.as_str().and_then(|raw| raw.parse::<i128>().ok()))
-        .or_else(|| {
-            value
-                .is_number()
-                .then(|| value.to_string().parse::<i128>().ok())
-                .flatten()
-        })
-}
-
-fn verify_market_equity_contributions(
-    sidecar: &Value,
-    markets: &[Value],
-    equity: &Value,
-    initial_cash_raw: i128,
-) -> Result<(), String> {
-    let sidecar = sidecar
-        .as_object()
-        .ok_or("按标的权益贡献必须是 JSON 对象")?;
-    let expected_instruments = markets
-        .iter()
-        .filter_map(|market| market["instrument"].as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let actual_instruments = sidecar
-        .keys()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    if expected_instruments.len() != markets.len() || actual_instruments != expected_instruments {
-        return Err("按标的权益贡献标的集合与已复核市场输入不一致".into());
-    }
-    let equity = equity
-        .as_array()
-        .filter(|rows| !rows.is_empty())
-        .ok_or("共享权益曲线为空或格式无效")?;
-    let mut curves = std::collections::BTreeMap::<&str, Vec<(u64, u64, i128)>>::new();
-    for instrument in expected_instruments {
-        let rows = sidecar[instrument]
-            .as_array()
-            .filter(|rows| !rows.is_empty() && rows.len() <= 1_000)
-            .ok_or_else(|| format!("{instrument} 权益贡献采样点数无效"))?;
-        let mut curve = Vec::with_capacity(rows.len());
-        for row in rows {
-            let fields = row
-                .as_object()
-                .filter(|fields| {
-                    fields.len() == 3
-                        && fields.contains_key("equity_index")
-                        && fields.contains_key("ts")
-                        && fields.contains_key("pnl_contribution_raw")
-                })
-                .ok_or_else(|| format!("{instrument} 权益贡献点字段无效"))?;
-            let index = fields["equity_index"]
-                .as_u64()
-                .ok_or_else(|| format!("{instrument} 权益贡献索引无效"))?;
-            let timestamp = fields["ts"]
-                .as_u64()
-                .ok_or_else(|| format!("{instrument} 权益贡献时间戳无效"))?;
-            let raw = fields["pnl_contribution_raw"]
-                .as_str()
-                .and_then(|value| value.parse::<i128>().ok())
-                .ok_or_else(|| format!("{instrument} 权益贡献金额无效"))?;
-            if curve
-                .last()
-                .is_some_and(|(previous, _, _)| index <= *previous)
-            {
-                return Err(format!("{instrument} 权益贡献索引未严格递增"));
-            }
-            curve.push((index, timestamp, raw));
-        }
-        if curve.first().map(|row| row.0) != Some(0)
-            || curve.last().map(|row| row.0) != Some(equity.len() as u64 - 1)
-        {
-            return Err(format!("{instrument} 权益贡献采样没有覆盖共享曲线首尾"));
-        }
-        curves.insert(instrument, curve);
-    }
-    let sample_count = curves.values().next().map(Vec::len).unwrap_or_default();
-    if sample_count == 0 || curves.values().any(|curve| curve.len() != sample_count) {
-        return Err("各标的权益贡献采样点数不一致".into());
-    }
-    for sample_index in 0..sample_count {
-        let (equity_index, timestamp) = curves
-            .values()
-            .next()
-            .and_then(|curve| curve.get(sample_index))
-            .map(|row| (row.0, row.1))
-            .ok_or("权益贡献采样点缺失")?;
-        let equity_row = equity
-            .get(usize::try_from(equity_index).map_err(|_| "权益贡献索引超出 usize 范围")?)
-            .and_then(Value::as_array)
-            .filter(|row| row.len() == 2)
-            .ok_or("权益贡献索引超出共享权益曲线")?;
-        if equity_row[0].as_u64() != Some(timestamp) {
-            return Err("权益贡献采样时间戳与共享权益曲线不一致".into());
-        }
-        let mut contribution_sum = 0_i128;
-        for curve in curves.values() {
-            let (index, curve_timestamp, contribution) = curve[sample_index];
-            if index != equity_index || curve_timestamp != timestamp {
-                return Err("各标的权益贡献采样轴不一致".into());
-            }
-            contribution_sum = contribution_sum
-                .checked_add(contribution)
-                .ok_or("逐标的权益贡献求和溢出")?;
-        }
-        let reconstructed = initial_cash_raw
-            .checked_add(contribution_sum)
-            .ok_or("逐标的权益贡献重建共享权益溢出")?;
-        if raw_i128_value(&equity_row[1]) != Some(reconstructed) {
-            return Err(format!(
-                "第 {equity_index} 个采样点的逐标的贡献与共享权益不守恒"
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Rebuild bounded causal and startup diagnostics for every Rust built-in strategy in a
@@ -978,6 +1062,7 @@ pub(crate) fn generate_builtin_bar_diagnostics(
                 low_raw: frame.low_raw[index],
                 close_raw: frame.close_raw[index],
                 volume_raw: frame.volume_raw[index],
+                exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
             })
             .collect::<Vec<_>>();
         prepared.insert(instrument.to_string(), (fingerprint, events));
@@ -1055,6 +1140,9 @@ pub(crate) fn generate_builtin_bar_diagnostics(
                     .first()
                     .map(qx_strategy::MarketEvent::ts)
                     .ok_or("BarFrame 为空")?,
+                positions_exact: std::collections::BTreeMap::new(),
+                cash_exact: std::collections::BTreeMap::new(),
+                available_margin_exact: None,
                 positions: std::collections::BTreeMap::new(),
                 available_margin_raw: Some(member.reserved_capital_raw),
                 cash,

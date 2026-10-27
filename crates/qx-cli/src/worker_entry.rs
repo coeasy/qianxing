@@ -19,7 +19,7 @@ use crate::worker_runtime::{run_binance_worker_inner, run_ccxt_worker_inner};
 use crate::{
     account_worker_settlement_currency, binance_event_log_name, catch_panic,
     ccxt_error_is_optional_derivatives_capability, load_binance_worker_auth, new_binance_venue,
-    pending_spread_recovery_groups, python_interpreter, read_runtime_config,
+    pending_spread_recovery_groups_for_account, python_interpreter, read_runtime_config,
     recover_spread_groups_for_venue, recovery_order_validator, required_account_event_log,
     runtime_timestamp_ms, spread_recovery_poll_delay, validate_configured_market_specs,
     PipelineMetricsReporter, PipelineStorage, SpreadRecoveryContext,
@@ -58,11 +58,26 @@ pub(crate) fn run_binance_spread_recovery_worker(
     let mut recovery_stalls = 0_u32;
     qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
-        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        let pending_before = pending_spread_recovery_groups_for_account(
+            &pipeline_storage.root,
+            &venue_id,
+            worker.account_id.as_deref(),
+        )?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
+            let active_orders = pipeline.orders();
+            qx_service::execution_capability_gate::require_active_orders_execution_capability(
+                active_orders.iter(),
+                &worker,
+                &runtime_config.environment,
+                &runtime_config_path,
+                qx_service::execution_capability_gate::ExecutionConnectorProfile::BinanceSpot,
+                true,
+                &mut pipeline,
+                now,
+            )?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut venue = new_binance_venue(&worker, auth)?;
             venue
@@ -79,6 +94,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
             let (_, diagnostics) = recover_spread_groups_for_venue(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
+                    account_id: worker.account_id.as_deref(),
                     venue_id: &venue_id,
                     accept_any_venue: false,
                     order_validator: Some(&validator),
@@ -94,7 +110,11 @@ pub(crate) fn run_binance_spread_recovery_worker(
             }
             metrics.absorb(&pipeline);
             // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
-            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            let pending_after = pending_spread_recovery_groups_for_account(
+                &pipeline_storage.root,
+                &venue_id,
+                worker.account_id.as_deref(),
+            )?;
             recovery_stalls = if pending_after >= pending_before {
                 recovery_stalls.saturating_add(1)
             } else {
@@ -184,11 +204,28 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
     let mut recovery_stalls = 0_u32;
     qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
-        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        let pending_before = pending_spread_recovery_groups_for_account(
+            &pipeline_storage.root,
+            &venue_id,
+            worker.account_id.as_deref(),
+        )?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            let active_orders = pipeline.orders();
+            qx_service::execution_capability_gate::require_active_orders_execution_capability(
+                active_orders.iter(),
+                &worker,
+                &runtime_config.environment,
+                &runtime_config_path,
+                qx_service::execution_capability_gate::ExecutionConnectorProfile::Ccxt {
+                    config_path: Path::new(&ccxt_config_path),
+                },
+                true,
+                &mut pipeline,
+                now,
+            )?;
             // 每轮扫描起一个 Python 子进程：只有过预算的重生才是有界的（V13 R2 #168c）。
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                 .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
@@ -204,6 +241,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             let (_, diagnostics) = recover_spread_groups_for_venue(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
+                    account_id: worker.account_id.as_deref(),
                     venue_id: &venue_id,
                     accept_any_venue: false,
                     order_validator: Some(&validator),
@@ -218,7 +256,11 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
                 eprintln!("[HedgeRecovery] {message}");
             }
             metrics.absorb(&pipeline);
-            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            let pending_after = pending_spread_recovery_groups_for_account(
+                &pipeline_storage.root,
+                &venue_id,
+                worker.account_id.as_deref(),
+            )?;
             recovery_stalls = if pending_after >= pending_before {
                 recovery_stalls.saturating_add(1)
             } else {

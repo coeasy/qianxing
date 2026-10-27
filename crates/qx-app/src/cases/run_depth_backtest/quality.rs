@@ -12,7 +12,7 @@ use qx_xingban::DepthFrame;
 use std::path::Path;
 
 /// 把清单读开、按本帧重算并逐项比对，返回摘要要写的那个 `dataset_quality` 块。
-pub(super) fn verified_depth_dataset_quality(
+pub(in crate::cases) fn verified_depth_dataset_quality(
     path: &Path,
     frame_path: &Path,
     frame: &DepthFrame,
@@ -76,7 +76,7 @@ pub(super) fn verified_depth_dataset_quality(
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!("深度回测档位不支持质量清单: {other}"),
-            ))
+            ));
         }
     };
     let timestamps = frame

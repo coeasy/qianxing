@@ -3,7 +3,7 @@
 use qx_core::RunManifest;
 use qx_spec::{
     ArtifactRef, FoundationDocument, RunEvidenceDatasetComponent, RunEvidenceReportAnalysis,
-    RunEvidenceStrategyDiagnostics, RunRecord,
+    RunEvidenceStrategyDiagnostics, RunRecord, RunRecordV2,
 };
 use std::path::Path;
 
@@ -41,7 +41,60 @@ pub fn load_run_evidence_identity_files(
     )?;
     let record_payload = std::fs::read_to_string(&record_path)
         .map_err(|error| format!("读取运行证据包的 RunRecord 失败 {record_path}: {error}"))?;
-    let record = RunRecord::from_json(&record_payload)?;
+    let record_value: serde_json::Value = serde_json::from_str(&record_payload)
+        .map_err(|error| format!("运行证据包 RunRecord JSON 无效: {error}"))?;
+    let record = match record_value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+    {
+        Some(version) if version == u64::from(qx_spec::RUN_RECORD_SCHEMA_VERSION) => {
+            RunRecord::from_json(&record_payload)?
+        }
+        Some(version) if version == u64::from(qx_spec::RUN_RECORD_V2_SCHEMA_VERSION) => {
+            let pathless = RunRecordV2::from_json(&record_payload)?;
+            let locations = summary
+                .get("artifact_locations")
+                .and_then(serde_json::Value::as_object)
+                .ok_or("RunRecord V2 摘要缺少 artifact_locations")?;
+            let artifacts = pathless
+                .artifact_refs
+                .iter()
+                .map(|reference| {
+                    let location = locations
+                        .get(&reference.name)
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("RunRecord V2 摘要缺少 {} 存储定位", reference.name)
+                        })?;
+                    Ok(ArtifactRef {
+                        name: reference.name.clone(),
+                        path: canonical_run_evidence_path(location, &reference.name)?,
+                        digest: reference.artifact_id.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            RunRecord {
+                schema_version: qx_spec::RUN_RECORD_SCHEMA_VERSION,
+                run_id: pathless.run_id,
+                status: pathless.status,
+                input_digest: pathless.input_digest,
+                code_identity: pathless.code_identity,
+                config_fingerprint: pathless.config_fingerprint,
+                started_at_ms: pathless.started_at_ms,
+                finished_at_ms: pathless.finished_at_ms,
+                artifact_refs: artifacts,
+                replay_verdict: pathless.replay_verdict,
+                capability_level: pathless.capability_level,
+            }
+        }
+        Some(version) => {
+            return Err(format!(
+                "运行证据包 RunRecord schema_version={version} 不受支持"
+            ));
+        }
+        None => return Err("运行证据包 RunRecord 缺少 schema_version".into()),
+    };
+    record.validate()?;
 
     Ok(RunEvidenceRunFiles {
         manifest_path,

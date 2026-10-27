@@ -278,6 +278,12 @@ pub struct StrategyRuntimeConfig {
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
+    /// Optional ``create_strategy(spec)`` payload for a Python ``BaseStrategy`` class.
+    /// When present, the Python worker uses the explicit class adapter; otherwise the
+    /// existing module-level ``on_event(request)`` contract remains in effect.
+    /// Omission preserves the serialized shape and fingerprint of existing configs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_strategy_spec: Option<serde_json::Value>,
     /// JSONL 保持兼容；framed_json 使用 QXSF，shared_memory_columnar 使用 QXCB 固定列。
     #[serde(default)]
     pub transport: StrategyTransport,
@@ -376,6 +382,7 @@ impl Default for StrategyRuntimeConfig {
             ashare_actions_path: None,
             ashare_calendar_path: None,
             python_module: None,
+            python_strategy_spec: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
             shared_memory_slot_bytes: default_strategy_shared_memory_slot_bytes(),

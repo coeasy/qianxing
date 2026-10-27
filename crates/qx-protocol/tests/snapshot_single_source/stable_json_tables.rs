@@ -13,6 +13,9 @@ use super::*;
 fn cross_language_sample() -> AccountSnapshot {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
     let mut snapshot = AccountSnapshot::new(7, "main", "default", "BINANCE", 10);
+    // Keep the checked-in v1 cross-language fixture as a true legacy writer sample; v2 behavior is
+    // covered separately by the settlement-currency hash tests and the current v2 schema contract.
+    snapshot.header.schema_version = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;
     snapshot.cash_raw.insert("USDT".into(), 1000);
     snapshot.equity_raw = Some(1000);
     snapshot
@@ -28,6 +31,7 @@ fn cross_language_sample() -> AccountSnapshot {
             quantity_raw: Quantity::from_i64(2).raw(),
             filled_raw: Quantity::from_i64(1).raw(),
             status: OrderStatus::Accepted,
+            exact_amounts: None,
         },
     );
     snapshot.fills.insert(
@@ -38,6 +42,10 @@ fn cross_language_sample() -> AccountSnapshot {
             quantity_raw: Quantity::from_i64(1).raw(),
             price_raw: Price::from_i64(99).raw(),
             fee_raw: Money::from_i64(1).raw(),
+            fee_currency: None,
+            fees: vec![],
+            exact_amounts: None,
+            exact_fees: vec![],
             ts: 1234,
         },
     );

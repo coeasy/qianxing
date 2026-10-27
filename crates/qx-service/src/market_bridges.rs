@@ -2,7 +2,7 @@
 
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
-use qx_core::{InstrumentId, Price, Quantity, VenueFamily};
+use qx_core::{ExactDecimal, InstrumentId, Price, Quantity, VenueFamily};
 use qx_guanxing::QuoteTick;
 use qx_runtime::account_worker_settlement_currency;
 
@@ -92,8 +92,10 @@ pub struct PaperMarketQuote<'a> {
     pub instrument: &'a InstrumentId,
     pub bid: Price,
     pub bid_qty: Quantity,
+    pub bid_qty_exact: Option<ExactDecimal>,
     pub ask: Price,
     pub ask_qty: Quantity,
+    pub ask_qty_exact: Option<ExactDecimal>,
     pub event_ts: u64,
     pub receive_ts: u64,
     pub source_seq: u64,
@@ -171,7 +173,8 @@ pub fn bridge_market_quote_to_paper(
                     quote.ask,
                     quote.ask_qty,
                     quote.source_seq,
-                ),
+                )
+                .with_optional_exact_sizes(quote.bid_qty_exact, quote.ask_qty_exact),
                 quote.receive_ts,
                 quote.source_seq,
                 format!(

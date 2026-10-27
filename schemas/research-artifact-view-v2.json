@@ -46,6 +46,26 @@
         "final_equity_raw": {"type": ["integer", "string"]},
         "fees_raw": {"type": ["integer", "string"]},
         "turnover_raw": {"type": ["integer", "string"]},
+        "metrics_exact": {
+          "type": "object",
+          "required": ["turnover", "fees_by_currency"],
+          "properties": {
+            "turnover": {
+              "type": "object",
+              "required": ["amount", "currency"],
+              "properties": {
+                "amount": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+                "currency": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            },
+            "fees_by_currency": {
+              "type": "object",
+              "additionalProperties": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"}
+            }
+          },
+          "additionalProperties": false
+        },
         "account": {
           "type": "object",
           "properties": {"initial_cash_raw": {"type": ["integer", "string"]}},

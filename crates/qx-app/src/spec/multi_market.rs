@@ -4,11 +4,12 @@ use super::{
     is_identity_token, BacktestMarginConfig, MakerTakerFeeSchedule, PortfolioStrategySpec,
 };
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::{FundingRateEvent, InstrumentId, OrderPolicy};
+use qx_core::{DecimalRounding, ExactDecimal, FundingRateEvent, InstrumentId, OrderPolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MULTI_MARKET_BACKTEST_SCHEMA_VERSION: u32 = 1;
+pub const MULTI_MARKET_BACKTEST_EXACT_SCHEMA_VERSION: u32 = 2;
 pub const MIN_MULTI_MARKETS: usize = 1;
 pub const MAX_MULTI_MARKETS: usize = 32;
 pub const MAX_STRATEGIES_PER_MARKET: usize = 16;
@@ -26,6 +27,9 @@ pub struct MultiMarketBacktestMarket {
     /// Frozen product spec or raw normalized snapshot from `qx-cli ccxt-market-spec`.
     /// The application parser normalizes both forms into the same domain contract.
     pub market_spec: Option<serde_json::Value>,
+    /// Explicit strategy-research asset taxonomy; never inferred from a ticker symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_class: Option<String>,
     pub fee_schedule: Option<MakerTakerFeeSchedule>,
     /// Product/order semantics applied to generated orders on this market when the strategy
     /// does not provide an order policy of its own. Omitted policies default to cash/1x for spot
@@ -35,10 +39,10 @@ pub struct MultiMarketBacktestMarket {
     /// Optional exchange-provided tiered margin schedule for this market.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub margin_model: Option<BacktestMarginConfig>,
-    /// Constant funding rate in basis points per UTC 8-hour settlement for this derivative.
+    /// Constant funding rate in basis points per default UTC 8-hour settlement for this derivative.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub funding_bps: i64,
-    /// Historical funding observations; mutually exclusive with nonzero `funding_bps`.
+    /// Exchange-timestamped history; mutually exclusive with nonzero `funding_bps`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub funding_events: Vec<FundingRateEvent>,
     pub strategies: Vec<PortfolioStrategySpec>,
@@ -52,6 +56,9 @@ pub struct MultiMarketBacktestSpec {
     pub account_id: String,
     pub settlement_currency: String,
     pub initial_cash_raw: i128,
+    /// Version 2 scale-aware principal. `initial_cash_raw` is its toward-zero 1e-9 projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_cash_exact: Option<ExactDecimal>,
     pub seed: u64,
     pub output_dir: String,
     pub markets: Vec<MultiMarketBacktestMarket>,
@@ -87,11 +94,25 @@ impl MultiMarketBacktestOutcome {
 
 impl MultiMarketBacktestSpec {
     pub fn validate(&self) -> Result<(), AppError> {
-        if self.schema_version != MULTI_MARKET_BACKTEST_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            MULTI_MARKET_BACKTEST_SCHEMA_VERSION | MULTI_MARKET_BACKTEST_EXACT_SCHEMA_VERSION
+        ) {
             return Err(invalid(format!(
-                "MultiMarketBacktestSpec schema_version={} 本版本只认 {}",
-                self.schema_version, MULTI_MARKET_BACKTEST_SCHEMA_VERSION
+                "MultiMarketBacktestSpec schema_version={} 本版本只认 {} 或 {}",
+                self.schema_version,
+                MULTI_MARKET_BACKTEST_SCHEMA_VERSION,
+                MULTI_MARKET_BACKTEST_EXACT_SCHEMA_VERSION
             )));
+        }
+        if (self.schema_version == MULTI_MARKET_BACKTEST_SCHEMA_VERSION
+            && self.initial_cash_exact.is_some())
+            || (self.schema_version == MULTI_MARKET_BACKTEST_EXACT_SCHEMA_VERSION
+                && self.initial_cash_exact.is_none())
+        {
+            return Err(invalid(
+                "MultiMarketBacktestSpec v1 只接受 initial_cash_raw；v2 必须提供 initial_cash_exact",
+            ));
         }
         if !is_identity_token(&self.run_id) || !is_identity_token(&self.account_id) {
             return Err(invalid(
@@ -103,9 +124,7 @@ impl MultiMarketBacktestSpec {
                 "多市场回测 settlement_currency 与 output_dir 不能为空",
             ));
         }
-        if self.initial_cash_raw <= 0 {
-            return Err(invalid("多市场回测 initial_cash_raw 必须为正数"));
-        }
+        let initial_cash = self.initial_cash_exact_value()?;
         if !(MIN_MULTI_MARKETS..=MAX_MULTI_MARKETS).contains(&self.markets.len()) {
             return Err(invalid(format!(
                 "多市场回测 markets 数量必须在 {MIN_MULTI_MARKETS}..={MAX_MULTI_MARKETS}"
@@ -117,7 +136,7 @@ impl MultiMarketBacktestSpec {
         }
         let mut instruments = BTreeSet::new();
         let mut strategy_ids = BTreeSet::new();
-        let mut reserved = 0_i128;
+        let mut reserved = ExactDecimal::ZERO;
         for market in &self.markets {
             let instrument = InstrumentId::parse(&market.instrument)
                 .filter(|parsed| parsed.to_string() == market.instrument)
@@ -132,6 +151,15 @@ impl MultiMarketBacktestSpec {
             }
             if market.bars_path.trim().is_empty() {
                 return Err(invalid(format!("市场 {instrument} bars_path 不能为空")));
+            }
+            if market
+                .asset_class
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty() || value.trim() != value)
+            {
+                return Err(invalid(format!(
+                    "市场 {instrument} asset_class 若在场必须是无首尾空白的非空字符串"
+                )));
             }
             if market
                 .dataset_manifest_path
@@ -245,11 +273,12 @@ impl MultiMarketBacktestSpec {
             for event in &market.funding_events {
                 if event.instrument != instrument
                     || !(-10_000..=10_000).contains(&event.rate_bps)
-                    || event.settlement_ts % qx_core::FUNDING_INTERVAL_MS != 0
+                    || event.settlement_ts == 0
+                    || !event.has_valid_funding_interval()
                     || !funding_ids.insert(event.settlement_ts)
                 {
                     return Err(invalid(format!(
-                        "市场 {instrument} 资金费事件的标的/费率/UTC 8小时结算时间/唯一性非法"
+                        "市场 {instrument} 资金费事件的标的/费率/结算周期/唯一性非法"
                     )));
                 }
             }
@@ -266,21 +295,38 @@ impl MultiMarketBacktestSpec {
                         member.strategy.strategy_id
                     )));
                 }
-                if member.reserved_capital_raw <= 0 {
-                    return Err(invalid(format!(
-                        "策略 {} reserved_capital_raw 必须为正数",
-                        member.strategy.strategy_id
-                    )));
-                }
+                let member_budget = member.reserved_capital().map_err(invalid)?;
                 reserved = reserved
-                    .checked_add(member.reserved_capital_raw)
-                    .ok_or_else(|| invalid("多市场策略预算求和溢出"))?;
+                    .checked_add(member_budget)
+                    .ok_or_else(|| invalid("多市场精确策略预算求和溢出"))?;
             }
         }
-        if reserved > self.initial_cash_raw {
+        if reserved
+            .checked_cmp(initial_cash)
+            .is_none_or(|ordering| ordering.is_gt())
+        {
             return Err(invalid("多市场策略预算合计不得超过账户初始资金"));
         }
         Ok(())
+    }
+
+    /// Return the authoritative account principal, preserving the v1 raw contract.
+    pub fn initial_cash_exact_value(&self) -> Result<ExactDecimal, AppError> {
+        if let Some(amount) = self.initial_cash_exact {
+            let projection = exact_cash_raw_projection(amount);
+            if !amount.is_positive() || projection != Some(self.initial_cash_raw) {
+                return Err(invalid(
+                    "MultiMarketBacktestSpec.initial_cash_exact 必须为正，且 initial_cash_raw 必须等于向零投影值",
+                ));
+            }
+            Ok(amount)
+        } else {
+            if self.initial_cash_raw <= 0 {
+                return Err(invalid("多市场回测 initial_cash_raw 必须为正数"));
+            }
+            ExactDecimal::from_parts(self.initial_cash_raw, 9)
+                .map_err(|_| invalid("多市场初始资金溢出"))
+        }
     }
 
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
@@ -298,6 +344,12 @@ impl MultiMarketBacktestSpec {
             )
         })
     }
+}
+
+fn exact_cash_raw_projection(amount: ExactDecimal) -> Option<i128> {
+    amount
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+        .and_then(|projected| projected.to_raw(9).ok())
 }
 
 fn is_zero(value: &i64) -> bool {

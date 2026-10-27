@@ -4,19 +4,29 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    compare_runs, plan_algo_execution, run_backtest, run_depth_backtest, run_depth_experiment,
-    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
-    run_multi_market_depth_backtest, validate_dataset, verify_depth_run, verify_run,
-    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestSpec, MultiAccountJointBacktestSpec, MultiLegBacktestSpec,
-    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec,
-    RunMultiMarketExperimentSpec,
+    compare_runs, plan_algo_execution, read_depth_run_report_v1,
+    read_multi_account_joint_report_v1_with_options, read_multi_account_report_v1,
+    read_multi_leg_event_report_page_v1, read_multi_leg_report_facts_v1,
+    read_multi_leg_research_report_v1, read_multi_market_depth_event_report_page_v1,
+    read_multi_market_depth_research_report_v1, read_multi_market_event_report_page_v1,
+    read_multi_market_research_report_v1, read_provider_backtest_report_v1,
+    read_provider_depth_backtest_report_v1, read_run_report_v1, run_backtest, run_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
+    run_multi_market_backtest, run_multi_market_depth_backtest, validate_dataset,
+    validate_strategy_execution_preflight_v1, verify_depth_run, verify_run, AlgoExecutionSpec,
+    AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec,
+    MultiAccountJointReportReadOptionsV1, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, ProviderBacktestOutcome,
+    ProviderDepthBacktestOutcome, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
+    StrategyExecutionPreflightSpecV1,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+mod account_query_preflight;
 mod ashare_corporate_actions;
 mod ashare_screen;
 mod capital_allocation;
@@ -35,7 +45,7 @@ pyo3::create_exception!(
     _qianxing_native,
     QxAppError,
     PyException,
-    "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
+    "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/reason_code/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
 );
 
 pub(crate) fn app_error(error: AppError) -> PyErr {
@@ -54,6 +64,30 @@ fn app_validate_dataset(spec_json: &str) -> PyResult<String> {
     validate_dataset(&spec, &research_context(&spec.dataset_id))
         .and_then(|verdict| verdict.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_validate_strategy_execution_preflight_v1(payload: &str) -> PyResult<String> {
+    let spec = StrategyExecutionPreflightSpecV1::from_json(payload).map_err(app_error)?;
+    let correlation_id = spec
+        .execution_spec
+        .get("run_id")
+        .or_else(|| spec.execution_spec.get("experiment_id"))
+        .or_else(|| {
+            spec.execution_spec
+                .get("base")
+                .and_then(|base| base.get("run_id"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            spec.strategy_manifest
+                .get("strategy_id")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("strategy-preflight");
+    let result = validate_strategy_execution_preflight_v1(&spec, &research_context(correlation_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&result).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 #[derive(serde::Deserialize)]
@@ -101,6 +135,206 @@ fn app_verify_run(outcome_json: &str) -> PyResult<String> {
     verify_run(&outcome, &research_context(&outcome.run_id))
         .and_then(|result| result.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_read_run_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = BacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report =
+        read_run_report_v1(&outcome, &research_context(&outcome.run_id)).map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_depth_run_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = DepthBacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report = read_depth_run_report_v1(&outcome, &research_context(&outcome.run_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_provider_backtest_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: ProviderBacktestOutcome = serde_json::from_str(outcome_json).map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("Provider Bar 回测结果 JSON 无效: {error}"),
+        ))
+    })?;
+    let report =
+        read_provider_backtest_report_v1(&outcome, &research_context(&outcome.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_provider_depth_backtest_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: ProviderDepthBacktestOutcome =
+        serde_json::from_str(outcome_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("Provider 深度回测结果 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_provider_depth_backtest_report_v1(
+        &outcome,
+        &research_context(&outcome.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_account_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: serde_json::Value = serde_json::from_str(outcome_json).map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多账户结果 JSON 无效: {error}"),
+        ))
+    })?;
+    let batch_id = outcome
+        .get("batch_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("multi-account-report");
+    let report =
+        read_multi_account_report_v1(&outcome, &research_context(batch_id)).map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (outcome_json, options_json=None))]
+fn app_read_multi_account_joint_report_v1(
+    outcome_json: &str,
+    options_json: Option<&str>,
+) -> PyResult<String> {
+    let outcome: qx_app::MultiAccountJointBacktestOutcome = serde_json::from_str(outcome_json)
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("联合多账户结果 JSON 无效: {error}"),
+            ))
+        })?;
+    let options = options_json
+        .map(serde_json::from_str::<MultiAccountJointReportReadOptionsV1>)
+        .transpose()
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("联合账户报告分页选项 JSON 无效: {error}"),
+            ))
+        })?
+        .unwrap_or_default();
+    let report = read_multi_account_joint_report_v1_with_options(
+        &outcome,
+        &research_context(&outcome.run_id),
+        &options,
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_report_facts_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = MultiLegBacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report = read_multi_leg_report_facts_v1(&outcome, &research_context(&outcome.run_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiLegResearchReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多腿完整研究报告请求 JSON 无效: {error}"),
+        ))
+    })?;
+    let report =
+        read_multi_leg_research_report_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiLegEventReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多腿事件报告读取请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report =
+        read_multi_leg_event_report_page_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketEventReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多市场事件报告读取请求 JSON 无效: {error}"),
+        ))
+    })?;
+    let report = read_multi_market_event_report_page_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_depth_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketDepthEventReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场深度事件报告读取请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_multi_market_depth_event_report_page_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketResearchReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场完整研究报告请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report =
+        read_multi_market_research_report_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_depth_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketDepthResearchReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场深度完整研究报告请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_multi_market_depth_research_report_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 #[pyfunction]
@@ -316,6 +550,7 @@ fn fingerprint_bars(payload: &str) -> PyResult<String> {
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         })
         .collect::<Vec<_>>();
     qx_data::fingerprint_bars(&bars).map_err(PyValueError::new_err)
@@ -455,6 +690,7 @@ unsafe extern "C" fn drop_schema_capsule(capsule: *mut pyo3::ffi::PyObject) {
 
 #[pymodule]
 fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    account_query_preflight::register(module)?;
     ashare_corporate_actions::register(module)?;
     error_classification::register(module)?;
     numeric_bridge::register(module)?;
@@ -466,12 +702,59 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_validate_strategy_execution_preflight_v1,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_assemble_dataset_bundle, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
     strategy_callback::register(module)?;
     multi_account::register(module)?;
     module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
+    module.add_function(wrap_pyfunction!(app_read_run_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(app_read_depth_run_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_provider_backtest_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_provider_depth_backtest_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(app_read_multi_account_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_account_joint_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_report_facts_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_research_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_depth_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_research_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_depth_research_report_v1,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     risk_parity::register(module)?;
     capital_allocation::register(module)?;

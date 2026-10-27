@@ -289,7 +289,7 @@ std::string handle(const std::string& line) {
         const auto targets = input.value("research_targets", json::object());
         const auto target = targets.value(instrument, json(0));
         json output = {
-            {"schema_version", input.at("schema_version")},
+            {"schema_version", 1},
             {"request_id", input.at("request_id")},
             {"strategy_id", input.at("strategy_id")},
             {"signal_id", input.at("as_of")},
@@ -300,7 +300,24 @@ std::string handle(const std::string& line) {
             {"expires_at", input.at("as_of")},
             {"intents", json::array()},
         };
-        return json{{"ok", true}, {"output", output}}.dump();
+        json response = {{"ok", true}, {"output", output}};
+        if (input.contains("strategy_checkpoint")) {
+            const auto& previous = input.at("strategy_checkpoint");
+            if (!previous.is_object() || !previous.contains("strategy_state") ||
+                !previous.at("strategy_state").is_object()) {
+                throw std::runtime_error("invalid external strategy checkpoint");
+            }
+            const auto processed = previous.at("strategy_state").value(
+                "processed_requests", std::uint64_t{0});
+            response["strategy_checkpoint"] = {
+                {"schema_version", 1},
+                {"strategy_id", input.at("strategy_id")},
+                {"strategy_version", input.at("strategy_version")},
+                {"adapter_state", {{"schema_version", 1}, {"state_mode", "external-process"}}},
+                {"strategy_state", {{"processed_requests", processed + 1}}},
+            };
+        }
+        return response.dump();
     } catch (const std::exception& error) {
         return json{{"ok", false}, {"error", error.what()}}.dump();
     }

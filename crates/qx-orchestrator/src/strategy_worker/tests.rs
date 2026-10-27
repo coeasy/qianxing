@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -187,6 +188,94 @@ fn worker_exit_before_first_request_preserves_exit_code_and_stderr() {
     assert!(error.contains("early-exit-test"), "{error}");
     assert!(error.contains("退出码 7"), "{error}");
     assert!(error.contains("strategy died before request"), "{error}");
+}
+
+#[test]
+fn e2b_host_provider_key_uses_separate_allowlisted_environment_channel() {
+    let (executable, args) = print_e2b_key_worker();
+    let strategy_env = std::collections::BTreeMap::new();
+    let provider_env = std::collections::BTreeMap::from([(
+        "E2B_API_KEY".to_string(),
+        "host-only-test-key".to_string(),
+    )]);
+    let mut pipes = crate::spawn_strategy_process_with_host_provider_env(
+        &executable,
+        &args,
+        &strategy_env,
+        &provider_env,
+        StrategyTransport::Jsonl,
+    )
+    .expect("trusted E2B bridge can receive its host SDK credential");
+    drop(pipes.stdin.take());
+    let mut stdout = String::new();
+    pipes
+        .stdout
+        .take()
+        .expect("stdout pipe")
+        .read_to_string(&mut stdout)
+        .expect("read provider environment output");
+    assert!(pipes
+        .child
+        .wait()
+        .expect("provider test process exits")
+        .success());
+    assert_eq!(stdout.trim(), "host-only-test-key");
+
+    let untrusted_env = std::collections::BTreeMap::from([(
+        "E2B_API_KEY".to_string(),
+        "must-not-pass".to_string(),
+    )]);
+    let error = crate::spawn_strategy_process_with_host_provider_env(
+        &executable,
+        &args,
+        &untrusted_env,
+        &std::collections::BTreeMap::new(),
+        StrategyTransport::Jsonl,
+    )
+    .err()
+    .expect("ordinary strategy environment cannot carry provider credentials");
+    assert!(error.contains("可能包含交易凭证"), "{error}");
+
+    let unsupported_provider_env = std::collections::BTreeMap::from([(
+        "ARBITRARY_SECRET".to_string(),
+        "must-not-pass".to_string(),
+    )]);
+    let error = crate::spawn_strategy_process_with_host_provider_env(
+        &executable,
+        &args,
+        &strategy_env,
+        &unsupported_provider_env,
+        StrategyTransport::Jsonl,
+    )
+    .err()
+    .expect("provider environment only admits E2B_API_KEY");
+    assert!(
+        error.contains("unsupported host provider credential"),
+        "{error}"
+    );
+}
+
+fn print_e2b_key_worker() -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let executable = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string())
+            + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        (
+            executable,
+            vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "[Console]::Out.WriteLine($env:E2B_API_KEY)".into(),
+            ],
+        )
+    }
+    #[cfg(unix)]
+    {
+        (
+            "/bin/sh".into(),
+            vec!["-c".into(), "printf '%s\\n' \"$E2B_API_KEY\"".into()],
+        )
+    }
 }
 
 fn exiting_worker() -> (String, Vec<String>) {

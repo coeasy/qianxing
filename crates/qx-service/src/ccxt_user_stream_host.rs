@@ -3,6 +3,7 @@
 use crate::ccxt_stream_retry::{
     ccxt_idle_poll_delay, ccxt_watch_reply_is_idle, CcxtReconnectBudget,
 };
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
@@ -94,6 +95,12 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             Err(error) => {
                 let detail = format!("{error:?}");
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
+                    metrics.observe_gateway_port_business_status(
+                        ExchangeGatewayPort::PrivateOrderStream,
+                        GatewayBusinessHealthStatus::Unhealthy,
+                        received_ts,
+                    );
+                    metrics.publish(true, received_ts);
                     return Err(format!("CCXT Pro 用户流不可用: {detail}"));
                 }
                 let backoff = reconnect_budget
@@ -107,6 +114,12 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                     ),
                     Some(received_ts),
                 )?;
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::PrivateOrderStream,
+                    GatewayBusinessHealthStatus::Degraded,
+                    received_ts,
+                );
+                metrics.publish_if_due(true, received_ts);
                 context.sleep_ms(backoff.as_millis() as u64);
                 if context.should_stop() {
                     break;
@@ -126,6 +139,11 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         if event.get("stream").and_then(serde_json::Value::as_str) != Some("orders") {
             return Err("CCXT Pro 用户流返回了非 orders 事件".into());
         }
+        metrics.observe_gateway_port_business_status(
+            ExchangeGatewayPort::PrivateOrderStream,
+            GatewayBusinessHealthStatus::Healthy,
+            received_ts,
+        );
         if ccxt_watch_reply_is_idle(event) {
             idle_windows = idle_windows.saturating_add(1);
             context.mark(
@@ -174,8 +192,23 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                 continue;
             };
             matched = matched.saturating_add(1);
+            let fee_baseline = pipeline
+                .fee_baseline_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久手续费基线失败: {error}"))?;
+            let exact_fee_baseline = pipeline
+                .exact_fee_baseline_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久精确手续费基线失败: {error}"))?;
+            let seen_trade_ids = pipeline
+                .fee_trade_ids_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久成交费用去重状态失败: {error}"))?;
             venue
-                .restore_order(order.clone(), remote_id)
+                .restore_order_with_exact_fee_state(
+                    order.clone(),
+                    remote_id,
+                    fee_baseline,
+                    exact_fee_baseline,
+                    seen_trade_ids,
+                )
                 .map_err(|error| format!("恢复 CCXT Pro remote order 失败: {error:?}"))?;
             let event_ts = update
                 .get("timestamp_ms")

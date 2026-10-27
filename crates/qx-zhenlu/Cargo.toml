@@ -6,9 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-qx-core = { version = "0.2.2", path = "../qx-core" }
-qx-guanxing = { version = "0.2.2", path = "../qx-guanxing" }
-qx-risk = { version = "0.2.2", path = "../qx-risk" }
+qx-core = { version = "0.3.0", path = "../qx-core" }
+qx-guanxing = { version = "0.3.0", path = "../qx-guanxing" }
+qx-risk = { version = "0.3.0", path = "../qx-risk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

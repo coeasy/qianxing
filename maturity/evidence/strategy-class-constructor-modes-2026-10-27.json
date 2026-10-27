@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-class-constructor-modes-v1",
+  "generated_at_utc": "2026-10-26T21:58:17Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "python_mode": "local"
+  },
+  "behavior": {
+    "runtime_strategy_class_spec_constructor": "supported",
+    "runtime_strategy_class_no_argument_constructor": "supported",
+    "runtime_rollback_reuses_selected_constructor": true,
+    "create_strategy_spec_contract": "always receives normalized run spec",
+    "local_cli_constructor_contract": "spec or no arguments",
+    "runtime_orderbook_input": "durable EventLog replay with checkpoint/cursor deduplication and exact sidecars"
+  },
+  "validation": [
+    {
+      "command": "python -m unittest tests.test_strategy_process_adapter",
+      "passed": 22,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile qianxing_strategy/worker.py tests/test_strategy_process_adapter.py",
+      "passed": true
+    },
+    {
+      "command": "git diff --check -- python/qianxing_strategy/worker.py python/tests/test_strategy_process_adapter.py python/README.md docs/牵星Qianxing-项目架构与GitHub竞品深度复核及优化重构总方案-2026-10-26.md",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Remote sandbox providers were not contacted.",
+    "The Runtime process lifecycle still reports shutdown/failed, not one stop event per scheduler JobRun.",
+    "This does not certify a published wheel or server deployment."
+  ],
+  "release_status": "unpublished workspace"
+}

@@ -42,7 +42,11 @@ pub(crate) fn run_paper_spread_recovery_worker(
                 let now = runtime_timestamp_ms();
                 // Paper 恢复接的是任意 venue 的待补偿腿（`accept_any_venue`），所以待恢复计数也
                 // 按同一口径取：venue 传空串，不把自己限死在 "paper" 这个腿归属上。
-                let pending_before = pending_spread_recovery_groups(&root, "")?;
+                let pending_before = pending_spread_recovery_groups_for_account(
+                    &root,
+                    "",
+                    worker.account_id.as_deref(),
+                )?;
                 if pending_before > 0 {
                     let mut pipeline = open_account_pipeline(
                         &runtime_config,
@@ -57,8 +61,9 @@ pub(crate) fn run_paper_spread_recovery_worker(
                         &runtime_config,
                         Some(&runtime_config_path),
                     )?;
-                    for message in recover_paper_spread_groups(
+                    for message in recover_paper_spread_groups_for_account(
                         &root,
+                        worker.account_id.as_deref(),
                         &mut pipeline,
                         context.id(),
                         now,
@@ -68,7 +73,11 @@ pub(crate) fn run_paper_spread_recovery_worker(
                         eprintln!("[HedgeRecovery] {message}");
                     }
                     metrics.absorb(&pipeline);
-                    let pending_after = pending_spread_recovery_groups(&root, "")?;
+                    let pending_after = pending_spread_recovery_groups_for_account(
+                        &root,
+                        "",
+                        worker.account_id.as_deref(),
+                    )?;
                     recovery_stalls = if pending_after >= pending_before {
                         recovery_stalls.saturating_add(1)
                     } else {

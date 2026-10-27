@@ -52,6 +52,8 @@ fn add_balance_snapshot_for_asset(pipeline: &mut LiveEventPipeline, asset: &str,
                     free: Money::from_i64(free),
                     locked: Money::ZERO,
                     borrowed: Money::ZERO,
+                    net_cash_balance: None,
+                    exact_amounts: None,
                 }],
             },
             10,
@@ -114,6 +116,62 @@ fn live_spot_admission_uses_quote_asset_balance_without_fx_conversion() {
 
     assert_eq!(context.available_margin_raw, Some(100 * SCALE));
     assert!(context.evaluate_order(&candidate, &position).allowed);
+}
+
+#[test]
+fn live_spot_sell_uses_base_free_balance_and_caps_to_exchange_inventory() {
+    let (_root, worker, spec, mut pipeline) = live_fixture("live-spot-sell-base-inventory");
+    let mut entry = mk_order(10_014, &spec.instrument, Side::Buy, 2);
+    entry.limit = Some(Price::from_i64(100));
+    pipeline.register_order(entry.clone(), 1).unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::Accepted {
+                client_order_id: entry.client_id,
+                venue_order_id: Some("binance-10_014".into()),
+            },
+            2,
+            2,
+            2,
+            "spot-sell-entry-accepted",
+        ))
+        .unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::FillWithSpec {
+                fill: Box::new(qx_core::Fill {
+                    order_id: entry.client_id,
+                    qty: Quantity::from_i64(2),
+                    price: Price::from_i64(100),
+                    ts: 3,
+                    account_id: "main".into(),
+                    venue_id: Some("binance".into()),
+                    ..qx_core::Fill::default()
+                }),
+                spec: Box::new(spec.clone()),
+            },
+            3,
+            3,
+            3,
+            "spot-sell-entry-fill",
+        ))
+        .unwrap();
+    // The account owns BTC, but has no USDT balance. A sell must use base inventory.
+    add_balance_snapshot_for_asset(&mut pipeline, "BTC", 1);
+
+    let mut affordable = mk_order(10_015, &spec.instrument, Side::Sell, 1);
+    affordable.limit = Some(Price::from_i64(100));
+    let (context, position) = worker_risk_context(&worker, &affordable, &pipeline, None)
+        .unwrap()
+        .expect("Live spot sell should admit against its BTC balance without quote cash");
+    assert_eq!(context.available_margin_raw, Some(SCALE));
+    assert!(context.evaluate_order(&affordable, &position).allowed);
+
+    let mut excessive = affordable;
+    excessive.client_id = 10_016;
+    excessive.qty = Quantity::from_i64(2);
+    let error = worker_risk_context(&worker, &excessive, &pipeline, None).unwrap_err();
+    assert!(error.contains("base 可用余额"), "{error}");
 }
 
 #[test]

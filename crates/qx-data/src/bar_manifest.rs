@@ -43,6 +43,7 @@ pub fn manifest_from_bar_frame(
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         })
         .collect::<Vec<_>>();
     let fingerprint = fingerprint_bars(&bars)?;

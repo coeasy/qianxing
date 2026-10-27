@@ -13,6 +13,7 @@ const API_PATHS = {
   ready: "/ready",
   snapshot: "/account/snapshot",
   snapshotEnvelope: "/account/snapshot/envelope",
+  accountActivity: "/account/activity",
   balances: "/account/balances",
   orders: "/account/orders",
   positions: "/account/positions",
@@ -21,6 +22,8 @@ const API_PATHS = {
   schedulerRuns: "/scheduler/runs",
   controlAudit: "/control/audit",
   controlCommands: "/control/commands",
+  productCapabilityCatalog: "/app/capabilities",
+  productCapabilityQuery: "/app/capabilities/query",
   appValidateDataset: "/app/validate-dataset",
   appBacktest: "/app/backtest",
   appBacktestRun: "/app/backtest/start",
@@ -97,6 +100,14 @@ const state = {
   // 服务端就会把「还没基线」读成「你超前了」并回 409。
   cursor: null,
   baselineSeq: null,
+  defaultAccountId: null,
+  defaultVenueId: null,
+  activityAccountId: null,
+  activityVenueId: null,
+  activityAfter: null,
+  activityBefore: null,
+  activityPage: null,
+  activitySelectionDirty: false,
   events: [],
   wsFramesSeen: 0,
   wsUnknownFrames: [],
@@ -241,8 +252,8 @@ function asNumber(value) {
 const RESPONSE_FIELDS = {
   snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
   snapshotHeader: ["snapshot_id", "account_id", "portfolio_id", "venue_id", "trading_day", "as_of", "event_seq", "state_hash"],
-  orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status"],
-  positionRow: ["instrument", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"],
+  orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status", "exact_amounts"],
+  positionRow: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw", "exact_amounts"],
   balances: ["cash_raw", "equity_raw", "available_raw", "margin_raw"],
   eventRow: ["seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata"],
   envelope: ["schema_version", "kind", "tenant_id", "run_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "cursor", "state_hash", "source", "lineage", "data"],
@@ -253,8 +264,9 @@ const RESPONSE_FIELDS = {
 // 与"页面多开了一列表头"都在门禁变红，而不是等用户看到一列永久的 —。
 const TABLE_SPECS = {
   "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw"] },
-  "positions-table": { roster: "positionRow", columns: ["instrument", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
+  "positions-table": { roster: "positionRow", columns: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
   "events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
+  "account-activity-events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
 };
 
 // 价格是定点数而 0 不是合法价格（`wire.rs` 的 PositionSnapshot 交代过这条纪律），
@@ -272,11 +284,53 @@ function cellText(key, value) {
   return String(value);
 }
 
+function exactDecimalText(value) {
+  if (!value || typeof value !== "object") return "—";
+  const coefficient = value.coefficient;
+  const scale = value.scale;
+  if (typeof coefficient !== "string" || !/^-?\d+$/.test(coefficient)
+      || !Number.isInteger(scale) || scale < 0 || scale > 18) return "—";
+  const negative = coefficient.startsWith("-");
+  const magnitude = BigInt(negative ? coefficient.slice(1) : coefficient);
+  if (magnitude === 0n) return "0";
+  if (scale === 0) return `${negative ? "-" : ""}${magnitude}`;
+  const divisor = 10n ** BigInt(scale);
+  const whole = magnitude / divisor;
+  const fraction = (magnitude % divisor).toString().padStart(scale, "0").replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
+}
+
+function orderAmountText(key, order) {
+  const exact = order?.exact_amounts;
+  if (exact && (key === "quantity_raw" || key === "filled_raw")) {
+    return exactDecimalText(key === "quantity_raw" ? exact.quantity : exact.filled);
+  }
+  return cellText(key, order?.[key]);
+}
+
+function positionAmountText(key, position) {
+  const exactKey = {
+    quantity_raw: "quantity",
+    average_price_raw: "average_price",
+    mark_price_raw: "mark_price",
+    unrealized_pnl_raw: "unrealized_pnl",
+    margin_raw: "initial_margin",
+  }[key];
+  const exact = position?.exact_amounts;
+  if (exactKey && exact && exact[exactKey] !== null && exact[exactKey] !== undefined) {
+    return exactDecimalText(exact[exactKey]);
+  }
+  return cellText(key, position?.[key]);
+}
+
 // 名册里声明过、这一份响应里却没有的字段。空数组就是形状齐全。
 function missingFields(roster, record) {
   const names = RESPONSE_FIELDS[roster] || [];
   if (!record || typeof record !== "object") return names.slice();
-  return names.filter((name) => !(name in record));
+  const optional = roster === "orderRow" || roster === "positionRow"
+    ? new Set(["exact_amounts"])
+    : new Set();
+  return names.filter((name) => !optional.has(name) && !(name in record));
 }
 
 function shapeText(missing) {
@@ -418,6 +472,17 @@ async function refreshSnapshot() {
   const snap = await getJson(API_PATHS.snapshot);
   if (!snap.ok) {
     // 404「该账户还没有投影」与 400「键形状非法」/429/503 是四件事，折成同一句就读不回来了。
+    const keepExplicitActivityScope = state.activitySelectionDirty;
+    state.activityAccountId = null;
+    state.activityVenueId = null;
+    state.defaultAccountId = null;
+    state.defaultVenueId = null;
+    state.activityAfter = null;
+    state.activityBefore = null;
+    if (!keepExplicitActivityScope) {
+      $("account-activity-account-id").value = "";
+      $("account-activity-venue-id").value = "";
+    }
     rows($("snapshot-rows"), [["状态", `HTTP ${snap.status}${errorOf(snap.body) ? " " + errorOf(snap.body) : ""}`]]);
     return;
   }
@@ -427,6 +492,27 @@ async function refreshSnapshot() {
   // 会永久印空白——不是"没数据"，是读错了层。
   const header = b.header || {};
   state.baselineSeq = asNumber(header.event_seq);
+  const accountId = typeof header.account_id === "string" ? header.account_id : null;
+  const venueId = typeof header.venue_id === "string" ? header.venue_id : null;
+  const selectionFollowsDefault = !state.activitySelectionDirty && (!state.activityAccountId || (
+    state.activityAccountId === state.defaultAccountId &&
+    state.activityVenueId === state.defaultVenueId
+  ));
+  const defaultSelectionChanged = selectionFollowsDefault && (
+    state.activityAccountId !== accountId || state.activityVenueId !== venueId
+  );
+  if (defaultSelectionChanged) {
+    state.activityAfter = null;
+    state.activityBefore = null;
+  }
+  state.defaultAccountId = accountId;
+  state.defaultVenueId = venueId;
+  if (selectionFollowsDefault) {
+    state.activityAccountId = accountId;
+    state.activityVenueId = venueId;
+    $("account-activity-account-id").value = accountId || "";
+    $("account-activity-venue-id").value = venueId || "";
+  }
   rows($("snapshot-rows"), [
     ["schema_version", b.schema_version],
     ["snapshot_id", header.snapshot_id],
@@ -463,6 +549,66 @@ async function refreshBalances() {
     ["margin_raw", money(b.margin_raw)],
     ["字段核对", shapeText(missingFields("balances", b))],
   ]);
+}
+
+async function refreshAccountActivity() {
+  const meta = $("account-activity-meta");
+  const selectedAccount = $("account-activity-account-id").value.trim();
+  const selectedVenue = $("account-activity-venue-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue) {
+    state.activityAfter = null;
+    state.activityBefore = null;
+  }
+  state.activityAccountId = selectedAccount || null;
+  state.activityVenueId = selectedVenue || null;
+  state.activitySelectionDirty = false;
+  if (!state.activityAccountId || !state.activityVenueId) {
+    state.activityPage = null;
+    rows(meta, [["状态", "账户快照没有可用于收窄查询的 account_id / venue_id"]]);
+    fillTable("account-activity-events-table", { ok: true, body: [] });
+    $("account-activity-prev").disabled = true;
+    $("account-activity-next").disabled = true;
+    return;
+  }
+  const query = new URLSearchParams({
+    account_id: state.activityAccountId,
+    venue_id: state.activityVenueId,
+    limit: "50",
+  });
+  if (state.activityAfter !== null) query.set("after", String(state.activityAfter));
+  if (state.activityBefore !== null) query.set("before", String(state.activityBefore));
+  const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
+  if (!response.ok) {
+    state.activityPage = null;
+    rows(meta, [["状态", `HTTP ${response.status}${errorOf(response.body) ? ` ${errorOf(response.body)}` : ""}`]]);
+    fillTable("account-activity-events-table", response);
+    $("account-activity-prev").disabled = true;
+    $("account-activity-next").disabled = true;
+    return;
+  }
+  const report = response.body || {};
+  const identity = report.identity || {};
+  const eventPage = report.events || {};
+  const completeness = report.completeness || {};
+  state.activityPage = eventPage;
+  const countText = (name) => {
+    const group = report[name] || {};
+    return `${group.returned ?? 0}/${group.total ?? 0}${group.truncated ? "（截断）" : ""}`;
+  };
+  rows(meta, [
+    ["账户 / venue", `${identity.account_id ?? "—"} / ${identity.venue_id ?? "—"}`],
+    ["快照 as_of / age", `${tsText(identity.snapshot_as_of_ms)} / ${cellText("age_ms", report.as_of_age_ms)}`],
+    ["余额字段完整度", ["equity", "available", "margin", "fees", "funding"].map((key) => `${key}:${completeness[`${key}_reported`] === true ? "有" : "无"}`).join(" · ")],
+    ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
+    ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
+    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
+  ]);
+  fillTable("account-activity-events-table", {
+    ok: true,
+    body: Array.isArray(eventPage.rows) ? eventPage.rows : [],
+  });
+  $("account-activity-prev").disabled = eventPage.has_older !== true;
+  $("account-activity-next").disabled = eventPage.has_newer !== true;
 }
 
 function fillTable(tableId, response) {
@@ -507,7 +653,14 @@ function fillTable(tableId, response) {
   }
   for (const record of records) {
     const tr = el("tr");
-    for (const key of spec.columns) tr.append(el("td", cellText(key, record ? record[key] : null)));
+    for (const key of spec.columns) {
+      const text = spec.roster === "orderRow"
+        ? orderAmountText(key, record)
+        : spec.roster === "positionRow"
+          ? positionAmountText(key, record)
+          : cellText(key, record ? record[key] : null);
+      tr.append(el("td", text));
+    }
     tbody.append(tr);
   }
 }
@@ -515,7 +668,7 @@ function fillTable(tableId, response) {
 async function refreshTables() {
   const [orders, positions] = await Promise.all([getJson(API_PATHS.orders), getJson(API_PATHS.positions)]);
   fillTable("orders-table", orders);
-  // 持仓列取的是 `PositionSnapshot` 真的发出来的那七格。后端从来没有 `side` / `cost_raw` /
+  // 持仓列取的是 `PositionSnapshot` 真的发出来的字段。后端从来没有 `side` / `cost_raw` /
   // `market_value_raw`（wire.rs），而页面此前照着它们开了三列——那三列永久是 —。
   // 市值也不在页面里现算：那是「各处手抄折算」要防的事，属于后端估值单点。
   fillTable("positions-table", positions);
@@ -562,6 +715,73 @@ async function postJsonText(path, body) {
     body,
   });
   return { status: response.status, ok: response.ok, body: await readJson(response) };
+}
+
+async function loadProductCapabilityCatalog() {
+  const output = $("product-capability-output");
+  output.textContent = "正在读取能力目录…";
+  try {
+    const response = await getJson(API_PATHS.productCapabilityCatalog);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const capabilities = response.body?.coverage_catalog?.capabilities;
+    if (!Array.isArray(capabilities)) throw new Error("服务端没有返回产品能力目录");
+    const ids = capabilities.map((item) => item.id).filter((id) => typeof id === "string");
+    const facets = response.body?.coverage_catalog?.execution_scope_facets ?? {};
+    const datalists = [
+      ["product-capability-ids", ids],
+      ["product-capability-venues", facets.venue],
+      ["product-capability-products", facets.product],
+      ["product-capability-account-modes", facets.account_mode],
+      ["product-capability-account-models", facets.account_models],
+      ["product-capability-margin-modes", facets.margin_modes],
+      ["product-capability-operations", facets.operations],
+    ];
+    for (const [listId, values] of datalists) {
+      const list = $(listId);
+      if (!list || !Array.isArray(values)) continue;
+      list.replaceChildren(...values.filter((value) => typeof value === "string").map((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        return option;
+      }));
+    }
+    output.textContent = JSON.stringify({
+      schema_version: response.body.coverage_catalog.schema_version,
+      source_updated_at: response.body.coverage_catalog.source_updated_at,
+      count: capabilities.length,
+      execution_scope_facets: facets,
+      capabilities,
+    }, null, 2);
+  } catch (error) {
+    output.textContent = `读取能力目录失败：${error.message}`;
+  }
+}
+
+async function queryProductCapability() {
+  const output = $("product-capability-output");
+  const fields = [
+    ["capability_id", "product-capability-id"],
+    ["venue", "product-capability-venue"],
+    ["product", "product-capability-product"],
+    ["account_mode", "product-capability-account-mode"],
+    ["account_model", "product-capability-account-model"],
+    ["margin_mode", "product-capability-margin-mode"],
+    ["operation", "product-capability-operation"],
+  ];
+  const query = Object.fromEntries(fields
+    .map(([key, id]) => [key, $(id).value.trim()])
+    .filter(([, value]) => value.length > 0));
+  if (Object.keys(query).length === 0) {
+    output.textContent = "请输入能力 ID，或至少填写一个交易范围条件";
+    return;
+  }
+  output.textContent = "正在查询能力证据…";
+  try {
+    const response = await postJson(API_PATHS.productCapabilityQuery, query);
+    output.textContent = JSON.stringify(response.body, null, 2);
+  } catch (error) {
+    output.textContent = `查询能力证据失败：${error.message}`;
+  }
 }
 
 function controlCommandFromForm() {
@@ -675,7 +895,7 @@ const UNIFIED_EVENT_PAGE_SIZE = 300;
 const researchReportState = {
   rows: [], kind: "", detailRequest: 0, selectedRow: null,
   latestArtifactView: null, comparisonCurves: [], unifiedReports: [], outcome: null,
-  strategyDiagnostics: null, eventPageRequest: 0, accountBatch: null,
+  strategyDiagnostics: null, eventPageRequest: 0, accountBatch: null, jointAccountReport: null,
   unifiedEventGeneration: 0, unifiedEventLoading: false, unifiedEventPage: 0,
   unifiedEventRows: null, unifiedEventVerifiedCount: 0,
 };
@@ -688,6 +908,7 @@ function clearResearchReport() {
   researchReportState.latestArtifactView = null;
   researchReportState.outcome = null;
   researchReportState.accountBatch = null;
+  researchReportState.jointAccountReport = null;
   researchReportState.strategyDiagnostics = null;
   $("research-diagnostic-select-row").hidden = true;
   $("research-diagnostic-select").replaceChildren();
@@ -774,6 +995,13 @@ function renderVerifiedArtifactMetrics(view) {
   host.replaceChildren();
   const summary = view.summary ?? {};
   const metrics = summary.metrics ?? summary;
+  const exactMetrics = summary.metrics_exact ?? metrics.metrics_exact ?? {};
+  const exactFees = exactMetrics.fees_by_currency && typeof exactMetrics.fees_by_currency === "object"
+    ? Object.entries(exactMetrics.fees_by_currency).map(([currency, amount]) => `${currency} ${amount}`).join(" · ")
+    : null;
+  const exactTurnover = exactMetrics.turnover?.amount == null
+    ? null
+    : `${exactMetrics.turnover.amount} ${exactMetrics.turnover.currency ?? ""}`.trim();
   const rejectionFacts = Array.isArray(summary.rejection_reasons)
     ? summary.rejection_reasons
     : (Array.isArray(summary.rejection_facts)
@@ -788,10 +1016,12 @@ function renderVerifiedArtifactMetrics(view) {
     ["手续费 raw", metrics.fees_raw],
     ["资金费 raw", metrics.funding_raw],
     ["换手 raw", metrics.turnover_raw],
+    ["成交额（精确）", exactTurnover],
+    ["手续费（分币种精确）", exactFees],
     ["单位净成本 bp", metrics.cost_bps],
     ["拒单数", rejected],
     ["成交数", summary.fills],
-    ["期初资金 raw", summary.account?.initial_cash_raw],
+    ["期初资金", summary.account?.initial_cash_exact ?? summary.account?.initial_cash_raw],
     ["期末权益 raw", metrics.final_equity_raw],
   ];
   for (const [label, value] of values) {
@@ -850,10 +1080,11 @@ function renderMultiMarketResearch(markets) {
     fills: market.fill_count ?? 0,
     pnl_currency: market.pnl_contribution?.currency ?? "—",
     pnl_contribution_raw: market.pnl_contribution?.rows?.at(-1)?.pnl_contribution_raw ?? "—",
+    pnl_contribution_exact: market.pnl_contribution?.rows?.at(-1)?.pnl_contribution_exact ?? "—",
     quality: market.quality_status ?? "unknown",
     data_fingerprint: market.data_fingerprint ?? "—",
   }));
-  renderResearchObjectTable("research-market-table", rows, ["instrument", "data_tier", "rows", "fills", "pnl_currency", "pnl_contribution_raw", "quality", "data_fingerprint"]);
+  renderResearchObjectTable("research-market-table", rows, ["instrument", "data_tier", "rows", "fills", "pnl_currency", "pnl_contribution_raw", "pnl_contribution_exact", "quality", "data_fingerprint"]);
   const rendered = [...$("research-market-table").tBodies[0].rows];
   const showMarket = (index) => {
     const market = markets[index];
@@ -865,7 +1096,7 @@ function renderMultiMarketResearch(markets) {
       pnlStatus.hidden = false;
       pnlTable.hidden = false;
       pnlStatus.textContent = `${market.instrument} · ${contribution.currency} · ${contribution.total ?? 0} 个共享权益时点 · 展示 ${contribution.rows?.length ?? 0}${contribution.truncated ? "（有界采样）" : ""}。此标的是已归因盈亏贡献；未分配的初始现金不计入任何标的。`;
-      renderResearchObjectTable("research-market-pnl-table", contribution.rows ?? [], ["equity_index", "ts", "pnl_contribution_raw"]);
+      renderResearchObjectTable("research-market-pnl-table", contribution.rows ?? [], ["equity_index", "ts", "pnl_contribution_raw", "pnl_contribution_exact"]);
       renderMarketContributionPlot(market);
     } else {
       pnlStatus.hidden = true;
@@ -915,6 +1146,7 @@ async function loadResearchArtifactDetail(row, strategyDiagnostics = null, expli
   researchReportState.latestArtifactView = null;
   researchReportState.outcome = null;
   researchReportState.accountBatch = preservedBatch;
+  researchReportState.jointAccountReport = null;
   researchReportState.strategyDiagnostics = null;
   researchReportState.eventPageRequest += 1;
   panel.hidden = false;
@@ -977,7 +1209,132 @@ async function loadResearchArtifactDetail(row, strategyDiagnostics = null, expli
     renderResearchAccountBatch(view, outcome, strategyDiagnostics?.account_strategy_diagnostics ?? null);
     return;
   }
+  if (view.run_kind === "multi_account_joint") {
+    renderResearchJointAccountReport(view, outcome);
+    return;
+  }
   renderResearchArtifactDetailView(view, outcome, strategyDiagnostics, preservedBatch?.selectedAccountId ?? null);
+}
+
+function renderResearchJointAccountReport(view, outcome) {
+  renderResearchArtifactDetailView(view, outcome, null, null);
+  const panel = $("research-account-detail");
+  const accounts = view.accounts ?? [];
+  researchReportState.accountBatch = null;
+  researchReportState.jointAccountReport = {
+    view, outcome, selected: null, pageRequest: 0,
+  };
+  $("research-diagnostic-import").hidden = true;
+  panel.hidden = false;
+  $("research-account-status").textContent = `联合账户 ${view.run_id} · ${view.summary.accounts_total} 个交易所账户 · ${view.summary.settlement_currency} · 资金与风险按账户隔离；事件样本按账户分别核验，不构造跨所全序。`;
+  renderResearchObjectTable("research-account-table", accounts, ["exchange_id", "account_id", "status", "return_bps", "max_drawdown_bps", "fills", "run_id"]);
+  const filter = $("research-account-event-instrument");
+  filter.replaceChildren(el("option", "账户事件样本"));
+  filter.disabled = true;
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  $("research-account-event-page-status").textContent = "每个交易所账户单独分页；不建立跨交易所事件总序。";
+  $("research-account-event-status").textContent = "先选择交易所账户查看已重放核验的账户内事件。";
+  accounts.forEach((account, index) => {
+    const row = $("research-account-table").tBodies[0].rows[index];
+    if (!row) return;
+    row.classList.add("research-account-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看 ${account.exchange_id} 交易所账户 ${account.account_id}`);
+    const select = () => {
+      for (const item of $("research-account-table").tBodies[0].rows) item.removeAttribute("aria-current");
+      row.setAttribute("aria-current", "true");
+      $("research-account-events").open = true;
+      researchReportState.jointAccountReport.selected = {
+        exchangeId: account.exchange_id,
+        accountId: account.account_id,
+      };
+      renderResearchJointAccountEventPage(account);
+      renderResearchArtifactDetailView(account.report, null, null, `${account.exchange_id}:${account.account_id}`);
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select();
+      }
+    });
+  });
+  const first = accounts.findIndex((account) => account.status === "succeeded" && account.report?.verification?.verified);
+  if (first >= 0) $("research-account-table").tBodies[0].rows[first]?.click();
+  else $("research-artifact-status").textContent = "联合账户结构已核验，但没有可展开的成功账户。";
+}
+
+function renderResearchJointAccountEventPage(account) {
+  const joint = researchReportState.jointAccountReport;
+  if (!joint || !account?.report?.verification?.verified) return;
+  const events = account.report.events ?? {};
+  const rows = events.rows ?? [];
+  const offset = Number(events.offset ?? 0);
+  const total = Number(events.total ?? 0);
+  const end = offset + rows.length;
+  const first = rows.length ? offset + 1 : 0;
+  $("research-account-event-status").textContent = `${account.exchange_id} · ${account.account_id} · 事件顺序只在该账户内定义；完整日志已重放校验。`;
+  $("research-account-event-page-status").textContent = total
+    ? `账户内事件 ${first}–${end} / ${total}；交易所账户分别分页，不合并排序。`
+    : "该账户没有事件记录";
+  $("research-account-event-prev").disabled = events.previous_offset == null;
+  $("research-account-event-next").disabled = events.next_offset == null;
+  renderResearchTimeline(researchTimelineRows(rows), {
+    tableId: "research-account-event-table",
+    filterId: "research-account-event-filter",
+    countId: "research-account-event-count",
+  });
+}
+
+async function loadResearchJointAccountEventPage(direction) {
+  const joint = researchReportState.jointAccountReport;
+  const selected = joint?.selected;
+  if (!joint || !selected) return;
+  const currentAccount = joint.view.accounts?.find((account) =>
+    account.exchange_id === selected.exchangeId && account.account_id === selected.accountId);
+  const currentEvents = currentAccount?.report?.events;
+  const offset = direction === "next" ? currentEvents?.next_offset : currentEvents?.previous_offset;
+  if (!Number.isInteger(offset) || offset < 0) return;
+  const limit = Number(currentEvents.limit ?? 50);
+  const requestId = ++joint.pageRequest;
+  $("research-account-event-page-status").textContent = "正在重放并校验所选交易所账户事件日志…";
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  try {
+    const request = {
+      outcome: joint.outcome,
+      joint_account_event_pages: {
+        [selected.exchangeId]: {
+          [selected.accountId]: { offset, limit },
+        },
+      },
+    };
+    const response = await postJson(API_PATHS.appResearchArtifacts, request);
+    if (researchReportState.jointAccountReport !== joint || requestId !== joint.pageRequest) return;
+    const next = response.body;
+    if (!response.ok || !next?.verification?.verified || next.run_id !== joint.view.run_id
+      || next.run_kind !== "multi_account_joint") {
+      $("research-account-event-page-status").textContent = "联合账户事件页复核失败："
+        + (next?.message ?? next?.error ?? response.status ?? "响应结构无效");
+      $("research-account-event-prev").disabled = currentEvents?.previous_offset == null;
+      $("research-account-event-next").disabled = currentEvents?.next_offset == null;
+      return;
+    }
+    joint.view = next;
+    const account = next.accounts?.find((item) =>
+      item.exchange_id === selected.exchangeId && item.account_id === selected.accountId);
+    if (!account) throw new Error("响应缺少所选交易所账户");
+    renderResearchJointAccountEventPage(account);
+    renderResearchArtifactDetailView(account.report, null, null, `${account.exchange_id}:${account.account_id}`);
+  } catch (error) {
+    if (researchReportState.jointAccountReport === joint && requestId === joint.pageRequest) {
+      $("research-account-event-page-status").textContent = "联合账户事件页读取失败：" + error;
+      $("research-account-event-prev").disabled = currentEvents?.previous_offset == null;
+      $("research-account-event-next").disabled = currentEvents?.next_offset == null;
+    }
+  }
 }
 
 function renderResearchAccountBatch(view, outcome, diagnosticAttachments = null) {
@@ -1174,11 +1531,14 @@ function renderResearchArtifactDetailView(view, outcome, strategyDiagnostics = n
   const eventRows = view.events?.rows ?? [];
   const barRows = view.bars?.rows ?? [];
   const depthRows = view.depth?.rows ?? [];
-  const isDepth = view.run_kind === "depth";
-  const isMultiMarket = view.run_kind === "multi_market" || view.run_kind === "multi_market_depth" || view.run_kind === "multi_leg";
+  const isDepth = view.run_kind === "depth" || view.run_kind === "provider_depth";
+  const isMultiMarket = view.run_kind === "multi_market" || view.run_kind === "multi_market_depth" || view.run_kind === "multi_leg" || view.run_kind === "multi_account_joint_member";
   const isMultiMarketDepth = view.run_kind === "multi_market_depth";
   const eventTraceAvailable = view.event_trace_available !== false;
   const totalReturn = equityReturnBps(equityRows);
+  const provider = view.summary?.provider ?? null;
+  const providerId = provider?.provider_id ?? provider?.dataset?.provider_id ?? null;
+  const providerVersion = provider?.provider_version ?? provider?.dataset?.provider_version ?? null;
   researchReportState.latestArtifactView = view;
   researchReportState.outcome = outcome;
   researchReportState.strategyDiagnostics = strategyDiagnostics;
@@ -1186,8 +1546,9 @@ function renderResearchArtifactDetailView(view, outcome, strategyDiagnostics = n
   status.textContent = (accountId ? `账户 ${accountId} · ` : "") + "产物复核通过 · " + view.instrument + " · " + view.run_id
     + " · 净值 " + (view.equity?.total ?? 0) + " 点" + (view.equity?.truncated ? "（图表有界采样）" : "")
     + " · 成交 " + (view.fills?.total ?? 0) + " 笔（展示 " + fillRows.length + "）"
-    + (eventTraceAvailable ? " · 事件 " + (view.events?.total ?? 0) + " 条（当前页 " + eventRows.length + " 条）" : " · 此运行未持久化事件轨迹")
-    + " · 采样净值变化 " + (totalReturn === null ? "—" : researchBps(totalReturn));
+    + (eventTraceAvailable ? " · 事件 " + (view.events?.total ?? 0) + " 条（当前页 " + eventRows.length + " 条）" : view.run_kind === "multi_account_joint_member" ? " · 账户内事件样本见上方账户面板" : " · 此运行未持久化事件轨迹")
+     + " · 采样净值变化 " + (totalReturn === null ? "—" : researchBps(totalReturn))
+     + (providerId ? ` · 数据源 ${providerId}${providerVersion ? `@${providerVersion}` : ""}` : "");
   $("research-diagnostic-import").hidden = isDepth || Boolean(accountId);
   $("research-bars-heading").hidden = isDepth || isMultiMarket;
   $("research-bars-status").hidden = isDepth || isMultiMarket;
@@ -1224,11 +1585,11 @@ function renderResearchArtifactDetailView(view, outcome, strategyDiagnostics = n
   }
   const barStatus = view.bars?.source_status ?? "not_returned";
   $("research-bars-status").textContent = barStatus === "verified"
-    ? `输入身份复核通过 · ${view.bars.total} 根 Bar · 展示 ${barRows.length}${view.bars.truncated ? "（等距采样）" : ""}；定点价格和成交量按原始整数展示。`
+    ? `${providerId ? "Provider 冻结行情输入身份复核通过" : "输入身份复核通过"} · ${view.bars.total} 根 Bar · 展示 ${barRows.length}${view.bars.truncated ? "（等距采样）" : ""}；定点价格和成交量按原始整数展示。`
     : `未返回原始 Bar（${barStatus}）。只有位于 API 配置数据目录内并通过数据指纹复核的单 BarFrame 输入会展示。`;
   const depthStatus = view.depth?.source_status ?? "not_returned";
   $("research-depth-status").textContent = depthStatus === "verified"
-    ? `输入身份复核通过 · ${view.depth.total} 份快照 · 展示 ${depthRows.length}${view.depth.truncated ? "（快照等距采样或盘口档位截断）" : ""}；每侧最多展示 20 档，价格和数量保留原始定点整数。`
+    ? `${providerId ? "Provider 冻结盘口输入身份复核通过" : "输入身份复核通过"} · ${view.depth.total} 份快照 · 展示 ${depthRows.length}${view.depth.truncated ? "（快照等距采样或盘口档位截断）" : ""}；每侧最多展示 20 档，价格和数量保留原始定点整数。`
     : `未返回原始盘口（${depthStatus}）。只有位于 API 配置数据目录内并通过输入指纹、清单和运行记录复核的深度帧会展示。`;
   if (researchReportState.comparisonCurves.length) {
     renderEquityComparisonPlot();
@@ -1236,7 +1597,7 @@ function renderResearchArtifactDetailView(view, outcome, strategyDiagnostics = n
     renderEquityDetailPlot(equityRows);
   }
   renderPositionDetailPlot(equityRows);
-  renderResearchObjectTable("research-equity-table", equityRows, ["ts", "equity_raw", "position_raw"]);
+  renderResearchObjectTable("research-equity-table", equityRows, ["ts", "equity_raw", "equity_exact", "position_raw"]);
   renderResearchObjectTable("research-bar-table", barRows, ["ts", "open_raw", "high_raw", "low_raw", "close_raw", "volume_raw"]);
   renderResearchObjectTable("research-depth-table", depthRows, ["ts", "sequence", "bids", "asks", "levels_truncated"]);
   renderResearchObjectTable("research-fill-table", fillRows);
@@ -1306,7 +1667,7 @@ function renderResearchEventPage(view) {
   $("research-event-prev").disabled = offset <= 0;
   $("research-event-next").disabled = end >= total;
   renderResearchObjectTable("research-event-table", eventRows, ["seq", "ts", "prio", "kind", "metadata", "research_fact"]);
-  if (view.run_kind === "depth" || view.run_kind === "multi_market_depth") {
+  if (view.run_kind === "depth" || view.run_kind === "provider_depth" || view.run_kind === "multi_market_depth") {
     $("research-timeline-status").textContent = "深度事件按引擎顺序展示；Bar 行情因果关联不适用于盘口快照运行。";
   } else if (view.run_kind === "multi_market") {
     $("research-timeline-status").textContent = "组合事件按 strategy_id / instrument 关联到对应标的；Bar 上下文使用该标的已复核输入，并遵守事件优先级和策略决策严格前序 Bar 可见规则。无法唯一关联的账户级事件会明确标记 input_unavailable。";
@@ -1441,11 +1802,20 @@ function unifiedExecutionSignature(view) {
 function unifiedReportMetrics(view) {
   const summary = view.summary ?? {};
   const metrics = summary.metrics ?? summary;
+  const exactMetrics = summary.metrics_exact ?? metrics.metrics_exact ?? {};
+  const exactFees = exactMetrics.fees_by_currency && typeof exactMetrics.fees_by_currency === "object"
+    ? Object.entries(exactMetrics.fees_by_currency).map(([currency, amount]) => `${currency} ${amount}`).join(" · ")
+    : null;
+  const exactTurnover = exactMetrics.turnover?.amount == null
+    ? null
+    : `${exactMetrics.turnover.amount} ${exactMetrics.turnover.currency ?? ""}`.trim();
   return {
     settlementCurrency: summary.settlement_currency ?? summary.account?.settlement_currency ?? summary.account?.currency ?? "未提供",
     returnBps: metrics.return_bps ?? metrics.weighted_return_bps ?? null,
     drawdownBps: metrics.max_drawdown_bps ?? null,
     feesRaw: metrics.fees_raw ?? null,
+    feesExact: exactFees,
+    turnoverExact: exactTurnover,
     costBps: metrics.cost_bps ?? null,
     finalEquityRaw: metrics.final_equity_raw ?? null,
     fills: view.fills?.total ?? metrics.fills ?? metrics.successful_fills ?? null,
@@ -1455,7 +1825,11 @@ function unifiedReportMetrics(view) {
 function researchTopologyLabel(runKind) {
   return ({
     depth: "单标的深度",
+    provider_bar: "Provider Bar",
+    provider_depth: "Provider 深度",
     multi_account: "多账户批次",
+    multi_account_joint: "多交易所联合账户",
+    multi_account_joint_member: "联合账户成员",
     multi_market: "共享账户多市场 Bar",
     multi_market_depth: "共享账户多市场深度",
     multi_leg: "共享账户多腿",
@@ -1549,6 +1923,8 @@ function renderUnifiedResearchReports() {
       "收益": report.metrics.returnBps == null ? "未提供" : researchBps(report.metrics.returnBps),
       "最大回撤": report.metrics.drawdownBps == null ? "未提供" : researchBps(report.metrics.drawdownBps),
       "手续费 raw": report.metrics.feesRaw ?? "未提供",
+      "手续费（分币种精确）": report.metrics.feesExact ?? "未提供",
+      "成交额（精确）": report.metrics.turnoverExact ?? "未提供",
       "单位成本": report.metrics.costBps == null ? "未提供" : researchBps(report.metrics.costBps),
       "成交数": report.metrics.fills ?? "未提供",
       "期末权益 raw": report.metrics.finalEquityRaw ?? "未提供",
@@ -2999,7 +3375,7 @@ function describeAccepted(result) {
   if (result.status === 401 && refusal === "console_session_required") {
     return { phase: PHASES[0], state: "refused", detail: "401 console_session_required：这一层要先用带 ?token= 的引导入口换取会话 cookie（令牌不进 URL 之外的任何地方）" };
   }
-  if (result.status === 400) return { phase: PHASES[0], state: "refused", detail: "400 载荷非法（审计字段缺失，或该命令类型在本构建里没有派发者）" };
+  if (result.status === 400) return { phase: PHASES[0], state: "refused", detail: "400 命令载荷、执行器类型或账户/交易所路由未通过受理校验" };
   if (result.status === 409) return { phase: PHASES[0], state: "refused", detail: "409 控制面拒绝（重复 request_id / 未知命令 / 已终态）" };
   if (result.status === 503) return { phase: PHASES[0], state: "refused", detail: `503 队列不可用（${refusal || "control_state_unavailable"}）` };
   return { phase: PHASES[0], state: "refused", detail: `HTTP ${result.status}${refusal ? " " + refusal : ""}` };
@@ -3148,6 +3524,7 @@ async function refreshAll() {
   try {
     await refreshHealth();
     await refreshSnapshot();
+    await refreshAccountActivity();
     await refreshBalances();
     await refreshTables();
     await refreshReadModels();
@@ -3356,6 +3733,14 @@ function disconnect() {
   state.viaBff = false;
   state.cursor = null;
   state.baselineSeq = null;
+  state.activityAccountId = null;
+  state.activityVenueId = null;
+  state.defaultAccountId = null;
+  state.defaultVenueId = null;
+  state.activityAfter = null;
+  state.activityBefore = null;
+  state.activityPage = null;
+  state.activitySelectionDirty = false;
   state.events = [];
   state.wsFramesSeen = 0;
   state.wsUnknownFrames = [];
@@ -3374,9 +3759,14 @@ function disconnect() {
   $("extended-research-query").disabled = true;
   $("extended-research-cancel").disabled = true;
   renderControl();
-  for (const id of ["health-rows", "snapshot-rows", "balances-rows", "readmodels-rows", "events-meta"]) {
+  for (const id of ["health-rows", "snapshot-rows", "account-activity-meta", "balances-rows", "readmodels-rows", "events-meta"]) {
     rows($(id), [["状态", "未连接"]]);
   }
+  fillTable("account-activity-events-table", { ok: true, body: [] });
+  $("account-activity-prev").disabled = true;
+  $("account-activity-next").disabled = true;
+  $("account-activity-account-id").value = "";
+  $("account-activity-venue-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -3385,9 +3775,37 @@ window.addEventListener("DOMContentLoaded", () => {
   if (seeded) $("api-base").value = seeded;
   $("connect").addEventListener("click", connect);
   $("disconnect").addEventListener("click", disconnect);
+  $("account-activity-prev").addEventListener("click", () => {
+    const cursor = state.activityPage?.previous_before;
+    if (cursor === null || cursor === undefined) return;
+    state.activityAfter = null;
+    state.activityBefore = cursor;
+    void refreshAccountActivity();
+  });
+  $("account-activity-next").addEventListener("click", () => {
+    const cursor = state.activityPage?.next_after;
+    if (cursor === null || cursor === undefined) return;
+    state.activityBefore = null;
+    state.activityAfter = cursor;
+    void refreshAccountActivity();
+  });
+  $("account-activity-load").addEventListener("click", () => {
+    state.activityAfter = null;
+    state.activityBefore = null;
+    state.activitySelectionDirty = false;
+    void refreshAccountActivity();
+  });
+  $("account-activity-account-id").addEventListener("input", () => {
+    state.activitySelectionDirty = true;
+  });
+  $("account-activity-venue-id").addEventListener("input", () => {
+    state.activitySelectionDirty = true;
+  });
   $("control-form").addEventListener("submit", submitCommand);
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
+  $("product-capability-load").addEventListener("click", loadProductCapabilityCatalog);
+  $("product-capability-query").addEventListener("click", queryProductCapability);
   $("research-strategy").addEventListener("change", (event) => {
     try {
       selectResearchStrategy(event.target.value);
@@ -3451,8 +3869,14 @@ window.addEventListener("DOMContentLoaded", () => {
     const events = researchReportState.latestArtifactView?.events;
     if (events) loadResearchEventPage(Number(events.offset ?? 0) + (events.rows?.length ?? 0));
   });
-  $("research-account-event-prev").addEventListener("click", () => loadResearchAccountEventPage("previous"));
-  $("research-account-event-next").addEventListener("click", () => loadResearchAccountEventPage("next"));
+  $("research-account-event-prev").addEventListener("click", () => {
+    if (researchReportState.jointAccountReport) void loadResearchJointAccountEventPage("previous");
+    else void loadResearchAccountEventPage("previous");
+  });
+  $("research-account-event-next").addEventListener("click", () => {
+    if (researchReportState.jointAccountReport) void loadResearchJointAccountEventPage("next");
+    else void loadResearchAccountEventPage("next");
+  });
   $("research-account-event-instrument").addEventListener("change", resetResearchAccountEventInstrument);
   $("api-base").addEventListener("keydown", (event) => {
     if (event.key === "Enter") connect();

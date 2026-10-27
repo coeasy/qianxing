@@ -83,6 +83,7 @@ impl BarStrategy for BuyBoardLot {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }

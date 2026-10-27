@@ -20,8 +20,9 @@ metrics in Python. Install the ``qianxing`` wheel to use this namespace.
 ===================  ==============================================  ==================
 
 这一层（顶层命名空间）稳定导出常用接口，与 ``qianxing.app`` 的公开面**逐一相等**——
-不多导出、也不少导出。子层是它的**分层视图**：每一层的名字都取自这份名单，
-子层不另造私有名字。
+不多导出、也不少导出。子层以这份名单为主，另允许在分层验收名册中点名的层专用类型和
+呈现函数；例如策略协议类型留在 ``qianxing.strategy``，离线 HTML writer 留在
+``qianxing.reports``，不会因此扩张 ``qianxing`` 顶层稳定面。
 
 ``qianxing.ccxt`` / ``qianxing.ashare`` 是可选适配器的入口，装对应的 extra 才可用；
 ``import qianxing`` 与 ``import qianxing.core`` 在任何 extras 都没装的环境里都成立
@@ -95,6 +96,7 @@ from .app import (
     FundingRateEvent,
     ExperimentParameterRange,
     ExperimentParameterSpace,
+    CallbackParameterSpace,
     ExecutionCostSensitivityFoldDelta,
     ExecutionCostSensitivityNeighborResult,
     ExecutionCostSensitivityNeighborhoodResult,
@@ -129,7 +131,10 @@ from .app import (
     MultiMarketDepthExperimentCandidateResult,
     MultiMarketDepthExperimentRankedCandidate,
     MultiMarketExperimentCandidateResult,
+    MultiMarketExperimentFoldCandidateFailure,
+    MultiMarketExperimentFoldSearchReport,
     MultiMarketExperimentRankedCandidate,
+    MultiMarketExperimentSearchReport,
     RiskParityAssetSpec,
     RiskParitySpec,
     RiskParityResult,
@@ -199,6 +204,20 @@ from .app import (
     start_multi_account_joint_backtest,
     run_multi_account_depth_backtest,
     validate_dataset,
+    validate_strategy_execution_preflight_v1,
+    read_depth_run_report_v1,
+    read_provider_depth_run_report_v1,
+    read_provider_run_report_v1,
+    read_multi_account_joint_report_v1,
+    read_multi_account_report_v1,
+    read_multi_leg_report_facts_v1,
+    read_multi_leg_research_report_v1,
+    read_multi_leg_event_report_page_v1,
+    read_multi_market_event_report_page_v1,
+    read_multi_market_depth_event_report_page_v1,
+    read_multi_market_depth_research_report_v1,
+    read_multi_market_research_report_v1,
+    read_run_report_v1,
     verify_run,
     verify_depth_run,
 )
@@ -268,6 +287,7 @@ __all__ = [
     "FundingRateEvent",
     "ExperimentParameterRange",
     "ExperimentParameterSpace",
+    "CallbackParameterSpace",
     "ExecutionCostSensitivityFoldDelta",
     "ExecutionCostSensitivityNeighborResult",
     "ExecutionCostSensitivityNeighborhoodResult",
@@ -302,7 +322,10 @@ __all__ = [
     "MultiMarketDepthExperimentCandidateResult",
     "MultiMarketDepthExperimentRankedCandidate",
     "MultiMarketExperimentCandidateResult",
+    "MultiMarketExperimentFoldCandidateFailure",
+    "MultiMarketExperimentFoldSearchReport",
     "MultiMarketExperimentRankedCandidate",
+    "MultiMarketExperimentSearchReport",
     "RiskParityAssetSpec",
     "RiskParitySpec",
     "RiskParityResult",
@@ -372,6 +395,20 @@ __all__ = [
     "start_multi_account_joint_backtest",
     "run_multi_account_depth_backtest",
     "validate_dataset",
+    "validate_strategy_execution_preflight_v1",
+    "read_run_report_v1",
+    "read_depth_run_report_v1",
+    "read_provider_run_report_v1",
+    "read_provider_depth_run_report_v1",
+    "read_multi_account_joint_report_v1",
+    "read_multi_account_report_v1",
+    "read_multi_leg_report_facts_v1",
+    "read_multi_leg_research_report_v1",
+    "read_multi_leg_event_report_page_v1",
+    "read_multi_market_event_report_page_v1",
+    "read_multi_market_depth_event_report_page_v1",
+    "read_multi_market_depth_research_report_v1",
+    "read_multi_market_research_report_v1",
     "verify_run",
     "verify_depth_run",
 ]
@@ -379,4 +416,4 @@ __all__ = [
 try:
     __version__ = version("qianxing")
 except PackageNotFoundError:
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"

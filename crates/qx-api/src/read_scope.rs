@@ -11,9 +11,10 @@ use crate::admission::query_param;
 /// 它们在分派前共用 `ApiService::missing_projection_response` 那道 404（V13 R2 #191）；
 /// `/account/snapshot/diff` 不在列——它的定位符是 `base_hash`，投影缺失时
 /// `409 snapshot_base_not_found` 说的就是"这份基线不在这条链上"，不是账户不存在。
-pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 7] = [
+pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 8] = [
     "/account/snapshot",
     "/account/snapshot/envelope",
+    "/account/activity",
     "/account/orders",
     "/account/positions",
     "/account/balances",
@@ -43,10 +44,14 @@ pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/
 
 /// 带键读面认的两把收窄键。
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
+/// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page.
+const ACCOUNT_ACTIVITY_PARAMS: [&str; 5] = ["account_id", "venue_id", "after", "before", "limit"];
 /// `/events` 与 `/events/live` 在收窄键之外还认游标。
 const EVENT_SCOPED_PARAMS: [&str; 3] = ["account_id", "venue_id", "after"];
 /// `/account/snapshot/diff` 的定位符是基线哈希，不是收窄键。
 const SNAPSHOT_DIFF_PARAMS: [&str; 3] = ["base_hash", "account_id", "venue_id"];
+/// `/account/portfolio` 收窄到显式配置的组合分组。
+const PORTFOLIO_FILTER_PARAMS: [&str; 2] = ["portfolio_id", "reporting_currency"];
 /// 账簿流水只有 `account_id` 一列。
 const LEDGER_FILTER_PARAMS: [&str; 1] = ["account_id"];
 /// 对账报告两条都有，可以单独按 venue 收窄。
@@ -61,6 +66,8 @@ pub(crate) fn accepted_query_params(route: &str) -> Option<&'static [&'static st
         return Some(params);
     }
     match route {
+        "/account/activity" => Some(&ACCOUNT_ACTIVITY_PARAMS),
+        "/account/portfolio" => Some(&PORTFOLIO_FILTER_PARAMS),
         "/events" | "/events/live" => Some(&EVENT_SCOPED_PARAMS),
         "/account/snapshot/diff" => Some(&SNAPSHOT_DIFF_PARAMS),
         route if KEYLESS_READ_ROUTES.contains(&route) => Some(&[]),

@@ -637,7 +637,7 @@ def build_script_parity_check() -> None:
 # pip，而两条脚本都是先跑完 cargo 构建、在最后一步 `pip wheel` 才炸；`.ps1` 里以中文结尾的注释行还会
 # 被 Windows PowerShell 5.1 按 ANSI 码页读，行尾字节吞掉换行、把下一行代码并进注释 —— 探测因此从不执行。
 def wheel_builder_check() -> None:
-    """两个 wheel 构建脚本都得先探测 pip，且 .ps1 的行尾要能被 ANSI 码页读法安全解析。"""
+    """两个构建入口先探测工具，并且 wheel 不扫描/收录工作树临时产物。"""
     ps1 = ROOT / "tools" / "build_python_wheel.ps1"
     sh = ROOT / "tools" / "build_python_wheel.sh"
     for path in (ps1, sh):
@@ -650,6 +650,22 @@ def wheel_builder_check() -> None:
             f"{path.name} 在 PEP 517 wheel 构建前先检查 pip 和 maturin",
             f"pip/maturin/wheel 位置 {probe}/{maturin}/{build}：缺任一构建器会晚到 wheel 阶段才失败",
         )
+    pyproject = (ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8")
+    excluded_worktree_artifacts = (
+        '"**/.tmp/**"',
+        '"**/.codex-tmp-build/**"',
+        '"**/.pytest_cache/**"',
+        '"**/.ruff_cache/**"',
+        '"**/.uv-cache/**"',
+        '"build/**"',
+        '"runs/**"',
+    )
+    missing_excludes = [pattern for pattern in excluded_worktree_artifacts if pattern not in pyproject]
+    check(
+        not missing_excludes,
+        "Python wheel 排除工作树临时目录、缓存、构建输出和回测运行产物",
+        f"[tool.maturin].exclude 缺少 {missing_excludes}",
+    )
     raw = ps1.read_bytes()
     tail_rows = [i for i, line in enumerate(raw.splitlines(), 1) if line and line[-1] >= 0x80]
     check(
@@ -1621,12 +1637,25 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::run_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场同步自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
     "qx-sdk::run_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 多市场同步策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-sdk::run_multi_market_experiment_with_parameter_factory": "qx-sdk Rust 多市场同步任意 callback 参数网格入口；外部 SDK 消费者提供逐候选参数化 Strategy factory",
+    "qx-sdk::start_multi_market_experiment_with_parameter_factory": "qx-sdk Rust 可取消多市场任意 callback 参数网格入口；外部 SDK 消费者提供逐候选参数化 Strategy factory",
     "qx-sdk::run_multi_market_depth_experiment_with_strategy_factory": "qx-sdk Rust 同步多市场 L2 策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_market_depth_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场 L2 策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::run_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 同步多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-xingban::from_exact": "外部深度行情适配器可用精确价格/数量构造 L2 档位；1e-9 兼容投影和精度校验由构造器统一完成",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
+    "qx-adapter::restore_order": "CcxtProcessVenue 的外部集成恢复便捷入口；生产 worker 使用带持久费用状态的完整恢复入口",
+    "qx-adapter::restore_order_with_fee_baseline": "CcxtProcessVenue 的外部集成恢复便捷入口；生产 worker 使用带成交去重状态的完整恢复入口",
+    "qx-zhenlu::record_accepted": "SpreadOrderGroup 公布给外部执行协调器的内存状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约以保证重放幂等",
+    "qx-zhenlu::record_cancelled": "SpreadOrderGroup 公布给外部执行协调器的内存状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约以保证重放幂等",
+    "qx-zhenlu::record_compensation_fill": "SpreadOrderGroup 兼容 1e9 精度的公开补偿进度 API；新集成应优先使用 record_compensation_fill_exact，仓内持久化 host 使用订单快照",
+    "qx-zhenlu::record_fill": "SpreadOrderGroup 公布给外部执行协调器的内存成交归约 API；仓内持久化 host 使用权威 OMS/EventLog 快照归约",
+    "qx-zhenlu::record_rejected": "SpreadOrderGroup 公布给外部执行协调器的内存状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约以保证重放幂等",
+    "qx-zhenlu::record_unknown": "SpreadOrderGroup 公布给外部执行协调器的未知结果/对账状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约",
+    "qx-zhenlu::on_quote": "PaperVenue 对外兼容便捷入口；内部生产 host 使用 try_on_quote 保留精度和报价校验错误",
+    "qx-service::project_api_account_snapshot": "兼容服务 API：将 portfolio_id 固定为 default 的公开快照投影入口",
     # 断链：能力已实现、生产侧尚未接线；删除等于把缺口藏起来（任务号见理由）。
     "qx-factor::materialize": "任务 #119：因子物化链与 finkit 绑定未接 CLI 生产装配",
     "qx-factor::materialize_incremental": "任务 #119",
@@ -1651,7 +1680,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     # 而「允许清单里的条目仍然没有生产读者」那颗判据要求条目随读者出现而退场。
     # 只剩测试读者的库内 API：用例本身就是回归证明，删面等于删证据。
     "qx-protocol::upsert_balance": "快照单源用例的唯一写入端",
-    "qx-protocol::upsert_balances": "快照单源用例的唯一批量写入端",
     "qx-strategy::try_push_frame": "跨语言环：Rust 只读、worker 写；此入口是 Rust 侧往返证明",
     "qx-storage::for_checkpoint": "跨后端投影原子性用例的唯一构造端",
     # 风控同源契约用例 (a)(b) 两条腿：删掉就等于放弃"三条入口必须一致"的证明面。
@@ -1723,7 +1751,11 @@ def _production_lines(text: str) -> list[str]:
 
 
 def _strip_cfg_test_items(text: str) -> list[str]:
-    """按花括号平衡剥掉 `#[cfg(test)]` 标注的整项，其余每一行原样保留。"""
+    """按 Rust 代码中的花括号平衡剥掉 `#[cfg(test)]` 标注的整项。
+
+    字符串、字符字面量与注释里的花括号不是语法边界。之前直接统计原始字符会被测试
+    fixture 中的 `"}"` 或 `r#"{"#` 提前/延后闭合，进而把后续生产代码也误删。
+    """
     lines = text.split("\n")
     kept: list[str] = []
     index = 0
@@ -1731,18 +1763,133 @@ def _strip_cfg_test_items(text: str) -> list[str]:
         line = lines[index]
         if line.strip() == CFG_TEST_MARKER:
             index += 1
-            while index < len(lines) and "{" not in lines[index] and ";" not in lines[index]:
-                index += 1
-            depth = 0
+            lexer = {"mode": "code", "block_depth": 0, "raw_hashes": 0}
+            opening_line = ""
+            opening_at = -1
             while index < len(lines):
-                depth += lines[index].count("{") - lines[index].count("}")
-                index += 1
-                if depth <= 0:
+                code = _rust_code_for_brace_count(lines[index], lexer)
+                opening_at = next(
+                    (position for position, char in enumerate(code) if char in "{;"),
+                    -1,
+                )
+                if opening_at >= 0:
+                    opening_line = code
                     break
+                index += 1
+            if opening_at < 0:
+                break
+            if opening_line[opening_at] == ";":
+                index += 1
+                continue
+            depth = opening_line[opening_at:].count("{") - opening_line[opening_at:].count("}")
+            index += 1
+            while index < len(lines) and depth > 0:
+                code = _rust_code_for_brace_count(lines[index], lexer)
+                depth += code.count("{") - code.count("}")
+                index += 1
             continue
         kept.append(line)
         index += 1
     return kept
+
+
+RUST_RAW_STRING_START_RE = re.compile(r'(?:b|c)?r(#+)?"')
+RUST_CHAR_LITERAL_RE = re.compile(r"'(?:\\.|[^'\\])'")
+
+
+def _rust_code_for_brace_count(line: str, lexer: dict[str, object]) -> str:
+    """Blank Rust comments and literals while preserving code positions for delimiter scans."""
+    output = list(line)
+    mode = str(lexer["mode"])
+    block_depth = int(lexer["block_depth"])
+    raw_hashes = int(lexer["raw_hashes"])
+    index = 0
+    while index < len(line):
+        char = line[index]
+        next_char = line[index + 1] if index + 1 < len(line) else ""
+        if mode == "line_comment":
+            for position in range(index, len(line)):
+                output[position] = " "
+            break
+        if mode == "block_comment":
+            output[index] = " "
+            if char == "/" and next_char == "*":
+                output[index + 1] = " "
+                block_depth += 1
+                index += 2
+                continue
+            if char == "*" and next_char == "/":
+                output[index + 1] = " "
+                block_depth -= 1
+                index += 2
+                if block_depth == 0:
+                    mode = "code"
+                continue
+            index += 1
+            continue
+        if mode == "raw_string":
+            output[index] = " "
+            if char == '"':
+                close = '"' + ("#" * raw_hashes)
+                if line.startswith(close, index):
+                    for position in range(index, min(index + len(close), len(line))):
+                        output[position] = " "
+                    index += len(close)
+                    mode = "code"
+                    continue
+            index += 1
+            continue
+        if mode in {"string", "char"}:
+            output[index] = " "
+            if char == "\\":
+                if index + 1 < len(line):
+                    output[index + 1] = " "
+                index += 2
+                continue
+            if (mode == "string" and char == '"') or (mode == "char" and char == "'"):
+                mode = "code"
+            index += 1
+            continue
+
+        # Code mode.
+        if char == "/" and next_char == "/":
+            output[index] = output[index + 1] = " "
+            mode = "line_comment"
+            index += 2
+            continue
+        if char == "/" and next_char == "*":
+            output[index] = output[index + 1] = " "
+            mode = "block_comment"
+            block_depth = 1
+            index += 2
+            continue
+        raw_start = (
+            RUST_RAW_STRING_START_RE.match(line, index) if char in "bcr" else None
+        )
+        if raw_start is not None:
+            raw_hashes = len(raw_start.group(1) or "")
+            width = len(raw_start.group(0))
+            for position in range(index, index + width):
+                output[position] = " "
+            mode = "raw_string"
+            index += width
+            continue
+        if char == '"':
+            output[index] = " "
+            mode = "string"
+            index += 1
+            continue
+        if char == "'" and RUST_CHAR_LITERAL_RE.match(line, index):
+            output[index] = " "
+            mode = "char"
+            index += 1
+            continue
+        index += 1
+
+    lexer["mode"] = "code" if mode == "line_comment" else mode
+    lexer["block_depth"] = block_depth
+    lexer["raw_hashes"] = raw_hashes
+    return "".join(output)
 
 
 def production_text(text: str) -> str:
@@ -1862,6 +2009,7 @@ STRATEGY_INTENT_BRIDGE_CASE_FILE = "python/tests/test_strategy_contract.py"
 STRATEGY_INTENT_BRIDGE_CASES = (
     "test_intent_carries_the_three_derivative_fields_rust_emits",
     "test_intent_rejects_derivative_fields_rust_would_reject",
+    "test_exact_decimal_intent_round_trip_and_rejects_mixed_scales",
 )
 
 
@@ -2212,11 +2360,66 @@ def strategy_intent_three_language_check() -> None:
         "Python 意图能表达多腿的保证金/持仓模式与杠杆（Rust 写出的键读得回来）",
         "缺任一字段则 Rust 自己产出的 intent 会被 Python 判成未知键",
     )
+    app_builder = production_text(
+        (ROOT / "crates/qx-app/src/strategy_order.rs").read_text(encoding="utf-8")
+    )
+    check(
+        all(
+            token in rust_validation
+            for token in ("qty_exact", "limit_price_exact", "ExactDecimal::parse")
+        )
+        and all(
+            token in python_text
+            for token in ("qty_exact", "limit_price_exact", "_validate_positive_exact_decimal")
+        )
+        and all(
+            token in app_builder
+            for token in (
+                "qty_exact",
+                "limit_price_exact",
+                "ExactOrderAmounts",
+                "validate_exact_order_precision",
+            )
+        ),
+        "Python/外部策略的精确数量/限价经 Rust 契约校验、冻结步长检查并构造成 ExactOrderAmounts",
+        "策略意图字段不能停在 wire/schema：Rust must parse exact strings and carry them to the core Order",
+    )
     cases = (ROOT / STRATEGY_INTENT_BRIDGE_CASE_FILE).read_text(encoding="utf-8")
     check(
         all(f"def {name}(" in cases for name in STRATEGY_INTENT_BRIDGE_CASES),
-        "跨语言意图往返用例在位：三字段随 Rust 产出可读回、Rust 拒绝的取值 Python 也拒绝",
+        "跨语言意图回归在位：衍生品字段、精确十进制与 raw/exact 混用拒绝均有 Python 用例",
         f"缺用例 {[name for name in STRATEGY_INTENT_BRIDGE_CASES if f'def {name}(' not in cases]}",
+    )
+    c_strategy_header = _text_or_empty(ROOT / "cpp/include/qianxing_strategy.h")
+    cpp_sample = _text_or_empty(ROOT / "cpp/examples/momentum_strategy.cpp")
+    c_api = production_text(_text_or_empty(ROOT / "crates/qx-strategy/src/c_api.rs"))
+    policy_loader = _fn_body(c_api, "fn order_policy_for_intent(")
+    policy_merge = _fn_body(c_api, "fn merge_order_policy(")
+    cpp_host_test = _text_or_empty(ROOT / "crates/qx-strategy/tests/cpp_plugin_host.rs")
+    policy_schema = json.loads(
+        _text_or_empty(ROOT / "schemas/c-strategy-order-policy-v1.json")
+    )
+    c_policy_fields = {"margin_mode", "position_mode", "leverage"}
+    policy_schema_fields = set(policy_schema.get("properties", {}))
+    cpp_policy_round_trip = (
+        "qx_strategy_get_order_policy_v1" in c_strategy_header
+        and "qx_strategy_get_order_policy_v1" in cpp_sample
+        and all(field in cpp_sample for field in c_policy_fields)
+        and c_policy_fields <= policy_schema_fields
+        and all(
+            f"payload.{field}" in policy_loader
+            or f"extension.{field}" in policy_merge
+            for field in c_policy_fields
+        )
+        and all(
+            f"assert_eq!(order_policy.{field}," in cpp_host_test
+            for field in c_policy_fields
+        )
+    )
+    check(
+        cpp_policy_round_trip,
+        "C++ 策略经稳定 C ABI 可选 policy 扩展传递 margin_mode/position_mode/leverage，Rust 动态宿主逐字段读回",
+        f"header/sample/schema/Rust loader+merge/integration assertions do not jointly cover {sorted(c_policy_fields)}",
     )
 
 
@@ -2224,10 +2427,21 @@ def gate_source_truncation_check() -> None:
     """门禁自己不许再按"第一次 `#[cfg(test)]`"截断源文件（V12 §16 的元判据）。"""
     self_source = Path(__file__).read_text(encoding="utf-8")
     naive = self_source.count(NAAIVE_TRUNCATION)
+    lexical_fixture = '''pub fn before() {}
+#[cfg(test)]
+mod tests {
+    const TEXT: &str = "} {"; // }
+    fn nested() { let raw = r#"{ }"#; }
+}
+pub fn after() { sink(); }'''
+    lexical_result = production_text(lexical_fixture)
     check(
-        naive == 0,
+        naive == 0
+        and "pub fn before()" in lexical_result
+        and "pub fn after()" in lexical_result
+        and "const TEXT" not in lexical_result,
         "门禁读生产文本一律经 production_text 按项剥测试代码，不再按第一次 cfg(test) 截断",
-        f"仍有 {naive} 处 `{NAAIVE_TRUNCATION}`：中途一个测试专用属性就能让后面的生产代码从判据里消失",
+        f"仍有 {naive} 处 `{NAAIVE_TRUNCATION}`，或测试块里的字符串/注释花括号破坏了剥离边界",
     )
 
 
@@ -3770,7 +3984,8 @@ def replay_kernel_check() -> None:
     )
     bar_cases = (ROOT / REPLAY_BAR_CASE_FILE).read_text(encoding="utf-8")
     check(
-        bar_cases.count("assert_replay_matches(") == 5
+        bar_cases.count("fn assert_replay_matches(") == 1
+        and bar_cases.count("assert_replay_matches(&report);") >= 4
         and "assert_eq!(replayed.entries(), report.ledger.entries());" in bar_cases
         and "ReplayVerifier::verify(report.event_log.events(), &unbacked)" in bar_cases,
         "Bar 链逐条比对重放账簿，并留有一条「凭空多记」的反向证据",
@@ -4173,8 +4388,11 @@ def fill_model_single_dispatch_check() -> None:
         and "pub struct BarVolumeParticipationLimit" in fill_trait
         and "participation_bps == 0 || participation_bps > 10_000" in fill_trait
         and "volume_limit_bar_ts" in venue
-        and "volume_used_raw" in venue
-        and "q.min(remaining)" in venue
+        and "volume_used_exact" in venue
+        and "checked_cmp(capacity)" in venue
+        and "qty = capacity;" in venue
+        and "self.volume_used_exact.checked_add(qty)" in venue
+        and "self.volume_used_exact = used_next;" in venue
         and "BarVolumeParticipationLimit::new" in app_execution
         and "max_bar_volume_participation_bps" in runtime_strategy,
         "Bar FillModel 与 L1/L2 OrderBook 模型边界、双 dispatch 与能力理由有明文登记并受单点守卫",
@@ -4245,6 +4463,8 @@ FRAME_CONTRACT_CASES = (
     "a_written_frame_declares_the_version_its_readers_honour",
     "a_frame_from_a_newer_contract_version_is_refused",
     "a_versionless_document_still_reads_as_legacy",
+    "v2_round_trip_preserves_sub_nano_ohlcv_and_resampling_precision",
+    "v2_rejects_mismatched_legacy_projection",
 )
 
 
@@ -4270,30 +4490,46 @@ def bar_frame_contract_check() -> None:
         versions[label] = int(found.group(1)) if found else -1
     # `qx-data` 的常量是 `DATA_SCHEMA_VERSION` 的别名，本身不印数字，所以按存在性计入。
     versions["qx-data"] = (
-        1 if "pub const BAR_FRAME_SCHEMA_VERSION: u32 = DATA_SCHEMA_VERSION;" in provider else -1
+        2 if "pub const BAR_FRAME_SCHEMA_VERSION: u32 = DATA_SCHEMA_VERSION;" in provider else -1
     )
     check(
         len(versions) == 4
-        and all(value == 1 for value in versions.values())
+        and all(value == 2 for value in versions.values())
         and '"{{\\"schema_version\\":{},\\"instrument\\":' in writer
-        and "wire.schema_version > BAR_FRAME_JSON_SCHEMA_VERSION" in writer,
-        "BarFrame 的三处契约版本常量同为一个数字，写侧把它印成文档第一格、读侧对更高版本 fail closed",
-        f"版本号 {versions}",
+        and "schema_version > BAR_FRAME_JSON_SCHEMA_VERSION" in writer
+        and "self.exact_ohlcv.is_some() { 2 } else { 1 }" in writer,
+        "BarFrame Rust/Python 读侧共同支持 v2、raw-only 写 v1、带精确 OHLCV 写 v2，并对未来版本 fail closed",
+        f"最高版本号 {versions}",
     )
     rust_keys: list[str] = []
-    literal = re.search(
-        r'pub fn to_json\(&self\) -> String \{\s*format!\(\s*"((?:[^"\\]|\\.)*)"', writer
+    writer_method = _fn_body(writer, "pub fn to_json(&self) -> String {")
+    format_literals = [
+        match.group(1)
+        for match in re.finditer(r'format!\(\s*"((?:[^"\\]|\\.)*)"', writer_method)
+    ]
+    primary_literal = next(
+        (literal for literal in format_literals if "schema_version" in literal), None
     )
-    if literal:
-        rust_keys = re.findall(r'\\"([a-z_]+)\\"', literal.group(1))
+    if primary_literal:
+        rust_keys = re.findall(r'\\"([a-z_]+)\\"', primary_literal)
     fields = re.search(r"BAR_FRAME_JSON_FIELDS = \(([^)]*)\)", bridge, re.DOTALL)
     python_keys = re.findall(r'"([a-z_]+)"', fields.group(1)) if fields else []
+    base_keys = {"schema_version", *python_keys}
+    sidecar_key_is_emitted = any(
+        re.search(r'\\"exact_ohlcv\\"', literal) for literal in format_literals
+    )
+    exact_sidecar_is_versioned = (
+        sidecar_key_is_emitted
+        and "exact_json" in writer_method
+        and primary_literal is not None
+        and "{}{}" in primary_literal
+    )
     check(
-        len(rust_keys) == len(python_keys) + 1
-        and rust_keys[:1] == ["schema_version"]
-        and set(rust_keys) == {"schema_version", *python_keys},
-        "写侧印出的键集合 = Python v1 严格模式允许的键集合（少一格就会被判未知键）",
-        f"Rust {rust_keys}；Python {python_keys}",
+        rust_keys[:1] == ["schema_version"]
+        and set(rust_keys) == base_keys
+        and (not sidecar_key_is_emitted or exact_sidecar_is_versioned),
+        "写侧基础键与 Python v1 严格模式一致，精确 OHLCV 只作为 v2 侧车输出",
+        f"Rust {rust_keys}；Python v1 {python_keys}；v2 侧车 {'已识别' if exact_sidecar_is_versioned else '缺失'}",
     )
     cases = (ROOT / FRAME_CONTRACT_TEST_FILE).read_text(encoding="utf-8")
     missing_cases = [name for name in FRAME_CONTRACT_CASES if f"fn {name}()" not in cases]
@@ -5314,7 +5550,7 @@ SCHEDULER_WORKER_FILE = "crates/qx-cli/src/workers/scheduler_worker.rs"
 STRATEGY_WORKER_FILE = "crates/qx-cli/src/workers/strategy_worker.rs"
 # `retry_run` 是公布入口、`retry_run_at` 是它的时间参数版；两条都只被定义文件自己调用。
 SCHEDULER_RETRY_ENTRIES = ("retry_run", "retry_run_at")
-SCHEDULER_FINISH_CALL = "finish_run_with_code(queued.run.run_id,true,None,"
+SCHEDULER_FINISH_CALL = "complete_strategy_job_run("
 
 
 def scheduler_retry_honesty_check() -> None:
@@ -5360,10 +5596,14 @@ def scheduler_retry_honesty_check() -> None:
         "deploy/README.md 的 Scheduler 段落缺「不会自动重跑」或「结果码不进 `JobRun`」口径",
     )
     worker = production_text((ROOT / STRATEGY_WORKER_FILE).read_text(encoding="utf-8"))
+    scheduler_owner = production_text((ROOT / "crates/qx-cli/src/scheduler.rs").read_text(encoding="utf-8"))
     check(
-        "".join(worker.split()).count(SCHEDULER_FINISH_CALL) == 1,
-        "Strategy worker 的成功收口只交终态，不再把结果码当作 error_code 传给 JobRun",
-        f"生产收口形状改变：去空白文本里应有恰好 1 处 {SCHEDULER_FINISH_CALL}",
+        "".join(worker.split()).count(SCHEDULER_FINISH_CALL) == 2
+        and "".join(scheduler_owner.split()).count(
+            "finish_run_with_code(run_id,true,None,finished_ts)"
+        ) == 1,
+        "Strategy worker 的普通成功与 checkpoint 崩溃恢复共用成功收口 helper，结果码不进入 JobRun",
+        "两个成功分支必须调用同一 helper，且 helper 只以 success=true/error_code=None 收口一次",
     )
     # 零构造者的档位：`Pending` 与 `Paused` 全仓没有任何构造点与入边（`start_run` 直接建
     # `Running`，暂停走的是 `StrategyState`），只给每个 `match` 留一条永不为真的臂。
@@ -5465,18 +5705,20 @@ def snapshot_money_honesty_check() -> None:
         f"读模型又把压在持仓上的那段钱说成可自由花掉：{equity_copy}",
     )
     equity_start = reader.find("snapshot.equity_raw =")
+    equity_end = reader.find("snapshot.available_raw =", equity_start)
     equity_stmt = (
-        reader[equity_start : reader.find(";", equity_start) + 1]
+        reader[equity_start:equity_end]
         if equity_start >= 0
         else ""
     )
     check(
         reader.count("snapshot.equity_raw =") == 1
+        and "snapshot.equity_raw = if single_quote_spot {" in reader
+        and "account_has_open_positions" in equity_stmt
         and "equity_for(" in equity_stmt
-        and "cash_for" not in equity_stmt
-        and "unwrap_or" not in equity_stmt,
-        "权益只在现金与每一条持仓的标记价都读得出时发布；算不出即缺席，不退回纯现金（V11 Q70）",
-        f"权益语句被改回兜底写法或算点丢失：{equity_stmt.strip()!r}",
+        and "} else {\n        None\n    };" in equity_stmt,
+        "账户标量权益只对可证明的单报价现货口径发布；多标的/多币种与无法估值的状态保持缺席",
+        f"标量权益的限制或算点丢失：{equity_stmt.strip()!r}",
     )
     check(
         reader.count("snapshot.available_raw = Some(") == 1
@@ -5485,12 +5727,15 @@ def snapshot_money_honesty_check() -> None:
         "可用资金取本条快照记账的那一本结算账簿现金",
         "available 的算点丢失或换成了别的口径",
     )
+    reader_tight = re.sub(r"\s+", "", reader)
     check(
-        reader.count("snapshot.fees_raw = Some(fees_raw);") == 1
-        and reader.count("fill.fee_raw.checked_add(fees_raw)") == 1
-        and reader.count("snapshot.fees_raw = Some(0)") == 0,
-        "账户费用合计由本快照的逐笔成交费用加出，且溢出即拒而不是回绕",
-        "费用算点丢失、被写回常量 0，或改用了会回绕的加法",
+        reader.count("snapshot.fees_by_currency_raw = fees_by_currency_raw;") == 1
+        and "fees_by_currency_raw.entry(currency.clone())" in reader_tight
+        and "currency_total=currency_total.checked_add(fee)" in reader_tight
+        and "fees_raw=fees_raw.checked_add(fee)" in reader_tight
+        and "fees_in_one_currency.then_some(fees_raw)" in reader_tight,
+        "账户费用按币种分别 checked_add；无币种标签的标量不跨币种合计",
+        "费用币种映射、溢出保护或混币标量缺席规则丢失",
     )
     # 整文件扫描，不在 `#[cfg(test)]` 处截断：被截断的读模型尾部正是这些赋值会落下的地方。
     fabricated = {
@@ -5803,14 +6048,17 @@ def api_lock_fail_closed_check() -> None:
 # 版本号有三处说法（Rust 常量 / 对外公布的契约文本 / Python 桥），必须同号，否则
 # "只接受契约声明的 const"这句话本身就是假话。公布的那份文本自 V12 审计第三遍起只有
 # `schemas/account-snapshot-v1.json` 一份——crate 里过去另手写了一份，两份的字段约束不一致。
-SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v1.json"
+SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v3.json"
 SNAPSHOT_CONTRACT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 # 两道版本闸门各守一个读入口（`from_json` 的稳定 JSON 与 `from_wire_json` 的 wire JSON）；
 # `validate()` 只做"这一份文档自洽吗"，不放闸门 —— 自洽的跨版本文档必须拿到"版本不受支持"
 # 这句话，而不是"某个字段缺失"，两件事实得分开说（V12 R2）。少一道闸门就等于放行。
 SNAPSHOT_VERSION_GATES = (
-    "if top_schema != ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64 {",
-    "if snapshot.header.schema_version != ACCOUNT_SNAPSHOT_SCHEMA_VERSION {",
+    "pub const ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION: u32 = 1;",
+    "const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;",
+    "top_schema < MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64",
+    "top_schema > ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64",
+    "(MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION..=ACCOUNT_SNAPSHOT_SCHEMA_VERSION)",
 )
 # `validate()` 里不得出现任何版本等值判断：闸门只放在两个读入口，"自洽体检"与
 # "认不认这个版本"是两件事实，各自那句话要能单独说清（V12 R2）。
@@ -5819,7 +6067,7 @@ SNAPSHOT_RUST_VERSION = re.compile(
     r"pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = (\d+);"
 )
 SNAPSHOT_SCHEMA_CONST = re.compile(r'"schema_version"\s*:\s*\{\s*"const"\s*:\s*(\d+)\s*\}')
-SNAPSHOT_BRIDGE_VERSION = re.compile(r'value\["schema_version"\]\s*!=\s*(\d+)')
+SNAPSHOT_BRIDGE_VERSIONS = re.compile(r'value\["schema_version"\]\s*not in\s*\(([^)]+)\)')
 # header 那份副本：缺席才按顶层补写，声明了就必须读得成与顶层同号的无符号整数。
 SNAPSHOT_HEADER_NORMALIZATION = (
     'match header.get("schema_version") {',
@@ -6017,9 +6265,9 @@ def snapshot_contract_version_check() -> None:
         and all(protocol.count(needle) == 1 for needle in SNAPSHOT_VERSION_GATES)
         and protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK) == 0
         and protocol.count("self.header.schema_version == 0") == 1,
-        "已知版本常量声明一处，两个读入口各有一道常量闸门，validate 只做自洽体检",
+        "当前版本与 legacy 下界各有单一声明，两个读入口只接受 v1..v2，validate 只做自洽体检",
         f"常量 {len(SNAPSHOT_RUST_VERSION.findall(protocol))} 处、"
-        f"闸门在位 {[protocol.count(needle) for needle in SNAPSHOT_VERSION_GATES]}（期望 [1, 1]）、"
+        f"范围闸门在位 {[protocol.count(needle) for needle in SNAPSHOT_VERSION_GATES]}（期望全为 1）、"
         f"validate 里的等值判断 {protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK)}（期望 0）",
     )
     declared = [int(v) for v in SNAPSHOT_RUST_VERSION.findall(protocol)]
@@ -6029,24 +6277,27 @@ def snapshot_contract_version_check() -> None:
             (ROOT / SNAPSHOT_CONTRACT_REPO_FILE).read_text(encoding="utf-8")
         )
     ]
-    bridge = [
-        int(v)
-        for v in SNAPSHOT_BRIDGE_VERSION.findall(
-            (ROOT / SNAPSHOT_CONTRACT_BRIDGE_FILE).read_text(encoding="utf-8")
-        )
-    ]
+    bridge_match = SNAPSHOT_BRIDGE_VERSIONS.search(
+        (ROOT / SNAPSHOT_CONTRACT_BRIDGE_FILE).read_text(encoding="utf-8")
+    )
+    bridge = (
+        [int(item.strip()) for item in bridge_match.group(1).split(",") if item.strip()]
+        if bridge_match
+        else []
+    )
     check(
-        len(declared) == 1 and len(repository) == 1 and len(bridge) == 1
-        and len({*declared, *repository, *bridge}) == 1,
-        "Rust 常量、公布契约与 Python 桥三处版本号同号，跨语言不会一个认一个不认",
-        f"Rust {declared} / 契约 {repository} / Python 桥 {bridge}",
+        len(declared) == 1
+        and repository == declared
+        and bridge == list(range(1, declared[0] + 1)),
+        "Rust 当前版本、v3 公布契约与 Python 支持范围一致，Python 同时保留 v1/v2 读取",
+        f"Rust {declared} / 契约 {repository} / Python 支持 {bridge}",
     )
     # 公布的那份契约只能有仓库这一份文本：V12 审计第三遍发现 crate 里另手写了一份，
     # 两份对 positions/orders/fills/transfers 的取值类型说法不同，一份能过另一份不能，
     # 而 deploy/README.md 宣称"同一份 schema"。手抄第二份的形态必须写不出来。
     code_only = without_line_comments(protocol)
     served_from_file = code_only.count(
-        'include_str!("../../../schemas/account-snapshot-v1.json")'
+        'include_str!("../../../schemas/account-snapshot-v3.json")'
     )
     check(
         served_from_file == 1 and not SNAPSHOT_SCHEMA_CONST.findall(code_only),
@@ -6230,7 +6481,7 @@ def position_money_honesty_check() -> None:
     core = production_text((ROOT / POSITION_CORE_FILE).read_text(encoding="utf-8"))
     wire = production_text((ROOT / POSITION_WIRE_FILE).read_text(encoding="utf-8"))
     protocol = production_text((ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8"))
-    ccxt = (ROOT / POSITION_CCXT_FILE).read_text(encoding="utf-8")
+    ccxt = production_text((ROOT / POSITION_CCXT_FILE).read_text(encoding="utf-8"))
     # 禁零与方向口径只能落在持仓函数上：余额侧的 `.unwrap_or(Money::ZERO)` 说的是
     # "这本账簿里没有这个币种"，那语义本来就是零。
     position_fn = ccxt[ccxt.find("pub fn ccxt_position_facts") :]
@@ -6589,18 +6840,19 @@ def reconcile_action_and_absence_check() -> None:
     check(
         verdict.count("pub fn status_action(") == 1
         and verdict.count("pub const fn filled_action(") == 1
-        and verdict.count("== VerdictAction::ManualReview") == 2
+        and verdict.count("pub fn exact_filled_action(") == 1
+        and verdict.count("== VerdictAction::ManualReview") == 4
         and verdict.count("can_transition_to") == 1,
-        "状态与数量两个维度的动作判据各只有一处定义，裁决本身只调用不另起比较",
-        f"定义 {[n for n in ('pub fn status_action(', 'pub const fn filled_action(') if verdict.count(n) != 1]}"
+        "状态、raw 数量与 exact 数量的动作判据各只有一处定义，裁决本身只调用不另起比较",
+        f"定义 {[n for n in ('pub fn status_action(', 'pub const fn filled_action(', 'pub fn exact_filled_action(') if verdict.count(n) != 1]}"
         f" / 裁决复用 {verdict.count('== VerdictAction::ManualReview')} 次 / 迁移判据 {verdict.count('can_transition_to')} 处",
     )
     check(
         "pub fn action(&self) -> VerdictAction" in adapter_prod
-        and all(name in adapter_prod for name in ("status_action", "filled_action"))
+        and all(name in adapter_prod for name in ("status_action", "filled_action", "exact_filled_action"))
         and "can_transition_to" not in adapter_prod
         and "> venue" not in adapter_prod,
-        "适配器把动作归类委托给 qx-genglu 的同一对判据，自己不重复比较状态或数量",
+        "适配器把动作归类委托给 qx-genglu 的状态/raw/exact 三条单一判据，自己不重复比较",
         "适配器里又长出第二份迁移/回退比较",
     )
     check(
@@ -6633,12 +6885,12 @@ LEASE_CALL_SITES = (
     ("crates/qx-cli/src/workers/strategy_worker.rs", ".available(lease_now)", ".available(now)"),
     (
         "crates/qx-cli/src/workers/strategy_worker.rs",
-        ".claim(queued.run.run_id,context.id(),lease_now,30)",
+        ".claim(queued.run.run_id,&strategy_lease_owner,lease_now,strategy_job_lease_seconds)",
         ".claim(queued.run.run_id,context.id(),now,30)",
     ),
     (
         "crates/qx-cli/src/workers/strategy_worker.rs",
-        ".ack_at(queued.run.run_id,context.id(),lease.fencing_token,lease_now)",
+        ".ack_at(queued.run.run_id,&strategy_lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
         ".ack_at(queued.run.run_id,context.id(),lease.fencing_token,now)",
     ),
     (
@@ -6751,10 +7003,54 @@ def lease_clock_domain_check() -> None:
         for path, ok, bad in LEASE_CALL_SITES
         if ok not in tight(path) or bad in tight(path)
     ]
+    strategy_lease_code = tight(LEASE_WORKERS_FILE)
+    strategy_lease_requirements = (
+        "letstrategy_lease_owner=strategy_job_lease_owner(&registered_id);",
+        "letmutlease=matchqueue.claim(queued.run.run_id,&strategy_lease_owner,lease_now,strategy_job_lease_seconds)",
+        "letfinalize_now=lease_clock(runtime_timestamp_ms());",
+        "letevaluation_lease_now=lease_clock(runtime_timestamp_ms());",
+        "letcommit_lease_now=lease_clock(runtime_timestamp_ms());",
+        "letfailure_lease_now=lease_clock(runtime_timestamp_ms());",
+        "queue.claim(queued.run.run_id,&strategy_lease_owner,commit_lease_now,strategy_job_lease_seconds)",
+        "queue.ack_at(queued.run.run_id,&strategy_lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
+        "ifstrategy_config.python_module.is_some(){Some(SandboxExecutionPolicy::from_env()?)}else{None}",
+        "execution_policy.as_ref().is_some_and(SandboxExecutionPolicy::sandbox_enabled)",
+        "strategy_config.python_timeout_ms.saturating_add(999)/1000",
+        "ifremote_strategy{240}else{0}",
+        ".saturating_add(60)",
+        ".max(30)",
+    )
+    if not all(term in strategy_lease_code for term in strategy_lease_requirements):
+        bad_units.append(f"{LEASE_WORKERS_FILE}: 策略租约 owner、fresh-time claim/ack 或请求/E2B 启动预算断链")
+    if strategy_lease_code.count("queue.claim(queued.run.run_id,&strategy_lease_owner,") < 5:
+        bad_units.append(f"{LEASE_WORKERS_FILE}: 策略 run 开始/恢复/执行/提交/失败各阶段没有逐段刷新 owner lease")
+    scheduler_stale_lease_code = tight(LEASE_SCHEDULER_FILE)
+    stale_lease_requirements = (
+        "queue.claim(lease.queued.run.run_id,lease.lease_owner,claim_now,lease.lease_seconds)",
+        "lease.queue.ack_at(lease.queued.run.run_id,lease.lease_owner,current_lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
+    )
+    if not all(term in scheduler_stale_lease_code for term in stale_lease_requirements):
+        bad_units.append(f"{LEASE_SCHEDULER_FILE}: stale snapshot ack 未重新确认当前 fencing lease")
     check(
         not bad_units,
-        "作业队列与命令队列的 claim/available 一律拿秒域时钟：30 秒租约不再 30 毫秒就过期",
+        "作业队列与命令队列使用秒域时钟；策略租约覆盖 Python 请求与 E2B 启动预算",
         f"; ".join(bad_units),
+    )
+    strategy_policy_code = tight("crates/qx-cli/src/strategy_host/execution_policy.rs")
+    strategy_worker_start = strategy_lease_code.find(
+        "SandboxExecutionPolicy::from_env()?"
+    )
+    worker_host_start = strategy_lease_code.find("qx_service::worker_host::run_worker(")
+    check(
+        "QX_PYTHON_STRATEGY_SANDBOX_REQUIRED" in strategy_policy_code
+        and "ifsandbox_required&&provider==StrategySandboxProvider::Local" in strategy_policy_code
+        and "SandboxExecutionPolicy::from_env()?" in tight(
+            "crates/qx-cli/src/strategy_host.rs"
+        )
+        and strategy_worker_start >= 0
+        and worker_host_start > strategy_worker_start,
+        "strategy-worker 的宿主可强制要求沙箱，缺失/local provider 在工作进程启动前拒绝",
+        "强制开关缺失、强制本地拒绝缺失，或策略 worker 启动早于策略执行策略校验",
     )
     bad_acks = [
         f"{path}: ack_command_at 秒域写法 {tight(path).count(LEASE_ACK_PACKED.format(owner=owner, now='lease_now'))}/{expected}"
@@ -6923,15 +7219,16 @@ def control_plane_honesty_check() -> None:
         "provider 又回到只读一次，或两条路各写一份读模型构造代码",
     )
     check(
-        assembly.count("pub fn hydrate_api_initial_state(") == 1
+        assembly.count("fn hydrate_api_initial_state_with_market_specs(") == 1
         and "crate::api_read_model::query_api_models(config)?" in assembly
         and "configured_account_event_logs(config)?" in assembly
         and "OutboxRecovery::ReadOnly" in assembly
         and "project_event_log(pipeline.log())" in assembly
         and "initial_api_state_hydrates_persisted_account_events" in api_host
-        and "hydrate_api_initial_state(config, &control_root, &mut state)?" in assembly
+        and "hydrate_api_initial_state_with_market_specs(" in assembly
+        and "load_api_account_snapshots_with_market_specs(config, market_specs)?" in assembly
         and "state.project_account_event_log(" not in api_builder
-        and "load_api_account_snapshots(config)" not in api_builder,
+        and "load_api_account_snapshots_with_market_specs(config, market_specs)" not in api_builder,
         "API 启动读模型、账户与默认全局事件投影、账户快照均归 qx-service，且有历史数据启动行为用例",
         "API 初始读状态仍在 CLI 分叉装配，或启动未同步默认全局事件投影/缺少行为用例",
     )
@@ -7008,11 +7305,36 @@ def control_plane_honesty_check() -> None:
         ]
     )
     check(
-        listed == declared == ["ashare", "backtest", "base", "builtin", "ccxt", "multi-venue", "paper"]
+        listed
+        == declared
+        == [
+            "ashare",
+            "backtest",
+            "base",
+            "builtin",
+            "ccxt",
+            "crypto-paper",
+            "crypto-sandbox-acceptance",
+            "multi-venue",
+            "paper",
+            "research-local",
+        ]
         and init.count('INIT_PROFILES.join("、")') == 2
         and "可用值：base、paper" not in init,
         "init --profile 的可用值只有一份：help 的表、错误文案与实际接受的集合三处相等",
         f"help={listed} declared={declared}，或错误文案又抄了一份清单",
+    )
+    release_profiles = _text_or_empty(ROOT / "docs/发布场景与验收入口-V1.md")
+    check(
+        all(
+            profile in release_profiles and f"--profile {profile}" in release_profiles
+            for profile in ("research-local", "crypto-paper", "crypto-sandbox-acceptance")
+        )
+        and '"sandbox": true' in _text_or_empty(ROOT / "deploy/qianxing.ccxt.exchange.example.json")
+        and '"QX_CCXT_OKX_API_KEY"' in _text_or_empty(ROOT / "deploy/qianxing.ccxt.exchange.example.json")
+        and "live-check` 是 production 配置门禁，不是 sandbox 验收器" in release_profiles,
+        "三个首发发布场景均有可复制的 init profile、前置条件与 sandbox 安全边界",
+        "profile 文档、示例模板或生产/sandbox 验收边界出现漂移",
     )
     harness = (ROOT / "crates/qx-cli/tests/unit/mod.rs").read_text(encoding="utf-8")
     check(
@@ -7140,8 +7462,8 @@ def api_route_contract_check() -> None:
 
 
 # V11 S10 / T3：对外发布的那一份账户快照 JSON Schema，以及"契约说的"与三方实现是否同宽。
-SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v1.json"
-SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v1"
+SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v3.json"
+SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v3"
 SNAPSHOT_SCHEMA_CASE_FILE = "crates/qx-protocol/tests/snapshot_schema_contract.rs"
 SNAPSHOT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 SNAPSHOT_SCHEMA_CASES = (
@@ -7151,6 +7473,7 @@ SNAPSHOT_SCHEMA_CASES = (
     "reader_rejects_versions_the_served_schema_does_not_declare",
     "reader_refuses_a_self_consistent_document_from_another_version",
     "schema_frame_matches_the_protocol_it_describes",
+    "legacy_v1_schema_and_snapshot_remain_readable",
 )
 
 # V11 R17/T2：日历组件指纹的跨语言夹具——Python 写侧产出文档与摘要，Rust 读侧重算同一格。
@@ -7177,7 +7500,7 @@ CALENDAR_PYTHON_CASES = (
 def account_snapshot_schema_check() -> None:
     """账户快照的对外契约只有一份文本，且它承诺的每一格两侧都做得到（V11 S10 / T3）。
 
-    `schemas/account-snapshot-v1.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
+    `schemas/account-snapshot-v3.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
     文件多 `title` 与顶层 `additionalProperties`，双方又都漏掉写侧真实印出的八个钱字段，比对时
     没有谁是权威；读侧 `from_json` 只核对协议字符串与两处版本号是否自相矛盾，一份按别的版本
     自洽封存的文档会被当成 v1 收下，而对面 Python 的 `load_account_snapshot` 对同一份产物直接
@@ -7208,7 +7531,7 @@ def account_snapshot_schema_check() -> None:
     check(
         re.search(
             r"pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =\s*"
-            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v1\.json"\)',
+            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v3\.json"\)',
             protocol,
         )
         is not None
@@ -7225,8 +7548,11 @@ def account_snapshot_schema_check() -> None:
         f" / 缺钱字段 {[name for name in SNAPSHOT_SCALARS if name not in properties]}",
     )
     check(
-        sorted(emitted) == sorted(properties),
-        "契约声明的顶层键集合正好等于写侧产物印出的那些：少一格是漏说，多一格是空头承诺",
+        set(emitted) <= set(properties)
+        and (set(properties) - set(emitted)) <= {"fees_by_currency_raw", "cash_exact"}
+        and "fees_by_currency_raw" not in schema["required"]
+        and "cash_exact" not in schema["required"],
+        "v3 契约覆盖写侧字段；空手续费 map 与精确余额 map 可省略",
         f"只在契约 {sorted(set(properties) - set(emitted))}"
         f" / 只在产物 {sorted(set(emitted) - set(properties))}",
     )
@@ -7265,7 +7591,7 @@ def account_snapshot_schema_check() -> None:
         f" / 协议名同源 {named}",
     )
     served = re.search(
-        r'\("GET", "/schema/account-snapshot-v1"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
+        r'\("GET", "/schema/account-snapshot-v3"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
         r"ACCOUNT_SNAPSHOT_JSON_SCHEMA\s*\)",
         endpoint,
     )
@@ -7275,22 +7601,23 @@ def account_snapshot_schema_check() -> None:
     listed = whitelist.group(1).strip() if whitelist else ""
     check(
         served is not None and SNAPSHOT_SCHEMA_ROUTE in listed,
-        "GET /schema/account-snapshot-v1 发出的就是这份常量，且客户端取契约不必带操作者凭据",
+        "GET /schema/account-snapshot-v3 发出的就是这份常量，且客户端取契约不必带操作者凭据",
         f"发出常量={served is not None} / 鉴权白名单 {listed}",
     )
     bridge = (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
-    python_version = re.search(r'value\["schema_version"\] != (\d+)', bridge)
+    python_versions = re.search(r'value\["schema_version"\] not in \(([^)]+)\)', bridge)
     required_block = re.search(r"required = \{(.*?)\}", bridge, re.S)
     python_required = (
         sorted(re.findall(r'"([^"]+)"', required_block.group(1))) if required_block else []
     )
     check(
-        python_version is not None
+        python_versions is not None
         and supported is not None
-        and int(python_version.group(1)) == supported
+        and [int(item.strip()) for item in python_versions.group(1).split(",") if item.strip()]
+        == list(range(1, supported + 1))
         and python_required == sorted(schema["required"]),
-        "对面 Python 的快照读侧与契约同宽：认同一个版本号、要求同一组必填键",
-        f"Python 版本 {python_version.group(1) if python_version else None} vs {supported}"
+        "对面 Python 的快照读侧与契约同宽：支持声明过的 v1/v2 并要求同一组必填键",
+        f"Python 版本 {python_versions.group(1) if python_versions else None} vs 1..={supported}"
         f" / 必填差 {sorted(set(python_required) ^ set(schema['required']))}",
     )
     cases = (ROOT / SNAPSHOT_SCHEMA_CASE_FILE).read_text(encoding="utf-8")
@@ -7430,6 +7757,8 @@ def c_abi_header_check() -> None:
     """
     header = (ROOT / "cpp/include/qianxing_strategy.h").read_text(encoding="utf-8")
     rust = (ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8")
+    strategy_core = (ROOT / "crates/qx-strategy/src/lib.rs").read_text(encoding="utf-8")
+    strategy_contract = (ROOT / "crates/qx-strategy/src/contract.rs").read_text(encoding="utf-8")
 
     def to_camel(name: str) -> str:
         # 只有 `vtable` 一段的惯用大小写不是首字母大写（Rust 侧写作 VTable）。
@@ -7542,6 +7871,110 @@ def c_abi_header_check() -> None:
         f"枚举 头 {c_enums} / Rust {rust_enums}；版本 头 {header_version and header_version.group(1)}"
         f" / Rust {rust_version and rust_version.group(1)}",
     )
+    status_codes = {
+        "QX_ORDER_STATUS_EVENT_ORDER_STATUS": "QX_ORDER_STATUS_EVENT_ORDER_STATUS",
+        "QX_ORDER_STATUS_PENDING_SUBMIT": "QX_ORDER_STATUS_PENDING_SUBMIT",
+        "QX_ORDER_STATUS_SUBMITTED": "QX_ORDER_STATUS_SUBMITTED",
+        "QX_ORDER_STATUS_ACCEPTED": "QX_ORDER_STATUS_ACCEPTED",
+        "QX_ORDER_STATUS_WORKING": "QX_ORDER_STATUS_WORKING",
+        "QX_ORDER_STATUS_PARTIALLY_FILLED": "QX_ORDER_STATUS_PARTIALLY_FILLED",
+        "QX_ORDER_STATUS_FILLED": "QX_ORDER_STATUS_FILLED",
+        "QX_ORDER_STATUS_CANCEL_PENDING": "QX_ORDER_STATUS_CANCEL_PENDING",
+        "QX_ORDER_STATUS_CANCELLED": "QX_ORDER_STATUS_CANCELLED",
+        "QX_ORDER_STATUS_REJECTED": "QX_ORDER_STATUS_REJECTED",
+        "QX_ORDER_STATUS_EXPIRED": "QX_ORDER_STATUS_EXPIRED",
+        "QX_ORDER_STATUS_UNKNOWN": "QX_ORDER_STATUS_UNKNOWN",
+    }
+    header_status_codes = {
+        name: int(value)
+        for name, value in re.findall(r"#define (QX_ORDER_STATUS_[A-Z_]+) (\d+)u", header)
+    }
+    rust_status_codes = {
+        rust_name: int(value)
+        for rust_name in status_codes.values()
+        for value in re.findall(rf"{rust_name}: u32 = (\d+);", rust)
+    }
+    header_status_schema = re.search(
+        r"#define QX_STRATEGY_ORDER_STATUS_SCHEMA_VERSION\s+(\d+)u", header
+    )
+    rust_status_schema = re.search(
+        r"ORDER_STATUS_UPDATE_SCHEMA_VERSION: u32 = (\d+)", strategy_core
+    )
+    check(
+        header_status_codes == rust_status_codes
+        and len(header_status_codes) == len(status_codes),
+        "C ABI typed order-status event/state code table matches between the public header and Rust host",
+        f"header {header_status_codes} / Rust {rust_status_codes}",
+    )
+    check(
+        bool(header_status_schema)
+        and bool(rust_status_schema)
+        and header_status_schema.group(1) == rust_status_schema.group(1),
+        "typed C ABI order-status schema version matches the canonical Rust DTO",
+        f"header {header_status_schema and header_status_schema.group(1)} / Rust {rust_status_schema and rust_status_schema.group(1)}",
+    )
+    check(
+        "qx_strategy_on_order_status_v2" in header
+        and 'b"qx_strategy_on_order_status_v2\\0"' in rust
+        and "self.on_order_status_v2" in rust,
+        "typed C ABI order-status callback is an independently resolved optional symbol",
+        "v2 callback declaration, lookup, or dispatch is missing",
+    )
+    header_fill_schema = re.search(
+        r"#define QX_STRATEGY_FILL_UPDATE_SCHEMA_VERSION\s+(\d+)u", header
+    )
+    rust_fill_schema = re.search(
+        r"ORDER_FILL_UPDATE_EVENT_SEQ_SCHEMA_VERSION: u32 = (\d+)", strategy_core
+    )
+    check(
+        bool(header_fill_schema)
+        and bool(rust_fill_schema)
+        and header_fill_schema.group(1) == rust_fill_schema.group(1),
+        "C ABI fill-update schema version matches the canonical Rust DTO",
+        f"header {header_fill_schema and header_fill_schema.group(1)} / Rust {rust_fill_schema and rust_fill_schema.group(1)}",
+    )
+    check(
+        "qx_strategy_on_fill_update_v2" in header
+        and 'b"qx_strategy_on_fill_update_v2\\0"' in rust
+        and "self.on_fill_update_v2" in rust
+        and "legacy_projection()" in rust,
+        "C ABI fill V2 is independently resolved and preserves the legacy fill callback fallback",
+        "fill V2 declaration, lookup, dispatch, or compatibility projection is missing",
+    )
+    header_account_schema = re.search(
+        r"#define QX_STRATEGY_ACCOUNT_UPDATE_SCHEMA_VERSION\s+(\d+)u", header
+    )
+    rust_account_schema = re.search(
+        r"STRATEGY_ACCOUNT_UPDATE_SCHEMA_VERSION: u32 = (\d+)", strategy_contract
+    )
+    check(
+        bool(header_account_schema)
+        and bool(rust_account_schema)
+        and header_account_schema.group(1) == rust_account_schema.group(1)
+        and "qx_strategy_on_account_update_v1" in header
+        and 'b"qx_strategy_on_account_update_v1\\0"' in rust
+        and "self.on_account_update" in rust,
+        "C ABI account/position snapshot callback schema matches Rust and is independently resolved",
+        "account schema version, header export, dynamic lookup, or callback dispatch is missing",
+    )
+    header_market_v2 = re.search(
+        r"#define QX_MARKET_EVENT_SCHEMA_VERSION_V2\s+(\d+)u", header
+    )
+    rust_market_v2 = re.search(
+        r"QX_MARKET_EVENT_SCHEMA_VERSION_V2: u32 = (\d+);", rust
+    )
+    check(
+        bool(header_market_v2)
+        and bool(rust_market_v2)
+        and header_market_v2.group(1) == rust_market_v2.group(1)
+        and "qx_strategy_on_market_event_v2" in header
+        and 'b"qx_strategy_on_market_event_v2\\0"' in rust
+        and "self.on_market_event_v2" in rust
+        and "exact_ohlcv" in rust_fields.get("QxMarketEventV2", [])
+        and "拒绝降级为 raw v1" in rust,
+        "精确 OHLCV C ABI 使用独立 v2 事件回调，版本映射一致且旧 raw 回调失败关闭",
+        "v2 版本、头文件符号、Rust 查找/分发、exact 字段或旧版拒绝路径缺失",
+    )
     check(
         bool(header_abi_version)
         and bool(rust_abi_version)
@@ -7567,7 +8000,7 @@ def c_abi_header_check() -> None:
 
 
 def snapshot_json_table_check() -> None:
-    """稳定 JSON 的键表只有一份编码：写侧印成什么，读侧 `from_json` 就得认什么（V11 R14/R15）。
+    """稳定 JSON 的映射只有一份编码：写侧印成什么，读侧 `from_json` 就得认什么（V11 R14/R15）。
 
     订单/成交/划转的键是 `u64`，持仓的键是 `InstrumentId`。此前 `to_json` 手抄 `format!`
     把裸数字当对象键，产出的 `{77:{...}}` 连合法 JSON 都不是，`from_json`、SQLite/Postgres
@@ -7581,20 +8014,22 @@ def snapshot_json_table_check() -> None:
     check(
         protocol.count("fn json_table_entries<K: Serialize, V: Serialize>") == 1
         and protocol.count("serde_json::to_string(table)") == 1,
-        "四张键表的稳定 JSON 只有一个渲染点，且它委托 serde 而不是再抄一份字段顺序",
+        "订单/成交/划转/多币种费用映射共用一个稳定 JSON 渲染点，字段不再手抄",
         f"渲染点 {protocol.count('fn json_table_entries<K: Serialize, V: Serialize>')} 处、"
         f"serde 委托 {protocol.count('serde_json::to_string(table)')} 处",
     )
     rendered = [f"let {name} = json_table_entries(&self.{name});" for name in SNAPSHOT_SERDE_TABLES]
     check(
         all(line in protocol for line in rendered)
-        and protocol.count("json_table_entries(&self.") == len(SNAPSHOT_SERDE_TABLES)
+        and "let fees_by_currency_raw = json_table_entries(&self.fees_by_currency_raw)?;" in protocol
+        and "json_table_entries(&self.cash_exact)?" in protocol
+        and protocol.count("json_table_entries(&self.") == len(SNAPSHOT_SERDE_TABLES) + 2
         and protocol.count("fn json_position_entries(") == 1
         and "let positions = json_position_entries(&self.positions);" in protocol
         and protocol.count("fn instrument_key(") == 1
         and protocol.count("instrument_key(") == 3
         and not [template for template in SNAPSHOT_TABLE_TEMPLATES if template in protocol],
-        "持仓/订单/成交/划转全部经该渲染点，标的键只有一个写法，文件里没有剩下的手抄键值模板",
+        "持仓/订单/成交/划转/多币种费用映射全部经该渲染点，标的键只有一个写法",
         f"表渲染 {protocol.count('json_table_entries(&self.')} 处、持仓渲染 "
         f"{protocol.count('json_position_entries(&self.')} 处、标的键 "
         f"{protocol.count('instrument_key(')} 处、"
@@ -9383,11 +9818,11 @@ def venue_report_contract_check() -> None:
     body = funnel[start : funnel.find("\n}\n", start)] if start >= 0 else ""
     check(
         start >= 0
-        and body.count("validate_fill(") == 1
+        and body.count("validate_fill_against_spec(") == 1
         and "ReconcileRequired" in body
         and "精度越界" in body,
-        "成交回报精度闸门只在唯一归约入口生效并转待对账",
-        f"入口存在={start >= 0}，闸门调用 {body.count('validate_fill(')} 处（期望 1）",
+        "成交回报精度闸门按 raw/exact 金额只在唯一归约入口生效并转待对账",
+        f"入口存在={start >= 0}，规格闸门调用 {body.count('validate_fill_against_spec(')} 处（期望 1）",
     )
     submit_start = funnel.find("    pub fn submit(")
     submit_end = funnel.find("\n    }\n", submit_start) if submit_start >= 0 else -1
@@ -9424,9 +9859,9 @@ def venue_report_contract_check() -> None:
         f"append_fact 体可定位={bool(append_body)}",
     )
     check(
-        funnel.count("validate_fill(") == 2,
-        "精度闸门调用点恰为两处：归约入口 + 共用提交闸门（不得有第三处）",
-        f"{REPORT_FUNNEL_FILE} 内 {funnel.count('validate_fill(')} 处（期望 2）",
+        funnel.count("validate_fill_against_spec(") == 3,
+        "raw/exact 规格校验共用函数只有两处调用：归约入口 + 提交闸门（不得有第三处）",
+        f"{REPORT_FUNNEL_FILE} 内定义与调用合计 {funnel.count('validate_fill_against_spec(')} 处（期望 3）",
     )
     check(
         funnel.count('"invalid-submit-response"') == 1
@@ -9618,8 +10053,10 @@ VENUE_ID_DEFINITION = "crates/qx-core/src/identity.rs"
 # 允许读取家族判定的消费者文件集合：少一个 = 有人把判定搬回本地，多一个 = 另起第二份。
 VENUE_FAMILY_CONSUMERS = (
     "crates/qx-cli/src/api_algo_execution.rs",
+    "crates/qx-cli/src/api_service/api_service_builder.rs",
     "crates/qx-cli/src/live_check.rs",
     "crates/qx-cli/src/strategy_contract/account_context.rs",
+    "crates/qx-cli/src/strategy_contract/execution_spec.rs",
     "crates/qx-cli/src/venue_runtime/binance_submit.rs",
     "crates/qx-cli/src/venue_runtime/binance_venue.rs",
     "crates/qx-cli/src/venue_runtime/ccxt_submit.rs",
@@ -9639,6 +10076,7 @@ VENUE_FAMILY_CONSUMERS = (
     "crates/qx-service/src/ccxt_execution_host.rs",
     "crates/qx-service/src/ccxt_reconcile_host.rs",
     "crates/qx-service/src/ccxt_user_stream_host.rs",
+    "crates/qx-service/src/exchange_gateway.rs",
 )
 # 收拢之前这些写法各有 1–5 份抄本；现在它们是"另起第二份"的指纹，值 = 允许出现的那一处。
 # 指纹都带 `venue` 接收者：`environment` 等同名写法读的是另一个字段（如 scheduler 的
@@ -12929,6 +13367,42 @@ def submit_terminal_state_check() -> None:
     )
 
 
+def cancel_intent_durability_check() -> None:
+    """Cancel side effects require a durable, replayable intent and a stable operation identity."""
+    execution_path = "crates/qx-execution/src/lib.rs"
+    runtime_path = "crates/qx-runtime/src/pipeline.rs"
+    runtime_commit_path = "crates/qx-runtime/src/pipeline/commit.rs"
+    execution = _text_or_empty(ROOT / execution_path)
+    execution_tests = _text_or_empty(ROOT / "crates/qx-execution/src/tests/gateway_port.rs")
+    runtime = _text_or_empty(ROOT / runtime_path)
+    runtime_commit = _text_or_empty(ROOT / runtime_commit_path)
+    cancel = _code_body(execution_path, "pub fn cancel(&mut self, client_order_id: u64)")
+    pending_at = cancel.find("ExecutionEvent::CancelPending")
+    side_effect_at = cancel.find("self.venue.cancel_order(client_order_id, self.now)")
+    check(
+        pending_at >= 0
+        and side_effect_at >= 0
+        and pending_at < side_effect_at
+        and "mark_reconcile_for_operation" in cancel,
+        "统一撤单网关先持久化 CancelPending，再产生 Venue 副作用；不确定结果绑定本次 operation",
+        f"intent@{pending_at} venue-call@{side_effect_at} reconcile-binding={'mark_reconcile_for_operation' in cancel}",
+    )
+    check(
+        "CancelPending 对应未知订单" in runtime
+        and "已有撤单操作在途，拒绝重复发起" in runtime
+        and "fn cancel_pending_is_durable_and_replayable_across_process_restart()" in runtime,
+        "Runtime 拒绝未知/重复撤单意图，并有 EventLog 重启恢复常驻用例",
+        "核对 apply_cancel_pending 状态校验、幂等操作隔离和 restart witness",
+    )
+    check(
+        "EventKind::CancelPending" in runtime_commit
+        and "RuntimeExternalEvent::CancelPending" in runtime_commit
+        and "fn cancel_intent_is_appended_before_venue_cancel_and_unknown_orders_require_reconcile()" in execution_tests,
+        "CancelPending 从统一 Runtime 输入映射到 EventLog，且有执行副作用前置检查用例",
+        "核对 Runtime commit 映射和 Gateway 行为 witness",
+    )
+
+
 def submit_topology_guard_check() -> None:
     """一次性提交入口的拓扑一致性判据必须落在动作函数之前（V13 R28）。
 
@@ -12977,7 +13451,7 @@ def one_shot_execution_ownership_check() -> None:
         and "pub fn execute_binance_one_shot_order<F>(" in binance_host
         and "pub fn execute_ccxt_one_shot_order(" in ccxt_host
         and binance_host.count("execute_submit_order_with_worker_risk(") >= 2
-        and ccxt_host.count("execute_submit_order_with_worker_risk(") >= 2
+        and ccxt_host.count("execute_submit_order_with_worker_risk_and_market_reference(") >= 2
         and "recover_spread_groups_for_venue(" in binance_host
         and "recover_spread_groups_for_venue(" in ccxt_host
         and '"op": "fetch_ticker"' in ccxt_host,
@@ -13078,6 +13552,26 @@ def wheel_optional_dependency_check() -> None:
         not missing_extras,
         "wheel 定义了 ccxt/ccxt-pro/tz/a-share* 全套可选 extras",
         f"缺这些 extras: {missing_extras}",
+    )
+    ccxt_source = (ROOT / CCXT_ADAPTER_FILE).read_text(encoding="utf-8")
+    version_match = re.search(
+        r'^SUPPORTED_CCXT_VERSION\s*=\s*["\']([^"\']+)["\']',
+        ccxt_source,
+        re.MULTILINE,
+    )
+    supported_ccxt = version_match.group(1) if version_match else None
+    expected_ccxt_pin = f"ccxt=={supported_ccxt}" if supported_ccxt else None
+    ccxt_extras_are_pinned = bool(expected_ccxt_pin) and all(
+        expected_ccxt_pin in extras.get(name, []) for name in ("ccxt", "ccxt-pro")
+    )
+    ccxt_runtime_fails_closed = bool(supported_ccxt) and (
+        "getattr(module, \"__version__\", None)" in ccxt_source
+        and "version != SUPPORTED_CCXT_VERSION" in ccxt_source
+    )
+    check(
+        ccxt_extras_are_pinned and ccxt_runtime_fails_closed,
+        "CCXT 执行适配只安装并运行经过请求契约核验的精确版本",
+        f"源码版本={supported_ccxt!r}、extras 固定={ccxt_extras_are_pinned}、运行时拒未核验版本={ccxt_runtime_fails_closed}",
     )
     adapter = (ROOT / CCXT_ADAPTER_FILE).read_text(encoding="utf-8")
     referenced = set(re.findall(r"qianxing\[([a-z0-9][a-z0-9-]*)\]", adapter))
@@ -13579,10 +14073,19 @@ def job_queue_shared_validation_check() -> None:
         and "fn validate_claim_job_request(" in shared
         and "worker.trim().is_empty() || lease_seconds == 0" in shared
         and "fn validate_existing_job(" in shared
-        and "existing.job == incoming.job && existing.run == incoming.run" in shared
+        and "let same_run_identity = existing.run.run_id == incoming.run.run_id" in shared
+        and "existing.run.job_id == incoming.run.job_id" in shared
+        and "existing.run.trading_day == incoming.run.trading_day" in shared
+        and "existing.run.manifest_digest == incoming.run.manifest_digest" in shared
+        and "existing.job == incoming.job && same_run_identity" in shared
         and "已被不同任务占用" in shared
         and "fnjob_and_run_on_day(seed:u64,trading_day:&str)" in runtime_flat
         and "available.iter().map(|queued|(queued.run.trading_day.clone(),queued.run.run_id))" in runtime_flat
+        and "invalid_run.run_id=invalid_run.run_id.saturating_add(1)" in runtime_flat
+        and "queue.claim_job(run_id,\"worker-a\",10,0)" in runtime_flat
+        and "retry.attempt=2" in runtime_flat
+        and "available[0].run.attempt,1" in runtime_flat
+        and "conflicting_job.timeout_seconds=conflicting_job.timeout_seconds.saturating_add(1)" in runtime_flat
     )
     ordered = (
         all(
@@ -13795,11 +14298,11 @@ def adapter_order_lifecycle_shared_rule_check() -> None:
         and "Self::can_submit(&order)" in binance
         and "Self::can_submit(&order)" in ccxt
         and 'Self::validate_cancel_state(&order, "Binance")?' in binance
-        and 'Self::validate_cancel_state(order, "CCXT")?' in ccxt
+        and 'Self::validate_cancel_state(&order, "CCXT")?' in ccxt
         and "Self::fill_seen(&self.seen_fill_keys, &key)" in binance
         and "Self::remember_fill(&mut self.seen_fill_keys, key)" in binance
         and binance.count("Self::reconciliation_trigger(&error)") == 2
-        and "Self::remember_fill(seen, trade_id.to_string())" in ccxt
+        and "Self::remember_fill(seen, trade_id)" in ccxt
         and "Self::reconciliation_trigger(&error)" in ccxt
     )
     runtime_rejection = (
@@ -14938,13 +15441,15 @@ def research_diagnostics_and_retry_check() -> None:
     )
 
 
-# 地基规格对象（规划 §6.2 / §7）：每类声明式文档各自只有一份 JSON Schema、一个版本常量、
+# 地基规格对象（规划 §6.2 / §7）：每个登记版本有一份 JSON Schema 和版本常量，
 # 一处 `pub struct` 定义，且 `qx_spec::describe` 是它们唯一的生产读入漏斗（CLI `plan` 命令）。
 FOUNDATION_SPECS = (
     ("schemas/project-manifest-v1.json", "crates/qx-spec/src/project.rs", "PROJECT_MANIFEST_SCHEMA_VERSION", "schema_version"),
     ("schemas/dataset-manifest-v2.json", "crates/qx-data/src/catalog_v2.rs", "DATASET_MANIFEST_V2_SCHEMA_VERSION", "manifest_version"),
     ("schemas/experiment-spec-v1.json", "crates/qx-spec/src/experiment.rs", "EXPERIMENT_SPEC_SCHEMA_VERSION", "schema_version"),
     ("schemas/run-record-v1.json", "crates/qx-spec/src/run_record.rs", "RUN_RECORD_SCHEMA_VERSION", "schema_version"),
+    ("schemas/run-record-v2.json", "crates/qx-spec/src/run_record.rs", "RUN_RECORD_V2_SCHEMA_VERSION", "schema_version"),
+    ("schemas/canonical-run-spec-v1.json", "crates/qx-spec/src/canonical_run_spec.rs", "CANONICAL_RUN_SPEC_SCHEMA_VERSION", "schema_version"),
     ("schemas/capability-manifest-v1.json", "crates/qx-spec/src/capability.rs", "CAPABILITY_MANIFEST_SCHEMA_VERSION", "schema_version"),
     ("schemas/evidence-bundle-v3.json", "crates/qx-spec/src/evidence.rs", "EVIDENCE_BUNDLE_SCHEMA_VERSION", "schema_version"),
     ("schemas/schema-registry-v1.json", "crates/qx-spec/src/schema_registry.rs", "SCHEMA_REGISTRY_SCHEMA_VERSION", "schema_version"),
@@ -14954,6 +15459,7 @@ FOUNDATION_OBJECT_TYPES = (
     "DatasetManifestV2",
     "ExperimentSpec",
     "RunRecord",
+    "CanonicalRunSpec",
     "CapabilityManifest",
     "EvidenceBundle",
     "SchemaRegistry",
@@ -15003,7 +15509,7 @@ def foundation_specs_check() -> None:
             )
     check(
         not schema_issues,
-        "七类当前地基规格各有一份严格 Schema，版本常量与 Rust 侧逐条一致",
+        "地基规格登记版本均有严格 Schema，版本常量与 Rust 侧逐条一致",
         "；".join(schema_issues),
     )
 
@@ -15018,7 +15524,7 @@ def foundation_specs_check() -> None:
     bad = {name: sites for name, sites in duplicates.items() if len(sites) != 1}
     check(
         not bad,
-        "七类地基对象的 `pub struct` 各只有一处定义（EvidenceBundle 已合并两代字段）",
+        "八类地基对象的 `pub struct` 各只有一处定义（EvidenceBundle 已合并两代字段）",
         f"定义数不为 1 的对象 {bad}",
     )
 
@@ -15056,7 +15562,7 @@ def foundation_specs_check() -> None:
         and len(set(arms)) == len(arms)
         and "RunEvidence" in arms
         and "Evidence" in arms,
-        "describe 覆盖七类对象并保留 run-evidence 到 EvidenceBundle 的兼容别名",
+        "describe 覆盖地基对象并保留 run-evidence 到 EvidenceBundle 的兼容别名",
         f"派发臂 {arms}（期望 {len(FOUNDATION_OBJECT_TYPES) + 1} 条且含两个证据读取别名）",
     )
 
@@ -15264,14 +15770,14 @@ def foundation_specs_check() -> None:
         "data-validate 链的容忍性、规格校验或入口文案有断点",
     )
 
-    # 八类「统一身份」对象必须有一个**使用者可达**的读入入口：`describe` 是唯一漏斗，但若没有
+    # 九类「统一身份」对象必须有一个**使用者可达**的读入入口：`describe` 是唯一漏斗，但若没有
     # CLI 入口，使用者就只能间接经过 init / 回测链看到其中几类，另外几类无处读入自己的清单。
     plan_commands = (ROOT / "crates/qx-cli/src/plan_commands.rs").read_text(encoding="utf-8")
     check(
         "pub(crate) fn plan_readout(" in plan_commands
         and "describe(&args.kind, &payload)" in plan_commands
         and "plan <kind> <file>" in help_text,
-        "八类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
+        "九类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
         "地基对象只有进程内读入者、缺使用者可达的 CLI 入口",
     )
 
@@ -15282,6 +15788,17 @@ def foundation_specs_check() -> None:
 # 格式必须保持「顶层键: / 两空格子键: / 四空格字段: 值」的规整形状，改坏缩进会当场变红。
 
 STRATEGY_INPUT_SCHEMA = ROOT / "schemas" / "strategy-api-input-v1.json"
+STRATEGY_INPUT_V2_SCHEMA = ROOT / "schemas" / "strategy-api-input-v2.json"
+STRATEGY_INPUT_V3_SCHEMA = ROOT / "schemas" / "strategy-api-input-v3.json"
+STRATEGY_INPUT_V4_SCHEMA = ROOT / "schemas" / "strategy-api-input-v4.json"
+STRATEGY_INPUT_V5_SCHEMA = ROOT / "schemas" / "strategy-api-input-v5.json"
+STRATEGY_INPUT_V6_SCHEMA = ROOT / "schemas" / "strategy-api-input-v6.json"
+STRATEGY_INPUT_V7_SCHEMA = ROOT / "schemas" / "strategy-api-input-v7.json"
+STRATEGY_INPUT_V8_SCHEMA = ROOT / "schemas" / "strategy-api-input-v8.json"
+STRATEGY_INPUT_V9_SCHEMA = ROOT / "schemas" / "strategy-api-input-v9.json"
+STRATEGY_INPUT_SCHEMA_IDS = {
+    f"strategy-api-input-v{version}" for version in range(1, 10)
+}
 STRATEGY_INPUT_TEST = ROOT / "crates" / "qx-runtime" / "tests" / "strategy_contract_input_schema.rs"
 TARGETS_FILE = ROOT / "maturity" / "targets.yaml"
 LEVELS_FILE = ROOT / "maturity" / "levels.yaml"
@@ -15498,6 +16015,190 @@ def strategy_input_schema_check() -> None:
     contract = (ROOT / "crates/qx-strategy/src/contract.rs").read_text(encoding="utf-8")
     if "STRATEGY_CONTRACT_SCHEMA_VERSION: u32 = STRATEGY_API_VERSION" not in contract:
         issues.append("contract.rs 的版本常量不再以 STRATEGY_API_VERSION 为单一来源")
+    try:
+        input_v2 = json.loads(STRATEGY_INPUT_V2_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v2 = {}
+        issues.append(f"Strategy 输入 v2 Schema 缺失或无效: {error}")
+    try:
+        input_v3 = json.loads(STRATEGY_INPUT_V3_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v3 = {}
+        issues.append(f"Strategy 输入 v3 Schema 缺失或无效: {error}")
+    try:
+        input_v4 = json.loads(STRATEGY_INPUT_V4_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v4 = {}
+        issues.append(f"Strategy 输入 v4 Schema 缺失或无效: {error}")
+    try:
+        input_v5 = json.loads(STRATEGY_INPUT_V5_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v5 = {}
+        issues.append(f"Strategy 输入 v5 Schema 缺失或无效: {error}")
+    try:
+        input_v6 = json.loads(STRATEGY_INPUT_V6_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v6 = {}
+        issues.append(f"Strategy 输入 v6 Schema 缺失或无效: {error}")
+    try:
+        input_v7 = json.loads(STRATEGY_INPUT_V7_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v7 = {}
+        issues.append(f"Strategy 输入 v7 Schema 缺失或无效: {error}")
+    try:
+        input_v8 = json.loads(STRATEGY_INPUT_V8_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v8 = {}
+        issues.append(f"Strategy 输入 v8 Schema 缺失或无效: {error}")
+    try:
+        input_v9 = json.loads(STRATEGY_INPUT_V9_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v9 = {}
+        issues.append(f"Strategy 输入 v9 Schema 缺失或无效: {error}")
+    input_v2_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V2_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v2_properties = input_v2.get("properties", {})
+    if (
+        input_v2.get("additionalProperties") is not False
+        or input_v2.get("$id") is None
+        or not input_v2_version
+        or v2_properties.get("schema_version", {}).get("const") != int(input_v2_version.group(1))
+        or v2_properties.get("execution_updates", {}).get("type") != "array"
+        or v2_properties.get("execution_updates", {}).get("minItems") != 1
+        or "execution_updates" not in input_v2.get("required", [])
+    ):
+        issues.append("Strategy 输入 v2 Schema 未严格声明非空 execution_updates 或版本常量")
+    input_v3_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V3_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v3_properties = input_v3.get("properties", {})
+    if (
+        input_v3.get("additionalProperties") is not False
+        or input_v3.get("$id") is None
+        or not input_v3_version
+        or v3_properties.get("schema_version", {}).get("const") != int(input_v3_version.group(1))
+        or v3_properties.get("fill_updates", {}).get("type") != "array"
+        or v3_properties.get("fill_updates", {}).get("minItems") != 1
+        or "fill_updates" not in input_v3.get("required", [])
+        or v3_properties.get("fill_updates", {}).get("items", {}).get("$ref")
+        != "strategy-fill-update-v2.json"
+        or v3_properties.get("execution_updates", {}).get("type") != "array"
+        or "execution_updates" in input_v3.get("required", [])
+    ):
+        issues.append("Strategy 输入 v3 Schema 未严格声明非空 fill_updates、可选 execution_updates 或版本常量")
+    input_v4_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V4_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v4_properties = input_v4.get("properties", {})
+    checkpoint = input_v4.get("$defs", {}).get("checkpoint", {})
+    if (
+        input_v4.get("additionalProperties") is not False
+        or input_v4.get("$id") is None
+        or not input_v4_version
+        or v4_properties.get("schema_version", {}).get("const") != int(input_v4_version.group(1))
+        or v4_properties.get("strategy_checkpoint", {}).get("$ref") != "#/$defs/checkpoint"
+        or "strategy_checkpoint" not in input_v4.get("required", [])
+        or checkpoint.get("additionalProperties") is not False
+        or checkpoint.get("properties", {}).get("schema_version", {}).get("const") != 1
+        or "adapter_state" not in checkpoint.get("required", [])
+        or "strategy_state" not in checkpoint.get("required", [])
+        or "fill_updates" in input_v4.get("required", [])
+        or v4_properties.get("fill_updates", {}).get("minItems") is not None
+    ):
+        issues.append("Strategy 输入 v4 Schema 未严格声明有界 checkpoint 与可选 execution/fill updates")
+    input_v5_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V5_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v5_properties = input_v5.get("properties", {})
+    v5_bars = input_v5.get("$defs", {}).get("bars", {})
+    exact_ohlcv = input_v5.get("$defs", {}).get("exact_ohlcv", {})
+    exact_rows = v5_bars.get("properties", {}).get("exact_ohlcv", {})
+    exact_row_options = exact_rows.get("items", {}).get("oneOf", [])
+    if (
+        input_v5.get("additionalProperties") is not False
+        or input_v5.get("$id") is None
+        or not input_v5_version
+        or v5_properties.get("schema_version", {}).get("const") != int(input_v5_version.group(1))
+        or v5_properties.get("strategy_checkpoint", {}).get("$ref") != "#/$defs/checkpoint"
+        or "strategy_checkpoint" in input_v5.get("required", [])
+        or exact_rows.get("type") != "array"
+        or exact_rows.get("minItems") != 1
+        or len(exact_row_options) != 2
+        or exact_row_options[1].get("$ref") != "#/$defs/exact_ohlcv"
+        or set(exact_ohlcv.get("properties", {})) != {"open", "high", "low", "close", "volume"}
+        or exact_ohlcv.get("additionalProperties") is not False
+    ):
+        issues.append("Strategy 输入 v5 Schema 未严格声明精确 OHLCV 与可选 checkpoint")
+    input_v6_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V6_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v6_properties = input_v6.get("properties", {})
+    if (
+        input_v6.get("additionalProperties") is not False
+        or input_v6.get("$id") is None
+        or not input_v6_version
+        or v6_properties.get("schema_version", {}).get("const") != int(input_v6_version.group(1))
+        or v6_properties.get("market_ticks", {}).get("type") != "array"
+        or v6_properties.get("market_ticks", {}).get("minItems") != 1
+        or "market_ticks" not in input_v6.get("required", [])
+        or "account_updates" in v6_properties
+    ):
+        issues.append("Strategy 输入 v6 Schema 未严格声明 Tick 或版本常量")
+    input_v7_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V7_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v7_properties = input_v7.get("properties", {})
+    account_update = input_v7.get("$defs", {}).get("account_update", {})
+    if (
+        input_v7.get("additionalProperties") is not False
+        or input_v7.get("$id") is None
+        or not input_v7_version
+        or v7_properties.get("schema_version", {}).get("const") != int(input_v7_version.group(1))
+        or v7_properties.get("account_updates", {}).get("type") != "array"
+        or v7_properties.get("account_updates", {}).get("minItems") != 1
+        or "account_updates" not in input_v7.get("required", [])
+        or len(account_update.get("oneOf", [])) != 2
+        or input_v7.get("$defs", {}).get("account_balance", {}).get("additionalProperties") is not False
+        or input_v7.get("$defs", {}).get("account_position", {}).get("additionalProperties") is not False
+    ):
+        issues.append("Strategy 输入 v7 Schema 未严格声明账户/持仓快照或版本常量")
+    input_v8_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V8_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v8_properties = input_v8.get("properties", {})
+    if (
+        input_v8.get("additionalProperties") is not False
+        or input_v8.get("$id") is None
+        or not input_v8_version
+        or v8_properties.get("schema_version", {}).get("const") != int(input_v8_version.group(1))
+        or v8_properties.get("market_order_books", {}).get("type") != "array"
+        or v8_properties.get("market_order_books", {}).get("minItems") != 1
+        or "market_order_books" not in input_v8.get("required", [])
+        or "market_order_books" in v7_properties
+    ):
+        issues.append("Strategy 输入 v8 Schema 未严格声明持久 L2 盘口或版本常量")
+    input_v9_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V9_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v9_properties = input_v9.get("properties", {})
+    v9_cash = input_v9.get("$defs", {}).get("exact_cash_ledger", {})
+    if (
+        input_v9.get("additionalProperties") is not False
+        or input_v9.get("$id") is None
+        or not input_v9_version
+        or v9_properties.get("schema_version", {}).get("const") != int(input_v9_version.group(1))
+        or v9_properties.get("cash_exact", {}).get("$ref") != "#/$defs/exact_cash_ledger"
+        or v9_properties.get("available_margin_exact", {}).get("$ref")
+        != "#/$defs/exact_non_negative_decimal"
+        or v9_cash.get("minProperties") != 1
+        or "market_order_books" in input_v9.get("required", [])
+        or not any(
+            set(arm.get("required", [])) & {"cash_exact", "available_margin_exact"}
+            for arm in input_v9.get("anyOf", [])
+        )
+    ):
+        issues.append("Strategy 输入 v9 Schema 未严格声明精确现金/保证金，或错误要求 L2 盘口")
     check(not issues, "策略输入方向有严格 Schema，且版本与策略 API 单一来源一致", "；".join(issues))
     check(
         STRATEGY_INPUT_TEST.is_file(),
@@ -15524,11 +16225,65 @@ def strategy_input_schema_check() -> None:
             re.MULTILINE,
         )
     )
-    for name, group in (("JSON schema", set(properties)), ("Python SDK", python_input)):
+    rust_v1 = rust_input - {
+        "execution_updates",
+        "fill_updates",
+        "market_ticks",
+        "account_updates",
+        "market_order_books",
+    }
+    rust_v1.discard("strategy_checkpoint")
+    rust_v2 = rust_input - {
+        "fill_updates",
+        "market_ticks",
+        "strategy_checkpoint",
+        "account_updates",
+        "market_order_books",
+    }
+    rust_v3 = rust_input - {
+        "market_ticks",
+        "strategy_checkpoint",
+        "account_updates",
+        "market_order_books",
+    }
+    rust_v4_v5 = rust_input - {"market_ticks", "account_updates", "market_order_books"}
+    rust_v6 = rust_input - {"account_updates", "market_order_books"}
+    rust_v7 = rust_input - {"market_order_books"}
+    rust_v1_v8 = {
+        "JSON schema v1": rust_v1.copy(),
+        "JSON schema v2": rust_v2.copy(),
+        "JSON schema v3": rust_v3.copy(),
+        "JSON schema v4": rust_v4_v5.copy(),
+        "JSON schema v5": rust_v4_v5.copy(),
+        "JSON schema v6": rust_v6.copy(),
+        "JSON schema v7": rust_v7.copy(),
+        "JSON schema v8": rust_input.copy(),
+    }
+    for expected in rust_v1_v8.values():
+        expected.discard("cash_exact")
+        expected.discard("available_margin_exact")
+    rust_v1 = rust_v1_v8["JSON schema v1"]
+    rust_v2 = rust_v1_v8["JSON schema v2"]
+    rust_v3 = rust_v1_v8["JSON schema v3"]
+    rust_v4_v5 = rust_v1_v8["JSON schema v4"]
+    rust_v6 = rust_v1_v8["JSON schema v6"]
+    rust_v7 = rust_v1_v8["JSON schema v7"]
+    for name, group, expected in (
+        ("JSON schema v1", set(properties), rust_v1),
+        ("JSON schema v2", set(v2_properties), rust_v2),
+        ("JSON schema v3", set(v3_properties), rust_v3),
+        ("JSON schema v4", set(v4_properties), rust_v4_v5),
+        ("JSON schema v5", set(v5_properties), rust_v4_v5),
+        ("JSON schema v6", set(v6_properties), rust_v6),
+        ("JSON schema v7", set(v7_properties), rust_v7),
+        ("JSON schema v8", set(input_v8.get("properties", {})), rust_v1_v8["JSON schema v8"]),
+        ("JSON schema v9", set(v9_properties), rust_input),
+        ("Python SDK", python_input, rust_input),
+    ):
         check(
-            group == rust_input,
+            group == expected,
             f"策略输入字段集 {name} 与 Rust StrategyContractInput 逐项相等",
-            f"多 {sorted(group - rust_input) or '无'}、少 {sorted(rust_input - group) or '无'}",
+            f"多 {sorted(group - expected) or '无'}、少 {sorted(expected - group) or '无'}",
         )
 
 
@@ -15760,8 +16515,8 @@ def runtime_path_resolution_ownership_check() -> None:
             ("event_log_exists", "event_log_exists"),
             ("default_account_log", "default_account_event_log"),
             ("api_query_models", "query_api_models"),
-            ("account_snapshots", "load_api_account_snapshots"),
-            ("account_snapshot_loader", "load_api_account_snapshot_for_worker"),
+            ("account_snapshots", "load_api_account_snapshots_with_market_specs"),
+            ("account_snapshot_loader", "load_api_account_snapshot_for_worker_with_market_specs"),
         ):
             if re.search(rf"(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+{function}\s*\(", text):
                 reconcile_definitions[key].append(relative)
@@ -15834,8 +16589,7 @@ def runtime_path_resolution_ownership_check() -> None:
         )
         and '"qx-service/sqlite"' in _read_text(ROOT / "crates/qx-cli/Cargo.toml")
         and '"qx-service/postgres"' in _read_text(ROOT / "crates/qx-cli/Cargo.toml")
-        and "pub(crate) use qx_service::api_read_model::{" in cli_api_text
-        and "default_account_event_log, load_api_account_snapshots" in cli_api_text
+        and "qx_service::api_read_model" not in cli_api_text
         and "load_api_query_models(" in service_read_model_text
         and "qx_service::api_read_model::load_reconcile_reports" not in cli_api_text
         and "apply_reconcile_reports(&mut snapshot, log_name, reports)" in service_read_model_text
@@ -15965,7 +16719,12 @@ PARAMETERIZED_EQUITY_RULERS = (
     "equity_for_with_spec_and_fx",
     "equity_for_with_spec",
     "equity_for_with_multiplier",
+    "equity_for_with_multiplier_exact",
+    "equity_for_with_market_specs_and_fx_exact",
+    "equity_for_with_market_specs_and_exact_marks_and_fx_exact",
 )
+RAW_EQUITY_RULERS = PARAMETERIZED_EQUITY_RULERS[:3]
+EXACT_EQUITY_RULERS = PARAMETERIZED_EQUITY_RULERS[3:]
 VALUATION_DISPATCH_CASES = (
     "ledger_valuate_equals_the_multiplier_ruler_for_spot",
     "ledger_valuate_uses_the_contract_spec_ruler_without_fx",
@@ -16202,14 +16961,13 @@ def valuation_single_source_check() -> None:
 
     ① `ValuationContext` / `ValuationResult` 在 `qx-core` 的 `valuation` 模块里，且 lib.rs
        既挂了模块又做了重导出（不然别的 crate 用不上）；
-    ② `Ledger::valuate` 在盘，且**它自己**包含三把参数化尺子的名字（派发只此一处）；
+    ② raw `Ledger::valuate` 与 scale-aware `Ledger::valuate_exact` 分别持有唯一派发；
     ③ `MarginState::valuate` 在盘，且两个入口都经 `ValuationResult::new`（`available` 关系单源）；
-    ④ 生产源码全文扫描：三把**参数化**尺子只能出现在 `ledger/query.rs`（定义点 + `Ledger::valuate`
-       的派发）——回测/CLI 里那几处手工派发必须消失。取 `production_text` 是为了剥掉注释与测试项：
+    ④ 生产源码全文扫描：raw 与 exact 六把**参数化**尺子只能出现在 `ledger/query.rs`
+       （定义点 + 两个唯一派发）——回测/CLI/报告里那几处手工派发必须消失。取 `production_text` 是为了剥掉注释与测试项：
        否则文档里提一句尺子名，或 `#[cfg(test)]` 用例里直接调原语，都会让「还有谁在直接派发」数不准；
     ⑤ `MarginState::equity` / `available` 委托 `valuate`（保证金算式不许在 `trading.rs` 里再写一份）；
-    ⑥ 派发等价性有四条行为用例在盘（`valuate` 必须与它派发到的原始尺子**逐值相等**，且
-       有/无汇率两把尺子给出不同的数——不然等式验不出派发）。
+    ⑥ raw/exact 派发均有逐值行为用例在盘；raw 汇率开/关两种尺子必须给出不同结果。
 
     刻意**不**纳入本颗的：`Ledger::equity_for`（乘数固定 1 的无参现货尺子）。它没有"选哪把"
     的歧义，`qx-cli` 的账户快照与策略上下文直接调它不构成第二处派发。
@@ -16218,17 +16976,26 @@ def valuation_single_source_check() -> None:
     check(
         (ROOT / VALUATION_MODULE).is_file()
         and "pub mod valuation;" in case_source("crates/qx-core/src/lib.rs")
-        and "pub use self::valuation::{PaperValuationContext, ValuationContext, ValuationResult};"
-        in case_source("crates/qx-core/src/lib.rs"),
-        "ValuationContext / ValuationResult 落在 qx-core 的 valuation 模块，且 lib.rs 挂载并重导出",
+        and all(
+            name in case_source("crates/qx-core/src/lib.rs")
+            for name in ("ExactValuationContext", "PaperValuationContext", "ValuationContext", "ValuationResult")
+        ),
+        "ValuationContext / ExactValuationContext / ValuationResult 落在 qx-core 的 valuation 模块，且 lib.rs 挂载并重导出",
         f"缺 {VALUATION_MODULE}，或 lib.rs 没挂模块 / 没重导出",
     )
     ledger_valuate = _rust_fn_body(case_source(EQUITY_RULER_DEFS), "valuate")
     check(
         ledger_valuate is not None
-        and all(ruler in ledger_valuate for ruler in PARAMETERIZED_EQUITY_RULERS),
-        "Ledger::valuate 在盘，且三把参数化尺子的派发只在它里面",
-        "Ledger::valuate 不在盘，或它没有覆盖全部三把尺子",
+        and all(ruler in ledger_valuate for ruler in RAW_EQUITY_RULERS),
+        "Ledger::valuate 在盘，且所有 raw 参数化权益尺子由它派发",
+        "Ledger::valuate 不在盘，或它没有覆盖全部 raw 参数化权益尺子",
+    )
+    ledger_valuate_exact = _rust_fn_body(case_source(EQUITY_RULER_DEFS), "valuate_exact")
+    check(
+        ledger_valuate_exact is not None
+        and all(ruler in ledger_valuate_exact for ruler in EXACT_EQUITY_RULERS),
+        "Ledger::valuate_exact 在盘，且所有 scale-aware 权益尺子由它派发",
+        "Ledger::valuate_exact 不在盘，或它没有覆盖全部 scale-aware 权益尺子",
     )
     check(
         re.search(
@@ -16288,9 +17055,10 @@ def valuation_single_source_check() -> None:
         and "required_fx.remove(&reporting_currency)" in paper_service
         and "qx_app::paper_available_margin_raw(" in paper_service
         and "strategy.refresh(&ledger, &account_id, &currency, derivative_spec.is_none())" in single_bar
-        and "strategy.on_bar_orders_with_margin_checked(" in portfolio_bar
+        and "strategy.on_bar_orders_with_margin_exact_checked(" in portfolio_bar
         and ".saturating_sub(reserved)" in portfolio_bar
-        and "Some(free_cash)" in portfolio_bar,
+        and "Some(free_cash)" in portfolio_bar
+        and "Some(free_cash_exact)" in portfolio_bar,
         "估值派发有四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率给出不同的数）",
         f"缺 {VALUATION_CASE_FILE} 或估值派发用例不全；Paper 必须走含冻结规格/FX 的完整账户估值，"
         "单腿 Bar 只暴露现货结算现金、衍生保证金未认证时保持 None，多市场 Bar 使用扣除待计资金费后的现金预算",
@@ -16391,7 +17159,7 @@ def paper_account_admission_serialization_check() -> None:
         and "paper_cross_currency_spot_uses_quote_cash_and_reserves_pending_orders" in margin_tests
         and "if spec.product == qx_core::TradingProduct::Spot" in service_risk
         and "&spec.quote_currency" in service_risk
-        and "pending_sell_qty" in service_risk
+        and "pending_spot_sell_quantity_exact" in service_risk
         and "spot_sell_needs_no_cash_margin" in risk_rules
         and "paper_submit_refreshes_under_account_lock_before_reusing_cash" in cli_tests
         and "paper_pending_spot_buys_reserve_quote_cash_for_a_new_order" in margin_tests
@@ -16431,9 +17199,11 @@ def spread_recovery_service_ownership_check() -> None:
     service = case_source("crates/qx-service/src/spread_recovery_host.rs")
     cli = case_source("crates/qx-cli/src/spread.rs")
     recovery_body = _rust_fn_body(service, "recover_spread_groups_for_venue") or ""
-    paper_body = _rust_fn_body(service, "recover_paper_spread_groups") or ""
+    paper_wrapper = _rust_fn_body(service, "recover_paper_spread_groups_for_account") or ""
+    paper_body = _rust_fn_body(service, "recover_paper_spread_groups_inner") or ""
     check(
         bool(recovery_body)
+        and bool(paper_wrapper)
         and bool(paper_body)
         and "pub fn pending_spread_recovery_groups" in service
         and "pub fn spread_recovery_poll_delay" in service
@@ -16452,7 +17222,8 @@ def spread_recovery_service_ownership_check() -> None:
         and "fn persist_strategy_submit" not in cli
         and "fn command_is_final" not in cli
         and "HedgeRecoveryWorker::new(" in recovery_body
-        and "venue.on_quote(&instrument, quote)" in paper_body,
+        and "recover_paper_spread_groups_inner(" in paper_wrapper
+        and ".try_on_quote(&instrument, quote)" in paper_body,
         "多腿恢复扫描、退避、补偿风控和 Paper 行情驱动归 qx-service，CLI 只重导出",
         f"venue恢复={bool(recovery_body)}，Paper恢复={bool(paper_body)}，CLI重导出={'pub(crate) use qx_service::spread_recovery_host' in cli}",
     )
@@ -16510,7 +17281,7 @@ def paper_execution_service_ownership_check() -> None:
         and "queue.claim_command(" in worker_body
         and "queue.ack_command_at(" in worker_body_flat
         and "run_paper_algo_execution_cycle(" in worker_body
-        and "recover_paper_spread_groups(" in worker_body
+        and "recover_paper_spread_groups_for_account(" in worker_body
         and "qx_service::paper_execution_host::run_paper_execution_worker(" in cli_body
         and "run_polling_worker(" not in cli_body,
         "Paper Execution 常驻 tick、队列租约/终态确认、算法单与多腿恢复由 qx-service 持有，CLI 仅校验与分流",
@@ -16526,15 +17297,19 @@ def live_balance_order_reservation_check() -> None:
     ccxt_submit = case_source("crates/qx-service/src/ccxt_execution_host.rs")
     ccxt_execution = case_source("crates/qx-service/src/ccxt_execution_host.rs")
     tests = case_source("crates/qx-cli/tests/unit/live_pending_order_reservation.rs")
-    runtime_body = _rust_fn_body(runtime, "execute_submit_order_with_worker_risk") or ""
-    helper = _rust_fn_body(service_risk, "live_post_snapshot_order_reserve_raw") or ""
+    runtime_body = _rust_fn_body(
+        runtime, "execute_submit_order_with_worker_risk_and_market_reference"
+    ) or ""
+    helper = _rust_fn_body(service_risk, "live_post_snapshot_order_reserve_exact") or ""
+    pending_helper = _rust_fn_body(service_risk, "pending_order_reserve_exact") or ""
+    post_snapshot_ids = _rust_fn_body(service_risk, "live_post_snapshot_order_ids") or ""
     spec_resolver = _rust_fn_body(service_risk, "live_order_market_spec") or ""
     disjoint_spot_bucket = re.search(
-        r"if !currency\.eq_ignore_ascii_case\(funding_currency\)\s*"
-        r"&& current_spec\.product == qx_core::TradingProduct::Spot\s*"
-        r"&& order_spec\.product == qx_core::TradingProduct::Spot\s*"
-        r"\{[^}]*return Ok\(total\);",
-        helper,
+        r"if !currency\.eq_ignore_ascii_case\(funding_currency\)\s*\{\s*"
+        r"if candidate_product == qx_core::TradingProduct::Spot\s*"
+        r"&& spec\.product == qx_core::TradingProduct::Spot\s*"
+        r"\{[^}]*return Ok\(ExactDecimal::ZERO\);",
+        pending_helper,
         re.S,
     )
     steps = (
@@ -16549,11 +17324,11 @@ def live_balance_order_reservation_check() -> None:
         all(index >= 0 for index in steps)
         and list(steps) == sorted(steps)
         and "pub fn worker_risk_context(" in service_risk
-        and "live_post_snapshot_order_reserve_raw(" in service_risk
-        and "event.seq > balance_seq" in helper
-        and "EventKind::OrderSubmitted { order }" in helper
-        and "EventKind::Filled { fill }" in helper
-        and "live_order_market_spec(" in helper
+        and "live_post_snapshot_order_reserve_exact(" in service_risk
+        and "live_post_snapshot_order_ids(" in helper
+        and "event.seq > balance_seq" in post_snapshot_ids
+        and "EventKind::OrderSubmitted { order }" in post_snapshot_ids
+        and "EventKind::Filled { fill }" in post_snapshot_ids
         and "live_order_market_spec(" in helper
         and "pub fn live_order_market_spec(" in service_risk
         and "runtime_config_path" in helper
@@ -16563,13 +17338,19 @@ def live_balance_order_reservation_check() -> None:
         and ".checked_sub(snapshot.ts)" in service_risk
         and "require_fresh_live_balance_snapshot(" in case_source("crates/qx-service/src/spread_recovery_host.rs")
         and "spec.quote_currency.trim().to_ascii_uppercase()" in service_risk
+        and "spec.base_currency.trim().to_ascii_uppercase()" in service_risk
+        and "exact_spot_sell_available_inventory(" in service_risk
+        and "live_post_snapshot_order_ids(" in service_risk
         and "balance.asset.eq_ignore_ascii_case(&funding_currency)" in service_risk
-        and "currency.eq_ignore_ascii_case(funding_currency)" in helper
+        and re.search(r"currency\.eq_ignore_ascii_case\(funding_currency\)", pending_helper)
         and disjoint_spot_bucket is not None
         and "venue_id" in spec_resolver
         and "worker.account_id.as_deref() == Some(account_id)" in spec_resolver
-        and "policy.validate_for(&order_spec)" in helper
-        and all("execute_submit_order_with_worker_risk(" in source for source in call_sites)
+        and "policy" in pending_helper
+        and re.search(r"policy\s*\.validate_for\(spec\)", pending_helper)
+        and "initial_margin_exact(remaining, price, policy.leverage)" in pending_helper
+        and "execute_submit_order_with_worker_risk(" in binance
+        and "execute_submit_order_with_worker_risk_and_market_reference(" in ccxt_submit
         and "&pipeline_storage.root" in binance
         and all("&pipeline_storage.root" in source for source in (ccxt_submit, ccxt_execution))
         and all(
@@ -16583,10 +17364,11 @@ def live_balance_order_reservation_check() -> None:
                 "live_spot_candidate_ignores_pending_spot_order_from_other_quote_asset",
                 "live_derivative_candidate_fails_closed_on_other_settlement_currency_orders",
                 "live_spot_admission_uses_quote_asset_balance_without_fx_conversion",
+                "live_spot_sell_uses_base_free_balance_and_caps_to_exchange_inventory",
                 "live_order_admission_rejects_missing_future_and_expired_balance_snapshots",
             )
         ),
-        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；现货报价币购买力/独立预留桶与衍生品异币种 fail-closed 均有行为合同",
+        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；现货 quote/base 资金桶、base 可卖量上限、在途预留及衍生品异币种 fail-closed 均有行为合同",
         f"准入顺序={steps}，Live 预留实现={bool(helper)}，市场规格解析={bool(spec_resolver)}，调用入口={len(call_sites)}",
     )
 
@@ -17021,7 +17803,7 @@ def _refusal_case_verdict(crate: str, name: str, version_field: str) -> str:
         text = _read_text(path)
         if re.search(r"#\[test\][\s\S]{0,800}?fn\s+" + re.escape(name) + r"\s*\(", text) is None:
             continue
-        body = text[text.index(f"fn {name}") :][:2000]
+        body = _fn_body(text, f"fn {name}(")
         if "contains(" in body or f"{version_field}=" in body:
             return ""
         return f"{name} 体里既无 contains( 也无 {version_field}=（只核失败、不核具名原因）"
@@ -17112,9 +17894,31 @@ def artifact_migration_check() -> None:
             continue
         text = _artifact_code_only(reader)
         gate = row.get("version_const", "")
-        if ARTIFACT_MIGRATION_CONST.format(gate=gate) not in text or f"!= {gate}" not in text:
-            gate_issues.append(f"{schema_id} 缺 `pub const {gate}: u32` 或 `!= {gate}`")
-        if row.get("refusal_reason", "") not in text or row.get("version_field", "") not in text:
+        if schema_id in {"account-snapshot-v1", "account-snapshot-v2", "account-snapshot-v3"}:
+            gate_ok = (
+                ARTIFACT_MIGRATION_CONST.format(gate=gate) in text
+                and "const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;" in text
+                and "top_schema < MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64" in text
+                and "top_schema > ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64" in text
+                and "..=ACCOUNT_SNAPSHOT_SCHEMA_VERSION" in text
+            )
+            reason_ok = (
+                row.get("refusal_reason", "")
+                == "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
+                and "schema_version={top_schema} 不受支持（本构建支持 {}..={}）" in text
+            )
+        elif schema_id in STRATEGY_INPUT_SCHEMA_IDS:
+            gate_ok = gate in text and "match self.schema_version" in text
+            reason_ok = row.get("refusal_reason", "") in text
+        else:
+            gate_ok = (
+                ARTIFACT_MIGRATION_CONST.format(gate=gate) in text
+                and f"!= {gate}" in text
+            )
+            reason_ok = row.get("refusal_reason", "") in text
+        if not gate_ok:
+            gate_issues.append(f"{schema_id} 缺已登记的版本边界 {gate}")
+        if not reason_ok or row.get("version_field", "") not in text:
             reason_issues.append(f"{schema_id} 拒绝文案或版本字段名不在读侧")
         reader_crate = Path(row.get("reader", "")).parts[1:2]
         if not reader_crate:
@@ -17124,7 +17928,7 @@ def artifact_migration_check() -> None:
         # cases intentionally remain in qx-runtime's compatibility/consumer tests.
         if schema_id == "strategy-api-v1":
             crate = Path(STRATEGY_OUTPUT_CASE_FILE).parts[1:2]
-        elif schema_id == "strategy-api-input-v1":
+        elif schema_id in STRATEGY_INPUT_SCHEMA_IDS:
             crate = Path(STRATEGY_INPUT_TEST.relative_to(ROOT)).parts[1:2]
         else:
             crate = reader_crate
@@ -18580,6 +19384,50 @@ def cli_command_manifest_check() -> None:
     )
 
 
+def workspace_inventory_check() -> None:
+    """Keep the human-facing Cargo workspace count tied to the root manifest."""
+    cargo = _read_text(ROOT / "Cargo.toml")
+    readme = _read_text(ROOT / "README.md")
+    workspace = re.search(r"(?ms)^\[workspace\]\s*(.*?)(?=^\[|\Z)", cargo)
+    member_list = (
+        re.search(r"(?ms)^\s*members\s*=\s*\[(.*?)^\s*\]", workspace.group(1))
+        if workspace
+        else None
+    )
+    members = (
+        re.findall(r'^\s*"([^"]+)"\s*,?\s*(?:#.*)?$', member_list.group(1), re.MULTILINE)
+        if member_list
+        else []
+    )
+    check(
+        member_list is not None and bool(members),
+        "Cargo workspace 成员清单可以从根 manifest 显式解析",
+        "Cargo.toml [workspace].members 缺失或不再是显式路径列表",
+    )
+    qx_count = sum(member.startswith("crates/qx-") for member in members)
+    contract_count = sum(member == "crates/contract-tests" for member in members)
+    declared_row = re.search(
+        r"(?m)^\| Cargo workspace 成员 \| (\d+)（(\d+) 个 `qx-\*` crate \+ `contract-tests`） \|",
+        readme,
+    )
+    expected_counts = (len(members), qx_count, contract_count)
+    actual_counts = (
+        (int(declared_row.group(1)), int(declared_row.group(2)), 1)
+        if declared_row
+        else None
+    )
+    check(
+        contract_count == 1 and qx_count + contract_count == len(members),
+        "Cargo workspace 当前只含 qx-* 包和一个 contract-tests 成员",
+        f"members={len(members)} qx={qx_count} contract-tests={contract_count}",
+    )
+    check(
+        actual_counts == expected_counts,
+        "README workspace 成员/ qx-* 数量与 Cargo.toml 同步",
+        f"README={actual_counts} Cargo={expected_counts}",
+    )
+
+
 def cli_surface_coverage_check() -> None:
     """Drive subprocess help coverage from the generated CLI route manifest."""
     args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
@@ -18885,31 +19733,29 @@ def file_lock_single_source_check() -> None:
 
 
 def fee_settlement_currency_check() -> None:
-    """成交手续费只能记在它自己的币种上（V11 D2）。
-
-    `Fill.fee_currency` 由 Binance 的 `commissionAsset` 与 CCXT 的 `fee_currency` 填充、
-    并已进入事件指纹，归约侧却可以整份不读它——异币种抵扣的手续费会被按面值记进结算币种，
-    账本凭空多（或少）一笔钱且没有任何信号（0.001 BNB 记成 0.001 USDT 低估两个数量级）。
-    正确形状只有三档：同币种/未报币种按面值；基准资产费用用**这笔成交自己的价格**折算
-    （不需要外部汇率，挡下它等于挡掉主力连接器上每天正常发生的全部成交）；其余币种拒记并
-    转待对账。衍生条款不折算——那一层要过 `contract_size` 与 inverse 口径，算错的代价比拒记更高。
-    """
+    """显式多币种费用保持币种，旧单币种 Fill 保留安全兼容路径（V11 D2）。"""
     fill_source = production_text(
         (ROOT / "crates/qx-core/src/ledger/fill.rs").read_text(encoding="utf-8")
     )
-    resolvers = len(re.findall(r"fee_in_settlement_raw\(", fill_source))
+    normalizers = len(re.findall(r"(?<!exact_)fee_charges_for_ledger\(", fill_source))
+    fee_negations = len(re.findall(r"fee_raw\s*\.checked_neg\(\)", fill_source))
     check(
-        resolvers >= 3 and "fill.fee_currency" in fill_source and "ReconcileRequired" in fill_source,
-        "手续费币种判定住在唯一的折算函数里，现货与衍生两条记账入口都过它（V11 D2）",
-        f"fee_in_settlement_raw 出现 {resolvers} 次（定义 + 两处调用），"
-        f"读取 fee_currency={'fill.fee_currency' in fill_source}",
+        normalizers == 4
+        and "exact_fee_charges_for_ledger(fill, &spec.quote_currency" in fill_source
+        and "fill.fee_charges().map_err(QxError::ReconcileRequired)" in fill_source
+        and "by_currency.entry(currency)" in fill_source
+        and "fee_in_settlement_raw(fill, currency, base)?" in fill_source,
+        "现货与衍生共用多币种费用归一器；精确现货路径只对旧手续费行走兼容折算",
+        f"raw fee_charges_for_ledger 出现 {normalizers} 次（定义 + 现货/衍生调用 + 精确现货兼容回退），"
+        f"显式 fees[] 归一={('fill.fee_charges()' in fill_source)}",
     )
     check(
         fill_source.count("Money::from_raw(-fill.fee.raw())") == 0
-        and fill_source.count("Money::from_raw(-fee_raw)") == 2,
-        "费用腿一律记折算后的数，不记回报里的原数（按面值入账正是 D2 的原始缺陷）",
-        f"-fill.fee.raw() 残留 {fill_source.count('Money::from_raw(-fill.fee.raw())')} 处、"
-        f"-fee_raw {fill_source.count('Money::from_raw(-fee_raw)')} 处",
+        and fill_source.count("currency: fee_currency.clone()") == 2
+        and fee_negations == 2,
+        "两条账簿费用腿保留费用原币种并以 checked_neg 记借方，不把异币种 raw 混成结算币种",
+        f"原币种费用腿 {fill_source.count('currency: fee_currency.clone()')} 处、"
+        f"checked_neg 费用腿 {fee_negations} 处",
     )
     check(
         "fn base_asset_of(" in fill_source
@@ -18920,8 +19766,8 @@ def fee_settlement_currency_check() -> None:
     )
     check(
         "multiplier == 1" in fill_source
-        and fill_source.count("fee_in_settlement_raw(fill, currency, None)") == 1,
-        "折算只对乘数为 1 的现货口径开放，衍生条款严格认结算币种",
+        and fill_source.count("fee_charges_for_ledger(fill, currency, None)") == 1,
+        "旧标量基准资产折算只在乘数为 1 的现货路径开放；衍生品不猜测异币种换算",
         "乘数闸门或衍生侧的严格口径不见了",
     )
     ledger_cases = case_source("crates/qx-core/tests/ledger")
@@ -18935,13 +19781,13 @@ def fee_settlement_currency_check() -> None:
             "fill_with_foreign_fee_currency_is_not_booked_at_face_value",
             "derivative_fill_with_foreign_fee_currency_is_rejected",
             "fee_currency_gate_only_bites_on_reported_foreign_currency",
+            "explicit_multi_currency_fee_rows_are_booked_in_their_native_currencies",
         )
         if f"fn {name}(" not in ledger_cases
     ]
     check(
         not missing,
-        "七条用例分别钉住「基准资产费用按成交价折算、符号没点名则拒、乘数路径不折算、"
-        "折到 0 不留腿、第三币种拒记、衍生同拒、闸门只管异币种」",
+        "用例覆盖旧标量费用兼容折算/拒绝，以及显式多币种费用保留币种、不交叉相加",
         f"crates/qx-core/tests/ledger 少了 {missing}",
     )
 
@@ -19496,8 +20342,14 @@ def web_console_field_wiring_check() -> None:
     )
     specs = js_table_specs(app)
     check(
-        len(specs) == 3 and all(table in html for table in specs),
-        "三张表都有列定义，且都在 index.html 里真的存在",
+        set(specs) == {
+            "orders-table",
+            "positions-table",
+            "events-table",
+            "account-activity-events-table",
+        }
+        and all(table in html for table in specs),
+        "账户快照和活动事件表都有列定义，且都在 index.html 里真的存在",
         f"列定义 {sorted(specs)}",
     )
 
@@ -19526,11 +20378,14 @@ def web_console_field_wiring_check() -> None:
         f"名册 {rosters.get('balances')} / 后端 {json_object_keys_of(CONSOLE_BALANCES_MARKER)}",
     )
     schema = json.loads(
-        (ROOT / "schemas/account-snapshot-v1.json").read_text(encoding="utf-8")
+        (ROOT / "schemas/account-snapshot-v3.json").read_text(encoding="utf-8")
     )
     check(
-        sorted(top) == sorted(schema["properties"]),
-        "快照写侧字面量的顶层键与 schemas/account-snapshot-v1.json 的 properties 相等（三份说法只有一份漂移就红）",
+        set(top) <= set(schema["properties"])
+        and set(schema["properties"]) - set(top) <= {"fees_by_currency_raw", "cash_exact"}
+        and "fees_by_currency_raw" not in schema["required"]
+        and "cash_exact" not in schema["required"],
+        "快照写侧的顶层键均由当前 v3 schema 声明，精确余额与费用 map 都可省略",
         f"写侧 {sorted(top)} / schema {sorted(schema['properties'])}",
     )
 
@@ -20238,6 +21093,7 @@ CLONE_COMMIT_MARKERS = ("let mut staged = self.clone();", "*self = staged;")
 COMMIT_ROLLBACK_WRAPPERS = (
     "fn register_order_with_correlation_once(",
     "fn ingest_once(",
+    "fn record_execution_capability_decision_once(",
 )
 COMMIT_ROLLBACK_CALL = "self.rebuild_from_store(true)"
 COMMIT_ROLLBACK_CASE = "failed_ingest_rolls_back_the_appended_fact_and_the_seq_cursor"
@@ -20246,7 +21102,7 @@ COMMIT_ROLLBACK_CASE = "failed_ingest_rolls_back_the_appended_fact_and_the_seq_c
 def pipeline_commit_rollback_check() -> None:
     """P0-2(a)：写面提交不再整份拷贝状态，失败靠强制重放回滚（且回滚有行为证据）。
 
-    四颗分别钉：① 生产源码里没有"整份拷贝式提交"的旧写法复活；② 两条写面各自的薄包装在盘
+    四颗分别钉：① 生产源码里没有"整份拷贝式提交"的旧写法复活；② 三条写面各自的薄包装在盘
     且都走强制重放回滚（少一条就是那条写面偷偷退回拷贝或退回会短路的普通重建）；③ 短路被
     `force` 门控住（`!force &&` 在盘，否则 `next_seq` 会漏回滚）；④ 行为用例在盘。
     """
@@ -20268,12 +21124,13 @@ def pipeline_commit_rollback_check() -> None:
         "if let Err(rollback_error) = self.rebuild_from_store(true)" in commit
         and "提交失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
         and "归约失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
+        and "执行能力证据提交失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
     )
     check(
         missing_wrappers == []
         and rollback_calls == len(COMMIT_ROLLBACK_WRAPPERS)
         and rollback_diagnostics,
-        "两条写面都有强制重放回滚，且回滚失败时保留提交根因",
+        "三条写面都有强制重放回滚，且回滚失败时保留提交根因",
         f"缺包装 {missing_wrappers} / 强制回滚调用 {rollback_calls} 处 / 根因诊断 {rollback_diagnostics}",
     )
     rebuild_body = _fn_body(production, "fn rebuild_from_store(")
@@ -20411,7 +21268,7 @@ READ_SCOPE_CASES = (
     "keyed_and_keyless_route_lists_are_disjoint_and_both_live",
     "snapshot_diff_returns_only_the_documented_non_200_codes",
 )
-READ_SCOPE_PROJECTION = "const PROJECTION_SCOPED_ROUTES: [&str; 7] = ["
+READ_SCOPE_PROJECTION = "const PROJECTION_SCOPED_ROUTES: [&str; 8] = ["
 READ_SCOPE_MODEL_FILTER = "const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = ["
 READ_SCOPE_KEYLESS = "const KEYLESS_READ_ROUTES: [&str; 2] = ["
 READ_SCOPE_LEDGER_PARAMS = "const LEDGER_FILTER_PARAMS: [&str; 1] = ["
@@ -20469,7 +21326,7 @@ def read_face_scope_check() -> None:
     live = [route for route in projection + keyless + filtered if f'"/{route[1:]}"' in dispatch]
     groups = [set(projection), set(keyless), set(filtered)]
     check(
-        len(projection) == 7
+        len(projection) == 8
         and len(filtered) == 2
         and len(keyless) == 2
         and len(set(projection) | set(keyless) | set(filtered)) == len(projection) + len(filtered) + len(keyless)
@@ -20496,7 +21353,7 @@ def read_face_scope_check() -> None:
         and "accepted_query_params(route)?" in admission
         and "fn accepted_query_params(" not in admission,
         "accepted_query_params 是唯一取名册的出口：admission 真的委派到它、自己不再定义一份，"
-        "五张名单都在 read_scope 体内",
+        "六种查询键名单都在 read_scope 体内",
         "取数出口或名单被挪走",
     )
 
@@ -21060,7 +21917,13 @@ def qx_app_check() -> None:
         and '"initialMarginRate" in value else 100' in ccxt_source
         and '_decimal_to_integer(max_leverage_value, 1, field="maxLeverage")' in ccxt_source
         and '_decimal_to_integer(max_leverage, 1, field="maxLeverage")' in ccxt_source
+        # Fraction performs exact rational tick/bound and formatter comparisons only;
+        # canonical raw conversions and integer metadata parsing remain in Rust.
         and "from decimal import" not in ccxt_source
+        and "from fractions import Fraction" in ccxt_source
+        and "fraction = Fraction(str(value))" in ccxt_source
+        and "exact = Fraction(str(formatted)) == Fraction(requested)" in ccxt_source
+        and "native.decimal_to_integer_exact(str(value))" in ccxt_source
         and "def decimal_to_raw_exact(value: str, allow_negative: bool)" in native_bridge
         and "def raw_to_decimal(value: str, allow_negative: bool)" in native_bridge
         and "def decimal_to_scaled_integer(value: str, multiplier: int)" in native_bridge
@@ -21558,6 +22421,8 @@ def cli_behavior_parity_check() -> None:
                 '"verify-run"',
                 '"export-run"',
                 '"pack-multi-market-run"',
+                '"recompute-experiment"',
+                '"recompute-depth-experiment"',
                 '"recompute-multi-market-experiment"',
                 '"recompute-multi-market-depth-experiment"',
                 '"recompute-multi-leg-experiment"',
@@ -21718,11 +22583,11 @@ def module_map_english_roles_check() -> None:
     path = ROOT / "docs/module-map.md"
     text = _read_text(path) if path.is_file() else ""
     roles = (
-        "qx-core", "qx-guanxing", "qx-data", "qx-xingban", "qx-zhenlu",
+        "qx-core", "qx-guanxing", "qx-data", "qx-app", "qx-xingban", "qx-zhenlu",
         "qx-risk", "qx-genglu", "qx-plugin", "qx-factor", "qx-protocol",
         "qx-provider", "qx-scheduler", "qx-control", "qx-api", "qx-datastruct",
         "qx-adapter", "qx-runtime", "qx-orchestrator", "qx-storage",
-        "qx-strategy", "qx-execution", "python/qianxing_ccxt", "qx-python",
+        "qx-strategy", "qx-execution", "qx-service", "python/qianxing_ccxt", "qx-python",
         "cpp/", "qx-cli", "web/console/",
     )
     english_section = text.split("## English role index", 1)[-1]
@@ -21742,6 +22607,24 @@ def module_map_english_roles_check() -> None:
         "模块地图英文职能索引缺项、重复或结构不完整",
     )
 
+    genglu_docs = _read_text(ROOT / "crates/qx-genglu/src/lib.rs")
+    app_attribution = _read_text(ROOT / "crates/qx-app/src/multi_leg.rs")
+    cli_attribution = _read_text(ROOT / "crates/qx-cli/src/multi_leg.rs")
+    genglu_row = next(
+        (line for line in text.splitlines() if line.startswith("| `qx-genglu` ")), ""
+    )
+    check(
+        "研究成交归因事实见 `qx-app`" in genglu_row
+        and "成交归因事实由" in genglu_docs
+        and "`qx-app` 的多腿归因用例/报告 reader" in genglu_docs
+        and "pub fn multi_leg_group_attributions" in app_attribution
+        and "implemented once in `qx-app`" in cli_attribution
+        and "成交归因见 `qx-cli`" not in genglu_row
+        and "qx-cli` 的 `multi_leg_group_attributions" not in genglu_docs,
+        "D22 成交归因事实 owner 固定为 qx-app，CLI 只投影",
+        "模块地图、qx-genglu 职责或源码与成交归因 owner 不一致",
+    )
+
 
 def cli_app_command_behavior_coverage_check() -> None:
     """WP-2.1: every app subcommand has a real CLI process behavior-test home."""
@@ -21755,6 +22638,19 @@ def cli_app_command_behavior_coverage_check() -> None:
         "provider-backtest": "crates/qx-cli/tests/command_surface.rs",
         "provider-depth-backtest": "crates/qx-cli/tests/command_surface.rs",
         "verify": "crates/qx-cli/tests/app_three_entrypoints.rs",
+        "read-report": "crates/qx-cli/tests/app_three_entrypoints.rs",
+        "read-depth-report": "crates/qx-cli/tests/depth_app_three_entrypoints.rs",
+        "read-provider-report": "crates/qx-cli/tests/app_three_entrypoints/provider_reports.rs",
+        "read-provider-depth-report": "crates/qx-cli/tests/app_three_entrypoints/provider_reports.rs",
+        "read-multi-account-report": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        "read-multi-account-joint-report": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        "read-multi-leg-report": "crates/qx-cli/tests/app_three_entrypoints/multi_leg_report.rs",
+        "read-multi-leg-research-report": "crates/qx-cli/tests/app_three_entrypoints/multi_leg_report.rs",
+        "read-multi-leg-event-page": "crates/qx-cli/tests/app_three_entrypoints/multi_leg_report.rs",
+        "read-multi-market-event-page": "crates/qx-cli/tests/app_three_entrypoints/multi_market_report.rs",
+        "read-multi-market-depth-event-page": "crates/qx-cli/tests/app_three_entrypoints/multi_market_report.rs",
+        "read-multi-market-depth-research-report": "crates/qx-cli/tests/app_three_entrypoints/multi_market_report.rs",
+        "read-multi-market-research-report": "crates/qx-cli/tests/app_three_entrypoints/multi_market_report.rs",
         "compare-runs": "crates/qx-cli/tests/app_three_entrypoints.rs",
         "plan-risk-parity": "crates/qx-cli/tests/app_three_entrypoints/risk_parity.rs",
         "plan-algo-execution": "crates/qx-cli/tests/app_three_entrypoints/algo_execution.rs",
@@ -21768,6 +22664,7 @@ def cli_app_command_behavior_coverage_check() -> None:
         "multi-market-backtest": "crates/qx-cli/tests/multi_market_quality_manifest.rs",
         "multi-market-depth-backtest": "crates/qx-cli/tests/multi_market_depth_quality_manifest.rs",
         "multi-account-backtest": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        "multi-account-depth-backtest": "crates/qx-cli/tests/depth_app_three_entrypoints.rs",
         "multi-account-joint-backtest": "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
     }
     missing_evidence = []
@@ -22183,7 +23080,10 @@ def client_route_wiring_check() -> None:
     unexercised = [
         route
         for route in sorted(cpp_routes)
-        if not any(_route_pattern(route).match(candidate) for candidate in smoke_routes)
+        if not any(
+            _route_pattern(route).match(candidate.split("?", 1)[0])
+            for candidate in smoke_routes
+        )
     ]
     check(
         not unexercised,
@@ -22669,7 +23569,7 @@ def language_api_contract_check() -> None:
     check(
         not (remote_methods - declared_remote - remote_lifecycle - remote_helpers),
         "Python 远端门面的公开方法都被用例或显式生命周期名册认领",
-        f"未认领 {sorted(remote_methods - declared_remote - remote_lifecycle)}；"
+        f"未认领 {sorted(remote_methods - declared_remote - remote_lifecycle - remote_helpers)}；"
         f"映射表 {sorted(declared_remote)}；生命周期名册 {sorted(remote_lifecycle)}",
     )
 
@@ -22679,7 +23579,8 @@ def language_api_contract_check() -> None:
     check(
         not (cpp_methods - declared_cpp - lifecycle - cpp_helpers),
         "C++ `AppClient` 的公开方法都被某个用例认领（或落在显式的 run 生命周期名册里）",
-        f"未认领 {sorted(cpp_methods - declared_cpp - lifecycle)}；生命周期名册 {sorted(lifecycle)}",
+        f"未认领 {sorted(cpp_methods - declared_cpp - lifecycle - cpp_helpers)}；"
+        f"生命周期名册 {sorted(lifecycle)}；辅助读入口 {sorted(cpp_helpers)}",
     )
 
     rust_remote = _named_roster("rust_remote_lifecycle_methods")
@@ -22869,7 +23770,7 @@ def worker_loop_cancellation_check() -> None:
         f"退避={user_backoff} / 停机检查={stop_guard} / 重生={replacement_spawn}",
     )
     check(
-        market.count(".call_cancellable(") == 2
+        market.count(".call_cancellable(") == 3
         and reconcile.count("ccxt_reconcile_call(") >= 7
         and ".with_shutdown_check(" in reconcile
         and "stream_call_cancellable(" in ccxt_user,
@@ -23038,8 +23939,8 @@ def ccxt_market_runner_ownership_check() -> None:
         len(re.findall(r"^pub fn run_ccxt_market_worker\(", service, re.MULTILINE)) == 1
         and "pub struct CcxtMarketWorkerInput" in service
         and "worker_host::run_polling_worker(&context, once, || {" in service
-        and service.count(".call_cancellable(") == 2
-        and service.count("reconnect_budget.note_failure(&channel)?") == 2
+        and service.count(".call_cancellable(") == 3
+        and service.count("reconnect_budget.note_failure(&channel)?") == 3
         and "CcxtChannelBudgets::market_rpc()" in service
         and "qx_service::ccxt_market_host::run_ccxt_market_worker(" in cli
         and ".call_cancellable(" not in cli
@@ -23100,6 +24001,8 @@ def venue_stream_idle_pacing_check() -> None:
 # （PaperVenue / BinanceSpotVenue / CcxtProcessVenue）也没有任何地方记着它们的限制落在哪一格。
 CAPABILITY_MATRIX_FILE = "maturity/capability-matrix.yaml"
 CAPABILITY_MATRIX_KIND = "capability-matrix"
+CAPABILITY_CROSSWALK_FILE = "maturity/capability-crosswalk.yaml"
+CAPABILITY_CROSSWALK_KIND = "capability-crosswalk"
 CAPABILITY_MATRIX_LEVELS = (
     "implemented-and-verified",
     "implemented-unverified",
@@ -23194,6 +24097,22 @@ def _matrix_roster(section: str) -> list[str]:
             continue
         if inside and (matched := re.match(r"^  - (\S+)\s*$", line)):
             names.append(matched.group(1))
+    return names
+
+
+def _maturity_capability_roster() -> set[str]:
+    """Read the stable capability keys under the internal evidence register."""
+    lines = _text_or_empty(ROOT / "maturity/capabilities.yaml").splitlines()
+    try:
+        start = lines.index("capabilities:") + 1
+    except ValueError:
+        return set()
+    names: set[str] = set()
+    for line in lines[start:]:
+        if line and not line[0].isspace():
+            break
+        if matched := re.fullmatch(r"  ([a-z][a-z0-9_]*):", line):
+            names.add(matched.group(1))
     return names
 
 
@@ -23625,6 +24544,10 @@ def experiment_split_plan_check() -> None:
 
     python_app = _text_or_empty(ROOT / "python/qianxing/app.py")
     experiment_grid_src = _text_or_empty(ROOT / "crates/qx-app/src/cases/experiment_grid.rs")
+    experiment_search_src = _text_or_empty(ROOT / "crates/qx-app/src/cases/experiment_search.rs")
+    multi_market_experiment_src = _text_or_empty(
+        ROOT / "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    )
     python_parameter_start = python_app.find("class ExperimentParameterSpace:")
     python_parameter_end = python_app.find("\n\n@dataclass", python_parameter_start)
     python_parameter_source = (
@@ -23699,6 +24622,53 @@ def experiment_split_plan_check() -> None:
         "run-depth-experiment-spec-v1.json",
         "run-multi-market-depth-experiment-spec-v1.json",
     )
+    try:
+        experiment_range_name_schema = json.loads(
+            _text_or_empty(ROOT / "schemas/run-experiment-spec-v1.json")
+        )["$defs"]["ExperimentParameterRange"]["properties"]["name"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        experiment_range_name_schema = {}
+    experiment_range_struct = re.search(
+        r"pub struct ExperimentParameterRange\s*\{([^}]*)\}",
+        experiment_search_src,
+        re.S,
+    )
+    experiment_range_fields = (
+        re.findall(r"pub (name|min|max|step): ([^,\n]+),", experiment_range_struct.group(1))
+        if experiment_range_struct
+        else []
+    )
+    python_range_start = python_app.find("class ExperimentParameterRange:")
+    python_range_end = python_app.find("\n\n@dataclass", python_range_start)
+    python_range_source = (
+        python_app[python_range_start:python_range_end]
+        if python_range_start >= 0 and python_range_end > python_range_start
+        else ""
+    )
+    callback_range_validation = _fn_body(
+        multi_market_experiment_src, "fn validate_callback_parameter_ranges("
+    )
+    range_names_are_contextually_validated = (
+        experiment_range_fields
+        == [("name", "String"), ("min", "i128"), ("max", "i128"), ("step", "i128")]
+        and re.search(r"^\s*name: str\s*$", python_range_source, re.M)
+        and experiment_range_name_schema
+        == {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        }
+        and "validate_grid(strategy, std::slice::from_ref(&dimension))?" in _fn_body(
+            experiment_grid_src, "pub(super) fn validate_continuous_grid("
+        )
+        and "apply_parameters(" in _fn_body(
+            experiment_grid_src, "pub(super) fn validate_continuous_grid("
+        )
+        and "range.name.len() <= 64" in callback_range_validation
+        and "range.point_count().is_none()" in callback_range_validation
+        and "continuous_domain_cardinality(ranges)" in callback_range_validation
+    )
     parameter_schema_shapes_match = (
         all(
             schema_parameter_vocab(name, "ExperimentParameterSpace")
@@ -23713,7 +24683,8 @@ def experiment_split_plan_check() -> None:
         and schema_parameter_vocab(
             "run-experiment-spec-v1.json", "ExperimentParameterRange"
         )
-        == bar_parameter_vocab
+        == set()
+        and range_names_are_contextually_validated
     )
     parameter_shape_mirror = (
         app_parameter_fields == [("name", "String"), ("values", "Vec<i128>")]
@@ -23760,8 +24731,8 @@ def experiment_split_plan_check() -> None:
     )
     check(
         split_plan_is_single_source,
-        "qx-app 直接复用 qx-spec::SplitPlan；实验参数 Python 镜像与 qx-app 字段/词表对齐，且 qx-spec 通用字符串参数空间保持独立",
-        f"SplitPlan 单源别名 {'有' if 'pub use qx_spec::{SplitPlan as ExperimentSplitPlan' in split_src else '缺'} / Python 镜像 {'相符' if python_split_shape else '不符'} / 参数空间形状与词表 {'相符' if parameter_shape_mirror else '不符'}",
+        "qx-app 直接复用 qx-spec::SplitPlan；实验参数 Python 镜像与 qx-app 字段/词表对齐；连续参数名由 schema 约束标识符并按使用场景在 Rust 校验",
+        f"SplitPlan 单源别名 {'有' if 'pub use qx_spec::{SplitPlan as ExperimentSplitPlan' in split_src else '缺'} / Python 镜像 {'相符' if python_split_shape else '不符'} / 参数空间形状与上下文校验 {'相符' if parameter_shape_mirror else '不符'}",
     )
 
     # ② qx-spec owns validation and both spec loading and execution call it.
@@ -24070,6 +25041,503 @@ def capability_matrix_check() -> None:
         "外部 venue 声称 `sandbox`/`order_type` 已验时必须有 outcome=pass 的 testnet 记录"
         "（没有证据不得翻真，与 `capabilities_check` 同一把尺）",
         f"越界 {overclaimed}；testnet 记录 {tally or '无'}（pass {passing}）",
+    )
+
+
+def capability_crosswalk_check() -> None:
+    """Bind every product matrix row to stable IDs and internal evidence keys."""
+    sections = ("domains", "venues", "providers")
+    matrix = _parse_named_records(ROOT / CAPABILITY_MATRIX_FILE, sections)
+    matrix_rows = [record for section in sections for record in matrix[section]]
+    bindings = _parse_named_records(ROOT / CAPABILITY_CROSSWALK_FILE, ("bindings",))["bindings"]
+    crosswalk_text = _text_or_empty(ROOT / CAPABILITY_CROSSWALK_FILE)
+    declared_kind = re.search(r"^kind:\s*(\S+)\s*$", crosswalk_text, re.MULTILINE)
+    declared_schema = re.search(r"^schema_version:\s*(\d+)\s*$", crosswalk_text, re.MULTILINE)
+    check(
+        declared_kind is not None
+        and declared_kind.group(1) == CAPABILITY_CROSSWALK_KIND
+        and declared_schema is not None
+        and declared_schema.group(1) == "1"
+        and bool(bindings),
+        "能力 crosswalk 在盘、自述 kind/schema 正确且至少有一条绑定",
+        f"kind {declared_kind and declared_kind.group(1)}；"
+        f"schema {declared_schema and declared_schema.group(1)}；bindings {len(bindings)}",
+    )
+
+    id_pattern = re.compile(r"^qx\.(?:domain|venue|provider)\.[a-z][a-z0-9_]*$")
+    matrix_ids = [str(record.get("capability_id", "")) for record in matrix_rows]
+    missing_matrix_ids = [str(record.get("name")) for record in matrix_rows if not record.get("capability_id")]
+    invalid_matrix_ids = [value for value in matrix_ids if not id_pattern.fullmatch(value)]
+    binding_ids = [str(record.get("name", "")) for record in bindings]
+    check(
+        not missing_matrix_ids
+        and not invalid_matrix_ids
+        and len(matrix_ids) == len(set(matrix_ids))
+        and len(binding_ids) == len(set(binding_ids))
+        and set(binding_ids) == set(matrix_ids),
+        "领域、Venue、Provider 均有唯一稳定 capability_id，crosswalk 与矩阵逐条双向对应",
+        f"缺 ID {missing_matrix_ids}；非法 ID {invalid_matrix_ids}；"
+        f"矩阵 ID 数 {len(matrix_ids)} / 绑定 ID 数 {len(binding_ids)}；"
+        f"未绑定 {sorted(set(matrix_ids) - set(binding_ids))}；无矩阵项 {sorted(set(binding_ids) - set(matrix_ids))}",
+    )
+
+    matrix_by_id = {
+        str(record.get("capability_id")): f"{section}/{record.get('name')}"
+        for section in sections
+        for record in matrix[section]
+        if record.get("capability_id")
+    }
+    bad_matrix_refs = [
+        f"{record.get('name')} -> {record.get('matrix_ref')} (expected {matrix_by_id.get(str(record.get('name')))})"
+        for record in bindings
+        if str(record.get("matrix_ref", "")) != matrix_by_id.get(str(record.get("name")))
+    ]
+    empty_evidence_refs = [
+        str(record.get("name"))
+        for record in bindings
+        if not [item for item in record.get("maturity_refs", []) if str(item).strip()]
+    ]
+    check(
+        not bad_matrix_refs and not empty_evidence_refs,
+        "crosswalk 每条绑定都指向其唯一矩阵记录，并关联至少一条成熟度证据",
+        f"矩阵引用错误 {bad_matrix_refs}；缺成熟度引用 {empty_evidence_refs}",
+    )
+
+    maturity_roster = _maturity_capability_roster()
+    referenced_maturity = [
+        str(item)
+        for record in bindings
+        for item in record.get("maturity_refs", [])
+    ]
+    unknown_maturity = sorted(set(referenced_maturity) - maturity_roster)
+    unlinked_maturity = sorted(maturity_roster - set(referenced_maturity))
+    duplicate_refs = [
+        str(record.get("name"))
+        for record in bindings
+        if len(record.get("maturity_refs", [])) != len(set(record.get("maturity_refs", [])))
+    ]
+    check(
+        bool(maturity_roster)
+        and not unknown_maturity
+        and not unlinked_maturity
+        and not duplicate_refs,
+        "每条成熟度登记都至少被一个产品 capability ID 引用，且不存在悬空或重复引用",
+        f"未知证据键 {unknown_maturity}；未关联证据键 {unlinked_maturity}；重复引用 {duplicate_refs}",
+    )
+
+    catalog_path = ROOT / "crates/qx-api/src/capability_catalog.generated.json"
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        catalog = {}
+        catalog_error = str(error)
+    else:
+        catalog_error = ""
+    python_catalog_path = ROOT / "crates/qx-python/src/capability_catalog.generated.json"
+    try:
+        python_catalog = json.loads(python_catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        python_catalog = {}
+        python_catalog_error = str(error)
+    else:
+        python_catalog_error = ""
+    check(
+        not catalog_error
+        and not python_catalog_error
+        and python_catalog == catalog,
+        "Python 原生账户读取预检使用与 API 同源的生成能力目录",
+        f"API catalog error={catalog_error}; Python catalog error={python_catalog_error}; documents_equal={python_catalog == catalog}",
+    )
+    source_paths = (
+        CAPABILITY_MATRIX_FILE,
+        "maturity/capabilities.yaml",
+        CAPABILITY_CROSSWALK_FILE,
+    )
+    expected_digests = {
+        path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+        for path in source_paths
+        if (ROOT / path).is_file()
+    }
+    catalog_digests = catalog.get("source_sha256", {}) if isinstance(catalog, dict) else {}
+    check(
+        not catalog_error
+        and catalog.get("kind") == "qianxing-capability-catalog"
+        and catalog.get("schema_version") == 1
+        and catalog_digests == expected_digests,
+        "API 能力目录为有效生成物，且三份来源变更后必须重新生成",
+        f"读取错误 {catalog_error or '无'}；kind/schema {catalog.get('kind')}/{catalog.get('schema_version')}；"
+        f"摘要匹配 {catalog_digests == expected_digests}",
+    )
+    expected_ids = [str(record.get("capability_id", "")) for record in matrix_rows]
+    details = catalog.get("capabilities", []) if isinstance(catalog, dict) else []
+    index = catalog.get("index", []) if isinstance(catalog, dict) else []
+    detail_ids = [entry.get("id") for entry in details if isinstance(entry, dict)] if isinstance(details, list) else []
+    index_ids = [entry.get("id") for entry in index if isinstance(entry, dict)] if isinstance(index, list) else []
+    bindings_by_id = {str(record.get("name")): record for record in bindings}
+    catalog_errors: list[str] = []
+    details_by_id = {entry.get("id"): entry for entry in details if isinstance(entry, dict)} if isinstance(details, list) else {}
+    index_by_id = {entry.get("id"): entry for entry in index if isinstance(entry, dict)} if isinstance(index, list) else {}
+    for capability_id in expected_ids:
+        detail = details_by_id.get(capability_id)
+        summary = index_by_id.get(capability_id)
+        binding = bindings_by_id.get(capability_id)
+        if not isinstance(detail, dict) or not isinstance(summary, dict) or binding is None:
+            catalog_errors.append(f"{capability_id}: missing detail/index/binding")
+            continue
+        expected_refs = list(binding.get("maturity_refs", []))
+        evidence = detail.get("maturity_evidence", [])
+        evidence_ids = [item.get("id") for item in evidence if isinstance(item, dict)] if isinstance(evidence, list) else []
+        if (
+            detail.get("matrix_ref") != binding.get("matrix_ref")
+            or summary.get("matrix_ref") != binding.get("matrix_ref")
+            or summary.get("maturity_refs") != expected_refs
+            or evidence_ids != expected_refs
+        ):
+            catalog_errors.append(f"{capability_id}: source projection differs from crosswalk")
+    check(
+        detail_ids == expected_ids and index_ids == expected_ids and not catalog_errors,
+        "API 能力目录详情与轻索引逐条对应产品矩阵及成熟度 crosswalk",
+        f"矩阵 {len(expected_ids)} 项 / 详情 {len(detail_ids)} 项 / 索引 {len(index_ids)} 项；错误 {catalog_errors}",
+    )
+
+    scope_errors: list[str] = []
+    scope_facets: dict[str, set[str]] = {
+        "venue": set(),
+        "product": set(),
+        "account_mode": set(),
+        "account_models": set(),
+        "margin_modes": set(),
+        "position_modes": set(),
+        "operations": set(),
+        "order_types": set(),
+        "quantity_units": set(),
+    }
+    scope_count = 0
+    scope_fields = {
+        "venue",
+        "product",
+        "account_mode",
+        "account_models",
+        "margin_modes",
+        "position_modes",
+        "operations",
+        "order_shapes",
+        "maturity_refs",
+        "status",
+        "evidence",
+    }
+    for detail in details if isinstance(details, list) else []:
+        if not isinstance(detail, dict):
+            continue
+        capability_id = str(detail.get("id", "unknown"))
+        scopes = detail.get("execution_scopes")
+        if not isinstance(scopes, list):
+            scope_errors.append(f"{capability_id}: execution_scopes is not an array")
+            continue
+        summary = index_by_id.get(capability_id, {})
+        if summary.get("execution_scope_count") != len(scopes):
+            scope_errors.append(f"{capability_id}: index execution_scope_count differs")
+        if scopes and not capability_id.startswith("qx.venue."):
+            scope_errors.append(f"{capability_id}: non-venue capability declares execution scopes")
+        seen_scopes: set[tuple[object, ...]] = set()
+        for scope in scopes:
+            scope_count += 1
+            if not isinstance(scope, dict) or set(scope) != scope_fields:
+                scope_errors.append(f"{capability_id}: malformed execution scope fields")
+                continue
+            venue = scope.get("venue")
+            product = scope.get("product")
+            account_mode = scope.get("account_mode")
+            account_models = scope.get("account_models")
+            margin_modes = scope.get("margin_modes")
+            position_modes = scope.get("position_modes")
+            operations = scope.get("operations")
+            order_shapes = scope.get("order_shapes")
+            maturity_refs = scope.get("maturity_refs")
+            evidence_paths = scope.get("evidence")
+            if (
+                not isinstance(venue, str)
+                or venue != venue.strip().upper()
+                or not isinstance(product, str)
+                or product != product.strip().lower()
+                or not isinstance(account_mode, str)
+                or account_mode != account_mode.strip().lower()
+                or scope.get("status") not in CAPABILITY_MATRIX_LEVELS
+                or not isinstance(account_models, list)
+                or not account_models
+                or any(not isinstance(value, str) or value != value.strip().lower() for value in account_models)
+                or len(account_models) != len(set(account_models))
+                or not isinstance(margin_modes, list)
+                or not margin_modes
+                or any(not isinstance(value, str) or value != value.strip().lower() for value in margin_modes)
+                or len(margin_modes) != len(set(margin_modes))
+                or not isinstance(position_modes, list)
+                or not position_modes
+                or any(not isinstance(value, str) or value != value.strip().lower() for value in position_modes)
+                or len(position_modes) != len(set(position_modes))
+                or not isinstance(operations, list)
+                or not operations
+                or any(not isinstance(value, str) or value not in {"submit", "cancel"} for value in operations)
+                or len(operations) != len(set(operations))
+                or not isinstance(order_shapes, list)
+                or not order_shapes
+                or not isinstance(maturity_refs, list)
+                or not maturity_refs
+                or any(not isinstance(value, str) or not value.strip() for value in maturity_refs)
+                or not isinstance(evidence_paths, list)
+                or not evidence_paths
+            ):
+                scope_errors.append(f"{capability_id}: invalid execution scope vocabulary")
+                continue
+            missing_paths = [
+                path for path in evidence_paths
+                if not isinstance(path, str) or not (ROOT / path).is_file()
+            ]
+            if missing_paths:
+                scope_errors.append(f"{capability_id}: missing scope evidence {missing_paths}")
+            for shape in order_shapes:
+                if (
+                    not isinstance(shape, dict)
+                    or set(shape) != {"order_type", "quantity_unit", "side"}
+                    or shape.get("order_type") not in {"market", "limit"}
+                    or shape.get("quantity_unit") not in {"base", "contracts", "quote"}
+                    or shape.get("side") not in {"buy", "sell"}
+                    or (
+                        shape.get("quantity_unit") == "quote"
+                        and (shape.get("order_type") != "market" or shape.get("side") != "buy")
+                    )
+                ):
+                    scope_errors.append(f"{capability_id}: invalid order shape {shape}")
+                elif isinstance(shape, dict):
+                    scope_facets["order_types"].add(shape["order_type"])
+                    scope_facets["quantity_units"].add(shape["quantity_unit"])
+            expected_maturity_refs = set(summary.get("maturity_refs", []))
+            if not set(maturity_refs).issubset(expected_maturity_refs):
+                scope_errors.append(f"{capability_id}: scope maturity refs are not bound by crosswalk")
+            identity = (venue, product, account_mode, tuple(sorted(account_models)))
+            if identity in seen_scopes:
+                scope_errors.append(f"{capability_id}: duplicate execution scope {identity}")
+            seen_scopes.add(identity)
+            scope_facets["venue"].add(venue)
+            scope_facets["product"].add(product)
+            scope_facets["account_mode"].add(account_mode)
+            scope_facets["account_models"].update(account_models)
+            scope_facets["margin_modes"].update(margin_modes)
+            scope_facets["position_modes"].update(position_modes)
+            scope_facets["operations"].update(operations)
+    expected_scope_facets = {key: sorted(values) for key, values in scope_facets.items()}
+    check(
+        scope_count > 0
+        and not scope_errors
+        and catalog.get("execution_scope_facets") == expected_scope_facets,
+        "交易范围目录字段、证据、索引计数及过滤提示一致",
+        f"范围 {scope_count} 项；facets 一致 {catalog.get('execution_scope_facets') == expected_scope_facets}；错误 {scope_errors}",
+    )
+
+    account_scope_errors: list[str] = []
+    account_scope_count = 0
+    account_scope_fields = {
+        "venue",
+        "product",
+        "account_models",
+        "operations",
+        "maturity_refs",
+        "status",
+        "evidence",
+    }
+    account_operations = {
+        "balance.read",
+        "orders.read",
+        "positions.read",
+        "cashflows.read",
+        "funding.read",
+        "account_settings.read",
+    }
+    for detail in details if isinstance(details, list) else []:
+        if not isinstance(detail, dict):
+            continue
+        capability_id = str(detail.get("id", "unknown"))
+        scopes = detail.get("account_query_scopes")
+        if not isinstance(scopes, list):
+            account_scope_errors.append(f"{capability_id}: account_query_scopes is not an array")
+            continue
+        summary = index_by_id.get(capability_id, {})
+        if summary.get("account_query_scope_count") != len(scopes):
+            account_scope_errors.append(f"{capability_id}: index account_query_scope_count differs")
+        if scopes and not capability_id.startswith("qx.venue."):
+            account_scope_errors.append(f"{capability_id}: non-venue capability declares account query scopes")
+        seen_account_scopes: set[tuple[str, str, str]] = set()
+        for scope in scopes:
+            account_scope_count += 1
+            if not isinstance(scope, dict) or set(scope) != account_scope_fields:
+                account_scope_errors.append(f"{capability_id}: malformed account query scope fields")
+                continue
+            venue = scope.get("venue")
+            product = scope.get("product")
+            account_models = scope.get("account_models")
+            operations = scope.get("operations")
+            maturity_refs = scope.get("maturity_refs")
+            evidence_paths = scope.get("evidence")
+            if (
+                not isinstance(venue, str)
+                or venue != venue.strip().upper()
+                or not isinstance(product, str)
+                or product != product.strip().lower()
+                or scope.get("status") not in CAPABILITY_MATRIX_LEVELS
+                or not isinstance(account_models, list)
+                or not account_models
+                or any(not isinstance(value, str) or value != value.strip().lower() for value in account_models)
+                or len(account_models) != len(set(account_models))
+                or not isinstance(operations, list)
+                or not operations
+                or any(not isinstance(value, str) or value not in account_operations for value in operations)
+                or len(operations) != len(set(operations))
+                or not isinstance(maturity_refs, list)
+                or not maturity_refs
+                or any(not isinstance(value, str) or not value.strip() for value in maturity_refs)
+                or not isinstance(evidence_paths, list)
+                or not evidence_paths
+            ):
+                account_scope_errors.append(f"{capability_id}: invalid account query scope vocabulary")
+                continue
+            missing_paths = [
+                path for path in evidence_paths
+                if not isinstance(path, str) or not (ROOT / path).is_file()
+            ]
+            if missing_paths:
+                account_scope_errors.append(f"{capability_id}: missing account query evidence {missing_paths}")
+            expected_maturity_refs = set(summary.get("maturity_refs", []))
+            if not set(maturity_refs).issubset(expected_maturity_refs):
+                account_scope_errors.append(f"{capability_id}: account query maturity refs are not bound by crosswalk")
+            for account_model in account_models:
+                identity = (venue, product, account_model)
+                if identity in seen_account_scopes:
+                    account_scope_errors.append(f"{capability_id}: duplicate account query scope {identity}")
+                seen_account_scopes.add(identity)
+    check(
+        account_scope_count > 0
+        and not account_scope_errors,
+        "账户私有查询范围逐项登记了字段、稳定操作名、成熟度引用、证据路径和索引计数",
+        f"范围 {account_scope_count} 项；错误 {account_scope_errors}",
+    )
+
+    def ordered_source_markers(path: str, markers: list[str]) -> bool:
+        source = _text_or_empty(ROOT / path)
+        positions = [source.find(marker) for marker in markers]
+        return all(position >= 0 for position in positions) and positions == sorted(positions)
+
+    private_query_gate_order = (
+        ordered_source_markers(
+            "crates/qx-service/src/binance_reconcile_host.rs",
+            [
+                "require_account_query_execution_capability(",
+                "let mut venue = create_venue(&worker)?;",
+                ".fetch_and_reconcile()",
+                ".fetch_account_balances(runtime_timestamp_ms())",
+            ],
+        )
+        and ordered_source_markers(
+            "crates/qx-service/src/ccxt_reconcile_host.rs",
+            [
+                "require_account_query_execution_capability(",
+                "CcxtProcessClient::spawn(&python, &ccxt_config_path, None)",
+                '"op": "fetch_balance"',
+                'if query_allowed("cashflows.read")',
+                '"op": "fetch_ledger"',
+                '.filter(|_| query_allowed("funding.read"))',
+                '"op": "fetch_funding_history"',
+                'if query_allowed("positions.read")',
+                '"op": "fetch_positions"',
+            ],
+        )
+        and ordered_source_markers(
+            "python/qianxing_ccxt/private_probe.py",
+            [
+                "app_account_query_capability_preflight_v1(json.dumps(spec))",
+                "config = _config_from_file(args.config)",
+                "client = CcxtExchangeClient(config)",
+                "balance = client.fetch_balance()",
+                "positions = client.fetch_positions(instruments)",
+                "settings = client.fetch_contract_settings(str(instrument))",
+            ],
+        )
+    )
+    check(
+        private_query_gate_order,
+        "Binance/CCXT 对账与 Python sandbox 私有探针均先过账户查询能力门，CCXT 可选私有读取按声明执行",
+        "账户私有查询可能在能力预检前创建连接器或调用未声明的私有接口",
+    )
+
+    markdown_path = ROOT / "docs/capability-catalog.md"
+    markdown = _text_or_empty(markdown_path)
+    expected_digest_marker = "<!-- Source SHA-256: " + "; ".join(
+        f"{path}={digest}" for path, digest in expected_digests.items()
+    ) + " -->"
+    missing_markdown_ids = [
+        capability_id
+        for capability_id in expected_ids
+        if f"| {capability_id} |" not in markdown
+    ]
+    missing_scope_rows = [
+        f"{detail.get('id')}/{scope.get('venue')}/{scope.get('product')}/{scope.get('account_mode')}"
+        for detail in (details if isinstance(details, list) else []) if isinstance(detail, dict)
+        for scope in detail.get("execution_scopes", []) if isinstance(detail.get("execution_scopes"), list)
+        if f"| {detail.get('id')} | {scope.get('venue')} | {scope.get('product')} | {scope.get('account_mode')} |" not in markdown
+    ]
+    missing_account_scope_rows = [
+        f"{detail.get('id')}/{scope.get('venue')}/{scope.get('product')}"
+        for detail in (details if isinstance(details, list) else []) if isinstance(detail, dict)
+        for scope in detail.get("account_query_scopes", []) if isinstance(scope, dict)
+        for account_model in scope.get("account_models", [])
+        if f"| {detail.get('id')} | {scope.get('venue')} | {scope.get('product')} | {account_model}" not in markdown
+    ]
+    check(
+        bool(markdown)
+        and expected_digest_marker in markdown
+        and not missing_markdown_ids
+        and not missing_scope_rows
+        and not missing_account_scope_rows,
+        "README 所链接的能力表由当前三份来源生成，版本摘要、stable ID、交易与账户查询范围均在表中",
+        f"缺失 stable ID {missing_markdown_ids}；缺失交易范围 {missing_scope_rows}；缺失账户查询范围 {missing_account_scope_rows}；来源摘要匹配 {expected_digest_marker in markdown}",
+    )
+    readme = _text_or_empty(ROOT / "README.md")
+    deploy_readme = _text_or_empty(ROOT / "deploy/README.md")
+    capability_html = _text_or_empty(ROOT / "web/console/index.html")
+    capability_script = _text_or_empty(ROOT / "web/console/app.js")
+    capability_ui_filters = (
+        all(
+            f'id="product-capability-{field}"' in capability_html
+            for field in ("id", "venue", "product", "account-mode", "account-model", "margin-mode", "operation")
+        )
+        and "execution_scope_facets" in capability_script
+        and all(
+            f'"{field}", "product-capability-{element}"' in capability_script
+            for field, element in (
+                ("capability_id", "id"),
+                ("venue", "venue"),
+                ("product", "product"),
+                ("account_mode", "account-mode"),
+                ("account_model", "account-model"),
+                ("margin_mode", "margin-mode"),
+                ("operation", "operation"),
+            )
+        )
+        and "API_PATHS.productCapabilityQuery, query" in capability_script
+    )
+    check(
+        "docs/capability-catalog.md" in readme
+        and "qx-cli doctor --capabilities" in readme
+        and "--account-mode hedge" in readme
+        and "doctor --capabilities --capability-id" in deploy_readme
+        and "POST /app/capabilities/query" in deploy_readme
+        and '"account_mode":"hedge"' in deploy_readme,
+        "README 与部署 API 文档均链接统一能力目录、列出离线 CLI 与范围查询入口",
+        "产品能力发现入口未在用户文档和部署 API 文档同时出现",
+    )
+    check(
+        capability_ui_filters,
+        "Web 控制台暴露目录筛选项并把已填筛选条件发送到统一查询 API",
+        "Web 能力查询表单、筛选维度或请求出口脱节",
     )
 
 
@@ -24502,6 +25970,10 @@ PY_LAYER_NAMES = (
 # `qianxing_strategy` 这个独立发行包，是策略作者那一侧的契约类型，不是 `qx-app` 用例面
 # 的一部分；放进顶层会把稳定面撑大一圈。
 PY_LAYER_SUB_NAMESPACE_ONLY = {
+    "reports": (
+        "render_multi_account_joint_report_html",
+        "write_multi_account_joint_report_html",
+    ),
     "strategy": (
         "SCHEMA_VERSION",
         "StrategyBars",
@@ -25226,6 +26698,10 @@ def stdout_json_error_propagation_check() -> None:
 
 def runtime_invariant_error_propagation_check() -> None:
     worker_risk = _text_or_empty(ROOT / "crates/qx-service/src/risk_host.rs")
+    fx_resolver = worker_risk[
+        worker_risk.find("pub fn spot_fx_rates_to_reporting(") :
+        worker_risk.find("fn fx_currency_distances(")
+    ]
     comparison = _text_or_empty(ROOT / "crates/qx-cli/src/report_comparison_command.rs")
     depth_quality = _text_or_empty(ROOT / "crates/qx-app/src/cases/run_depth_backtest/quality.rs")
     app_runs = _fn_body(
@@ -25237,10 +26713,12 @@ def runtime_invariant_error_propagation_check() -> None:
     api = production_text(_text_or_empty(ROOT / "crates/qx-api/src/lib.rs"))
     api_tight = re.sub(r"\s+", "", api)
     check(
-        "observed_rates.first().copied()" in worker_risk
-        and "FX 汇率集合为空" in worker_risk
-        and "observed_rates.first().unwrap()" not in worker_risk,
-        "Paper FX 唯一汇率分支不以 unwrap 假设集合非空，且空集具名拒绝",
+        "let Some(shortest_distance) = distance_from_source.get(&reporting).copied() else" in fx_resolver
+        and "FAIL_CLOSED: 缺少 {source}->{reporting} 可用 Spot FX 路径与标记价" in fx_resolver
+        and "rate_to_currency.get(&reporting).copied().ok_or_else" in fx_resolver
+        and ".unwrap()" not in fx_resolver
+        and "等长但不一致的 FX 路径" in fx_resolver,
+        "Paper FX 多跳解析对空路径/状态缺失/等长报价冲突 fail-closed，不假设集合非空",
     )
     check(
         'identity.ok_or_else(|| "横向对照输入身份未建立".to_string())?' in comparison
@@ -25375,6 +26853,7 @@ SELF_ROLLED_PUBLISH = (
 ARTIFACT_PUBLISH_EXEMPT = {
     "crates/qx-service/src/ccxt_live_bars.rs": "实时 BarFrame 快照：行情运行期断点，每轮整份覆写，不是一次运行的产物",
     "crates/qx-cli/src/strategy_live_state.rs": "实时策略 digest 断点：运行期状态，非产物",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs": "策略 EventLog 消费游标：运行期可恢复状态，非研究/回测产物",
     "crates/qx-service/src/worker_metrics.rs": "worker Prometheus .prom 边车文件：运维指标出口，非产物（WP-3.14）",
     "crates/qx-data/src/catalog.rs": "数据集目录登记：数据层存储，sink 在 qx-app、qx-data 位于其下游",
     "crates/qx-data/src/registry.rs": "数据集注册表：数据层存储，同上",
@@ -25596,6 +27075,7 @@ def main() -> int:
     cli_dispatch_check()
     cli_help_surface_check()
     cli_command_manifest_check()
+    workspace_inventory_check()
     cli_flag_honesty_check()
     test_module_shape_check()
     cli_root_module_check()
@@ -25667,6 +27147,7 @@ def main() -> int:
     example_read_funnel_check()
     deploy_template_coverage_check()
     submit_terminal_state_check()
+    cancel_intent_durability_check()
     submit_topology_guard_check()
     one_shot_execution_ownership_check()
     paper_check_delta_honesty_check()
@@ -25807,6 +27288,7 @@ def main() -> int:
     ccxt_market_runner_ownership_check()
     venue_stream_idle_pacing_check()
     capability_matrix_check()
+    capability_crosswalk_check()
     capability_execution_check()
     quant_scenarios_check()
     experiment_split_plan_check()

@@ -2,8 +2,8 @@
 
 use crate::escape_html;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const MAX_HTML_DETAIL_ROWS_PER_ACCOUNT: usize = 250;
@@ -45,9 +45,48 @@ pub(crate) fn maybe_run(
     if output.is_some() && !html {
         return Err("--output 只能与 --html 一起使用".into());
     }
+    if value.get("result_kind").and_then(Value::as_str) == Some("multi_account_depth")
+        || value
+            .get("runs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|run| {
+                run.pointer("/outcome/tier")
+                    .and_then(Value::as_str)
+                    .is_some()
+            })
+    {
+        return maybe_run_depth_report(
+            path,
+            &value,
+            as_json,
+            html,
+            evidence,
+            output,
+            against,
+            xlsx,
+            has_benchmark,
+            strategy_diagnostics,
+        );
+    }
     let result: qx_app::MultiAccountBacktestResult = serde_json::from_value(value)
-        .map_err(|error| format!("多账户回测结果不符合 v1 契约: {error}"))?;
-    validate_batch(&result)?;
+        .map_err(|error| format!("多账户回测结果契约无效: {error}"))?;
+    let outcome_value =
+        serde_json::to_value(&result).map_err(|error| format!("多账户结果编码失败: {error}"))?;
+    let verified_batch = qx_app::read_multi_account_report_v1(
+        &outcome_value,
+        &qx_app::RunContext::new(
+            qx_app::CallerCapability::Research,
+            format!("report-{}", result.batch_id),
+        ),
+    )
+    .map_err(|error| format!("多账户共享报告复核失败: {error}"))?;
+    let verified_accounts = verified_batch
+        .accounts
+        .iter()
+        .map(|account| (account.account_id.as_str(), account))
+        .collect::<BTreeMap<_, _>>();
     let diagnostics = strategy_diagnostics
         .map(read_multi_account_diagnostics)
         .transpose()?;
@@ -115,23 +154,19 @@ pub(crate) fn maybe_run(
             MAX_REPORT_EVENT_ROWS_PER_ACCOUNT,
         );
         let summary_path = PathBuf::from(&outcome.artifacts.summary);
-        let summary_payload = std::fs::read_to_string(&summary_path).map_err(|error| {
-            format!(
-                "读取账户 {} 的 summary 失败 {}: {error}",
-                run.account_id,
-                summary_path.display()
-            )
-        })?;
-        let summary: Value = serde_json::from_str(&summary_payload)
-            .map_err(|error| format!("账户 {} 的 summary JSON 无效: {error}", run.account_id))?;
-        let verification = qx_app::verify_run(
-            outcome,
-            &qx_app::RunContext::new(
-                qx_app::CallerCapability::Research,
-                format!("report-{}", run.account_id),
-            ),
-        )
-        .map_err(|error| format!("账户 {} 的运行工件复核失败: {error}", run.account_id))?;
+        let verified_account = verified_accounts
+            .get(run.account_id.as_str())
+            .copied()
+            .ok_or_else(|| format!("多账户共享报告缺少账户 {}", run.account_id))?;
+        if verified_account.status != qx_app::MultiAccountResearchStatusV1::Succeeded {
+            return Err(format!("账户 {} 的共享报告状态不匹配", run.account_id));
+        }
+        let verified_report = verified_account
+            .report
+            .as_ref()
+            .ok_or_else(|| format!("账户 {} 缺少共享核心报告", run.account_id))?;
+        let summary = verified_report.summary.clone();
+        let verification = &verified_report.verification;
         if !verification.verified {
             return Err(format!(
                 "账户 {} 的运行工件复核未通过: {}",
@@ -329,7 +364,7 @@ pub(crate) fn maybe_run(
         "batch_id": &result.batch_id,
         "settlement_currency": &result.settlement_currency,
         "spec_fingerprint": &result.spec_fingerprint,
-        "summary": &result.summary,
+        "summary": &verified_batch.summary,
         "account_semantics": "accounts_are_independent; cash_positions_risk_and_returns_are_not_netted",
         "verification_scope": "run_manifest_summary_equity_and_fills_cross_checked; source_input_recomputed_and_cross_checked_when_declared",
         "strategy_diagnostics_attachment": diagnostics.as_ref().map(|attachment| json!({
@@ -381,7 +416,7 @@ pub(crate) fn maybe_run(
             .replace("<th>结果哈希</th>", "<th>结果哈希</th><th>成交明细</th>")
             .replace(
                 "rows.append(tr);",
-                "const fillCell=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),fills=item.fill_rows||[];summary.textContent='显示 '+fills.length+' / '+(item.fill_rows_total??fills.length)+' 笔成交（方向字段缺席）';details.append(summary);if(fills.length){{const fillTable=document.createElement('table'),head=document.createElement('tr');for(const title of ['时间','订单','数量 raw','价格 raw','费用 raw','策略','事件链']){{const th=document.createElement('th');th.textContent=title;head.append(th);}}fillTable.append(head);for(const fill of fills){{const line=document.createElement('tr');for(const value of [new Date(fill.timestamp_ms).toLocaleString(),fill.order_id,fill.qty_raw,fill.price_raw,fill.fee_raw,fill.strategy_id||'absent']){{const cell=document.createElement('td');cell.textContent=value;line.append(cell);}}const eventCell=document.createElement('td');if(fill.event_id){{const link=document.createElement('a');link.href='#'+fill.event_id;link.textContent='事件 '+fill.event_seq;eventCell.append(link);}}else{{eventCell.textContent='absent';}}line.append(eventCell);fillTable.append(line);}}details.append(fillTable);}}fillCell.append(details);tr.append(fillCell);rows.append(tr);",
+                "const fillCell=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),fills=item.fill_rows||[];summary.textContent='显示 '+fills.length+' / '+(item.fill_rows_total??fills.length)+' 笔成交（方向字段缺席）';details.append(summary);if(fills.length){{const fillTable=document.createElement('table'),head=document.createElement('tr');for(const title of ['时间','订单','数量 raw','数量 exact','价格 raw','价格 exact','费用 raw','精确费用 JSON','策略','事件链']){{const th=document.createElement('th');th.textContent=title;head.append(th);}}fillTable.append(head);for(const fill of fills){{const line=document.createElement('tr');for(const value of [new Date(fill.timestamp_ms).toLocaleString(),fill.order_id,fill.qty_raw,fill.qty_exact||'absent',fill.price_raw,fill.price_exact||'absent',fill.fee_raw,fill.exact_fees_json||'absent',fill.strategy_id||'absent']){{const cell=document.createElement('td');cell.textContent=value;line.append(cell);}}const eventCell=document.createElement('td');if(fill.event_id){{const link=document.createElement('a');link.href='#'+fill.event_id;link.textContent='事件 '+fill.event_seq;eventCell.append(link);}}else{{eventCell.textContent='absent';}}line.append(eventCell);fillTable.append(line);}}details.append(fillTable);}}fillCell.append(details);tr.append(fillCell);rows.append(tr);",
             )
             .replace(
                 "<section class=\"cards\">",
@@ -468,6 +503,540 @@ pub(crate) fn maybe_run(
         }
     }
     Ok(true)
+}
+
+fn maybe_run_depth_report(
+    path: &Path,
+    value: &Value,
+    as_json: bool,
+    html: bool,
+    evidence: bool,
+    output: Option<&Path>,
+    against: &[PathBuf],
+    xlsx: Option<&Path>,
+    has_benchmark: bool,
+    strategy_diagnostics: Option<&Path>,
+) -> Result<bool, String> {
+    if !against.is_empty() || has_benchmark {
+        return Err(
+            "多账户深度报告暂不支持 --against 或基准参数；请对账户运行分别生成对照报告".into(),
+        );
+    }
+    if output.is_some() && !html {
+        return Err("--output 只能与 --html 一起使用".into());
+    }
+    if output.is_some_and(|html_path| {
+        xlsx.is_some_and(|xlsx_path| {
+            crate::report_output_paths::same_output_target(html_path, xlsx_path)
+        })
+    }) {
+        return Err("HTML 与 XLSX 报告必须使用不同输出路径".into());
+    }
+    let result: qx_app::MultiAccountDepthBacktestResult = serde_json::from_value(value.clone())
+        .map_err(|error| format!("多账户深度回测结果契约无效: {error}"))?;
+    let verified_batch = qx_app::read_multi_account_report_v1(
+        value,
+        &qx_app::RunContext::new(
+            qx_app::CallerCapability::Research,
+            format!("report-{}", result.batch_id),
+        ),
+    )
+    .map_err(|error| format!("多账户深度共享报告复核失败: {error}"))?;
+    let verified_accounts = verified_batch
+        .accounts
+        .iter()
+        .map(|account| (account.account_id.as_str(), account))
+        .collect::<BTreeMap<_, _>>();
+    let diagnostics = strategy_diagnostics
+        .map(read_multi_account_diagnostics)
+        .transpose()?;
+    if let Some(diagnostics) = &diagnostics {
+        let expected = result
+            .runs
+            .iter()
+            .filter(|run| run.outcome.is_some())
+            .map(|run| run.account_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let supplied = diagnostics
+            .reports
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if expected != supplied {
+            return Err(
+                "多账户深度策略诊断必须为每个成功账户各提供且仅提供一份，且不得绑定失败账户".into(),
+            );
+        }
+    }
+    if let Some(xlsx_path) = xlsx {
+        crate::report_xlsx::validate_xlsx_path(xlsx_path)?;
+        validate_depth_report_output_target(
+            xlsx_path,
+            path,
+            strategy_diagnostics,
+            &result,
+            evidence,
+        )?;
+    }
+    let html_target = if html {
+        let target = output.map(Path::to_path_buf).unwrap_or_else(|| {
+            let name = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("multi-account-depth");
+            path.with_file_name(format!("{name}.depth.report.html"))
+        });
+        if !target
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+            })
+        {
+            return Err(format!(
+                "HTML 报告输出路径必须以 .html 或 .htm 结尾: {}",
+                target.display()
+            ));
+        }
+        validate_depth_report_output_target(
+            &target,
+            path,
+            strategy_diagnostics,
+            &result,
+            evidence,
+        )?;
+        Some(target)
+    } else {
+        None
+    };
+
+    let accounts_total = result.runs.len();
+    let fill_row_limit_max =
+        MAX_REPORT_FILL_ROWS_PER_ACCOUNT.min(MAX_REPORT_FILL_ROWS_TOTAL.div_ceil(accounts_total));
+    let event_row_limit_max =
+        MAX_REPORT_EVENT_ROWS_PER_ACCOUNT.min(MAX_REPORT_EVENT_ROWS_TOTAL.div_ceil(accounts_total));
+    let mut accounts = Vec::with_capacity(accounts_total);
+    for (account_index, run) in result.runs.iter().enumerate() {
+        let Some(outcome) = run.outcome.as_ref() else {
+            accounts.push(json!({
+                "account_id": &run.account_id,
+                "status": "failed",
+                "error": &run.error_json,
+                "run_id": null,
+                "instrument": null,
+                "tier": null,
+                "result_hash": null,
+                "data_fingerprint": null,
+                "return_bps": null,
+                "max_drawdown_bps": null,
+                "fills": null,
+                "equity_points": null,
+                "snapshots": null,
+                "fill_rows": [],
+                "fill_rows_total": 0,
+                "fill_rows_truncated": false,
+                "event_rows": [],
+                "event_rows_total": 0,
+                "event_rows_truncated": false,
+                "summary_path": null,
+            }));
+            continue;
+        };
+        let fill_row_limit = batch_row_budget(
+            MAX_REPORT_FILL_ROWS_TOTAL,
+            accounts_total,
+            account_index,
+            MAX_REPORT_FILL_ROWS_PER_ACCOUNT,
+        );
+        let event_row_limit = batch_row_budget(
+            MAX_REPORT_EVENT_ROWS_TOTAL,
+            accounts_total,
+            account_index,
+            MAX_REPORT_EVENT_ROWS_PER_ACCOUNT,
+        );
+        let verified_account = verified_accounts
+            .get(run.account_id.as_str())
+            .copied()
+            .ok_or_else(|| format!("多账户深度共享报告缺少账户 {}", run.account_id))?;
+        if verified_account.status != qx_app::MultiAccountResearchStatusV1::Succeeded {
+            return Err(format!("账户 {} 的共享报告状态不匹配", run.account_id));
+        }
+        let verified_report = verified_account
+            .report
+            .as_ref()
+            .ok_or_else(|| format!("账户 {} 缺少共享核心报告", run.account_id))?;
+        let summary = verified_report.summary.clone();
+        let verification = &verified_report.verification;
+        if !verification.verified
+            || verified_report.run_id != outcome.run_id
+            || verified_report.instrument != outcome.instrument
+            || verification.result_hash != outcome.result_hash
+            || verification.data_fingerprint != outcome.data_fingerprint
+            || outcome.account_id.as_deref() != Some(run.account_id.as_str())
+        {
+            return Err(format!("账户 {} 的深度报告身份不一致", run.account_id));
+        }
+        let summary_path = PathBuf::from(&outcome.artifacts.summary);
+        let declared_input = qx_app::artifact_store::recompute_declared_backtest_input(&summary)?;
+        if (evidence || diagnostics.is_some()) && declared_input.is_none() {
+            return Err(format!(
+                "账户 {} 的 summary 未声明可复核输入，不能绑定诊断或生成 EvidenceBundle",
+                run.account_id
+            ));
+        }
+        let bound_diagnostics = diagnostics
+            .as_ref()
+            .map(|attachment| {
+                let diagnostic = attachment
+                    .reports
+                    .get(&run.account_id)
+                    .ok_or_else(|| format!("账户 {} 缺少策略诊断", run.account_id))?;
+                let strategy_id = summary
+                    .pointer("/strategy/strategy_id")
+                    .or_else(|| summary.pointer("/strategy_id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        format!("账户 {} 的 summary 缺少 strategy_id", run.account_id)
+                    })?;
+                crate::report_command::validate_strategy_diagnostics_identity(
+                    diagnostic,
+                    strategy_id,
+                    &outcome.instrument,
+                    &declared_input
+                        .as_ref()
+                        .ok_or("策略诊断缺少重算后的数据输入身份")?
+                        .fingerprint,
+                )?;
+                Ok::<_, String>(json!({
+                    "identity_bound": true,
+                    "account_id": &run.account_id,
+                    "report": diagnostic,
+                }))
+            })
+            .transpose()?;
+        let account_evidence_path =
+            if let Some(declared_input) = declared_input.as_ref().filter(|_| evidence) {
+                let diagnostic_report = diagnostics
+                    .as_ref()
+                    .and_then(|attachment| attachment.reports.get(&run.account_id));
+                let diagnostic_snapshot = diagnostic_report
+                    .map(|report| {
+                        write_account_diagnostic_snapshot(&summary_path, &run.account_id, report)
+                    })
+                    .transpose()?;
+                match crate::run_evidence::write_run_evidence(
+                    &summary_path,
+                    &summary,
+                    None,
+                    diagnostic_snapshot
+                        .as_ref()
+                        .zip(diagnostic_report)
+                        .map(|((snapshot, _), report)| (snapshot.as_path(), report)),
+                ) {
+                    Ok(evidence_path) => Some(evidence_path),
+                    Err(error) => {
+                        if let Some((snapshot, created)) = diagnostic_snapshot {
+                            if created {
+                                let _ = std::fs::remove_file(snapshot);
+                            }
+                        }
+                        return Err(format!(
+                            "账户 {} 生成运行 EvidenceBundle 失败（输入 {}）: {error}",
+                            run.account_id, declared_input.path
+                        ));
+                    }
+                }
+            } else {
+                None
+            };
+        let (mut fill_rows, fill_rows_total) =
+            read_depth_account_fills(verified_report, outcome.fills, fill_row_limit)?;
+        let fill_rows_truncated =
+            verified_report.fills.truncated || fill_rows_total > fill_rows.len() as u64;
+        let (event_rows, event_trace_path, event_rows_total) = if let Some(trace_path) =
+            &outcome.artifacts.event_trace
+        {
+            let event_page = qx_app::read_event_report_v1_with_reader(
+                trace_path,
+                &summary,
+                &outcome.artifacts.run_manifest,
+                None,
+                &qx_app::artifact_store::FileArtifactReader,
+            )
+            .map_err(|error| format!("账户 {} 深度 EventLog 复核失败: {error}", run.account_id))?;
+            let mut order_events = BTreeMap::new();
+            let rows = event_page
+                    .rows
+                    .iter()
+                    .skip(event_page.rows.len().saturating_sub(
+                        event_row_limit.min(qx_app::MAX_EVENT_REPORT_PAGE_ROWS),
+                    ))
+                    .map(|event| {
+                        let kind_value = event.get("kind").cloned().unwrap_or(Value::Null);
+                        let (kind, order_id) = event
+                            .get("kind")
+                            .and_then(Value::as_object)
+                            .and_then(|tagged| tagged.iter().next())
+                            .map(|(kind, payload)| {
+                                let order = payload
+                                    .pointer("/fill/order_id")
+                                    .or_else(|| payload.pointer("/order/client_order_id"))
+                                    .or_else(|| payload.get("client_order_id"));
+                                let order_id = order.map(|value| {
+                                    value
+                                        .as_str()
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| value.to_string())
+                                });
+                                (kind.clone(), order_id)
+                            })
+                            .unwrap_or_else(|| ("unknown".into(), None));
+                        if let (Some(order_id), Some(seq)) =
+                            (order_id.as_ref(), event.get("seq").and_then(Value::as_u64))
+                        {
+                            order_events.entry(order_id.clone()).or_insert(seq);
+                        }
+                        json!({
+                            "event_id": format!("account-{}-event-{}", run.account_id, event["seq"]),
+                            "account_id": &run.account_id,
+                            "seq": event["seq"],
+                            "timestamp_ms": event["ts"],
+                            "priority": event["prio"],
+                            "source_seq": event["source_seq"],
+                            "kind": kind,
+                            "order_id": order_id,
+                            "payload": serde_json::to_string(&kind_value).unwrap_or_else(|_| "{}".into()),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+            for fill in &mut fill_rows {
+                if let Some(seq) = fill
+                    .get("order_id")
+                    .and_then(Value::as_str)
+                    .and_then(|order_id| order_events.get(order_id))
+                {
+                    fill["event_seq"] = json!(seq);
+                    fill["event_id"] = json!(format!("account-{}-event-{}", run.account_id, seq));
+                }
+            }
+            (rows, Some(PathBuf::from(trace_path)), event_page.total)
+        } else {
+            (Vec::new(), None, 0)
+        };
+        let event_rows_truncated =
+            event_trace_path.is_some() && event_rows_total > event_rows.len() as u64;
+        let equity_values =
+            crate::report_html::read_equity_csv(Path::new(&outcome.artifacts.equity))?;
+        let equity_series = downsample_equity(&equity_values, 2_000)
+            .into_iter()
+            .map(|(timestamp_ms, equity_raw)| {
+                json!({"timestamp_ms": timestamp_ms, "equity_raw": equity_raw.to_string()})
+            })
+            .collect::<Vec<_>>();
+        let equity_series_truncated =
+            verified_report.equity.truncated || outcome.equity_points > equity_series.len() as u64;
+        accounts.push(json!({
+            "account_id": &run.account_id,
+            "status": "succeeded",
+            "run_id": &outcome.run_id,
+            "instrument": &outcome.instrument,
+            "tier": &outcome.tier,
+            "snapshots": outcome.snapshots,
+            "strategy_id": summary.pointer("/strategy/strategy_id").or_else(|| summary.pointer("/strategy_id")),
+            "result_hash": &outcome.result_hash,
+            "data_fingerprint": declared_input.as_ref().map(|input| input.fingerprint.as_str()).unwrap_or(&verification.data_fingerprint),
+            "run_data_fingerprint": &verification.data_fingerprint,
+            "strategy_bias_diagnostics": bound_diagnostics,
+            "return_bps": outcome.return_bps,
+            "max_drawdown_bps": outcome.max_drawdown_bps,
+            "fills": outcome.fills,
+            "fill_rows_total": fill_rows_total,
+            "fill_rows": fill_rows,
+            "fill_rows_truncated": fill_rows_truncated,
+            "event_rows": event_rows,
+            "event_rows_total": event_rows_total,
+            "event_rows_truncated": event_rows_truncated,
+            "event_trace_path": event_trace_path,
+            "equity_points": outcome.equity_points,
+            "equity_series": equity_series,
+            "equity_series_truncated": equity_series_truncated,
+            "summary_path": &summary_path,
+            "run_evidence_path": account_evidence_path,
+            "equity_path": &outcome.artifacts.equity,
+            "fills_path": &outcome.artifacts.fills,
+        }));
+    }
+
+    let report = json!({
+        "schema_version": 1,
+        "report_kind": "multi_account_depth_backtest",
+        "source_path": path,
+        "batch_id": &verified_batch.run_id,
+        "settlement_currency": &verified_batch.settlement_currency,
+        "spec_fingerprint": &verified_batch.spec_fingerprint,
+        "summary": &verified_batch.summary,
+        "account_semantics": "accounts_are_independent; cash_positions_risk_and_returns_are_not_netted",
+        "verification_scope": "shared_qx_app_report_verified_parent_child_artifacts_and_replayed_depth_event_logs",
+        "detail_limits": {
+            "fill_rows_per_account_max": fill_row_limit_max,
+            "fill_rows_batch_max": MAX_REPORT_FILL_ROWS_TOTAL,
+            "event_rows_per_account_max": event_row_limit_max.min(qx_app::MAX_EVENT_REPORT_PAGE_ROWS),
+            "event_rows_batch_max": MAX_REPORT_EVENT_ROWS_TOTAL.min(qx_app::MAX_EVENT_REPORT_PAGE_ROWS * accounts_total),
+            "sampling": "verified_qx_app_rows_with_cli_tail_limits_and_equity_downsampling",
+        },
+        "accounts": accounts,
+    });
+    if let Some(xlsx_path) = xlsx {
+        crate::report_xlsx::validate_xlsx_path(xlsx_path)?;
+        validate_depth_report_output_target(
+            xlsx_path,
+            path,
+            strategy_diagnostics,
+            &result,
+            evidence,
+        )?;
+    }
+    let html_path = if let Some(target) = html_target {
+        if let Some(parent) = target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("创建报告目录失败: {error}"))?;
+        }
+        let mut rendered = render_html(&report)?
+            .replace("牵星多账户回测研究报告", "牵星多账户深度回测研究报告")
+            .replace(
+                "<h1>多账户回测研究报告</h1>",
+                "<h1>多账户深度回测研究报告</h1>",
+            );
+        let depth_rows = report["accounts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|account| {
+                format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    escape_html(account["account_id"].as_str().unwrap_or("")),
+                    escape_html(account["instrument"].as_str().unwrap_or("")),
+                    escape_html(account["tier"].as_str().unwrap_or("")),
+                    escape_html(
+                        account["snapshots"]
+                            .as_u64()
+                            .map(|value| value.to_string())
+                            .as_deref()
+                            .unwrap_or("absent")
+                    ),
+                )
+            })
+            .collect::<String>();
+        rendered = rendered.replace(
+            "<section class=\"cards\">",
+            &format!("<section><h2>深度输入</h2><div class=\"scroll\"><table><thead><tr><th>账户</th><th>标的</th><th>档位</th><th>快照</th></tr></thead><tbody>{depth_rows}</tbody></table></div></section><section class=\"cards\">"),
+        );
+        qx_app::artifact_store::sink::publish(
+            &target,
+            &rendered,
+            qx_app::artifact_store::sink::PublishMode::Overwrite,
+        )
+        .map_err(|error| format!("发布多账户深度 HTML 报告失败: {error}"))?;
+        Some(target)
+    } else {
+        None
+    };
+    let xlsx_path = xlsx
+        .map(|target| crate::report_xlsx::write_multi_account_report_xlsx(&report, target))
+        .transpose()?;
+    if as_json {
+        let mut value = json!({"schema_version":1,"report":report});
+        if let Some(path) = html_path {
+            value["generated_artifacts"]["html"] = json!(path);
+        }
+        if let Some(path) = xlsx_path {
+            value["generated_artifacts"]["xlsx"] = json!(path);
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?
+        );
+    } else if let Some(html_path) = html_path {
+        println!("[Report] html={}", html_path.display());
+        if let Some(xlsx_path) = xlsx_path {
+            println!("[Report] xlsx={}", xlsx_path.display());
+        }
+        println!(
+            "[Report] batch_id={} accounts={} complete={}",
+            result.batch_id,
+            result.runs.len(),
+            result.summary.complete
+        );
+    } else {
+        if let Some(xlsx_path) = xlsx_path {
+            println!("[Report] xlsx={}", xlsx_path.display());
+        }
+        println!(
+            "[Report] batch_id={} accounts={} complete={}",
+            result.batch_id,
+            result.runs.len(),
+            result.summary.complete
+        );
+    }
+    Ok(true)
+}
+
+fn validate_depth_report_output_target(
+    target: &Path,
+    source: &Path,
+    strategy_diagnostics: Option<&Path>,
+    result: &qx_app::MultiAccountDepthBacktestResult,
+    evidence: bool,
+) -> Result<(), String> {
+    if crate::report_output_paths::same_output_target(target, source) {
+        return Err("报告不能覆盖多账户深度结果输入".into());
+    }
+    if strategy_diagnostics.is_some_and(|diagnostics| {
+        crate::report_output_paths::same_output_target(target, diagnostics)
+    }) {
+        return Err("报告不能覆盖策略诊断输入".into());
+    }
+    for outcome in result.runs.iter().filter_map(|run| run.outcome.as_ref()) {
+        for artifact in [
+            &outcome.artifacts.run_manifest,
+            &outcome.artifacts.summary,
+            &outcome.artifacts.equity,
+            &outcome.artifacts.fills,
+        ]
+        .into_iter()
+        .chain(outcome.artifacts.event_trace.iter())
+        {
+            if crate::report_output_paths::same_output_target(target, Path::new(artifact)) {
+                return Err(format!("报告不能覆盖账户运行工件: {artifact}"));
+            }
+        }
+        if evidence {
+            let summary_path = Path::new(&outcome.artifacts.summary);
+            let stem = evidence_summary_stem(summary_path)?;
+            for suffix in [".evidence.json", ".strategy-diagnostics.evidence.json"] {
+                let evidence_path = summary_path.with_file_name(format!("{stem}{suffix}"));
+                if crate::report_output_paths::same_output_target(target, &evidence_path) {
+                    return Err(format!(
+                        "报告不能覆盖账户运行 EvidenceBundle: {}",
+                        evidence_path.display()
+                    ));
+                }
+            }
+            if let Some(account_id) = outcome.account_id.as_deref() {
+                let diagnostic_path = account_diagnostic_snapshot_path(summary_path, account_id)?;
+                if crate::report_output_paths::same_output_target(target, &diagnostic_path) {
+                    return Err(format!(
+                        "报告不能覆盖账户策略诊断证据附件: {}",
+                        diagnostic_path.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_report_output_target(
@@ -596,96 +1165,85 @@ fn write_account_diagnostic_snapshot(
     }
 }
 
+fn read_depth_account_fills(
+    report: &qx_app::ResearchRunReportV1,
+    expected: u64,
+    row_limit: usize,
+) -> Result<(Vec<Value>, u64), String> {
+    if report.fills.total != expected {
+        return Err(format!(
+            "Depth 成交报告行数与 outcome.fills 不一致: rows={} expected={expected}",
+            report.fills.total
+        ));
+    }
+    let rows = &report.fills.rows;
+    let start = rows.len().saturating_sub(row_limit);
+    let projected = rows[start..]
+        .iter()
+        .map(|row| {
+            let timestamp_ms = row
+                .get("ts")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
+                })
+                .ok_or("Depth 成交报告缺少有效 ts")?;
+            let cell = |name: &str| {
+                row.get(name)
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| value.to_string())
+                    })
+                    .ok_or_else(|| format!("Depth 成交报告缺少 {name}"))
+            };
+            Ok::<_, String>(json!({
+                "timestamp_ms": timestamp_ms,
+                "order_id": cell("order_id")?,
+                "qty_raw": cell("qty_raw")?,
+                "price_raw": cell("price_raw")?,
+                "fee_raw": cell("fee_raw")?,
+                "strategy_id": row.get("strategy_id").filter(|value| !value.is_null()),
+                "side": null,
+                "side_status": "absent_from_fill_contract",
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((projected, report.fills.total))
+}
+
 fn read_account_fills(
     path: &str,
     expected: u64,
     row_limit: usize,
 ) -> Result<(Vec<Value>, u64), String> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("读取已复核成交工件失败 {path}: {error}"))?;
-    let mut lines = BufReader::new(file).lines();
-    let header = lines
-        .next()
-        .transpose()
-        .map_err(|error| format!("读取成交工件表头失败 {path}: {error}"))?
-        .unwrap_or_default();
-    if header != "ts,order_id,qty_raw,price_raw,fee_raw,strategy_id" {
-        return Err(format!("成交工件格式不匹配 {path}: header={header}"));
-    }
-    let expected_capacity = usize::try_from(expected).unwrap_or(usize::MAX);
-    let mut rows = VecDeque::with_capacity(row_limit.min(expected_capacity));
-    let mut total = 0_u64;
-    for (line_index, line) in lines.enumerate() {
-        let line = line.map_err(|error| {
-            format!("读取成交工件失败 {path} 第 {} 行: {error}", line_index + 2)
-        })?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let columns = line.split(',').collect::<Vec<_>>();
-        if columns.len() != 6 {
-            return Err(format!(
-                "成交工件 {path} 第 {} 行字段数错误",
-                line_index + 2
-            ));
-        }
-        let timestamp = columns[0]
-            .parse::<u64>()
-            .map_err(|_| format!("成交工件 {path} 第 {} 行 ts 非法", line_index + 2))?;
-        let raw = |index: usize, name: &str| {
-            columns[index]
-                .parse::<i128>()
-                .map_err(|_| format!("成交工件 {path} 第 {} 行 {name} 非法", line_index + 2))
-        };
-        rows.push_back(json!({
-            "timestamp_ms": timestamp,
-            "order_id": columns[1],
-            "qty_raw": raw(2, "qty_raw")?.to_string(),
-            "price_raw": raw(3, "price_raw")?.to_string(),
-            "fee_raw": raw(4, "fee_raw")?.to_string(),
-            "strategy_id": if columns[5].is_empty() { None } else { Some(columns[5]) },
-            "side": null,
-            "side_status": "absent_from_fill_contract",
-        }));
-        total = total
-            .checked_add(1)
-            .ok_or_else(|| format!("成交工件行数溢出 {path}"))?;
-        if rows.len() > row_limit {
-            rows.pop_front();
-        }
-    }
+    let (fills, total) = crate::report_html::read_fills_csv_tail(Path::new(path), row_limit)?;
     if total != expected {
         return Err(format!(
             "成交工件行数与 outcome.fills 不一致 {path}: rows={total} expected={expected}",
         ));
     }
-    Ok((rows.into_iter().collect(), total))
-}
-
-fn validate_batch(result: &qx_app::MultiAccountBacktestResult) -> Result<(), String> {
-    let succeeded = result
-        .runs
-        .iter()
-        .filter(|run| run.outcome.is_some())
-        .count();
-    let failed = result.runs.len() - succeeded;
-    if result.runs.len() < 2
-        || result.summary.accounts_total != result.runs.len()
-        || result.summary.accounts_succeeded != succeeded
-        || result.summary.accounts_failed != failed
-        || result.summary.complete != (failed == 0)
-    {
-        return Err("多账户结果汇总计数/complete 与逐账户状态不一致".into());
-    }
-    let mut ids = std::collections::BTreeSet::new();
-    if result
-        .runs
-        .iter()
-        .any(|run| !ids.insert(run.account_id.as_str()))
-    {
-        return Err("多账户结果含重复 account_id".into());
-    }
-    Ok(())
+    let rows = fills
+        .into_iter()
+        .map(|fill| {
+            json!({
+                "timestamp_ms": fill.ts,
+                "order_id": fill.order_id.to_string(),
+                "qty_raw": fill.qty_raw.to_string(),
+                "qty_exact": fill.qty_exact,
+                "price_raw": fill.price_raw.to_string(),
+                "price_exact": fill.price_exact,
+                "fee_raw": fill.fee_raw.map(|value| value.to_string()),
+                "exact_fees_json": fill.exact_fees_json,
+                "strategy_id": if fill.strategy_id.is_empty() { None } else { Some(fill.strategy_id) },
+                "side": null,
+                "side_status": "absent_from_fill_contract",
+            })
+        })
+        .collect();
+    Ok((rows, total))
 }
 
 struct MultiAccountDiagnostics {

@@ -420,6 +420,10 @@ impl Strategy for BuiltinStrategy {
                 },
                 reduce_only,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             });
             self.next_intent_id = self.next_intent_id.saturating_add(1);
         }

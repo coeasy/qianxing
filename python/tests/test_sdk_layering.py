@@ -52,6 +52,11 @@ LAYERS = (
 SUB_NAMESPACE_ONLY = {
     "strategy": ("SCHEMA_VERSION", "StrategyBars", "StrategyInput", "StrategyIntent", "StrategyOutput"),
     "core": ("AsyncCoreClient", "AsyncRunHandle"),
+    # HTML rendering is a reports-layer presentation API, not a qx-app use case.
+    "reports": (
+        "render_multi_account_joint_report_html",
+        "write_multi_account_joint_report_html",
+    ),
     "data": (
         "BAR_JSON_CONTENT_TYPE",
         "FUNDING_RATE_JSON_CONTENT_TYPE",
@@ -173,11 +178,13 @@ class LayerSemanticsTest(unittest.TestCase):
         basket = PortfolioBacktestConfig(
             primary_priority=0,
             primary_reserved_capital_raw=40_000_000_000,
+            primary_reserved_capital_exact={"coefficient": "400000000005", "scale": 10},
             additional_strategies=(
                 PortfolioStrategySpec(
                     priority=1,
                     reserved_capital_raw=50_000_000_000,
                     strategy=BuiltinStrategySpec(kind="momentum", strategy_id="mom"),
+                    reserved_capital_exact={"coefficient": "500000000005", "scale": 10},
                 ),
             ),
         )
@@ -193,6 +200,14 @@ class LayerSemanticsTest(unittest.TestCase):
         )
         payload = spec.to_dict()
         self.assertEqual(payload["portfolio"]["additional_strategies"][0]["strategy"]["strategy_id"], "mom")
+        self.assertEqual(
+            payload["portfolio"]["additional_strategies"][0]["reserved_capital_exact"],
+            {"coefficient": "500000000005", "scale": 10},
+        )
+        self.assertEqual(
+            payload["portfolio"]["primary_reserved_capital_exact"],
+            {"coefficient": "400000000005", "scale": 10},
+        )
         self.assertNotIn("portfolio", BacktestSpec(
             run_id="legacy-single",
             instrument="BTCUSDT.BINANCE",
@@ -341,6 +356,7 @@ class TopLevelStabilityTest(unittest.TestCase):
 
         root = PYTHON_DIR.parent
         schema = json.loads((root / "schemas" / "backtest-spec-v1.json").read_text(encoding="utf-8"))
+        exact_schema = json.loads((root / "schemas" / "backtest-spec-v2.json").read_text(encoding="utf-8"))
         spec_path = root / "crates" / "qx-app" / "src" / "spec" / "backtest.rs"
         spec_source = spec_path.read_text(encoding="utf-8")
         backtest_match = re.search(r"pub struct BacktestSpec \{([\s\S]*?)\n\}", spec_source)
@@ -348,12 +364,54 @@ class TopLevelStabilityTest(unittest.TestCase):
         backtest_fields = set(re.findall(r"^\s*pub ([a-z_]+):", backtest_match.group(1), re.MULTILINE))
         python_fields = {field.name for field in fields(BacktestSpec)}
         self.assertEqual(backtest_fields, python_fields)
-        self.assertEqual(set(schema["properties"]), backtest_fields)
+        self.assertEqual(set(schema["properties"]), backtest_fields - {"initial_cash_exact"})
+        self.assertEqual(set(exact_schema["properties"]), backtest_fields)
         self.assertEqual(
             set(schema["required"]),
             {"schema_version", "run_id", "instrument", "bars_path", "settlement_currency", "initial_cash_raw", "seed", "output_dir", "strategy"},
         )
         self.assertEqual(schema["properties"]["schema_version"]["const"], 1)
+        self.assertEqual(exact_schema["properties"]["schema_version"]["const"], 2)
+        self.assertIn("initial_cash_exact", exact_schema["required"])
+        self.assertEqual(exact_schema["properties"]["initial_cash_raw"]["minimum"], 0)
+        schema_registry = json.loads((root / "maturity" / "schema-registry.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            {
+                "schema_id": "backtest-spec-v2",
+                "version": 2,
+                "path": "schemas/backtest-spec-v2.json",
+                "producer": "qx-app",
+                "consumers": ["qx-cli", "qx-api", "qx-python", "qx-sdk"],
+                "compatibility": "forward",
+                "golden_fixtures": [
+                    "crates/qx-app/tests/spec_contract.rs",
+                    "python/tests/test_sdk_layering.py",
+                ],
+            },
+            schema_registry["entries"],
+        )
+        equity_csv_schema = json.loads(
+            (root / "schemas" / "backtest-equity-csv-v2.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            set(equity_csv_schema["required"]),
+            {"ts", "equity_raw", "equity_exact", "position_raw"},
+        )
+        self.assertIn(
+            {
+                "schema_id": "backtest-equity-csv-v2",
+                "version": 2,
+                "path": "schemas/backtest-equity-csv-v2.json",
+                "producer": "qx-app",
+                "consumers": ["qx-cli", "qx-api", "qx-python", "qx-sdk"],
+                "compatibility": "backward",
+                "golden_fixtures": [
+                    "crates/qx-app/tests/account_ownership.rs",
+                    "python/tests/test_experiment_html.py",
+                ],
+            },
+            schema_registry["entries"],
+        )
         self.assertEqual(schema["properties"]["strategy"]["$ref"], "#/$defs/BuiltinStrategySpec")
         self.assertFalse(schema["additionalProperties"])
         strategy_schema = json.loads(
@@ -464,16 +522,26 @@ class TopLevelStabilityTest(unittest.TestCase):
     def test_multi_leg_backtest_schema_matches_rust_python_and_runtime_constraints(self):
         import json
 
-        from qianxing import BuiltinStrategySpec, MultiLegBacktestOutcome, MultiLegBacktestSpec
+        from qianxing import (
+            BuiltinStrategySpec,
+            FundingRateEvent,
+            InstrumentId,
+            MultiLegBacktestOutcome,
+            MultiLegBacktestSpec,
+        )
 
         root = PYTHON_DIR.parent
         schema = json.loads((root / "schemas" / "multi-leg-backtest-spec-v1.json").read_text(encoding="utf-8"))
+        schema_v2 = json.loads((root / "schemas" / "multi-leg-backtest-spec-v2.json").read_text(encoding="utf-8"))
         rust_source = (root / "crates" / "qx-app" / "src" / "spec" / "multi_leg.rs").read_text(encoding="utf-8")
         rust_match = re.search(r"pub struct MultiLegBacktestSpec \{([\s\S]*?)\n\}", rust_source)
         self.assertIsNotNone(rust_match, "Rust MultiLegBacktestSpec definition must remain discoverable")
         rust_fields = set(re.findall(r"^\s*pub ([a-z_]+):", rust_match.group(1), re.MULTILINE))
         self.assertEqual({field.name for field in fields(MultiLegBacktestSpec)}, rust_fields)
-        self.assertEqual(set(schema["properties"]), rust_fields)
+        exact_fields = {"primary_initial_cash_exact", "reference_initial_cash_exact"}
+        self.assertEqual(set(schema["properties"]), rust_fields - exact_fields)
+        self.assertEqual(set(schema_v2["properties"]), rust_fields)
+        self.assertEqual(schema_v2["properties"]["schema_version"]["const"], 2)
         self.assertEqual(
             set(schema["required"]),
             {"schema_version", "run_id", "primary_bars_path", "reference_bars_path", "settlement_currency", "primary_initial_cash_raw", "reference_initial_cash_raw", "seed", "output_dir", "strategy"},
@@ -483,7 +551,39 @@ class TopLevelStabilityTest(unittest.TestCase):
             set(schema["$defs"]["MultiLegStrategySpec"]["properties"]["kind"]["enum"]),
             {"pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage"},
         )
-        self.assertEqual(schema["$defs"]["FundingRateEvent"]["properties"]["settlement_ts"]["multipleOf"], 28_800_000)
+        self.assertNotIn("multipleOf", schema["$defs"]["FundingRateEvent"]["properties"]["settlement_ts"])
+        self.assertEqual(
+            schema["$defs"]["FundingRateEvent"]["properties"]["funding_interval_ms"]["minimum"],
+            60_000,
+        )
+        funding_event_schema = schema["$defs"]["FundingRateEvent"]
+        funding_event = FundingRateEvent(
+            InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+            settlement_ts=12_345,
+            rate_bps=25,
+            funding_interval_ms=3_600_000,
+        ).to_dict()
+        self.assertEqual(funding_event["settlement_ts"], 12_345)
+        self.assertEqual(funding_event["funding_interval_ms"], 3_600_000)
+        __import__("jsonschema").Draft202012Validator(
+            {"$defs": schema["$defs"], "$ref": "#/$defs/FundingRateEvent"}
+        ).validate(funding_event)
+        self.assertNotIn(
+            "funding_interval_ms",
+            FundingRateEvent(
+                InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                settlement_ts=12_345,
+                rate_bps=25,
+            ).to_dict(),
+        )
+        for invalid_interval in (59_999, 86_400_001, True, 3_600_000.0, "3600000"):
+            with self.assertRaises(ValueError):
+                FundingRateEvent(
+                    InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                    settlement_ts=12_345,
+                    rate_bps=25,
+                    funding_interval_ms=invalid_interval,
+                ).to_dict()
         self.assertEqual(len(schema["allOf"]), 3, "paired manifests and mutually exclusive funding inputs stay documented")
 
         funding_source = (root / "crates" / "qx-core" / "src" / "ledger" / "mod.rs").read_text(encoding="utf-8")
@@ -494,6 +594,24 @@ class TopLevelStabilityTest(unittest.TestCase):
 
         registry = json.loads((root / "maturity" / "schema-registry.json").read_text(encoding="utf-8"))
         self.assertTrue(any(entry["schema_id"] == "multi-leg-backtest-spec-v1" for entry in registry["entries"]))
+        self.assertTrue(any(entry["schema_id"] == "multi-leg-backtest-spec-v2" for entry in registry["entries"]))
+        self.assertTrue(any(entry["schema_id"] == "multi-leg-backtest-artifact-v6" for entry in registry["entries"]))
+        payload_schema_ids = {
+            entry["schema_id"]
+            for entry in registry["entries"]
+            if entry["schema_id"].startswith("funding-rate-provider-payload-")
+        }
+        self.assertEqual(
+            payload_schema_ids,
+            {"funding-rate-provider-payload-v1", "funding-rate-provider-payload-v2"},
+        )
+        for version in ("v1", "v2"):
+            payload_schema = json.loads(
+                (root / "schemas" / f"funding-rate-provider-payload-{version}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            __import__("jsonschema").Draft202012Validator.check_schema(payload_schema)
         result_schema = json.loads((root / "schemas" / "multi-leg-backtest-result-v1.json").read_text(encoding="utf-8"))
         result_source = (root / "crates" / "qx-app" / "src" / "spec" / "multi_leg.rs").read_text(encoding="utf-8")
         result_match = re.search(r"pub struct MultiLegBacktestOutcome \{([\s\S]*?)\n\}", result_source)
@@ -537,6 +655,34 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertIsNone(payload["reference_market_spec"])
         self.assertNotIn("funding_events", payload)
         self.assertEqual(payload["fill_model"], "next_bar_open")
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator.check_schema(schema_v2)
+        artifact_schema_v6 = json.loads((root / "schemas" / "multi-leg-backtest-artifact-v6.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(artifact_schema_v6)
+        self.assertEqual(artifact_schema_v6["properties"]["schema_version"]["const"], 6)
+        exact_payload = MultiLegBacktestSpec(
+            run_id="multi-leg-exact-v2",
+            primary_bars_path="primary.json",
+            reference_bars_path="reference.json",
+            settlement_currency="USDT",
+            primary_initial_cash_raw=1,
+            reference_initial_cash_raw=1,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(kind="pairs_arbitrage", strategy_id="exact-v2"),
+        ).with_initial_cash_exact("0.0000000002", "0.0000000002").to_dict()
+        self.assertEqual(exact_payload["schema_version"], 2)
+        self.assertEqual(exact_payload["primary_initial_cash_raw"], 0)
+        self.assertEqual(exact_payload["reference_initial_cash_raw"], 0)
+        Draft202012Validator(schema_v2).validate(exact_payload)
+        experiment_schema = json.loads((root / "schemas" / "run-multi-leg-experiment-spec-v1.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(experiment_schema)
+        Draft202012Validator(experiment_schema).validate({
+            "schema_version": 1,
+            "experiment_id": "multi-leg-exact-v2-search",
+            "base": exact_payload,
+            "parameter_space": [{"name": "quantity_raw", "values": [1]}],
+        })
 
     def test_multi_account_backtest_schemas_match_rust_python_and_bound_batches(self):
         import json
@@ -611,7 +757,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             (
                 "MultiAccountBacktestResult",
                 MultiAccountBacktestResult,
-                "multi-account-backtest-result-v1",
+                "multi-account-backtest-result-v2",
                 "crates/qx-app/src/spec/multi_account.rs",
                 "MultiAccountRunResult",
                 MultiAccountRunResult,
@@ -620,7 +766,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             (
                 "MultiAccountDepthBacktestResult",
                 MultiAccountDepthBacktestResult,
-                "multi-account-depth-backtest-result-v1",
+                "multi-account-depth-backtest-result-v2",
                 "crates/qx-app/src/spec/multi_account/depth.rs",
                 "MultiAccountDepthRunResult",
                 MultiAccountDepthRunResult,
@@ -652,6 +798,18 @@ class TopLevelStabilityTest(unittest.TestCase):
         joint_result_entry = next(item for item in registry["entries"] if item["schema_id"] == "multi-account-joint-backtest-result-v1")
         self.assertEqual(joint_result_entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk", "cpp"])
         self.assertIn("python/tests/test_sdk_layering.py", joint_result_entry["golden_fixtures"])
+
+        joint_envelope_schema = json.loads((root / "schemas" / "multi-account-joint-backtest-envelope-v2.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(joint_envelope_schema)
+        self.assertEqual(joint_envelope_schema["properties"]["schema_version"]["const"], 2)
+        self.assertEqual(joint_envelope_schema["properties"]["outcome"]["$ref"], "multi-account-joint-backtest-result-v1.json")
+        joint_envelope_entry = next(item for item in registry["entries"] if item["schema_id"] == "multi-account-joint-backtest-envelope-v2")
+        self.assertEqual(joint_envelope_entry["producer"], "qx-app")
+        self.assertEqual(joint_envelope_entry["consumers"], ["qx-app"])
+        self.assertIn("crates/qx-app/tests/multi_account_joint_backtest.rs", joint_envelope_entry["golden_fixtures"])
+        joint_record_source = (root / "crates" / "qx-app" / "src" / "artifact_store" / "run_record.rs").read_text(encoding="utf-8")
+        self.assertIn("pub const MULTI_ACCOUNT_JOINT_BACKTEST_ENVELOPE_SCHEMA_VERSION: u32 = 2;", joint_record_source)
+        self.assertIn("fn normalize_legacy_joint_portfolio_artifact_ref(", joint_record_source)
 
         backtest_source = (root / "crates" / "qx-app" / "src" / "spec" / "results.rs").read_text(encoding="utf-8")
         backtest_fields = rust_fields(backtest_source, "BacktestOutcome")
@@ -707,7 +865,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             Draft202012Validator(verification_schema).validate({**verification_payload, "unexpected": True})
         depth_source = (root / "crates" / "qx-app" / "src" / "spec" / "depth.rs").read_text(encoding="utf-8")
         depth_fields = rust_fields(depth_source, "DepthBacktestOutcome") - {"display_summary"}
-        depth_schema = json.loads((root / "schemas" / "multi-account-depth-backtest-result-v1.json").read_text(encoding="utf-8"))
+        depth_schema = json.loads((root / "schemas" / "multi-account-depth-backtest-result-v2.json").read_text(encoding="utf-8"))
         self.assertEqual(set(depth_schema["$defs"]["DepthBacktestOutcome"]["properties"]), depth_fields)
         self.assertEqual({field.name for field in fields(DepthBacktestOutcome)}, depth_fields)
 
@@ -745,14 +903,42 @@ class TopLevelStabilityTest(unittest.TestCase):
             "tier": "l1",
             "snapshots": 2,
         }
+        parent_run_manifest = {
+            "run_id": "batch-1",
+            "code_commit": "fixture-revision",
+            "config_hash": "0123456789abcdef",
+            "data_fingerprint": "0123456789abcdef",
+            "input_components": {},
+            "clock_start": 1,
+            "clock_end": 2,
+            "global_seed": 0,
+            "determinism_mode": True,
+            "result_hash": "0123456789abcdef",
+            "strategy_version": "multi-account-batch",
+            "instrument_spec_version": "multi-account-bar-batch-v1",
+            "model_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "input_event_hash": "0123456789abcdef",
+            "output_event_hash": "0123456789abcdef",
+            "runtime_version": "qx-app-fixture",
+            "canonical_run_spec_json": "{}",
+            "canonical_run_spec_fingerprint": "0123456789abcdef",
+        }
         payloads = (
             (
                 "multi-account-backtest-result-v1",
                 {"batch_id": "batch-1", "settlement_currency": "USDT", "spec_fingerprint": "0123456789abcdef", "runs": [{"account_id": "acct-1", "outcome": bar_outcome, "error_json": None}, {"account_id": "acct-2", "outcome": None, "error_json": "{}"}], "summary": summary},
             ),
             (
+                "multi-account-backtest-result-v2",
+                {"schema_version": 2, "batch_id": "batch-1", "settlement_currency": "USDT", "spec_fingerprint": "0123456789abcdef", "runs": [{"account_id": "acct-1", "outcome": bar_outcome, "error_json": None}, {"account_id": "acct-2", "outcome": None, "error_json": "{}"}], "summary": summary, "run_manifest": parent_run_manifest},
+            ),
+            (
                 "multi-account-depth-backtest-result-v1",
                 {"batch_id": "batch-1", "settlement_currency": "USDT", "spec_fingerprint": "0123456789abcdef", "runs": [{"account_id": "acct-1", "outcome": depth_outcome, "error_json": None}, {"account_id": "acct-2", "outcome": None, "error_json": "{}"}], "summary": summary},
+            ),
+            (
+                "multi-account-depth-backtest-result-v2",
+                {"schema_version": 2, "result_kind": "multi_account_depth", "batch_id": "batch-1", "settlement_currency": "USDT", "spec_fingerprint": "0123456789abcdef", "runs": [{"account_id": "acct-1", "outcome": depth_outcome, "error_json": None}, {"account_id": "acct-2", "outcome": None, "error_json": "{}"}], "summary": summary, "run_manifest": parent_run_manifest},
             ),
         )
         for schema_id, payload in payloads:
@@ -762,21 +948,32 @@ class TopLevelStabilityTest(unittest.TestCase):
                 validator = Draft202012Validator(schema)
                 self.assertTrue(validator.is_valid(payload))
                 self.assertFalse(validator.is_valid({**payload, "orphan_field": True}))
+        parsed_depth_v2 = MultiAccountDepthBacktestResult.from_dict(payloads[-1][1])
+        self.assertEqual(parsed_depth_v2.schema_version, 2)
+        self.assertEqual(parsed_depth_v2.result_kind, "multi_account_depth")
+        self.assertEqual(parsed_depth_v2.run_manifest["run_id"], "batch-1")
+        parsed_legacy_depth = MultiAccountDepthBacktestResult.from_dict(payloads[-2][1])
+        self.assertEqual(parsed_legacy_depth.schema_version, 1)
+        self.assertIsNone(parsed_legacy_depth.run_manifest)
 
     def test_multi_market_backtest_schemas_match_rust_python_contracts(self):
         import json
 
         from qianxing import (
+            BuiltinStrategySpec,
             MultiMarketBacktestMarket,
             MultiMarketBacktestOutcome,
             MultiMarketBacktestSpec,
             MultiMarketDepthBacktestMarket,
             MultiMarketDepthBacktestOutcome,
             MultiMarketDepthBacktestSpec,
+            PortfolioStrategySpec,
         )
 
         root = PYTHON_DIR.parent
         registry = json.loads((root / "maturity" / "schema-registry.json").read_text(encoding="utf-8"))
+        from jsonschema import Draft202012Validator
+
         contracts = (
             ("MultiMarketBacktestSpec", MultiMarketBacktestSpec, "multi-market-backtest-spec-v1", "crates/qx-app/src/spec/multi_market.rs", "MultiMarketBacktestMarket", MultiMarketBacktestMarket, "crates/qx-app/tests/multi_market_backtest.rs", 1),
             ("MultiMarketDepthBacktestSpec", MultiMarketDepthBacktestSpec, "multi-market-depth-backtest-spec-v1", "crates/qx-app/src/spec/multi_market_depth.rs", "MultiMarketDepthBacktestMarket", MultiMarketDepthBacktestMarket, "crates/qx-app/tests/multi_market_depth_backtest.rs", 2),
@@ -789,8 +986,13 @@ class TopLevelStabilityTest(unittest.TestCase):
             self.assertIsNotNone(rust_match, f"Rust {name} definition must remain discoverable")
             rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", rust_match.group(1), re.MULTILINE))
             self.assertEqual({field.name for field in fields(python_type)}, rust_fields)
-            self.assertEqual(set(schema["properties"]), rust_fields)
-            self.assertEqual(set(schema["required"]), rust_fields)
+            schema_fields = rust_fields - (
+                {"initial_cash_exact"}
+                if name in {"MultiMarketBacktestSpec", "MultiMarketDepthBacktestSpec"}
+                else set()
+            )
+            self.assertEqual(set(schema["properties"]), schema_fields)
+            self.assertEqual(set(schema["required"]), schema_fields)
             self.assertFalse(schema["additionalProperties"])
             market_schema = schema["$defs"][nested_name]
             self.assertEqual(
@@ -806,6 +1008,91 @@ class TopLevelStabilityTest(unittest.TestCase):
             entry = next(item for item in registry["entries"] if item["schema_id"] == schema_id)
             self.assertEqual(entry["golden_fixtures"], [fixture])
             self.assertEqual(entry["producer"], "qx-app")
+        market_schema_v2 = json.loads((root / "schemas" / "multi-market-backtest-spec-v2.json").read_text(encoding="utf-8"))
+        market_v2_entry = next(item for item in registry["entries"] if item["schema_id"] == "multi-market-backtest-spec-v2")
+        self.assertEqual(market_v2_entry["version"], 2)
+        self.assertEqual(market_v2_entry["producer"], "qx-app")
+        self.assertEqual(set(market_schema_v2["properties"]), {field.name for field in fields(MultiMarketBacktestSpec)})
+        self.assertEqual(set(market_schema_v2["required"]), set(market_schema_v2["properties"]))
+        Draft202012Validator.check_schema(market_schema_v2)
+        v2_market = MultiMarketBacktestMarket(
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            priority=0,
+            strategies=(PortfolioStrategySpec(
+                priority=0,
+                reserved_capital_raw=1,
+                strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="v2-slot"),
+            ),),
+        )
+        v2_spec = MultiMarketBacktestSpec(
+            run_id="multi-market-exact-v2",
+            account_id="account-1",
+            settlement_currency="USDT",
+            initial_cash_raw=1,
+            initial_cash_exact={"coefficient": "15", "scale": 10},
+            output_dir="runs/v2",
+            markets=(v2_market,),
+            schema_version=2,
+        ).to_dict()
+        Draft202012Validator(market_schema_v2).validate(v2_spec)
+        with self.assertRaises(ValueError):
+            MultiMarketBacktestSpec(
+                run_id="multi-market-exact-v2-invalid",
+                account_id="account-1",
+                settlement_currency="USDT",
+                initial_cash_raw=0,
+                initial_cash_exact={"coefficient": "15", "scale": 10},
+                output_dir="runs/v2",
+                markets=(v2_market,),
+                schema_version=2,
+            ).to_dict()
+        depth_schema_v2 = json.loads(
+            (root / "schemas" / "multi-market-depth-backtest-spec-v2.json").read_text(encoding="utf-8")
+        )
+        depth_v2_entry = next(
+            item for item in registry["entries"] if item["schema_id"] == "multi-market-depth-backtest-spec-v2"
+        )
+        self.assertEqual(depth_v2_entry["version"], 2)
+        self.assertEqual(depth_v2_entry["producer"], "qx-app")
+        self.assertEqual(set(depth_schema_v2["properties"]), {field.name for field in fields(MultiMarketDepthBacktestSpec)})
+        self.assertEqual(set(depth_schema_v2["required"]), set(depth_schema_v2["properties"]))
+        self.assertEqual(depth_schema_v2["properties"]["schema_version"]["const"], 2)
+        self.assertEqual(depth_schema_v2["properties"]["initial_cash_raw"]["minimum"], 0)
+        self.assertEqual(depth_schema_v2["properties"]["initial_cash_exact"]["$ref"], "#/$defs/ExactDecimal")
+        Draft202012Validator.check_schema(depth_schema_v2)
+        depth_v2_spec = MultiMarketDepthBacktestSpec(
+            run_id="multi-market-depth-exact-v2",
+            account_id="account-1",
+            settlement_currency="USDT",
+            initial_cash_raw=0,
+            output_dir="runs/depth-v2",
+            markets=(),
+            schema_version=2,
+            initial_cash_exact={"coefficient": "5", "scale": 10},
+        ).to_dict()
+        self.assertEqual(depth_v2_spec["initial_cash_exact"], {"coefficient": "5", "scale": 10})
+        with self.assertRaises(ValueError):
+            MultiMarketDepthBacktestSpec(
+                run_id="multi-market-depth-exact-v2-invalid",
+                account_id="account-1",
+                settlement_currency="USDT",
+                initial_cash_raw=1,
+                output_dir="runs/depth-v2",
+                markets=(),
+                schema_version=2,
+                initial_cash_exact={"coefficient": "5", "scale": 10},
+            ).to_dict()
+        depth_experiment_schema = json.loads(
+            (root / "schemas" / "run-multi-market-depth-experiment-spec-v1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            depth_experiment_schema["$defs"]["MultiMarketDepthBacktestSpec"]["oneOf"],
+            [
+                {"$ref": "multi-market-depth-backtest-spec-v1.json"},
+                {"$ref": "multi-market-depth-backtest-spec-v2.json"},
+            ],
+        )
         outcome_schema = json.loads((root / "schemas" / "multi-market-backtest-result-v1.json").read_text(encoding="utf-8"))
         outcome_source = (root / "crates" / "qx-app" / "src" / "spec" / "multi_market.rs").read_text(encoding="utf-8")
         outcome_match = re.search(r"pub struct MultiMarketBacktestOutcome \{([\s\S]*?)\n\}", outcome_source)
@@ -854,6 +1141,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         from jsonschema import Draft202012Validator, ValidationError
 
         from qianxing import (
+            CallbackParameterSpace,
             ExperimentFoldSearchReport,
             ExperimentCandidatePruning,
             ExperimentEarlyPruningPlan,
@@ -869,6 +1157,10 @@ class TopLevelStabilityTest(unittest.TestCase):
             RunDepthExperimentSpec,
             RunExperimentSpec,
             RunMultiLegExperimentSpec,
+            MultiMarketBacktestMarket,
+            MultiMarketBacktestSpec,
+            PortfolioStrategySpec,
+            BuiltinStrategySpec,
             RunMultiMarketDepthExperimentSpec,
             RunMultiMarketExperimentSpec,
         )
@@ -899,6 +1191,15 @@ class TopLevelStabilityTest(unittest.TestCase):
             self.assertEqual(schema["properties"]["parameter_space"]["items"]["$ref"], "#/$defs/ExperimentParameterSpace")
             allowed_kinds = multileg_kinds if name == "RunMultiLegExperimentSpec" else all_kinds - multileg_kinds
             self.assertEqual(set(schema["properties"]["strategy_kinds"]["items"]["enum"]), allowed_kinds)
+            if name == "RunMultiMarketExperimentSpec":
+                self.assertEqual(
+                    schema["properties"]["split_plan"]["$ref"],
+                    "run-experiment-spec-v1.json#/$defs/ExperimentSplitPlan",
+                )
+                self.assertEqual(
+                    schema["properties"]["search"]["$ref"],
+                    "run-experiment-spec-v1.json#/$defs/ExperimentSearchPlan",
+                )
             entry = registry_by_id[schema_id]
             self.assertEqual(entry["golden_fixtures"], [fixture])
             self.assertEqual(entry["producer"], "qx-app")
@@ -935,14 +1236,37 @@ class TopLevelStabilityTest(unittest.TestCase):
             expected = bar_parameters | maker_parameters if "depth" in schema_id else bar_parameters
             self.assertEqual(actual, expected, f"{schema_id} parameter names must match Rust's applicable dimensions")
         self.assertEqual(
-            set(bar_schema["$defs"]["ExperimentParameterRange"]["properties"]["name"]["enum"]),
-            bar_parameters,
+            bar_schema["$defs"]["ExperimentParameterRange"]["properties"]["name"],
+            {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            },
         )
         for name in ("target_notional_raw", "target_available_margin_bps", "target_volatility_bps"):
             Draft202012Validator(bar_schema["$defs"]["ExperimentParameterSpace"]).validate(
                 ExperimentParameterSpace(name, (1_000, 2_000)).to_dict()
             )
         self.assertEqual(set(bar_schema["$defs"]["ExperimentSplitPlan"]["properties"]), {"train_bars", "test_bars", "walk_forward", "step_bars", "purge_bars", "embargo_bars"})
+        for schema_id in (
+            "run-multi-market-experiment-spec-v1",
+            "run-multi-market-depth-experiment-spec-v1",
+        ):
+            schema = json.loads((root / "schemas" / f"{schema_id}.json").read_text(encoding="utf-8"))
+            self.assertNotIn("parameter_space", schema["required"])
+            self.assertEqual(
+                schema["properties"]["callback_parameter_space"]["items"]["$ref"],
+                "#/$defs/CallbackParameterSpace",
+            )
+            callback_parameter = CallbackParameterSpace("risk_scale", (2, 4)).to_dict()
+            Draft202012Validator(schema["$defs"]["CallbackParameterSpace"]).validate(
+                callback_parameter
+            )
+            with self.assertRaises(ValidationError):
+                Draft202012Validator(schema["$defs"]["CallbackParameterSpace"]).validate(
+                    {"name": "bad-name", "values": [1]}
+                )
         self.assertEqual(set(bar_schema["properties"]["baselines"]["items"]["enum"]), {"buy-and-hold", "zero-signal", "none"})
         cost_scenario = ExecutionCostSensitivityScenario(
             name="higher-fees",
@@ -1079,6 +1403,38 @@ class TopLevelStabilityTest(unittest.TestCase):
             (schema["$id"], Resource.from_contents(schema))
             for schema in local_schemas if "$id" in schema
         )
+        market_v2 = MultiMarketBacktestMarket(
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            priority=0,
+            strategies=(PortfolioStrategySpec(
+                priority=0,
+                reserved_capital_raw=1,
+                strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="experiment-slot"),
+            ),),
+        )
+        exact_market_base = MultiMarketBacktestSpec(
+            run_id="multi-market-experiment-exact-base",
+            account_id="account-1",
+            settlement_currency="USDT",
+            initial_cash_raw=1,
+            initial_cash_exact={"coefficient": "15", "scale": 10},
+            output_dir="runs/exact-base",
+            markets=(market_v2,),
+            schema_version=2,
+        ).to_dict()
+        multi_market_experiment_schema = json.loads(
+            (root / "schemas" / "run-multi-market-experiment-spec-v1.json").read_text(encoding="utf-8")
+        )
+        Draft202012Validator(
+            multi_market_experiment_schema,
+            registry=local_registry,
+        ).validate({
+            "schema_version": 1,
+            "experiment_id": "exact-base-experiment",
+            "target_strategy_id": "experiment-slot",
+            "base": exact_market_base,
+        })
         search_schema = {
             "$schema": result_schema["$schema"],
             "$id": result_schema["$id"],
@@ -1266,6 +1622,8 @@ class TopLevelStabilityTest(unittest.TestCase):
             output_dir="runs",
             strategy=BuiltinStrategySpec(kind="pairs_arbitrage", strategy_id="pair"),
         ).to_dict()
+        self.assertNotIn("primary_initial_cash_exact", legacy)
+        self.assertNotIn("reference_initial_cash_exact", legacy)
         self.assertNotIn("primary_dataset_manifest_path", legacy)
         self.assertNotIn("reference_dataset_manifest_path", legacy)
 
@@ -1285,7 +1643,22 @@ class TopLevelStabilityTest(unittest.TestCase):
         rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
         self.assertEqual({field.name for field in fields(RunMultiMarketExperimentResult)}, rust_fields)
         self.assertEqual(set(schema["properties"]), rust_fields)
-        self.assertEqual(set(schema["required"]), rust_fields)
+        self.assertEqual(
+            set(schema["required"]),
+            rust_fields
+            - {
+                "out_of_sample",
+                "fold_candidate_failures",
+                "search",
+                "canonical_run_spec_json",
+                "canonical_run_spec_fingerprint",
+                "input_data_fingerprint",
+                "result_hash",
+                "run_manifest",
+                "run_record",
+                "artifact_locations",
+            },
+        )
         self.assertFalse(schema["additionalProperties"])
         entry = next(item for item in registry["entries"] if item["schema_id"] == "run-multi-market-experiment-result-v1")
         self.assertEqual(entry["producer"], "qx-app")
@@ -1308,12 +1681,35 @@ class TopLevelStabilityTest(unittest.TestCase):
         rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
         self.assertEqual({field.name for field in fields(RunMultiMarketDepthExperimentResult)}, rust_fields)
         self.assertEqual(set(schema["properties"]), rust_fields)
-        self.assertEqual(set(schema["required"]), rust_fields)
+        optional_fields = {
+            "canonical_run_spec_json",
+            "canonical_run_spec_fingerprint",
+            "input_data_fingerprint",
+            "result_hash",
+            "run_manifest",
+            "run_record",
+            "artifact_locations",
+        }
+        self.assertEqual(set(schema["required"]), rust_fields - optional_fields)
         self.assertFalse(schema["additionalProperties"])
         entry = next(item for item in registry["entries"] if item["schema_id"] == "run-multi-market-depth-experiment-result-v1")
         self.assertEqual(entry["producer"], "qx-app")
         self.assertEqual(entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk"])
         Draft202012Validator.check_schema(schema)
+        artifact_locations = schema["properties"]["artifact_locations"]
+        self.assertIn("experiment_input", artifact_locations["properties"])
+        self.assertNotIn("experiment_input", artifact_locations["required"])
+        validator = Draft202012Validator(artifact_locations)
+        validator.validate(
+            {"experiment_report": "report.json", "run_manifest": "manifest.json"}
+        )
+        validator.validate(
+            {
+                "experiment_report": "report.json",
+                "run_manifest": "manifest.json",
+                "experiment_input": "experiment.spec.json",
+            }
+        )
 
     def test_run_experiment_result_schema_matches_rust_python_contracts(self):
         import json
@@ -1332,6 +1728,31 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertEqual({field.name for field in fields(RunExperimentResult)}, rust_fields)
         self.assertEqual(set(schema["properties"]), rust_fields)
         self.assertEqual(set(schema["required"]), {"schema_version", "experiment_id", "spec_fingerprint", "total_candidates", "completed_candidates", "succeeded_candidates", "failed_candidates", "candidates", "comparison", "artifact_path"})
+        self.assertEqual(
+            schema["properties"]["canonical_run_spec_fingerprint"]["pattern"],
+            "^[0-9a-f]{16}$",
+        )
+        self.assertNotIn("canonical_run_spec_json", schema["required"])
+        self.assertNotIn("canonical_run_spec_fingerprint", schema["required"])
+        persistence_fields = {"result_hash", "run_manifest", "run_record", "artifact_locations"}
+        for field in persistence_fields:
+            self.assertNotIn(field, schema["required"])
+        artifact_locations = schema["properties"]["artifact_locations"]
+        self.assertIn("experiment_input", artifact_locations["properties"])
+        self.assertNotIn("experiment_input", artifact_locations["required"])
+        Draft202012Validator(artifact_locations).validate(
+            {"experiment_report": "report.json", "run_manifest": "manifest.json"}
+        )
+        Draft202012Validator(artifact_locations).validate(
+            {
+                "experiment_report": "report.json",
+                "run_manifest": "manifest.json",
+                "experiment_input": "experiment.spec.json",
+            }
+        )
+        self.assertTrue(
+            any(condition.get("if", {}).get("required") == ["result_hash"] for condition in schema["allOf"])
+        )
         self.assertFalse(schema["additionalProperties"])
         fold_properties = schema["$defs"]["FoldReport"]["properties"]
         self.assertEqual(fold_properties["purge_range"]["$ref"], "#/$defs/TimeRange")
@@ -1359,8 +1780,47 @@ class TopLevelStabilityTest(unittest.TestCase):
         rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
         self.assertEqual({field.name for field in fields(RunDepthExperimentResult)}, rust_fields)
         self.assertEqual(set(schema["properties"]), rust_fields)
-        self.assertEqual(set(schema["required"]), rust_fields)
+        self.assertEqual(
+            set(schema["required"]),
+            {
+                "schema_version",
+                "experiment_id",
+                "spec_fingerprint",
+                "total_candidates",
+                "completed_candidates",
+                "succeeded_candidates",
+                "failed_candidates",
+                "candidates",
+                "ranking",
+                "artifact_path",
+            },
+        )
+        self.assertEqual(
+            {
+                "canonical_run_spec_json",
+                "canonical_run_spec_fingerprint",
+                "input_data_fingerprint",
+                "result_hash",
+                "run_manifest",
+                "run_record",
+                "artifact_locations",
+            },
+            rust_fields - set(schema["required"]),
+        )
         self.assertFalse(schema["additionalProperties"])
+        artifact_locations = schema["properties"]["artifact_locations"]
+        self.assertIn("experiment_input", artifact_locations["properties"])
+        self.assertNotIn("experiment_input", artifact_locations["required"])
+        Draft202012Validator(artifact_locations).validate(
+            {"experiment_report": "report.json", "run_manifest": "manifest.json"}
+        )
+        Draft202012Validator(artifact_locations).validate(
+            {
+                "experiment_report": "report.json",
+                "run_manifest": "manifest.json",
+                "experiment_input": "depth-experiment.spec.json",
+            }
+        )
         entry = next(item for item in registry["entries"] if item["schema_id"] == "run-depth-experiment-result-v1")
         self.assertEqual(entry["producer"], "qx-app")
         self.assertEqual(entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk"])
@@ -1370,7 +1830,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         import json
         import re
         from dataclasses import fields
-        from jsonschema import Draft202012Validator
+        from jsonschema import Draft202012Validator, ValidationError
         from qianxing import RunMultiLegExperimentResult
 
         root = PYTHON_DIR.parent
@@ -1382,12 +1842,83 @@ class TopLevelStabilityTest(unittest.TestCase):
         rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
         self.assertEqual({field.name for field in fields(RunMultiLegExperimentResult)}, rust_fields)
         self.assertEqual(set(schema["properties"]), rust_fields)
-        self.assertEqual(set(schema["required"]), rust_fields)
+        self.assertEqual(
+            set(schema["required"]),
+            {
+                "schema_version",
+                "experiment_id",
+                "spec_fingerprint",
+                "total_candidates",
+                "completed_candidates",
+                "succeeded_candidates",
+                "failed_candidates",
+                "candidates",
+                "ranking",
+                "artifact_path",
+            },
+        )
+        self.assertEqual(
+            {
+                "canonical_run_spec_json",
+                "canonical_run_spec_fingerprint",
+                "input_data_fingerprint",
+                "result_hash",
+                "run_manifest",
+                "run_record",
+                "artifact_locations",
+            },
+            rust_fields - set(schema["required"]),
+        )
         self.assertFalse(schema["additionalProperties"])
         entry = next(item for item in registry["entries"] if item["schema_id"] == "run-multi-leg-experiment-result-v1")
         self.assertEqual(entry["producer"], "qx-app")
         self.assertEqual(entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk"])
         Draft202012Validator.check_schema(schema)
+        artifact_locations = schema["properties"]["artifact_locations"]
+        self.assertIn("experiment_input", artifact_locations["properties"])
+        self.assertNotIn("experiment_input", artifact_locations["required"])
+        location_validator = Draft202012Validator(artifact_locations)
+        location_validator.validate(
+            {"experiment_report": "report.json", "run_manifest": "manifest.json"}
+        )
+        location_validator.validate(
+            {
+                "experiment_report": "report.json",
+                "run_manifest": "manifest.json",
+                "experiment_input": "spec.identity.json",
+            }
+        )
+        validator = Draft202012Validator(schema)
+        legacy_result = {
+            "schema_version": 1,
+            "experiment_id": "legacy-run",
+            "spec_fingerprint": "0123456789abcdef",
+            "total_candidates": 1,
+            "completed_candidates": 0,
+            "succeeded_candidates": 0,
+            "failed_candidates": 0,
+            "candidates": [],
+            "ranking": [],
+            "artifact_path": "report.json",
+        }
+        self.assertTrue(validator.is_valid(legacy_result))
+        current_result = {
+            **legacy_result,
+            "canonical_run_spec_json": "{}",
+            "canonical_run_spec_fingerprint": "0123456789abcdef",
+            "input_data_fingerprint": "multi-bar:0123456789abcdef:fedcba9876543210",
+            "result_hash": "fedcba9876543210",
+            "run_manifest": "manifest.json",
+            "run_record": "record.json",
+            "artifact_locations": {
+                "experiment_report": "report.json",
+                "run_manifest": "manifest.json",
+                "experiment_input": "spec.identity.json",
+            },
+        }
+        self.assertTrue(validator.is_valid(current_result))
+        with self.assertRaises(ValidationError):
+            validator.validate({**legacy_result, "canonical_run_spec_json": "{}"})
 
     def test_multi_market_market_fields_match_rust_and_serialize_manifest(self):
         from qianxing import MultiMarketBacktestMarket
@@ -1427,6 +1958,7 @@ class TopLevelStabilityTest(unittest.TestCase):
     def test_depth_backtest_dtos_match_rust_fields_and_serialize_queue_model(self):
         from qianxing import (
             BuiltinStrategySpec,
+            DepthBacktestOutcome,
             DepthBacktestSpec,
             InstrumentId,
             MultiMarketDepthBacktestMarket,
@@ -1491,6 +2023,32 @@ class TopLevelStabilityTest(unittest.TestCase):
         ).to_dict()
         self.assertNotIn("dataset_manifest_path", legacy_market)
         self.assertNotIn("queue_position_model", legacy_market)
+        from qianxing.app import FundingRateEvent
+
+        funding_event = FundingRateEvent(
+            instrument=InstrumentId("BTCUSDT", "BINANCE"),
+            settlement_ts=8 * 60 * 60 * 1000,
+            rate_bps=12,
+            funding_interval_ms=60 * 60 * 1000,
+        )
+        funded_market = MultiMarketDepthBacktestMarket(
+            instrument="BTCUSDT.BINANCE",
+            depth_path="depth.json",
+            priority=0,
+            market_spec=market_spec,
+            funding_events=(funding_event,),
+        ).to_dict()
+        self.assertEqual(
+            funded_market["funding_events"],
+            [
+                {
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "settlement_ts": 8 * 60 * 60 * 1000,
+                    "rate_bps": 12,
+                    "funding_interval_ms": 60 * 60 * 1000,
+                }
+            ],
+        )
 
         spec = DepthBacktestSpec(
             run_id="typed-depth",
@@ -1518,6 +2076,48 @@ class TopLevelStabilityTest(unittest.TestCase):
         ).to_dict()
         self.assertNotIn("queue_position_model", legacy_payload)
         self.assertNotIn("quality_manifest_path", legacy_payload)
+        self.assertNotIn("funding_bps", legacy_payload)
+        self.assertNotIn("funding_events", legacy_payload)
+        funded_payload = DepthBacktestSpec(
+            run_id="funded-depth",
+            depth_path="depth.json",
+            tier="l2",
+            settlement_currency="USDT",
+            initial_cash_raw=10_000_000_000,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="funded-depth"),
+            funding_events=(funding_event,),
+        ).to_dict()
+        self.assertEqual(funded_payload["funding_events"], funded_market["funding_events"])
+        self.assertNotIn("funding_bps", funded_payload)
+
+        outcome_payload = {
+            "run_id": "friendly-run-id",
+            "manifest_run_id": "depth-backtest:l2:sma_cross:BTCUSDT.BINANCE",
+            "instrument": "BTCUSDT.BINANCE",
+            "tier": "l2",
+            "result_hash": "0123456789abcdef",
+            "data_fingerprint": "depthframe:0123456789abcdef",
+            "fills": 0,
+            "equity_points": 1,
+            "return_bps": 0,
+            "max_drawdown_bps": 0,
+            "artifacts": {
+                "run_manifest": "runs/depth.run.json",
+                "summary": "runs/depth.summary.json",
+                "equity": "runs/depth.equity.csv",
+                "fills": "runs/depth.fills.csv",
+            },
+        }
+        self.assertEqual(
+            DepthBacktestOutcome.from_dict(outcome_payload).manifest_run_id,
+            "depth-backtest:l2:sma_cross:BTCUSDT.BINANCE",
+        )
+        legacy_outcome_payload = dict(outcome_payload)
+        legacy_outcome_payload.pop("manifest_run_id")
+        self.assertIsNone(
+            DepthBacktestOutcome.from_dict(legacy_outcome_payload).manifest_run_id
+        )
 
     def test_backtest_spec_serializes_all_runtime_optional_bindings(self):
         from qianxing import BacktestSpec, BuiltinStrategySpec
@@ -1567,6 +2167,42 @@ class TopLevelStabilityTest(unittest.TestCase):
             "risk_rules",
             "allow_short",
         })
+        exact_spec = BacktestSpec(
+            run_id="exact-capital-v2",
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000_000,
+            initial_cash_exact={"coefficient": "1000000000000001", "scale": 10},
+            schema_version=2,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="exact"),
+        )
+        exact_payload = exact_spec.to_dict()
+        self.assertEqual(exact_payload["schema_version"], 2)
+        self.assertEqual(exact_payload["initial_cash_exact"], exact_spec.initial_cash_exact)
+        with self.assertRaisesRegex(ValueError, "requires initial_cash_exact"):
+            BacktestSpec(
+                run_id="missing-exact-capital-v2",
+                instrument="BTCUSDT.BINANCE",
+                bars_path="bars.json",
+                settlement_currency="USDT",
+                initial_cash_raw=100_000_000_000_000,
+                schema_version=2,
+                output_dir="runs",
+                strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="missing"),
+            ).to_dict()
+        with self.assertRaisesRegex(ValueError, "schema_version=2"):
+            BacktestSpec(
+                run_id="invalid-exact-capital-v1",
+                instrument="BTCUSDT.BINANCE",
+                bars_path="bars.json",
+                settlement_currency="USDT",
+                initial_cash_raw=100_000_000_000_000,
+                initial_cash_exact={"coefficient": "1000000000000001", "scale": 10},
+                output_dir="runs",
+                strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="invalid"),
+            ).to_dict()
 
     def test_runtime_binding_nested_objects_have_typed_wire_serializers(self):
         from qianxing import (
@@ -1802,6 +2438,15 @@ class TopLevelStabilityTest(unittest.TestCase):
                 "failed_candidates": 0,
                 "spec_fingerprint": "abc",
                 "input_data_fingerprint": "barframe:0123456789abcdef",
+                "canonical_run_spec_json": "{}",
+                "canonical_run_spec_fingerprint": "0123456789abcdef",
+                "result_hash": "fedcba9876543210",
+                "run_manifest": "manifest.json",
+                "run_record": "record.json",
+                "artifact_locations": {
+                    "experiment_report": "experiment.json",
+                    "run_manifest": "manifest.json",
+                },
                 "candidates": [
                     {
                         "ordinal": 1,
@@ -1837,6 +2482,10 @@ class TopLevelStabilityTest(unittest.TestCase):
         )
         self.assertIsInstance(result.out_of_sample, ExperimentOutOfSampleReport)
         self.assertEqual(result.input_data_fingerprint, "barframe:0123456789abcdef")
+        self.assertEqual(result.result_hash, "fedcba9876543210")
+        self.assertEqual(result.run_manifest, "manifest.json")
+        self.assertEqual(result.run_record, "record.json")
+        self.assertEqual(result.artifact_locations["experiment_report"], "experiment.json")
         self.assertEqual(result.candidates[0].strategy_kind, "ema_cross")
         self.assertEqual(result.out_of_sample.folds[0].test_range, (20, 30))
         self.assertEqual(result.out_of_sample.folds[0].selected_strategy_kind, "ema_cross")
@@ -1979,7 +2628,10 @@ class TopLevelStabilityTest(unittest.TestCase):
 
         bar_schema = json.loads((root / "schemas" / "provider-backtest-spec-v1.json").read_text(encoding="utf-8"))
         backtest_schema = json.loads((root / "schemas" / "backtest-spec-v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(bar_schema["$defs"]["BacktestSpec"]["properties"], backtest_schema["properties"])
+        self.assertEqual(
+            set(bar_schema["$defs"]["BacktestSpec"]["properties"]),
+            set(backtest_schema["properties"]) | {"initial_cash_exact"},
+        )
         self.assertEqual(bar_schema["$defs"]["BacktestSpec"]["required"], backtest_schema["required"])
         self.assertEqual(
             {name: schema for name, schema in bar_schema["$defs"].items() if name not in {"DataRequest", "BacktestSpec"}},
@@ -2037,18 +2689,20 @@ class TopLevelStabilityTest(unittest.TestCase):
 
         self.assertEqual({field.name for field in fields(ProviderDepthBacktestOutcome)}, set(depth_result_schema["properties"]))
         self.assertEqual(depth_result_entry["consumers"], ["qx-cli", "qx-api", "qx-python", "qx-sdk"])
-        depth_source = (root / "crates" / "qx-app" / "src" / "spec" / "depth.rs").read_text(encoding="utf-8")
-        rust_depth_fields = rust_fields(depth_source, "DepthBacktestOutcome") - {"display_summary"}
-        self.assertEqual(set(depth_result_schema["$defs"]["DepthBacktestOutcome"]["properties"]) - {"artifacts"}, rust_depth_fields - {"artifacts"})
+        self.assertEqual(
+            depth_result_schema["properties"]["outcome"]["$ref"],
+            "depth-backtest-outcome-v1.json",
+        )
         depth_account_schema = json.loads((root / "schemas" / "multi-account-depth-backtest-result-v1.json").read_text(encoding="utf-8"))
-        self.assertNotIn("account_id", depth_result_schema["$defs"]["DepthBacktestOutcome"]["required"])
-        self.assertNotIn("manifest_digest", depth_result_schema["$defs"]["DepthBacktestOutcome"]["required"])
         self.assertNotIn("account_id", depth_account_schema["$defs"]["DepthBacktestOutcome"]["required"])
         self.assertNotIn("manifest_digest", depth_account_schema["$defs"]["DepthBacktestOutcome"]["required"])
         standalone_depth_schema = json.loads((root / "schemas" / "depth-backtest-outcome-v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(standalone_depth_schema["properties"], depth_result_schema["$defs"]["DepthBacktestOutcome"]["properties"])
-        self.assertEqual(standalone_depth_schema["required"], depth_result_schema["$defs"]["DepthBacktestOutcome"]["required"])
-        self.assertEqual(standalone_depth_schema["properties"]["manifest_digest"]["pattern"], "^[0-9a-f]{16}$")
+        depth_source = (root / "crates" / "qx-app" / "src" / "spec" / "depth.rs").read_text(encoding="utf-8")
+        rust_depth_fields = rust_fields(depth_source, "DepthBacktestOutcome") - {"display_summary"}
+        self.assertEqual(set(standalone_depth_schema["properties"]), rust_depth_fields)
+        self.assertNotIn("account_id", standalone_depth_schema["required"])
+        self.assertNotIn("manifest_digest", standalone_depth_schema["required"])
+        self.assertEqual(standalone_depth_schema["properties"]["manifest_digest"]["pattern"], "^(|[0-9a-f]{16})$")
         Draft202012Validator.check_schema(depth_result_schema)
         Draft202012Validator.check_schema(standalone_depth_schema)
 
@@ -2172,6 +2826,114 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertIn("DepthDatasetManifestValidationSpec", cli)
         self.assertIn("L1", cli)
         self.assertIn("L2", cli)
+
+
+class MultiLegResearchReportSchemaTest(unittest.TestCase):
+    def test_shared_report_schema_is_registered_exact_and_bounded(self):
+        import json
+
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+
+        root = PYTHON_DIR.parent
+        request_schema = json.loads(
+            (root / "schemas" / "multi-leg-research-report-read-request-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        report_schema = json.loads(
+            (root / "schemas" / "multi-leg-research-report-v1.json").read_text(encoding="utf-8")
+        )
+        event_schema = json.loads(
+            (root / "schemas" / "multi-leg-event-report-page-v1.json").read_text(encoding="utf-8")
+        )
+        registry_document = json.loads(
+            (root / "maturity" / "schema-registry.json").read_text(encoding="utf-8")
+        )
+        entries = {entry["schema_id"]: entry for entry in registry_document["entries"]}
+        for schema in (request_schema, report_schema, event_schema):
+            Draft202012Validator.check_schema(schema)
+
+        self.assertEqual(
+            entries["multi-leg-research-report-v1"]["consumers"],
+            ["qx-api", "qx-cli", "qx-python"],
+        )
+        self.assertEqual(
+            entries["multi-leg-research-report-read-request-v1"]["consumers"],
+            ["qx-cli", "qx-python"],
+        )
+        self.assertEqual(report_schema["properties"]["equity"]["$ref"], "#/$defs/equityRows")
+        self.assertEqual(report_schema["$defs"]["equityRows"]["properties"]["rows"]["maxItems"], 1000)
+        self.assertEqual(report_schema["$defs"]["fillRows"]["properties"]["rows"]["maxItems"], 200)
+        self.assertEqual(report_schema["properties"]["summary"]["properties"]["initial_cash_raw"]["type"], "string")
+        self.assertEqual(report_schema["properties"]["execution"]["properties"]["market_specs_json"]["type"], "string")
+
+        registry = Registry().with_resource(event_schema["$id"], Resource.from_contents(event_schema))
+        validator = Draft202012Validator(report_schema, registry=registry)
+        report = {
+            "schema_version": 1,
+            "run_id": "multi-leg-schema-fixture",
+            "strategy_id": "cross-venue-spread-v1",
+            "data_fingerprint": "multi-bar:primary:reference",
+            "summary": {
+                "account_id": "shared-account",
+                "initial_cash_raw": "100000000",
+                "initial_cash_exact": "0.1",
+                "account_ledger_summary": {
+                    "account_id": "shared-account",
+                    "allocation_policy": "shared_buying_power_deterministic_market_priority",
+                    "cross_leg_buying_power": True,
+                    "initial_cash_raw": "100000000",
+                    "initial_cash": "0.1",
+                    "initial_cash_exact": "0.1",
+                    "cash_balances_raw": {"USDT": "100000000"},
+                    "positions": [
+                        {"instrument": "BTC-USDT", "quantity_raw": "0", "average_entry_raw": "0", "realized_pnl_raw": "0"},
+                        {"instrument": "ETH-USDT", "quantity_raw": "0", "average_entry_raw": "0", "realized_pnl_raw": "0"},
+                    ],
+                    "realized_pnl_raw": "0",
+                    "ledger_entry_count": 1,
+                    "replay_verified": True,
+                },
+                "event_count": 1,
+                "event_hash": "0000000000000000",
+                "primary": {"instrument": "BTC-USDT", "fills": 0, "result_hash": "0000000000000000", "return_bps": 0, "funding_cost_raw": "0"},
+                "reference": {"instrument": "ETH-USDT", "fills": 0, "result_hash": "0000000000000000", "return_bps": 0, "funding_cost_raw": "0"},
+                "costs": {"total_fees_raw": "0", "total_funding_raw": "0", "total_turnover_raw": "0", "cost_bps": None},
+                "equity": {"points": 1, "initial_equity_raw": "100000000", "final_equity_raw": "100000000", "return_bps": 0, "max_drawdown_bps": 0},
+                "total_fills": 0,
+            },
+            "execution": {
+                "settlement_currency": "USDT",
+                "fill_model": "next_bar_open",
+                "primary_maker_fee_bps": 0,
+                "primary_taker_fee_bps": 0,
+                "reference_maker_fee_bps": 0,
+                "reference_taker_fee_bps": 0,
+                "funding_bps": 0,
+                "funding_events_count": 0,
+                "funding_events_sha256": "0" * 64,
+                "market_specs_json": "{}",
+            },
+            "markets": [
+                {"instrument": instrument, "data_fingerprint": fingerprint, "quality_fingerprint": None, "bar_count": 1, "start_ts_ms": 1, "end_ts_ms": 1, "fills": 0}
+                for instrument, fingerprint in (("BTC-USDT", "primary"), ("ETH-USDT", "reference"))
+            ],
+            "equity": {"total": 1, "truncated": False, "rows": [{"ts": "1", "equity_raw": "100000000"}]},
+            "fills": {"total": 0, "truncated": False, "rows": []},
+            "events": {
+                "schema_version": 1,
+                "run_id": "multi-leg-schema-fixture",
+                "total": 1,
+                "offset": 0,
+                "limit": 25,
+                "truncated": False,
+                "rows": [{}],
+                "event_hash": "0000000000000000",
+                "fill_count": 0,
+            },
+        }
+        validator.validate(report)
 
 
 class OptionalDependencyTest(unittest.TestCase):

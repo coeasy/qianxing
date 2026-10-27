@@ -32,6 +32,8 @@ struct CcxtBarFrame {
     low_raw: Vec<i128>,
     close_raw: Vec<i128>,
     volume_raw: Vec<i128>,
+    #[serde(default)]
+    exact_ohlcv: Option<Vec<qx_core::ExactOhlcv>>,
 }
 
 /// CCXT historical OHLCV source implementing the shared Rust `DataProvider` port.
@@ -99,7 +101,9 @@ impl CcxtBarDataProvider {
             .ok_or_else(|| permanent("CCXT OHLCV 响应缺少 frame"))?;
         let frame: CcxtBarFrame = serde_json::from_value(frame)
             .map_err(|error| permanent(format!("CCXT BarFrame 格式无效: {error}")))?;
-        if frame.schema_version > 1
+        if frame.schema_version > 2
+            || (frame.schema_version == 2 && frame.exact_ohlcv.is_none())
+            || (frame.schema_version < 2 && frame.exact_ohlcv.is_some())
             || frame.instrument != *instrument
             || frame.source.trim().is_empty()
         {
@@ -132,6 +136,34 @@ impl CcxtBarDataProvider {
                 "CCXT BarFrame 列长度、时间顺序或查询时间范围无效",
             ));
         }
+        if frame
+            .exact_ohlcv
+            .as_ref()
+            .is_some_and(|values| values.len() != rows)
+        {
+            return Err(permanent("CCXT BarFrame exact_ohlcv 行数与列不一致"));
+        }
+        if let Some(exact_rows) = &frame.exact_ohlcv {
+            for index in 0..rows {
+                let exact = exact_rows[index];
+                exact
+                    .validate()
+                    .map_err(|error| permanent(format!("CCXT exact OHLCV 无效: {error}")))?;
+                if exact.raw_projection().map_err(permanent)?
+                    != [
+                        frame.open_raw[index],
+                        frame.high_raw[index],
+                        frame.low_raw[index],
+                        frame.close_raw[index],
+                        frame.volume_raw[index],
+                    ]
+                {
+                    return Err(permanent(format!(
+                        "CCXT exact OHLCV 与 raw 投影不一致（row {index}）"
+                    )));
+                }
+            }
+        }
         Ok(frame)
     }
 }
@@ -144,6 +176,11 @@ impl DataProvider for CcxtBarDataProvider {
     fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError> {
         let frame = self.fetch_frame(query)?;
         let received_at = (self.clock_ms)()?;
+        let rows = frame.ts.len();
+        let exact_rows = frame
+            .exact_ohlcv
+            .map(|values| values.into_iter().map(Some).collect())
+            .unwrap_or_else(|| vec![None; rows]);
         let payloads = frame
             .ts
             .iter()
@@ -153,19 +190,27 @@ impl DataProvider for CcxtBarDataProvider {
             .zip(frame.low_raw)
             .zip(frame.close_raw)
             .zip(frame.volume_raw)
-            .map(|(((((timestamp, open), high), low), close), volume)| {
-                let bar = Bar::new(timestamp, open, high, low, close, volume);
-                Ok((
-                    timestamp,
-                    received_at,
-                    ProviderPayload::new_json(
-                        frame.instrument.clone(),
-                        BAR_CONTENT_TYPE,
-                        serde_json::to_string(&bar)
-                            .map_err(|error| permanent(format!("Bar JSON 序列化失败: {error}")))?,
-                    ),
-                ))
-            })
+            .zip(exact_rows)
+            .map(
+                |((((((timestamp, open), high), low), close), volume), exact)| {
+                    let bar = Bar::new(timestamp, open, high, low, close, volume);
+                    let bar = match exact {
+                        Some(exact) => bar.with_exact_ohlcv(exact).map_err(permanent)?,
+                        None => bar,
+                    };
+                    Ok((
+                        timestamp,
+                        received_at,
+                        ProviderPayload::new_json(
+                            frame.instrument.clone(),
+                            BAR_CONTENT_TYPE,
+                            serde_json::to_string(&bar).map_err(|error| {
+                                permanent(format!("Bar JSON 序列化失败: {error}"))
+                            })?,
+                        ),
+                    ))
+                },
+            )
             .collect::<Result<Vec<_>, ProviderError>>()?;
         ProviderResult::from_payloads(
             self.capability.provider_id.clone(),
@@ -323,6 +368,36 @@ mod tests {
                 "params": {},
             }))
         );
+    }
+
+    #[test]
+    fn ccxt_v2_source_precision_survives_the_provider_registry() {
+        let mut frame = frame_json("BTCUSDT.BINANCE", &[1_000, 2_000]);
+        frame["schema_version"] = json!(2);
+        frame["exact_ohlcv"] = json!([
+            {
+                "open": {"coefficient": "1001", "scale": 11},
+                "high": {"coefficient": "129", "scale": 10},
+                "low": {"coefficient": "95", "scale": 10},
+                "close": {"coefficient": "114", "scale": 10},
+                "volume": {"coefficient": "1008", "scale": 10}
+            },
+            {
+                "open": {"coefficient": "201", "scale": 10},
+                "high": {"coefficient": "229", "scale": 10},
+                "low": {"coefficient": "195", "scale": 10},
+                "close": {"coefficient": "214", "scale": 10},
+                "volume": {"coefficient": "2008", "scale": 10}
+            }
+        ]);
+        let (provider, _) = make_provider(Ok(json!({"frame": frame})));
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(provider)).unwrap();
+
+        let fetched = registry.fetch_bar_frame(&request()).unwrap();
+        let exact = fetched.frame.exact_ohlcv.unwrap();
+        assert_eq!(exact[0].close.to_string(), "0.0000000114");
+        assert_eq!(exact[0].volume.to_string(), "0.0000001008");
     }
 
     #[test]

@@ -30,9 +30,12 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 | 装上、跑通第一轮回测与体检 | 本 README 的「安装」与「快速开始」 |
 | 看结果：离线报告 / 静态页面 / 同源 BFF 控制台 | 本 README「看结果」+ [deploy/README.md](../deploy/README.md) 的控制台两节 |
 | 上手细节：按场景初始化项目、七条回测入口各自的落点与拒收口径、四份产物字段、读模型里 `null` 与 `0` 的分别、实盘发布前检查 | [工业化易用性收口指南](工业化易用性收口指南-V1.md) |
-| 部署与运维：运行时配置、worker 拓扑与监督停机、CCXT/Binance/A 股接入、SubmitOrder、存储后端、HTTP 读面与 WS 事件流、模板契约面 | [deploy/README.md](../deploy/README.md) |
+| 部署与运维：运行时配置、worker 拓扑与监督停机、CCXT/Binance/A 股接入、SubmitOrder/CancelOrder、存储后端、HTTP 读面与 WS 事件流、模板契约面 | [deploy/README.md](../deploy/README.md) |
 | 机器可读的能力证据分级：每条能力的实现 / 代码测试 / 沙盒 / 生产批准四档 + 证据路径 + 缺口 | [maturity/capabilities.yaml](../maturity/capabilities.yaml) |
 | 现行审计结论、不合理清单与下一轮怎么排 | [自研量化框架审计与重构方案 V13](自研量化框架审计与重构方案-V13.md) |
+| GitHub 竞品结论、当前架构、重构决策和发布门 | [竞品与架构重构决策主方案（2026-10-25）](牵星Qianxing-GitHub竞品与架构重构决策主方案-2026-10-25.md)；执行卡与源码定位见[竞品执行方案](牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md)和[深度复核记录](牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md) |
+| 最新竞品横向对照、架构问题、ExchangeGateway/BaseStrategy 决策和分期重构路线 | [项目架构与 GitHub 竞品深度复核及优化重构总方案（2026-10-26）](牵星Qianxing-项目架构与GitHub竞品深度复核及优化重构总方案-2026-10-26.md) |
+| 标准策略生命周期、基础回调和经典框架接口对比 | [标准策略接口与经典框架对比方案（2026-10-25）](牵星Qianxing-标准策略接口经典框架对比与改进方案-2026-10-25.md) |
 | 架构事实、工业级差距的工作包与逐轮登记（WP-* 与 §17 执行记录） | [架构设计与工业级优化改进方案](qianxing-架构设计与工业级优化改进方案-2026-10-06.md) |
 | 项目结构、模块划分与同类开源项目的对照 | [项目结构与 GitHub 竞品对比](qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md) |
 | 逐轮变更、验收数字与"本轮没修什么" | [CHANGELOG.md](../CHANGELOG.md) |

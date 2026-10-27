@@ -44,8 +44,10 @@ pub use self::error::{
 };
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
-    EventKind, EventMetadata, FundingRateSnapshot, OrderRiskDecisionFact, Priority,
-    StrategyDecisionFact, StrategyIntentFact, EVENT_METADATA_SCHEMA_VERSION,
+    EventKind, EventMetadata, ExactAccountBalanceAmounts, ExactAccountPositionAmounts, ExactOhlcv,
+    ExecutionCapabilityDecisionFact, ExecutionCapabilityDecisionKind, FundingRateSnapshot,
+    MarketDepthLevel, OrderRiskDecisionFact, Priority, StrategyDecisionFact, StrategyIntentFact,
+    EVENT_METADATA_SCHEMA_VERSION, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
 };
 pub use self::fee::{
     bp_amount, bp_amount_checked, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel,
@@ -60,22 +62,33 @@ pub use self::identity::{
     CanonicalProduct, InstrumentId, MarketId, VenueId, DEFAULT_SETTLEMENT_CURRENCY,
 };
 pub use self::ledger::{
-    ConvertibleBondConversion, CorporateAction, FundingRateEvent, InstrumentFunding, Ledger,
-    LedgerEntry, LedgerEntryKind, PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS,
+    ConvertibleBondConversion, CorporateAction, ExactInstrumentFunding, ExactLedgerAmounts,
+    ExactPositionState, FundingRateEvent, InstrumentFunding, Ledger, LedgerEntry, LedgerEntryKind,
+    PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS, MAX_FUNDING_INTERVAL_MS,
+    MIN_FUNDING_INTERVAL_MS,
 };
 pub use self::numeric::{
     parse_decimal_exact, parse_decimal_half_even, parse_decimal_integer_exact,
-    parse_decimal_scaled_integer, Fixed, Money, Price, Quantity, SCALE,
+    parse_decimal_scaled_integer, DecimalRounding, ExactDecimal, Fixed, Money, Price, Quantity,
+    SCALE,
 };
-pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
+pub use self::order::{
+    ExactFillAmounts, ExactFillFee, ExactOrderAmounts, Fill, FillFee, Order, OrderStatus,
+    OrderTrace, Side,
+};
 pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};
-pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
+pub use self::sourcing::{
+    EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest, StreamingReplayResult,
+    StreamingReplayVerifier,
+};
 pub use self::target::TargetPosition;
 pub use self::trading::{
-    resolve_settlement_currency, MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide,
-    TradingInstrumentSpec, TradingProduct,
+    resolve_settlement_currency, ExactTradingRules, MarginMode, MarginState, OrderPolicy,
+    PositionMode, PositionSide, TradingInstrumentSpec, TradingProduct,
 };
 pub use self::trading_policy::{margin_mode_for_product, short_selling_enabled};
-pub use self::valuation::{PaperValuationContext, ValuationContext, ValuationResult};
+pub use self::valuation::{
+    ExactValuationContext, PaperValuationContext, ValuationContext, ValuationResult,
+};
 pub use self::venue::VenueFamily;

@@ -11,7 +11,9 @@
 //! 在那之前，涉及 paper 撮合的表述必须写明"首档 touch"。
 
 use crate::{ExecutionAttempt, ExecutionAttemptReason, ExecutionLiquidityEvidence};
-use qx_core::{Fill, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, SCALE};
+use qx_core::{
+    DecimalRounding, ExactDecimal, Fill, Order, Price, Quantity, Side, TradingInstrumentSpec, SCALE,
+};
 use serde::{Deserialize, Serialize};
 
 mod audit;
@@ -20,21 +22,85 @@ mod matching;
 pub use audit::{OrderBookExecutionDescriptor, QueuePositionDescriptor};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BookLevel {
     pub price: Price,
     pub qty: Quantity,
+    /// Exact source price for DepthFrame v2. The legacy `price` is its explicit 1e-9
+    /// toward-zero projection and remains populated for older consumers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_exact: Option<ExactDecimal>,
+    /// Exact source quantity for DepthFrame v2. The legacy `qty` is its explicit 1e-9
+    /// toward-zero projection and remains populated for older consumers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qty_exact: Option<ExactDecimal>,
 }
 
 impl BookLevel {
+    pub fn from_exact(price: ExactDecimal, qty: ExactDecimal) -> Result<Self, String> {
+        let level = Self {
+            price: Price::from_raw(Self::legacy_projection(price)?),
+            qty: Quantity::from_raw(Self::legacy_projection(qty)?),
+            price_exact: Some(price),
+            qty_exact: Some(qty),
+        };
+        level.validate()?;
+        Ok(level)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
-        if self.price.raw() <= 0 || self.qty.raw() <= 0 {
-            return Err("盘口档位价格和数量必须为正".into());
+        match (self.price_exact, self.qty_exact) {
+            (Some(price), Some(qty)) => {
+                if !price.is_positive() || !qty.is_positive() {
+                    return Err("盘口精确价格和数量必须为正".into());
+                }
+                if Self::legacy_projection(price)? != self.price.raw()
+                    || Self::legacy_projection(qty)? != self.qty.raw()
+                {
+                    return Err("盘口精确值与 1e-9 兼容投影不一致".into());
+                }
+            }
+            (None, None) if self.price.raw() > 0 && self.qty.raw() > 0 => {}
+            (None, None) => return Err("盘口档位价格和数量必须为正".into()),
+            _ => return Err("盘口精确价格和数量必须同时提供".into()),
         }
         Ok(())
+    }
+
+    pub fn price_decimal(&self) -> ExactDecimal {
+        self.price_exact.unwrap_or_else(|| {
+            ExactDecimal::from_parts(self.price.raw(), 9).expect("legacy price scale is supported")
+        })
+    }
+
+    pub fn qty_decimal(&self) -> ExactDecimal {
+        self.qty_exact.unwrap_or_else(|| {
+            ExactDecimal::from_parts(self.qty.raw(), 9).expect("legacy quantity scale is supported")
+        })
+    }
+
+    pub(crate) fn write_identity(&self, hash: &mut qx_core::Fnv1a) {
+        hash.write_i128(self.price.raw());
+        hash.write_i128(self.qty.raw());
+        if let (Some(price), Some(qty)) = (self.price_exact, self.qty_exact) {
+            hash.write_text("book_level_exact_v1");
+            hash.write_i128(price.coefficient());
+            hash.write_u64(u64::from(price.scale()));
+            hash.write_i128(qty.coefficient());
+            hash.write_u64(u64::from(qty.scale()));
+        }
+    }
+
+    fn legacy_projection(value: ExactDecimal) -> Result<i128, String> {
+        value
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+            .and_then(|projected| projected.to_raw(9).ok())
+            .ok_or_else(|| "盘口精确值无法投影到兼容 1e-9 字段".to_string())
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OrderBookSnapshot {
     pub instrument: qx_core::InstrumentId,
     pub ts: u64,
@@ -46,29 +112,50 @@ pub struct OrderBookSnapshot {
 }
 
 impl OrderBookSnapshot {
+    pub fn has_exact_levels(&self) -> bool {
+        self.bids
+            .iter()
+            .chain(&self.asks)
+            .any(|level| level.price_exact.is_some() || level.qty_exact.is_some())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.ts == 0 || self.sequence == 0 {
             return Err("OrderBookSnapshot ts/sequence 必须为正".into());
         }
-        for level in self.bids.iter().chain(self.asks.iter()) {
+        let levels = self.bids.iter().chain(self.asks.iter()).collect::<Vec<_>>();
+        for level in &levels {
             level.validate()?;
         }
-        if self
-            .bids
-            .windows(2)
-            .any(|window| window[0].price.raw() <= window[1].price.raw())
-        {
+        let exact_levels = levels
+            .iter()
+            .filter(|level| level.price_exact.is_some() && level.qty_exact.is_some())
+            .count();
+        if exact_levels != 0 && exact_levels != levels.len() {
+            return Err("OrderBookSnapshot 不能混合精确盘口档位与旧精度档位".into());
+        }
+        if self.bids.windows(2).any(|window| {
+            window[0]
+                .price_decimal()
+                .checked_cmp(window[1].price_decimal())
+                .is_none_or(|ordering| !ordering.is_gt())
+        }) {
             return Err("买盘必须严格按价格降序排列".into());
         }
-        if self
-            .asks
-            .windows(2)
-            .any(|window| window[0].price.raw() >= window[1].price.raw())
-        {
+        if self.asks.windows(2).any(|window| {
+            window[0]
+                .price_decimal()
+                .checked_cmp(window[1].price_decimal())
+                .is_none_or(|ordering| !ordering.is_lt())
+        }) {
             return Err("卖盘必须严格按价格升序排列".into());
         }
         if let (Some(bid), Some(ask)) = (self.bids.first(), self.asks.first()) {
-            if bid.price.raw() > ask.price.raw() {
+            if bid
+                .price_decimal()
+                .checked_cmp(ask.price_decimal())
+                .is_none_or(|ordering| ordering.is_gt())
+            {
                 return Err("盘口买一不能高于卖一".into());
             }
         }
@@ -110,7 +197,9 @@ pub struct DepthFrame {
 }
 
 impl DepthFrame {
-    pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+    pub const LEGACY_SCHEMA_VERSION: u32 = 1;
+    pub const EXACT_SCHEMA_VERSION: u32 = 2;
+    pub const SUPPORTED_SCHEMA_VERSION: u32 = Self::EXACT_SCHEMA_VERSION;
 
     pub fn from_json(input: &str) -> Result<Self, String> {
         let frame: Self = serde_json::from_str(input)
@@ -120,9 +209,13 @@ impl DepthFrame {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != Self::SUPPORTED_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            Self::LEGACY_SCHEMA_VERSION | Self::EXACT_SCHEMA_VERSION
+        ) {
             return Err(format!(
-                "深度数据帧 schema_version 仅支持 {}，实际 {}",
+                "深度数据帧 schema_version 仅支持 {} 或 {}，实际 {}",
+                Self::LEGACY_SCHEMA_VERSION,
                 Self::SUPPORTED_SCHEMA_VERSION,
                 self.schema_version
             ));
@@ -132,6 +225,26 @@ impl DepthFrame {
         }
         if self.snapshots.is_empty() {
             return Err("深度数据帧至少需要一份盘口快照".into());
+        }
+        let levels = self
+            .snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bids.iter().chain(&snapshot.asks))
+            .collect::<Vec<_>>();
+        let exact_level_count = levels
+            .iter()
+            .filter(|level| level.price_exact.is_some())
+            .count();
+        match self.schema_version {
+            Self::LEGACY_SCHEMA_VERSION if exact_level_count != 0 => {
+                return Err("DepthFrame v1 不能包含精确盘口字段；请升级到 v2".into());
+            }
+            Self::EXACT_SCHEMA_VERSION
+                if levels.is_empty() || exact_level_count != levels.len() =>
+            {
+                return Err("DepthFrame v2 必须为每个盘口档位提供精确价格和数量".into());
+            }
+            _ => {}
         }
         for snapshot in &self.snapshots {
             snapshot.validate()?;
@@ -157,8 +270,7 @@ impl DepthFrame {
             hash.write_u64(snapshot.bids.len() as u64); // Preserve the flattened book's bid/ask boundary.
             hash.write_u64(snapshot.asks.len() as u64);
             for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
-                hash.write_i128(level.price.raw());
-                hash.write_i128(level.qty.raw());
+                level.write_identity(&mut hash);
             }
         }
         hash.finish()
@@ -206,9 +318,7 @@ impl QueuePositionModel {
     pub fn descriptor(self, initial_queue_bps: i128) -> String {
         match self {
             Self::Disabled => "queue_position=disabled".into(),
-            Self::FifoVolumeEstimate {
-                volume_advance_bps,
-            } => format!(
+            Self::FifoVolumeEstimate { volume_advance_bps } => format!(
                 "queue_position=fifo_volume_estimate@v2[initial_queue_bps={initial_queue_bps};volume_advance_bps={volume_advance_bps};assumption=displayed_depth_reduction_estimates_traded_volume;limits=hidden_liquidity_and_cancellations_are_unobserved,missing_limit_level_has_no_baseline_and_cannot_advance_queue]"
             ),
         }
@@ -311,6 +421,44 @@ impl OrderBookMatchingEngine {
         order
             .validate()
             .map_err(|error| format!("订单簿订单非法: {error}"))?;
+        if let Some(amounts) = order.exact_amounts {
+            let spec = self
+                .fee_spec
+                .as_ref()
+                .ok_or_else(|| "精确订单簿撮合需要冻结 TradingInstrumentSpec".to_string())?;
+            if spec.exact_rules.is_none() {
+                return Err("精确盘口撮合需要冻结精确 tick/step 规则".into());
+            }
+            if self.model.queue_position_bps != 0
+                || self.model.queue_position_model != QueuePositionModel::Disabled
+            {
+                return Err("精确盘口撮合暂不支持队列位置估算模型".into());
+            }
+            let policy = order.policy.unwrap_or_default();
+            policy
+                .validate_for(spec)
+                .map_err(|error| format!("精确订单 policy 非法: {error}"))?;
+            if let Some(budget) = amounts.quote_budget {
+                spec.validate_exact_quote_budget(budget)
+                    .map_err(|error| format!("精确盘口预算订单不符合冻结交易规则: {error}"))?;
+                let reference = amounts
+                    .market_reference_price
+                    .or_else(|| amounts.limit_price)
+                    .ok_or_else(|| "精确盘口预算订单缺少冻结参考价".to_string())?;
+                let quantity = spec
+                    .base_quantity_for_quote_budget(budget, reference)
+                    .map_err(|error| format!("精确盘口预算订单数量换算失败: {error}"))?;
+                spec.validate_exact_order_with_reference(quantity, None, Some(reference))
+                    .map_err(|error| format!("精确盘口预算订单不符合冻结交易规则: {error}"))?;
+            } else {
+                spec.validate_exact_order_with_reference(
+                    amounts.quantity,
+                    amounts.limit_price,
+                    amounts.market_reference_price.or(amounts.limit_price),
+                )
+                .map_err(|error| format!("精确盘口订单不符合冻结交易规则: {error}"))?;
+            }
+        }
         if self
             .pending
             .iter()
@@ -379,7 +527,11 @@ impl OrderBookMatchingEngine {
             requested_qty_raw,
             filled_qty_raw,
             remaining_qty_raw: requested_qty_raw.saturating_sub(filled_qty_raw),
+            requested_qty_exact: None,
+            filled_qty_exact: None,
+            remaining_qty_exact: None,
             price_raw,
+            price_exact: None,
             reason,
             displayed_qty_raw: liquidity.displayed_qty_raw,
             queue_ahead_before_raw: liquidity.queue_ahead_before_raw,

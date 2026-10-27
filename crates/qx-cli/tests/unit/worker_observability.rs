@@ -378,8 +378,8 @@ fn ccxt_market_tiers_drive_backtest_margin_rule() {
         }]
     });
     let rule = ccxt_margin_rule_from_market(&market);
-    assert_eq!(rule.initial_margin(100_000), 20_000);
-    assert_eq!(rule.maintain_margin(100_000), 10_000);
+    assert_eq!(rule.initial_margin(100_000), Ok(20_000));
+    assert_eq!(rule.maintain_margin(100_000), Ok(10_000));
 }
 
 #[test]
@@ -451,6 +451,7 @@ fn live_strategy_rejects_future_or_stale_bar_snapshots() {
         low_raw: vec![999_999_999; 3],
         close_raw: vec![1_000_000_000; 3],
         volume_raw: vec![1_000_000_000; 3],
+        exact_ohlcv: None,
     };
     assert!(live_frame_is_fresh(&frame, 60_000, true, 120_000, 180_000));
     assert!(!live_frame_is_fresh(&frame, 60_000, true, 120_000, 300_001));

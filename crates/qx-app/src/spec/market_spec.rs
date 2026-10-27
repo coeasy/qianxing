@@ -1,6 +1,8 @@
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{BacktestMarginConfig, BacktestMarginTier};
-use qx_core::{InstrumentId, TradingInstrumentSpec, TradingProduct};
+use qx_core::{
+    ExactDecimal, ExactTradingRules, InstrumentId, TradingInstrumentSpec, TradingProduct,
+};
 use serde_json::Value;
 
 pub const CCXT_MARKET_SPEC_VERSION: &str = "ccxt-market-spec-v1";
@@ -176,7 +178,35 @@ fn ccxt_market_to_spec(
         maintenance_margin_bps,
         valid_from: 0,
         valid_to: market.get("expiry_ms").and_then(Value::as_u64),
+        exact_rules: exact_rules_from_ccxt(market)?,
     })
+}
+
+fn exact_rules_from_ccxt(market: &Value) -> Result<Option<ExactTradingRules>, AppError> {
+    let Some(value) = market.get("exact_rules") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid("CCXT market exact_rules 必须是 object"))?;
+    let parse = |field: &str| -> Result<ExactDecimal, AppError> {
+        let value = object
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid(format!("CCXT market exact_rules 缺少十进制字段 {field}")))?;
+        ExactDecimal::parse(value)
+            .map_err(|error| invalid(format!("CCXT market exact_rules.{field} 非法: {error}")))
+    };
+    Ok(Some(ExactTradingRules {
+        contract_size: parse("contract_size")?,
+        price_tick: parse("price_tick")?,
+        quantity_step: parse("quantity_step")?,
+        minimum_quantity: parse("minimum_quantity")?,
+        minimum_notional: parse("minimum_notional")?,
+    }))
 }
 
 fn optional_nonnegative_raw(market: &Value, key: &str) -> Result<Option<i128>, AppError> {
@@ -386,5 +416,55 @@ mod binding_tests {
             .unwrap_err()
             .message()
             .contains("不能为负数"));
+    }
+
+    #[test]
+    fn ccxt_snapshot_preserves_sub_nano_exact_rules() {
+        let instrument = InstrumentId::parse("TINY/USDT.BINANCE").expect("valid instrument");
+        let market = serde_json::json!({
+            "exchange_id": "binance",
+            "symbol": "TINY/USDT",
+            "market_id": "TINYUSDT",
+            "base": "TINY",
+            "quote": "USDT",
+            "market_type": "spot",
+            "active": true,
+            "contract": false,
+            "linear": false,
+            "inverse": false,
+            "contract_size_raw": "1000000000",
+            "settle": null,
+            "expiry_ms": null,
+            "price_tick_raw": "1",
+            "qty_step_raw": "1",
+            "min_qty_raw": "1",
+            "min_notional_raw": null,
+            "max_leverage": 1,
+            "maintenance_margin_bps": 0,
+            "exact_rules": {
+                "contract_size": "1",
+                "price_tick": "0.0000000001",
+                "quantity_step": "0.0000000001",
+                "minimum_quantity": "0.0000000001",
+                "minimum_notional": "5"
+            }
+        });
+
+        let spec = market_spec_from_value(&instrument, &market).expect("exact market spec");
+        let rules = spec.exact_rules.expect("scale-aware market rules");
+        assert_eq!(rules.contract_size, ExactDecimal::parse("1").unwrap());
+        assert_eq!(
+            rules.price_tick,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(
+            rules.quantity_step,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(
+            rules.minimum_quantity,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(rules.minimum_notional, ExactDecimal::parse("5").unwrap());
     }
 }

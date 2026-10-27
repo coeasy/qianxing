@@ -5,7 +5,10 @@
 //! 编译期只留一份文本（常量 `include_str!` 那个文件），再把"契约说的"与"两侧做的"逐个对齐：
 //! 声明的键集合 = 写侧产物的键集合、未算的钱仍然是 `null`、读侧按 `const` 的版本号收口。
 
-use qx_protocol::{AccountSnapshot, ACCOUNT_SNAPSHOT_JSON_SCHEMA, ACCOUNT_SNAPSHOT_SCHEMA_VERSION};
+use qx_protocol::{
+    AccountSnapshot, ACCOUNT_SNAPSHOT_JSON_SCHEMA, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1,
+    ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
+};
 use serde_json::Value;
 
 /// 写侧真实产出的那一份快照（V11 R18 的地面真值夹具，由 `to_json` 原样产出）。
@@ -23,6 +26,38 @@ fn writer_sample() -> Value {
     let text = std::fs::read_to_string(WRITER_SAMPLE)
         .unwrap_or_else(|error| panic!("写侧夹具必须存在: {error}"));
     serde_json::from_str(&text).expect("夹具必须是合法 JSON")
+}
+
+fn current_writer_sample() -> Value {
+    let mut snapshot = AccountSnapshot::new(12, "main", "portfolio", "BINANCE", 100);
+    let cash = qx_core::ExactDecimal::parse("123.4567890123").unwrap();
+    snapshot.cash_raw.insert(
+        "USDT".into(),
+        qx_core::ExactDecimal::parse("123.456789012")
+            .unwrap()
+            .to_raw(9)
+            .unwrap(),
+    );
+    snapshot.cash_exact.insert("USDT".into(), cash);
+    let instrument = qx_core::InstrumentId::parse("BTC/USDT:USDT.BINANCE").unwrap();
+    snapshot.positions.insert(
+        instrument.clone(),
+        qx_protocol::PositionSnapshot {
+            instrument,
+            exact_amounts: Some(qx_core::ExactAccountPositionAmounts {
+                quantity: qx_core::ExactDecimal::parse("0.0000000001").unwrap(),
+                average_price: None,
+                mark_price: None,
+                liquidation_price: None,
+                unrealized_pnl: Some(qx_core::ExactDecimal::parse("0.0000000002").unwrap()),
+                initial_margin: None,
+                maintenance_margin: None,
+            }),
+            ..qx_protocol::PositionSnapshot::default()
+        },
+    );
+    snapshot.seal();
+    serde_json::from_str(&snapshot.to_json().unwrap()).unwrap()
 }
 
 fn keys_of(value: &Value) -> Vec<String> {
@@ -62,7 +97,7 @@ fn string_array(value: &Value) -> Vec<String> {
 fn served_schema_is_the_repository_file_verbatim() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../schemas/account-snapshot-v1.json"
+        "/../../schemas/account-snapshot-v3.json"
     );
     let on_disk = std::fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("schema 文件必须存在: {error}"));
@@ -74,18 +109,47 @@ fn served_schema_is_the_repository_file_verbatim() {
     );
 }
 
-/// schema 声明的顶层键必须正好盖住写侧印出的那些：少一个键，客户端按契约校验自家解出来
-/// 的快照会失败；多一个键，就是把不存在的字段说成契约。`required` 另钉一侧——它只能是
-/// 写侧永远印出来的键，否则"必填"本身就是一句做不到的承诺。
+#[test]
+fn legacy_v1_schema_and_snapshot_remain_readable() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../schemas/account-snapshot-v1.json"
+    );
+    let on_disk = std::fs::read_to_string(path).expect("v1 schema file must remain available");
+    assert_eq!(
+        ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1.replace("\r\n", "\n"),
+        on_disk.replace("\r\n", "\n")
+    );
+    let legacy = writer_sample();
+    let snapshot = AccountSnapshot::from_json(&legacy.to_string())
+        .expect("legacy v1 snapshot and its original state hash must still validate");
+    assert_eq!(snapshot.header.schema_version, 1);
+    assert_eq!(snapshot.header.state_hash, 17_770_453_242_411_702_682);
+    assert!(snapshot
+        .positions
+        .values()
+        .all(|position| position.settlement_currency.is_none()));
+}
+
+/// schema 声明的顶层键必须盖住写侧印出的那些。`fees_by_currency_raw` 是空时会省略的可选键，
+/// 因此契约允许它存在但不能列为必填；其余属性必须与写侧产物一一对应。
 #[test]
 fn served_schema_declares_every_key_the_writer_emits() {
     let contract = schema();
     let declared = keys_of(&contract["properties"]);
-    let emitted = keys_of(&writer_sample());
-    assert_eq!(
-        declared, emitted,
-        "schema 的 properties 必须与写侧产物的顶层键一一对应"
-    );
+    let emitted = keys_of(&current_writer_sample());
+    for key in &emitted {
+        assert!(
+            declared.contains(key),
+            "写侧产物的字段 {key} 没有出现在 schema properties 中"
+        );
+    }
+    let optional = declared
+        .iter()
+        .filter(|key| !emitted.contains(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(optional, vec!["fees_by_currency_raw".to_string()]);
     let required = string_array(&contract["required"]);
     for key in &required {
         assert!(
@@ -93,6 +157,10 @@ fn served_schema_declares_every_key_the_writer_emits() {
             "{key} 被列为必填，但写侧产物里没有这个键: {emitted:?}"
         );
     }
+    assert!(
+        !required.contains(&"fees_by_currency_raw".to_string()),
+        "空手续费 map 可以省略，不能列为必填"
+    );
     // 七个汇总钱字段可以缺席于 `required`（未算时印 null），但必须出现在 properties 里，
     // 否则客户端按契约就解不出自家读模型每天发的那一份。
     for key in [
@@ -216,7 +284,7 @@ fn schema_keeps_uncomputed_money_nullable() {
     );
 }
 
-/// 读侧必须按契约里那个 `"const": 1` 收口。此前它只核对协议字符串与两处版本号的自洽性，
+/// 读侧必须按契约里的 schema 版本收口。此前它只核对协议字符串与两处版本号的自洽性，
 /// 一份 `schema_version: 7` 的文档会被当成 v1 静默解出来——而对面 Python 的
 /// `load_account_snapshot` 对同一份产物是直接抛错的（一宽一严）。
 #[test]
@@ -228,21 +296,25 @@ fn reader_rejects_versions_the_served_schema_does_not_declare() {
         "契约声明的版本号必须就是读侧支持的那一个"
     );
     let base = writer_sample();
-    for version in [supported - 1, supported + 1, supported + 6] {
+    for version in [0, supported + 1, supported + 6] {
         let mut document = base.clone();
         document["schema_version"] = Value::from(version);
         let message = reject_reason(
             AccountSnapshot::from_json(&document.to_string()),
-            &format!("版本 {version} 不是契约声明的版本"),
+            &format!("版本 {version} 不是受支持版本"),
         );
         assert!(
             message.contains("不受支持"),
             "拒绝理由必须说清是版本不受支持，而不是把它混成解析错误: {message}"
         );
     }
-    let mut document = base.clone();
-    document["schema_version"] = Value::from(supported);
-    AccountSnapshot::from_json(&document.to_string()).expect("契约声明的那一份必须读得回来");
+    AccountSnapshot::from_json(&base.to_string()).expect("v1 历史快照必须继续读得回来");
+    let current = AccountSnapshot::new(11, "main", "default", "BINANCE", 10)
+        .to_json()
+        .expect("v2 当前快照必须能编码");
+    let current: Value = serde_json::from_str(&current).expect("当前快照必须是 JSON");
+    assert_eq!(current["schema_version"], Value::from(supported));
+    AccountSnapshot::from_json(&current.to_string()).expect("契约声明的 v2 必须读得回来");
 
     let mut missing = base.clone();
     missing.as_object_mut().unwrap().remove("schema_version");
@@ -307,8 +379,8 @@ fn schema_frame_matches_the_protocol_it_describes() {
     );
     assert_eq!(
         frame["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v1.json"),
-        "$id 里的 v1 必须与 schema_version 常量说的是同一份契约"
+        Some("https://qianxing.dev/schema/account-snapshot-v3.json"),
+        "$id 里的 v3 必须与 schema_version 常量说的是同一份契约"
     );
     assert_eq!(frame["type"].as_str(), Some("object"));
     assert_eq!(

@@ -1,7 +1,10 @@
 //! Paper/Live command boundary over the existing Rust control and execution path.
 
 use crate::{AppError, AppErrorCategory, CallerCapability, RunContext};
-use qx_control::{order_from_submit_command, CommandKind, ControlCommand, Permission};
+use qx_control::{
+    cancel_order_target_from_command, order_from_submit_command, CommandKind, ControlCommand,
+    Permission,
+};
 use serde::{Deserialize, Serialize};
 
 pub const TRADE_CONTROL_SCHEMA_VERSION: u32 = 1;
@@ -104,6 +107,13 @@ pub fn validate_trade_control(
                     format!("SubmitOrder 载荷无效: {error}"),
                 )
             })?;
+        } else if spec.command.kind == CommandKind::CancelOrder {
+            cancel_order_target_from_command(&spec.command).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("CancelOrder 载荷无效: {error:?}"),
+                )
+            })?;
         }
         Ok(spec.command.clone())
     })();
@@ -134,6 +144,7 @@ mod tests {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         ControlCommand {
             command_id: 41,
@@ -177,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn trade_control_rejects_wrong_capability_grant_and_non_executable_commands() {
+    fn trade_control_rejects_wrong_capability_and_accepts_valid_cancel_commands() {
         let paper = spec(TradeWorkflow::Paper, false);
         assert_eq!(
             validate_trade_control(
@@ -199,11 +210,25 @@ mod tests {
             .category(),
             AppErrorCategory::PermissionDenied
         );
-        let mut unsupported = paper;
-        unsupported.command.kind = CommandKind::CancelOrder;
+        let mut cancel = paper;
+        cancel.command.kind = CommandKind::CancelOrder;
+        cancel.command.target = "41".into();
+        cancel.command.payload = BTreeMap::from([
+            ("account_id".into(), "main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]);
+        let accepted = validate_trade_control(
+            &cancel,
+            &RunContext::new(CallerCapability::Paper, "request-41"),
+            Permission::Trading,
+        )
+        .expect("valid CancelOrder command");
+        assert_eq!(accepted, cancel.command);
+
+        cancel.command.payload.insert("ignored".into(), "x".into());
         assert_eq!(
             validate_trade_control(
-                &unsupported,
+                &cancel,
                 &RunContext::new(CallerCapability::Paper, "request-41"),
                 Permission::Trading,
             )

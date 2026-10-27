@@ -53,6 +53,7 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
             leverage: 5,
             ..OrderPolicy::default()
         }),
+        exact_amounts: None,
     };
     let command = ControlCommand {
         command_id: order.client_id,
@@ -82,6 +83,7 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let risk = RiskContext {
         available_margin_raw: Some(10_000 * SCALE),
@@ -144,6 +146,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     let command = ControlCommand {
         command_id: 7,
@@ -234,6 +237,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     let command = ControlCommand {
         command_id: 71,
@@ -266,6 +270,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
             maintenance_margin_bps: 0,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         }),
         ..RiskContext::default()
     };
@@ -341,6 +346,7 @@ fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     let command = ControlCommand {
         command_id: 81,
@@ -373,6 +379,7 @@ fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
             maintenance_margin_bps: 0,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         }),
         ..RiskContext::default()
     };
@@ -400,9 +407,10 @@ fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
     assert!(executed.starts_with("PAPER_EXECUTED fills=1"), "{executed}");
     // 吃单：名义 1 * 100 = 100 USDT，默认吃单费率 DEFAULT_TAKER_BP。
     let expected = qx_core::bp_amount(
-        qx_core::notional(order.qty.raw(), order.limit.unwrap().raw()),
+        qx_core::notional(order.qty.raw(), order.limit.unwrap().raw()).unwrap(),
         qx_core::DEFAULT_TAKER_BP,
-    );
+    )
+    .unwrap();
     assert!(expected > 0, "默认吃单费率必须产生非零费用");
     let fee_raw: i128 = pipeline
         .ledger()

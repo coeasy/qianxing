@@ -160,9 +160,45 @@ fn assert_job_queue_semantics(queue: &dyn JobQueueBackend) {
 
     let (job, run) = job_and_run(202);
     let run_id = run.run_id;
+
+    let mut invalid_run = run.clone();
+    invalid_run.run_id = invalid_run.run_id.saturating_add(1);
+    assert!(matches!(
+        queue.enqueue_job(job.clone(), invalid_run, 10),
+        Err(StorageError::Conflict(_))
+    ));
+    assert!(matches!(
+        queue.claim_job(run_id, "  ", 10, 10),
+        Err(StorageError::Conflict(_))
+    ));
+    assert!(matches!(
+        queue.claim_job(run_id, "worker-a", 10, 0),
+        Err(StorageError::Conflict(_))
+    ));
+
     queue.enqueue_job(job.clone(), run.clone(), 10).unwrap();
     queue.enqueue_job(job, run, 10).unwrap();
     assert_eq!(queue.available_jobs(10).unwrap().len(), 1);
+
+    // A restarted scheduler may retry the same stable run with stale run
+    // timestamps. The already-persisted queue envelope remains authoritative.
+    let (job, mut retry) = job_and_run(202);
+    retry.attempt = 2;
+    retry.started_ts = 11;
+    retry.deadline_ts = 71;
+    queue.enqueue_job(job.clone(), retry, 11).unwrap();
+    let available = queue.available_jobs(11).unwrap();
+    assert_eq!(available.len(), 1);
+    assert_eq!(available[0].run.attempt, 1);
+    assert_eq!(available[0].run.started_ts, 10);
+
+    // Reusing the stable run ID for a different job payload is a conflict.
+    let mut conflicting_job = job;
+    conflicting_job.timeout_seconds = conflicting_job.timeout_seconds.saturating_add(1);
+    assert!(matches!(
+        queue.enqueue_job(conflicting_job, job_and_run(202).1, 11),
+        Err(StorageError::Conflict(_))
+    ));
 
     let first = queue.claim_job(run_id, "worker-a", 10, 10).unwrap();
     assert_eq!(first.fencing_token, 1);

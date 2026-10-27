@@ -34,13 +34,16 @@ pub fn persist_strategy_backtest_artifacts(
     input: StrategyBacktestArtifactsInput<'_>,
 ) -> Result<StrategyBacktestArtifactsResult, String> {
     let rejections = crate::trade_facts::rejection_facts(&report.event_log);
+    let summary_extra = serde_json::json!({
+        "metrics_exact": report.exact_metrics_json(),
+    });
     let (summary_path, equity_path, fills_path) = persist_backtest_artifacts(
         run_manifest_path,
         &BacktestArtifacts {
             runtime_config_path: input.runtime_config_path,
             account_id: None,
             portfolio: None,
-            summary_extra: None,
+            summary_extra: Some(&summary_extra),
             market_spec_path: input.market_spec_path,
             strategy_id: input.strategy_id,
             instrument: input.instrument,
@@ -48,6 +51,7 @@ pub fn persist_strategy_backtest_artifacts(
             samples: input.bars.len(),
             sample_ts: BacktestSampleTimestamps::Bars(input.bars),
             equity: &report.equity,
+            equity_exact: Some(&report.equity_exact),
             positions: &report.positions,
             fills: &report.fills,
             execution_attempts: &report.execution_attempts,

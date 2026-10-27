@@ -357,8 +357,9 @@ pub struct WorkerConfig {
     pub credential_env: Option<CredentialEnv>,
     #[serde(default)]
     pub credential_files: Option<CredentialFiles>,
-    /// 可选的冻结市场规格文件。配置后，Execution worker 会在调用 Venue
-    /// 前使用同一份规格执行数量、价格、杠杆和保证金预检。
+    /// 可选的冻结市场规格文件。可传单市场规格（兼容旧配置）或按完整 InstrumentId
+    /// 键控的 qianxing_market_spec_set；Execution worker 会为每笔订单选取对应规格，
+    /// 在调用 Venue 前执行数量、价格、杠杆和保证金预检。
     #[serde(default)]
     pub instrument_spec_path: Option<String>,
     /// Paper 虚拟账户启动时幂等注入的结算币初始资金 raw 值。
@@ -399,6 +400,9 @@ pub struct AccountRuntimeConfig {
     pub settlement_currency: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_cash_raw: Option<i128>,
+    /// 可选组合分组。多个账户可共享同一个只读组合视图；保证金仍按交易所账户隔离。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portfolio_id: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

@@ -8,8 +8,8 @@
 //! 相邻概念刻意不放在这里，避免同一问题出现第二份答案：
 //! - 绩效指标（收益、回撤、费用合计）由撮合引擎在同一处算出，见
 //!   `qx-xingban` 回测报告的 `return_bps` / `max_drawdown_bps`；
-//! - 成交归因由多腿归因链（`qx-cli` 的 `multi_leg_group_attributions`）与
-//!   `Fill` 自带的 `strategy_id` / `signal_id` / `intent_id` 承担；
+//! - 成交归因事实由 `Fill` 自带的 `strategy_id` / `signal_id` / `intent_id` 与
+//!   `qx-app` 的多腿归因用例/报告 reader 共同承载；`qx-cli` 只投影结果，不计算归因；
 //! - 现金对账由运行时管线 `qx-runtime` 的 `settlement_balance_discrepancies`
 //!   承担，它读的是账户账本与柜台余额事实，不在这里重复实现。
 

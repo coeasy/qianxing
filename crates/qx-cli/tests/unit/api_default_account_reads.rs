@@ -47,7 +47,7 @@ fn unkeyed_read_models_describe_the_same_account() {
         .unwrap();
     drop(pipeline);
     assert_eq!(
-        default_account_event_log(&config, &root)
+        qx_service::api_read_model::default_account_event_log(&config, &root)
             .unwrap()
             .as_deref(),
         Some(main_log.as_str()),

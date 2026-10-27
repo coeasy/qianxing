@@ -8,8 +8,9 @@ use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::risk_host::worker_account_admission_lock;
 use crate::spread_recovery_host::{
     command_is_final, dedicated_spread_recovery_configured, is_fail_closed_rejection,
-    open_spread_group_store, recover_paper_spread_groups, recovery_order_validator,
-    sync_spread_group_after_order,
+    is_retryable_spread_submission, open_spread_group_store,
+    recover_paper_spread_groups_for_account, recovery_order_validator,
+    sync_in_flight_spread_orders, sync_spread_group_after_order,
 };
 use crate::worker_host::{run_polling_worker, run_worker};
 use qx_control::{order_from_submit_command, CommandKind, ControlCommand};
@@ -199,6 +200,13 @@ pub fn run_paper_execution_worker(
                             OutboxRecovery::ReprojectOnOpen,
                         )
                         .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
+                        sync_in_flight_spread_orders(
+                            &root,
+                            &market_pipeline,
+                            command.payload.get("spread_group_id").map(String::as_str),
+                            worker.account_id.as_deref(),
+                            worker.venue_id.as_deref(),
+                        )?;
                         // Accepted/领取之后的可预期失败都要变成这条命令的终态：缺行情只是
                         // 「行情还没进来」，它不该把整个执行 worker 打停，更不该让同一条命令
                         // 在一次性入口和常驻循环里得到两种裁决（V13 第三十一遍 ② #273）。
@@ -212,7 +220,9 @@ pub fn run_paper_execution_worker(
                             &spread_store,
                             now,
                         );
-                        let outcome = if is_fail_closed_rejection(&result) {
+                        let outcome = if is_fail_closed_rejection(&result)
+                            || is_retryable_spread_submission(&result)
+                        {
                             // 网关未写入任何事实：归约会把真正的 FAIL_CLOSED 文案覆盖成
                             // "订单组缺少 EventLog 订单"，因此这条路径直接保留原拒绝原因。
                             result
@@ -224,6 +234,11 @@ pub fn run_paper_execution_worker(
                         metrics.absorb(&market_pipeline);
                         outcome
                     };
+                    if is_retryable_spread_submission(&action) {
+                        // Keep the command pending while another leg's submit intent is
+                        // unresolved; queue lease expiry provides the retry boundary.
+                        continue;
+                    }
                     let (_, record_result) = store
                         .transact(|plane| {
                             plane.execute(command.command_id, now, |_| action.clone())
@@ -291,8 +306,9 @@ pub fn run_paper_execution_worker(
                         &runtime_config,
                         Some(&runtime_config_path),
                     )?;
-                    for message in recover_paper_spread_groups(
+                    for message in recover_paper_spread_groups_for_account(
                         &root,
+                        worker.account_id.as_deref(),
                         &mut recovery_pipeline,
                         context.id(),
                         now,

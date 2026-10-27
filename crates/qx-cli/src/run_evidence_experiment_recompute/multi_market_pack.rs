@@ -199,7 +199,7 @@ fn write_package(report_path: &Path, output_dir: &Path, depth: bool) -> Result<(
                         index + 1
                     ));
                 }
-                super::super::super::verify_candidate_replay(&summary, &manifest)?;
+                super::super::super::verify_candidate_replay(&summary, &manifest, &source)?;
                 let manifest_relative = candidate_path("manifest", index + 1);
                 let summary_relative = candidate_path("summary", index + 1);
                 let manifest_target_name = Path::new(&manifest_relative)
@@ -252,6 +252,7 @@ fn write_package(report_path: &Path, output_dir: &Path, depth: bool) -> Result<(
             code_commit: input.code_commit,
             spec_fingerprint: fingerprint,
             files,
+            references: Vec::new(),
         };
         write_json(&output_dir.join(BUNDLE_FILE), &manifest)
     })();

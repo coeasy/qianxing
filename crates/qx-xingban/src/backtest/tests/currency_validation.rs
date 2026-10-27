@@ -41,6 +41,7 @@ fn derivative_backtest_uses_spec_pnl_instead_of_full_notional_cashflow() {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     let bars = vec![
         Bar::new(
@@ -102,6 +103,7 @@ fn market_cash_currency_mismatch_is_rejected_before_strategy_execution() {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     let bars = [
         Bar::new(1, 100, 100, 100, 100, 10),

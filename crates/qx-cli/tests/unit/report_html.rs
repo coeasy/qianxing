@@ -93,6 +93,9 @@ fn sample_fills() -> Vec<FillPoint> {
         qty_raw: 1_000_000_000,
         price_raw: 86_500_000_000,
         fee_raw: Some(43_250_000),
+        qty_exact: None,
+        price_exact: None,
+        exact_fees_json: None,
         account_id: Some("main".into()),
         strategy_id: "strategy-macd".into(),
         signal_id: Some("52".into()),
@@ -490,6 +493,9 @@ fn zero_fills_draw_no_marker_and_each_fill_adds_one_neutral_point() {
             qty_raw: 1_000_000_000,
             price_raw: 86_500_000_000,
             fee_raw: Some(10),
+            qty_exact: None,
+            price_exact: None,
+            exact_fees_json: None,
             account_id: None,
             strategy_id: "buy".into(),
             signal_id: None,
@@ -504,6 +510,9 @@ fn zero_fills_draw_no_marker_and_each_fill_adds_one_neutral_point() {
             qty_raw: -1_000_000_000,
             price_raw: 87_000_000_000,
             fee_raw: Some(10),
+            qty_exact: None,
+            price_exact: None,
+            exact_fees_json: None,
             account_id: None,
             strategy_id: "sell".into(),
             signal_id: None,
@@ -641,6 +650,25 @@ fn multi_leg_equity_csv_reports_checked_combined_portfolio_curve() {
 
     std::fs::write(
         &path,
+        "index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact\n0,1000,1000000000,2000000000,3000000000,3\n1,2000,1100000000,2100000000,3200000000,3.2\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 3_000_000_000, None), (2000, 3_200_000_000, None)]
+    );
+
+    std::fs::write(
+        &path,
+        "index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact\n0,1000,1000000000,2000000000,3000000001,3\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("腿权益合计与 equity_raw 不一致"));
+
+    std::fs::write(
+        &path,
         format!(
             "index,ts,primary_equity_raw,reference_equity_raw\n0,1000,{},1\n",
             i128::MAX
@@ -665,6 +693,40 @@ fn multi_account_equity_csv_keeps_its_position_series_in_reports() {
         read_equity_analysis_csv(&path).unwrap(),
         vec![(1000, 100, Some(0)), (2000, 110, Some(5))]
     );
+}
+
+#[test]
+fn exact_equity_csv_validates_raw_projection_and_preserves_position_column() {
+    let dir = temp_dir("exact-equity-csv");
+    let path = dir.join("exact.equity.csv");
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,0,0.0000000005,0\n1,2000,1,0.0000000015,2\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 0, Some(0)), (2000, 1, Some(2))]
+    );
+
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,1,0.0000000005,0\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("equity_raw 与 equity_exact 投影不一致"));
+
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,0,not-a-decimal,0\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("equity_exact 非法"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

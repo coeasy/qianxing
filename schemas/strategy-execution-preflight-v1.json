@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-execution-preflight-v1.json",
+  "title": "Qianxing Strategy Execution Preflight v1",
+  "description": "Shared Rust validation contract for a normalized file-strategy manifest and its execution or search inputs.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "strategy_manifest", "execution_spec", "purpose"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "strategy_manifest": { "type": "object" },
+        "execution_spec": { "type": "object" },
+        "purpose": { "enum": ["run", "search", "diagnose"] },
+        "target_strategy_id": { "type": ["string", "null"] },
+        "split_plan": { "type": ["object", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "strategy_id", "strategy_version", "completeness", "data_level", "warmup_bars", "checked_markets"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "strategy_id": { "type": "string", "minLength": 1 },
+        "strategy_version": { "type": "string", "minLength": 1 },
+        "completeness": { "enum": ["complete", "partial"] },
+        "data_level": { "type": ["string", "null"] },
+        "warmup_bars": { "type": ["integer", "null"], "minimum": 0 },
+        "checked_markets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "instrument", "rows", "content_fingerprint"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1 },
+              "instrument": { "type": "string", "minLength": 1 },
+              "rows": { "type": "integer", "minimum": 0 },
+              "content_fingerprint": { "type": "string", "pattern": "^barframe:[0-9a-f]{16}$" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const FUNDING_RATE_JSON_CONTENT_TYPE: &str = "application/vnd.qianxing.funding-rate+json;v=1";
+pub const FUNDING_RATE_JSON_CONTENT_TYPE_V2: &str =
+    "application/vnd.qianxing.funding-rate+json;v=2";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,8 +31,15 @@ pub(super) struct FundingRateProviderProvenance {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FundingRatePayload {
+struct FundingRatePayloadV1 {
     rate_bps: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FundingRatePayloadV2 {
+    rate_bps: i64,
+    funding_interval_ms: u64,
 }
 
 /// Fetch, validate and execute provider-supplied historical funding through the shared Rust core.
@@ -62,7 +71,10 @@ pub(super) fn run_multi_leg_backtest_with_funding_provider(
             .iter()
             .zip(&fetched.payloads)
             .map(|(record, payload)| {
-                if payload.content_type != FUNDING_RATE_JSON_CONTENT_TYPE {
+                if !matches!(
+                    payload.content_type.as_str(),
+                    FUNDING_RATE_JSON_CONTENT_TYPE | FUNDING_RATE_JSON_CONTENT_TYPE_V2
+                ) {
                     return Err(invalid(format!(
                         "funding Provider payload content_type is unsupported: {}",
                         payload.content_type
@@ -76,14 +88,29 @@ pub(super) fn run_multi_leg_backtest_with_funding_provider(
                             payload.instrument
                         ))
                     })?;
-                let rate: FundingRatePayload =
-                    serde_json::from_str(&payload.json).map_err(|error| {
-                        invalid(format!("funding Provider rate payload is invalid: {error}"))
-                    })?;
+                let (rate_bps, funding_interval_ms) =
+                    if payload.content_type == FUNDING_RATE_JSON_CONTENT_TYPE_V2 {
+                        let rate: FundingRatePayloadV2 = serde_json::from_str(&payload.json)
+                            .map_err(|error| {
+                                invalid(format!(
+                                    "funding Provider v2 rate payload is invalid: {error}"
+                                ))
+                            })?;
+                        (rate.rate_bps, Some(rate.funding_interval_ms))
+                    } else {
+                        let rate: FundingRatePayloadV1 = serde_json::from_str(&payload.json)
+                            .map_err(|error| {
+                                invalid(format!(
+                                    "funding Provider v1 rate payload is invalid: {error}"
+                                ))
+                            })?;
+                        (rate.rate_bps, None)
+                    };
                 Ok(FundingRateEvent {
                     instrument,
                     settlement_ts: record.event_time,
-                    rate_bps: rate.rate_bps,
+                    rate_bps,
+                    funding_interval_ms,
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
@@ -134,7 +161,7 @@ fn validate_request(request: &DataRequest, spec: &MultiLegBacktestSpec) -> Resul
     let allowed = legs.into_iter().flatten().collect::<BTreeSet<_>>();
     if request.query.kind != DataKind::Financial
         || request.query.field_set != BTreeSet::from(["funding_rate_bps".to_string()])
-        || request.query.frequency != "funding_8h"
+        || !matches!(request.query.frequency.as_str(), "funding" | "funding_8h")
         || request.requirements.require_realtime
         || request.query.instrument_set.is_empty()
         || request.query.instrument_set.len() > 2
@@ -145,7 +172,7 @@ fn validate_request(request: &DataRequest, spec: &MultiLegBacktestSpec) -> Resul
         })
     {
         return Err(invalid(
-            "funding Provider request requires Financial/funding_8h/funding_rate_bps and one or two configured multi-leg instruments",
+            "funding Provider request requires Financial/funding[/funding_8h]/funding_rate_bps and one or two configured multi-leg instruments",
         ));
     }
     Ok(())
@@ -234,6 +261,7 @@ mod tests {
             maintenance_margin_bps: 500,
             valid_from: 0,
             valid_to: None,
+            exact_rules: None,
         }
     }
 
@@ -245,7 +273,7 @@ mod tests {
             data_kinds: BTreeSet::from([DataKind::Financial]),
             data_tiers: BTreeSet::new(),
             asset_classes: BTreeSet::from(["crypto".into()]),
-            frequencies: BTreeSet::from(["funding_8h".into()]),
+            frequencies: BTreeSet::from(["funding".into(), "funding_8h".into()]),
             auth_scope: "public".into(),
             rate_limit_per_second: 100,
             freshness_seconds: 0,
@@ -257,19 +285,30 @@ mod tests {
             cost_score: 0,
         };
         let rows = [
-            (144_000_000, 172_800_000, 100),
-            (172_800_000, 172_800_000, -50),
+            (
+                144_000_000,
+                172_800_000,
+                100,
+                Some(qx_core::FUNDING_INTERVAL_MS),
+            ),
+            (172_800_000, 172_800_000, -50, None),
         ]
         .into_iter()
-        .map(|(ts, received, rate)| {
-            (
-                ts,
-                received,
-                ProviderPayload::new_json(
-                    instrument,
+        .map(|(ts, received, rate, interval)| {
+            let (content_type, payload_json) = match interval {
+                Some(interval) => (
+                    FUNDING_RATE_JSON_CONTENT_TYPE_V2,
+                    format!(r#"{{"rate_bps":{rate},"funding_interval_ms":{interval}}}"#),
+                ),
+                None => (
                     FUNDING_RATE_JSON_CONTENT_TYPE,
                     format!(r#"{{"rate_bps":{rate}}}"#),
                 ),
+            };
+            (
+                ts,
+                received,
+                ProviderPayload::new_json(instrument, content_type, payload_json),
             )
         })
         .collect();
@@ -287,7 +326,7 @@ mod tests {
                 asset_class: "crypto".into(),
                 instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
                 field_set: BTreeSet::from(["funding_rate_bps".into()]),
-                frequency: "funding_8h".into(),
+                frequency: "funding".into(),
                 adjustment: "none".into(),
                 quality_policy: "strict".into(),
                 start: 144_000_000,
@@ -363,6 +402,11 @@ mod tests {
             "caller_supplied_historical_events"
         );
         assert_eq!(artifact["funding_rate_events"].as_array().unwrap().len(), 2);
+        assert!(artifact["funding_rate_events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["funding_interval_ms"] == qx_core::FUNDING_INTERVAL_MS));
         assert_eq!(
             artifact["funding_provider_provenance"]["provider_id"],
             "fixture-funding"

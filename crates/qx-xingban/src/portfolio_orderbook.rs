@@ -16,6 +16,7 @@ pub struct OrderBookStrategySlot {
     pub priority: i32,
     pub strategy_id: String,
     pub reserved_capital_raw: i128,
+    pub reserved_capital_exact: qx_core::ExactDecimal,
     strategy: Box<dyn OrderBookStrategy>,
 }
 
@@ -44,8 +45,15 @@ impl OrderBookStrategySlot {
             priority,
             strategy_id: strategy_id.into(),
             reserved_capital_raw,
+            reserved_capital_exact: qx_core::ExactDecimal::from_parts(reserved_capital_raw, 9)
+                .expect("legacy strategy budget fits its raw money representation"),
             strategy,
         }
+    }
+
+    pub fn with_reserved_capital_exact(mut self, amount: qx_core::ExactDecimal) -> Self {
+        self.reserved_capital_exact = amount;
+        self
     }
 }
 
@@ -70,9 +78,21 @@ impl PortfolioOrderBookStrategy {
             ));
         }
         for slot in &slots {
-            if !valid_identity(&slot.strategy_id) || slot.reserved_capital_raw <= 0 {
+            let projected = slot
+                .reserved_capital_exact
+                .checked_mul_at_scale(
+                    qx_core::ExactDecimal::ONE,
+                    9,
+                    qx_core::DecimalRounding::TowardZero,
+                )
+                .and_then(|value| value.to_raw(9).ok());
+            if !valid_identity(&slot.strategy_id)
+                || !slot.reserved_capital_exact.is_positive()
+                || projected != Some(slot.reserved_capital_raw)
+            {
                 return Err(QxError::BusinessViolation(
-                    "订单簿组合策略 ID 必须合法且 reserved_capital_raw 必须为正".into(),
+                    "订单簿组合策略 ID 必须合法且 reserved_capital_exact 必须为正并匹配 raw 投影"
+                        .into(),
                 ));
             }
         }
@@ -98,10 +118,10 @@ impl PortfolioOrderBookStrategy {
         })
     }
 
-    fn budget_map(&self) -> BTreeMap<String, i128> {
+    fn exact_budget_map(&self) -> BTreeMap<String, qx_core::ExactDecimal> {
         self.slots
             .iter()
-            .map(|slot| (slot.strategy_id.clone(), slot.reserved_capital_raw))
+            .map(|slot| (slot.strategy_id.clone(), slot.reserved_capital_exact))
             .collect()
     }
 
@@ -132,6 +152,46 @@ impl PortfolioOrderBookStrategy {
             .ok_or_else(|| QxError::Invariant("订单簿组合 client_id 溢出".into()))?;
         Ok(id)
     }
+
+    fn dispatch_fill(
+        &mut self,
+        order: &Order,
+        fill: &Fill,
+        event_seq: Option<u64>,
+    ) -> Result<(), QxError> {
+        let owner = self.owner(order.client_id)?;
+        let strategy_id = owner.strategy_id.clone();
+        let local_client_id = owner.local_client_id;
+        let exact_budgets = self.exact_budget_map();
+        self.budgets.apply_fill_if_owned_with_exact_budget(
+            |id| exact_budgets.get(id).copied(),
+            order,
+            fill,
+        )?;
+        let index = self
+            .slots
+            .iter()
+            .position(|slot| slot.strategy_id == strategy_id)
+            .ok_or_else(|| QxError::ReconcileRequired("成交策略槽已不存在".into()))?;
+        let mut local_order = order.clone();
+        local_order.client_id = local_client_id;
+        let mut local_fill = fill.clone();
+        local_fill.order_id = local_client_id;
+        match event_seq {
+            Some(event_seq) => self.slots[index].strategy.on_fill_with_event_seq(
+                &local_order,
+                &local_fill,
+                event_seq,
+            )?,
+            None => self.slots[index]
+                .strategy
+                .on_fill(&local_order, &local_fill)?,
+        }
+        if order.filled.raw().saturating_add(fill.qty.raw()) >= order.qty.raw() {
+            self.order_owners.remove(&order.client_id);
+        }
+        Ok(())
+    }
 }
 
 impl TickStrategy for PortfolioOrderBookStrategy {
@@ -150,10 +210,14 @@ impl TickStrategy for PortfolioOrderBookStrategy {
             ts: tick.ts,
             sequence: tick.source_seq,
             bids: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.bid,
                 qty: tick.bid_qty,
             }],
             asks: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.ask,
                 qty: tick.ask_qty,
             }],
@@ -173,10 +237,14 @@ impl TickStrategy for PortfolioOrderBookStrategy {
             ts: tick.ts,
             sequence: tick.source_seq,
             bids: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.bid,
                 qty: tick.bid_qty,
             }],
             asks: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.ask,
                 qty: tick.ask_qty,
             }],
@@ -200,6 +268,31 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
             let budget =
                 available_margin_raw.map(|available| available.min(slot.reserved_capital_raw));
             slot.strategy.update_account_state(cash, budget);
+        }
+    }
+
+    fn update_account_state_exact(
+        &mut self,
+        cash: &std::collections::BTreeMap<String, i128>,
+        cash_exact: &std::collections::BTreeMap<String, qx_core::ExactDecimal>,
+        available_margin_raw: Option<i128>,
+        available_margin_exact: Option<qx_core::ExactDecimal>,
+    ) {
+        for slot in &mut self.slots {
+            let raw_margin =
+                available_margin_raw.map(|available| available.min(slot.reserved_capital_raw));
+            let exact_margin = available_margin_exact.map(|available| {
+                if available
+                    .checked_cmp(slot.reserved_capital_exact)
+                    .is_some_and(|ordering| ordering.is_gt())
+                {
+                    slot.reserved_capital_exact
+                } else {
+                    available
+                }
+            });
+            slot.strategy
+                .update_account_state_exact(cash, cash_exact, raw_margin, exact_margin);
         }
     }
 
@@ -234,7 +327,10 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         let mut actions = OrderBookActions::default();
         for index in 0..self.slots.len() {
             let strategy_id = self.slots[index].strategy_id.clone();
-            let position = self.budgets.position(&strategy_id);
+            let position = self
+                .budgets
+                .position(&strategy_id)
+                .map_err(|error| error.to_string())?;
             let member_open_orders = self.member_orders(&strategy_id, open_order_ids);
             let member_budget = available_margin_raw
                 .map(|available| available.min(self.slots[index].reserved_capital_raw));
@@ -316,24 +412,76 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         reference_price: i128,
         instrument_spec: Option<&TradingInstrumentSpec>,
     ) -> Result<(), QxError> {
-        let budgets = self.budget_map();
+        let budgets = self.exact_budget_map();
         let margin = NoMargin;
-        let Some((budget, required)) = self.budgets.order_budget_check(
+        let order_quantity = order
+            .remaining_decimal()
+            .or_else(|| qx_core::ExactDecimal::from_parts(order.remaining().raw(), 9).ok())
+            .ok_or_else(|| QxError::Invariant("订单簿预算订单数量溢出".into()))?;
+        let Some((budget, required)) = self.budgets.order_budget_check_with_exact_budget(
             |strategy_id| budgets.get(strategy_id).copied(),
             order,
-            reference_price,
+            order_quantity,
+            qx_core::ExactDecimal::from_parts(reference_price, 9)
+                .map_err(|_| QxError::Invariant("订单簿预算参考价溢出".into()))?,
+            qx_core::ExactDecimal::from_parts(reference_price, 9)
+                .map_err(|_| QxError::Invariant("订单簿预算标记价溢出".into()))?,
             instrument_spec,
             1,
             &margin,
+            None,
+            "",
         )?
         else {
             return Err(QxError::ReconcileRequired(
                 "订单簿组合订单缺少已登记的策略身份".into(),
             ));
         };
-        if required > budget {
+        if required
+            .checked_cmp(budget)
+            .is_none_or(|ordering| ordering.is_gt())
+        {
             return Err(QxError::BusinessViolation(format!(
                 "订单簿策略资金额度不足: required={required}, budget={budget}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn check_exact_order_budget(
+        &self,
+        order: &Order,
+        reference_price: qx_core::ExactDecimal,
+        instrument_spec: Option<&TradingInstrumentSpec>,
+    ) -> Result<(), QxError> {
+        let budgets = self.exact_budget_map();
+        let order_quantity = order
+            .remaining_decimal()
+            .or_else(|| qx_core::ExactDecimal::from_parts(order.remaining().raw(), 9).ok())
+            .ok_or_else(|| QxError::Invariant("订单簿精确预算订单数量溢出".into()))?;
+        let Some((budget, required)) = self.budgets.order_budget_check_with_exact_budget(
+            |strategy_id| budgets.get(strategy_id).copied(),
+            order,
+            order_quantity,
+            reference_price,
+            reference_price,
+            instrument_spec,
+            1,
+            &NoMargin,
+            None,
+            "",
+        )?
+        else {
+            return Err(QxError::ReconcileRequired(
+                "订单簿组合精确订单缺少已登记的策略身份".into(),
+            ));
+        };
+        if required
+            .checked_cmp(budget)
+            .is_none_or(|ordering| ordering.is_gt())
+        {
+            return Err(QxError::BusinessViolation(format!(
+                "订单簿策略精确资金额度不足: required={required}, budget={budget}"
             )));
         }
         Ok(())
@@ -345,14 +493,16 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         fill: &Fill,
         instrument_spec: Option<&TradingInstrumentSpec>,
     ) -> Result<(), QxError> {
-        let budgets = self.budget_map();
-        self.budgets.validate_fill_budget(
+        let budgets = self.exact_budget_map();
+        self.budgets.validate_fill_budget_with_exact_budget(
             |strategy_id| budgets.get(strategy_id).copied(),
             order,
             fill,
             instrument_spec,
             1,
             &NoMargin,
+            None,
+            "",
         )
     }
 
@@ -361,14 +511,28 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         order: &Order,
         reference_price: Option<i128>,
     ) -> Result<(), QxError> {
+        let raw = reference_price
+            .ok_or_else(|| QxError::ReconcileRequired("策略组合受限订单缺少保证金参考价".into()))?;
+        let exact = qx_core::ExactDecimal::from_parts(raw, 9)
+            .map_err(|_| QxError::Invariant("订单簿预算参考价溢出".into()))?;
+        self.on_exact_order_accepted(order, exact)
+    }
+
+    fn on_exact_order_accepted(
+        &mut self,
+        order: &Order,
+        reference_price: qx_core::ExactDecimal,
+    ) -> Result<(), QxError> {
         self.owner(order.client_id)?;
-        let budget = self.budget_map();
-        self.budgets.accept_if_owned(
+        let budget = self.exact_budget_map();
+        self.budgets.accept_if_owned_with_exact_budget(
             |strategy_id| budget.get(strategy_id).copied(),
             order,
-            reference_price.ok_or_else(|| {
-                QxError::ReconcileRequired("策略组合受限订单缺少保证金参考价".into())
-            })?,
+            order
+                .remaining_decimal()
+                .or_else(|| qx_core::ExactDecimal::from_parts(order.remaining().raw(), 9).ok())
+                .ok_or_else(|| QxError::Invariant("订单簿预算订单数量溢出".into()))?,
+            reference_price,
         )
     }
 
@@ -376,9 +540,9 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         let owner = self.owner(order.client_id)?;
         let strategy_id = owner.strategy_id.clone();
         let local_client_id = owner.local_client_id;
-        let budget = self.budget_map();
+        let budget = self.exact_budget_map();
         self.budgets
-            .cancel_if_owned(|id| budget.get(id).copied(), order.client_id)?;
+            .cancel_if_owned_with_exact_budget(|id| budget.get(id).copied(), order.client_id)?;
         self.order_owners.remove(&order.client_id);
         let index = self
             .slots
@@ -391,28 +555,16 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
     }
 
     fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), QxError> {
-        let owner = self.owner(order.client_id)?;
-        let strategy_id = owner.strategy_id.clone();
-        let local_client_id = owner.local_client_id;
-        let budgets = self.budget_map();
-        self.budgets
-            .apply_fill_if_owned(|id| budgets.get(id).copied(), order, fill)?;
-        let index = self
-            .slots
-            .iter()
-            .position(|slot| slot.strategy_id == strategy_id)
-            .ok_or_else(|| QxError::ReconcileRequired("成交策略槽已不存在".into()))?;
-        let mut local_order = order.clone();
-        local_order.client_id = local_client_id;
-        let mut local_fill = fill.clone();
-        local_fill.order_id = local_client_id;
-        self.slots[index]
-            .strategy
-            .on_fill(&local_order, &local_fill)?;
-        if order.filled.raw().saturating_add(fill.qty.raw()) >= order.qty.raw() {
-            self.order_owners.remove(&order.client_id);
-        }
-        Ok(())
+        self.dispatch_fill(order, fill, None)
+    }
+
+    fn on_fill_with_event_seq(
+        &mut self,
+        order: &Order,
+        fill: &Fill,
+        event_seq: u64,
+    ) -> Result<(), QxError> {
+        self.dispatch_fill(order, fill, Some(event_seq))
     }
 }
 

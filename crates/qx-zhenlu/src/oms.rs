@@ -97,13 +97,94 @@ impl Oms {
             .get(&fill.order_id)
             .ok_or_else(|| QxError::Invariant("成交对应的订单不存在".into()))?
             .clone();
-        if fill.qty.raw() <= 0 || fill.qty.raw() > order.remaining().raw() {
-            return Err(QxError::Invariant("成交数量超过订单剩余数量".into()));
-        }
         if !fill.account_id.is_empty() && fill.account_id != order.account_id {
             return Err(QxError::Invariant("成交账户与 OMS 订单账户不一致".into()));
         }
+        fill.validate_exact_amounts().map_err(QxError::Invariant)?;
         let mut next = order;
+        if next.exact_amounts.is_some() || fill.exact_amounts.is_some() {
+            let exact_fill = fill
+                .exact_amounts
+                .ok_or_else(|| QxError::Invariant("精确订单收到缺少精确数量/价格的成交".into()))?;
+            let exact_order = next
+                .exact_amounts
+                .as_mut()
+                .ok_or_else(|| QxError::Invariant("旧精度订单收到精确成交".into()))?;
+            let quote_budget = exact_order.quote_budget;
+            if exact_fill.quote_budget_complete && quote_budget.is_none() {
+                return Err(QxError::Invariant(
+                    "非 quote_budget 订单收到预算完成标记".into(),
+                ));
+            }
+            if let Some(budget) = quote_budget {
+                let cost = exact_fill
+                    .quote_cost
+                    .ok_or_else(|| QxError::Invariant("计价币预算订单成交缺少精确花费".into()))?;
+                let remaining_budget = budget
+                    .checked_sub(exact_order.quote_filled)
+                    .ok_or_else(|| QxError::Invariant("计价币预算剩余量计算溢出".into()))?;
+                if cost
+                    .checked_cmp(remaining_budget)
+                    .is_none_or(|ordering| ordering.is_gt())
+                {
+                    return Err(QxError::Invariant("成交花费超过计价币预算".into()));
+                }
+                exact_order.quote_filled = exact_order
+                    .quote_filled
+                    .checked_add(cost)
+                    .ok_or_else(|| QxError::Invariant("计价币累计成交花费溢出".into()))?;
+            } else {
+                let remaining = exact_order
+                    .quantity
+                    .checked_sub(exact_order.filled)
+                    .ok_or_else(|| QxError::Invariant("精确订单剩余数量计算溢出".into()))?;
+                if exact_fill
+                    .quantity
+                    .checked_cmp(remaining)
+                    .is_none_or(|ordering| ordering.is_gt())
+                {
+                    return Err(QxError::Invariant("成交数量超过订单剩余数量".into()));
+                }
+            }
+            exact_order.filled = exact_order
+                .filled
+                .checked_add(exact_fill.quantity)
+                .ok_or_else(|| QxError::Invariant("精确订单累计成交数量溢出".into()))?;
+            if matches!(next.status, OrderStatus::Submitted | OrderStatus::Accepted) {
+                next.status
+                    .transition(OrderStatus::Working)
+                    .map_err(QxError::Invariant)?;
+            }
+            let is_filled = quote_budget.map_or_else(
+                || {
+                    exact_order
+                        .filled
+                        .checked_cmp(exact_order.quantity)
+                        .is_some_and(|ordering| ordering.is_ge())
+                },
+                |budget| {
+                    exact_fill.quote_budget_complete
+                        || exact_order
+                            .quote_filled
+                            .checked_cmp(budget)
+                            .is_some_and(|ordering| ordering.is_ge())
+                },
+            );
+            let status = if is_filled {
+                OrderStatus::Filled
+            } else if next.status == OrderStatus::CancelPending {
+                // A fill can race a venue cancel acknowledgement. Keep the cancel
+                // operation in flight until the venue confirms or rejects it.
+                OrderStatus::CancelPending
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+            next.status.transition(status).map_err(QxError::Invariant)?;
+            return Ok(next);
+        }
+        if fill.qty.raw() <= 0 || fill.qty.raw() > next.remaining().raw() {
+            return Err(QxError::Invariant("成交数量超过订单剩余数量".into()));
+        }
         if matches!(next.status, OrderStatus::Submitted | OrderStatus::Accepted) {
             next.status
                 .transition(OrderStatus::Working)
@@ -112,6 +193,9 @@ impl Oms {
         next.filled = Quantity::from_raw(next.filled.raw() + fill.qty.raw());
         let status = if next.filled.raw() >= next.qty.raw() {
             OrderStatus::Filled
+        } else if next.status == OrderStatus::CancelPending {
+            // Do not lose the durable cancel-in-flight state on a partial fill.
+            OrderStatus::CancelPending
         } else {
             OrderStatus::PartiallyFilled
         };
@@ -182,7 +266,9 @@ impl qx_core::OrderFillBook for Oms {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_core::{InstrumentId, OrderTrace, Side};
+    use qx_core::{
+        ExactDecimal, ExactFillAmounts, ExactOrderAmounts, InstrumentId, OrderTrace, Side,
+    };
 
     fn order() -> Order {
         Order {
@@ -201,6 +287,8 @@ mod tests {
                 rule_version: Some("v1".into()),
             }),
             policy: None,
+
+            exact_amounts: None,
         }
     }
 
@@ -228,6 +316,81 @@ mod tests {
             .all(|order| order.status.is_terminal()));
     }
 
+    #[test]
+    fn partial_fill_during_cancel_pending_preserves_cancel_until_confirmation() {
+        let mut oms = Oms::new();
+        let mut pending = order();
+        pending.status = OrderStatus::Submitted;
+        oms.submit(pending).unwrap();
+        oms.accept(1).unwrap();
+        oms.get_mut(1).unwrap().status = OrderStatus::CancelPending;
+
+        oms.apply_fill(&Fill {
+            order_id: 1,
+            qty: Quantity::from_i64(1),
+            price: qx_core::Price::from_i64(100),
+            account_id: "main".into(),
+            ..Fill::default()
+        })
+        .unwrap();
+
+        let after_fill = oms.get(1).unwrap();
+        assert_eq!(after_fill.status, OrderStatus::CancelPending);
+        assert_eq!(after_fill.filled, Quantity::from_i64(1));
+
+        oms.cancel(1).unwrap();
+        let after_cancel = oms.get(1).unwrap();
+        assert_eq!(after_cancel.status, OrderStatus::Cancelled);
+        assert_eq!(after_cancel.filled, Quantity::from_i64(1));
+    }
+
+    #[test]
+    fn exact_partial_fill_during_cancel_pending_preserves_cancel_until_confirmation() {
+        let mut oms = Oms::new();
+        let mut pending = order();
+        pending.qty = Quantity::ZERO;
+        pending.status = OrderStatus::Submitted;
+        pending.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.0000000002").unwrap(),
+            limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+            filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            quote_budget: None,
+            quote_filled: Default::default(),
+        });
+        oms.submit(pending).unwrap();
+        oms.accept(1).unwrap();
+        oms.get_mut(1).unwrap().status = OrderStatus::CancelPending;
+
+        oms.apply_fill(&Fill {
+            order_id: 1,
+            account_id: "main".into(),
+            exact_amounts: Some(ExactFillAmounts {
+                quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+                price: ExactDecimal::parse("0.00000001").unwrap(),
+                quote_cost: None,
+                quote_budget_complete: false,
+            }),
+            ..Fill::default()
+        })
+        .unwrap();
+
+        let after_fill = oms.get(1).unwrap();
+        assert_eq!(after_fill.status, OrderStatus::CancelPending);
+        assert_eq!(
+            after_fill.filled_decimal(),
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+
+        oms.cancel(1).unwrap();
+        let after_cancel = oms.get(1).unwrap();
+        assert_eq!(after_cancel.status, OrderStatus::Cancelled);
+        assert_eq!(
+            after_cancel.filled_decimal(),
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+    }
+
     /// 状态机拒下的成交不能把订单留在"已加仓但未迁移状态"的半程上。
     #[test]
     fn rejected_fill_leaves_no_partial_order_state() {
@@ -248,5 +411,194 @@ mod tests {
         let stored = oms.get(1).unwrap();
         assert_eq!(stored.status, OrderStatus::PendingSubmit);
         assert_eq!(stored.filled, Quantity::ZERO);
+    }
+
+    #[test]
+    fn oms_accumulates_exact_fill_quantity_without_legacy_scale_loss() {
+        let mut oms = Oms::new();
+        let mut precise_order = order();
+        precise_order.qty = Quantity::ZERO;
+        precise_order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.0000000002").unwrap(),
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            quote_budget: None,
+            quote_filled: Default::default(),
+        });
+        oms.submit(precise_order).unwrap();
+        oms.accept(1).unwrap();
+
+        for expected_status in [OrderStatus::PartiallyFilled, OrderStatus::Filled] {
+            let fill = Fill {
+                order_id: 1,
+                account_id: "main".into(),
+                exact_amounts: Some(ExactFillAmounts {
+                    quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+                    price: ExactDecimal::parse("0.00000001").unwrap(),
+                    quote_cost: None,
+                    quote_budget_complete: false,
+                }),
+                ..Fill::default()
+            };
+            oms.apply_fill(&fill).unwrap();
+            let stored = oms.get(1).unwrap();
+            assert_eq!(stored.status, expected_status);
+        }
+        assert_eq!(
+            oms.get(1).unwrap().filled_decimal(),
+            ExactDecimal::parse("0.0000000002").unwrap()
+        );
+    }
+
+    #[test]
+    fn oms_tracks_quote_budget_spend_while_accumulating_base_fills() {
+        let mut oms = Oms::new();
+        let mut budget_order = order();
+        budget_order.qty = Quantity::ZERO;
+        budget_order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::ZERO,
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: Some(ExactDecimal::parse("10").unwrap()),
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+        });
+        oms.submit(budget_order).unwrap();
+        oms.accept(1).unwrap();
+
+        for (quantity, price, cost, expected_status) in [
+            ("0.5", "10", "5", OrderStatus::PartiallyFilled),
+            ("0.25", "20", "5", OrderStatus::Filled),
+        ] {
+            oms.apply_fill(&Fill {
+                order_id: 1,
+                account_id: "main".into(),
+                exact_amounts: Some(ExactFillAmounts {
+                    quantity: ExactDecimal::parse(quantity).unwrap(),
+                    price: ExactDecimal::parse(price).unwrap(),
+                    quote_cost: Some(ExactDecimal::parse(cost).unwrap()),
+                    quote_budget_complete: false,
+                }),
+                ..Fill::default()
+            })
+            .unwrap();
+            assert_eq!(oms.get(1).unwrap().status, expected_status);
+        }
+        let amounts = oms.get(1).unwrap().exact_amounts.unwrap();
+        assert_eq!(amounts.filled, ExactDecimal::parse("0.75").unwrap());
+        assert_eq!(amounts.quote_filled, ExactDecimal::parse("10").unwrap());
+    }
+
+    #[test]
+    fn oms_finishes_quote_budget_order_when_lot_step_leaves_unspent_dust() {
+        let mut oms = Oms::new();
+        let mut budget_order = order();
+        budget_order.qty = Quantity::ZERO;
+        budget_order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::ZERO,
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: Some(ExactDecimal::parse("10").unwrap()),
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+        });
+        oms.submit(budget_order).unwrap();
+        oms.accept(1).unwrap();
+
+        oms.apply_fill(&Fill {
+            order_id: 1,
+            account_id: "main".into(),
+            exact_amounts: Some(ExactFillAmounts {
+                quantity: ExactDecimal::parse("3.333").unwrap(),
+                price: ExactDecimal::parse("3").unwrap(),
+                quote_cost: Some(ExactDecimal::parse("9.999").unwrap()),
+                quote_budget_complete: true,
+            }),
+            ..Fill::default()
+        })
+        .unwrap();
+
+        assert_eq!(oms.get(1).unwrap().status, OrderStatus::Filled);
+        assert_eq!(
+            oms.get(1).unwrap().quote_filled_decimal(),
+            ExactDecimal::parse("9.999").unwrap()
+        );
+    }
+
+    #[test]
+    fn oms_rejects_quote_budget_overrun_without_advancing_order() {
+        let mut oms = Oms::new();
+        let mut budget_order = order();
+        budget_order.qty = Quantity::ZERO;
+        budget_order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::ZERO,
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: Some(ExactDecimal::parse("10").unwrap()),
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+        });
+        oms.submit(budget_order).unwrap();
+        oms.accept(1).unwrap();
+        let result = oms.apply_fill(&Fill {
+            order_id: 1,
+            account_id: "main".into(),
+            exact_amounts: Some(ExactFillAmounts {
+                quantity: ExactDecimal::parse("1").unwrap(),
+                price: ExactDecimal::parse("10.01").unwrap(),
+                quote_cost: Some(ExactDecimal::parse("10.01").unwrap()),
+                quote_budget_complete: false,
+            }),
+            ..Fill::default()
+        });
+        assert!(result.is_err());
+        assert_eq!(oms.get(1).unwrap().filled_decimal(), ExactDecimal::ZERO);
+        assert_eq!(
+            oms.get(1).unwrap().quote_filled_decimal(),
+            ExactDecimal::ZERO
+        );
+    }
+
+    #[test]
+    fn oms_accumulates_exact_fills_when_raw_alignment_would_overflow_before_normalization() {
+        let mut oms = Oms::new();
+        let mut precise_order = order();
+        precise_order.qty = Quantity::ZERO;
+        precise_order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("340282366920938463463.37460743176821145").unwrap(),
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            quote_budget: None,
+            quote_filled: Default::default(),
+        });
+        oms.submit(precise_order).unwrap();
+        oms.accept(1).unwrap();
+
+        for quantity in [
+            "170141183460469231731.687303715884105727",
+            "170141183460469231731.687303715884105723",
+        ] {
+            let fill = Fill {
+                order_id: 1,
+                account_id: "main".into(),
+                exact_amounts: Some(ExactFillAmounts {
+                    quantity: ExactDecimal::parse(quantity).unwrap(),
+                    price: ExactDecimal::parse("0.00000001").unwrap(),
+                    quote_cost: None,
+                    quote_budget_complete: false,
+                }),
+                ..Fill::default()
+            };
+            oms.apply_fill(&fill).unwrap();
+        }
+
+        let stored = oms.get(1).unwrap();
+        assert_eq!(stored.status, OrderStatus::Filled);
+        assert_eq!(
+            stored.filled_decimal().to_string(),
+            "340282366920938463463.37460743176821145"
+        );
     }
 }

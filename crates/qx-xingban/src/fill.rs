@@ -4,7 +4,7 @@
 //! **没有 L2/L3 数据时不得使用 VolumeSensitive 并声称已还原订单簿**——
 //! 更诚实的做法是输出"可交易容量区间"。
 
-use qx_core::Side;
+use qx_core::{DecimalRounding, ExactDecimal, Side};
 use qx_guanxing::Bar;
 
 use crate::execution_attempt::{ExecutionAttemptReason, FillEvaluation};
@@ -45,6 +45,38 @@ pub struct FillContext<'a> {
     pub halted: bool,
 }
 
+/// Scale-aware counterpart to [`FillContext`]. The OHLC price and volume source remains the
+/// declared Bar scale, while order quantity and limit values retain their exact decimal scale.
+pub struct ExactFillContext<'a> {
+    pub side: Side,
+    pub qty: ExactDecimal,
+    pub limit: Option<ExactDecimal>,
+    pub bar: &'a Bar,
+    pub halted: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ExactFillEvaluation {
+    pub fill: Option<(ExactDecimal, ExactDecimal)>,
+    pub no_fill_reason: ExecutionAttemptReason,
+}
+
+impl ExactFillEvaluation {
+    pub fn filled(price: ExactDecimal, qty: ExactDecimal) -> Self {
+        Self {
+            fill: Some((price, qty)),
+            no_fill_reason: ExecutionAttemptReason::ModelDeclined,
+        }
+    }
+
+    pub fn declined(reason: ExecutionAttemptReason) -> Self {
+        Self {
+            fill: None,
+            no_fill_reason: reason,
+        }
+    }
+}
+
 /// Machine-readable model identity and assumptions for summaries and reports.
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FillModelDescriptor {
@@ -62,6 +94,21 @@ pub(crate) fn limit_ok(side: Side, limit: Option<i128>, px: i128) -> bool {
         Some(l) => match side {
             Side::Buy => px <= l,
             Side::Sell => px >= l,
+        },
+    }
+}
+
+fn raw_decimal(value: i128) -> ExactDecimal {
+    ExactDecimal::from_parts(value, 9).expect("legacy Bar values use supported scale 9")
+}
+
+fn limit_ok_exact(side: Side, limit: Option<ExactDecimal>, px: ExactDecimal) -> bool {
+    match limit {
+        None => true,
+        Some(limit) => match (side, px.checked_cmp(limit)) {
+            (Side::Buy, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+            | (Side::Sell, Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) => true,
+            _ => false,
         },
     }
 }
@@ -110,6 +157,50 @@ pub trait FillModel {
     }
 
     fn fill(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> Option<(i128, i128)>;
+
+    /// True when this model implements scale-aware quantities directly. Models that only
+    /// implement the legacy callback can still receive exact inputs that project losslessly
+    /// onto the historical 1e-9 scale.
+    fn supports_exact_amounts(&self) -> bool {
+        false
+    }
+
+    fn can_evaluate_exact(&self, ctx: &ExactFillContext<'_>) -> bool {
+        self.supports_exact_amounts()
+            || (ctx.qty.to_raw(9).is_ok() && ctx.limit.is_none_or(|limit| limit.to_raw(9).is_ok()))
+    }
+
+    /// Evaluate an exact order. The compatibility implementation delegates to the old
+    /// callback only when every order amount is exactly representable at scale 1e-9.
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        let (Ok(qty), Some(limit)) = (
+            ctx.qty.to_raw(9),
+            match ctx.limit {
+                Some(limit) => limit.to_raw(9).ok().map(Some),
+                None => Some(None),
+            },
+        ) else {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::ExactAmountsUnsupported);
+        };
+        let legacy = FillContext {
+            side: ctx.side,
+            qty,
+            limit,
+            bar: ctx.bar,
+            halted: ctx.halted,
+        };
+        self.evaluate(&legacy, rng)
+            .fill
+            .and_then(|(price, qty)| Some((raw_decimal(price), raw_decimal(qty))))
+            .map_or_else(
+                || ExactFillEvaluation::declined(ExecutionAttemptReason::ModelDeclined),
+                |(price, qty)| ExactFillEvaluation::filled(price, qty),
+            )
+    }
 
     /// Evaluate once and retain a machine-readable explanation for the attempt. Third-party
     /// models remain source-compatible and default to a generic decline reason until they
@@ -176,6 +267,22 @@ impl FillModel for BarVolumeParticipationLimit {
         self.inner.fill(ctx, rng)
     }
 
+    fn supports_exact_amounts(&self) -> bool {
+        self.inner.supports_exact_amounts()
+    }
+
+    fn can_evaluate_exact(&self, ctx: &ExactFillContext<'_>) -> bool {
+        self.inner.can_evaluate_exact(ctx)
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        self.inner.evaluate_exact(ctx, rng)
+    }
+
     fn evaluate(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> FillEvaluation {
         self.inner.evaluate(ctx, rng)
     }
@@ -196,6 +303,26 @@ impl FillModel for NextBarOpenFillModel {
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
         self.evaluate(ctx, _rng).fill
+    }
+
+    fn supports_exact_amounts(&self) -> bool {
+        true
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        _rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        if ctx.halted {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::MarketHalted);
+        }
+        let price = ctx.bar.open_exact();
+        if limit_ok_exact(ctx.side, ctx.limit, price) {
+            ExactFillEvaluation::filled(price, ctx.qty)
+        } else {
+            ExactFillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
+        }
     }
     fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         if ctx.halted {
@@ -225,6 +352,23 @@ impl FillModel for BestPriceFillModel {
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
         self.evaluate(ctx, _rng).fill
+    }
+
+    fn supports_exact_amounts(&self) -> bool {
+        true
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        _rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        let price = ctx.bar.close_exact();
+        if limit_ok_exact(ctx.side, ctx.limit, price) {
+            ExactFillEvaluation::filled(price, ctx.qty)
+        } else {
+            ExactFillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
+        }
     }
     fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let px = ctx.bar.close;
@@ -256,6 +400,31 @@ impl FillModel for OneTickSlippageFillModel {
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
         self.evaluate(ctx, _rng).fill
+    }
+
+    fn supports_exact_amounts(&self) -> bool {
+        true
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        _rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        let tick = raw_decimal(self.tick);
+        let close = ctx.bar.close_exact();
+        let price = match ctx.side {
+            Side::Buy => close.checked_add(tick),
+            Side::Sell => close.checked_sub(tick),
+        };
+        let Some(price) = price.filter(|price| price.is_positive()) else {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::InvalidModelOutput);
+        };
+        if limit_ok_exact(ctx.side, ctx.limit, price) {
+            ExactFillEvaluation::filled(price, ctx.qty)
+        } else {
+            ExactFillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
+        }
     }
     fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let px = match ctx.side {
@@ -297,6 +466,34 @@ impl FillModel for ProbabilisticFillModel {
     fn fill(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> Option<(i128, i128)> {
         self.evaluate(ctx, rng).fill
     }
+
+    fn supports_exact_amounts(&self) -> bool {
+        true
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        if rng.next_prob() >= self.prob_fill_on_limit {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::ProbabilityMiss);
+        }
+        let base = ctx.bar.close_exact();
+        let tick = raw_decimal(self.tick);
+        let price = match ctx.side {
+            Side::Buy => base.checked_add(tick),
+            Side::Sell => base.checked_sub(tick),
+        };
+        let Some(price) = price.filter(|price| price.is_positive()) else {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::InvalidModelOutput);
+        };
+        if limit_ok_exact(ctx.side, ctx.limit, price) {
+            ExactFillEvaluation::filled(price, ctx.qty)
+        } else {
+            ExactFillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
+        }
+    }
     fn evaluate(&self, ctx: &FillContext, rng: &mut DeterministicRng) -> FillEvaluation {
         if rng.next_prob() >= self.prob_fill_on_limit {
             return FillEvaluation::declined(ExecutionAttemptReason::ProbabilityMiss);
@@ -335,6 +532,60 @@ impl FillModel for VolumeSensitiveFillModel {
     }
     fn fill(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> Option<(i128, i128)> {
         self.evaluate(ctx, _rng).fill
+    }
+
+    fn supports_exact_amounts(&self) -> bool {
+        true
+    }
+
+    fn evaluate_exact(
+        &self,
+        ctx: &ExactFillContext<'_>,
+        _rng: &mut DeterministicRng,
+    ) -> ExactFillEvaluation {
+        if self.frac_bp < 0 {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::InvalidModelOutput);
+        }
+        let fraction = match ExactDecimal::from_parts(self.frac_bp, 0) {
+            Ok(value) => value,
+            Err(_) => {
+                return ExactFillEvaluation::declined(ExecutionAttemptReason::InvalidModelOutput);
+            }
+        };
+        let denominator = ExactDecimal::from_parts(10_000, 0).expect("constant is valid");
+        let capacity = ctx
+            .bar
+            .volume_exact()
+            .checked_mul_at_scale(
+                fraction,
+                ExactDecimal::MAX_SCALE,
+                DecimalRounding::TowardZero,
+            )
+            .and_then(|value| {
+                value.checked_div_at_scale(
+                    denominator,
+                    ExactDecimal::MAX_SCALE,
+                    DecimalRounding::TowardZero,
+                )
+            });
+        let Some(capacity) = capacity.filter(|capacity| capacity.is_positive()) else {
+            return ExactFillEvaluation::declined(ExecutionAttemptReason::NoCapacity);
+        };
+        let qty = if ctx
+            .qty
+            .checked_cmp(capacity)
+            .is_some_and(|ordering| ordering.is_gt())
+        {
+            capacity
+        } else {
+            ctx.qty
+        };
+        let price = ctx.bar.close_exact();
+        if limit_ok_exact(ctx.side, ctx.limit, price) {
+            ExactFillEvaluation::filled(price, qty)
+        } else {
+            ExactFillEvaluation::declined(ExecutionAttemptReason::LimitNotMarketable)
+        }
     }
     fn evaluate(&self, ctx: &FillContext, _rng: &mut DeterministicRng) -> FillEvaluation {
         let capacity = (ctx.bar.volume * self.frac_bp) / 10_000;

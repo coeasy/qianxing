@@ -682,6 +682,9 @@ mod tests {
             venue_id: "venue".into(),
             data_fingerprint: "fingerprint".into(),
             as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             positions: Default::default(),
             cash: Default::default(),
             available_margin_raw: None,
@@ -700,6 +703,7 @@ mod tests {
                 low_raw: 99,
                 close_raw: 100,
                 volume_raw: 10,
+                exact_ohlcv: None,
             })
             .collect()
     }

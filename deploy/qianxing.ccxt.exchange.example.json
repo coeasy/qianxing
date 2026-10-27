@@ -13,5 +13,10 @@
     "password": "QX_CCXT_OKX_PASSWORD"
   },
   "options": {},
-  "instruments": ["BTC/USDT.OKX", "ETH/USDT.OKX", "BTC/USDT:USDT.OKX"]
+  "instruments": [
+    "BTC/USDT.OKX",
+    "ETH/USDT.OKX",
+    "BTC/USDT:USDT.OKX"
+  ],
+  "account_model": "unified"
 }

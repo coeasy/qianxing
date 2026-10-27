@@ -57,6 +57,7 @@ fn derivative_fill_with_foreign_fee_currency_is_rejected() {
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let mut buy = order(Side::Buy);
     buy.client_id = 11;
@@ -133,6 +134,56 @@ fn fee_currency_gate_only_bites_on_reported_foreign_currency() {
             "零费用不产生费用腿，非零费用必须有费用腿"
         );
     }
+}
+
+/// Current exchange adapters can return itemized fees in several currencies. Each fee stays
+/// in the unit reported by the venue; raw amounts from different currencies are never added.
+#[test]
+fn explicit_multi_currency_fee_rows_are_booked_in_their_native_currencies() {
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_i64(1000), 1)
+        .unwrap();
+    ledger
+        .deposit("main", "BNB", Money::from_i64(2), 1)
+        .unwrap();
+
+    ledger
+        .apply_fill(
+            &order(Side::Buy),
+            &Fill {
+                order_id: 7,
+                qty: Quantity::from_i64(1),
+                price: Price::from_i64(100),
+                fees: vec![
+                    FillFee {
+                        amount: Money::from_raw(10_000_000),
+                        currency: Some("BNB".into()),
+                        source_trade_ids: vec!["trade-1".into()],
+                    },
+                    FillFee {
+                        amount: Money::from_raw(25_000_000),
+                        currency: Some("USDT".into()),
+                        source_trade_ids: vec!["trade-1".into()],
+                    },
+                ],
+                ts: 2,
+                ..Fill::default()
+            },
+            "USDT",
+        )
+        .expect("itemized fees in distinct currencies are valid facts");
+
+    let fee_rows = ledger
+        .entries()
+        .iter()
+        .filter(|entry| entry.kind == LedgerEntryKind::Fee)
+        .map(|entry| (entry.currency.as_str(), entry.amount.raw()))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        fee_rows,
+        BTreeMap::from([("BNB", -10_000_000), ("USDT", -25_000_000)])
+    );
 }
 
 /// 现货里最常见的异币种费用：Binance 从**收到的那份资产**里扣手续费，所以 BTCUSDT 买入

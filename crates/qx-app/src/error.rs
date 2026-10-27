@@ -13,8 +13,8 @@
 //!
 //! 唯一映射表在本模块：类别 → 行动是 [`AppErrorCategory::action`]，类别 → 重试档是
 //! [`AppErrorCategory::retry`]，领域码 → 类别是 [`category_of_domain_code`]。
-//! 调用方按 [`AppErrorCategory::as_str`] 分支，**永远不要** `match` 消息文本——
-//! 消息是中文展示层，会随文案漂移。
+//! 调用方按 [`AppErrorCategory::as_str`] 分支；当需要区分同一类别下的具体拒绝子因时，
+//! 再看可选 `reason_code`。**永远不要** `match` 消息文本——消息是中文展示层，会随文案漂移。
 //!
 //! ## 两条轴之间唯一必须成立的那条不等式
 //!
@@ -222,7 +222,7 @@ pub const fn category_of_domain_code(code: ErrorCode) -> AppErrorCategory {
     }
 }
 
-/// 应用层错误：类别 + 展示层消息 + 可定位的 correlation id + 底层诊断码。
+/// 应用层错误：类别 + 可选稳定原因码 + 展示层消息 + 可定位的 correlation id + 底层诊断码。
 ///
 /// `action` / `retry` / `safe_to_retry` **不存字段**，从类别派生（单源）——存字段就会有人
 /// 造出「类别是 INVALID_INPUT 但 action 是 RETRY_LATER」这种自相矛盾的实例。
@@ -231,6 +231,8 @@ pub struct AppError {
     category: AppErrorCategory,
     message: String,
     correlation_id: Option<String>,
+    /// 稳定的应用层拒绝子因；调用方可按它区分同一类别下的具体能力缺口。
+    reason_code: Option<String>,
     /// 底层诊断证据（领域码 `TRANSIENT` 那类，或 `io:NotFound` 那类）。**不参与分支**。
     source_code: Option<String>,
 }
@@ -242,6 +244,7 @@ impl AppError {
             category,
             message: message.into(),
             correlation_id: None,
+            reason_code: None,
             source_code: None,
         }
     }
@@ -250,6 +253,14 @@ impl AppError {
     /// 否则用户拿到的错误无从与日志、产物对齐（G6 要的是"一次故障四层同一个 id"）。
     pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
         self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    /// 挂上稳定的应用层拒绝子因（例如 `scope_not_declared`）。
+    ///
+    /// 它细化 `category`，不替代行动/重试分类；展示文案仍只供人阅读。
+    pub fn with_reason_code(mut self, reason_code: impl Into<String>) -> Self {
+        self.reason_code = Some(reason_code.into());
         self
     }
 
@@ -313,6 +324,11 @@ impl AppError {
         self.correlation_id.as_deref()
     }
 
+    /// 稳定的应用层拒绝子因（没挂就是 `None`）。
+    pub fn reason_code(&self) -> Option<&str> {
+        self.reason_code.as_deref()
+    }
+
     /// 底层诊断码（没挂就是 `None`）。
     pub fn source_code(&self) -> Option<&str> {
         self.source_code.as_deref()
@@ -332,6 +348,7 @@ impl AppError {
             "retry": self.retry().as_str(),
             "safe_to_retry": self.safe_to_retry(),
             "correlation_id": self.correlation_id(),
+            "reason_code": self.reason_code(),
             "source_code": self.source_code(),
             "message": self.message(),
         })

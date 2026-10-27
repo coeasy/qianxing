@@ -7,18 +7,21 @@ use super::{
     append_strategy_decision_facts,
     fill_application::{self, FillApplicationInput},
     order_admission::{self, OrderAdmissionInput},
-    BarStrategy, PortfolioBarSeries, PortfolioBarTimeline, PortfolioBudgetState,
+    strategy_order_status_update_from_order, BarStrategy, PortfolioBarSeries, PortfolioBarTimeline,
+    PortfolioBudgetState,
 };
+use crate::backtest::portfolio_budget::PortfolioBudgetMarket;
 use crate::cost::MarginRule;
 use qx_core::{
-    Event, EventKind, EventLog, FundingRateEvent, InstrumentId, Ledger, Money, Price,
-    TradingInstrumentSpec, ValuationContext,
+    DecimalRounding, Event, EventKind, EventLog, ExactDecimal, ExactValuationContext,
+    FundingRateEvent, InstrumentId, Ledger, Money, OrderStatus, Price, TradingInstrumentSpec,
+    ValuationContext,
 };
 use qx_guanxing::Bar;
 use qx_zhenlu::Oms;
 use std::collections::BTreeMap;
 
-const MAX_INSTRUMENT_EQUITY_SAMPLES: usize = 1_000;
+pub const MAX_INSTRUMENT_EQUITY_SAMPLES: usize = 1_000;
 
 mod construction;
 mod funding;
@@ -35,12 +38,37 @@ pub use model::{
 };
 use runtime::{
     bar_at_or_before, build_runtime, initialize_ledger, invariant, pending_funding_reservation_raw,
-    sum_pending_funding_reservations,
+    sum_pending_funding_reservations, RuntimeMarkets,
 };
 struct OwnedTimelineEvent {
     market_index: usize,
     bar_index: usize,
     ts: u64,
+}
+
+fn portfolio_budget_markets(
+    runtime: &RuntimeMarkets<'_>,
+    marks: &BTreeMap<InstrumentId, Price>,
+) -> Result<BTreeMap<InstrumentId, PortfolioBudgetMarket>, qx_core::QxError> {
+    runtime
+        .by_index
+        .iter()
+        .filter_map(|market| {
+            marks.get(&market.instrument).map(|mark| {
+                let exact_mark = ExactDecimal::from_parts(mark.raw(), 9)
+                    .map_err(|error| qx_core::QxError::Invariant(error.into()))?;
+                Ok((
+                    market.instrument.clone(),
+                    PortfolioBudgetMarket {
+                        spec: market.spec.clone(),
+                        mark: exact_mark,
+                        margin: std::sync::Arc::clone(&market.margin),
+                        multiplier: 1,
+                    },
+                ))
+            })
+        })
+        .collect()
 }
 
 impl<'a> PortfolioBarEngine<'a> {
@@ -66,6 +94,9 @@ impl<'a> PortfolioBarEngine<'a> {
             .map(|market| (market.instrument.clone(), market.spec.clone()))
             .collect::<BTreeMap<_, _>>();
         let initial_cash_raw = config.initial_cash.raw();
+        let initial_cash_exact = config
+            .initial_cash_exact
+            .ok_or_else(|| invariant("共享 Bar session 缺少已校验的精确初始资金"))?;
         let PreparedTimeline {
             start,
             end,
@@ -81,7 +112,7 @@ impl<'a> PortfolioBarEngine<'a> {
         let (mut ledger, mut log) = initialize_ledger(
             &config.account_id,
             &config.currency,
-            config.initial_cash,
+            initial_cash_exact,
             start,
             settlements.contains_key(&start),
         )?;
@@ -104,14 +135,26 @@ impl<'a> PortfolioBarEngine<'a> {
             .map(|market| (market.instrument.clone(), EventLog::new()))
             .collect::<BTreeMap<_, _>>();
         let mut equity = Vec::new();
+        let mut equity_exact = Vec::new();
         let mut instrument_equity_contributions = specs
             .keys()
             .cloned()
             .map(|instrument| (instrument, Vec::new()))
             .collect::<BTreeMap<_, _>>();
-        let mut instrument_cash_by_currency =
+        let mut instrument_equity_contributions_exact = specs
+            .keys()
+            .cloned()
+            .map(|instrument| (instrument, Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        let mut instrument_cash_raw_by_currency =
             BTreeMap::<InstrumentId, BTreeMap<String, i128>>::new();
-        let mut instrument_cash_entry_cursor = 0_usize;
+        let mut instrument_cash_exact_by_currency =
+            BTreeMap::<InstrumentId, BTreeMap<String, ExactDecimal>>::new();
+        let mut account_cash_exact_by_currency =
+            BTreeMap::from([(config.currency.clone(), initial_cash_exact)]);
+        let mut account_cash_raw_by_currency =
+            BTreeMap::from([(config.currency.clone(), initial_cash_raw)]);
+        let mut instrument_cash_entry_cursor = ledger.entries().len();
         let mut funding_by_instrument_raw = BTreeMap::<InstrumentId, i128>::new();
         let mut funding_events_by_instrument = BTreeMap::<InstrumentId, Vec<(u64, i128)>>::new();
 
@@ -157,16 +200,20 @@ impl<'a> PortfolioBarEngine<'a> {
                 })?;
             }
             if timestamp_events.is_empty() {
-                let marked_equity = ledger
-                    .valuate(
-                        &ValuationContext::spot(&config.account_id, &marks, &config.currency)
-                            .with_market_specs(&specs),
-                    )?
-                    .equity
-                    .raw();
+                let valuation =
+                    ValuationContext::spot(&config.account_id, &marks, &config.currency)
+                        .with_market_specs(&specs);
+                let marked_equity = ledger.valuate(&valuation)?.equity.raw();
+                let marked_equity_exact =
+                    ledger.valuate_exact(&ExactValuationContext::new(valuation))?;
                 append_instrument_equity_contributions(
                     &mut instrument_equity_contributions,
-                    &mut instrument_cash_by_currency,
+                    &mut instrument_equity_contributions_exact,
+                    &mut equity_exact,
+                    &mut instrument_cash_raw_by_currency,
+                    &mut instrument_cash_exact_by_currency,
+                    &mut account_cash_exact_by_currency,
+                    &mut account_cash_raw_by_currency,
                     &mut instrument_cash_entry_cursor,
                     InstrumentContributionInput {
                         equity_index: u64::try_from(equity.len())
@@ -178,7 +225,9 @@ impl<'a> PortfolioBarEngine<'a> {
                         specs: &specs,
                         marks: &marks,
                         initial_cash_raw,
+                        initial_cash_exact,
                         marked_equity_raw: marked_equity,
+                        marked_equity_exact,
                     },
                 )?;
                 equity.push((ts, marked_equity));
@@ -228,16 +277,37 @@ impl<'a> PortfolioBarEngine<'a> {
                         .cash_for(&config.account_id, &config.currency)
                         .saturating_sub(reserved)
                         .max(0);
-                    strategy.update_account_state(cash, Some(free_cash));
+                    let cash_exact = ledger.cash_balances_exact_for(&config.account_id);
+                    let reserved_exact = qx_core::ExactDecimal::from_parts(reserved, 9)
+                        .map_err(|error| qx_core::QxError::Invariant(error.into()))?;
+                    let free_cash_exact = ledger
+                        .cash_for_exact(&config.account_id, &config.currency)
+                        .checked_sub(reserved_exact)
+                        .filter(|amount| !amount.is_negative())
+                        .unwrap_or(qx_core::ExactDecimal::ZERO);
+                    strategy.update_account_state_exact(
+                        cash,
+                        Some(free_cash),
+                        &cash_exact,
+                        Some(free_cash_exact),
+                    );
                     let position = ledger
                         .position_for(&config.account_id, instrument)
                         .quantity
                         .raw();
-                    let orders = strategy.on_bar_orders_with_margin_checked(
+                    let position_exact = ledger
+                        .position_for_side_exact(
+                            &config.account_id,
+                            instrument,
+                            qx_core::PositionSide::Net,
+                        )
+                        .quantity;
+                    let orders = strategy.on_bar_orders_with_margin_exact_checked(
                         history,
                         instrument,
                         bar.ts,
                         position,
+                        Some(position_exact),
                         Some(free_cash),
                     )?;
                     append_strategy_decision_facts(
@@ -378,6 +448,7 @@ impl<'a> PortfolioBarEngine<'a> {
                         markets: &runtime,
                     },
                 )?;
+                let budget_markets = portfolio_budget_markets(&runtime, visible_marks)?;
                 let derivative_spec = market
                     .spec
                     .product
@@ -388,7 +459,7 @@ impl<'a> PortfolioBarEngine<'a> {
                     .quantity
                     .raw();
                 let previous_log_len = log.events().len();
-                let accepted = order_admission::admit_orders(OrderAdmissionInput {
+                let admission = order_admission::admit_orders(OrderAdmissionInput {
                     orders,
                     account_id: &config.account_id,
                     instrument,
@@ -403,6 +474,7 @@ impl<'a> PortfolioBarEngine<'a> {
                     ledger: &ledger,
                     oms: &mut oms,
                     portfolio_budget: &mut budget,
+                    portfolio_budget_markets: Some(&budget_markets),
                     margin: market.margin.as_ref(),
                     matcher: &market.matcher,
                     other_pending_funding_raw: other_pending,
@@ -416,6 +488,9 @@ impl<'a> PortfolioBarEngine<'a> {
                     next_id: &mut next_id,
                     log: &mut log,
                 })?;
+                for update in &admission.rejected_updates {
+                    strategy.on_order_status(update)?;
+                }
                 let projection = rejections_by_instrument
                     .get_mut(instrument)
                     .ok_or_else(|| invariant("rejection projection missing"))?;
@@ -430,7 +505,7 @@ impl<'a> PortfolioBarEngine<'a> {
                         ));
                     }
                 }
-                for order in accepted {
+                for order in admission.accepted_orders {
                     batch_reserved_raw =
                         batch_reserved_raw.saturating_add(order.funding_reservation_raw);
                     admitted.push((*market_index, order));
@@ -447,6 +522,15 @@ impl<'a> PortfolioBarEngine<'a> {
                         venue_order_id: None,
                     },
                 ));
+                if let Some(update) = strategy_order_status_update_from_order(
+                    &accepted.order,
+                    accepted_seq,
+                    ts,
+                    OrderStatus::Accepted,
+                    None,
+                )? {
+                    strategy.on_order_status(&update)?;
+                }
                 pending_funding_reservations = pending_funding_reservations.and_then(|total| {
                     total.checked_add(accepted.funding_reservation_raw.max(0) as u128)
                 });
@@ -456,13 +540,15 @@ impl<'a> PortfolioBarEngine<'a> {
                         accepted.order,
                         ts,
                         accepted.funding_reservation_raw,
-                    );
+                    )
+                    .map_err(qx_core::QxError::BusinessViolation)?;
             }
             if pending_funding_reservations.is_none() {
                 pending_funding_reservations = sum_pending_funding_reservations(&runtime);
             }
 
             for event in timestamp_events {
+                let budget_markets = portfolio_budget_markets(&runtime, &marks)?;
                 let market = runtime
                     .by_index
                     .get_mut(event.market_index)
@@ -493,6 +579,7 @@ impl<'a> PortfolioBarEngine<'a> {
                         ledger: &mut ledger,
                         oms: &mut oms,
                         portfolio_budget: &mut budget,
+                        portfolio_budget_markets: Some(&budget_markets),
                         margin: market.margin.as_ref(),
                         log: &mut log,
                         fills: &mut fills,
@@ -514,16 +601,20 @@ impl<'a> PortfolioBarEngine<'a> {
                 } else {
                     mark_timestamps.insert(market.instrument.clone(), bar.ts);
                 }
-                let marked_equity = ledger
-                    .valuate(
-                        &ValuationContext::spot(&config.account_id, &marks, &config.currency)
-                            .with_market_specs(&specs),
-                    )?
-                    .equity
-                    .raw();
+                let valuation =
+                    ValuationContext::spot(&config.account_id, &marks, &config.currency)
+                        .with_market_specs(&specs);
+                let marked_equity = ledger.valuate(&valuation)?.equity.raw();
+                let marked_equity_exact =
+                    ledger.valuate_exact(&ExactValuationContext::new(valuation))?;
                 append_instrument_equity_contributions(
                     &mut instrument_equity_contributions,
-                    &mut instrument_cash_by_currency,
+                    &mut instrument_equity_contributions_exact,
+                    &mut equity_exact,
+                    &mut instrument_cash_raw_by_currency,
+                    &mut instrument_cash_exact_by_currency,
+                    &mut account_cash_exact_by_currency,
+                    &mut account_cash_raw_by_currency,
                     &mut instrument_cash_entry_cursor,
                     InstrumentContributionInput {
                         equity_index: u64::try_from(equity.len())
@@ -535,7 +626,9 @@ impl<'a> PortfolioBarEngine<'a> {
                         specs: &specs,
                         marks: &marks,
                         initial_cash_raw,
+                        initial_cash_exact,
                         marked_equity_raw: marked_equity,
+                        marked_equity_exact,
                     },
                 )?;
                 equity.push((ts, marked_equity));
@@ -550,8 +643,11 @@ impl<'a> PortfolioBarEngine<'a> {
             fills_by_instrument,
             rejections_by_instrument,
             equity,
+            equity_exact,
             instrument_equity_contributions,
+            instrument_equity_contributions_exact,
             initial_cash_raw,
+            initial_cash_exact,
             ledger,
             event_log: log,
             market_specs: specs,
@@ -567,7 +663,12 @@ impl<'a> PortfolioBarEngine<'a> {
 
 fn append_instrument_equity_contributions(
     curves: &mut BTreeMap<InstrumentId, Vec<(u64, u64, i128)>>,
-    cash_by_instrument: &mut BTreeMap<InstrumentId, BTreeMap<String, i128>>,
+    exact_curves: &mut BTreeMap<InstrumentId, Vec<(u64, u64, ExactDecimal)>>,
+    equity_exact: &mut Vec<(u64, u64, ExactDecimal)>,
+    cash_raw_by_instrument: &mut BTreeMap<InstrumentId, BTreeMap<String, i128>>,
+    cash_exact_by_instrument: &mut BTreeMap<InstrumentId, BTreeMap<String, ExactDecimal>>,
+    account_cash_exact: &mut BTreeMap<String, ExactDecimal>,
+    account_cash_raw: &mut BTreeMap<String, i128>,
     ledger_entry_cursor: &mut usize,
     input: InstrumentContributionInput<'_>,
 ) -> Result<(), qx_core::QxError> {
@@ -580,22 +681,62 @@ fn append_instrument_equity_contributions(
         if entry.account_id != input.account_id {
             continue;
         }
-        let Some(instrument) = entry.instrument.as_ref() else {
-            continue;
+        let amount_exact = match entry.exact_amounts {
+            Some(amounts) => amounts.amount,
+            None => ExactDecimal::from_parts(entry.amount.raw(), 9)
+                .map_err(|error| qx_core::QxError::Invariant(error.into()))?,
         };
-        let amount = cash_by_instrument
+        if amount_exact.is_zero() {
+            continue;
+        }
+        let instrument = entry.instrument.as_ref().ok_or_else(|| {
+            qx_core::QxError::BusinessViolation(
+                "多市场逐标的权益归因不能隐去未绑定标的的现金流".into(),
+            )
+        })?;
+        if !input.specs.contains_key(instrument) {
+            return Err(qx_core::QxError::ReconcileRequired(format!(
+                "多市场逐标的权益归因缺少现金流标的规格: {instrument}"
+            )));
+        }
+        let prior_cash_exact = account_cash_exact
+            .get(&entry.currency)
+            .copied()
+            .unwrap_or(ExactDecimal::ZERO);
+        let next_cash_exact = prior_cash_exact
+            .checked_add(amount_exact)
+            .ok_or_else(|| invariant("多市场账户精确现金归因累计溢出"))?;
+        let prior_cash_raw = account_cash_raw.get(&entry.currency).copied().unwrap_or(0);
+        let next_cash_raw = project_exact_raw(next_cash_exact)?;
+        let raw_delta = next_cash_raw
+            .checked_sub(prior_cash_raw)
+            .ok_or_else(|| invariant("多市场账户现金兼容投影溢出"))?;
+        account_cash_exact.insert(entry.currency.clone(), next_cash_exact);
+        account_cash_raw.insert(entry.currency.clone(), next_cash_raw);
+
+        let exact_amount = cash_exact_by_instrument
             .entry(instrument.clone())
             .or_default()
             .entry(entry.currency.clone())
             .or_default();
-        *amount = amount
-            .checked_add(entry.amount.raw())
-            .ok_or_else(|| invariant("多市场标的现金归因累计溢出"))?;
+        *exact_amount = exact_amount
+            .checked_add(amount_exact)
+            .ok_or_else(|| invariant("多市场标的精确现金归因累计溢出"))?;
+        let raw_amount = cash_raw_by_instrument
+            .entry(instrument.clone())
+            .or_default()
+            .entry(entry.currency.clone())
+            .or_default();
+        *raw_amount = raw_amount
+            .checked_add(raw_delta)
+            .ok_or_else(|| invariant("多市场标的现金兼容归因累计溢出"))?;
     }
     *ledger_entry_cursor = input.ledger.entries().len();
 
     let mut reconstructed_equity = input.initial_cash_raw;
     let empty_cash_projection = BTreeMap::new();
+    let empty_exact_cash = BTreeMap::new();
+    let mut reconstructed_equity_exact = input.initial_cash_exact;
     for (instrument, spec) in input.specs {
         let valuation = qx_core::ValuationContext::spot(
             input.account_id,
@@ -605,27 +746,62 @@ fn append_instrument_equity_contributions(
         .with_spec(Some(spec));
         let contribution = input.ledger.instrument_equity_contribution_from_cash(
             &valuation,
-            cash_by_instrument
+            cash_raw_by_instrument
                 .get(instrument)
                 .unwrap_or(&empty_cash_projection),
         )?;
+        let exact_contribution = input
+            .ledger
+            .instrument_equity_contribution_from_exact_cash(
+                &valuation,
+                cash_exact_by_instrument
+                    .get(instrument)
+                    .unwrap_or(&empty_exact_cash),
+            )?;
         reconstructed_equity = reconstructed_equity
             .checked_add(contribution)
             .ok_or_else(|| invariant("多市场标的归因权益溢出"))?;
+        reconstructed_equity_exact = reconstructed_equity_exact
+            .checked_add(exact_contribution)
+            .ok_or_else(|| invariant("多市场标的精确归因权益溢出"))?;
         curves
             .get_mut(instrument)
             .ok_or_else(|| invariant("多市场标的归因曲线缺失"))?
             .push((input.equity_index, input.ts, contribution));
+        exact_curves
+            .get_mut(instrument)
+            .ok_or_else(|| invariant("多市场标的 exact 归因曲线缺失"))?
+            .push((input.equity_index, input.ts, exact_contribution));
     }
     if reconstructed_equity != input.marked_equity_raw {
-        return Err(invariant("多市场逐标的权益贡献之和与共享账户权益不一致"));
+        return Err(qx_core::QxError::Invariant(format!(
+            "多市场逐标的权益贡献之和与共享账户权益不一致: attributed={reconstructed_equity}, marked={}",
+            input.marked_equity_raw
+        )));
     }
+    if reconstructed_equity_exact != input.marked_equity_exact {
+        return Err(qx_core::QxError::Invariant(format!(
+            "多市场逐标的 exact 权益贡献之和与共享账户权益不一致: attributed={reconstructed_equity_exact}, marked={}",
+            input.marked_equity_exact
+        )));
+    }
+    equity_exact.push((input.equity_index, input.ts, input.marked_equity_exact));
     if curves
         .values()
         .next()
         .is_some_and(|curve| curve.len() > MAX_INSTRUMENT_EQUITY_SAMPLES)
     {
         for curve in curves.values_mut() {
+            let last = curve.len().saturating_sub(1);
+            let mut compacted = Vec::with_capacity(curve.len().div_ceil(2) + 1);
+            for (index, point) in curve.drain(..).enumerate() {
+                if index % 2 == 0 || index == last {
+                    compacted.push(point);
+                }
+            }
+            *curve = compacted;
+        }
+        for curve in exact_curves.values_mut() {
             let last = curve.len().saturating_sub(1);
             let mut compacted = Vec::with_capacity(curve.len().div_ceil(2) + 1);
             for (index, point) in curve.drain(..).enumerate() {
@@ -648,5 +824,14 @@ struct InstrumentContributionInput<'a> {
     specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
     marks: &'a BTreeMap<InstrumentId, Price>,
     initial_cash_raw: i128,
+    initial_cash_exact: ExactDecimal,
     marked_equity_raw: i128,
+    marked_equity_exact: ExactDecimal,
+}
+
+fn project_exact_raw(value: ExactDecimal) -> Result<i128, qx_core::QxError> {
+    value
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+        .and_then(|projected| projected.to_raw(9).ok())
+        .ok_or_else(|| invariant("多市场精确现金兼容投影溢出"))
 }

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/worker-market-spec-set-v1.json",
+  "title": "Qianxing worker frozen market specification set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "markets"],
+  "properties": {
+    "kind": {"const": "qianxing_market_spec_set"},
+    "schema_version": {"const": 1},
+    "markets": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Map keyed by the complete canonical InstrumentId, including venue, for example BTC/USDT:USDT.OKX. Every entry is validated at runtime, including entries not selected by a particular worker, so a set can be shared safely by workers trading different subsets.",
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "description": "One existing product market spec or normalized CCXT market spec. CCXT-shaped entries may include exact_rules with canonical decimal strings for contract_size, price_tick, quantity_step, minimum_quantity, and minimum_notional; runtime freezes these rules and compares them with refreshed venue metadata. Runtime loading verifies that the entry identity agrees with the InstrumentId key and validates its trading constraints."
+      }
+    }
+  }
+}

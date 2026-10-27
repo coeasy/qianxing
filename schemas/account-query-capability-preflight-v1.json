@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/account-query-capability-preflight-v1.json",
+  "title": "Qianxing Account Query Capability Preflight v1",
+  "description": "Versioned private account-read requirements and the fail-closed capability decision made before authenticated connectors start.",
+  "oneOf": [
+    {
+      "title": "Request",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "profile",
+        "capability_id",
+        "venue",
+        "product",
+        "account_model",
+        "required_operations",
+        "optional_operations",
+        "sandbox_endpoint"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "profile": { "enum": ["sandbox_acceptance", "production"] },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "venue": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "product": { "type": "string", "minLength": 1 },
+        "account_model": { "type": "string", "minLength": 1 },
+        "required_operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "optional_operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "sandbox_endpoint": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "Decision",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "allowed",
+        "profile",
+        "capability_id",
+        "venue",
+        "product",
+        "account_model",
+        "allowed_operations",
+        "omitted_optional_operations",
+        "scope_status",
+        "maturity_refs",
+        "evidence_stages",
+        "evidence",
+        "limitations",
+        "reason_code",
+        "reason"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "allowed": { "type": "boolean" },
+        "profile": { "enum": ["sandbox_acceptance", "production"] },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "venue": { "type": "string", "minLength": 1 },
+        "product": { "type": "string", "minLength": 1 },
+        "account_model": { "type": "string", "minLength": 1 },
+        "allowed_operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "omitted_optional_operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "scope_status": { "type": ["string", "null"] },
+        "maturity_refs": { "type": "array", "items": { "type": "string" } },
+        "evidence_stages": { "type": "object" },
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "limitations": { "type": "array", "items": { "type": "string" } },
+        "reason_code": { "type": ["string", "null"] },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "enum": [
+        "balance.read",
+        "orders.read",
+        "positions.read",
+        "cashflows.read",
+        "funding.read",
+        "account_settings.read"
+      ]
+    }
+  }
+}

@@ -37,13 +37,13 @@ impl CommandKind {
         }
     }
 
-    /// 这一份构建里**真的有执行者**的命令类型：提交入口按它裁决，其余变体在仓内没有任何
+    /// 这一份构建里**真的有执行者**的命令类型：提交/撤单 worker 按它裁决，其余变体在仓内没有任何
     /// 派发者，接受了只会以 `Accepted` 永远停在审计里（新增变体默认落在"拒绝"这一侧）。
     /// 判定式与执行者文件的对应关系由常驻用例 `control_command_kinds_match_executors` 钉住。
     pub fn executed(&self) -> bool {
         matches!(
             self,
-            Self::SubmitOrder | Self::PauseStrategy | Self::ResumeStrategy
+            Self::SubmitOrder | Self::CancelOrder | Self::PauseStrategy | Self::ResumeStrategy
         )
     }
 
@@ -61,6 +61,7 @@ impl CommandKind {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlCommand {
     pub command_id: u64,
     pub request_id: String,
@@ -71,6 +72,57 @@ pub struct ControlCommand {
     pub payload: BTreeMap<String, String>,
     pub permission: Permission,
     pub dry_run: bool,
+}
+
+/// CancelOrder 的路由声明。账户和 venue 必须由实时 worker 再与 EventLog 中的权威订单核对。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelOrderTarget {
+    pub client_order_id: u64,
+    pub account_id: String,
+    pub venue_id: String,
+}
+
+fn parse_cancel_order_target(command: &ControlCommand) -> Result<CancelOrderTarget, ControlError> {
+    if command.kind != CommandKind::CancelOrder {
+        return Err(ControlError::Invalid("控制命令不是 CancelOrder".into()));
+    }
+    let client_order_id = command
+        .target
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            ControlError::Invalid("CancelOrder target 必须是正整数 client_order_id".into())
+        })?;
+    if command.payload.len() != 2
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+    {
+        return Err(ControlError::Invalid(
+            "CancelOrder payload 必须且只能包含 account_id 和 venue_id".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "CancelOrder account_id/venue_id 不能为空".into(),
+        ));
+    }
+    Ok(CancelOrderTarget {
+        client_order_id,
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+    })
+}
+
+/// Parse the explicit routing identity for a cancellation command. The execution worker must
+/// independently bind this identity to the authoritative order snapshot before contacting a venue.
+pub fn cancel_order_target_from_command(
+    command: &ControlCommand,
+) -> Result<CancelOrderTarget, ControlError> {
+    command.validate()?;
+    parse_cancel_order_target(command)
 }
 
 impl ControlCommand {
@@ -85,6 +137,9 @@ impl ControlCommand {
         if !has_permission(self.permission, self.kind.required_permission()) {
             return Err(ControlError::Forbidden);
         }
+        if self.kind == CommandKind::CancelOrder {
+            parse_cancel_order_target(self)?;
+        }
         Ok(())
     }
 
@@ -93,13 +148,12 @@ impl ControlCommand {
     /// `permission` 是审计字段，不是认证凭据；生产入口必须把外部身份解析成
     /// `granted` 后调用本方法，不能只调用无身份的 `validate`。
     pub fn validate_as(&self, granted: Permission) -> Result<(), ControlError> {
-        self.validate()?;
         if !has_permission(granted, self.permission)
             || !has_permission(granted, self.kind.required_permission())
         {
             return Err(ControlError::Forbidden);
         }
-        Ok(())
+        self.validate()
     }
 
     pub fn digest(&self) -> u64 {
@@ -501,7 +555,7 @@ mod tests {
             request_id: "req-1".into(),
             operator_id: "operator".into(),
             reason: "incident recovery".into(),
-            // PauseStrategy 而不是 CancelOrder：提交入口只接受有派发者的命令类型。
+            // PauseStrategy 有策略 worker 派发者；CancelOrder 也已由交易所执行 worker 派发。
             kind: CommandKind::PauseStrategy,
             target: "strategy-1".into(),
             payload: BTreeMap::new(),
@@ -526,6 +580,13 @@ mod tests {
             plane.submit(duplicate_id, 12),
             Err(ControlError::DuplicateCommand(1))
         );
+    }
+
+    #[test]
+    fn control_command_wire_rejects_unknown_fields() {
+        let mut value = serde_json::to_value(command(Permission::Trading)).unwrap();
+        value["dry_rnu"] = serde_json::Value::Bool(false);
+        assert!(serde_json::from_value::<ControlCommand>(value).is_err());
     }
 
     #[test]

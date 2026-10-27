@@ -135,6 +135,7 @@ mod tests {
             low_raw: close_raw,
             close_raw,
             volume_raw: 1,
+            exact_ohlcv: None,
         }
     }
 

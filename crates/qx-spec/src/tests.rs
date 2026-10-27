@@ -50,6 +50,52 @@ fn run_record_json() -> String {
     .to_string()
 }
 
+fn run_record_v2_json() -> String {
+    serde_json::json!({
+        "schema_version": 2,
+        "run_id": "run-2",
+        "status": "completed",
+        "input_digest": "input",
+        "code_identity": "source-sha",
+        "config_fingerprint": "config-sha",
+        "started_at_ms": 100,
+        "finished_at_ms": 200,
+        "artifact_refs": [{
+            "name": "summary",
+            "artifact_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "kind": "backtest-summary",
+            "schema_version": 2,
+            "byte_len": 256
+        }],
+        "replay_verdict": "verified",
+        "capability_level": "L1"
+    })
+    .to_string()
+}
+
+fn canonical_run_spec_json() -> String {
+    serde_json::json!({
+        "schema_version": 1,
+        "run_type": "bar_backtest",
+        "code_revision": "abc123",
+        "strategies": [{
+            "strategy_id": "sma",
+            "strategy_version": "sma-v1",
+            "parameters": {"fast": 5, "slow": 20}
+        }],
+        "datasets": [
+            {"role": "bars", "instrument": "BINANCE.BTCUSDT", "content_fingerprint": "barframe:bars-sha", "start_ts_ms": 100, "end_ts_ms": 200}
+        ],
+        "market_rules": {"BINANCE.BTCUSDT": "inline-market-spec:market-fp"},
+        "clock": {"start_ts_ms": 100, "end_ts_ms": 200, "timestamp_unit": "unix_ms", "timezone": "UTC"},
+        "random_seed": "7",
+        "behavior": {"initial_cash_raw": "1000000000", "fee_schedule": {"rate": "0.001"}},
+        "execution_model": {"matching_kernel": "bar-v1", "fill_model": "next_bar_open"},
+        "extensions": {}
+    })
+    .to_string()
+}
+
 fn run_evidence_json() -> String {
     serde_json::json!({
         "schema_version": 1,
@@ -165,7 +211,7 @@ fn registry_json() -> String {
             "path": "schemas/strategy_api_v1.schema.json",
             "producer": "qx-runtime",
             "consumers": ["qx-python"],
-            "compatibility": "backward",
+            "compatibility": "parallel-version",
             "golden_fixtures": ["crates/qx-strategy/tests/fixture.json"]
         }]
     })
@@ -214,6 +260,7 @@ fn describe_reads_every_foundation_kind() {
         ("capability", capability_json()),
         ("evidence", evidence_json()),
         ("schema-registry", registry_json()),
+        ("canonical-run-spec", canonical_run_spec_json()),
     ];
     // 这张表是手抄的，而用例名说的是「every foundation kind」：不在这里逐一对齐，下一次
     // 往 `FoundationKind::ALL` 里加一类时这份用例会静默漏掉它（名字比内容诚实）。
@@ -257,6 +304,105 @@ fn run_record_refuses_completion_without_verified_replay() {
     let mut value: serde_json::Value = serde_json::from_str(&run_record_json()).unwrap();
     value["replay_verdict"] = serde_json::json!("not_run");
     assert!(RunRecord::from_json(&value.to_string()).is_err());
+}
+
+#[test]
+fn run_record_v2_is_pathless_and_describes_as_v2() {
+    let payload = run_record_v2_json();
+    let record = RunRecordV2::from_json(&payload).unwrap();
+    let readout = describe("run-record", &payload).unwrap();
+    let canonical: serde_json::Value = serde_json::from_str(&readout.canonical_json).unwrap();
+    assert_eq!(record.schema_version, RUN_RECORD_V2_SCHEMA_VERSION);
+    assert_eq!(readout.schema_version, RUN_RECORD_V2_SCHEMA_VERSION);
+    assert_eq!(readout.identity, "run-2 [completed]");
+    assert!(canonical["artifact_refs"][0].get("path").is_none());
+    assert_eq!(canonical["artifact_refs"][0]["byte_len"], 256);
+}
+
+#[test]
+fn run_record_v2_rejects_paths_bad_ids_and_duplicate_names() {
+    let mut with_path: serde_json::Value = serde_json::from_str(&run_record_v2_json()).unwrap();
+    with_path["artifact_refs"][0]["path"] = serde_json::json!("summary.json");
+    assert!(RunRecordV2::from_json(&with_path.to_string()).is_err());
+
+    let mut bad_id: serde_json::Value = serde_json::from_str(&run_record_v2_json()).unwrap();
+    bad_id["artifact_refs"][0]["artifact_id"] = serde_json::json!("not-a-sha256");
+    assert!(RunRecordV2::from_json(&bad_id.to_string()).is_err());
+
+    let mut duplicate: serde_json::Value = serde_json::from_str(&run_record_v2_json()).unwrap();
+    let second = duplicate["artifact_refs"][0].clone();
+    duplicate["artifact_refs"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    assert!(RunRecordV2::from_json(&duplicate.to_string()).is_err());
+}
+
+#[test]
+fn canonical_run_spec_uses_pathless_sorted_inputs_and_stable_fingerprint() {
+    let mut value: serde_json::Value = serde_json::from_str(&canonical_run_spec_json()).unwrap();
+    value["datasets"] = serde_json::json!([
+        {"role": "reference_bars", "instrument": "BINANCE.ETHUSDT", "content_fingerprint": "eth-fp", "start_ts_ms": 100, "end_ts_ms": 200},
+        {"role": "bars", "instrument": "BINANCE.BTCUSDT", "content_fingerprint": "btc-fp", "start_ts_ms": 100, "end_ts_ms": 200}
+    ]);
+    let first = CanonicalRunSpec::from_json(&value.to_string()).unwrap();
+    value["datasets"].as_array_mut().unwrap().reverse();
+    let second = CanonicalRunSpec::from_json(&value.to_string()).unwrap();
+    assert_eq!(first.fingerprint().unwrap(), second.fingerprint().unwrap());
+    let canonical: serde_json::Value =
+        serde_json::from_str(&first.canonical_json().unwrap()).unwrap();
+    assert_eq!(canonical["datasets"][0]["instrument"], "BINANCE.BTCUSDT");
+    assert!(canonical.get("bars_path").is_none());
+    assert_eq!(
+        describe("canonical-run-spec", &canonical_run_spec_json())
+            .unwrap()
+            .schema_version,
+        1
+    );
+}
+
+#[test]
+fn canonical_run_spec_rejects_floats_unsafe_integers_and_duplicate_inputs() {
+    let mut with_float: serde_json::Value =
+        serde_json::from_str(&canonical_run_spec_json()).unwrap();
+    with_float["behavior"]["fee_rate"] = serde_json::json!(0.001);
+    assert!(CanonicalRunSpec::from_json(&with_float.to_string())
+        .unwrap_err()
+        .contains("不接受浮点数"));
+
+    let mut unsafe_integer: serde_json::Value =
+        serde_json::from_str(&canonical_run_spec_json()).unwrap();
+    unsafe_integer["behavior"]["cash"] = serde_json::json!(9_007_199_254_740_992u64);
+    assert!(CanonicalRunSpec::from_json(&unsafe_integer.to_string())
+        .unwrap_err()
+        .contains("跨语言安全范围"));
+
+    let mut duplicate: serde_json::Value =
+        serde_json::from_str(&canonical_run_spec_json()).unwrap();
+    let same = duplicate["datasets"][0].clone();
+    duplicate["datasets"].as_array_mut().unwrap().push(same);
+    assert!(CanonicalRunSpec::from_json(&duplicate.to_string()).is_err());
+
+    let mut pathful: serde_json::Value = serde_json::from_str(&canonical_run_spec_json()).unwrap();
+    pathful["behavior"]["dataset_path"] = serde_json::json!("data/bars.json");
+    assert!(CanonicalRunSpec::from_json(&pathful.to_string())
+        .unwrap_err()
+        .contains("dataset_path"));
+}
+
+#[test]
+fn run_record_dispatch_preserves_v1_and_rejects_unknown_versions() {
+    assert_eq!(
+        describe("run-record", &run_record_json())
+            .unwrap()
+            .schema_version,
+        1
+    );
+    let mut unsupported: serde_json::Value = serde_json::from_str(&run_record_v2_json()).unwrap();
+    unsupported["schema_version"] = serde_json::json!(3);
+    assert!(describe("run-record", &unsupported.to_string())
+        .unwrap_err()
+        .contains("不受支持"));
 }
 
 #[test]
@@ -435,6 +581,18 @@ fn run_evidence_accepts_a_bound_strategy_diagnostic_reference_and_rejects_unknow
     });
     EvidenceBundle::from_json(&value.to_string())
         .expect("multi-market Bar evidence may carry a digest-bound diagnostic array");
+
+    let market_components = value["dataset"]["components"]
+        .as_array()
+        .expect("three-market evidence fixture")
+        .clone();
+    for market_count in [1_usize, 2] {
+        value["dataset"]["components"] =
+            serde_json::Value::Array(market_components[..market_count].to_vec());
+        value["dataset"]["row_count"] = serde_json::json!(10 * market_count);
+        EvidenceBundle::from_json(&value.to_string())
+            .unwrap_or_else(|error| panic!("{market_count}-market Bar evidence is valid: {error}"));
+    }
 
     value["dataset"]["kind"] = serde_json::json!("multi-market-depthframe");
     value["strategy_diagnostics"]["kind"] =

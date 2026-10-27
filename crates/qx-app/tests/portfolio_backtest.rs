@@ -25,9 +25,11 @@ fn basket_runs_through_shared_engine_and_replay_verification() {
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: 50_000 * SCALE,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: 50_000 * SCALE,
+            reserved_capital_exact: None,
             strategy: second,
         }],
     });
@@ -52,9 +54,11 @@ fn basket_validation_rejects_duplicate_ids_and_oversubscribed_budget() {
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: 60_000 * SCALE,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: 40_001 * SCALE,
+            reserved_capital_exact: None,
             strategy: duplicate.clone(),
         }],
     });

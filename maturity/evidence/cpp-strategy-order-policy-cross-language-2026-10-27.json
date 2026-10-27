@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "kind": "cpp-strategy-derivative-order-policy-cross-language",
+  "generated_at_utc": "2026-10-27T03:54:01Z",
+  "scope": {
+    "contract": "C++ C ABI strategy returns versioned per-intent margin_mode, position_mode, and leverage; Rust host validates and merges the policy without changing the stable qx_order_intent layout",
+    "fields": [
+      "margin_mode",
+      "position_mode",
+      "leverage"
+    ],
+    "sample_values": {
+      "margin_mode": "cross",
+      "position_mode": "hedge",
+      "leverage": 3
+    }
+  },
+  "validation": [
+    {
+      "command": "cmake --build build/cpp --config Release --target qianxing_strategy_update_contract qianxing_strategy_example",
+      "passed": true
+    },
+    {
+      "command": "ctest --test-dir build/cpp -C Release -R qianxing_strategy_update_contract --output-on-failure",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 -- --test-threads=1",
+      "passed": 83,
+      "failed": 0,
+      "ignored": 1,
+      "details": "The ignored C++ dynamic library test was run separately against the freshly rebuilt DLL."
+    },
+    {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 --test cpp_plugin_host -- --ignored",
+      "passed": 1,
+      "failed": 0,
+      "details": "Rust host loaded the current C++ example DLL and asserted position_side=long, margin_mode=cross, position_mode=hedge, leverage=3."
+    },
+    {
+      "command": "tools.check_architecture.strategy_intent_three_language_check",
+      "passed": 7,
+      "failed": 0,
+      "details": "Checks Rust/Python/schema parity and the C++ header/example/schema/Rust-host/integration-test path."
+    },
+    {
+      "command": "python tools/generate_capability_catalog.py --check",
+      "passed": true
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "details": "Four shards, complete named-check coverage, no duplicates; wall clock 140.60 seconds."
+    }
+  ],
+  "limitations": [
+    "This proves the C++ plugin policy extension and Rust host readback, not that every venue/account mode accepts the selected combination.",
+    "The full cross-host strategy lifecycle and persistence golden matrix remains open.",
+    "No exchange sandbox or production request was sent; this is an unpublished workspace."
+  ],
+  "release_status": "unpublished workspace"
+}

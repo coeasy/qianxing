@@ -1,5 +1,6 @@
 //! Binance private user-stream worker lifecycle.
 
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::venue_market_host::configured_binance_ws_endpoint;
@@ -68,13 +69,23 @@ where
     )?;
     let stop_context = context.clone();
     let sleep_context = context.clone();
+    let sleep_metrics = Arc::clone(&metrics);
     let event_context = context.clone();
     let mut source_seq = 0_u64;
     let mut should_stop = move || stop_context.should_stop();
     let mut sleep = move |delay: Duration| {
         sleep_context.sleep_ms(delay.as_millis() as u64);
         if !sleep_context.should_stop() {
-            let _ = sleep_context.heartbeat(runtime_timestamp_ms());
+            let now = runtime_timestamp_ms();
+            let _ = sleep_context.heartbeat(now);
+            if let Ok(mut metrics) = sleep_metrics.lock() {
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::PrivateOrderStream,
+                    GatewayBusinessHealthStatus::Degraded,
+                    now,
+                );
+                metrics.publish_if_due(true, now);
+            }
         }
     };
     let event_worker = worker.clone();
@@ -94,6 +105,15 @@ where
                 // the reconciler confirms state from REST before submissions resume.
                 if payload.contains("listenKeyExpired") {
                     venue.reconnect();
+                }
+                let now = runtime_timestamp_ms();
+                if let Ok(mut metrics) = event_metrics.lock() {
+                    metrics.observe_gateway_port_business_status(
+                        ExchangeGatewayPort::PrivateOrderStream,
+                        GatewayBusinessHealthStatus::Degraded,
+                        now,
+                    );
+                    metrics.publish_if_due(true, now);
                 }
                 return Err(format!("Binance 用户事件处理失败: {error:?}"));
             }
@@ -119,6 +139,11 @@ where
         };
         event_context.heartbeat(received_ts)?;
         if let Ok(mut metrics) = event_metrics.lock() {
+            metrics.observe_gateway_port_business_status(
+                ExchangeGatewayPort::PrivateOrderStream,
+                GatewayBusinessHealthStatus::Healthy,
+                received_ts,
+            );
             metrics.observe(&pipeline);
             metrics.publish_if_due(true, received_ts);
         }

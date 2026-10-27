@@ -3,7 +3,7 @@
 //! [`order_reconcile_verdict`] 是唯一的状态感知裁决函数；[`reconcile_order_facts`]
 //! 与 qx-adapter 的 `reconcile_remote` 只把裁决投影为各自的差异类型，禁止重复比较。
 
-use qx_core::OrderStatus;
+use qx_core::{ExactDecimal, OrderStatus};
 use std::collections::BTreeMap;
 
 /// 订单对账的"事实"中性表示：只携带判定所需字段，让 qx-genglu 与 qx-adapter 共享
@@ -15,6 +15,8 @@ pub struct OrderReconcileFact {
     pub status: Option<OrderStatus>,
     /// 已成交数量（定点 raw）。
     pub filled_raw: i128,
+    /// 可选的任意尺度成交数量；存在时是精确事实，优先于 raw 投影。
+    pub filled_exact: Option<ExactDecimal>,
 }
 
 /// 裁决携带的各维度差异，`(本地, 远端)`；`None` 表示该维度一致或不可判定。
@@ -22,6 +24,7 @@ pub struct OrderReconcileFact {
 pub struct OrderDimensionDiff {
     pub status: Option<(OrderStatus, OrderStatus)>,
     pub filled: Option<(i128, i128)>,
+    pub filled_exact: Option<(ExactDecimal, ExactDecimal)>,
 }
 
 /// 单笔订单对账的唯一裁决口径（canonical verdict）。
@@ -86,6 +89,24 @@ pub const fn filled_action(local_raw: i128, venue_raw: i128) -> VerdictAction {
     }
 }
 
+/// 精确成交数量差异 → 动作的唯一判据；比较失败时按事实冲突处理。
+pub fn exact_filled_action(local: ExactDecimal, venue: ExactDecimal) -> VerdictAction {
+    match local.checked_cmp(venue) {
+        Some(std::cmp::Ordering::Greater) => VerdictAction::ManualReview,
+        Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => VerdictAction::Resync,
+        None => VerdictAction::ManualReview,
+    }
+}
+
+fn legacy_raw_as_exact(raw: i128) -> ExactDecimal {
+    // The scale is a compile-time legacy invariant and always fits ExactDecimal.
+    ExactDecimal::from_parts(raw, 9).expect("legacy raw scale is supported")
+}
+
+fn raw_matches_exact_projection(raw: i128, exact: ExactDecimal) -> bool {
+    legacy_raw_as_exact(raw) == exact
+}
+
 impl ReconcileVerdict {
     /// 裁决 → 动作的唯一映射口径。
     pub fn action(&self) -> VerdictAction {
@@ -121,19 +142,53 @@ pub fn order_reconcile_verdict(
     let Some(remote) = remote else {
         return ReconcileVerdict::PendingReconcile;
     };
+    let (filled, filled_exact, filled_is_conflict) = match (local.filled_exact, remote.filled_exact)
+    {
+        (None, None) => {
+            let diff = (local.filled_raw != remote.filled_raw)
+                .then_some((local.filled_raw, remote.filled_raw));
+            let conflict = diff.is_some_and(|(local, venue)| {
+                filled_action(local, venue) == VerdictAction::ManualReview
+            });
+            (diff, None, conflict)
+        }
+        (local_exact, remote_exact) => {
+            let local_exact = local_exact.unwrap_or_else(|| legacy_raw_as_exact(local.filled_raw));
+            let remote_exact =
+                remote_exact.unwrap_or_else(|| legacy_raw_as_exact(remote.filled_raw));
+            if local_exact == remote_exact {
+                (None, None, false)
+            } else if raw_matches_exact_projection(local.filled_raw, local_exact)
+                && raw_matches_exact_projection(remote.filled_raw, remote_exact)
+                && local.filled_raw != remote.filled_raw
+            {
+                let diff = Some((local.filled_raw, remote.filled_raw));
+                let conflict = filled_action(local.filled_raw, remote.filled_raw)
+                    == VerdictAction::ManualReview;
+                (diff, None, conflict)
+            } else {
+                let conflict =
+                    exact_filled_action(local_exact, remote_exact) == VerdictAction::ManualReview;
+                (None, Some((local_exact, remote_exact)), conflict)
+            }
+        }
+    };
     let dimensions = OrderDimensionDiff {
         status: match (local.status, remote.status) {
             (Some(ls), Some(rs)) if ls != rs => Some((ls, rs)),
             _ => None,
         },
-        filled: (local.filled_raw != remote.filled_raw)
-            .then_some((local.filled_raw, remote.filled_raw)),
+        filled,
+        filled_exact,
     };
-    let conflicts = matches!(dimensions.filled, Some((local_raw, venue_raw)) if filled_action(local_raw, venue_raw) == VerdictAction::ManualReview)
+    let conflicts = filled_is_conflict
         || matches!(dimensions.status, Some((local_status, venue_status)) if status_action(local_status, venue_status) == VerdictAction::ManualReview);
     if conflicts {
         ReconcileVerdict::NeedsHuman(dimensions)
-    } else if dimensions.status.is_none() && dimensions.filled.is_none() {
+    } else if dimensions.status.is_none()
+        && dimensions.filled.is_none()
+        && dimensions.filled_exact.is_none()
+    {
         ReconcileVerdict::Consistent
     } else {
         ReconcileVerdict::AutoConverge(dimensions)
@@ -198,6 +253,13 @@ pub fn reconcile_order_facts(
                         venue_raw,
                     });
                 }
+                if let Some((local, venue)) = diff.filled_exact {
+                    out.push(OrderReconcileDiff::FilledExactMismatch {
+                        client_order_id: id,
+                        local,
+                        venue,
+                    });
+                }
             }
         }
     }
@@ -231,6 +293,12 @@ pub enum OrderReconcileDiff {
         client_order_id: u64,
         local_raw: i128,
         venue_raw: i128,
+    },
+    /// 两侧至少一方携带精确数量，且差异无法由 legacy raw 无损表示。
+    FilledExactMismatch {
+        client_order_id: u64,
+        local: ExactDecimal,
+        venue: ExactDecimal,
     },
     /// 远端有、本地无。
     MissingLocally { client_order_id: u64 },

@@ -44,6 +44,12 @@ pub fn fingerprint_bars(bars: &[Bar]) -> Result<String, String> {
         hash.write_bytes(&bar.low_raw.to_le_bytes());
         hash.write_bytes(&bar.close_raw.to_le_bytes());
         hash.write_bytes(&bar.volume_raw.to_le_bytes());
+        if let Some(exact) = bar.exact_ohlcv {
+            hash.write_bytes(&1_u64.to_le_bytes());
+            for value in [exact.open, exact.high, exact.low, exact.close, exact.volume] {
+                hash.write_text(&value.to_string());
+            }
+        }
     }
     Ok(format!("{:016x}", hash.finish()))
 }
@@ -61,6 +67,7 @@ pub fn fingerprint_bar_frame(frame: &BarFrame) -> Result<String, String> {
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         })
         .collect::<Vec<_>>();
     fingerprint_bars(&bars)
@@ -89,6 +96,7 @@ pub fn barframe_registry_version(frame: &BarFrame) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qx_core::{ExactDecimal, ExactOhlcv};
 
     fn bar(ts: u64, close_raw: i128) -> Bar {
         Bar {
@@ -99,6 +107,7 @@ mod tests {
             low_raw: close_raw,
             close_raw,
             volume_raw: 100,
+            exact_ohlcv: None,
         }
     }
 
@@ -117,6 +126,35 @@ mod tests {
         assert_ne!(
             fingerprint_bars(&[bar(1, 10)]).unwrap(),
             fingerprint_bars(&[bar(1, 11)]).unwrap()
+        );
+    }
+
+    #[test]
+    fn fingerprint_changes_when_sub_nano_source_data_changes() {
+        let mut coarse = Bar {
+            instrument: "XSHG:600000".into(),
+            timestamp: 1,
+            open_raw: 10,
+            high_raw: 12,
+            low_raw: 9,
+            close_raw: 10,
+            volume_raw: 100,
+            exact_ohlcv: None,
+        };
+        let precise = |close: &str| ExactOhlcv {
+            open: ExactDecimal::parse("0.0000000101").unwrap(),
+            high: ExactDecimal::parse("0.0000000129").unwrap(),
+            low: ExactDecimal::parse("0.0000000095").unwrap(),
+            close: ExactDecimal::parse(close).unwrap(),
+            volume: ExactDecimal::parse("0.0000001008").unwrap(),
+        };
+        coarse.exact_ohlcv = Some(precise("0.0000000101"));
+        let mut revised = coarse.clone();
+        revised.exact_ohlcv = Some(precise("0.0000000102"));
+        assert_eq!(coarse.close_raw, revised.close_raw);
+        assert_ne!(
+            fingerprint_bars(&[coarse]).unwrap(),
+            fingerprint_bars(&[revised]).unwrap()
         );
     }
 
@@ -156,6 +194,7 @@ mod tests {
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         }
     }
 }

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing-guided-research-gate-v1",
+  "generated_at_utc": "2026-10-26T19:09:30Z",
+  "scope": {
+    "local_command": "qianxing research",
+    "remote_command": "qianxing remote-research",
+    "strategy_execution": "local direct execution by default; remote provider remains explicit"
+  },
+  "behavior": {
+    "requires_explicit_oos_split_plan": true,
+    "default_effectiveness_baseline_single_market": "buy-and-hold",
+    "multi_market_baseline": "not_supported; strict schema retained",
+    "allowed_explicit_baselines": [
+      "buy-and-hold",
+      "zero-signal"
+    ],
+    "default_candidate_diagnostic_limit": 16,
+    "remaining_candidates": "reported as unverified/not_run_candidate_limit"
+  },
+  "validation": [
+    {
+      "command": "python -m pytest -q python/tests/test_callback_strategy_diagnostics.py python/tests/test_sandbox_execution.py",
+      "passed": 35,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test quick_research",
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "command": "cargo check -p qx-python",
+      "passed": true
+    },
+    {
+      "command": "python -m pytest -q python/tests/test_app_use_cases.py -k quick_research_spec_bridge",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest -q python/tests/test_strategy_base.py python/tests/test_strategy_process_adapter.py python/tests/test_cli_strategy_file.py python/tests/test_e2b_strategy_worker.py python/tests/test_microsandbox_strategy_worker.py python/tests/test_opensandbox_strategy_worker.py python/tests/test_callback_strategy_diagnostics.py python/tests/test_sandbox_execution.py",
+      "passed": 137,
+      "failed": 0
+    },
+    {
+      "command": "python -m compileall -q python/qianxing python/qianxing_bridge",
+      "passed": true
+    },
+    {
+      "command": "python -m qianxing.cli research --help",
+      "passed": true
+    },
+    {
+      "command": "python -m qianxing.cli remote-research --help",
+      "passed": true
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": true,
+      "shards": 4,
+      "named_checks": 228,
+      "duplicate_checks": 0,
+      "wall_time_seconds": 112.62
+    }
+  ],
+  "limitations": [
+    "Multi-market guided research preserves RunMultiMarketExperimentSpec and provides held-out folds but has no cross-market baseline; its ranking is not benchmark-relative effectiveness evidence.",
+    "Remote provider CLI tests use fake E2B/OpenSandbox provider classes and do not prove a live sandbox service execution.",
+    "This change does not perform exchange acceptance or establish production approval."
+  ],
+  "release_status": "unpublished workspace"
+}

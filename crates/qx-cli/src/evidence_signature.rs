@@ -222,15 +222,93 @@ pub(crate) fn run(args: EvidenceArgs) -> Result<(), String> {
         }) => {
             crate::run_evidence_multi_account::pack_multi_account_run(&result, &spec, &output_dir)
         }
-        Some(EvidenceCommand::VerifyMultiAccountRun { bundle_dir }) => {
-            crate::run_evidence_multi_account::verify_multi_account_run(&bundle_dir)
-        }
+        Some(EvidenceCommand::VerifyMultiAccountRun {
+            bundle_dir,
+            recompute,
+        }) => crate::run_evidence_multi_account::verify_multi_account_run(&bundle_dir, recompute),
+        Some(EvidenceCommand::PackMultiAccountJointRun {
+            result,
+            spec,
+            output_dir,
+        }) => crate::run_evidence_multi_account_joint::pack_multi_account_joint_run(
+            &result,
+            &spec,
+            &output_dir,
+        ),
+        Some(EvidenceCommand::VerifyMultiAccountJointRun {
+            bundle_dir,
+            recompute,
+        }) => crate::run_evidence_multi_account_joint::verify_multi_account_joint_run(
+            &bundle_dir,
+            recompute,
+        ),
+        Some(EvidenceCommand::PackMultiAccountDepthRun {
+            result,
+            spec,
+            output_dir,
+        }) => crate::run_evidence_multi_account_depth::pack_multi_account_depth_run(
+            &result,
+            &spec,
+            &output_dir,
+        ),
+        Some(EvidenceCommand::VerifyMultiAccountDepthRun {
+            bundle_dir,
+            recompute,
+        }) => crate::run_evidence_multi_account_depth::verify_multi_account_depth_run(
+            &bundle_dir,
+            recompute,
+        ),
         Some(EvidenceCommand::PackMultiMarketRun { artifact }) => {
             let path =
                 crate::run_evidence_multi_market::write_multi_market_run_evidence(&artifact, None)?;
             println!("{}", path.display());
             Ok(())
         }
+        Some(EvidenceCommand::RecomputeExperiment { artifact }) => {
+            crate::run_evidence_experiment_recompute::recompute_bar_experiment(&artifact)
+        }
+        Some(EvidenceCommand::RecomputeDepthExperiment { artifact }) => {
+            crate::run_evidence_experiment_recompute::recompute_depth_experiment(&artifact)
+        }
+        Some(EvidenceCommand::PackExperiment {
+            artifact,
+            output_dir,
+        }) => {
+            crate::run_evidence_experiment_recompute::pack_bar_experiment(&artifact, &output_dir)?;
+            println!(
+                "[qx-cli · CLI] portable experiment package: {}",
+                output_dir.display()
+            );
+            Ok(())
+        }
+        Some(EvidenceCommand::PackDepthExperiment {
+            artifact,
+            output_dir,
+        }) => {
+            crate::run_evidence_experiment_recompute::pack_depth_experiment(
+                &artifact,
+                &output_dir,
+            )?;
+            println!(
+                "[qx-cli · CLI] portable experiment package: {}",
+                output_dir.display()
+            );
+            Ok(())
+        }
+        Some(EvidenceCommand::VerifyExperiment {
+            bundle_dir,
+            recompute,
+        }) => crate::run_evidence_experiment_recompute::verify_bar_experiment_bundle(
+            &bundle_dir,
+            recompute,
+        ),
+        Some(EvidenceCommand::VerifyDepthExperiment {
+            bundle_dir,
+            recompute,
+        }) => crate::run_evidence_experiment_recompute::verify_depth_experiment_bundle(
+            &bundle_dir,
+            recompute,
+        ),
         Some(EvidenceCommand::RecomputeMultiMarketExperiment { artifact }) => {
             crate::run_evidence_experiment_recompute::recompute_multi_market_experiment(&artifact)
         }

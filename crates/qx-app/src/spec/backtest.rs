@@ -2,7 +2,7 @@ use super::{
     AppError, AppErrorCategory, BacktestMarginConfig, BuiltinStrategySpec, PortfolioBacktestConfig,
     ProtectiveExitSpec, BACKTEST_SPEC_SCHEMA_VERSION,
 };
-use qx_core::{MakerTakerFeeSchedule, TradingInstrumentSpec};
+use qx_core::{ExactDecimal, MakerTakerFeeSchedule, TradingInstrumentSpec};
 use qx_xingban::{AshareRuleConfig, ExecutionCostRules};
 use serde::{Deserialize, Serialize};
 /// `RunBacktest` 的输入。
@@ -19,6 +19,9 @@ pub struct BacktestSpec {
     /// 本金（定点原值）。V11 Q72 之后这是必答题：藏在默认值里会让整条收益率
     /// 压在一个调用方毫不知情的常数上。
     pub initial_cash_raw: i128,
+    /// Version 2 scale-aware capital. `initial_cash_raw` remains its toward-zero 1e-9 projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_cash_exact: Option<ExactDecimal>,
     pub seed: u64,
     /// 产物目录。四份核心产物（`*.run.json` / `*.summary.json` / `*.equity.csv` / `*.fills.csv`）
     /// 都落在它下面。
@@ -30,6 +33,9 @@ pub struct BacktestSpec {
     /// Omitted legacy specs keep their historical compatibility semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market_spec: Option<TradingInstrumentSpec>,
+    /// Explicit strategy-research asset taxonomy; never inferred from a ticker symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_class: Option<String>,
     /// Explicit margin semantics supplied by a venue snapshot; omitted specs keep app defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub margin_model: Option<BacktestMarginConfig>,
@@ -66,7 +72,8 @@ pub struct BacktestSpec {
     pub protective_exit: Option<ProtectiveExitSpec>,
 }
 impl BacktestSpec {
-    /// 构造一份当前版本的 spec（其余字段按调用方给的填）。
+    /// Construct the backward-compatible v1 raw-capital spec. Use
+    /// [`Self::with_initial_cash_exact`] to select the scale-aware v2 contract.
     pub fn new(
         dataset: BacktestDatasetInput,
         settlement_currency: impl Into<String>,
@@ -82,10 +89,12 @@ impl BacktestSpec {
             bars_path: dataset.bars_path,
             settlement_currency: settlement_currency.into(),
             initial_cash_raw,
+            initial_cash_exact: None,
             seed,
             output_dir: output_dir.into(),
             account_id: None,
             market_spec: None,
+            asset_class: None,
             margin_model: None,
             fee_schedule: None,
             execution_cost_rules: None,
@@ -102,6 +111,22 @@ impl BacktestSpec {
     /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
     pub fn validate(&self) -> Result<(), AppError> {
         super::backtest_validation::validate(self)
+    }
+
+    /// Select the scale-aware v2 capital contract and keep its compatibility projection in sync.
+    pub fn with_initial_cash_exact(mut self, amount: ExactDecimal) -> Result<Self, AppError> {
+        self.schema_version = super::BACKTEST_SPEC_EXACT_SCHEMA_VERSION;
+        self.initial_cash_raw = amount
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, qx_core::DecimalRounding::TowardZero)
+            .and_then(|projected| projected.to_raw(9).ok())
+            .ok_or_else(|| {
+                AppError::new(
+                    super::AppErrorCategory::InvalidInput,
+                    "BacktestSpec.initial_cash_exact 无法投影到 1e-9 兼容范围",
+                )
+            })?;
+        self.initial_cash_exact = Some(amount);
+        Ok(self)
     }
 
     /// 从 JSON 读入（严格：多余键即拒）。

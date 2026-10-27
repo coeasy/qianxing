@@ -61,10 +61,23 @@ fn find_composition_summary(root: &Path) -> PathBuf {
 #[test]
 fn multi_leg_manifests_are_bound_reported_and_rechecked() {
     let root = temp_root();
-    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
-    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let primary_manifest = root.join("primary.dataset-manifest-v2.json");
-    let reference_manifest = root.join("reference.dataset-manifest-v2.json");
+    let source_root = root.join("source-workspace");
+    let input_root = source_root.join("inputs");
+    std::fs::create_dir_all(&input_root).expect("create isolated multi-leg source inputs");
+    let primary = input_root.join("primary.bar-frame.json");
+    let reference = input_root.join("reference.bar-frame.json");
+    std::fs::copy(
+        fixture("qianxing.bar-frame.pairs-primary.example.json"),
+        &primary,
+    )
+    .expect("copy primary BarFrame into isolated source workspace");
+    std::fs::copy(
+        fixture("qianxing.bar-frame.pairs-reference.example.json"),
+        &reference,
+    )
+    .expect("copy reference BarFrame into isolated source workspace");
+    let primary_manifest = source_root.join("primary.dataset-manifest-v2.json");
+    let reference_manifest = source_root.join("reference.dataset-manifest-v2.json");
     let primary_text = primary.to_string_lossy().into_owned();
     let reference_text = reference.to_string_lossy().into_owned();
     let primary_manifest_text = primary_manifest.to_string_lossy().into_owned();
@@ -95,7 +108,7 @@ fn multi_leg_manifests_are_bound_reported_and_rechecked() {
         assert_eq!(code, 0, "manifest generation failed: {stderr}");
     }
 
-    let run_root = root.join("valid-run");
+    let run_root = source_root.join("valid-run");
     let run_root_text = run_root.to_string_lossy().into_owned();
     let (code, stdout, stderr) = run(&[
         "backtest",
@@ -137,24 +150,31 @@ fn multi_leg_manifests_are_bound_reported_and_rechecked() {
             .as_str()
             .expect("composition summary references RunRecord"),
     );
-    let record: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&record_path).expect("composition RunRecord exists"))
-            .expect("composition RunRecord is JSON");
-    assert_eq!(record["run_id"], manifest["run_id"]);
-    assert_eq!(record["input_digest"], manifest["data_fingerprint"]);
-    assert_eq!(record["status"], "completed");
-    assert_eq!(record["replay_verdict"], "verified");
-    let artifact_refs = record["artifact_refs"]
-        .as_array()
-        .expect("RunRecord artifact references");
-    assert_eq!(artifact_refs.len(), 4);
+    let record_payload =
+        std::fs::read_to_string(&record_path).expect("composition RunRecord exists");
+    let record = qx_spec::RunRecordV2::from_json(&record_payload)
+        .expect("composition RunRecord must use the pathless V2 contract");
+    assert_eq!(record.run_id, manifest["run_id"].as_str().unwrap());
+    assert_eq!(
+        record.input_digest,
+        manifest["data_fingerprint"].as_str().unwrap()
+    );
+    assert_eq!(record.status, qx_spec::RunStatus::Completed);
+    assert_eq!(record.replay_verdict, qx_spec::ReplayVerdict::Verified);
+    assert_eq!(record.artifact_refs.len(), 4);
     for artifact_name in ["summary", "equity", "fills", "run_manifest"] {
-        let artifact = artifact_refs
+        let artifact = record
+            .artifact_refs
             .iter()
-            .find(|artifact| artifact["name"] == artifact_name)
+            .find(|artifact| artifact.name == artifact_name)
             .unwrap_or_else(|| panic!("RunRecord omits {artifact_name}"));
-        assert!(Path::new(artifact["path"].as_str().unwrap()).is_file());
-        assert_eq!(artifact["digest"].as_str().unwrap().len(), 64);
+        let location = summary["artifact_locations"][artifact_name]
+            .as_str()
+            .expect("RunRecord V2 storage location");
+        assert!(Path::new(location).is_file());
+        let bytes = std::fs::read(location).expect("RunRecord V2 artifact bytes");
+        assert_eq!(artifact.byte_len, bytes.len() as u64);
+        assert_eq!(artifact.artifact_id, qx_strategy::sha256_hex(&bytes));
     }
     let primary_fingerprint = summary["dataset_quality"]["legs"]["primary"]["manifest_fingerprint"]
         .as_str()
@@ -354,4 +374,22 @@ fn multi_leg_manifests_are_bound_reported_and_rechecked() {
     ]);
     assert_eq!(code, 2, "quality drift must fail closed: {stderr}");
     assert!(!rejected_root.exists(), "rejected run wrote artifacts");
+
+    let relocated_portable_root = root.join("relocated-portable-multi-leg");
+    std::fs::rename(&portable_root, &relocated_portable_root)
+        .expect("move multi-leg portable evidence package");
+    std::fs::remove_dir_all(&source_root)
+        .expect("remove original BarFrames, quality manifests and run artifacts");
+    let relocated_evidence = relocated_portable_root.join("evidence.json");
+    let relocated_verify = run(&[
+        "evidence",
+        "verify-run",
+        relocated_evidence.to_str().unwrap(),
+        "--recompute",
+    ]);
+    assert_eq!(
+        relocated_verify.0, 0,
+        "relocated multi-leg recompute must not depend on the source workspace: {}",
+        relocated_verify.2
+    );
 }

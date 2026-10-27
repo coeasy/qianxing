@@ -284,6 +284,7 @@ fn bench_l2_matching(n: usize) {
                         account_id: "bench".into(),
                         trace: None,
                         policy: None,
+                        exact_amounts: None,
                     })
                     .expect("valid benchmark order");
                 let snapshot = OrderBookSnapshot {
@@ -291,10 +292,14 @@ fn bench_l2_matching(n: usize) {
                     ts: id,
                     sequence: id,
                     bids: vec![BookLevel {
+                        price_exact: None,
+                        qty_exact: None,
                         price: Price::from_i64(99),
                         qty: Quantity::from_i64(1),
                     }],
                     asks: vec![BookLevel {
+                        price_exact: None,
+                        qty_exact: None,
                         price: Price::from_i64(100),
                         qty: Quantity::from_i64(1),
                     }],

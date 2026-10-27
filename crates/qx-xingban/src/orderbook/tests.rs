@@ -1,5 +1,8 @@
 use super::*;
-use qx_core::{InstrumentId, OrderTrace};
+use qx_core::{
+    ExactDecimal, ExactOrderAmounts, ExactTradingRules, InstrumentId, Ledger, Money, OrderStatus,
+    OrderTrace, TradingInstrumentSpec,
+};
 
 fn order(side: Side, qty: i128, limit: Option<i128>) -> Order {
     Order {
@@ -18,6 +21,7 @@ fn order(side: Side, qty: i128, limit: Option<i128>) -> Order {
             rule_version: Some("v1".into()),
         }),
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -27,20 +31,169 @@ fn book() -> OrderBookSnapshot {
         ts: 10,
         sequence: 1,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(99),
             qty: Quantity::from_i64(2),
         }],
         asks: vec![
             BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(100),
                 qty: Quantity::from_i64(1),
             },
             BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(101),
                 qty: Quantity::from_i64(2),
             },
         ],
     }
+}
+
+fn exact_depth_frame(bid_price: &str, ask_price: &str) -> DepthFrame {
+    DepthFrame {
+        schema_version: DepthFrame::EXACT_SCHEMA_VERSION,
+        source: "exact-depth-fixture".into(),
+        instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+        snapshots: vec![OrderBookSnapshot {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            ts: 10,
+            sequence: 1,
+            bids: vec![BookLevel::from_exact(
+                ExactDecimal::parse(bid_price).unwrap(),
+                ExactDecimal::parse("0.0000000001").unwrap(),
+            )
+            .unwrap()],
+            asks: vec![BookLevel::from_exact(
+                ExactDecimal::parse(ask_price).unwrap(),
+                ExactDecimal::parse("0.0000000002").unwrap(),
+            )
+            .unwrap()],
+        }],
+    }
+}
+
+#[test]
+fn depth_v2_preserves_sub_nano_book_levels_and_hashes_the_source_values() {
+    let frame = exact_depth_frame("100.0000000001", "100.0000000002");
+    frame.validate().unwrap();
+    let snapshot = &frame.snapshots[0];
+    assert_eq!(snapshot.bids[0].price.raw(), snapshot.asks[0].price.raw());
+    assert_eq!(snapshot.bids[0].qty.raw(), 0);
+    assert!(snapshot.validate().is_ok());
+
+    let payload = serde_json::to_string(&frame).unwrap();
+    let restored = DepthFrame::from_json(&payload).unwrap();
+    assert_eq!(restored.input_hash(), frame.input_hash());
+    assert_ne!(
+        frame.input_hash(),
+        exact_depth_frame("100.0000000003", "100.0000000004").input_hash()
+    );
+    let example = DepthFrame::from_json(include_str!(
+        "../../../../docs/examples/depth-frame-v2.example.json"
+    ))
+    .unwrap();
+    assert_eq!(example.schema_version, DepthFrame::EXACT_SCHEMA_VERSION);
+}
+
+#[test]
+fn depth_v2_rejects_missing_exact_levels_and_mismatched_legacy_projections() {
+    let mut frame = exact_depth_frame("100.0000000001", "100.0000000002");
+    frame.snapshots[0].asks[0].qty_exact = None;
+    assert!(frame.validate().unwrap_err().contains("必须同时提供"));
+
+    let mut frame = exact_depth_frame("100.0000000001", "100.0000000002");
+    frame.snapshots[0].bids[0].qty = Quantity::from_raw(1);
+    assert!(frame.validate().unwrap_err().contains("投影不一致"));
+}
+
+#[test]
+fn depth_v1_rejects_exact_fields_instead_of_silently_ignoring_them() {
+    let mut frame = exact_depth_frame("100.0000000001", "100.0000000002");
+    frame.schema_version = DepthFrame::LEGACY_SCHEMA_VERSION;
+    assert!(frame
+        .validate()
+        .unwrap_err()
+        .contains("不能包含精确盘口字段"));
+}
+
+#[test]
+fn exact_matcher_consumes_sub_nano_spot_depth_and_keeps_exact_fill_facts() {
+    let frame = exact_depth_frame("100.0000000001", "100.0000000002");
+    let instrument = frame.instrument.clone();
+    let mut spec = TradingInstrumentSpec::spot_default(&instrument, "USDT");
+    spec.base_currency = "BTC".into();
+    spec.exact_rules = Some(ExactTradingRules {
+        contract_size: ExactDecimal::ONE,
+        price_tick: ExactDecimal::parse("0.0000000001").unwrap(),
+        quantity_step: ExactDecimal::parse("0.0000000001").unwrap(),
+        minimum_quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+        minimum_notional: ExactDecimal::ZERO,
+    });
+    let qty = ExactDecimal::parse("0.0000000002").unwrap();
+    let mut exact_order = order(Side::Buy, 0, None);
+    exact_order.exact_amounts = Some(ExactOrderAmounts {
+        quantity: qty,
+        limit_price: None,
+        filled: ExactDecimal::ZERO,
+        quote_budget: None,
+        quote_filled: ExactDecimal::ZERO,
+        market_reference_price: Some(ExactDecimal::parse("100.0000000002").unwrap()),
+    });
+    let mut engine = OrderBookMatchingEngine::new(100)
+        .unwrap()
+        .with_fee_spec(Some(spec.clone()));
+    engine.submit(exact_order.clone()).unwrap();
+
+    let fills = engine.on_snapshot(&frame.snapshots[0]).unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].qty.raw(), 0);
+    assert_eq!(fills[0].price.raw(), 0);
+    let amounts = fills[0].exact_amounts.unwrap();
+    assert_eq!(amounts.quantity, qty);
+    assert_eq!(
+        amounts.price,
+        ExactDecimal::parse("100.0000000002").unwrap()
+    );
+    assert_eq!(
+        amounts.quote_cost,
+        Some(ExactDecimal::parse("0.000000020000000001").unwrap())
+    );
+    assert_eq!(fills[0].exact_fees.len(), 1);
+    assert_eq!(
+        fills[0].exact_fees[0].amount,
+        ExactDecimal::parse("0.0000000002").unwrap()
+    );
+    assert_eq!(engine.pending_count(), 0);
+    let attempt = engine.execution_attempts().last().unwrap();
+    assert_eq!(attempt.requested_qty_exact, Some(qty));
+    assert_eq!(attempt.filled_qty_exact, Some(qty));
+    assert_eq!(attempt.price_exact, Some(amounts.price));
+
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_i64(1), 1)
+        .unwrap();
+    ledger
+        .apply_fill_with_spec(&exact_order, &fills[0], "USDT", &spec)
+        .unwrap();
+    assert_eq!(
+        ledger
+            .position_for_side_exact(
+                &exact_order.account_id,
+                &instrument,
+                qx_core::PositionSide::Net
+            )
+            .quantity,
+        qty
+    );
+    assert_eq!(
+        ledger.cash_for_exact("main", "USDT"),
+        ExactDecimal::parse("0.999999979799999999").unwrap()
+    );
 }
 
 #[test]
@@ -216,6 +369,8 @@ fn fifo_volume_estimate_advances_queue_before_filling_passive_limit() {
             vec![]
         } else {
             vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(99),
                 qty: Quantity::from_i64(bid_qty),
             }]

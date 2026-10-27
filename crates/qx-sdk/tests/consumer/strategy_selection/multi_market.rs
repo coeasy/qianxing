@@ -12,9 +12,11 @@ fn rust_sdk_composes_multiple_external_strategies_in_one_shared_portfolio() {
     backtest.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: backtest.initial_cash_raw / 2,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: backtest.initial_cash_raw / 2,
+            reserved_capital_exact: None,
             strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::Momentum, "custom-secondary"),
         }],
     });
@@ -75,6 +77,7 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
                 dataset_manifest_path: None,
                 priority: index as u32,
                 market_spec: None,
+                asset_class: None,
                 fee_schedule: None,
                 order_policy: None,
                 margin_model: None,
@@ -83,6 +86,7 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
                 strategies: vec![PortfolioStrategySpec {
                     priority: 0,
                     reserved_capital_raw: 20_000 * 1_000_000_000,
+                    reserved_capital_exact: None,
                     strategy: BuiltinStrategySpec::new(
                         BuiltinStrategyKind::SmaCross,
                         format!("sdk-market-{index}"),
@@ -97,6 +101,7 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
         account_id: "sdk-shared-account".into(),
         settlement_currency: "USDT".into(),
         initial_cash_raw: 100_000 * 1_000_000_000,
+        initial_cash_exact: None,
         seed: 7,
         output_dir: root.join(run_id).to_string_lossy().into_owned(),
         markets: markets.clone(),
@@ -186,8 +191,11 @@ fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
                     maintenance_margin_bps: 0,
                     valid_from: 1,
                     valid_to: None,
+                    exact_rules: None,
                 },
                 fee_bps: 0,
+                funding_bps: 0,
+                funding_events: Vec::new(),
                 latency_snapshots: 0,
                 queue_position_bps: 0,
                 queue_position_model: Default::default(),
@@ -206,6 +214,7 @@ fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
         account_id: "sdk-depth-shared".into(),
         settlement_currency: "USDT".into(),
         initial_cash_raw: 10_000_000_000_000_000,
+        initial_cash_exact: None,
         output_dir: root.join("out").to_string_lossy().into_owned(),
         markets,
     };
@@ -258,6 +267,7 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
                 dataset_manifest_path: None,
                 priority: index as u32,
                 market_spec: None,
+                asset_class: None,
                 fee_schedule: None,
                 order_policy: None,
                 margin_model: None,
@@ -266,6 +276,7 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
                 strategies: vec![PortfolioStrategySpec {
                     priority: 0,
                     reserved_capital_raw: 20_000 * 1_000_000_000,
+                    reserved_capital_exact: None,
                     strategy: BuiltinStrategySpec::new(
                         BuiltinStrategyKind::SmaCross,
                         format!("experiment-slot-{index}"),
@@ -280,6 +291,7 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
         account_id: "sdk-market-grid-account".into(),
         settlement_currency: "USDT".into(),
         initial_cash_raw: 100_000 * 1_000_000_000,
+        initial_cash_exact: None,
         seed: 7,
         output_dir: root.to_string_lossy().into_owned(),
         markets,
@@ -295,14 +307,19 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
             values: vec![1, 2],
         }],
         strategy_kinds: vec![BuiltinStrategyKind::SmaCross, BuiltinStrategyKind::EmaCross],
+        callback_parameter_space: Vec::new(),
+        split_plan: None,
+        search: None,
     };
     let result = client.run_multi_market_experiment(&selected).unwrap();
     assert_eq!(result.total_candidates, 4);
     assert_eq!(result.succeeded_candidates, 4);
-    assert!(result.candidates.iter().all(|candidate| candidate
-        .outcome
-        .as_ref()
-        .is_some_and(|outcome| outcome.markets_total == 3)));
+    assert!(result.candidates.iter().all(|candidate| {
+        candidate
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.markets_total == 3)
+    }));
     let mut handle = client.start_multi_market_experiment(RunMultiMarketExperimentSpec {
         experiment_id: "sdk-market-grid-async".into(),
         ..selected.clone()
@@ -327,6 +344,9 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
             values: vec![1, 2],
         }],
         strategy_kinds: Vec::new(),
+        callback_parameter_space: Vec::new(),
+        split_plan: None,
+        search: None,
     };
     let identity = StrategyArtifactIdentity {
         strategy_id: "experiment-slot-0".into(),
@@ -342,4 +362,77 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
         .unwrap();
     assert_eq!(custom_result.succeeded_candidates, 2);
     assert_eq!(observed, [1, 2]);
+
+    let generic = RunMultiMarketExperimentSpec {
+        schema_version: 1,
+        experiment_id: "sdk-market-grid-callback-parameters".into(),
+        target_strategy_id: "experiment-slot-0".into(),
+        base: custom.base.clone(),
+        parameter_space: Vec::new(),
+        strategy_kinds: Vec::new(),
+        callback_parameter_space: vec![ExperimentParameterSpace {
+            name: "risk_scale".into(),
+            values: vec![2, 4],
+        }],
+        split_plan: None,
+        search: None,
+    };
+    let mut observed_callback_parameters = Vec::new();
+    let generic_result = client
+        .run_multi_market_experiment_with_parameter_factory(
+            &generic,
+            &identity,
+            &mut |_candidate, parameters| {
+                observed_callback_parameters.push(parameters["risk_scale"]);
+                Ok(Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>)
+            },
+        )
+        .unwrap();
+    assert_eq!(generic_result.succeeded_candidates, 2);
+    assert_eq!(observed_callback_parameters, [2, 4]);
+
+    let mut adaptive = generic;
+    adaptive.experiment_id = "sdk-market-adaptive-search".into();
+    adaptive.callback_parameter_space.clear();
+    adaptive.split_plan = Some(ExperimentSplitPlan {
+        train_bars: 32,
+        test_bars: 16,
+        walk_forward: true,
+        step_bars: 16,
+        purge_bars: 0,
+        embargo_bars: 0,
+    });
+    adaptive.search = Some(ExperimentSearchPlan {
+        algorithm: ExperimentSearchAlgorithm::Tpe,
+        seed: 73,
+        budget: 5,
+        max_training_drawdown_bps: None,
+        fold_local_search: true,
+        neighborhood_radius: None,
+        continuous_parameter_space: vec![ExperimentParameterRange {
+            name: "risk_scale".into(),
+            min: 1,
+            max: 8,
+            step: 1,
+        }],
+        early_pruning: None,
+        robustness_subwindows: None,
+        minimum_training_robustness_score_bps: None,
+    });
+    let adaptive_result = client
+        .run_multi_market_experiment_with_parameter_factory(
+            &adaptive,
+            &identity,
+            &mut |_candidate, _parameters| {
+                Ok(Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>)
+            },
+        )
+        .expect("stable SDK facade runs bounded adaptive search");
+    let adaptive_search = adaptive_result.search.expect("fold search trace");
+    let adaptive_oos = adaptive_result.out_of_sample.expect("fold OOS report");
+    assert_eq!(adaptive_search.fold_searches.len(), 2);
+    assert_eq!(adaptive_oos.folds.len(), 2);
+    assert!(adaptive_search.fold_searches.iter().all(|fold| {
+        fold.trials.len() == 5 && fold.trials.last().unwrap().proposal == "tpe_continuous"
+    }));
 }
