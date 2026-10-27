@@ -4,8 +4,8 @@
 
 服务端 Python 策略隔离仍以 E2B 为首选，Microsandbox 与 OpenSandbox 是显式可选后端；本地 Windows 验收只走 Microsandbox local。Microsandbox SDK 固定为 `0.7.11`，增加 Windows 11 / WHP 前置步骤和 `tools/microsandbox_local_smoke.py`，该命令在关闭 guest 网络的微虚机中执行 Python 并检查结果标记。Cargo、Python、C++ SDK 和成熟度基线版本统一准备为 `0.3.0`。
 
-- 定向沙箱回归 **48/48**，Windows smoke 命令帮助与 Python 编译检查通过；`cargo check --workspace --offline`、完整 Rust 工作区回归（**2,578 通过、2 忽略、0 失败，178 个目标**）、Rustfmt 和架构门禁 **228/228** 通过。Windows CPython 3.13 wheel 已在新虚拟环境安装并完成完整 Python wheel smoke，SHA-256 与范围记录于 [`python-wheel-release-candidate-2026-10-27.json`](../../maturity/evidence/python-wheel-release-candidate-2026-10-27.json)。Rust 回归记录见 [`rust-workspace-release-candidate-2026-10-27.json`](../../maturity/evidence/rust-workspace-release-candidate-2026-10-27.json)。
-- 当前 Windows 已启用 WHP，但 hypervisor 尚未进入本次启动会话。真实 `Sandbox.create` 在 VM 启动前返回“WHP is installed but the hypervisor is not active”；失败记录见 [`microsandbox-local-windows-attempt-2026-10-27.json`](../../maturity/evidence/microsandbox-local-windows-attempt-2026-10-27.json)。必须重启并让本地微虚机 smoke 输出成功标记后，才可关闭该发布门；此候选尚未打 tag 或发布。
+- 在提交 `b23ab7eed3fc2aa5f1ffdfcf7d27fee53057b649` 上，`cargo test --workspace --offline -j 1` **2,578 通过、2 忽略、0 失败，178 个目标**；同时重建了匹配该提交的 Python 原生扩展。此前 A 股 evidence 测试因临时目录复制过长 summary 文件名触发 Windows 路径错误，已改为短的逐运行目录；独立用例 **1/1**、完整集成组 **33/33** 及其后的全工作区回归均通过。完整 Python 套件 **560 通过、10 跳过**、架构门禁 **228/228**、Rustfmt 通过。Windows CPython 3.13 wheel 已在新虚拟环境安装并完成 wheel smoke，SHA-256 与范围记录于 [`python-wheel-release-candidate-2026-10-27.json`](../../maturity/evidence/python-wheel-release-candidate-2026-10-27.json)。Rust 回归记录见 [`rust-workspace-release-candidate-2026-10-27.json`](../../maturity/evidence/rust-workspace-release-candidate-2026-10-27.json)。
+- 当前 Windows 已启用 WHP，且 `LongPathsEnabled=1`；但 hypervisor 尚未进入本次启动会话，长路径设置也需重启后生效。真实 `Sandbox.create` 在 VM 启动前返回“WHP is installed but the hypervisor is not active”；失败记录见 [`microsandbox-local-windows-attempt-2026-10-27.json`](../../maturity/evidence/microsandbox-local-windows-attempt-2026-10-27.json)。必须重启并让本地微虚机 smoke 输出成功标记后，才可关闭该发布门；此候选尚未打 tag 或发布。
 
 ### `llm-sandbox` 远程 Docker 策略 worker 接入（2026-10-27，未发布工作区）
 

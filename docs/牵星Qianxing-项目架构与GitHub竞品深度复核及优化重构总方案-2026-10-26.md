@@ -769,7 +769,7 @@ Rust `MarketEvent::OrderBook` 的 `price_exact`/`qty_exact` 此前只存在 Rust
 
 **实现。** Strategy Job 使用“配置 worker ID + 进程实例 nonce”作为队列 owner，策略路由仍使用稳定配置 ID。策略评估后、cursor/checkpoint 提交前和失败收口前使用当前 lease 时钟重新 claim/续租；已提交 run 的恢复收口先确认当前 lease。实时行情过期确认也先按当前 wall clock 重新 claim，并使用返回的 fencing token ack。若已失租，当前进程不会把新 owner 的作业写成 Failed；作业留给持有有效 lease 的 worker。ControlCommand queue 未纳入这次 Strategy Job 改动。
 
-**验证。** 相同配置 worker ID 的两个进程 owner 在文件队列上无法共享活动 lease **1/1**；快照变化、快照缺失、输入时效、不匹配配置、过期租约接管与 ack 失败等闸门用例 **6/6**；策略回调期间另一 owner 接管租约后，旧 worker 在 cursor/checkpoint 提交前退出、保留新 owner 的 fencing token 且不吞掉待处理事件 **1/1**。`qx-cli` 首次完整二进制测试为 **404 通过、50 失败**；失败项归因为 Windows 默认临时目录不可写及测试使用的 CLI 二进制落后于源码。将 `TEMP/TMP` 指向工作区测试目录、重建 CLI 后，原 50 个失败用例（将旧的 ack 注入用例替换为上述并发接管用例）逐项复跑 **50/50 通过**；完整 454 项未在修正环境下再次整体重跑。全仓架构 `--fast` 四分片 **228/228**、无重复（137.02 秒）；相关 Rust `rustfmt --check`、门禁脚本 `py_compile` 与 `git diff --check` 通过。机器证据见 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
+**验证。** 相同配置 worker ID 的两个进程 owner 在文件队列上无法共享活动 lease **1/1**；快照变化、快照缺失、输入时效、不匹配配置、过期租约接管与 ack 失败等闸门用例 **6/6**；策略回调期间另一 owner 接管租约后，旧 worker 在 cursor/checkpoint 提交前退出、保留新 owner 的 fencing token 且不吞掉待处理事件 **1/1**。`qx-cli` 首次完整二进制测试为 **404 通过、50 失败**；失败项归因为 Windows 默认临时目录不可写及测试使用的 CLI 二进制落后于源码。将 `TEMP/TMP` 指向工作区测试目录、重建 CLI 后，原 50 个失败用例（将旧的 ack 注入用例替换为上述并发接管用例）逐项复跑 **50/50 通过**；完整 454 项未在修正环境下再次整体重跑。全仓架构 `--fast` 四分片 **228/228**、无重复（137.02 秒）；相关 Rust `rustfmt --check`、门禁脚本 `py_compile` 与 `git diff --check` 通过。机器证据见 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
 
 **边界。** 这关闭了 Strategy Job 同进程 ID 跨进程误共享 lease 的代码断点，并让写 cursor 前的 owner 校验使用当前 lease 时钟；不构成 lease 与跨节点 checkpoint 文件的单事务，也未完成 SQLite/PostgreSQL 并行 worker 压力与崩溃注入。Python 模块函数状态恢复见 §13.41；Rust/C ABI/第三方进程 checkpoint 状态合同、全 hook 能力拒绝矩阵、真实沙箱服务和发布门仍开放。
 
@@ -779,7 +779,7 @@ Rust `MarketEvent::OrderBook` 的 `price_exact`/`qty_exact` 此前只存在 Rust
 
 **实现。** 模块函数可选择导出成对的 `snapshot_state() -> dict` / `restore_state(state)`，或声明 `STRATEGY_STATELESS = True`。策略快照是有限 JSON 对象，完整 checkpoint 限制为 64 KiB；策略身份/版本、状态模式和策略状态均写入现有 `StrategyCheckpointV1`。持久 Python worker 首次发出 bootstrap checkpoint，并在推进 EventLog cursor 的同一可恢复快照中提交函数状态；失败回调恢复至上次提交状态。未声明模式的模块函数在持久 worker 首次调用前失败关闭。无状态 one-shot 本地回测/研究仍兼容旧模块函数；`BaseStrategy` 类生命周期不变。
 
-**验证。** `python/tests/test_strategy_process_adapter.py` 新增的 4 项模块函数状态用例全部通过；`test_strategy_base.py` 与进程适配器合计 **68/68**。`strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates` **1/1** 通过，验证持久模块 worker bootstrap、租约接管后旧 worker 在提交前退出；触及 Rust 文件 `rustfmt --check` 通过。能力目录生成检查通过；全仓 architecture `--fast` 四片 **228/228**、无重复（113.34 秒）。机器结果并入 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
+**验证。** `python/tests/test_strategy_process_adapter.py` 新增的 4 项模块函数状态用例全部通过；`test_strategy_base.py` 与进程适配器合计 **68/68**。`strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates` **1/1** 通过，验证持久模块 worker bootstrap、租约接管后旧 worker 在提交前退出；触及 Rust 文件 `rustfmt --check` 通过。能力目录生成检查通过；全仓 architecture `--fast` 四片 **228/228**、无重复（113.34 秒）。机器结果并入 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
 
 **边界。** 此变更覆盖持久 Python 模块函数，不表示 Rust/C ABI/外部进程状态恢复已统一，不构成跨节点存储事务、真实 E2B/Microsandbox/OpenSandbox 服务验收或发布许可。E2B 仍为服务器隔离执行首选，Microsandbox 与 OpenSandbox 保持显式备选；`lm-sandbox` 当前没有 Qianxing provider 实现，未列入已支持能力。
 
@@ -789,7 +789,7 @@ Rust `MarketEvent::OrderBook` 的 `price_exact`/`qty_exact` 此前只存在 Rust
 
 **实现。** 三个 provider 统一只依据当前请求是否携带宿主持久 checkpoint 决定能否轮换，不再以 class/spec 是否存在替代状态能力判断。轮换仍发生在发送下一事件之前；若已有请求处理过、下一请求没有 checkpoint，则保留当前 session 并失败关闭，避免状态丢失；有 checkpoint 时先有序终止旧 session，再创建新 session 并原样转发含 checkpoint 请求。错误文案改为通用 Python strategy checkpoint。
 
-**验证。** E2B、Microsandbox、OpenSandbox fake SDK worker 定向套件 **40/40**；新增覆盖无 `strategy spec` 的模块函数 bootstrap → 保存状态 checkpoint → session 轮换和恢复请求转发，以及三个 provider 缺少 checkpoint 时拒绝状态丢失式轮换。完整 Python 测试集 **553 通过、10 跳过、0 失败**。qx-cli 完整测试首轮 **445/454 通过**，9 项仅因 `cargo test --bin` 未重链 CLI 二进制触发新鲜度护栏；单独 `cargo build -p qx-cli` 后 9 项逐项 **9/9** 通过。架构 `--fast` **228/228**、四片无重复（126.09 秒）；能力目录 `--check`、受影响 Python `py_compile` 和 `git diff --check` 通过。机器记录见 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
+**验证。** E2B、Microsandbox、OpenSandbox fake SDK worker 定向套件 **40/40**；新增覆盖无 `strategy spec` 的模块函数 bootstrap → 保存状态 checkpoint → session 轮换和恢复请求转发，以及三个 provider 缺少 checkpoint 时拒绝状态丢失式轮换。完整 Python 测试集 **553 通过、10 跳过、0 失败**。qx-cli 完整测试首轮 **445/454 通过**，9 项仅因 `cargo test --bin` 未重链 CLI 二进制触发新鲜度护栏；单独 `cargo build -p qx-cli` 后 9 项逐项 **9/9** 通过。架构 `--fast` **228/228**、四片无重复（126.09 秒）；能力目录 `--check`、受影响 Python `py_compile` 和 `git diff --check` 通过。机器记录见 [`strategy-lifecycle-warmup-matrix-2026-10-27.json`](../maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json)。
 
 **边界。** 目前验证仍使用 fake SDK，不证明真实 provider 续租、网络中断后的 session 恢复、容量/费用、隔离策略或实盘链路。每次策略响应与 Rust cursor/checkpoint 原子提交仍以当前 worker 请求生命周期为界；provider session rotation 不替代跨节点持久存储事务或人工接管协议。
 
