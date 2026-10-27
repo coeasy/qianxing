@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "kind": "python-wheel-release-candidate-v1",
-  "generated_at_utc": "2026-10-27T07:43:03Z",
+  "generated_at_utc": "2026-10-27T09:15:04Z",
   "source": {
-    "head_commit": "2643979d24421b7ab38e2ae0a7ca9db60920eade",
-    "working_tree_changes_included": true
+    "head_commit": "6e91839ab3fd3ae4db4d8f7e492d0f7ae4726e30",
+    "working_tree_changes_included": false
   },
   "environment": {
     "os": "Windows 11 Pro build 22631",
@@ -16,8 +16,8 @@
     "name": "qianxing",
     "version": "0.3.0",
     "wheel": "qianxing-0.3.0-cp310-abi3-win_amd64.whl",
-    "wheel_sha256": "45d0d3106c1f894a761a62d745c4413c1756d6b8b9fdf5bb1b1601172843914a",
-    "wheel_bytes": 5998420,
+    "wheel_sha256": "074e5b46965510f082b4b5eba764a2020de9c16fd99a87457f8519aa12c8265e",
+    "wheel_bytes": 5998534,
     "native_payload": "qianxing_bridge/_qianxing_native.pyd",
     "microsandbox_worker_payload": "qianxing_strategy/microsandbox_worker.py",
     "microsandbox_optional_dependency": "microsandbox==0.7.11",
@@ -30,7 +30,7 @@
     "fresh_virtual_environment_install": "passed",
     "installed_package_version": "0.3.0",
     "wheel_smoke": {
-      "command": "python tools/python_wheel_smoke.py <repository-root>",
+      "command": ".codex-tmp-build/qianxing-030-commit-venv/Scripts/python.exe tools/python_wheel_smoke.py <repository-root>",
       "passed": true,
       "builtin_strategies": 17,
       "dataset_rows": 70,
@@ -47,7 +47,7 @@
   },
   "limitations": [
     "This candidate wheel covers Windows x64 and CPython 3.13 only; Linux, macOS and other Python release matrix legs remain unbuilt here.",
-    "The wheel was built from an uncommitted working tree and is not a published release artifact.",
+    "The wheel was built from commit 6e91839ab3fd3ae4db4d8f7e492d0f7ae4726e30 and is not a published release artifact.",
     "The Microsandbox guest runtime has not passed on this Windows boot: WHP is enabled but requires a restart before a local microVM can start."
   ],
   "release_status": "candidate_built_not_published"
