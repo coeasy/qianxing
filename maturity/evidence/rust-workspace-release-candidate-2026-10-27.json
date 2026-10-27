@@ -22,8 +22,8 @@
   },
   "limitations": [
     "This records the committed release candidate, not a published release.",
-    "Windows Microsandbox local VM acceptance is pending a Windows restart because WHP is enabled but the hypervisor is not active in the current boot.",
-    "Windows long-path support is enabled in the registry and also requires a restart before it affects running processes."
+    "The Windows Microsandbox local runtime smoke subsequently passed; its scoped evidence is maturity/evidence/microsandbox-local-windows-smoke-2026-10-27.json.",
+    "The local runtime smoke does not validate a Qianxing strategy worker inside the guest, connected server provider sessions, tenant isolation, capacity, billing, or production approval."
   ],
   "release_status": "candidate_tests_passed_not_published"
 }
