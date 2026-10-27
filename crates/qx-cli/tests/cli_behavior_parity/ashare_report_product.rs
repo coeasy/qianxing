@@ -317,7 +317,7 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
             );
         }
 
-        benchmark::assert_benchmark_report_product(&cwd, summary, &frame);
+        benchmark::assert_benchmark_report_product(&cwd, summary, &frame, run_index);
 
         let direct_xlsx = cwd.join(format!(
             "{}.report.xlsx",
