@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qianxing import cli
+from qianxing import cli, strategy_execution
 from qianxing.strategy_manifest import (
     apply_parameter_defaults,
     build_module_manifest,
@@ -221,7 +221,7 @@ def create_strategy(spec):
         payload["strategy"] = {"strategy_id": "class-sma", "fast_window": 5}
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy", return_value={"ok": True}) as run:
+        with patch.object(strategy_execution, "run_backtest_with_strategy", return_value={"ok": True}) as run:
             with contextlib.redirect_stdout(output):
                 code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
@@ -420,8 +420,8 @@ def create_strategy(spec):
         }
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         error = io.StringIO()
-        with patch.object(cli, "validate_strategy_execution_preflight_v1") as preflight:
-            with patch.object(cli, "run_backtest_with_strategy") as run:
+        with patch.object(strategy_execution, "validate_strategy_execution_preflight_v1") as preflight:
+            with patch.object(strategy_execution, "run_backtest_with_strategy") as run:
                 with contextlib.redirect_stderr(error):
                     code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
@@ -473,7 +473,7 @@ def create_strategy(spec):
         payload["strategy"].pop("fast")
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy", return_value={"ok": True}) as run:
+        with patch.object(strategy_execution, "run_backtest_with_strategy", return_value={"ok": True}) as run:
             with contextlib.redirect_stdout(output):
                 code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
@@ -494,8 +494,8 @@ def create_strategy(spec):
         self.strategy_path.write_text(source, encoding="utf-8")
         self.spec_path.write_text(json.dumps(self._backtest_base()), encoding="utf-8")
         error = io.StringIO()
-        with patch.object(cli, "validate_strategy_execution_preflight_v1") as preflight:
-            with patch.object(cli, "run_backtest_with_strategy") as run:
+        with patch.object(strategy_execution, "validate_strategy_execution_preflight_v1") as preflight:
+            with patch.object(strategy_execution, "run_backtest_with_strategy") as run:
                 with contextlib.redirect_stderr(error):
                     code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
@@ -637,7 +637,7 @@ def create_strategy(spec):
         payload["asset_class"] = "equity"
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -650,7 +650,7 @@ def create_strategy(spec):
         payload.pop("fee_schedule")
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -663,7 +663,7 @@ def create_strategy(spec):
         payload["market_spec"]["instrument"]["venue"] = "OKX"
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -674,7 +674,7 @@ def create_strategy(spec):
         payload["market_spec"]["product"] = "spot"
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -686,7 +686,7 @@ def create_strategy(spec):
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
         self._write_bars(40)
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -705,7 +705,7 @@ def create_strategy(spec):
         payload = self._backtest_base()
         self.spec_path.write_text(json.dumps(payload), encoding="utf-8")
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -721,7 +721,7 @@ def create_strategy(spec):
             }"""
         )
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
+        with patch.object(strategy_execution, "run_backtest_with_strategy") as run, contextlib.redirect_stderr(output):
             code = cli.main(["run-strategy", str(self.strategy_path), str(self.spec_path)])
 
         self.assertEqual(code, 2)
@@ -759,7 +759,7 @@ def create_strategy(spec):
         )
         output = io.StringIO()
         with patch.object(
-            cli,
+            strategy_execution,
             "run_multi_market_backtest_with_strategy_slots",
             return_value={"ok": True},
         ) as run, contextlib.redirect_stdout(output):

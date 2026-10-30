@@ -2,8 +2,7 @@
 
 use crate::{
     fingerprint_bars, Bar, DatasetManifest, DatasetManifestV2, DatasetQualityReport,
-    DatasetSourceLineage, DatasetTier, BAR_FRAME_SCHEMA_VERSION,
-    DATASET_MANIFEST_V2_SCHEMA_VERSION,
+    DatasetSourceLineage, DatasetTier, DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 use qx_datastruct::BarFrame;
 use ring::digest::{digest, SHA256};
@@ -76,7 +75,9 @@ pub fn manifest_from_bar_frame(
             version: dataset_version.to_owned(),
             source,
             fingerprint,
-            schema_version: BAR_FRAME_SCHEMA_VERSION,
+            // Mirror the wire version `BarFrame::to_json` emits: the source-precision
+            // sidecar only exists at schema 2, so a raw-only frame is schema 1.
+            schema_version: if frame.exact_ohlcv.is_some() { 2 } else { 1 },
             start_timestamp,
             end_timestamp,
         },

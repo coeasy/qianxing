@@ -402,7 +402,26 @@ class ProviderSdkTest(unittest.TestCase):
                 ),
             )
             result = registry.run_backtest_with_manifest(
-                spec, query, "provider-bars", "source-v1", interval_ms=1
+                spec,
+                query,
+                "provider-bars",
+                "source-v1",
+                interval_ms=1,
+                snapshot_context={
+                    "schema_version": 1,
+                    "instrument_role": "crypto_spot",
+                    "captured_at_ms": 1,
+                    "frequency_ms": 1,
+                    "timestamp_semantics": "bar_close",
+                    "price_precision": 8,
+                    "quantity_precision": 8,
+                    "price_unit": "USDT",
+                    "quantity_unit": "BTC",
+                    "calendar_id": "crypto-24x7",
+                    "calendar_version": "v1",
+                    "gaps": [],
+                    "corporate_action_policy": "not_applicable",
+                },
             )
             from jsonschema import Draft202012Validator
 
@@ -429,6 +448,7 @@ class ProviderSdkTest(unittest.TestCase):
                     "research-run-report-v1.json",
                     "provider-backtest-result-v1.json",
                     "dataset-manifest-v2.json",
+                    "dataset-snapshot-v1.json",
                 ),
             ).validate(report)
             tampered = asdict(result)
@@ -513,7 +533,26 @@ class ProviderSdkTest(unittest.TestCase):
                 depth_path=str(root / "provider-depth.json"),
                 output_dir=str(root / "provider-run"),
             )
-            provider_outcome = registry.run_depth_backtest(provider_spec, query)
+            provider_outcome = registry.run_depth_backtest(
+                provider_spec,
+                query,
+                snapshot_context={
+                    "schema_version": 1,
+                    "instrument_role": "crypto_spot",
+                    "captured_at_ms": 1,
+                    "frequency_ms": 1_000,
+                    "timestamp_semantics": "event_time",
+                    "price_precision": 8,
+                    "quantity_precision": 8,
+                    "price_unit": "USDT",
+                    "quantity_unit": "BTC",
+                    "calendar_id": "crypto-24x7",
+                    "calendar_version": "v1",
+                    "gaps": [],
+                    "corporate_action_policy": "not_applicable",
+                },
+                timezone="UTC",
+            )
             from jsonschema import Draft202012Validator
 
             depth_output_schema = json.loads(
@@ -521,7 +560,11 @@ class ProviderSdkTest(unittest.TestCase):
             )
             Draft202012Validator(
                 depth_output_schema,
-                registry=_local_schema_registry("depth-backtest-outcome-v1.json"),
+                registry=_local_schema_registry(
+                    "depth-backtest-outcome-v1.json",
+                    "dataset-manifest-v2.json",
+                    "dataset-snapshot-v1.json",
+                ),
             ).validate(json.loads(json.dumps(asdict(provider_outcome))))
             self.assertEqual(provider_outcome.provider_id, "quote-fixture")
             self.assertEqual(provider_outcome.retry_chain, ("quote-fixture",))
@@ -535,7 +578,11 @@ class ProviderSdkTest(unittest.TestCase):
             )
             Draft202012Validator(
                 report_schema,
-                registry=_local_schema_registry("research-run-report-v1.json"),
+                registry=_local_schema_registry(
+                    "research-run-report-v1.json",
+                    "dataset-manifest-v2.json",
+                    "dataset-snapshot-v1.json",
+                ),
             ).validate(report)
             tampered = asdict(provider_outcome)
             tampered["source_hash"] = "0000000000000000"

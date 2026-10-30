@@ -47,15 +47,24 @@ LAYERS = (
 )
 
 #: 子层里允许出现、但**刻意不进**顶层稳定名单的名字（按子层点名）。
-#: 理由：它们来自 `qianxing_strategy` 这个独立发行包，是策略作者那一侧的契约类型，
-#: 不是 `qx-app` 用例面的一部分；放进顶层会把稳定面撑大一圈。
+#: 一条名册就是一张通行证，理由写在它自己那一行上；没写理由的名字只能来自顶层。
 SUB_NAMESPACE_ONLY = {
+    # 来自 `qianxing_strategy` 这个独立发行包：策略作者那一侧的契约类型，不是
+    # `qx-app` 用例面的一部分，放进顶层会把稳定面撑大一圈。
     "strategy": ("SCHEMA_VERSION", "StrategyBars", "StrategyInput", "StrategyIntent", "StrategyOutput"),
     "core": ("AsyncCoreClient", "AsyncRunHandle"),
     # HTML rendering is a reports-layer presentation API, not a qx-app use case.
     "reports": (
         "render_multi_account_joint_report_html",
         "write_multi_account_joint_report_html",
+    ),
+    # 引导式研究是实验层用法，不进顶层稳定面。
+    "experiments": (
+        "GuidedResearchHandle",
+        "GuidedResearchResult",
+        "GuidedResearchSpec",
+        "research",
+        "start_research",
     ),
     "data": (
         "BAR_JSON_CONTENT_TYPE",
@@ -2301,12 +2310,24 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertEqual(set(get_args(get_type_hints(BacktestSpec)["fill_model"])[0].__args__), rust_fill_models)
 
     def test_top_level_all_equals_the_app_public_surface(self):
-        """顶层稳定名单 == `qianxing.app` 的公开类/函数集合，**双向**。"""
-        source = (PACKAGE_DIR / "app.py").read_text(encoding="utf-8")
-        public = set(re.findall(r"^(?:class|def) ([A-Za-z]\w*)", source, re.MULTILINE))
+        """顶层稳定名单 == `qianxing.app` 门面的公开类/函数集合，**双向**。"""
+        # R19 拆分后 app.py 只保留门面，运行时/交易客户端搬到同包实现模块；
+        # 这些名字仍属于 app 的公开面，因此一并扫描。
+        facade_modules = (
+            "app.py",
+            "client_local.py",
+            "client_remote.py",
+            "client_trading.py",
+            "client_transport.py",
+            "sdk_diagnostics.py",
+        )
+        public = set()
+        for module in facade_modules:
+            source = (PACKAGE_DIR / module).read_text(encoding="utf-8")
+            public |= set(re.findall(r"^(?:class|def) ([A-Za-z]\w*)", source, re.MULTILINE))
         exported = set(qianxing.__all__)
-        self.assertEqual(sorted(public - exported), [], "app.py 有公开面没被导出")
-        self.assertEqual(sorted(exported - public), [], "顶层导出了 app.py 里没有的名字")
+        self.assertEqual(sorted(public - exported), [], "app 门面有公开面没被导出")
+        self.assertEqual(sorted(exported - public), [], "顶层导出了 app 门面里没有的名字")
 
     def test_top_level_names_are_all_reachable(self):
         unresolved = [item for item in qianxing.__all__ if not hasattr(qianxing, item)]

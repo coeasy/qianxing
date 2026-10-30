@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import types
 import unittest
@@ -726,6 +727,9 @@ class BaseStrategyProcessAdapterTests(unittest.TestCase):
             (root / "helper.py").write_text("VALUE = 42\n", encoding="utf-8")
             strategy_path = root / "strategy.py"
             strategy_path.write_text("import helper\nVALUE = helper.VALUE\n", encoding="utf-8")
+            # The loader registers the bare sibling module in sys.modules; leaving it
+            # behind poisons later isolation tests that import a same-named helper.
+            self.addCleanup(sys.modules.pop, "helper", None)
             module = _load_strategy_module(str(strategy_path))
             self.assertEqual(module.VALUE, 42)
 

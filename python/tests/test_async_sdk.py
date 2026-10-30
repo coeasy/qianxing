@@ -8,13 +8,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from qianxing import client_local
 from qianxing.app import AsyncCoreClient, AsyncRunHandle, AppClient, PaperClient, RemoteRunHandle, RunEvent
 
 
 class AsyncSdkTests(unittest.TestCase):
     def test_async_core_methods_delegate_to_the_native_contract(self):
-        from qianxing import app
-
         client = AsyncCoreClient()
         spec = {"schema_version": 1, "request_id": "local-async"}
         methods = (
@@ -31,7 +30,7 @@ class AsyncSdkTests(unittest.TestCase):
         )
         for async_name, sync_name in methods:
             with self.subTest(async_method=async_name), patch.object(
-                app, sync_name, return_value=object()
+                client_local, sync_name, return_value=object()
             ) as sync_method:
                 result = asyncio.run(getattr(client, async_name)(spec))
                 self.assertIs(result, sync_method.return_value)
@@ -59,7 +58,7 @@ class AsyncSdkTests(unittest.TestCase):
 
         native_handle = FakeHandle()
         client = AsyncCoreClient()
-        with patch("qianxing.app.start_backtest", return_value=native_handle):
+        with patch("qianxing.client_local.start_backtest", return_value=native_handle):
             handle = asyncio.run(client.async_start_backtest({"request_id": "local-start"}))
         self.assertIsInstance(handle, AsyncRunHandle)
         self.assertEqual(handle.run_id, "local-run-1")
@@ -71,8 +70,6 @@ class AsyncSdkTests(unittest.TestCase):
         self.assertTrue(native_handle.cancelled)
 
     def test_every_async_core_start_maps_to_the_existing_native_start_function(self):
-        from qianxing import app
-
         client = AsyncCoreClient()
         marker = object()
         spec = {"schema_version": 1, "request_id": "local-start-parity"}
@@ -86,7 +83,7 @@ class AsyncSdkTests(unittest.TestCase):
         )
         for async_name, sync_name in methods:
             with self.subTest(async_method=async_name), patch.object(
-                app, sync_name, return_value=marker
+                client_local, sync_name, return_value=marker
             ) as sync_method:
                 result = asyncio.run(getattr(client, async_name)(spec))
                 self.assertEqual(result._handle, marker)

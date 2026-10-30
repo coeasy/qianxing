@@ -140,6 +140,8 @@ class ProviderDatasetBacktestOutcome:
     manifest: Mapping[str, Any]
     dataset_verdict: Any
     manifest_path: str
+    dataset_snapshot: Mapping[str, Any]
+    snapshot_path: str
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,10 @@ class ProviderDepthBacktestOutcome:
     retry_chain: tuple[str, ...]
     source_hash: str
     depth_path: str
+    manifest: Mapping[str, Any]
+    dataset_snapshot: Mapping[str, Any]
+    manifest_path: str
+    snapshot_path: str
 
 
 class ProviderRegistry:
@@ -213,7 +219,12 @@ class ProviderRegistry:
         return json.loads(self._native.fetch_depth_frame_json(query.to_json(), tier))
 
     def run_depth_backtest(
-        self, spec: Any, query: ProviderQuery
+        self,
+        spec: Any,
+        query: ProviderQuery,
+        *,
+        snapshot_context: Mapping[str, Any],
+        timezone: str,
     ) -> ProviderDepthBacktestOutcome:
         """Fetch Quote data through Rust Provider selection and run the shared Rust depth use case."""
         from qianxing.app import DepthBacktestOutcome, DepthBacktestSpec
@@ -221,10 +232,17 @@ class ProviderRegistry:
         values = spec.to_dict() if isinstance(spec, DepthBacktestSpec) else dict(spec)
         request = query.to_dict()
         request["required_data_tier"] = query.required_data_tier or values["tier"]
+        workflow_spec = {
+            "schema_version": 1,
+            "data_request": request,
+            "backtest": values,
+            "timezone": timezone,
+            "snapshot_context": dict(snapshot_context),
+        }
         payload = json.loads(
             self._native.run_depth_backtest_with_provider_json(
                 json.dumps(request, sort_keys=True, separators=(",", ":")),
-                json.dumps(values, sort_keys=True, separators=(",", ":")),
+                json.dumps(workflow_spec, sort_keys=True, separators=(",", ":")),
             )
         )
         return ProviderDepthBacktestOutcome(
@@ -235,6 +253,10 @@ class ProviderRegistry:
             retry_chain=tuple(payload["retry_chain"]),
             source_hash=payload["source_hash"],
             depth_path=payload["depth_path"],
+            manifest=payload["manifest"],
+            dataset_snapshot=payload["dataset_snapshot"],
+            manifest_path=payload["manifest_path"],
+            snapshot_path=payload["snapshot_path"],
         )
 
     def run_multi_leg_backtest_with_funding(self, spec: Any, query: ProviderQuery) -> Any:
@@ -264,10 +286,11 @@ class ProviderRegistry:
         dataset_id: str,
         dataset_version: str,
         interval_ms: int,
+        snapshot_context: Mapping[str, Any],
         timezone: str = "UTC",
         manifest_path: str | None = None,
     ) -> ProviderDatasetBacktestOutcome:
-        """Freeze and validate a DatasetManifestV2 before invoking the Rust Bar backtest."""
+        """Freeze a manifest and owner-context snapshot before invoking the Rust Bar backtest."""
         from qianxing.app import BacktestOutcome, BacktestSpec, DatasetVerdict
 
         values = spec.to_dict() if isinstance(spec, BacktestSpec) else dict(spec)
@@ -283,6 +306,7 @@ class ProviderRegistry:
                         "interval_ms": interval_ms,
                         "timezone": timezone,
                         "manifest_path": manifest_file,
+                        "snapshot_context": dict(snapshot_context),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -294,6 +318,8 @@ class ProviderRegistry:
             manifest=payload["manifest"],
             dataset_verdict=DatasetVerdict.from_dict(payload["dataset_verdict"]),
             manifest_path=payload["manifest_path"],
+            dataset_snapshot=payload["dataset_snapshot"],
+            snapshot_path=payload["snapshot_path"],
         )
 
     def run_depth_backtest_from_frame(self, spec: Any, query: ProviderQuery, tier: str) -> Any:
