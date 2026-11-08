@@ -76,6 +76,9 @@ impl CanonicalRunSpec {
         Ok(document)
     }
 
+    // Keep the constructor explicit: each argument is a required identity input and
+    // the validated document remains the only construction result.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_type: impl Into<String>,
         code_revision: impl Into<String>,

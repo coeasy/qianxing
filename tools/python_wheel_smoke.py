@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 import qianxing as qx
+from qianxing_bridge.native import extension_version
 
 
 def write_builtin_catalog_frame(path: Path, bars: int = 90) -> None:
@@ -76,6 +78,10 @@ def write_ashare_frame(path: Path, bars: int = 60) -> None:
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: python_wheel_smoke.py <repository-root>")
+    installed_version = package_version("qianxing")
+    native_version = extension_version()
+    assert qx.__version__ == installed_version, (qx.__version__, installed_version)
+    assert native_version == installed_version, (native_version, installed_version)
     root = Path(sys.argv[1]).resolve()
     bars = root / "deploy" / "qianxing.bar-frame.example.json"
     primary = root / "deploy" / "qianxing.bar-frame.pairs-primary.example.json"

@@ -1,0 +1,12 @@
+test_bare_file_name_is_not_a_path_citation (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_bare_file_name_is_not_a_path_citation) ... ok
+test_dot_slash_prefix_is_navigation_not_spelling (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_dot_slash_prefix_is_navigation_not_spelling) ... ok
+test_exact_spelling_is_examined_and_cleared (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_exact_spelling_is_examined_and_cleared) ... ok
+test_link_grammar_leaves_non_local_targets_alone (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_link_grammar_leaves_non_local_targets_alone) ... ok
+test_multiple_case_variants_are_left_unjudged (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_multiple_case_variants_are_left_unjudged) ... ok
+test_remote_and_non_path_backticks_are_skipped (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_remote_and_non_path_backticks_are_skipped) ... ok
+test_unique_case_variant_is_flagged_once_per_occurrence (python.tests.test_markdown_link_checker.PathCitationRuleTest.test_unique_case_variant_is_flagged_once_per_occurrence) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.001s
+
+OK

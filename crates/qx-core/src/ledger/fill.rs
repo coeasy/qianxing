@@ -213,7 +213,7 @@ impl Ledger {
         }
         // 异币种费用只有在现货口径下能按成交价折算，见 `fee_in_settlement_raw`。
         let base = (multiplier == 1)
-            .then(|| base_asset_of(&order.instrument.symbol, currency))
+            .then(|| base_asset_of(order.instrument.symbol(), currency))
             .flatten();
         let fee_charges = fee_charges_for_ledger(fill, currency, base.as_deref())?;
         if matches!(
@@ -602,10 +602,7 @@ impl Ledger {
             .exact_rules
             .as_ref()
             .map(|rules| rules.contract_size)
-            .unwrap_or_else(|| {
-                ExactDecimal::from_parts(spec.contract_size, 9)
-                    .expect("legacy contract size uses supported scale 9")
-            });
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(spec.contract_size));
 
         let mut staged = self.clone();
         let mut ids = Vec::with_capacity(2 + fee_charges.len());

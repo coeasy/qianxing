@@ -158,26 +158,35 @@ pub(crate) fn run_comparison_report(
             }
         }
     }
+    let mut output_bundle = crate::report_publish::ReportOutputBundle::default();
     if let (Some(analyses), Some(path)) = (&analyses, benchmark_csv) {
-        crate::report_comparison_benchmark::write_csv(analyses, &entries, path)?;
+        let staged = output_bundle.stage_path(path)?;
+        crate::report_comparison_benchmark::write_csv(analyses, &entries, &staged)?;
+        output_bundle.add_staged(path, &staged)?;
     }
     let html_path = if html {
-        Some(write_comparison_html(
+        let (target, content) = crate::report_comparison::prepare_comparison_html(
             &base_summary_path,
             &instrument,
             &fingerprint,
             &entries,
             &equity_series,
             output,
-        )?)
+        )?;
+        output_bundle.add_bytes(&target, content);
+        Some(target)
     } else {
         None
     };
-    let xlsx_path = xlsx
-        .map(|path| {
-            crate::report_xlsx::write_comparison_xlsx(&instrument, &fingerprint, &entries, path)
-        })
-        .transpose()?;
+    let xlsx_path = if let Some(path) = xlsx {
+        let staged = output_bundle.stage_path(path)?;
+        crate::report_xlsx::write_comparison_xlsx(&instrument, &fingerprint, &entries, &staged)?;
+        output_bundle.add_staged(path, &staged)?;
+        Some(path.to_path_buf())
+    } else {
+        None
+    };
+    output_bundle.commit()?;
     if as_json {
         let mut report = serde_json::json!({
             "schema_version": 1,

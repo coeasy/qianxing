@@ -263,6 +263,54 @@ fn strategy_worker_executes_pause_command_through_persistent_queue() {
         .pending()
         .unwrap()
         .is_empty());
+    // Each invocation creates a new runtime: Resume must observe the durable Pause.
+    for (command_id, expected_status) in [
+        (9002, CommandStatus::Executed),
+        (9003, CommandStatus::Failed),
+    ] {
+        let resume = ControlCommand {
+            command_id,
+            request_id: format!("resume-strategy-{command_id}"),
+            operator_id: "ops".into(),
+            reason: "restart lifecycle recovery".into(),
+            kind: CommandKind::ResumeStrategy,
+            target: "strategy-paper".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: false,
+        };
+        store
+            .transact_control(|plane| plane.submit_as(resume, Permission::Trading, command_id))
+            .unwrap()
+            .1
+            .unwrap();
+        run_strategy_worker(&config_path, "strategy-paper", true, false).unwrap();
+        let restored = load_control_state(&data_dir).unwrap();
+        let result = restored
+            .audit()
+            .iter()
+            .find(|record| record.command_id == command_id && record.status.is_final())
+            .unwrap();
+        assert_eq!(result.status, expected_status);
+        assert_eq!(restored.strategy_pause_state("strategy-paper"), Some(false));
+    }
+    let deployments = qx_service::strategy_deployments::read_strategy_deployments(
+        &config,
+        runtime_timestamp_ms(),
+    )
+    .unwrap();
+    let deployment = deployments
+        .iter()
+        .find(|status| status.worker_id == "strategy-paper")
+        .unwrap();
+    assert_eq!(deployment.state, "stopped");
+    assert!(deployment.trading_enabled.is_none());
+    assert!(deployment
+        .observation
+        .as_ref()
+        .unwrap()
+        .owner_id
+        .starts_with("strategy-paper@"));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -312,6 +360,62 @@ fn strategy_signal_portfolio_risk_emits_idempotent_submit_order() {
     let queued = queue.pending().unwrap().pop().unwrap();
     assert_eq!(queued.command.command_id, 9101);
     assert!(queued.command.payload.contains_key("order_json"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn strategy_failed_submit_replay_returns_a_known_local_result_for_reconciliation() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-cli-strategy-failed-replay-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.runtime.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    config.strategy.account_id = Some("main".into());
+    config.strategy.venue_id = Some("binance-testnet".into());
+    config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+    let order = build_strategy_order(&config, "strategy-paper", 9103, 10, 0, 1)
+        .unwrap()
+        .unwrap();
+    let command = strategy_submit_command("strategy-paper", &order, false, None).unwrap();
+    let store = ControlStateBackend::Files(JsonStateStore::new(&data_dir));
+    let queue = ControlCommandQueue::new(data_dir.join("control-queue"));
+    store
+        .transact(|plane| plane.submit_as(command.clone(), qx_control::Permission::Trading, 10))
+        .unwrap()
+        .1
+        .unwrap();
+    store
+        .transact(|plane| plane.execute(command.command_id, 20, |_| Err("VENUE_UNKNOWN".into())))
+        .unwrap()
+        .1
+        .unwrap();
+
+    let replay = persist_strategy_submit(&store, &queue, &command, 30).unwrap();
+    assert_eq!(replay, "ORDER_INTENT_ALREADY_FAILED");
+    assert!(queue.pending().unwrap().is_empty());
+    let state = load_control_state(&data_dir).unwrap();
+    let audit = state
+        .audit()
+        .iter()
+        .rev()
+        .find(|record| record.command_id == command.command_id)
+        .unwrap();
+    assert_eq!(audit.status, qx_control::CommandStatus::Failed);
     let _ = std::fs::remove_dir_all(root);
 }
 

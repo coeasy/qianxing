@@ -1,0 +1,7 @@
+$ python tools/accept_strategy_process_tree.py --output maturity/evidence/strategy-preflight-process-tree-windows-2026-10-29.json
+exit_code=0
+
+[stdout]
+{"out": "D:\\aex_work\\qianxing\\maturity\\evidence\\strategy-preflight-process-tree-windows-2026-10-29.json", "cases": 2, "all_descendants_reaped": true}
+
+[stderr]

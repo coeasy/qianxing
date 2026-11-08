@@ -1,6 +1,8 @@
 //! `data-validate` CLI adapter: bind flags to the qx-app manifest-validation use case.
 
-use crate::data_validate_args::{DatasetValidateArgs, DepthDatasetValidateArgs};
+use crate::data_validate_args::{
+    DatasetSnapshotArgs, DatasetValidateArgs, DepthDatasetValidateArgs,
+};
 use std::fmt::Write as _;
 
 pub(crate) fn validate_dataset(args: &DatasetValidateArgs) -> Result<(), String> {
@@ -87,5 +89,27 @@ pub(crate) fn validate_depth_dataset(args: &DepthDatasetValidateArgs) -> Result<
     for warning in result.manifest.warnings() {
         eprintln!("[Data · Validate · Depth · 警告] {warning}");
     }
+    Ok(())
+}
+
+pub(crate) fn publish_dataset_snapshot(args: &DatasetSnapshotArgs) -> Result<(), String> {
+    let spec = qx_app::DatasetSnapshotPublicationSpec::new(
+        args.data.to_string_lossy(),
+        args.manifest.to_string_lossy(),
+        args.context.to_string_lossy(),
+        args.output.to_string_lossy(),
+    );
+    let context = qx_app::RunContext::new(qx_app::CallerCapability::Research, "data-snapshot");
+    let result =
+        qx_app::publish_dataset_snapshot(&spec, &context).map_err(|error| error.to_string())?;
+    println!(
+        "[Data · Snapshot] dataset={} role={:?} content_sha256={} snapshot_sha256={} verdict={} output={}",
+        result.snapshot.manifest.identity(),
+        result.snapshot.instrument_role,
+        result.snapshot.manifest.content_hash,
+        result.snapshot_sha256,
+        if result.verified_existing { "已复核一致" } else { "已写出" },
+        result.output_path,
+    );
     Ok(())
 }

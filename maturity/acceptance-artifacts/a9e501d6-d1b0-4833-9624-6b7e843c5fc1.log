@@ -1,0 +1,76 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.19s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.21s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.20s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.29s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 7.49s
+
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 29.16s
+
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.72s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-cd4cbe8459ea2802.exe)
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (36312) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:490:9:
+assertion `left != right` failed
+  left: [123, 34, 115, 99, 104, 101, 109, 97, 95, 118, 101, 114, 115, 105, 111, 110, 34, 58, 51, 44, 34, 110, 101, 120, 116, 95, 115, 101, 113, 95, 98, 121, 95, 108, 111, 103, 34, 58, 123, 125, 44, 34, 99, 111, 109, 109, 105, 116, 116, 101, 100, 95, 102, 101, 110, 99, 105, 110, 103, 95, 116, 111, 107, 101, 110, 34, 58, 48, 44, 34, 99, 111, 109, 109, 105, 116, 95, 103, 101, 110, 101, 114, 97, 116, 105, 111, 110, 34, 58, 48, 125]
+ right: [123, 34, 115, 99, 104, 101, 109, 97, 95, 118, 101, 114, 115, 105, 111, 110, 34, 58, 51, 44, 34, 110, 101, 120, 116, 95, 115, 101, 113, 95, 98, 121, 95, 108, 111, 103, 34, 58, 123, 125, 44, 34, 99, 111, 109, 109, 105, 116, 116, 101, 100, 95, 102, 101, 110, 99, 105, 110, 103, 95, 116, 111, 107, 101, 110, 34, 58, 48, 44, 34, 99, 111, 109, 109, 105, 116, 95, 103, 101, 110, 101, 114, 97, 116, 105, 111, 110, 34, 58, 48, 125]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (8140) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:754:17:
+recovery child failed: exit code: 101
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`

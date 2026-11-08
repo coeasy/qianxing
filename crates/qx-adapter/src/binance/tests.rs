@@ -29,6 +29,31 @@ fn credentials_redact_secret_and_construct_auth() {
 }
 
 #[test]
+fn binance_spot_symbol_validation_rejects_path_and_request_syntax() {
+    let valid = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    assert!(validate_binance_instrument(&valid).is_ok());
+
+    let generic_market_form =
+        InstrumentId::new("BTC/USDT", qx_core::VenueId::new("BINANCE")).unwrap();
+    assert!(matches!(
+        validate_binance_instrument(&generic_market_form),
+        Err(QxError::Permanent(_))
+    ));
+    for symbol in [
+        "../../etc/passwd",
+        "/etc/passwd",
+        "BTCUSDT?limit=1",
+        "BTCUSDT\r\nX-Injected: yes",
+        "比特币USDT",
+    ] {
+        assert!(
+            InstrumentId::new(symbol, qx_core::VenueId::new("BINANCE")).is_none(),
+            "InstrumentId must refuse malformed symbol {symbol:?}"
+        );
+    }
+}
+
+#[test]
 fn credentials_load_from_projected_files_and_reject_control_bytes() {
     let root = std::env::current_dir()
         .unwrap()
@@ -920,7 +945,7 @@ fn binance_submit_events_reach_live_pipeline_and_ledger() {
             ),
             VenueEvent::Fill(fill) => {
                 let ts = fill.ts;
-                (qx_runtime::RuntimeExternalEvent::Fill { fill }, ts)
+                (qx_runtime::RuntimeExternalEvent::Fill { fill: *fill }, ts)
             }
             VenueEvent::FeeAdjustment {
                 account_id,
@@ -1014,7 +1039,7 @@ fn binance_exact_fill_and_fee_reach_exact_multicurrency_ledger() {
                 let ts = fill.ts;
                 (
                     qx_runtime::RuntimeExternalEvent::FillWithSpec {
-                        fill: Box::new(fill),
+                        fill: Box::new(*fill),
                         spec: Box::new(spec.clone()),
                     },
                     ts,

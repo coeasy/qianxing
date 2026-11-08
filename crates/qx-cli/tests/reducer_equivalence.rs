@@ -73,7 +73,8 @@ fn spot_spec() -> TradingInstrumentSpec {
 /// 线性永续：每张合约 0.01 BTC，与现货的现金语义路径不同。
 fn perpetual_spec() -> TradingInstrumentSpec {
     TradingInstrumentSpec {
-        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture"),
         product: TradingProduct::Perpetual,
         base_currency: "BTC".into(),
         quote_currency: CURRENCY.into(),

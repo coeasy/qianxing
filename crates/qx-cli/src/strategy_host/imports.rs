@@ -13,5 +13,4 @@ pub(super) use qx_strategy::{
     BuiltinStrategy, DynamicCAbiLoadPolicy, DynamicCAbiStrategy, MarketEvent as NativeMarketEvent,
     SharedRingConfig, Strategy as NativeStrategy, StrategyErrorStage, StrategyErrorV1,
 };
-pub(super) use std::collections::BTreeMap;
 pub(super) use std::path::Path;

@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import hashlib
-import inspect
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, is_dataclass
-from pathlib import Path, PurePosixPath
-from types import MappingProxyType
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .app import (
@@ -25,6 +21,9 @@ from .app import (
     doctor,
     run_backtest,
     run_backtest_with_strategy,
+    start_backtest_with_strategy,
+    start_depth_backtest_with_strategy,
+    start_multi_market_backtest_with_strategy_slots,
     run_depth_backtest,
     run_depth_backtest_with_strategy,
     run_depth_experiment,
@@ -42,6 +41,18 @@ from .app import (
     verify_run,
     verify_depth_run,
 )
+from .experiment_summary import summarize_experiment as _summarize_experiment
+from .experiment_strategy import build_multi_market_experiment_factory as _build_multi_market_experiment_factory
+from .experiment_diagnostics import (
+    _candidate_diagnostic_spec as _build_candidate_diagnostic_spec,
+    _experiment_candidate_rows as _build_experiment_candidate_rows,
+    diagnose_experiment_candidates as _run_experiment_candidate_diagnostics,
+)
+from .strategy_diagnostics import (
+    _multi_market_diagnostic_request,
+    _referenced_input_paths,
+    _strategy_diagnostic_request,
+)
 from .reports.experiment_html import (
     load_verified_candidate_details,
     load_verified_multi_market_candidate_details,
@@ -53,263 +64,40 @@ from .strategy_manifest import (
     declared_config_validator,
     resolve_strategy_parameters,
 )
-from qianxing_strategy.base import bind_strategy_warmup
+from .strategy_project import (
+    init_strategy_project,
+    load_strategy_file,
+    load_strategy_project,
+    local_project_preflight,
+    server_project_plan,
+    project_deployments,
+    show_strategy_project,
+    static_project_doctor,
+    dynamic_project_doctor,
+    validate_strategy_config,
+)
+from .strategy_execution import (
+    _bind_manifest_config_factory as _bind_execution_manifest_config_factory,
+    _bind_warmup_factory,
+    _strategy_identity as _resolve_strategy_identity,
+    run_project_strategy,
+    run_strategy_file,
+)
+from .project_runs import (run_project, wait_project_run, record_project_result,
+                           project_runs, project_run_status, cancel_project_run, project_run_events,
+                           record_project_error, record_project_plan,
+                           prepare_project_input, snapshot_project_input, snapshot_project_strategy,
+                           verify_project_artifacts, generate_project_report)
 
 
 def _document(value: object) -> object:
     return asdict(value) if is_dataclass(value) else value
 
 
-def _referenced_input_paths(value: object) -> list[str]:
-    """Collect common local data-file references from a versioned input document."""
-    path_keys = {
-        "path",
-        "file",
-        "file_path",
-        "input_path",
-        "source_path",
-        "data_path",
-        "bars_path",
-        "ticks_path",
-        "trades_path",
-        "book_path",
-        "csv_path",
-    }
-    found: list[str] = []
-
-    def visit(item: object) -> None:
-        if isinstance(item, dict):
-            for key, child in item.items():
-                if key in path_keys and isinstance(child, str):
-                    found.append(child)
-                else:
-                    visit(child)
-        elif isinstance(item, (list, tuple)):
-            for child in item:
-                visit(child)
-
-    visit(value)
-    return found
 
 
-def _strategy_diagnostic_request(
-    spec: dict[str, object], strategy_id: str, strategy_version: str
-):
-    from qianxing_bridge.strategy import StrategyInput
-
-    bars_path = spec.get("bars_path")
-    if not isinstance(bars_path, str) or not bars_path.strip():
-        raise InvalidInputError(
-            "diagnose-strategy requires BacktestSpec.bars_path",
-            payload={"category": "INVALID_INPUT", "message": "diagnose-strategy requires BacktestSpec.bars_path"},
-        )
-    path = Path(bars_path).expanduser().resolve()
-    try:
-        frame_bytes = path.read_bytes()
-        frame = json.loads(frame_bytes)
-    except OSError as exc:
-        message = f"cannot read diagnostic BarFrame {str(path)!r}: {exc}"
-        raise DataUnavailableError(
-            message, payload={"category": "DATA_UNAVAILABLE", "message": message}
-        ) from exc
-    except json.JSONDecodeError as exc:
-        message = f"diagnostic BarFrame JSON is invalid: {exc}"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        ) from exc
-    if not isinstance(frame, dict):
-        message = "diagnostic BarFrame must be a JSON object"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    instrument = spec.get("instrument")
-    if frame.get("instrument") != instrument:
-        message = "BarFrame.instrument must match BacktestSpec.instrument"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    timestamps = frame.get("ts")
-    if not isinstance(timestamps, list) or not timestamps or any(type(ts) is not int or ts <= 0 for ts in timestamps):
-        message = "diagnostic BarFrame.ts must contain positive integer timestamps"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    from qianxing_strategy.diagnostics import MAX_CALLBACK_DIAGNOSTIC_BARS
-
-    if len(timestamps) > MAX_CALLBACK_DIAGNOSTIC_BARS:
-        message = f"callback diagnostics accept at most {MAX_CALLBACK_DIAGNOSTIC_BARS} bars"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    if timestamps[-1] >= (1 << 64) - 1:
-        message = "last Bar timestamp leaves no representable diagnostic as_of boundary"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    verdict = validate_dataset(
-        {
-            "schema_version": 1,
-            "dataset_id": str(frame.get("source") or path.stem),
-            "bars_path": str(path),
-        }
-    )
-    if not verdict.usable or verdict.instrument != instrument or verdict.rows != len(timestamps):
-        message = "BarFrame failed Rust dataset validation or does not match the BacktestSpec"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    settlement = spec.get("settlement_currency")
-    initial_cash = spec.get("initial_cash_raw")
-    if not isinstance(settlement, str) or not settlement.strip() or type(initial_cash) is not int:
-        message = "BacktestSpec settlement_currency and initial_cash_raw are required for diagnostics"
-        raise InvalidInputError(message, payload={"category": "INVALID_INPUT", "message": message})
-    return StrategyInput.from_dict(
-        {
-            "schema_version": 1,
-            "request_id": f"{spec.get('run_id') or 'backtest'}:strategy-diagnostic",
-            "strategy_id": strategy_id,
-            "strategy_version": strategy_version,
-            "data_fingerprint": verdict.content_fingerprint,
-            "as_of": timestamps[-1] + 1,
-            "instrument": instrument,
-            "positions": {},
-            "cash": {settlement: initial_cash},
-            "available_margin_raw": None,
-            "risk_state": "diagnostic_fixed_initial_context",
-            "research_targets": {},
-            # Dataset BarFrames carry identity metadata alongside OHLCV columns.
-            # StrategyInput.bars is a separate strict wire contract, so pass only
-            # its declared fields after the dataset itself has been validated.
-            "bars": {key: value for key, value in frame.items() if key != "instrument"},
-        }
-    )
 
 
-def _multi_market_diagnostic_request(
-    spec: dict[str, object], strategy_id: str, strategy_version: str
-):
-    """Build one strategy-slot diagnostic input with Rust-validated peer BarFrames."""
-    from qianxing_bridge.strategy import StrategyInput, StrategyBars
-    from qianxing_strategy.diagnostics import MAX_CALLBACK_DIAGNOSTIC_BARS
-
-    markets = spec.get("markets")
-    if not isinstance(markets, list) or not markets:
-        raise InvalidInputError("multi-market diagnostics require a non-empty markets array")
-    settlement = spec.get("settlement_currency")
-    initial_cash = spec.get("initial_cash_raw")
-    if not isinstance(settlement, str) or not settlement.strip() or type(initial_cash) is not int:
-        raise InvalidInputError(
-            "multi-market diagnostics require settlement_currency and initial_cash_raw"
-        )
-
-    target: tuple[dict, dict] | None = None
-    seen_slots: set[str] = set()
-    for market_index, market in enumerate(markets):
-        if not isinstance(market, dict) or not isinstance(market.get("strategies"), list):
-            raise InvalidInputError(f"markets[{market_index}].strategies must be an array")
-        for slot in market["strategies"]:
-            strategy = slot.get("strategy") if isinstance(slot, dict) else None
-            slot_id = strategy.get("strategy_id") if isinstance(strategy, dict) else None
-            if not isinstance(slot_id, str) or not slot_id.strip() or slot_id in seen_slots:
-                raise InvalidInputError("multi-market strategy slots need unique strategy IDs")
-            seen_slots.add(slot_id)
-            if slot_id == strategy_id:
-                target = (market, slot)
-    if target is None:
-        raise InvalidInputError(
-            f"strategy ID {strategy_id!r} does not match a declared multi-market strategy slot"
-        )
-
-    target_market, target_slot = target
-    target_instrument = target_market.get("instrument")
-    if not isinstance(target_instrument, str) or not target_instrument.strip():
-        raise InvalidInputError("target market instrument must be a non-empty string")
-    bars_path = target_market.get("bars_path")
-    if not isinstance(bars_path, str) or not bars_path.strip():
-        raise InvalidInputError("target market requires bars_path")
-    request = _strategy_diagnostic_request(
-        {
-            "run_id": spec.get("run_id"),
-            "instrument": target_instrument,
-            "bars_path": bars_path,
-            "settlement_currency": settlement,
-            "initial_cash_raw": initial_cash,
-            "account_id": spec.get("account_id"),
-            "strategy": target_slot.get("strategy"),
-        },
-        strategy_id,
-        strategy_version,
-    )
-
-    market_bars: dict[str, StrategyBars] = {}
-    market_inputs: list[dict[str, object]] = []
-    target_as_of = request.as_of
-    total_rows = 0
-    for market_index, market in enumerate(markets):
-        instrument = market.get("instrument") if isinstance(market, dict) else None
-        path_value = market.get("bars_path") if isinstance(market, dict) else None
-        if not isinstance(instrument, str) or not instrument.strip():
-            raise InvalidInputError(f"markets[{market_index}].instrument must be a non-empty string")
-        if not isinstance(path_value, str) or not path_value.strip():
-            raise InvalidInputError(f"markets[{market_index}].bars_path must be a non-empty string")
-        path = Path(path_value).expanduser().resolve()
-        try:
-            frame = json.loads(path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise DataUnavailableError(f"cannot read BarFrame {str(path)!r}: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise InvalidInputError(f"BarFrame JSON is invalid for {instrument}: {exc}") from exc
-        if not isinstance(frame, dict) or frame.get("instrument") != instrument:
-            raise InvalidInputError(f"BarFrame.instrument must match market {instrument}")
-        timestamps = frame.get("ts")
-        if not isinstance(timestamps, list) or not timestamps:
-            raise InvalidInputError(f"BarFrame for {instrument} must contain timestamps")
-        if len(timestamps) > MAX_CALLBACK_DIAGNOSTIC_BARS:
-            raise InvalidInputError(
-                f"BarFrame for {instrument} exceeds the {MAX_CALLBACK_DIAGNOSTIC_BARS}-bar diagnostic limit"
-            )
-        verdict = validate_dataset(
-            {"schema_version": 1, "dataset_id": f"diagnostic-{market_index}", "bars_path": str(path)}
-        )
-        if not verdict.usable or verdict.instrument != instrument or verdict.rows != len(timestamps):
-            raise InvalidInputError(f"BarFrame failed Rust dataset validation for {instrument}")
-        market_inputs.append(
-            {
-                "instrument": instrument,
-                "content_fingerprint": verdict.content_fingerprint,
-                "rows": len(timestamps),
-            }
-        )
-        total_rows += len(timestamps)
-        if total_rows > MAX_CALLBACK_DIAGNOSTIC_BARS:
-            raise InvalidInputError(
-                f"multi-market callback diagnostics accept at most {MAX_CALLBACK_DIAGNOSTIC_BARS} total Bars"
-            )
-        if instrument == target_instrument:
-            continue
-        raw_bars = {key: value for key, value in frame.items() if key != "instrument"}
-        bars = StrategyBars.from_dict(raw_bars)
-        visible_count = sum(ts < target_as_of for ts in bars.ts)
-        if visible_count:
-            clipped = {
-                key: (value[:visible_count] if isinstance(value, list) else value)
-                for key, value in bars.to_dict().items()
-            }
-            market_bars[instrument] = StrategyBars.from_dict(clipped)
-
-    fingerprint_material = json.dumps(
-        sorted(
-            (item["instrument"], item["content_fingerprint"])
-            for item in market_inputs
-        ),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    request_value = request.to_dict()
-    request_value["data_fingerprint"] = "multi-market-sha256:" + hashlib.sha256(
-        fingerprint_material
-    ).hexdigest()
-    strategy_config = target_slot.get("strategy")
-    factory_context = {
-        "market": target_market,
-        "strategy": strategy_config,
-        "strategy_slot": target_slot,
-    }
-    return (
-        StrategyInput.from_dict(request_value),
-        strategy_config,
-        factory_context,
-        market_bars,
-        sorted(market_inputs, key=lambda item: str(item["instrument"])),
-    )
 
 
 def _write_protected_json(path: Path, document: object, protected_paths: Sequence[str | Path]) -> Path:
@@ -359,185 +147,9 @@ def _read_json(path: str) -> object:
         ) from exc
 
 
-def _strategy_bundle_sha256(source_path: Path, source_bytes: bytes, module: object) -> str:
-    """Hash the strategy file and Python dependencies imported from its directory."""
-    root = source_path.parent.resolve()
-    files: dict[str, bytes] = {}
-
-    def add_file(path: Path, content: bytes | None = None) -> None:
-        try:
-            resolved = path.resolve(strict=True)
-        except OSError as exc:
-            message = f"cannot read declared strategy dependency {str(path)!r}: {exc}"
-            raise DataUnavailableError(
-                message, payload={"category": "DATA_UNAVAILABLE", "message": message}
-            ) from exc
-        try:
-            relative = resolved.relative_to(root)
-        except ValueError as exc:
-            message = f"strategy dependency must remain under {root}: {path}"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            ) from exc
-        if not resolved.is_file() or resolved.suffix.lower() != ".py":
-            message = f"strategy dependency must be a Python source file: {path}"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-        try:
-            payload = content if content is not None else resolved.read_bytes()
-        except OSError as exc:
-            message = f"cannot read strategy dependency {str(resolved)!r}: {exc}"
-            raise DataUnavailableError(
-                message, payload={"category": "DATA_UNAVAILABLE", "message": message}
-            ) from exc
-        files[relative.as_posix()] = payload
-
-    add_file(source_path, source_bytes)
-
-    declared = getattr(module, "STRATEGY_DEPENDENCIES", ())
-    if not isinstance(declared, (tuple, list)):
-        message = "STRATEGY_DEPENDENCIES must be a tuple or list of relative .py paths"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-    for dependency in declared:
-        if not isinstance(dependency, str) or not dependency.strip():
-            message = "STRATEGY_DEPENDENCIES entries must be non-empty strings"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-        portable = PurePosixPath(dependency.replace("\\", "/"))
-        if portable.is_absolute() or ".." in portable.parts or portable.suffix.lower() != ".py":
-            message = f"invalid strategy dependency path: {dependency!r}"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-        add_file(root.joinpath(*portable.parts))
-
-    # Capture eagerly imported local helpers automatically. Lazy imports must be listed in
-    # STRATEGY_DEPENDENCIES so the identity is complete before the Rust run starts.
-    for loaded_module in tuple(sys.modules.values()):
-        module_path = getattr(loaded_module, "__file__", None)
-        if not isinstance(module_path, str) or not module_path.endswith(".py"):
-            continue
-        candidate = Path(module_path)
-        try:
-            relative = candidate.resolve(strict=True).relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if relative.suffix.lower() == ".py":
-            add_file(root / relative)
-
-    digest = hashlib.sha256()
-    digest.update(b"qianxing-strategy-bundle-v1\0")
-    for relative, content in sorted(files.items()):
-        path_bytes = relative.encode("utf-8")
-        digest.update(len(path_bytes).to_bytes(4, "big"))
-        digest.update(path_bytes)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
-
-
 def _load_strategy_file(path: str):
-    """Load one user strategy module and return its factory, module, and source digest."""
-    source_path = Path(path).expanduser().resolve()
-    if source_path.suffix.lower() != ".py":
-        message = f"strategy file must be a .py file: {source_path}"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-    try:
-        source_bytes = source_path.read_bytes()
-    except OSError as exc:
-        message = f"cannot read strategy file {str(source_path)!r}: {exc}"
-        raise DataUnavailableError(
-            message, payload={"category": "DATA_UNAVAILABLE", "message": message}
-        ) from exc
-
-    source_digest = hashlib.sha256(source_bytes).hexdigest()
-    module_name = f"_qianxing_strategy_{source_digest[:20]}"
-    module_spec = importlib.util.spec_from_file_location(module_name, source_path)
-    if module_spec is None or module_spec.loader is None:
-        message = f"cannot load Python strategy file: {source_path}"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-    module = importlib.util.module_from_spec(module_spec)
-    sys.modules[module_name] = module
-    parent = str(source_path.parent)
-    sys.path.insert(0, parent)
-    try:
-        module_spec.loader.exec_module(module)
-    except Exception as exc:
-        sys.modules.pop(module_name, None)
-        message = f"loading Python strategy file failed: {type(exc).__name__}: {exc}"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        ) from exc
-    finally:
-        try:
-            sys.path.remove(parent)
-        except ValueError:
-            pass
-
-    factory = getattr(module, "create_strategy", None)
-    strategy_class = getattr(module, "STRATEGY_CLASS", None)
-    if factory is None and strategy_class is not None:
-        from qianxing_strategy import BaseStrategy
-
-        if not isinstance(strategy_class, type) or not issubclass(
-            strategy_class, BaseStrategy
-        ):
-            message = "STRATEGY_CLASS must be a qianxing_strategy.BaseStrategy subclass"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-
-        try:
-            constructor = inspect.signature(strategy_class)
-        except (TypeError, ValueError) as exc:
-            message = (
-                "cannot inspect STRATEGY_CLASS constructor; export "
-                "create_strategy(spec: dict) instead"
-            )
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            ) from exc
-
-        accepts_spec = True
-        try:
-            constructor.bind({})
-        except TypeError:
-            accepts_spec = False
-            try:
-                constructor.bind()
-            except TypeError as exc:
-                message = (
-                    "STRATEGY_CLASS constructor must accept the strategy spec or no arguments"
-                )
-                raise InvalidInputError(
-                    message, payload={"category": "INVALID_INPUT", "message": message}
-                ) from exc
-
-        if accepts_spec:
-            def factory(spec):
-                return strategy_class(spec)
-        else:
-            def factory(_spec):
-                return strategy_class()
-    if not callable(factory):
-        message = (
-            "strategy file must export STRATEGY_CLASS (a BaseStrategy subclass) "
-            "or create_strategy(spec: dict)"
-        )
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-    digest = _strategy_bundle_sha256(source_path, source_bytes, module)
-    return module, factory, digest
-
+    """Compatibility wrapper for project-service strategy loading."""
+    return load_strategy_file(path)
 
 def _strategy_identity(
     args: argparse.Namespace,
@@ -546,49 +158,20 @@ def _strategy_identity(
     payload: dict,
     strategy_manifest: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
-    path = Path(strategy_file)
-    base = payload.get("base") if isinstance(payload.get("base"), dict) else payload
-    strategy = base.get("strategy") if isinstance(base.get("strategy"), dict) else {}
-    configured_id = payload.get("target_strategy_id") or strategy.get("strategy_id")
-    strategy_id = (
-        args.strategy_id
-        or configured_id
-        or getattr(module, "STRATEGY_ID", None)
-        or (strategy_manifest or {}).get("strategy_id")
-        or path.stem
+    return _resolve_strategy_identity(
+        module,
+        strategy_file,
+        payload,
+        strategy_manifest or {},
+        strategy_id=args.strategy_id,
+        strategy_version=args.strategy_version,
     )
-    if configured_id and str(strategy_id) != str(configured_id):
-        message = (
-            "strategy ID must match the primary strategy slot in the spec "
-            f"({configured_id!r})"
-        )
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-    strategy_version = (
-        args.strategy_version
-        or getattr(module, "STRATEGY_VERSION", None)
-        or (strategy_manifest or {}).get("strategy_version")
-        or "local"
-    )
-    return str(strategy_id), str(strategy_version)
 
 
 def _bind_manifest_warmup_factory(
     factory: Callable[..., object], warmup_bars: int
 ) -> Callable[..., object]:
-    """Carry manifest warmup into each fresh instance and validate it at callback init."""
-    def create(*args: object, **kwargs: object) -> object:
-        strategy = factory(*args, **kwargs)
-        if strategy is None:
-            return None
-        return bind_strategy_warmup(
-            strategy,
-            warmup_bars,
-            defer_history_requirements=True,
-        )
-
-    return create
+    return _bind_warmup_factory(factory, warmup_bars)
 
 
 def _validate_strategy_config(
@@ -597,27 +180,8 @@ def _validate_strategy_config(
     execution_spec: Mapping[str, Any],
     target_strategy_id: str | None,
 ) -> None:
-    """Run the single optional pure validator against declared parameters."""
-    validator = declared_config_validator(module)
-    if validator is None:
-        return
-    if manifest.get("completeness") != "complete":
-        raise ValueError("validate_config requires a complete strategy manifest")
-    config = resolve_strategy_parameters(
-        execution_spec,
-        manifest,
-        target_strategy_id=target_strategy_id,
-    )
-    try:
-        result = validator(MappingProxyType(copy.deepcopy(config)))
-    except Exception as exc:
-        raise ValueError(
-            f"validate_config(config) rejected strategy parameters: {type(exc).__name__}: {exc}"
-        ) from exc
-    if result is not None:
-        raise ValueError(
-            "validate_config(config) must return None; raise ValueError to reject config"
-        )
+    """Compatibility wrapper for project-service strategy validation."""
+    return validate_strategy_config(module, manifest, execution_spec, target_strategy_id)
 
 
 def _bind_manifest_config_factory(
@@ -626,345 +190,14 @@ def _bind_manifest_config_factory(
     manifest: Mapping[str, Any],
     target_strategy_id: str | None,
 ) -> Callable[..., object]:
-    """Apply manifest defaults and cross-parameter validation for every factory call."""
-    def create(
-        execution_spec: Mapping[str, Any], *args: object, **kwargs: object
-    ) -> object:
-        if kwargs:
-            raise ValueError("create_strategy(spec) does not accept keyword arguments")
-        if len(args) > 1 or (args and not isinstance(args[0], Mapping)):
-            raise ValueError("candidate parameters must be provided as one mapping")
-        candidate_parameters = args[0] if args else None
-        effective_target = target_strategy_id
-        if effective_target is None and isinstance(execution_spec, Mapping):
-            strategy = execution_spec.get("strategy")
-            if isinstance(strategy, Mapping):
-                identity = strategy.get("strategy_id")
-                if isinstance(identity, str) and identity.strip():
-                    effective_target = identity
-        bound_spec = apply_parameter_defaults(
-            execution_spec,
-            manifest,
-            target_strategy_id=effective_target,
-            candidate_parameters=candidate_parameters,
-        )
-        _validate_strategy_config(
-            module,
-            manifest,
-            bound_spec,
-            effective_target,
-        )
-        return factory(bound_spec)
-
-    return create
-
-
-def _strategy_config_targets(
-    execution_spec: Mapping[str, Any], target_strategy_id: str | None
-) -> list[str | None]:
-    """List the strategy slots that must pass module-level config validation."""
-    base = execution_spec.get("base")
-    if isinstance(base, Mapping):
-        return _strategy_config_targets(base, target_strategy_id)
-    markets = execution_spec.get("markets")
-    if not isinstance(markets, list):
-        return [target_strategy_id]
-    identities: set[str] = set()
-    for market in markets:
-        if not isinstance(market, Mapping):
-            continue
-        slots = market.get("strategies")
-        if not isinstance(slots, list):
-            continue
-        for slot in slots:
-            strategy = slot.get("strategy") if isinstance(slot, Mapping) else None
-            identity = strategy.get("strategy_id") if isinstance(strategy, Mapping) else None
-            if isinstance(identity, str) and identity.strip():
-                if target_strategy_id is None or identity == target_strategy_id:
-                    identities.add(identity)
-    return sorted(identities) if identities else [target_strategy_id]
-
-
-def _multi_market_strategy_bindings(
-    payload: dict,
-    factory: Callable[[dict], object],
-    *,
-    strategy_id: str | None,
-    strategy_version: str,
-    source_sha256: str,
-) -> list[dict[str, object]]:
-    """Build fresh Python strategy instances for selected shared-account market slots."""
-    markets = payload.get("markets")
-    if not isinstance(markets, list) or not markets:
-        message = "multi-market strategy input must contain a non-empty markets array"
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-
-    slots: list[tuple[str, dict, dict]] = []
-    seen: set[str] = set()
-    for market_index, market in enumerate(markets):
-        if not isinstance(market, dict) or not isinstance(market.get("strategies"), list):
-            message = f"markets[{market_index}].strategies must be an array"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-        for slot_index, portfolio_slot in enumerate(market["strategies"]):
-            strategy = (
-                portfolio_slot.get("strategy")
-                if isinstance(portfolio_slot, dict)
-                else None
-            )
-            slot_id = strategy.get("strategy_id") if isinstance(strategy, dict) else None
-            if not isinstance(slot_id, str) or not slot_id.strip():
-                message = (
-                    f"markets[{market_index}].strategies[{slot_index}] must declare "
-                    "strategy.strategy_id"
-                )
-                raise InvalidInputError(
-                    message, payload={"category": "INVALID_INPUT", "message": message}
-                )
-            if slot_id in seen:
-                message = f"multi-market strategy slot ID is duplicated: {slot_id}"
-                raise InvalidInputError(
-                    message, payload={"category": "INVALID_INPUT", "message": message}
-                )
-            seen.add(slot_id)
-            slots.append((slot_id, market, portfolio_slot))
-
-    selected = [slot for slot in slots if strategy_id is None or slot[0] == strategy_id]
-    if not selected:
-        message = (
-            f"strategy ID {strategy_id!r} does not match a declared multi-market strategy slot"
-            if strategy_id
-            else "multi-market spec contains no strategy slots"
-        )
-        raise InvalidInputError(
-            message, payload={"category": "INVALID_INPUT", "message": message}
-        )
-
-    bindings: list[dict[str, object]] = []
-    for slot_id, market, portfolio_slot in selected:
-        strategy_spec = portfolio_slot["strategy"]
-        factory_payload = {
-            **payload,
-            "market": market,
-            "strategy": strategy_spec,
-            "strategy_slot": portfolio_slot,
-        }
-        try:
-            strategy = factory(factory_payload)
-        except Exception as exc:
-            message = (
-                f"create_strategy(spec) failed for slot {slot_id!r}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            ) from exc
-        if strategy is None:
-            message = f"create_strategy(spec) returned None for slot {slot_id!r}"
-            raise InvalidInputError(
-                message, payload={"category": "INVALID_INPUT", "message": message}
-            )
-        bindings.append(
-            {
-                "strategy_id": slot_id,
-                "strategy_version": strategy_version,
-                "source_sha256": source_sha256,
-                "strategy": strategy,
-            }
-        )
-    return bindings
+    return _bind_execution_manifest_config_factory(
+        factory, module, manifest, target_strategy_id
+    )
 
 
 def _experiment_summary(result: object) -> dict[str, object]:
-    """Render the long experiment report as a compact strategy review."""
-    document = _document(result)
-    if not isinstance(document, dict):
-        return {"result": document}
-
-    candidates = document.get("candidates", [])
-    if isinstance(document.get("ranking"), (list, tuple)) and not isinstance(
-        document.get("comparison"), dict
-    ):
-        by_ordinal = {
-            candidate.get("ordinal"): candidate
-            for candidate in candidates
-            if isinstance(candidate, dict)
-        }
-        ranking = []
-        for item in document.get("ranking", []):
-            if not isinstance(item, dict):
-                continue
-            candidate = by_ordinal.get(item.get("ordinal"), {})
-            ranking.append(
-                {
-                    **item,
-                    "parameters": candidate.get("parameters", {}),
-                }
-            )
-        out_of_sample = document.get("out_of_sample")
-        fold_selections = []
-        if isinstance(out_of_sample, dict):
-            for fold in out_of_sample.get("folds", []):
-                fold_selections.append(
-                    {
-                        "fold": fold.get("fold"),
-                        "selected_ordinal": fold.get("selected_ordinal"),
-                        "parameters": fold.get("selected_parameters", {}),
-                        "in_sample_return_bps": fold.get("in_sample_return_bps"),
-                        "out_of_sample_return_bps": fold.get("out_of_sample_return_bps"),
-                    }
-                )
-        search_report = document.get("search")
-        search_summary = None
-        if isinstance(search_report, dict):
-            search_folds = []
-            for fold in search_report.get("fold_searches", []):
-                if not isinstance(fold, dict):
-                    continue
-                trials = [
-                    trial
-                    for trial in fold.get("trials", [])
-                    if isinstance(trial, dict)
-                ]
-                trials.sort(
-                    key=lambda trial: (
-                        trial.get("training_score_bps") is None,
-                        -(trial.get("training_score_bps") or 0),
-                        trial.get("ordinal", 0),
-                    )
-                )
-                search_folds.append(
-                    {
-                        "fold": fold.get("fold"),
-                        "seed": fold.get("seed"),
-                        "top_training_trials": trials[:10],
-                    }
-                )
-            search_summary = {
-                "algorithm": search_report.get("algorithm"),
-                "objective": search_report.get("objective"),
-                "seed": search_report.get("seed"),
-                "budget": search_report.get("budget"),
-                "fold_local_search": search_report.get("fold_local_search"),
-                "max_training_drawdown_bps": search_report.get(
-                    "max_training_drawdown_bps"
-                ),
-                "fold_searches": search_folds,
-            }
-        return {
-            "experiment_id": document.get("experiment_id"),
-            "target_strategy_id": document.get("target_strategy_id"),
-            "candidate_count": document.get("total_candidates"),
-            "succeeded_candidates": document.get("succeeded_candidates"),
-            "failed_candidates": document.get("failed_candidates"),
-            "ranking_scope": (
-                "first_training_fold"
-                if isinstance(out_of_sample, dict)
-                else "full_input_in_sample"
-            ),
-            "top_candidates": ranking[:10],
-            "search": search_summary,
-            "fold_candidate_failures": document.get("fold_candidate_failures", []),
-            "out_of_sample": (
-                {
-                    "in_sample_return_bps": out_of_sample.get("in_sample_return_bps"),
-                    "out_of_sample_return_bps": out_of_sample.get("out_of_sample_return_bps"),
-                    "degradation_bps": out_of_sample.get("degradation_bps"),
-                    "cross_fold_robustness": out_of_sample.get("cross_fold_robustness"),
-                    "fold_selections": fold_selections,
-                }
-                if isinstance(out_of_sample, dict)
-                else None
-            ),
-            **(
-                {}
-                if isinstance(out_of_sample, dict)
-                else {"note": "multi-market grid has no time split; in-sample ranking alone does not establish out-of-sample effectiveness"}
-            ),
-            "artifact_path": document.get("artifact_path"),
-        }
-
-    by_run_id = {
-        candidate.get("outcome", {}).get("run_id"): candidate
-        for candidate in candidates
-        if candidate.get("outcome") is not None
-    }
-
-
-    ranking = []
-    comparison = document.get("comparison") or {}
-    for item in comparison.get("runs", []):
-        run = item.get("run", {})
-        candidate = by_run_id.get(run.get("run_id"), {})
-        ranking.append(
-            {
-                "rank": item.get("rank"),
-                "ordinal": candidate.get("ordinal"),
-                "parameters": candidate.get("parameters", {}),
-                "return_bps": run.get("return_bps"),
-                "max_drawdown_bps": run.get("max_drawdown_bps"),
-                "fills": (candidate.get("outcome") or {}).get("fills"),
-                "run_id": run.get("run_id"),
-            }
-        )
-
-    out_of_sample = document.get("out_of_sample")
-    fold_selections = []
-    if isinstance(out_of_sample, dict):
-        for fold in out_of_sample.get("folds", []):
-            selected = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if candidate.get("ordinal") == fold.get("selected_ordinal")
-                ),
-                {},
-            )
-            fold_selections.append(
-                {
-                    "fold": fold.get("fold"),
-                    "parameters": fold.get("selected_parameters")
-                    or selected.get("parameters", {}),
-                    "in_sample_return_bps": fold.get("in_sample_return_bps"),
-                    "out_of_sample_return_bps": fold.get("out_of_sample_return_bps"),
-                }
-            )
-
-    search = document.get("search") or {}
-    neighborhood = search.get("neighborhood") or {}
-    return {
-        "experiment_id": document.get("experiment_id"),
-        "candidate_count": document.get("total_candidates"),
-        "succeeded_candidates": document.get("succeeded_candidates"),
-        "failed_candidates": document.get("failed_candidates"),
-        "top_candidates_by_comparison": ranking[:10],
-        "out_of_sample": (
-            {
-                "in_sample_return_bps": out_of_sample.get("in_sample_return_bps"),
-                "out_of_sample_return_bps": out_of_sample.get("out_of_sample_return_bps"),
-                "degradation_bps": out_of_sample.get("degradation_bps"),
-                "cross_fold_robustness": out_of_sample.get("cross_fold_robustness"),
-                "fold_selections": fold_selections,
-            }
-            if isinstance(out_of_sample, dict)
-            else None
-        ),
-        "baselines": document.get("baselines", []),
-        "cost_sensitivity": [
-            {
-                "name": item.get("name"),
-                "cost_robustness_passed": item.get("cost_robustness_passed"),
-                "return_delta_bps": item.get("return_delta_bps"),
-                "error": item.get("error"),
-            }
-            for item in document.get("cost_sensitivity", [])
-        ],
-        "parameter_neighborhood_assessment": neighborhood.get("assessment"),
-        "artifact_path": document.get("artifact_path"),
-    }
+    """Compatibility facade for the experiment summary projection."""
+    return _summarize_experiment(result)
 
 
 def _multi_market_experiment_factory(
@@ -972,73 +205,12 @@ def _multi_market_experiment_factory(
     factory: Callable[[dict], object],
     strategy_id: str,
 ) -> Callable[[dict], object]:
-    """Adapt a candidate's target slot to the strategy-file create_strategy contract."""
-    search = experiment_spec.get("search")
-    continuous = search.get("continuous_parameter_space", []) if isinstance(search, dict) else []
-    dimensions = (
-        experiment_spec.get("callback_parameter_space")
-        or experiment_spec.get("parameter_space", [])
-        or continuous
-    )
-    parameter_names = [
-        dimension.get("name")
-        for dimension in dimensions
-        if isinstance(dimension, dict) and isinstance(dimension.get("name"), str)
-    ]
-
-    def create(candidate: dict, parameters: dict | None = None) -> object:
-        markets = candidate.get("markets") if isinstance(candidate, dict) else None
-        if not isinstance(markets, list):
-            raise ValueError("multi-market experiment candidate has no markets array")
-        matches = []
-        for market in markets:
-            if not isinstance(market, dict):
-                continue
-            for slot in market.get("strategies", []):
-                strategy = slot.get("strategy") if isinstance(slot, dict) else None
-                if isinstance(strategy, dict) and strategy.get("strategy_id") == strategy_id:
-                    matches.append((market, slot, strategy))
-        if len(matches) != 1:
-            raise ValueError(
-                f"target strategy slot {strategy_id!r} matched {len(matches)} candidates"
-            )
-        market, slot, strategy = matches[0]
-        resolved_parameters = (
-            parameters
-            if isinstance(parameters, dict)
-            else {name: strategy.get(name) for name in parameter_names}
-        )
-        return factory(
-            {
-                **candidate,
-                "market": market,
-                "strategy": strategy,
-                "strategy_slot": slot,
-                "parameters": resolved_parameters,
-            }
-        )
-
-    return create
+    """Compatibility facade for multi-market candidate strategy binding."""
+    return _build_multi_market_experiment_factory(experiment_spec, factory, strategy_id)
 
 
 def _experiment_candidate_rows(document: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return every materialized primary and fold-local candidate with its search scope."""
-    rows: list[dict[str, Any]] = []
-    for candidate in document.get("candidates", ()):
-        if isinstance(candidate, dict):
-            rows.append({"scope": "primary", "fold": None, "candidate": candidate})
-    search = document.get("search")
-    if isinstance(search, dict):
-        for fold_index, fold in enumerate(search.get("fold_searches", ()), start=1):
-            if not isinstance(fold, dict):
-                continue
-            fold_number = fold.get("fold", fold_index)
-            for candidate in fold.get("candidates", ()):
-                if isinstance(candidate, dict):
-                    rows.append(
-                        {"scope": "fold_local", "fold": fold_number, "candidate": candidate}
-                    )
-    return rows
+    return _build_experiment_candidate_rows(document)
 
 
 def _candidate_diagnostic_spec(
@@ -1047,63 +219,7 @@ def _candidate_diagnostic_spec(
     experiment_spec: Mapping[str, Any],
     strategy_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Rebuild the candidate settings consumed by create_strategy(spec)."""
-    candidate_spec = copy.deepcopy(dict(base_spec))
-    raw_parameters = candidate.get("parameters", {})
-    if not isinstance(raw_parameters, dict) or any(
-        not isinstance(name, str) or type(value) is not int
-        for name, value in raw_parameters.items()
-    ):
-        raise TypeError("candidate parameters must be an object of integer values")
-    parameters = dict(raw_parameters)
-    kind = candidate.get("strategy_kind")
-    if kind is not None and not isinstance(kind, str):
-        raise TypeError("candidate strategy_kind must be a string or null")
-
-    markets = candidate_spec.get("markets")
-    if isinstance(markets, list):
-        target: dict[str, Any] | None = None
-        target_slot: dict[str, Any] | None = None
-        for market in markets:
-            if not isinstance(market, dict):
-                continue
-            for slot in market.get("strategies", ()):
-                strategy = slot.get("strategy") if isinstance(slot, dict) else None
-                if isinstance(strategy, dict) and strategy.get("strategy_id") == strategy_id:
-                    if target is not None:
-                        raise ValueError(f"strategy slot {strategy_id!r} is ambiguous")
-                    target, target_slot = market, slot
-        if target is None or target_slot is None:
-            raise ValueError(f"strategy slot {strategy_id!r} is missing from the experiment base")
-        strategy = target_slot.get("strategy")
-        if not isinstance(strategy, dict):
-            raise TypeError("target strategy slot has no strategy object")
-        if kind is not None:
-            strategy["kind"] = kind
-        builtin_names = {
-            row.get("name")
-            for row in experiment_spec.get("parameter_space", ())
-            if isinstance(row, dict) and isinstance(row.get("name"), str)
-        }
-        for name, value in parameters.items():
-            if name in builtin_names:
-                strategy[name] = value
-        factory_context = {
-            "market": target,
-            "strategy": strategy,
-            "strategy_slot": target_slot,
-            "parameters": parameters,
-        }
-        return candidate_spec, factory_context
-
-    strategy = candidate_spec.get("strategy")
-    if not isinstance(strategy, dict):
-        raise TypeError("candidate BacktestSpec has no strategy object")
-    if kind is not None:
-        strategy["kind"] = kind
-    for name, value in parameters.items():
-        strategy[name] = value
-    return candidate_spec, None
+    return _build_candidate_diagnostic_spec(base_spec, candidate, experiment_spec, strategy_id)
 
 
 def _diagnose_experiment_candidates(
@@ -1119,204 +235,22 @@ def _diagnose_experiment_candidates(
     timeout_seconds: int,
     candidate_limit: int | None = None,
 ) -> dict[str, Any]:
-    """Attach an independently replayed bias diagnostic to each materialized candidate."""
-    base_spec = experiment_spec.get("base")
-    if not isinstance(base_spec, dict):
-        raise TypeError("candidate diagnostics require an experiment base object")
-    rows = _experiment_candidate_rows(experiment_document)
-    if candidate_limit is not None and candidate_limit <= 0:
-        raise ValueError("diagnostic candidate limit must be positive")
-
-    from qianxing_strategy.diagnostics import (
-        MAX_HANDLER_TIMEOUT_SECONDS,
-        MAX_LOOKAHEAD_CHECKS,
-        diagnose_callback_strategy,
+    return _run_experiment_candidate_diagnostics(
+        experiment_spec,
+        experiment_document,
+        strategy_file,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        strategy_bundle_sha256=strategy_bundle_sha256,
+        startup_windows=startup_windows,
+        max_checks=max_checks,
+        timeout_seconds=timeout_seconds,
+        candidate_limit=candidate_limit,
+        candidate_rows_builder=_experiment_candidate_rows,
+        candidate_spec_builder=_candidate_diagnostic_spec,
+        multi_market_request_builder=_multi_market_diagnostic_request,
+        strategy_request_builder=_strategy_diagnostic_request,
     )
-
-    if (
-        not startup_windows
-        or any(type(window) is not int or window <= 0 for window in startup_windows)
-        or len(set(startup_windows)) != len(startup_windows)
-    ):
-        raise ValueError("diagnostic startup windows must be unique positive integers")
-    if not 0 < max_checks <= MAX_LOOKAHEAD_CHECKS:
-        raise ValueError(f"diagnostic max checks must be in 1..={MAX_LOOKAHEAD_CHECKS}")
-    if not 0 < timeout_seconds <= MAX_HANDLER_TIMEOUT_SECONDS:
-        raise ValueError(
-            f"diagnostic timeout must be in 1..={MAX_HANDLER_TIMEOUT_SECONDS} seconds"
-        )
-
-    base_spec_sha256 = hashlib.sha256(
-        json.dumps(
-            base_spec,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
-    items: list[dict[str, Any]] = []
-    diagnosed = 0
-    failures = 0
-    unavailable = 0
-    limited = 0
-    diagnostic_attempts = 0
-    for row in rows:
-        candidate = row["candidate"]
-        parameters = candidate.get("parameters", {})
-        item: dict[str, Any] = {
-            "scope": row["scope"],
-            "fold": row["fold"],
-            "ordinal": candidate.get("ordinal"),
-            "strategy_kind": candidate.get("strategy_kind"),
-            "parameters": parameters,
-        }
-        if candidate.get("outcome") is None:
-            if candidate.get("pruning") is not None:
-                item.update(
-                    {"status": "candidate_pruned", "reason": "candidate was pruned before a full outcome"}
-                )
-            else:
-                item.update(
-                    {
-                        "status": "candidate_failed",
-                        "reason": candidate.get("error") or "candidate produced no outcome",
-                    }
-                )
-            unavailable += 1
-            items.append(item)
-            continue
-        if candidate_limit is not None and diagnostic_attempts >= candidate_limit:
-            item.update(
-                {
-                    "status": "not_run_candidate_limit",
-                    "reason": f"diagnostic candidate limit {candidate_limit} reached",
-                }
-            )
-            limited += 1
-            items.append(item)
-            continue
-
-        diagnostic_attempts += 1
-        try:
-            candidate_spec, factory_context = _candidate_diagnostic_spec(
-                base_spec, candidate, experiment_spec, strategy_id
-            )
-            identity_material = {
-                "base_spec_sha256": base_spec_sha256,
-                "input_data_fingerprint": experiment_document.get("input_data_fingerprint"),
-                "strategy_bundle_sha256": strategy_bundle_sha256,
-                "scope": row["scope"],
-                "fold": row["fold"],
-                "ordinal": candidate.get("ordinal"),
-                "strategy_kind": candidate.get("strategy_kind"),
-                "parameters": parameters,
-            }
-            item["candidate_fingerprint"] = hashlib.sha256(
-                json.dumps(
-                    identity_material,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    allow_nan=False,
-                ).encode("utf-8")
-            ).hexdigest()
-            if isinstance(candidate_spec.get("markets"), list):
-                (
-                    request,
-                    strategy_config,
-                    resolved_context,
-                    peer_frames,
-                    market_inputs,
-                ) = _multi_market_diagnostic_request(
-                    candidate_spec, strategy_id, strategy_version
-                )
-                if factory_context is None:
-                    raise ValueError("multi-market candidate diagnostic has no factory context")
-                resolved_context["parameters"] = factory_context["parameters"]
-                diagnostic = diagnose_callback_strategy(
-                    request,
-                    strategy_file,
-                    candidate_spec,
-                    strategy_bundle_sha256=strategy_bundle_sha256,
-                    startup_windows=list(startup_windows),
-                    max_checks=max_checks,
-                    timeout_seconds=timeout_seconds,
-                    diagnostic_market_bars=peer_frames,
-                    factory_context=resolved_context,
-                )
-                diagnostic["backtest_strategy_config"] = strategy_config
-                diagnostic["multi_market"] = {
-                    "target_strategy_id": strategy_id,
-                    "market_count": len(candidate_spec["markets"]),
-                    "peer_market_bars_included": len(peer_frames),
-                    "peer_market_instruments": sorted(peer_frames),
-                    "market_inputs": market_inputs,
-                    "point_in_time_ledger_scope": "target_market_only",
-                }
-            else:
-                request = _strategy_diagnostic_request(
-                    candidate_spec, strategy_id, strategy_version
-                )
-                diagnostic = diagnose_callback_strategy(
-                    request,
-                    strategy_file,
-                    candidate_spec,
-                    strategy_bundle_sha256=strategy_bundle_sha256,
-                    startup_windows=list(startup_windows),
-                    max_checks=max_checks,
-                    timeout_seconds=timeout_seconds,
-                )
-                diagnostic["backtest_strategy_config"] = candidate_spec.get("strategy")
-            diagnostic["candidate_fingerprint"] = item["candidate_fingerprint"]
-            diagnostic["candidate_parameters"] = parameters
-            diagnostic["candidate_scope"] = row["scope"]
-            diagnostic["candidate_fold"] = row["fold"]
-            item.update({"status": "diagnosed", "diagnostics": diagnostic})
-            diagnosed += 1
-        except Exception as exc:  # noqa: BLE001 - isolate user strategy failures per candidate.
-            item.update(
-                {
-                    "status": "diagnostic_failed",
-                    "reason": f"{type(exc).__name__}: {exc}",
-                }
-            )
-            failures += 1
-        items.append(item)
-
-    coverage = (
-        "no_candidates"
-        if not rows
-        else "complete"
-        if diagnosed == len(rows)
-        else "no_runnable_candidates"
-        if diagnosed == 0 and failures == 0 and limited == 0
-        else "partial"
-    )
-    return {
-        "schema_version": 1,
-        "kind": "qianxing-candidate-bias-diagnostics",
-        "experiment_id": experiment_document.get("experiment_id"),
-        "strategy_id": strategy_id,
-        "strategy_version": strategy_version,
-        "strategy_bundle_sha256": strategy_bundle_sha256,
-        "base_spec_sha256": base_spec_sha256,
-        "input_data_fingerprint": experiment_document.get("input_data_fingerprint"),
-        "diagnostic_data_scope": "full_declared_input_for_each_candidate_configuration",
-        "parameters": {
-            "startup_windows": list(startup_windows),
-            "max_lookahead_checks": max_checks,
-            "timeout_seconds": timeout_seconds,
-            "candidate_limit": candidate_limit,
-        },
-        "candidate_count": len(rows),
-        "diagnosed_count": diagnosed,
-        "diagnostic_failure_count": failures,
-        "unavailable_candidate_count": unavailable,
-        "not_run_candidate_count": limited,
-        "coverage_status": coverage,
-        "items": items,
-    }
 
 
 def _configure_console_encoding() -> None:
@@ -1337,6 +271,110 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="show installed SDK and native use-case availability")
+    data = commands.add_parser(
+        "data",
+        help="list data sources, fetch bars/actions, install dataset bundles",
+        add_help=False,
+    )
+    data.add_argument("data_argv", nargs=argparse.REMAINDER)
+    run_file = commands.add_parser(
+        "run",
+        help="compose a BacktestSpec from a strategy file and run it on the Rust engine",
+    )
+    run_file.add_argument("-f", "--strategy-file", required=True,
+                          help="Python file exporting STRATEGY_CLASS or create_strategy(spec)")
+    run_file.add_argument("--spec", type=Path,
+                          help="explicit BacktestSpec JSON; mutually exclusive with --bars/--data")
+    run_file.add_argument("--bars", type=Path, help="frozen BarFrame JSON (explicit data source)")
+    run_file.add_argument("--data", type=Path, help="dataset bundle directory (bars + snapshot)")
+    run_file.add_argument("--source", help="fetch bars from this source before running (network)")
+    run_file.add_argument("--instrument", help="instrument symbol; defaults to the bars file's")
+    run_file.add_argument("-s", "--start", help="inclusive start date YYYYMMDD")
+    run_file.add_argument("-e", "--end", help="inclusive end date YYYYMMDD")
+    run_file.add_argument("-a", "--cash", help="initial cash in major units (default: 100000)")
+    run_file.add_argument("--currency", help="settlement currency; required outside A shares/sample")
+    run_file.add_argument("--frequency", help="fetch frequency (default: daily)")
+    run_file.add_argument("--adjustment", choices=("none", "qfq", "hfq"))
+    run_file.add_argument("--seed", type=int)
+    run_file.add_argument("-o", "--output", type=Path,
+                          help="run directory for bars/spec/artifacts (default: runs/<strategy>)")
+    project = commands.add_parser(
+        "project",
+        help="initialize, inspect, and run a versioned local strategy project",
+    )
+    project_commands = project.add_subparsers(dest="project_command", required=True)
+    project_init = project_commands.add_parser("init", help="create a strategy project scaffold")
+    project_init.add_argument("directory", help="project directory to create or update")
+    project_init.add_argument("--strategy-file", help="link an existing strategy file")
+    project_init.add_argument("--input-spec", help="link a versioned BacktestSpec JSON file")
+    project_init.add_argument("--runtime-config", help="optional server runtime config for plan")
+    project_init.add_argument("--worker-id", help="strategy worker id in the server runtime config")
+    project_init.add_argument("--force", action="store_true", help="replace the project manifest")
+    project_init.add_argument("--demo", action="store_true",
+                              help="write an offline sample dataset and a runnable input spec")
+    project_init.add_argument("--source", help="fetch real bars from this source (implies demo wiring)")
+    project_init.add_argument("--instrument", help="instrument symbol for the dataset")
+    project_init.add_argument("--start", help="inclusive start date YYYYMMDD")
+    project_init.add_argument("--end", help="inclusive end date YYYYMMDD")
+    project_init.add_argument("--cash", default="100000", help="initial cash in major units")
+    project_init.add_argument("--currency", help="settlement currency")
+    project_init.add_argument("--frequency", default="daily")
+    project_init.add_argument("--adjustment", default="none", choices=("none", "qfq", "hfq"))
+    project_init.add_argument("--rows", type=int, default=600, help="sample rows (--demo only)")
+    project_doctor = project_commands.add_parser(
+        "doctor", help="statically inspect a project; run user code only with --dynamic",
+    )
+    project_doctor.add_argument("project_path", help="project directory or qianxing.strategy.json")
+    project_doctor.add_argument("--dynamic", action="store_true",
+                                help="run strategy preflight in a timed trusted-local subprocess")
+    project_doctor.add_argument("--timeout", type=int, default=30,
+                                help="dynamic preflight timeout in seconds (1-300)")
+    project_show = project_commands.add_parser(
+        "show", help="show project metadata and resolved paths without executing code"
+    )
+    project_show.add_argument("project_path", help="project directory or qianxing.strategy.json")
+    project_plan = project_commands.add_parser(
+        "plan", help="show a validated local or static server execution plan",
+    )
+    project_plan.add_argument("project_path", help="project directory or qianxing.strategy.json")
+    project_plan.add_argument("--profile", choices=("local", "server"), default="local")
+    project_plan.add_argument("--runtime-config", help="server runtime JSON path")
+    project_plan.add_argument("--worker-id", help="strategy worker id in the runtime config")
+    project_plan.add_argument("--explain", action="store_true", help="show effective values, their sources and overridden values")
+    project_run = project_commands.add_parser("run", help="run the project's strategy locally")
+    project_run.add_argument("project_path", help="project directory or qianxing.strategy.json")
+    project_report = project_commands.add_parser("report", help="generate verified HTML/XLSX/JSON reports for a completed project run")
+    project_report.add_argument("project_path")
+    project_report.add_argument("run_id")
+    project_report.add_argument(
+        "--cli", default=None,
+        help="report renderer executable; defaults to the qx-cli bundled in this wheel, then PATH",
+    )
+    project_report.add_argument("-o", "--output", help="HTML output path (relative to project root)")
+    project_report.add_argument(
+        "--format", default="html", metavar="LIST",
+        help="comma-separated report formats: html, xlsx, json (default: html)",
+    )
+    deployments = project_commands.add_parser("deployments", help="query observed server strategy processes")
+    deployments.add_argument("project_path")
+    deployments.add_argument("--api-url", required=True, help="Qianxing API origin")
+    deployments.add_argument("--worker-id", help="override the worker selected by the project manifest")
+    deployments.add_argument("--ca-cert", help="CA certificate bundle for HTTPS")
+    deployments.add_argument("--client-cert", help="mTLS client certificate")
+    deployments.add_argument("--client-key", help="mTLS client private key path")
+    for action, help_text in (("runs", "list project run receipts"),
+                              ("status", "inspect a project run"),
+                              ("cancel", "request cooperative Rust cancellation"),
+                              ("logs", "read bounded Rust lifecycle events"),
+                              ("artifacts", "verify recorded artifact bytes")):
+        action_parser = project_commands.add_parser(action, help=help_text)
+        action_parser.add_argument("project_path")
+        if action != "runs":
+            action_parser.add_argument("run_id")
+        if action == "runs":
+            action_parser.add_argument("--limit", type=int, default=100)
+        if action == "logs":
+            action_parser.add_argument("--tail", type=int, default=100)
     diagnose = commands.add_parser(
         "diagnose-strategy",
         help="probe a Python strategy class or factory for future-data and warmup sensitivity",
@@ -1594,9 +632,91 @@ def _prepare_guided_research_input(payload: Any) -> dict[str, Any]:
     return prepare_quick_research_spec(payload)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run_strategy_command(args: argparse.Namespace) -> Any:
+    from uuid import uuid4
+
+    from . import run_spec
+    from .app import BuiltinStrategySpec
+
+    strategy_file = Path(args.strategy_file).expanduser().resolve(strict=True)
+    data_flags = [value for value in (args.bars, args.data, args.source) if value is not None]
+    composition_flags = (args.instrument, args.start, args.end, args.cash, args.currency,
+                         args.frequency, args.adjustment, args.seed, args.output)
+    if args.spec is not None:
+        if data_flags or any(value is not None for value in composition_flags):
+            raise ValueError("--spec cannot be combined with data, date, cash or output flags")
+        return run_strategy_file(_read_json(args.spec), strategy_file)
+    if len(data_flags) != 1:
+        raise ValueError("run requires exactly one explicit data source: --bars, --data or --source")
+    if args.source is None and (args.frequency is not None or args.adjustment is not None):
+        raise ValueError("--frequency/--adjustment require --source; frozen bars cannot be reinterpreted")
+    cash_raw = run_spec.parse_cash(args.cash or "100000")
+    seed = args.seed if args.seed is not None else 0
+    if not 0 <= seed < 2 ** 64:
+        raise ValueError("--seed must be an unsigned 64-bit integer")
+    run_id = uuid4().hex
+    output = (args.output or Path.cwd() / "runs" / strategy_file.stem).expanduser().resolve() / run_id
+    snapshot = None
+    if args.data is not None:
+        bundle = run_spec.load_data_bundle(args.data)
+        bars_path = bundle["bars"]
+        snapshot = bundle["snapshot"]
+    elif args.bars is not None:
+        bars_path = args.bars.expanduser().resolve(strict=True)
+    else:
+        if not (args.instrument and args.start and args.end):
+            raise ValueError("--source requires --instrument/--start/--end")
+        from .strategy_project import _write_fetched_dataset
+
+        bundle = _write_fetched_dataset(
+            output / "data", source=args.source, instrument=args.instrument,
+            start=args.start, end=args.end, frequency=args.frequency or "daily",
+            adjustment=args.adjustment or "none",
+        )
+        bars_path = output / "data" / bundle["bars_path"]
+        snapshot = output / "data" / bundle["snapshot_path"]
+    original = run_spec.load_bars(bars_path)
+    if args.instrument is not None:
+        expected = args.instrument
+        if args.source is not None:
+            from qianxing_ashare import normalize_instrument
+
+            expected = normalize_instrument(expected)
+        if expected != original.instrument:
+            raise ValueError(f"--instrument {expected!r} differs from bars {original.instrument!r}")
+    frame = run_spec.slice_frame(original, args.start, args.end)
+    currency = args.currency or run_spec.settlement_currency(frame.instrument)
+    loaded = load_strategy_file(strategy_file)
+    module, _factory, digest = loaded
+    metadata = build_module_manifest(module, strategy_file, digest)
+    output.mkdir(parents=True, exist_ok=True)
+    if frame is not original:
+        bars_path = output / "bars.json"
+        bars_path.write_text(frame.to_json(), encoding="utf-8", newline="\n")
+        if snapshot is not None:
+            print("Date slicing creates new bars without the original snapshot binding.", file=sys.stderr)
+        snapshot = None
+    spec = run_spec.compose_run_spec(
+        instrument=frame.instrument, bars_path=bars_path, dataset_snapshot_path=snapshot,
+        output_dir=output, initial_cash_raw=cash_raw,
+        strategy_config=BuiltinStrategySpec("sma_cross", metadata["strategy_id"]).to_dict(),
+        run_id=run_id, settlement_currency=currency, seed=seed,
+    )
+    path = run_spec.write_run_spec(output, spec)
+    print(f"Execution spec: {path}", file=sys.stderr)
+    return run_strategy_file(spec, strategy_file, _loaded_strategy=loaded)
+
+
+def _dispatch_command(argv: Sequence[str] | None = None) -> int:
     _configure_console_encoding()
-    args = _parser().parse_args(argv)
+    # `data` 的旗标面由 qianxing_ashare 拥有（含 -h）；先在顶层截走，避免外层
+    # argparse 把 `--json`/`-h` 当成未知参数（方案 D11 的薄分派）。
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if tokens and tokens[0] == "data":
+        from qianxing_ashare.cli import main as data_main
+
+        return data_main(tokens[1:], prog="qianxing data")
+    args = _parser().parse_args(tokens)
     guided_research = args.command == "research"
     research_workflow = guided_research or args.command == "remote-research"
     if guided_research:
@@ -1607,7 +727,119 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.diagnostics = None
         args.diagnose_candidates = True
     try:
-        if args.command == "doctor":
+        if args.command == "data":
+            # 取数命令由 qianxing_ashare 拥有；这里只做薄分派（方案 D11）。
+            from qianxing_ashare.cli import main as data_main
+
+            return data_main(args.data_argv, prog="qianxing data")
+        if args.command == "project":
+            try:
+                if args.project_command == "init":
+                    result = init_strategy_project(
+                        args.directory,
+                        strategy_file=args.strategy_file,
+                        input_spec=args.input_spec,
+                        runtime_config=args.runtime_config,
+                        worker_id=args.worker_id,
+                        force=args.force,
+                        demo=args.demo,
+                        source=args.source,
+                        instrument=args.instrument,
+                        start=args.start,
+                        end=args.end,
+                        cash=args.cash,
+                        currency=args.currency,
+                        frequency=args.frequency,
+                        adjustment=args.adjustment,
+                        rows=args.rows,
+                    )
+                elif args.project_command == "doctor":
+                    result = (
+                        dynamic_project_doctor(args.project_path, timeout_seconds=args.timeout)
+                        if args.dynamic
+                        else static_project_doctor(args.project_path)
+                    )
+                elif args.project_command == "show":
+                    result = show_strategy_project(args.project_path)
+                elif args.project_command == "plan":
+                    if args.profile == "local":
+                        if args.runtime_config is not None or args.worker_id is not None:
+                            raise ValueError("--runtime-config/--worker-id require --profile server")
+                        result = local_project_preflight(args.project_path, explain=args.explain)
+                    else:
+                        result = server_project_plan(
+                            args.project_path,
+                            runtime_config=args.runtime_config,
+                            worker_id=args.worker_id,
+                            explain=args.explain,
+                        )
+                elif args.project_command == "report":
+                    root, _manifest = load_strategy_project(args.project_path)
+                    result = generate_project_report(root, args.run_id, executable=args.cli,
+                                                     output=args.output, formats=args.format)
+                elif args.project_command == "deployments":
+                    context = None
+                    if args.client_key and not args.client_cert:
+                        raise ValueError("--client-key requires --client-cert")
+                    if args.ca_cert or args.client_cert:
+                        import ssl
+                        context = ssl.create_default_context(cafile=args.ca_cert)
+                        if args.client_cert:
+                            context.load_cert_chain(args.client_cert, args.client_key)
+                    result = project_deployments(args.project_path, args.api_url,
+                                                 worker_id=args.worker_id, ssl_context=context)
+                elif args.project_command in {"runs", "status", "cancel", "logs", "artifacts"}:
+                    root, _manifest = load_strategy_project(args.project_path)
+                    if args.project_command == "runs":
+                        result = project_runs(root, args.limit)
+                    elif args.project_command == "status":
+                        result = project_run_status(root, args.run_id)
+                    elif args.project_command == "cancel":
+                        result = cancel_project_run(root, args.run_id)
+                    elif args.project_command == "artifacts":
+                        result = verify_project_artifacts(root, args.run_id)
+                    else:
+                        result = project_run_events(root, args.run_id, args.tail)
+                elif args.project_command == "run":
+                    execution_result: dict[str, Any] = {}
+
+                    def execute(root, manifest):
+                        strategy_path = Path(manifest["strategy_file"]).expanduser()
+                        if not strategy_path.is_absolute():
+                            strategy_path = root / strategy_path
+                        strategy_snapshot = snapshot_project_strategy(
+                            root, strategy_path.resolve(strict=True)
+                        )
+                        input_path = Path(manifest["input_spec"]).expanduser()
+                        if not input_path.is_absolute():
+                            input_path = root / input_path
+                        snapshot = snapshot_project_input(root, input_path.resolve(strict=True))
+                        run_plan = local_project_preflight(
+                            root, input_spec_override=snapshot,
+                            strategy_file_override=strategy_snapshot,
+                        )
+                        record_project_plan(run_plan)
+                        execution_result["value"] = run_project_strategy(
+                            root, manifest, snapshot, run_plan
+                        )
+                        return 0
+
+                    run_status = run_project(args.project_path, execute)
+                    if run_status != 0:
+                        return run_status
+                    result = execution_result.get("value")
+                    if result is None:
+                        raise RuntimeError("project run completed without a strategy result")
+                else:
+                    raise InvalidInputError("unknown project action")
+            except QianxingError:
+                raise
+            except (OSError, TypeError, ValueError) as exc:
+                raise InvalidInputError(
+                    f"strategy project {args.project_command} failed: {exc}",
+                    payload={"category": "INVALID_INPUT", "message": str(exc)},
+                ) from exc
+        elif args.command == "doctor":
             result = doctor()
         elif args.command == "inspect-strategy":
             module, _factory, bundle_sha256 = _load_strategy_file(args.strategy_file)
@@ -1629,6 +861,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_path = _write_protected_json(args.out, strategy_manifest, protected)
                 print(f"Strategy manifest: {output_path}", file=sys.stderr)
             result = strategy_manifest
+        elif args.command == "run":
+            try:
+                result = _run_strategy_command(args)
+            except (OSError, ValueError) as exc:
+                raise InvalidInputError(str(exc), payload={"category": "INVALID_INPUT", "message": str(exc)}) from exc
         else:
             payload = _read_json(args.input)
             if research_workflow:
@@ -1889,7 +1126,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = run_depth_backtest(payload)
             elif args.command == "verify-depth":
                 result = verify_depth_run(payload)
-            elif args.command in {"run-strategy", "search-strategy"}:
+            elif args.command == "run-strategy":
+                result = run_strategy_file(
+                    payload,
+                    args.strategy_file,
+                    strategy_id=args.strategy_id,
+                    strategy_version=args.strategy_version,
+                )
+            elif args.command == "search-strategy":
                 if not isinstance(payload, dict):
                     message = "strategy input JSON must be an object"
                     raise InvalidInputError(
@@ -1916,16 +1160,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         strategy_manifest,
                         target_strategy_id=selected_strategy_id,
                     )
-                    if args.command == "run-strategy":
-                        for config_target in _strategy_config_targets(
-                            payload, selected_strategy_id
-                        ):
-                            _validate_strategy_config(
-                                module,
-                                strategy_manifest,
-                                payload,
-                                config_target,
-                            )
                     factory = _bind_manifest_config_factory(
                         factory,
                         module,
@@ -1953,248 +1187,158 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"strategy manifest preflight failed: {exc}",
                         payload={"category": "INVALID_INPUT", "message": str(exc)},
                     ) from exc
-                if args.command == "run-strategy":
-                    is_depth_spec = (
-                        payload.get("schema_version") == 1
-                        and isinstance(payload.get("depth_path"), str)
-                        and payload.get("tier") in {"l1", "l2"}
+                strategy_id, strategy_version = _strategy_identity(
+                    args, module, args.strategy_file, payload, strategy_manifest
+                )
+                depth_base = payload.get("base")
+                if (
+                    isinstance(depth_base, dict)
+                    and isinstance(depth_base.get("depth_path"), str)
+                    and depth_base.get("tier") in {"l1", "l2"}
+                ):
+                    expected_data_level = (
+                        "tick" if depth_base["tier"] == "l1" else "orderbook"
                     )
-                    if is_depth_spec:
-                        expected_data_level = "tick" if payload["tier"] == "l1" else "orderbook"
-                        declared_data_level = strategy_manifest.get("data_level")
-                        if declared_data_level not in (None, expected_data_level):
-                            message = (
-                                f"strategy manifest data_level={declared_data_level!r} does not match "
-                                f"depth tier={payload['tier']!r} (expected {expected_data_level!r})"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        strategy_id, strategy_version = _strategy_identity(
-                            args, module, args.strategy_file, payload, strategy_manifest
+                    declared_data_level = strategy_manifest.get("data_level")
+                    if declared_data_level not in (None, expected_data_level):
+                        message = (
+                            f"strategy manifest data_level={declared_data_level!r} does not match "
+                            f"depth tier={depth_base['tier']!r} (expected {expected_data_level!r})"
                         )
-                        try:
-                            strategy = factory(payload)
-                        except Exception as exc:
-                            message = (
-                                "create_strategy(spec) failed: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            ) from exc
-                        if strategy is None:
-                            message = "create_strategy(spec) returned None"
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        result = run_depth_backtest_with_strategy(
-                            payload,
-                            strategy,
-                            strategy_id=strategy_id,
-                            strategy_version=strategy_version,
-                            source_sha256=source_sha256,
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                    elif isinstance(payload.get("markets"), list):
-                        strategy_version = (
-                            args.strategy_version
-                            or getattr(module, "STRATEGY_VERSION", None)
-                            or strategy_manifest.get("strategy_version")
-                            or "local"
+                    if payload.get("strategy_kinds"):
+                        message = (
+                            "strategy_kinds cannot be combined with a Python strategy file; "
+                            "use parameter_space for the depth strategy"
                         )
-                        bindings = _multi_market_strategy_bindings(
-                            payload,
-                            factory,
-                            strategy_id=args.strategy_id,
-                            strategy_version=str(strategy_version),
-                            source_sha256=source_sha256,
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                        result = run_multi_market_backtest_with_strategy_slots(
-                            payload, bindings
+                    if not payload.get("parameter_space"):
+                        message = "RunDepthExperimentSpec needs parameter_space"
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                    else:
-                        strategy_id, strategy_version = _strategy_identity(
-                            args, module, args.strategy_file, payload, strategy_manifest
+                    if args.html is not None or args.diagnostics is not None:
+                        message = (
+                            "interactive HTML and diagnostic sidecars currently support Bar experiments only; "
+                            "depth strategy search returns the complete ranked JSON report"
                         )
-                        try:
-                            strategy = factory(payload)
-                        except Exception as exc:
-                            message = (
-                                "create_strategy(spec) failed: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            ) from exc
-                        if strategy is None:
-                            message = "create_strategy(spec) returned None"
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        result = run_backtest_with_strategy(
-                            payload,
-                            strategy,
-                            strategy_id=strategy_id,
-                            strategy_version=strategy_version,
-                            source_sha256=source_sha256,
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                else:
-                    strategy_id, strategy_version = _strategy_identity(
-                        args, module, args.strategy_file, payload, strategy_manifest
+                    if args.diagnose_candidates:
+                        message = (
+                            "candidate future-data diagnostics currently support Bar experiments only"
+                        )
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
+                        )
+                    print(
+                        "[建议] RunDepthExperimentSpec 没有训练/样本外切分；当前排名只表示该深度输入上的样本内候选排序。",
+                        file=sys.stderr,
                     )
-                    depth_base = payload.get("base")
-                    if (
-                        isinstance(depth_base, dict)
-                        and isinstance(depth_base.get("depth_path"), str)
-                        and depth_base.get("tier") in {"l1", "l2"}
-                    ):
-                        expected_data_level = (
-                            "tick" if depth_base["tier"] == "l1" else "orderbook"
+                    result = run_depth_experiment_with_strategy(
+                        payload,
+                        factory,
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        source_sha256=source_sha256,
+                    )
+                elif isinstance(payload.get("base"), dict) and isinstance(
+                    payload["base"].get("markets"), list
+                ):
+                    if payload.get("strategy_kinds"):
+                        message = (
+                            "strategy_kinds cannot be combined with a Python strategy file; "
+                            "use parameter_space for the target strategy slot"
                         )
-                        declared_data_level = strategy_manifest.get("data_level")
-                        if declared_data_level not in (None, expected_data_level):
-                            message = (
-                                f"strategy manifest data_level={declared_data_level!r} does not match "
-                                f"depth tier={depth_base['tier']!r} (expected {expected_data_level!r})"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if payload.get("strategy_kinds"):
-                            message = (
-                                "strategy_kinds cannot be combined with a Python strategy file; "
-                                "use parameter_space for the depth strategy"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if not payload.get("parameter_space"):
-                            message = "RunDepthExperimentSpec needs parameter_space"
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if args.html is not None or args.diagnostics is not None:
-                            message = (
-                                "interactive HTML and diagnostic sidecars currently support Bar experiments only; "
-                                "depth strategy search returns the complete ranked JSON report"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if args.diagnose_candidates:
-                            message = (
-                                "candidate future-data diagnostics currently support Bar experiments only"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
+                        )
+                    callback_space = payload.get("callback_parameter_space")
+                    parameter_space = payload.get("parameter_space")
+                    search = payload.get("search") or {}
+                    continuous_space = (
+                        search.get("continuous_parameter_space", [])
+                        if isinstance(search, dict)
+                        else []
+                    )
+                    if callback_space and parameter_space:
+                        message = (
+                            "use either callback_parameter_space for arbitrary Python strategy "
+                            "parameters or parameter_space for Rust engine parameters, not both"
+                        )
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
+                        )
+                    if not callback_space and not parameter_space and not continuous_space:
+                        message = (
+                            "multi-market search-strategy needs parameter_space or "
+                            "callback_parameter_space or search.continuous_parameter_space"
+                        )
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
+                        )
+                    if not payload.get("split_plan"):
                         print(
-                            "[建议] RunDepthExperimentSpec 没有训练/样本外切分；当前排名只表示该深度输入上的样本内候选排序。",
+                            "[建议] 多市场文件策略实验未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。",
                             file=sys.stderr,
                         )
-                        result = run_depth_experiment_with_strategy(
-                            payload,
-                            factory,
-                            strategy_id=strategy_id,
-                            strategy_version=strategy_version,
-                            source_sha256=source_sha256,
+                    result = run_multi_market_experiment_with_strategy(
+                        payload,
+                        _multi_market_experiment_factory(
+                            payload, factory, strategy_id
+                        ),
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        source_sha256=source_sha256,
+                    )
+                else:
+                    search = payload.get("search") or {}
+                    if not isinstance(search, dict):
+                        message = "RunExperimentSpec.search must be an object"
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                    elif isinstance(payload.get("base"), dict) and isinstance(
-                        payload["base"].get("markets"), list
+                    if not payload.get("parameter_space") and not search.get(
+                        "continuous_parameter_space"
                     ):
-                        if payload.get("strategy_kinds"):
-                            message = (
-                                "strategy_kinds cannot be combined with a Python strategy file; "
-                                "use parameter_space for the target strategy slot"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        callback_space = payload.get("callback_parameter_space")
-                        parameter_space = payload.get("parameter_space")
-                        search = payload.get("search") or {}
-                        continuous_space = (
-                            search.get("continuous_parameter_space", [])
-                            if isinstance(search, dict)
-                            else []
+                        message = (
+                            "search-strategy needs parameter_space or "
+                            "search.continuous_parameter_space"
                         )
-                        if callback_space and parameter_space:
-                            message = (
-                                "use either callback_parameter_space for arbitrary Python strategy "
-                                "parameters or parameter_space for Rust engine parameters, not both"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if not callback_space and not parameter_space and not continuous_space:
-                            message = (
-                                "multi-market search-strategy needs parameter_space or "
-                                "callback_parameter_space or search.continuous_parameter_space"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if not payload.get("split_plan"):
-                            print(
-                                "[建议] 多市场文件策略实验未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。",
-                                file=sys.stderr,
-                            )
-                        result = run_multi_market_experiment_with_strategy(
-                            payload,
-                            _multi_market_experiment_factory(
-                                payload, factory, strategy_id
-                            ),
-                            strategy_id=strategy_id,
-                            strategy_version=strategy_version,
-                            source_sha256=source_sha256,
+                        raise InvalidInputError(
+                            message,
+                            payload={"category": "INVALID_INPUT", "message": message},
                         )
-                    else:
-                        search = payload.get("search") or {}
-                        if not isinstance(search, dict):
-                            message = "RunExperimentSpec.search must be an object"
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if not payload.get("parameter_space") and not search.get(
-                            "continuous_parameter_space"
-                        ):
-                            message = (
-                                "search-strategy needs parameter_space or "
-                                "search.continuous_parameter_space"
-                            )
-                            raise InvalidInputError(
-                                message,
-                                payload={"category": "INVALID_INPUT", "message": message},
-                            )
-                        if not payload.get("split_plan"):
-                            print(
-                                "[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。",
-                                file=sys.stderr,
-                            )
-                        result = run_experiment_with_strategy(
-                            payload,
-                            factory,
-                            strategy_id=strategy_id,
-                            strategy_version=strategy_version,
-                            source_sha256=source_sha256,
+                    if not payload.get("split_plan"):
+                        print(
+                            "[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。",
+                            file=sys.stderr,
                         )
+                    result = run_experiment_with_strategy(
+                        payload,
+                        factory,
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        source_sha256=source_sha256,
+                    )
             else:
                 result = verify_run(payload)
         full_document = _document(result)
+        record_project_result(full_document)
         if args.command == "search-strategy" and args.diagnose_candidates:
             if not isinstance(payload, dict) or not isinstance(payload.get("base"), dict):
                 message = "--diagnose-candidates requires a RunExperimentSpec or RunMultiMarketExperimentSpec"
@@ -2417,8 +1561,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except QianxingError as exc:
         error = exc.payload or {"category": exc.code, "message": str(exc)}
+        record_project_error(error)
         print(json.dumps(error, ensure_ascii=False, sort_keys=True), file=sys.stderr)
         return 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point; project services call their own APIs without re-entering this wrapper."""
+    from qianxing_ashare.sources import AshareProviderError
+
+    try:
+        return _dispatch_command(argv)
+    except AshareProviderError as error:
+        record_project_error(json.loads(error.to_json()))
+        print(error.to_json(), file=sys.stderr)
+        return error.exit_code
 
 
 if __name__ == "__main__":

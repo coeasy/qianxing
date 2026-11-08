@@ -233,9 +233,12 @@ pub(crate) fn print_cli_help() {
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证；每个 job 可选填 dataset_manifest，
       与 strategy backtest 一样复核数据身份、源文件摘要和质量报告。
   dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
-      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。
-  dataset-bundle <bundle.json> <data-dir> [bar-frame.json]
-      校验并持久化 DatasetBundleManifest；提供 BarFrame 时同时校验 bars fingerprint。
+      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。可追加
+      --snapshot-context <context.json> --timezone <tz>，把合并后的完整 BarFrame、v2 manifest
+      与 owner context 校验后幂等发布 DatasetSnapshotV1；同身份内容漂移会被拒绝。
+  dataset-bundle <bundle.json> <data-dir> [bar-frame.json] [--snapshot <DatasetSnapshotV1.json>]
+        校验并持久化 DatasetBundleManifest；含 bars 的 bundle 必须提供 BarFrame 与 DatasetSnapshotV1，核对精确字节、清单指纹和缺口。
+        bars snapshot 纳入 bundle fingerprint，并在策略回测时与实际 BarFrame 重核；无 snapshot 的旧 bundle 不具备执行资格。
   data-validate <bar-frame.json> <dataset-id> <version> <interval-ms> <output.json> [--timezone <tz>] [--json]
       只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
   data-validate-depth <depth-frame.json> --tier <l1|l2> <interval-ms> <output.json> [--timezone <tz>]
@@ -243,6 +246,9 @@ pub(crate) fn print_cli_help() {
       清单会记录 interval_ms，后续回测可据此独立复算 missing_intervals。
       output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
       --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
+  data-snapshot <data.json> <manifest.json> <context.json> <snapshot.json>
+      用 DatasetSnapshotContextV1 将 instrument role、采集语义、交易日历、精度/单位及公司行为口径绑定到清单；
+      发布前复核原始数据 SHA-256，output 只接受幂等相同内容。
   app <validate-dataset|backtest|verify> <spec.json>
       应用层用例入口（T2-2）：三条入口分别调 qx-app 的 validate_dataset / run_backtest / verify_run。
       validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测；数据不足是裁决不是错误。
@@ -251,12 +257,13 @@ pub(crate) fn print_cli_help() {
       成功时 stdout 只有一份 JSON；失败时 stderr 给出同一份 AppError JSON，与 Python/HTTP 两个入口
       逐字节可比（同一 use case、同一错误 code 与 correlation id）。这条链是同步 Bar 切片，不含
       market spec、A 股制度与跨语言策略——那些能力在 backtest builtin 上，两者互不替代。
-  plan <kind> <file> [--json]
+  plan <kind> <file> [--json|--template]
       按类型名读入并校验一份地基规格对象，印出身份、规格版本与稳定指纹；
-      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry。
-      --json 改印规范化正文；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
+      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry / canonical-run-spec。
+      --json 改印规范化正文；experiment / capability / schema-registry 支持 --template 写入占位模板，拒绝覆盖已有文件。
+      证据对象必须由真实运行或验收生成，不提供占位证据；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
   ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
-      拉取并冻结一份 CCXT 市场规格，供回测与实盘共用（需要 CCXT worker 依赖）。
+      拉取并冻结 CCXT 市场规格；同时按交易产品写入标的角色，供实盘角色门禁校验（需要 CCXT worker 依赖）。
 
 运行时与服务入口：
   serve [runtime.json]
@@ -316,8 +323,9 @@ pub(crate) fn print_cli_help() {
   ccxt-submit-order <runtime.json> <worker-id> <ccxt-config.json> <command.json>
       经公共 CCXT Worker 提交一条 SubmitOrder（Binance/OKX/Bybit 等由 exchange_id 决定），真实下单。
       CCXT 凭据只经环境变量名引用（写在 ccxt-config.json 的 credential_env），不进命令行/运行时配置。
-  paper-e2e [runtime.json]
-      跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
+  paper-e2e [runtime.json] [--quote-price-raw PRICE] [--quote-qty-raw QTY]
+      跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）；可用 raw 定点价格覆盖默认 99/100 报价，
+      覆盖时 bid 与 ask 相同，数量默认 1000 单位。
   paper-check [runtime.json]
       按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路；与 paper-e2e 一样注入
       一条固定合成 L1 报价（99/100），不接真实 feed。

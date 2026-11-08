@@ -98,13 +98,12 @@ pub fn exact_filled_action(local: ExactDecimal, venue: ExactDecimal) -> VerdictA
     }
 }
 
-fn legacy_raw_as_exact(raw: i128) -> ExactDecimal {
-    // The scale is a compile-time legacy invariant and always fits ExactDecimal.
-    ExactDecimal::from_parts(raw, 9).expect("legacy raw scale is supported")
+fn legacy_raw_as_exact(raw: i128) -> Option<ExactDecimal> {
+    ExactDecimal::from_parts(raw, 9).ok()
 }
 
 fn raw_matches_exact_projection(raw: i128, exact: ExactDecimal) -> bool {
-    legacy_raw_as_exact(raw) == exact
+    legacy_raw_as_exact(raw).is_some_and(|legacy| legacy == exact)
 }
 
 impl ReconcileVerdict {
@@ -142,9 +141,14 @@ pub fn order_reconcile_verdict(
     let Some(remote) = remote else {
         return ReconcileVerdict::PendingReconcile;
     };
-    let (filled, filled_exact, filled_is_conflict) = match (local.filled_exact, remote.filled_exact)
-    {
-        (None, None) => {
+    let local_exact = local
+        .filled_exact
+        .or_else(|| legacy_raw_as_exact(local.filled_raw));
+    let remote_exact = remote
+        .filled_exact
+        .or_else(|| legacy_raw_as_exact(remote.filled_raw));
+    let (filled, filled_exact, filled_is_conflict) = match (local_exact, remote_exact) {
+        (None, _) | (_, None) => {
             let diff = (local.filled_raw != remote.filled_raw)
                 .then_some((local.filled_raw, remote.filled_raw));
             let conflict = diff.is_some_and(|(local, venue)| {
@@ -152,10 +156,7 @@ pub fn order_reconcile_verdict(
             });
             (diff, None, conflict)
         }
-        (local_exact, remote_exact) => {
-            let local_exact = local_exact.unwrap_or_else(|| legacy_raw_as_exact(local.filled_raw));
-            let remote_exact =
-                remote_exact.unwrap_or_else(|| legacy_raw_as_exact(remote.filled_raw));
+        (Some(local_exact), Some(remote_exact)) => {
             if local_exact == remote_exact {
                 (None, None, false)
             } else if raw_matches_exact_projection(local.filled_raw, local_exact)

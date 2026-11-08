@@ -6,6 +6,7 @@ use crate::cases::{attach, guard::guard_panics};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::{validate_dataset, BacktestOutcome, BacktestSpec, DatasetSpec, DatasetVerdict};
+use qx_data::{DatasetSnapshotContextV1, DatasetSnapshotV1};
 use qx_provider::{
     DataRequest, DatasetManifestV2, ProviderBarFrame, ProviderErrorClass, ProviderRegistry,
     RegistryError,
@@ -23,6 +24,8 @@ pub struct ProviderBacktestOutcome {
     pub dataset_verdict: DatasetVerdict,
     pub manifest: DatasetManifestV2,
     pub manifest_path: String,
+    pub dataset_snapshot: DatasetSnapshotV1,
+    pub snapshot_path: String,
 }
 
 /// Inputs after Provider selection for the shared freeze/validate/backtest core.
@@ -36,6 +39,7 @@ struct FetchedProviderBacktest<'a> {
     pub timezone: &'a str,
     /// Optional caller-selected sidecar path. The manifest remains immutable once written.
     pub manifest_path: Option<&'a str>,
+    pub snapshot_context: &'a DatasetSnapshotContextV1,
 }
 
 /// Complete Provider-to-backtest input. The application layer owns source selection and failover.
@@ -48,6 +52,7 @@ pub struct ProviderBacktestSpec {
     pub dataset_version: String,
     pub interval_ms: u64,
     pub timezone: String,
+    pub snapshot_context: DatasetSnapshotContextV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_path: Option<String>,
 }
@@ -72,6 +77,21 @@ impl ProviderBacktestSpec {
             || self.dataset_version.trim().is_empty()
             || self.interval_ms == 0
             || self.timezone.trim().is_empty()
+            || self.snapshot_context.schema_version
+                != qx_data::DATASET_SNAPSHOT_CONTEXT_SCHEMA_VERSION
+            || self.snapshot_context.captured_at_ms == 0
+            || self.snapshot_context.frequency_ms != self.interval_ms
+            || self.snapshot_context.price_precision > 18
+            || self.snapshot_context.quantity_precision > 18
+            || self.snapshot_context.price_unit.trim().is_empty()
+            || self.snapshot_context.quantity_unit.trim().is_empty()
+            || self.snapshot_context.calendar_id.trim().is_empty()
+            || self.snapshot_context.calendar_version.trim().is_empty()
+            || !matches!(
+                self.snapshot_context.timestamp_semantics,
+                qx_data::DatasetTimestampSemantics::BarOpen
+                    | qx_data::DatasetTimestampSemantics::BarClose
+            )
             || self
                 .manifest_path
                 .as_deref()
@@ -79,7 +99,7 @@ impl ProviderBacktestSpec {
         {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "Provider backtest requires matching single-instrument Bar data, dataset identity, positive interval, timezone, and a non-empty optional manifest path",
+                "Provider backtest requires matching single-instrument Bar data, dataset identity, a complete Bar snapshot context with matching frequency, timezone, and a non-empty optional manifest path",
             ));
         }
         Ok(())
@@ -135,6 +155,7 @@ pub fn run_provider_backtest_with_manifest(
                 interval_ms: spec.interval_ms,
                 timezone: &spec.timezone,
                 manifest_path: spec.manifest_path.as_deref(),
+                snapshot_context: &spec.snapshot_context,
             },
             context,
         )
@@ -172,8 +193,32 @@ fn run_provider_backtest_inner(
         .manifest_path
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("{}.manifest.json", request.spec.bars_path)));
+    crate::cases::publish_dataset_snapshot::validate_snapshot_data(
+        frame_json.as_bytes(),
+        &manifest,
+        request.snapshot_context,
+        &bars_path.to_string_lossy(),
+    )?;
+    let dataset_snapshot = DatasetSnapshotV1::from_manifest_and_context(
+        manifest.clone(),
+        request.snapshot_context.clone(),
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("Provider DatasetSnapshotV1 is invalid: {error}"),
+        )
+    })?;
+    let snapshot_path = PathBuf::from(format!("{}.snapshot.json", manifest_path.display()));
+    let snapshot_json = serde_json::to_string(&dataset_snapshot).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("validated Provider snapshot serialization failed: {error}"),
+        )
+    })?;
     freeze(&bars_path, frame_json.as_bytes())?;
     freeze(&manifest_path, manifest_json.as_bytes())?;
+    freeze(&snapshot_path, snapshot_json.as_bytes())?;
     let dataset_verdict = validate_dataset(
         &DatasetSpec::new(request.dataset_id, request.spec.bars_path.clone()),
         context,
@@ -188,8 +233,11 @@ fn run_provider_backtest_inner(
         )
     })?;
     let manifest_sha256 = qx_data::sha256_hex_bytes(manifest_json.as_bytes());
+    let snapshot_sha256 = dataset_snapshot
+        .content_sha256()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
     let lineage = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "provider_id": request.fetched.result.provider_id.clone(),
         "provider_version": request.fetched.result.provider_version.clone(),
         "request_id": request.fetched.result.request_id.clone(),
@@ -199,6 +247,8 @@ fn run_provider_backtest_inner(
         "request_json": request_json,
         "dataset_manifest_json": manifest_json,
         "dataset_manifest_sha256": manifest_sha256,
+        "dataset_snapshot_json": snapshot_json,
+        "dataset_snapshot_sha256": snapshot_sha256,
     });
     let outcome = crate::cases::run_backtest_with_identity_extensions(
         request.spec,
@@ -210,6 +260,8 @@ fn run_provider_backtest_inner(
         dataset_verdict,
         manifest,
         manifest_path: manifest_path.to_string_lossy().into_owned(),
+        dataset_snapshot,
+        snapshot_path: snapshot_path.to_string_lossy().into_owned(),
     })
 }
 
@@ -389,6 +441,21 @@ mod tests {
             interval_ms: 1_000,
             timezone: "UTC".into(),
             manifest_path: None,
+            snapshot_context: qx_data::DatasetSnapshotContextV1 {
+                schema_version: 1,
+                instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+                captured_at_ms: 1,
+                frequency_ms: 1_000,
+                timestamp_semantics: qx_data::DatasetTimestampSemantics::BarClose,
+                price_precision: 8,
+                quantity_precision: 8,
+                price_unit: "USDT".into(),
+                quantity_unit: "BTC".into(),
+                calendar_id: "crypto-24x7".into(),
+                calendar_version: "v1".into(),
+                gaps: Vec::new(),
+                corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
+            },
         };
 
         let outcome = run_provider_backtest_with_manifest(

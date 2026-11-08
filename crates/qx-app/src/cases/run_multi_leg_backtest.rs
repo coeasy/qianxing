@@ -89,8 +89,12 @@ pub(super) fn run_inner(
     if primary.instrument == reference.instrument {
         return Err(invalid("多腿回测要求两条腿使用不同标的"));
     }
-    let primary_bars: Vec<qx_guanxing::Bar> = (&primary).into();
-    let reference_bars: Vec<qx_guanxing::Bar> = (&reference).into();
+    let primary_bars: Vec<qx_guanxing::Bar> = primary
+        .bars()
+        .map_err(|error| invalid(format!("主腿 BarFrame exact OHLCV 无效: {error:?}")))?;
+    let reference_bars: Vec<qx_guanxing::Bar> = reference
+        .bars()
+        .map_err(|error| invalid(format!("对冲腿 BarFrame exact OHLCV 无效: {error:?}")))?;
     if primary_bars.len() < MIN_BARS || reference_bars.len() < MIN_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
@@ -153,12 +157,8 @@ pub(super) fn run_inner(
     let data_fingerprint = if let Some(quality) = &dataset_quality {
         format!(
             "multi-bar:{primary_fingerprint}:{reference_fingerprint}:quality:{}:{}",
-            quality["primary"]["manifest_fingerprint"]
-                .as_str()
-                .unwrap_or_default(),
-            quality["reference"]["manifest_fingerprint"]
-                .as_str()
-                .unwrap_or_default(),
+            crate::multi_leg_dataset_quality_identity(&quality["primary"]).unwrap_or_default(),
+            crate::multi_leg_dataset_quality_identity(&quality["reference"]).unwrap_or_default(),
         )
     } else {
         format!("multi-bar:{primary_fingerprint}:{reference_fingerprint}")
@@ -247,7 +247,15 @@ pub(super) fn run_inner(
     );
     let mut strategy_adapter =
         NativeBarStrategy::new(recording_strategy, strategy_context).with_virtual_position();
-    strategy_adapter.initialize().map_err(invalid)?;
+    if let Err(init_error) = strategy_adapter.initialize() {
+        let stop_error = strategy_adapter.strategy.on_stop().err();
+        return Err(invalid(match stop_error {
+            Some(stop_error) => {
+                format!("多腿策略初始化失败: {init_error}; on_stop 也失败: {stop_error}")
+            }
+            None => format!("多腿策略初始化失败: {init_error}"),
+        }));
+    }
     if let Err(start_error) = strategy_adapter
         .strategy
         .on_start(&strategy_adapter.context)

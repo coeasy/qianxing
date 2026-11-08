@@ -11,7 +11,7 @@
 #     避免把「表达式」误当成「版本号」冻结。
 
 schema_version: 1
-updated_at: "2026-10-27"
+updated_at: "2026-11-08"
 release_version: "0.3.0"
 
 # ---- 冻结的 schema 版本（u32 / u16 字面量） ----
@@ -20,7 +20,7 @@ frozen_versions:
   data_schema: "crates/qx-data/src/schema.rs::DATA_SCHEMA_VERSION=2"
   bar_frame_json: "crates/qx-datastruct/src/lib.rs::BAR_FRAME_JSON_SCHEMA_VERSION=2"
   factor_execution_plan: "crates/qx-factor/src/execution_plan.rs::FACTOR_EXECUTION_PLAN_SCHEMA_VERSION=1"
-  account_snapshot: "crates/qx-protocol/src/lib.rs::ACCOUNT_SNAPSHOT_SCHEMA_VERSION=3"
+  account_snapshot: "crates/qx-protocol/src/lib.rs::ACCOUNT_SNAPSHOT_SCHEMA_VERSION=4"
   projection_envelope: "crates/qx-protocol/src/lib.rs::PROJECTION_ENVELOPE_SCHEMA_VERSION=1"
   runtime_config: "crates/qx-runtime/src/runtime_config/schema.rs::RUNTIME_SCHEMA_VERSION=1"
   strategy_api: "crates/qx-strategy/src/lib.rs::STRATEGY_API_VERSION=1"

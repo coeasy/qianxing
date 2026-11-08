@@ -25,7 +25,8 @@ pub struct BacktestReport {
     /// Exact turnover in `turnover_currency`, including fills below the 1e-9 raw grid.
     pub turnover_exact: ExactDecimal,
     pub turnover_currency: String,
-    pub max_drawdown_raw: i128, // 衍生于 max_drawdown_bps；登记了零生产读者 limitation。
+    /// Maximum peak-to-trough loss on the legacy fixed-point raw equity curve.
+    pub max_drawdown_raw: i128,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub assumptions: Vec<String>,

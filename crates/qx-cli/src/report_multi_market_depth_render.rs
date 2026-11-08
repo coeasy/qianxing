@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 pub(crate) fn workbook_rows(report: &Value) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
-    let overview: Vec<Vec<String>> = [
+    let mut overview: Vec<Vec<String>> = [
         "run_id",
         "account_id",
         "result_hash",
@@ -27,6 +27,22 @@ pub(crate) fn workbook_rows(report: &Value) -> (Vec<Vec<String>>, Vec<Vec<String
         ]
     })
     .collect();
+    for key in [
+        "schema_version",
+        "risk_ratio_period_basis",
+        "benchmark_period_basis",
+        "fees_exact_basis",
+        "fees_raw_basis",
+    ] {
+        overview.push(vec![
+            format!("metrics_definition.{key}"),
+            strval(&report["metrics_definition"][key]),
+        ]);
+    }
+    overview.push(vec![
+        "metrics_exact.fees_by_currency".into(),
+        strval(&report["metrics_exact"]["fees_by_currency"]),
+    ]);
     let mut quality = vec![vec![
         "instrument".into(),
         "tier".into(),
@@ -101,7 +117,13 @@ pub(crate) fn render_html(report: &Value) -> String {
             esc(&strval(&report[key]))
         ));
     }
-    html.push_str("</div><section><h2>市场与数据质量</h2><table><thead><tr><th>标的</th><th>档位</th><th>来源</th><th>快照</th><th>成交</th><th>质量清单指纹</th><th>间隔 ms</th><th>缺口</th><th>重复</th><th>乱序</th><th>状态</th></tr></thead><tbody>");
+    let definition =
+        serde_json::to_string_pretty(&report["metrics_definition"]).unwrap_or_else(|_| "{}".into());
+    html.push_str(&format!(
+        "</div><section id=\"metric-definitions\"><h2>指标定义</h2><p>每周期风险指标不年化；基准只使用严格时间戳对齐的观测；精确费用按币种汇总，raw 费用仅作兼容投影。</p><pre>{}</pre><p>精确费用（按币种）：<code>{}</code></p></section><section><h2>市场与数据质量</h2><table><thead><tr><th>标的</th><th>档位</th><th>来源</th><th>快照</th><th>成交</th><th>质量清单指纹</th><th>间隔 ms</th><th>缺口</th><th>重复</th><th>乱序</th><th>状态</th></tr></thead><tbody>",
+        esc(&definition),
+        esc(&strval(&report["metrics_exact"]["fees_by_currency"]))
+    ));
     for market in report["markets"].as_array().into_iter().flatten() {
         let q = &market["dataset_quality"];
         let r = &q["quality_report"];

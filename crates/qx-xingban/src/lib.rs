@@ -7,6 +7,8 @@
 //! - 规则包描述订单簿与业务约束
 //! - 两者匹配才启用精细撮合；档位不足时**直接报错拒绝运行**，不静默降级成更宽松的假设
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod ashare;
 pub mod backtest;
 pub mod cost;
@@ -19,6 +21,7 @@ pub mod orderbook_backtest;
 mod orderbook_strategies;
 mod portfolio_depth_timeline;
 mod portfolio_orderbook;
+mod report_validation;
 pub mod rng;
 pub mod tick_backtest;
 pub mod venue;

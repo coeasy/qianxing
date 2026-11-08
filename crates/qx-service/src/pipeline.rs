@@ -288,7 +288,8 @@ mod tests {
     fn append_quote(pipeline: &mut qx_runtime::LiveEventPipeline) {
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     10,
                     Price::from_i64(99),

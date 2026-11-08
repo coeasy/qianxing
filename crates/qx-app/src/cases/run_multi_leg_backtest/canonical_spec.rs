@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 const MATCHING_KERNEL: &str = "PortfolioBarEngine/NextBarOpenFillModel/ZeroLatency/v1";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_multi_leg_canonical_run_spec(
     spec: &MultiLegBacktestSpec,
     datasets: Vec<CanonicalDatasetIdentity>,
@@ -81,13 +82,9 @@ pub(crate) fn build_multi_leg_canonical_run_spec(
         for leg in ["primary", "reference"] {
             let fingerprint = quality
                 .get(leg)
-                .and_then(|value| value.get("manifest_fingerprint"))
-                .and_then(Value::as_str)
+                .and_then(crate::multi_leg_dataset_quality_identity)
                 .ok_or_else(|| invalid(format!("多腿 {leg} 质量清单缺少 fingerprint")))?;
-            extensions.insert(
-                format!("dataset_quality:{leg}"),
-                Value::String(fingerprint.to_string()),
-            );
+            extensions.insert(format!("dataset_quality:{leg}"), Value::String(fingerprint));
         }
     }
     if let Some(provenance) = funding_provider {
@@ -159,10 +156,9 @@ pub(crate) fn multi_leg_input_components(
         for leg in ["primary", "reference"] {
             let fingerprint = quality
                 .get(leg)
-                .and_then(|value| value.get("manifest_fingerprint"))
-                .and_then(Value::as_str)
+                .and_then(crate::multi_leg_dataset_quality_identity)
                 .ok_or_else(|| invalid(format!("多腿 {leg} 质量清单 fingerprint 无效")))?;
-            components.insert(format!("{leg}_quality"), fingerprint.to_string());
+            components.insert(format!("{leg}_quality"), fingerprint);
         }
     }
     if let Some(provider) = funding_provider {

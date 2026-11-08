@@ -98,7 +98,23 @@
     },
     {
       "method": "GET",
+      "path": "/schema/account-snapshot-v4"
+    },
+    {
+      "method": "GET",
       "path": "/schema/contract-matrix"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployment-nodes"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployments"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployments/operations"
     },
     {
       "method": "POST",
@@ -295,6 +311,18 @@
     {
       "method": "POST",
       "path": "/control/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployment-nodes"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployments/operations"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployments/revisions"
     }
   ]
 }

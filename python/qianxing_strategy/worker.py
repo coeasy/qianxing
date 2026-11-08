@@ -34,6 +34,13 @@ def _load_strategy_module(reference: str):
     path = Path(reference)
     if path.exists() and path.suffix == ".py":
         path = path.resolve()
+        dependency_root = os.environ.get("QX_STRATEGY_DEPENDENCY_ROOT", "").strip()
+        if dependency_root:
+            root = Path(dependency_root).resolve()
+            if not root.is_dir() or not path.is_relative_to(root):
+                raise ValueError("frozen strategy dependency root does not contain the entry module")
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
         parent = str(path.parent)
         # File strategies often keep indicators/helpers beside the entry file.
         # A dedicated worker process owns this import path for its full lifetime.
@@ -116,15 +123,80 @@ def _notify_module_setup_error(
         sys.stderr.flush()
 
 
+def _validate_host_requirements(
+    module: Any,
+    strategy_spec: dict[str, Any] | None,
+    catalog: Mapping[str, Any] | None,
+) -> None:
+    """Check host-owned delivery support before invoking a strategy factory.
+
+    Rust owns the capability matrix. Python validates the envelope and matches
+    requirements; it does not infer support from optional no-op hook methods.
+    """
+    supported: set[str] | None = None
+    if catalog is not None:
+        level = (strategy_spec or {}).get("data_level", "bar")
+        profile = catalog.get("profile") if isinstance(catalog, Mapping) else None
+        if profile == "server":
+            expected_host_id = (
+                f"runtime_python_class_{level}"
+                if strategy_spec is not None
+                else "runtime_python_module_function"
+            )
+        elif profile == "local":
+            expected_host_id = f"local_python_{level}"
+        else:
+            expected_host_id = None
+        if (
+            not isinstance(catalog, Mapping)
+            or set(catalog) != {"schema_version", "host_id", "profile", "supported"}
+            or type(catalog.get("schema_version")) is not int
+            or catalog["schema_version"] != 1
+            or profile not in {"server", "local"}
+            or catalog.get("host_id") != expected_host_id
+        ):
+            raise ValueError("host capability catalog identity/schema does not match the Python host")
+        values = catalog.get("supported")
+        known_capabilities = {
+            "bar", "tick", "orderbook", "bar_history", "multi_instrument", "fill_updates",
+            "order_status_updates", "account_updates", "position_updates",
+            "timer", "durable_checkpoint",
+        }
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or value not in known_capabilities for value in values
+        ) or len(values) != len(set(values)):
+            raise ValueError("host supported capabilities must be known unique capability names")
+        supported = set(values)
+    for owner in (module, getattr(module, "STRATEGY_CLASS", None)):
+        manifest = getattr(owner, "STRATEGY_MANIFEST", None)
+        if not isinstance(manifest, Mapping) or "required_capabilities" not in manifest:
+            continue
+        required = manifest["required_capabilities"]
+        if not isinstance(required, list) or any(
+            not isinstance(value, str) or not value.strip() for value in required
+        ) or len(required) != len(set(required)):
+            raise ValueError("required_capabilities must be a unique array of non-empty strings")
+        if required and supported is None:
+            raise ValueError(
+                "persistent process host capability negotiation is unavailable; "
+                "cannot establish required_capabilities: " + ", ".join(required)
+            )
+        missing = set(required) - (supported or set())
+        if missing:
+            raise ValueError("host does not support required_capabilities: " + ", ".join(sorted(missing)))
+
+
 def _handler_from_module(
     module: Any,
     strategy_spec: dict[str, Any] | None = None,
     *,
     account_id: str | None = None,
     venue_id: str | None = None,
+    host_capabilities: Mapping[str, Any] | None = None,
 ) -> Callable[[StrategyInput], Any]:
+    _validate_host_requirements(module, strategy_spec, host_capabilities)
     if strategy_spec is not None:
-        from qianxing.strategy_manifest import prepare_runtime_strategy_spec
+        from .manifest import prepare_runtime_strategy_spec
 
         from .base import BaseStrategy
         from .class_adapter import BaseStrategyProcessAdapter
@@ -181,6 +253,9 @@ def _handler_from_module(
     error_v1_handler = getattr(module, "on_error_v1", None)
     snapshot_state_handler = getattr(module, "snapshot_state", None)
     restore_state_handler = getattr(module, "restore_state", None)
+    warmup_evidence_handler = getattr(module, "warmup_completed_instruments", None)
+    if warmup_evidence_handler is not None and not callable(warmup_evidence_handler):
+        raise ValueError("warmup_completed_instruments must be callable when provided")
     if (snapshot_state_handler is None) != (restore_state_handler is None):
         raise ValueError("module state checkpoint requires both snapshot_state() and restore_state(state)")
     if snapshot_state_handler is not None and (
@@ -198,6 +273,7 @@ def _handler_from_module(
         error_v1_handler if callable(error_v1_handler) else None,
         snapshot_state_handler=snapshot_state_handler,
         restore_state_handler=restore_state_handler,
+        warmup_evidence_handler=warmup_evidence_handler,
         stateless=stateless_marker,
     )
 
@@ -213,6 +289,7 @@ class _ModuleFunctionHandler:
         *,
         snapshot_state_handler: Callable[[], Any] | None = None,
         restore_state_handler: Callable[[Mapping[str, Any]], Any] | None = None,
+        warmup_evidence_handler: Callable[[], Any] | None = None,
         stateless: bool = False,
     ) -> None:
         self._handler = handler
@@ -221,6 +298,7 @@ class _ModuleFunctionHandler:
         self._active_error_context: dict[str, Any] | None = None
         self._snapshot_state_handler = snapshot_state_handler
         self._restore_state_handler = restore_state_handler
+        self._warmup_evidence_handler = warmup_evidence_handler
         self._state_mode = (
             "module-function" if snapshot_state_handler is not None else "stateless" if stateless else None
         )
@@ -269,21 +347,55 @@ class _ModuleFunctionHandler:
         if not isinstance(adapter_state, Mapping) or not isinstance(strategy_state, Mapping):
             raise ValueError("module strategy checkpoint states must be objects")
         bootstrap = {"schema_version": 1, "state_mode": "bootstrap"}
-        expected_adapter = {"schema_version": 1, "state_mode": self._state_mode}
         if dict(adapter_state) == bootstrap:
             if strategy_state:
                 raise ValueError("module strategy checkpoint bootstrap state must be empty")
             return
+        expected_adapter = {"schema_version": 1, "state_mode": self._state_mode}
+        saved_warmup = adapter_state.get("warmup_completed")
+        if saved_warmup is not None:
+            if self._warmup_evidence_handler is None:
+                raise ValueError("module checkpoint contains warmup evidence without its reporter")
+            saved_warmup = self._validate_warmup_evidence(saved_warmup)
+            expected_adapter["warmup_completed"] = saved_warmup
+        elif self._warmup_evidence_handler is not None:
+            raise ValueError("module checkpoint is missing warmup evidence from its reporter")
         if dict(adapter_state) != expected_adapter:
             raise ValueError("module strategy checkpoint adapter state does not match its declared mode")
         if self._state_mode == "stateless":
             if strategy_state:
                 raise ValueError("stateless module strategy checkpoint state must be empty")
+            if self._warmup_evidence_handler is not None:
+                current_warmup = self._read_warmup_evidence()
+                if current_warmup != saved_warmup:
+                    raise ValueError("module checkpoint warmup evidence does not match its reporter")
             return
         assert self._restore_state_handler is not None
         state = self._normalize_state(strategy_state, "strategy checkpoint")
         self._restore_state_handler(state)
+        if self._warmup_evidence_handler is not None:
+            current_warmup = self._read_warmup_evidence()
+            if current_warmup != saved_warmup:
+                raise ValueError("module checkpoint warmup evidence does not match restored strategy state")
         self._rollback_state = self._snapshot_module_state()
+
+    @staticmethod
+    def _validate_warmup_evidence(value: Any) -> list[str]:
+        if not isinstance(value, list) or len(value) > 4096:
+            raise ValueError("warmup_completed_instruments must return a bounded string list")
+        if any(
+            not isinstance(instrument, str)
+            or not instrument.strip()
+            or len(instrument) > 256
+            for instrument in value
+        ) or len(value) != len(set(value)):
+            raise ValueError("warmup_completed_instruments must contain unique non-empty instrument strings")
+        return list(value)
+
+    def _read_warmup_evidence(self) -> list[str]:
+        if self._warmup_evidence_handler is None:
+            return []
+        return self._validate_warmup_evidence(self._warmup_evidence_handler())
 
     def _snapshot_module_state(self) -> dict[str, Any]:
         assert self._snapshot_state_handler is not None
@@ -314,11 +426,14 @@ class _ModuleFunctionHandler:
             strategy_state = {}
         else:
             raise ValueError("module strategy has no durable state contract")
+        adapter_state = {"schema_version": 1, "state_mode": self._state_mode}
+        if self._warmup_evidence_handler is not None:
+            adapter_state["warmup_completed"] = self._read_warmup_evidence()
         checkpoint = {
             "schema_version": 1,
             "strategy_id": request.strategy_id,
             "strategy_version": request.strategy_version,
-            "adapter_state": {"schema_version": 1, "state_mode": self._state_mode},
+            "adapter_state": adapter_state,
             "strategy_state": strategy_state,
         }
         encoded = json.dumps(
@@ -468,6 +583,11 @@ def _handle_line_inner(
                 response["diagnostic_state"] = state
         if checkpoint_handler is not None:
             response["strategy_checkpoint"] = checkpoint_handler(request)
+        if request.strategy_checkpoint_sha256 is not None:
+            response["checkpoint_restore_ack"] = {
+                "schema_version": 1,
+                "checkpoint_sha256": request.strategy_checkpoint_sha256,
+            }
         encoded = json.dumps(
             response,
             separators=(",", ":"),
@@ -686,11 +806,21 @@ def _initialize_handlers(
         if not isinstance(decoded_spec, dict):
             parser.error("QX_STRATEGY_SPEC_JSON must be a JSON object")
         strategy_spec = decoded_spec
+    host_capabilities = None
+    capabilities_text = os.environ.get("QX_STRATEGY_HOST_CAPABILITIES_JSON")
+    if capabilities_text is not None:
+        try:
+            host_capabilities = json.loads(capabilities_text)
+        except json.JSONDecodeError as error:
+            parser.error(f"QX_STRATEGY_HOST_CAPABILITIES_JSON is invalid JSON: {error}")
+        if not isinstance(host_capabilities, dict):
+            parser.error("QX_STRATEGY_HOST_CAPABILITIES_JSON must be a JSON object")
     handler = _handler_from_module(
         module,
         strategy_spec,
         account_id=os.environ.get("QX_STRATEGY_ACCOUNT_ID"),
         venue_id=os.environ.get("QX_STRATEGY_VENUE_ID"),
+        host_capabilities=host_capabilities,
     )
     diagnostic_handler = (
         (
@@ -706,6 +836,10 @@ def _initialize_handlers(
     checkpoint_handler = getattr(handler, "strategy_checkpoint", None)
     if checkpoint_handler is not None and not callable(checkpoint_handler):
         parser.error("strategy_checkpoint must be callable when provided")
+    if os.environ.get("QX_STRATEGY_REQUIRE_CHECKPOINT") == "true" and checkpoint_handler is None:
+        parser.error(
+            "persistent Runtime strategy must export snapshot_state/restore_state or declare STRATEGY_STATELESS = True"
+        )
     return handler, diagnostic_handler, checkpoint_handler
 
 

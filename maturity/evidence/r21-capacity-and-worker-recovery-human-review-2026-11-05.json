@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R21",
+  "acceptance_id": "R21-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "a325d500-2b85-4831-9c0f-6288be192764",
+    "7c6ddfa8-9f79-4da0-86dc-418ca33a50f1",
+    "19144f85-17ab-4fe2-98bc-ac1613e947eb",
+    "f48a999d-0ca6-4286-b206-ac5d30e4ca18",
+    "248280ac-123e-4106-a706-332363bd9959",
+    "06d20fac-83dc-4795-af9d-eb43a064ad5d",
+    "8a6bc31a-8bad-46fc-a778-9a3e207fd8be",
+    "7649b9e8-aef9-4e8b-b5ad-c484d9110c59",
+    "e7c8960a-f0fc-4b2e-82be-f806bc8bf40e",
+    "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4"
+  ],
+  "reviewed_artifacts": [
+    "maturity/evidence/prepared-evaluation-capacity-2026-10-29.json",
+    "maturity/evidence/job-queue-capacity-sqlite-2026-10-29.json",
+    "maturity/evidence/control-command-queue-capacity-file-2026-10-29.json",
+    "maturity/evidence/control-command-queue-capacity-sqlite-2026-10-29.json",
+    "maturity/evidence/job-queue-capacity-postgres-2026-11-04.json",
+    "maturity/evidence/control-command-queue-capacity-postgres-2026-11-04.json",
+    "maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json",
+    "maturity/acceptance-artifacts/a325d500-2b85-4831-9c0f-6288be192764.log",
+    "maturity/acceptance-artifacts/7c6ddfa8-9f79-4da0-86dc-418ca33a50f1.log",
+    "maturity/acceptance-artifacts/19144f85-17ab-4fe2-98bc-ac1613e947eb.log",
+    "maturity/acceptance-artifacts/f48a999d-0ca6-4286-b206-ac5d30e4ca18.log",
+    "maturity/acceptance-artifacts/248280ac-123e-4106-a706-332363bd9959.log",
+    "maturity/acceptance-artifacts/06d20fac-83dc-4795-af9d-eb43a064ad5d.log",
+    "maturity/acceptance-artifacts/8a6bc31a-8bad-46fc-a778-9a3e207fd8be.log",
+    "maturity/acceptance-artifacts/7649b9e8-aef9-4e8b-b5ad-c484d9110c59.log",
+    "maturity/acceptance-artifacts/e7c8960a-f0fc-4b2e-82be-f806bc8bf40e.log",
+    "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log"
+  ],
+  "findings": [
+    "Windows file/SQLite/PostgreSQL queue acceptance fills JobQueue and ControlCommandQueue to the configured 4096 pending-record cap, rejects overflow, and acknowledges the queued records.",
+    "ControlCommandQueue tests reject commands exceeding 16 KiB; SQLite and PostgreSQL queue runs record the owner-matched worker batch and acknowledgement counts.",
+    "The PostgreSQL capacity evidence records p50/p95 enqueue latency and process RSS for this Windows 11 host; values are environment-specific measurements.",
+    "File, SQLite, and PostgreSQL Paper worker evidence covers six dispatch-to-ack crash/restart boundaries with idempotent recovery."
+  ],
+  "limitations": [
+    "Linux acceptance remains outstanding.",
+    "Capacity/latency/RSS numbers describe the recorded Windows host and run configuration; they are not portable performance guarantees.",
+    "Crash recovery uses Paper fixtures and does not demonstrate live venue recovery."
+  ]
+}

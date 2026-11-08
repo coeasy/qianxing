@@ -516,7 +516,7 @@ impl OrderBookMatchingEngine {
         let step = spec
             .exact_rules
             .as_ref()
-            .expect("exact rules were checked")
+            .ok_or_else(|| "exact rules disappeared after validation".to_string())?
             .quantity_step;
 
         for mut pending_order in pending.drain(..) {

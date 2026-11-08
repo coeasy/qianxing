@@ -10,6 +10,7 @@ use qx_xingban::BacktestReport;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_bar_canonical_run_spec(
     spec: &BacktestSpec,
     strategies: &[StrategyArtifactIdentity],
@@ -143,11 +144,9 @@ fn normalize_cross_language_values(value: &mut Value, path: &str) -> Result<(), 
         }
         Value::Object(fields) => {
             for (name, child) in fields.iter_mut() {
-                if name.ends_with("_raw") || name == "seed" {
-                    if child.is_number() {
-                        *child = Value::String(child.to_string());
-                        continue;
-                    }
+                if (name.ends_with("_raw") || name == "seed") && child.is_number() {
+                    *child = Value::String(child.to_string());
+                    continue;
                 }
                 normalize_cross_language_values(child, &format!("{path}.{name}"))?;
             }

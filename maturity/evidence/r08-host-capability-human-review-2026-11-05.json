@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R08",
+  "acceptance_id": "R08-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "384d1bb8-d922-4956-8f46-90ddfb32c36a",
+    "cc7997db-4f84-4bd9-874d-13610fea6008",
+    "12b03a25-8789-4290-aadd-cc69eb9abbc2",
+    "613599c9-e643-489c-8978-bbebb9206596",
+    "83b507fd-fce1-4ebe-917c-7835975a1bb8",
+    "f1aa248a-8b36-4451-8957-b5cf82d9bb44"
+  ],
+  "reviewed_artifacts": [
+    "crates/qx-strategy/src/capabilities.rs",
+    "crates/qx-strategy/tests/legacy_c_abi_capability_load.rs",
+    "crates/qx-cli/src/strategy_host/process_client.rs",
+    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "crates/qx-cli/tests/unit/e2e_and_python_contract.rs",
+    "maturity/strategy-run-acceptance-v1.json",
+    "maturity/acceptance-artifacts/384d1bb8-d922-4956-8f46-90ddfb32c36a.log",
+    "maturity/acceptance-artifacts/cc7997db-4f84-4bd9-874d-13610fea6008.log",
+    "maturity/acceptance-artifacts/12b03a25-8789-4290-aadd-cc69eb9abbc2.log",
+    "maturity/acceptance-artifacts/613599c9-e643-489c-8978-bbebb9206596.log",
+    "maturity/acceptance-artifacts/83b507fd-fce1-4ebe-917c-7835975a1bb8.log",
+    "maturity/acceptance-artifacts/f1aa248a-8b36-4451-8957-b5cf82d9bb44.log",
+    ".github/workflows/ci.yml"
+  ],
+  "findings": [
+    "Windows acceptance covers host-profile catalog checks for Python file/class/module-function, built-in, C ABI, and external process hosts.",
+    "Negative cases reject unsupported capability requirements before strategy factory or handler dispatch; external-process tests also reject a mismatched host identity acknowledgment.",
+    "The legacy C ABI test confirms plugins without the optional requirement export remain compatible when requirements are empty, while unsupported FillUpdates fails before plugin creation.",
+    "Runtime Python class and module-function tests exercise production Runtime catalogs across the four supported transports; local backtest construction rejects Runtime-only requirements.",
+    "The built-in worker path accepts Bar for SMA and rejects unsupported Timer and MultiInstrument requirements before dispatch."
+  ],
+  "limitations": [
+    "This review accepts the Windows host matrix only. Targeted Linux Rust dispatch, legacy C ABI, and Python negotiation checks are configured in CI but have not yet produced Linux evidence.",
+    "The historical failed runs are not counted as passing evidence; the reviewed run IDs are the later successful corrections."
+  ]
+}

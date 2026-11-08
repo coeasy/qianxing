@@ -6,9 +6,10 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 pub const ACCOUNT_QUERY_PREFLIGHT_SCHEMA_VERSION: u32 = 1;
-const ACCOUNT_QUERY_OPERATIONS: [&str; 6] = [
+const ACCOUNT_QUERY_OPERATIONS: [&str; 7] = [
     "balance.read",
     "orders.read",
+    "trades.read",
     "positions.read",
     "cashflows.read",
     "funding.read",
@@ -413,7 +414,11 @@ mod tests {
             venue: "BINANCE".into(),
             product: "spot".into(),
             account_model: "spot".into(),
-            required_operations: vec!["balance.read".into(), "orders.read".into()],
+            required_operations: vec![
+                "balance.read".into(),
+                "orders.read".into(),
+                "trades.read".into(),
+            ],
             optional_operations: vec!["cashflows.read".into()],
             sandbox_endpoint,
         }
@@ -429,7 +434,7 @@ mod tests {
                     "venue": "BINANCE",
                     "product": "spot",
                     "account_models": ["spot"],
-                    "operations": ["balance.read", "orders.read"],
+                    "operations": ["balance.read", "orders.read", "trades.read"],
                     "maturity_refs": ["binance_direct"],
                     "status": "implemented-unverified",
                     "evidence": ["crates/qx-adapter/src/binance.rs"]
@@ -461,7 +466,10 @@ mod tests {
         )
         .unwrap();
         assert!(decision.allowed);
-        assert_eq!(decision.allowed_operations, ["balance.read", "orders.read"]);
+        assert_eq!(
+            decision.allowed_operations,
+            ["balance.read", "orders.read", "trades.read"]
+        );
         assert_eq!(decision.omitted_optional_operations, ["cashflows.read"]);
         assert_eq!(
             decision.evidence_stages["binance_direct"]["sandbox_tested"],

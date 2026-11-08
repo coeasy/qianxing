@@ -304,6 +304,21 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
 fn both_bar_chains_read_the_same_declared_signal() {
     let root = temp_dir("same-signal");
     let config = signal_config(&root, |_| {});
+    // Both summaries preserve local provenance paths. The built-in route records its frozen
+    // runtime snapshot and canonical BarFrame path, while the strategy route records the source
+    // config and declared BarFrame path. Keep the artifact stores separate because this test checks
+    // behavior and event-hash parity, not byte identity of those invocation-specific reports.
+    let builtin_config = root.join("runtime.signal.builtin.json");
+    let mut builtin_runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).expect("读取同信号运行时配置失败"))
+            .expect("解析同信号运行时配置失败");
+    builtin_runtime["storage"]["data_dir"] =
+        serde_json::Value::String(root.join("builtin-data").to_string_lossy().into_owned());
+    std::fs::write(
+        &builtin_config,
+        serde_json::to_vec(&builtin_runtime).expect("编码内置链运行时配置失败"),
+    )
+    .expect("写入内置链独立运行时配置失败");
     let (code, strategy_chain, err) = run(&[
         "strategy".into(),
         "backtest".into(),
@@ -312,7 +327,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
         deploy(SPEC).to_string_lossy().into_owned(),
     ]);
     assert_eq!(code, 0, "策略链基线必须跑通: {err}");
-    let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&config));
+    let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&builtin_config));
     assert_eq!(code, 0, "内置链同一份配置必须跑通: {err}");
     let marker = "[Strategy · Backtest]".to_string();
     // 两条链都得真的成交：零成交下"逐项相等"可以永远成立，那就不是在核对同一套信号。
@@ -328,6 +343,11 @@ fn both_bar_chains_read_the_same_declared_signal() {
             "同一份配置在两条 Bar 链上的 {key} 不同，说明信号口径又分叉了"
         );
     }
+    assert_eq!(
+        field(&strategy_chain, "[Strategy · Backtest]", "result_hash"),
+        field(&builtin_chain, &marker, "result_hash"),
+        "同一份配置在两条 Bar 链上的业务结果与事件身份相同，结果哈希也必须一致"
+    );
     assert!(line_with(&builtin_chain, "[Strategy · Signal]").contains("source=config"));
     assert!(
         line_with(&strategy_chain, "[Strategy · Signal]").contains("source=config"),

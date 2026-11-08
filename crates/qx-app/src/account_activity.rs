@@ -454,8 +454,8 @@ mod tests {
         assert_eq!(first.events.rows.len(), 2);
         assert_eq!(first.events.next_after, Some(3));
         assert!(first.events.has_older);
-        assert_eq!(first.completeness.fees_reported, true);
-        assert_eq!(first.completeness.equity_reported, false);
+        assert!(first.completeness.fees_reported);
+        assert!(!first.completeness.equity_reported);
 
         let previous = read_account_activity_report_v1(
             &snapshot(),

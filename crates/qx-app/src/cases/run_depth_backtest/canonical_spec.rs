@@ -10,6 +10,7 @@ use qx_xingban::{DepthFrame, OrderBookBacktestReport};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_depth_canonical_run_spec(
     spec: &DepthBacktestSpec,
     custom_strategies: &[StrategyArtifactIdentity],

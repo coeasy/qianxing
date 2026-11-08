@@ -49,6 +49,21 @@ pub(crate) fn run_bar_strategy_with_lifecycle_and_reason<T>(
     }
 }
 
+fn startup_error(
+    stage: &str,
+    primary: qx_core::QxError,
+    stop: Result<(), qx_core::QxError>,
+) -> AppError {
+    let primary_error = AppError::from_qx_error(&primary);
+    match stop {
+        Ok(()) => primary_error,
+        Err(stop_error) => AppError::new(
+            primary_error.category(),
+            format!("策略 {stage} 失败: {primary}; on_stop 也失败: {stop_error}"),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,20 +137,5 @@ mod tests {
         let (mut strategy, stop_reason) = recorder(true);
         assert!(run_bar_strategy_with_lifecycle(&mut strategy, |_| Ok(())).is_err());
         assert_eq!(stop_reason.get(), Some(StrategyStopReason::Failed));
-    }
-}
-
-fn startup_error(
-    stage: &str,
-    primary: qx_core::QxError,
-    stop: Result<(), qx_core::QxError>,
-) -> AppError {
-    let primary_error = AppError::from_qx_error(&primary);
-    match stop {
-        Ok(()) => primary_error,
-        Err(stop_error) => AppError::new(
-            primary_error.category(),
-            format!("策略 {stage} 失败: {primary}; on_stop 也失败: {stop_error}"),
-        ),
     }
 }

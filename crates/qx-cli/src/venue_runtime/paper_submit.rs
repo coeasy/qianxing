@@ -59,10 +59,35 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         .map_err(|error| format!("Paper SubmitOrder 未通过控制面校验: {error:?}"))?;
     queue
         .enqueue_command(command.clone(), lease_now)
-        .map_err(|error| format!("写入 Paper SubmitOrder 队列失败: {error:?}"))?;
-    let lease = queue
-        .claim_command(command.command_id, "paper-execution", lease_now, 30)
-        .map_err(|error| format!("领取 Paper SubmitOrder 租约失败: {error:?}"))?;
+        .map_err(|error| {
+            format!(
+                "Paper SubmitOrder 已受理，但写入队列失败: {error:?}；命令仍保留为 Accepted。修复队列存储/容量后启动对应 Paper Execution worker，它会从控制面待办恢复队列项；不要复用 command_id 或 request_id。"
+            )
+        })?;
+    // A one-shot CLI process is a different executor from the resident worker even though both
+    // serve the same configured worker. Reusing `paper-execution` lets lease_rules treat two
+    // processes as one owner and issue the same fencing token to both.
+    let owner = format!("paper-submit-once-{}-{now}", std::process::id());
+    let lease = match queue.claim_command(command.command_id, &owner, lease_now, 30) {
+        Ok(lease) => lease,
+        Err(qx_storage::StorageError::LeaseHeld {
+            owner: active_owner,
+            ..
+        }) => {
+            println!(
+                "[Paper · SubmitOrder] accepted=Accepted final=Accepted command_id={} result=已移交给正在持有租约的 worker {active_owner}",
+                command.command_id
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            // The command is already durable in both stores. Preserve Accepted for the queue
+            // worker's reconciliation loop instead of guessing that this process owns it.
+            return Err(format!(
+                "Paper SubmitOrder 已受理并保留在队列中，但本次未领取租约: {error:?}；Paper Execution worker 会继续恢复处理，不要复用 command_id 或 request_id。"
+            ));
+        }
+    };
 
     let action = if command.dry_run {
         Ok("DRY_RUN_VALIDATED".into())
@@ -89,12 +114,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         .map_err(|error| format!("持久化 Paper SubmitOrder 终态失败: {error}"))?;
     let record = record_result.map_err(|error| format!("Paper 执行控制命令失败: {error:?}"))?;
     queue
-        .ack_command_at(
-            command.command_id,
-            "paper-execution",
-            lease.fencing_token,
-            lease_now,
-        )
+        .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
         .map_err(|error| format!("确认 Paper SubmitOrder 队列失败: {error:?}"))?;
     println!(
         "[Paper · SubmitOrder] accepted={:?} final={:?} command_id={} result={}",

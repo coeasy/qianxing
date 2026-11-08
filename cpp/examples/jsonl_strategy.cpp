@@ -13,8 +13,11 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -316,11 +319,95 @@ std::string handle(const std::string& line) {
                 {"adapter_state", {{"schema_version", 1}, {"state_mode", "external-process"}}},
                 {"strategy_state", {{"processed_requests", processed + 1}}},
             };
+            if (input.contains("strategy_checkpoint_sha256")) {
+                const auto digest = input.at("strategy_checkpoint_sha256");
+                if (!digest.is_string() || digest.get<std::string>().size() != 64) {
+                    throw std::runtime_error("invalid external strategy checkpoint SHA-256");
+                }
+                response["checkpoint_restore_ack"] = {
+                    {"schema_version", 1},
+                    {"checkpoint_sha256", digest},
+                };
+            }
         }
         return response.dump();
     } catch (const std::exception& error) {
         return json{{"ok", false}, {"error", error.what()}}.dump();
     }
+}
+
+const char* environment(const char* name) {
+#ifdef _WIN32
+    return std::getenv(name);
+#else
+    return std::getenv(name);
+#endif
+}
+
+void acknowledge_capabilities() {
+    const auto* required_text = environment("QX_STRATEGY_REQUIRED_CAPABILITIES_JSON");
+    if (required_text == nullptr) return; // Legacy configs with no requirements keep the old startup contract.
+    const auto* host_text = environment("QX_STRATEGY_HOST_CAPABILITIES_JSON");
+    const auto* protocol_text = environment("QX_STRATEGY_CONTRACT_SCHEMA_VERSION");
+    const auto* acknowledgment_path = environment("QX_STRATEGY_CAPABILITY_ACK_FILE");
+    if (host_text == nullptr || protocol_text == nullptr || acknowledgment_path == nullptr ||
+        std::string(acknowledgment_path).empty()) {
+        throw std::runtime_error("required capability handshake environment is incomplete");
+    }
+    const auto host = json::parse(host_text);
+    const auto required = json::parse(required_text);
+    if (!host.is_object() || host.value("schema_version", 0) != 1 ||
+        !host.contains("host_id") || !host.at("host_id").is_string() ||
+        !host.contains("profile") || !host.at("profile").is_string() ||
+        !host.contains("supported") || !host.at("supported").is_array() ||
+        !required.is_array()) {
+        throw std::runtime_error("invalid StrategyHostCapabilitiesV1 or required capability list");
+    }
+    std::set<std::string> supported;
+    for (const auto& value : host.at("supported")) {
+        if (!value.is_string() || !supported.insert(value.get<std::string>()).second) {
+            throw std::runtime_error("host capability catalog contains an invalid or duplicate value");
+        }
+    }
+    std::set<std::string> unique_required;
+    for (const auto& value : required) {
+        if (!value.is_string() || !unique_required.insert(value.get<std::string>()).second) {
+            throw std::runtime_error("required capabilities contain an invalid or duplicate value");
+        }
+        if (supported.count(value.get<std::string>()) == 0) {
+            throw std::runtime_error("host does not support required capability: " +
+                                     value.get<std::string>());
+        }
+    }
+    std::size_t protocol_version = 0;
+    try {
+        protocol_version = static_cast<std::size_t>(std::stoul(protocol_text));
+    } catch (const std::exception&) {
+        throw std::runtime_error("invalid Strategy contract schema version");
+    }
+    if (protocol_version == 0) throw std::runtime_error("invalid Strategy contract schema version");
+    const auto acknowledgment = json{
+        {"schema_version", 1},
+        {"host_id", host.at("host_id")},
+        {"profile", host.at("profile")},
+        {"strategy_contract_schema_version", protocol_version},
+        {"supported", host.at("supported")},
+        {"required_capabilities", required},
+        {"ready", true},
+    }.dump();
+    const std::filesystem::path destination(acknowledgment_path);
+    auto temporary = destination;
+    temporary += ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file) throw std::runtime_error("cannot create capability acknowledgment temporary file");
+        file.write(acknowledgment.data(), static_cast<std::streamsize>(acknowledgment.size()));
+        file.flush();
+        if (!file) throw std::runtime_error("cannot write capability acknowledgment");
+    }
+    std::error_code ignored;
+    std::filesystem::remove(destination, ignored); // Rust reserves an empty marker before spawn.
+    std::filesystem::rename(temporary, destination);
 }
 } // namespace
 
@@ -343,6 +430,13 @@ int main(int argc, char** argv) {
         else if (key == "--ring-capacity") ring_capacity = static_cast<std::uint32_t>(std::stoul(value));
         else if (key == "--ring-slot-bytes") ring_slot_bytes = static_cast<std::uint32_t>(std::stoul(value));
         else if (key == "--parent-pid") parent_pid = std::stoul(value);
+    }
+
+    try {
+        acknowledge_capabilities();
+    } catch (const std::exception& error) {
+        std::cerr << "strategy capability handshake failed: " << error.what() << '\n';
+        return 2;
     }
 
     const bool framed = protocol == "framed_json";

@@ -1,0 +1,8 @@
+$ python tools/accept_strategy_deployment_lifecycle.py --binary target/debug/qx-cli.exe --runtime-template deploy/qianxing.runtime.paper-strategy.example.json --openssl D:/dev/miniforge3/Library/bin/openssl.exe --storage-backend sqlite --evidence-out maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json
+exit_code=1
+
+[stdout]
+{"schema_version": 1, "kind": "qianxing_strategy_deployment_lifecycle_acceptance", "run_id": "e105c55733de4af291ce9f363451524b", "environment": "windows_local_sqlite_paper_loopback", "storage_backend": "sqlite", "runtime_profile": "single_node", "storage_consistency": "local_durable", "operator_id": "console-operator", "worker_id": "strategy-r09-e105c55733de", "effects": {"venue_worker_started": false, "orders_sent": false, "external_network_access": false}, "operations": [], "outcome": "failed", "error": "RuntimeError: revision 1 creation returned HTTP 400: b'{\"error\":\"invalid deployment revision bundle: deployment Python strategy requires strategy_artifact_sha256\"}'", "supervisor_exit_code": 1, "console_exit_code": 1, "log_sha256": {"supervisor": "fcbd873803dd2bda2b87eebcae42636559c9e0d6a3932155f5cb99ea17932f45", "console": "a6e7dd79b024b1769cf160e618fc0f87b1d36b85adcbf17a848171bffbbe46d3"}}
+Evidence: maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json
+
+[stderr]

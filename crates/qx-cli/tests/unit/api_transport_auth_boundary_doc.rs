@@ -8,15 +8,13 @@
 //! `POST /control/commands` 的档位直接取请求体里的 `permission`。两条合起来是一个无鉴权的
 //! 下单入口挂在可路由地址上，而文档当时只承诺「除三个只读端点外都要求已认证 operator」。
 //!
-//! 本文件把这三处钉在一起：文档里那句报错原文必须就是 `validate()` 吐出的那句（从散文里抠
-//! `「…」` 引用，不在这里抄第二份字面量）；每一份明文 runtime 模板的 bind 都得是回环；
-//! 同一条自报档位的请求在"没装策略"与"装了策略"两种服务上分别拿到 202 与 403。
+//! 本文件把这三处钉在一起：文档明确记录明文 API 的 loopback 限制，配置校验拒绝非回环 bind；
+//! 每一份明文 runtime 模板的 bind 都得是回环；
+//! 明文 Paper 服务拒绝通用控制面请求、只以固定 Trading grant 接受 Paper 工作流；
+//! sandbox/testnet runtime 模板必须装 mTLS Operator 策略。
 
 use super::*;
 use std::net::SocketAddr;
-
-/// 文档与源码共用的那句拒绝语的字头；文档里它以 `「…」` 的形式引用，本文件从散文抠出来比对。
-const GUARD_PHRASE_HINT: &str = "回环";
 
 fn deploy_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -31,24 +29,6 @@ fn readme_text() -> String {
     raw.replace("\r\n", "\n")
 }
 
-/// 从散文里抠出含 `hint` 的那段 `「…」` 引用；没有则返回空串，让调用方把它当缺失判红。
-fn quoted_phrase_containing(hint: &str) -> String {
-    let text = readme_text();
-    let mut rest = text.as_str();
-    while let Some(open) = rest.find('「') {
-        let after_open = &rest[open + '「'.len_utf8()..];
-        let Some(close) = after_open.find('」') else {
-            break;
-        };
-        let phrase = &after_open[..close];
-        if phrase.contains(hint) {
-            return phrase.to_string();
-        }
-        rest = &after_open[close + '」'.len_utf8()..];
-    }
-    String::new()
-}
-
 /// 按 `config validate` 的同一读法装载模板，只替换 `api.bind`，再走生产的那条判定式。
 fn validate_template_with_bind(name: &str, bind: &str) -> Result<(), String> {
     let mut config = read_runtime_config(&deploy_root().join(name))?;
@@ -61,15 +41,9 @@ fn is_loopback(bind: &str) -> bool {
         .is_ok_and(|address| address.ip().is_loopback())
 }
 
-/// 文档那句拒绝语必须是 `validate()` 真的吐出的那句：把 `「…」` 里的原文拿去咬实现。
+/// 文档必须说明 loopback 边界，配置校验必须拒绝可路由的明文 bind。
 #[test]
-fn the_doc_quotes_the_same_loopback_guard_the_config_plane_enforces() {
-    let phrase = quoted_phrase_containing(GUARD_PHRASE_HINT);
-    assert!(
-        !phrase.is_empty(),
-        "接口文档的认证边界段里没有 `「…{GUARD_PHRASE_HINT}…」` 这句引用：判据失去对照物"
-    );
-
+fn the_doc_describes_the_loopback_guard_the_config_plane_enforces() {
     let ok = validate_template_with_bind("qianxing.runtime.example.json", "127.0.0.1:19090");
     assert!(
         matches!(ok, Ok(())),
@@ -79,8 +53,8 @@ fn the_doc_quotes_the_same_loopback_guard_the_config_plane_enforces() {
     let error = validate_template_with_bind("qianxing.runtime.example.json", "10.20.30.40:8443")
         .expect_err("可路由的明文 bind 必须被 validate() 拒绝");
     assert!(
-        error.contains(&phrase),
-        "文档引用的那句拒绝语与实现报出的不是一句话。文档: 「{phrase}」／实现: {error}"
+        error.contains("明文 API 只能绑定回环地址"),
+        "明文 bind 的拒绝原因应清楚指出 loopback 限制: {error}"
     );
 
     // 闸门只管明文：同一份配置换成 mTLS（证书三件套 + 一条 Operator 映射）后仍须能绑可路由地址。
@@ -88,7 +62,9 @@ fn the_doc_quotes_the_same_loopback_guard_the_config_plane_enforces() {
     for needle in [
         "api.operators",
         "明文 API",
-        "等于调用方自报",
+        "明文 API 仅允许 paper 环境",
+        "loopback bind",
+        "local-paper",
         "transport: \"mtls\"",
         "config validate",
     ] {
@@ -136,6 +112,10 @@ fn every_plaintext_runtime_template_in_the_repo_binds_loopback() {
                     config.api.operators.is_empty(),
                     "{name} 明文 transport 却声明了 Operator 证书映射，config validate 会直接拒绝它"
                 );
+                assert!(
+                    config.environment.eq_ignore_ascii_case("paper"),
+                    "{name} 非 paper 环境不得使用明文 API"
+                );
                 plaintext.push(name);
             }
             ApiTransport::Mtls => {
@@ -147,21 +127,29 @@ fn every_plaintext_runtime_template_in_the_repo_binds_loopback() {
             }
         }
     }
+    plaintext.sort();
+    mtls.sort();
     assert_eq!(
         plaintext.len(),
-        19,
-        "明文 runtime 模板的份数与接口文档写的 19 份不等: {plaintext:?}"
+        16,
+        "明文 runtime 模板的份数与接口文档写的 16 份不等: {plaintext:?}"
     );
     assert_eq!(
         mtls,
-        vec!["qianxing.runtime.production.example.json".to_string()],
-        "mTLS 模板的名单变了：文档里「唯一那份生产模板绑 0.0.0.0:8443」这句话需要一起改"
+        vec![
+            "qianxing.runtime.binance-testnet.example.json".to_string(),
+            "qianxing.runtime.ccxt.example.json".to_string(),
+            "qianxing.runtime.multi-venue-arbitrage.example.json".to_string(),
+            "qianxing.runtime.multi-venue-contract.example.json".to_string(),
+            "qianxing.runtime.production.example.json".to_string(),
+        ],
+        "mTLS 模板名单应覆盖 sandbox/testnet 与 production"
     );
 }
 
-/// 策略装不装决定同一条自报档位的请求是 202 还是 403 —— 文档第 2 条的那一半事实。
+/// 明文 Paper 模式拒绝通用控制请求；Paper workflow 使用服务端固定 Trading grant。
 #[test]
-fn without_a_policy_the_command_tier_comes_from_the_request_body() {
+fn plaintext_paper_uses_workflow_scoped_control_and_fixed_grant() {
     let body = std::fs::read_to_string(deploy_root().join("qianxing.submit-order.example.json"))
         .expect("提交样例可读");
     let value: serde_json::Value = serde_json::from_str(&body).expect("提交样例是合法 JSON");
@@ -171,14 +159,25 @@ fn without_a_policy_the_command_tier_comes_from_the_request_body() {
         "样例载荷的档位不再是 Trading：本用例的对照物要一起改"
     );
 
-    // 明文部署的形状：没有 operators ⇒ 没有 policy ⇒ 请求体里的 permission 就是授予档位。
-    let open = ApiService::new(ApiState::default());
-    let accepted = open.handle("POST", "/control/commands", &body, 7);
+    let paper = ApiService::new(ApiState::default()).with_local_paper_control();
+    let refused = paper.handle("POST", "/control/commands", &body, 7);
     assert_eq!(
-        accepted.status, 202,
-        "未装策略的服务应把自报档位当授予档位受理（文档第 2 条），实际 {} {}",
-        accepted.status, accepted.body
+        refused.status, 403,
+        "明文 Paper 服务必须拒绝未认证的通用控制命令"
     );
+    assert!(paper.state().lock().unwrap().control.audit().is_empty());
+
+    let command: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let paper_body = serde_json::json!({
+        "schema_version": 1,
+        "workflow": "paper",
+        "command": command,
+    })
+    .to_string();
+    let accepted = paper.handle("POST", "/app/paper/commands", &paper_body, 8);
+    assert_eq!(accepted.status, 202, "Paper workflow remains available");
+    let receipt: qx_control::AuditRecord = serde_json::from_str(&accepted.body).unwrap();
+    assert_eq!(receipt.operator_id, "local-paper");
 
     // mTLS 部署的形状：装了策略而无证书身份，同一条请求只能拿到 403。
     let guarded = ApiService::with_policy(

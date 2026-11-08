@@ -65,6 +65,7 @@ impl PortfolioBudgetState {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn order_budget_check_exact(
         &self,
         budget_for: impl Fn(&str) -> Option<i128>,
@@ -94,6 +95,7 @@ impl PortfolioBudgetState {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn order_budget_check_with_exact_budget(
         &self,
         budget_for: impl Fn(&str) -> Option<ExactDecimal>,
@@ -186,6 +188,7 @@ impl PortfolioBudgetState {
         Ok(Some((budget, maximum_required)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_fill_budget_with_exact_budget(
         &self,
         budget_for: impl Fn(&str) -> Option<ExactDecimal>,
@@ -502,6 +505,7 @@ struct BudgetMarketView<'a> {
     multiplier: i128,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn required_total_capital(
     exposures: &BTreeMap<qx_core::InstrumentId, PositionExposure>,
     reference_prices: &BTreeMap<qx_core::InstrumentId, ExactDecimal>,

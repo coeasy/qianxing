@@ -301,6 +301,16 @@ typedef struct qx_strategy_vtable {
 /* Plugin entry point exported by a C++ strategy shared library. */
 QX_STRATEGY_EXPORT const qx_strategy_vtable* qx_strategy_get_vtable(void);
 
+/* Optional strategy-owned host requirements. The plugin writes one bounded
+   StrategyRequiredCapabilitiesV1 JSON object; the Rust host resolves this
+   symbol and rejects unsupported declarations before calling create(). */
+QX_STRATEGY_EXPORT int qx_strategy_required_capabilities_v1(
+    char* output,
+    size_t output_capacity,
+    size_t* output_len,
+    char* error_buffer,
+    size_t error_buffer_len);
+
 /* Optional precise market-event callback. If a source Bar carries exact OHLCV,
    the host requires this symbol and will not silently project it to raw v1. */
 QX_STRATEGY_EXPORT int qx_strategy_on_market_event_v2(

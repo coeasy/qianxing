@@ -104,6 +104,12 @@ fn open(path: &Path) -> Result<Connection, StorageError> {
             "2" => transaction
                 .execute_batch(super::schema_migrations::SQLITE_V2_SCHEMA)
                 .map_err(map_sqlite)?,
+            "3" => transaction
+                .execute_batch(super::schema_migrations::SQLITE_V3_SCHEMA)
+                .map_err(map_sqlite)?,
+            "4" => transaction
+                .execute_batch(super::schema_migrations::SQLITE_V4_SCHEMA)
+                .map_err(map_sqlite)?,
             _ => unreachable!("migration plan only contains known schema versions"),
         }
         transaction
@@ -1202,6 +1208,19 @@ impl SqliteControlCommandQueue {
             transaction.commit().map_err(map_sqlite)?;
             return Ok(self.path.clone());
         }
+        let pending_count: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM qx_control_commands WHERE done = 0",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite)?;
+        if pending_count >= crate::DEFAULT_MAX_PENDING_CONTROL_COMMANDS as i64 {
+            return Err(StorageError::Conflict(format!(
+                "ControlCommandQueue pending capacity reached: {pending_count}/{}",
+                crate::DEFAULT_MAX_PENDING_CONTROL_COMMANDS
+            )));
+        }
         transaction
             .execute(
                 "INSERT INTO qx_control_commands
@@ -1503,6 +1522,7 @@ impl SqliteAuditStore {
 #[derive(Clone, Debug)]
 pub struct SqliteJobQueue {
     path: PathBuf,
+    max_pending_jobs: usize,
 }
 
 /// SQLite 事务令牌桶，适用于多个 API 进程共享的强一致限流状态。
@@ -1640,7 +1660,23 @@ impl ControlCommandQueueBackend for SqliteControlCommandQueue {
 
 impl SqliteJobQueue {
     pub fn new(path: impl Into<PathBuf>) -> Result<Self, StorageError> {
-        let queue = Self { path: path.into() };
+        Self::with_pending_limit(path, crate::DEFAULT_MAX_PENDING_JOBS)
+    }
+
+    pub fn with_pending_limit(
+        path: impl Into<PathBuf>,
+        max_pending_jobs: usize,
+    ) -> Result<Self, StorageError> {
+        if max_pending_jobs == 0 || max_pending_jobs > crate::DEFAULT_MAX_PENDING_JOBS {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue max_pending_jobs 必须在 1..={} 内",
+                crate::DEFAULT_MAX_PENDING_JOBS
+            )));
+        }
+        let queue = Self {
+            path: path.into(),
+            max_pending_jobs,
+        };
         let _ = open(&queue.path)?;
         Ok(queue)
     }
@@ -1683,6 +1719,17 @@ impl SqliteJobQueue {
             transaction.commit().map_err(map_sqlite)?;
             return Ok(self.path.clone());
         }
+        let pending_count: i64 = transaction
+            .query_row("SELECT COUNT(*) FROM qx_jobs WHERE done = 0", [], |row| {
+                row.get(0)
+            })
+            .map_err(map_sqlite)?;
+        if pending_count as usize >= self.max_pending_jobs {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue pending capacity reached: {pending_count}/{}",
+                self.max_pending_jobs
+            )));
+        }
         transaction
             .execute(
                 "INSERT INTO qx_jobs(run_id, envelope_json, done) VALUES (?1, ?2, 0)",
@@ -1722,6 +1769,46 @@ impl SqliteJobQueue {
             }
         }
         jobs.sort_by(crate::job_queue::compare_queued_job_order);
+        Ok(jobs)
+    }
+
+    pub fn available_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let connection = open(&self.path)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT j.envelope_json
+                 FROM qx_jobs j LEFT JOIN qx_job_leases l ON l.run_id = j.run_id
+                 WHERE j.done = 0
+                   AND (l.expires_ts IS NULL OR CAST(l.expires_ts AS INTEGER) <= ?1)
+                   AND (json_extract(j.envelope_json, '$.job.owner') = ?2
+                        OR json_extract(j.envelope_json, '$.job.owner') = '*')
+                 ORDER BY json_extract(j.envelope_json, '$.run.trading_day'),
+                          length(j.run_id), j.run_id
+                 LIMIT ?3",
+            )
+            .map_err(map_sqlite)?;
+        let limit = limit.min(i64::MAX as usize) as i64;
+        let rows = statement
+            .query_map(params![db_string(now), worker_id, limit], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(map_sqlite)?;
+        let mut jobs = Vec::new();
+        for row in rows {
+            let json = row.map_err(map_sqlite)?;
+            let job: QueuedJob = serde_json::from_str(&json)
+                .map_err(|error| StorageError::Io(format!("任务 JSON 非法: {error}")))?;
+            job.validate()?;
+            jobs.push(job);
+        }
         Ok(jobs)
     }
 
@@ -1903,6 +1990,15 @@ impl JobQueueBackend for SqliteJobQueue {
         self.available(now)
     }
 
+    fn available_jobs_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        self.available_for_owner(now, worker_id, limit)
+    }
+
     fn claim_job(
         &self,
         run_id: u64,
@@ -2053,8 +2149,12 @@ fn load_event_log(connection: &Connection, name: &str) -> Result<Option<EventLog
     }
     validate_event_log(&log)?;
     let digest_matches = match digest {
-        EventLogManifestDigest::Legacy(expected) => log.digest() == expected,
-        EventLogManifestDigest::RollingV2(expected) => log.event_digest() == expected,
+        EventLogManifestDigest::Legacy(expected) => {
+            log.digest() == expected || log.legacy_q68_digest() == expected
+        }
+        EventLogManifestDigest::RollingV2(expected) => {
+            log.event_digest() == expected || log.legacy_q68_event_digest() == expected
+        }
     };
     if log.len() as u64 != event_count || log.next_seq() != next_seq || !digest_matches {
         return Err(StorageError::Conflict(
@@ -2114,9 +2214,11 @@ fn append_event_log_in_transaction(
             let prefix_digest_matches = match digest {
                 EventLogManifestDigest::Legacy(expected) => {
                     log.digest_of_prefix(start) == Some(expected)
+                        || log.legacy_q68_digest_of_prefix(start) == Some(expected)
                 }
                 EventLogManifestDigest::RollingV2(expected) => {
                     log.event_digest_of_prefix(start) == Some(expected)
+                        || log.legacy_q68_event_digest_of_prefix(start) == Some(expected)
                 }
             };
             (start, prefix_digest_matches)
@@ -2437,6 +2539,7 @@ impl EventLogStore for SqliteEventLogStore {
 mod tests {
     use super::*;
     use qx_control::{CommandKind, CommandStatus, Permission};
+    use qx_core::{EventKind, Priority};
     use qx_protocol::AccountSnapshot;
     use qx_scheduler::{JobStatus, JobWindow, RetryPolicy, Trigger};
     use std::collections::BTreeMap;
@@ -2470,6 +2573,55 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_event_log_reads_and_rewrites_q68_rolling_manifest() {
+        let path = temp_db("event-log-q68");
+        let store = SqliteEventLogStore::new(&path).unwrap();
+        let mut log = EventLog::new();
+        let seq = log.alloc_seq();
+        log.append(Event::new(
+            seq,
+            1,
+            Priority::APPLY,
+            EventKind::AccountPositionSnapshot {
+                account_id: "main".into(),
+                venue_id: "OKX".into(),
+                positions: vec![qx_core::event::AccountPositionSnapshot {
+                    instrument: qx_core::InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap(),
+                    settlement_currency: None,
+                    quantity: qx_core::Quantity::from_i64(1),
+                    average_price: None,
+                    mark_price: None,
+                    liquidation_price: None,
+                    unrealized_pnl: None,
+                    initial_margin: None,
+                    maintenance_margin: None,
+                    leverage: None,
+                    margin_mode: None,
+                    position_side: None,
+                    exact_amounts: None,
+                }],
+            },
+        ));
+        store.write("run", &log).unwrap();
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE qx_event_log_state SET digest = ?1 WHERE name = ?2",
+                params![format!("v2:{}", log.legacy_q68_event_digest()), "run"],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.read("run").unwrap().events(), log.events());
+        let seq = log.alloc_seq();
+        log.append(Event::new(seq, 2, Priority::POST, EventKind::Settle));
+        store.append_batch("run", &log, &[]).unwrap();
+        assert_eq!(store.read("run").unwrap().events(), log.events());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn v1_schema_is_upgraded_transactionally_to_v2() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
             "../../target/qx-storage-schema-migration-{}-{}.sqlite",
@@ -2493,9 +2645,12 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2"]);
+        assert_eq!(versions, ["1", "2", "3", "4"]);
         connection
-            .execute("DELETE FROM qx_schema_migrations WHERE version = '2'", [])
+            .execute(
+                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4')",
+                [],
+            )
             .unwrap();
         connection
             .execute_batch(
@@ -2506,7 +2661,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        drop(open(&path).expect("v1 database applies the v2 index migration"));
+        drop(open(&path).expect("v1 database reapplies migrations v2-v4"));
         let connection = Connection::open(&path).unwrap();
         let version: String = connection
             .query_row(
@@ -2570,7 +2725,7 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2"]);
+        assert_eq!(versions, ["1", "2", "3", "4"]);
         drop(connection);
         let _ = std::fs::remove_file(v2_path);
 
@@ -2589,7 +2744,7 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2"]);
+        assert_eq!(versions, ["1", "2", "3", "4"]);
         drop(connection);
         let _ = std::fs::remove_file(v1_path);
     }

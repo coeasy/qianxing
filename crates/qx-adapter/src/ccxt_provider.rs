@@ -144,8 +144,7 @@ impl CcxtBarDataProvider {
             return Err(permanent("CCXT BarFrame exact_ohlcv 行数与列不一致"));
         }
         if let Some(exact_rows) = &frame.exact_ohlcv {
-            for index in 0..rows {
-                let exact = exact_rows[index];
+            for (index, exact) in exact_rows.iter().copied().enumerate() {
                 exact
                     .validate()
                     .map_err(|error| permanent(format!("CCXT exact OHLCV 无效: {error}")))?;

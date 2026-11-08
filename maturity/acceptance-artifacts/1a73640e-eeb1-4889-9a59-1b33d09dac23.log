@@ -1,0 +1,15 @@
+anchor blind-anchor   occurrences=1 OK
+anchor shape-drop     occurrences=1 OK
+anchor norm-off       occurrences=1 OK
+anchor dead-bucket-off occurrences=1 OK
+tracked paths: 3571  ignored-but-present paths: 363904
+docs/installation.md tracked: True
+Docs/Installation.md                 tracked=False on_disk=True  ignored=False unique_case_variant=1  OK
+docs/first-run.md                    tracked=False on_disk=True  ignored=False unique_case_variant=0  OK
+python/tests/not_a_tracked_path_r18.py tracked=False on_disk=False ignored=False unique_case_variant=0  OK
+   dead-injection tail matches: 0 (must be 0, else it lands in an alias bucket)
+target/release/_qianxing_native.dll  tracked=False on_disk=True  ignored=True  unique_case_variant=0  OK
+citation faces: examined=4617 exact=2685 local_only=150 gated=36 case=0 ambiguous=0 dead=1782 no_target=1267
+five buckets close to examined: True
+HEAD link face rows: 10 (booked at 10)
+PRE_FLIGHT OK

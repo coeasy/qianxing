@@ -17,6 +17,8 @@
 
 独立进程要求：JSONL 模式每行读一个 `StrategyContractInput`，每行输出 `{"ok":true,"output":...}`；传入 `--protocol framed_json` 时使用 QXSF 版本化二进制分帧（24 字节头、长度上限、序号、CRC32）；传入 `--protocol shared_memory_json` 时通过 `--input-ring`/`--output-ring` 使用 Rust 创建的 QXRB 双向 SPSC mmap ring；这条传输没有 stdin 可关，必须同时传 `--parent-pid <驱动进程 pid>`，worker 每秒探一次该进程是否还在，父进程消失就以退出码 0 收摊（不传则不检查，与 Python worker 同口径）。标准输出只能写协议，日志写标准错误。`nlohmann/json` 仅用于示例，不是框架运行时依赖。
 
+持久 server worker 配置了非空 `strategy.required_capabilities` 时，独立进程必须在读取首个 JSONL/QXSF 请求或打开共享内存 ring 前完成能力确认。宿主通过 `QX_STRATEGY_HOST_CAPABILITIES_JSON`、`QX_STRATEGY_REQUIRED_CAPABILITIES_JSON` 和 `QX_STRATEGY_CONTRACT_SCHEMA_VERSION` 注入版本化目录、要求及合同版本，并在 `QX_STRATEGY_CAPABILITY_ACK_FILE` 指定的位置等待原子发布 `StrategyHostCapabilityAckV1` JSON。示例 worker 在三种传输模式均执行此握手；不支持的要求或缺少握手环境会以启动错误退出。空 requirements 保持旧进程启动约定。自定义可执行文件应实现同一确认合同；宿主按配置超时等待，最多接受 64 KiB 确认。
+
 `include/qianxing_ring.hpp` 提供 C++17 的跨平台文件映射和 QXRB 读写实现；Ring 仍要求严格单生产者/单消费者，策略进程只处理 QXSF 帧，不得直接访问凭证、Venue 或 Ledger。
 
 本地构建示例：`cmake -S cpp -B build/cpp -DQX_BUILD_JSONL_EXAMPLE=ON && cmake --build build/cpp --config Release`。CI 会在 Ubuntu 安装 `nlohmann-json3-dev` 后编译 C ABI 动态库和独立 Worker；Windows/macOS 的编译器矩阵仍需接入发布环境后验收。
@@ -26,6 +28,8 @@ C ABI v2 的 `qx_order_intent` 与旧 `qx_strategy_vtable` 布局保持稳定。
 策略可选导出 `qx_strategy_history_requirements_v1` 声明每标的 Bar 预热数，并以 `qx_strategy_on_warmup_complete_v1` 接收版本化就绪事件；未声明时默认 0 根预热。两个符号由 Rust 动态宿主独立探测，不改变既有 vtable；缺少就绪 callback 不影响策略运行。Rust 策略引擎按声明应用 warmup gate，并在首个可决策 Bar hook 前发送就绪通知。共享 fixture 固定 `on_init → on_start → 预热 Bar → warmup_complete → 首个可决策 Bar → on_stop` 的调用顺序；C++ 动态插件集成用例验证结构版本、标的和观测数量。旧插件缺少这些符号时维持零预热行为。
 
 策略可选导出 `qx_strategy_on_error_v1` 接收 `StrategyErrorV1` JSON（`schemas/strategy-error-v1.json`）。该符号独立探测，不改变 vtable；错误观察器返回失败时，Rust 宿主仍保留原策略 callback 错误。
+
+C ABI 插件可选导出 `qx_strategy_required_capabilities_v1`，通过 host-owned bounded output buffer 返回 `StrategyRequiredCapabilitiesV1` JSON（`schemas/c-strategy-required-capabilities-v1.json`）。Rust 在 `qx_strategy_create_v1` 前读取该声明并与实际导出的回调能力及运行时配置要求分别核对；未知、重复、不支持或超长声明会拒绝加载。未导出该符号的旧插件保持兼容。
 
 精确行情通过可选导出符号接入，不改变旧 `qx_strategy_vtable` 和 `qx_market_event` 布局：`qx_strategy_on_market_event_v2` 承载 exact OHLCV，`qx_strategy_on_market_event_v3` 在 v2 envelope 上再附加与原始 bids/asks 同序、同长度的 exact price/quantity sidecar。exact decimal 使用 `coefficient / 10^scale`，不会经过浮点；旧 v1/v2 插件遇到带 exact OrderBook 的事件会由 Rust 宿主明确拒绝，不会静默按 1e-9 raw 投影继续运行。C++ 示例动态库实现 v2/v3；宿主优先走 v3，再走 v2，raw-only 事件仍兼容旧 callback。标准 Timer 事件使用 `QX_MARKET_TIMER`、`timer_name` 与 `ts`，C++ 示例动态库也处理共享 Timer 和精确 OrderBook fixture，并在 Rust 动态宿主测试中验证回调结果。
 

@@ -188,7 +188,7 @@ impl CcxtProcessClient {
                 .recv_timeout(remaining.min(Duration::from_millis(20)))
             {
                 Ok(result) => {
-                    let line = result?;
+                    let line = self.response_line(result)?;
                     let response: Value = serde_json::from_str(&line)
                         .map_err(|error| format!("解析 CCXT Worker 响应失败: {error}"))?;
                     if response.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -217,6 +217,31 @@ impl CcxtProcessClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.stdin.take();
+    }
+
+    fn response_line(&mut self, result: Result<String, String>) -> Result<String, String> {
+        result.map_err(|error| format!("{error}（{}）", self.child_exit_diagnostic()))
+    }
+
+    fn child_exit_diagnostic(&mut self) -> String {
+        // 子进程关闭 stdout 与操作系统发布退出状态之间可能有极短竞态。有限采样
+        // 避免把已经退出的进程误报为仍运行，同时不让异常关闭的管道无限阻塞调用方。
+        let deadline = Instant::now() + Duration::from_millis(100);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    return match status.code() {
+                        Some(code) => format!("exit_code={code}"),
+                        None => "exit_status=terminated_by_signal".to_string(),
+                    };
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => return "exit_status=still_running".to_string(),
+                Err(error) => return format!("exit_status=unavailable: {error}"),
+            }
+        }
     }
 }
 
@@ -309,7 +334,7 @@ impl CcxtRpc for CcxtProcessClient {
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
         {
-            Ok(result) => result?,
+            Ok(result) => self.response_line(result)?,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
@@ -646,7 +671,7 @@ impl CcxtProcessVenue {
                 exact_amounts: None,
             };
             order.trace_fill(&mut fill, Some(&self.id), Some(&remote_id));
-            events.push(VenueEvent::Fill(fill));
+            events.push(VenueEvent::Fill(Box::new(fill)));
         } else if !fee_deltas.is_empty() {
             events.push(VenueEvent::FeeAdjustment {
                 account_id: order.account_id.clone(),

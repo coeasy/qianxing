@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R18",
+  "acceptance_id": "R18-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "42c840b2-5c0d-451a-ad9d-6a0577696a7e",
+    "6f39fcaa-7084-469f-9eb2-525ee22d9a76",
+    "09bfc574-525e-406b-a2ba-c7eaaefd893a",
+    "301f5123-45f0-4ada-800a-80602cf9a551",
+    "4558c8f7-70e3-4dea-bfaf-648632df26ae"
+  ],
+  "reviewed_artifacts": [
+    "maturity/evidence/console-bff-acceptance-2026-11-04.json",
+    "maturity/evidence/console-browser-acceptance-2026-11-04.json",
+    "tools/check_console_browser_evidence.py",
+    "web/console/console_auth.test.js",
+    "crates/qx-api/src/console.rs",
+    "crates/qx-service/src/strategy_deployments.rs",
+    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "maturity/acceptance-artifacts/42c840b2-5c0d-451a-ad9d-6a0577696a7e.log",
+    "maturity/acceptance-artifacts/6f39fcaa-7084-469f-9eb2-525ee22d9a76.log",
+    "maturity/acceptance-artifacts/09bfc574-525e-406b-a2ba-c7eaaefd893a.log",
+    "maturity/acceptance-artifacts/301f5123-45f0-4ada-800a-80602cf9a551.log",
+    "maturity/acceptance-artifacts/4558c8f7-70e3-4dea-bfaf-648632df26ae.log"
+  ],
+  "findings": [
+    "Packaged console authentication issues a server-side session and CSRF cookie; same-origin writes require the matching token, and missing CSRF is rejected before API mutation.",
+    "The BFF acceptance creates and reads a deployment revision and accepted operation, binds audit identity to the authenticated operator, and displays operation/deployment state through authenticated reads.",
+    "Packaged browser evidence records HTTP 201 revision creation, accepted Deploy operation and visible desired_revision=1 with an unobserved worker; readiness remains fail-closed.",
+    "The projection keeps trading_enabled=null when authoritative live prerequisites are absent. No supervisor, venue worker, or order was started."
+  ],
+  "limitations": [
+    "This review accepts the Windows loopback BFF and packaged browser local workflow only.",
+    "Authoritative worker observation, host lifecycle/capabilities, checkpoint roundtrip, venue reconciliation, and live authorization evidence remain unavailable; full live readiness is unproven."
+  ]
+}

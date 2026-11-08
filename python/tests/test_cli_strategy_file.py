@@ -34,20 +34,36 @@ class StrategyFileCliTest(unittest.TestCase):
         self.input_path.write_text(json.dumps(value), encoding="utf-8")
 
     def test_run_strategy_loads_file_and_binds_its_source_digest(self):
-        self._write_input({"run_id": "run-1", "strategy": {"fast_window": 3}})
+        original = {"run_id": "run-1", "strategy": {"fast_window": 3},
+                    "dataset_snapshot_path": "snapshot.json", "output_dir": "user-output"}
+        self._write_input(original)
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy", return_value={"verified": True}) as run:
-            with contextlib.redirect_stdout(output):
-                code = cli.main(["run-strategy", str(self.strategy_path), str(self.input_path)])
+        from qianxing import strategy_execution
+        with (
+            patch.object(strategy_execution, "run_backtest_with_strategy", return_value={"verified": True}) as run,
+            patch.object(strategy_execution, "validate_strategy_execution_preflight_v1", return_value={}) as preflight,
+            patch.object(strategy_execution, "prepare_project_input", side_effect=lambda value: {**value, "output_dir": "isolated"}),
+            contextlib.redirect_stdout(output),
+        ):
+            code = cli.main(["run-strategy", str(self.strategy_path), str(self.input_path)])
 
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output.getvalue()), {"verified": True})
         payload, strategy = run.call_args.args
         self.assertEqual(payload["run_id"], "run-1")
         self.assertEqual(strategy, {"candidate": payload})
+        self.assertEqual(payload["output_dir"], "isolated")
+        self.assertNotIn("dataset_snapshot_path", payload)
+        self.assertEqual(preflight.call_args.args[1]["dataset_snapshot_path"], "snapshot.json")
+        self.assertEqual(json.loads(self.input_path.read_text()), original)
         self.assertEqual(run.call_args.kwargs["strategy_id"], "my-strategy")
         self.assertEqual(run.call_args.kwargs["strategy_version"], "test-v1")
         self.assertEqual(len(run.call_args.kwargs["source_sha256"]), 64)
+        nested = {"base": {"dataset_snapshot_path": "one", "parameters": {"x": 1}},
+                  "markets": [{"dataset_snapshot_path": "two", "bars_path": "bars.json"}]}
+        projected = strategy_execution._drop_project_execution_keys(nested)
+        self.assertEqual(projected, {"base": {"parameters": {"x": 1}}, "markets": [{"bars_path": "bars.json"}]})
+        self.assertEqual(nested["base"]["dataset_snapshot_path"], "one")
 
     def test_run_strategy_accepts_class_only_strategy_file(self):
         self.strategy_path.write_text(
@@ -62,7 +78,8 @@ class StrategyFileCliTest(unittest.TestCase):
         )
         self._write_input({"run_id": "class-only-run", "strategy": {"fast_window": 3}})
         output = io.StringIO()
-        with patch.object(cli, "run_backtest_with_strategy", return_value={"verified": True}) as run:
+        from qianxing import strategy_execution
+        with patch.object(strategy_execution, "run_backtest_with_strategy", return_value={"verified": True}) as run:
             with contextlib.redirect_stdout(output):
                 code = cli.main(["run-strategy", str(self.strategy_path), str(self.input_path)])
 
@@ -93,8 +110,9 @@ class StrategyFileCliTest(unittest.TestCase):
         self._write_input(payload)
         output = io.StringIO()
         result = {"run_id": "tick-run", "verified": True}
-        with patch.object(cli, "validate_strategy_execution_preflight_v1", return_value={}):
-            with patch.object(cli, "run_depth_backtest_with_strategy", return_value=result) as run:
+        from qianxing import strategy_execution
+        with patch.object(strategy_execution, "validate_strategy_execution_preflight_v1", return_value={}):
+            with patch.object(strategy_execution, "run_depth_backtest_with_strategy", return_value=result) as run:
                 with contextlib.redirect_stdout(output):
                     code = cli.main(
                         ["run-strategy", str(self.strategy_path), str(self.input_path)]
@@ -136,9 +154,10 @@ class StrategyFileCliTest(unittest.TestCase):
             "data_level": "tick",
         }
         stderr = io.StringIO()
-        with patch.object(cli, "build_module_manifest", return_value=manifest):
-            with patch.object(cli, "validate_strategy_execution_preflight_v1", return_value={}):
-                with patch.object(cli, "run_depth_backtest_with_strategy") as run:
+        from qianxing import strategy_execution
+        with patch.object(strategy_execution, "build_module_manifest", return_value=manifest):
+            with patch.object(strategy_execution, "validate_strategy_execution_preflight_v1", return_value={}):
+                with patch.object(strategy_execution, "run_depth_backtest_with_strategy") as run:
                     with contextlib.redirect_stderr(stderr):
                         code = cli.main(
                             ["run-strategy", str(self.strategy_path), str(self.input_path)]
@@ -263,8 +282,9 @@ class StrategyFileCliTest(unittest.TestCase):
         self._write_input(payload)
         output = io.StringIO()
         result = {"markets_total": 2, "replay_verified": True}
+        from qianxing import strategy_execution
         with patch.object(
-            cli, "run_multi_market_backtest_with_strategy_slots", return_value=result
+            strategy_execution, "run_multi_market_backtest_with_strategy_slots", return_value=result
         ) as run:
             with contextlib.redirect_stdout(output):
                 code = cli.main(
@@ -303,8 +323,9 @@ class StrategyFileCliTest(unittest.TestCase):
                 ],
             }
         )
+        from qianxing import strategy_execution
         with patch.object(
-            cli, "run_multi_market_backtest_with_strategy_slots", return_value={"ok": True}
+            strategy_execution, "run_multi_market_backtest_with_strategy_slots", return_value={"ok": True}
         ) as run:
             with contextlib.redirect_stdout(io.StringIO()):
                 code = cli.main(

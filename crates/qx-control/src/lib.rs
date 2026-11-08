@@ -153,7 +153,21 @@ impl ControlCommand {
         {
             return Err(ControlError::Forbidden);
         }
-        self.validate()
+        self.validate()?;
+        self.validate_submission_target()
+    }
+
+    fn validate_submission_target(&self) -> Result<(), ControlError> {
+        if matches!(
+            &self.kind,
+            CommandKind::PauseStrategy | CommandKind::ResumeStrategy
+        ) && self.target == "*"
+        {
+            return Err(ControlError::Invalid(
+                "strategy lifecycle commands require an explicit worker target".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn digest(&self) -> u64 {
@@ -252,7 +266,7 @@ pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
 }
 
 /// 控制面终态命令的保留上界。`commands` / `requests` / `audit` 三格只追加不退场，长跑进程
-/// 每受理一条命令就永久留下三处条目；越过上界按「终态时间最旧」退场（V13 R1-H 重落 V11 R5-1，
+/// 每受理一条命令就永久留下三处条目；越过上界按「终态审计写入顺序最早」退场（V13 R1-H 重落 V11 R5-1，
 /// 那份交付面被合流 c07ad22 按上游树整体裁定覆盖掉了）。
 ///
 /// 只退**终态**命令：`pending()` 靠 `finalized_command_ids()` 判待办，退掉一条未终态的命令等于
@@ -276,10 +290,23 @@ pub struct ControlPlane {
     commands: BTreeMap<u64, ControlCommand>,
     requests: BTreeMap<String, u64>,
     audit: Vec<AuditRecord>,
+    #[serde(default)]
+    strategy_lifecycle: BTreeMap<String, StrategyLifecycleRecord>,
+    #[serde(default)]
+    strategy_lifecycle_legacy_incomplete: bool,
     /// 累计退场量。`#[serde(default)]`：合流之前落盘的控制面 JSON 没有这一格，恢复时必须
     /// 读得回来，否则一次升级就拒读自己的历史。
     #[serde(default)]
     retired: RetirementSummary,
+}
+
+/// Latest successful lifecycle command, retained independently of bounded audit history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyLifecycleRecord {
+    pub paused: bool,
+    pub command_id: u64,
+    pub ts: u64,
 }
 
 impl ControlPlane {
@@ -308,6 +335,8 @@ impl ControlPlane {
         command: ControlCommand,
         ts: u64,
     ) -> Result<AuditRecord, ControlError> {
+        // Reject new ambiguous commands without making legacy stored commands unreadable.
+        command.validate_submission_target()?;
         // 只有提交入口裁决"有没有执行者"：`ControlCommand::validate` 同时被恢复路径调用，
         // 把这条规则放进 `validate` 会让历史队列里已存在的旧命令在重启时读不回来。
         if !command.kind.executed() {
@@ -347,6 +376,18 @@ impl ControlPlane {
         &self.audit
     }
 
+    pub fn strategy_lifecycle(&self, worker_id: &str) -> Option<&StrategyLifecycleRecord> {
+        self.strategy_lifecycle.get(worker_id)
+    }
+
+    /// Legacy snapshots with retired audit cannot prove the last lifecycle state.
+    /// Start unrecorded workers paused until an explicit resume establishes it.
+    pub fn strategy_pause_state(&self, worker_id: &str) -> Option<bool> {
+        self.strategy_lifecycle(worker_id)
+            .map(|state| state.paused)
+            .or_else(|| self.strategy_lifecycle_legacy_incomplete.then_some(true))
+    }
+
     /// 待办命令。判据与 `execute` 的 `AlreadyFinal` 同一口径：终态审计记录一旦落下，
     /// 这条命令就不再是待办。
     ///
@@ -378,7 +419,7 @@ impl ControlPlane {
         self.retire_overflow_with(FINALIZED_COMMAND_RETENTION)
     }
 
-    /// 上界之外的终态命令按终态时间最旧退场，命令、请求索引、审计记录三格同时删。
+    /// 上界之外的终态命令按终态审计记录的追加顺序最早退场，命令、请求索引、审计记录三格同时删。
     ///
     /// 第一句就是规模判据：`finalized ⊆ commands`，所以命令数没越过上界时终态数也不可能越过，
     /// 直接返回。少了这句，每次 `submit`/`execute` 都要重扫整段审计并重建一个 `BTreeSet`，
@@ -391,21 +432,17 @@ impl ControlPlane {
         if finalized.len() <= retention {
             return;
         }
-        // 每条终态命令至多一条终态记录（`execute` 对已终态命令回 `AlreadyFinal`），
-        // 所以「按终态记录的 ts 升序」就是「按退场优先级升序」，同 ts 按 command_id 定序。
-        let mut finalized_at: Vec<(u64, u64)> = self
+        // 系统时钟可能回拨或节点间有偏移，`ts` 不是追加顺序。审计向量保留了
+        // ControlPlane 接受记录的先后；按终态记录在此向量中的顺序退场，避免时钟漂移
+        // 让较新的命令先于较旧命令淘汰。`execute` 保证每条命令至多一条终态记录。
+        let finalized_in_order: Vec<u64> = self
             .audit
             .iter()
             .filter(|record| record.status.is_final())
-            .map(|record| (record.ts, record.command_id))
+            .map(|record| record.command_id)
             .collect();
-        finalized_at.sort_unstable();
-        let overflow = finalized_at.len() - retention;
-        let victims: BTreeSet<u64> = finalized_at
-            .into_iter()
-            .take(overflow)
-            .map(|(_, command_id)| command_id)
-            .collect();
+        let overflow = finalized_in_order.len() - retention;
+        let victims: BTreeSet<u64> = finalized_in_order.into_iter().take(overflow).collect();
         let mut removed_records = 0u64;
         self.audit.retain(|record| {
             if victims.contains(&record.command_id) {
@@ -461,6 +498,23 @@ impl ControlPlane {
             result_code,
             ts,
         };
+        if status == CommandStatus::Executed && !command.dry_run && command.target != "*" {
+            let paused = match command.kind {
+                CommandKind::PauseStrategy => Some(true),
+                CommandKind::ResumeStrategy => Some(false),
+                _ => None,
+            };
+            if let Some(paused) = paused {
+                self.strategy_lifecycle.insert(
+                    command.target.clone(),
+                    StrategyLifecycleRecord {
+                        paused,
+                        command_id,
+                        ts,
+                    },
+                );
+            }
+        }
         self.audit.push(record.clone());
         self.retire_overflow();
         Ok(record)
@@ -471,7 +525,13 @@ impl ControlPlane {
     }
 
     pub fn from_json(input: &str) -> Result<Self, String> {
-        let plane: Self = serde_json::from_str(input).map_err(|error| error.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        let legacy_lifecycle = value.get("strategy_lifecycle").is_none();
+        let mut plane: Self = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        if legacy_lifecycle && plane.retired.retired_commands > 0 {
+            plane.strategy_lifecycle_legacy_incomplete = true;
+        }
         for (command_id, command) in &plane.commands {
             if *command_id != command.command_id {
                 return Err("命令索引与 command_id 不一致".into());
@@ -529,6 +589,72 @@ impl ControlPlane {
         for command_id in plane.commands.keys() {
             if !audit_state.contains_key(command_id) {
                 return Err(format!("命令 {} 缺少审计记录", command_id));
+            }
+        }
+        // Migrate legacy documents from retained successful commands in execution order.
+        let mut latest = BTreeMap::new();
+        for record in &plane.audit {
+            let command = &plane.commands[&record.command_id];
+            if record.status != CommandStatus::Executed || command.dry_run || command.target == "*"
+            {
+                continue;
+            }
+            let paused = match command.kind {
+                CommandKind::PauseStrategy => true,
+                CommandKind::ResumeStrategy => false,
+                _ => continue,
+            };
+            latest.insert(
+                command.target.clone(),
+                StrategyLifecycleRecord {
+                    paused,
+                    command_id: record.command_id,
+                    ts: record.ts,
+                },
+            );
+        }
+        for (worker_id, record) in latest {
+            if let Some(stored) = plane.strategy_lifecycle.get(&worker_id) {
+                if plane.commands.contains_key(&stored.command_id) && stored != &record {
+                    return Err(format!(
+                        "strategy lifecycle state disagrees with audit for {worker_id}"
+                    ));
+                }
+            } else if legacy_lifecycle {
+                plane.strategy_lifecycle.insert(worker_id, record);
+            } else {
+                return Err(format!(
+                    "strategy lifecycle state is missing for {worker_id}"
+                ));
+            }
+        }
+        if plane
+            .strategy_lifecycle
+            .keys()
+            .any(|id| id.trim().is_empty() || id == "*")
+        {
+            return Err("strategy lifecycle state requires explicit worker IDs".into());
+        }
+        for (worker_id, state) in &plane.strategy_lifecycle {
+            if let Some(command) = plane.commands.get(&state.command_id) {
+                let kind_matches = if state.paused {
+                    command.kind == CommandKind::PauseStrategy
+                } else {
+                    command.kind == CommandKind::ResumeStrategy
+                };
+                if !kind_matches
+                    || command.dry_run
+                    || command.target != *worker_id
+                    || !plane.audit.iter().any(|record| {
+                        record.command_id == state.command_id
+                            && record.status == CommandStatus::Executed
+                            && record.ts == state.ts
+                    })
+                {
+                    return Err(format!(
+                        "invalid strategy lifecycle binding for {worker_id}"
+                    ));
+                }
             }
         }
         Ok(plane)
@@ -703,6 +829,34 @@ mod tests {
         assert_eq!(restored.audit().len(), 4);
     }
 
+    #[test]
+    fn retirement_uses_audit_append_order_when_timestamps_move_backwards() {
+        let mut plane = ControlPlane::default();
+        for index in 1..=4u64 {
+            plane.submit(numbered(index), 100 + index).unwrap();
+        }
+        for (command_id, ts) in [(1, 400), (2, 300), (3, 200), (4, 100)] {
+            plane
+                .execute(command_id, ts, |_| Ok("APPLIED".into()))
+                .unwrap();
+        }
+
+        plane.retire_overflow_with(2);
+
+        assert!(
+            plane.command(1).is_none(),
+            "oldest finalized command must retire first"
+        );
+        assert!(
+            plane.command(2).is_none(),
+            "second-oldest finalized command must retire"
+        );
+        assert!(plane.command(3).is_some());
+        assert!(plane.command(4).is_some());
+        assert_eq!(plane.retirement().retired_commands, 2);
+        assert!(ControlPlane::from_json(&plane.to_json().unwrap()).is_ok());
+    }
+
     /// 未终态的命令永不退场：把它退掉等于静默丢掉一条已受理、还没人执行的命令。
     #[test]
     fn retirement_never_drops_a_pending_command() {
@@ -756,5 +910,117 @@ mod tests {
         let restored = ControlPlane::from_json(&legacy).unwrap();
         assert_eq!(restored.retirement(), RetirementSummary::default());
         assert_eq!(restored.audit().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod durable_lifecycle_tests {
+    use super::*;
+
+    fn command(id: u64, kind: CommandKind, dry_run: bool) -> ControlCommand {
+        ControlCommand {
+            command_id: id,
+            request_id: format!("lifecycle-{id}"),
+            operator_id: "ops".into(),
+            reason: "lifecycle recovery".into(),
+            kind,
+            target: "worker-a".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run,
+        }
+    }
+
+    fn execute(plane: &mut ControlPlane, id: u64, kind: CommandKind, dry_run: bool, success: bool) {
+        plane.submit(command(id, kind, dry_run), id).unwrap();
+        plane
+            .execute(id, id, |_| {
+                if success {
+                    Ok("ok".into())
+                } else {
+                    Err("failed".into())
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn durable_lifecycle_survives_audit_retirement_and_restart() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        plane.retire_overflow_with(0);
+        assert!(plane.audit().is_empty());
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        assert!(restored.strategy_lifecycle("worker-a").unwrap().paused);
+        assert!(restored.strategy_lifecycle("worker-b").is_none());
+    }
+
+    #[test]
+    fn durable_lifecycle_legacy_retirement_requires_explicit_resume() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        plane.retire_overflow_with(0);
+        let mut value = serde_json::to_value(&plane).unwrap();
+        value.as_object_mut().unwrap().remove("strategy_lifecycle");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("strategy_lifecycle_legacy_incomplete");
+        let mut migrated = ControlPlane::from_json(&value.to_string()).unwrap();
+        assert_eq!(migrated.strategy_pause_state("worker-a"), Some(true));
+        execute(&mut migrated, 2, CommandKind::ResumeStrategy, false, true);
+        let restored = ControlPlane::from_json(&migrated.to_json().unwrap()).unwrap();
+        assert_eq!(restored.strategy_pause_state("worker-a"), Some(false));
+        assert_eq!(restored.strategy_pause_state("worker-b"), Some(true));
+    }
+
+    #[test]
+    fn durable_lifecycle_ignores_failed_and_dry_run_commands() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        execute(&mut plane, 2, CommandKind::ResumeStrategy, true, true);
+        execute(&mut plane, 3, CommandKind::ResumeStrategy, false, false);
+        assert_eq!(plane.strategy_lifecycle("worker-a").unwrap().command_id, 1);
+        execute(&mut plane, 4, CommandKind::ResumeStrategy, false, true);
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        assert!(!restored.strategy_lifecycle("worker-a").unwrap().paused);
+    }
+
+    #[test]
+    fn durable_lifecycle_migrates_legacy_and_rejects_conflicting_projection() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        let mut value = serde_json::to_value(&plane).unwrap();
+        value.as_object_mut().unwrap().remove("strategy_lifecycle");
+        let migrated = ControlPlane::from_json(&value.to_string()).unwrap();
+        assert!(migrated.strategy_lifecycle("worker-a").unwrap().paused);
+        let mut value = serde_json::to_value(&migrated).unwrap();
+        value["strategy_lifecycle"]["worker-a"]["paused"] = false.into();
+        assert!(ControlPlane::from_json(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn durable_lifecycle_rejects_new_wildcard_without_breaking_legacy_reads() {
+        let mut plane = ControlPlane::default();
+        let mut wildcard = command(1, CommandKind::PauseStrategy, false);
+        wildcard.target = "*".into();
+        assert!(wildcard.validate().is_ok());
+        assert!(wildcard.validate_as(Permission::Trading).is_err());
+        assert!(plane.submit(wildcard.clone(), 1).is_err());
+        // A previously accepted wildcard remains readable but does not invent per-worker state.
+        let mut legacy = ControlPlane::default();
+        let accepted = AuditRecord {
+            command_id: 1,
+            request_id: wildcard.request_id.clone(),
+            operator_id: wildcard.operator_id.clone(),
+            command_digest: wildcard.digest(),
+            status: CommandStatus::Accepted,
+            result_code: "accepted".into(),
+            ts: 1,
+        };
+        legacy.requests.insert(wildcard.request_id.clone(), 1);
+        legacy.commands.insert(1, wildcard);
+        legacy.audit.push(accepted);
+        assert!(ControlPlane::from_json(&legacy.to_json().unwrap()).is_ok());
     }
 }

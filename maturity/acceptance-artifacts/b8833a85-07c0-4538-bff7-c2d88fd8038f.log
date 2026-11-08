@@ -1,0 +1,27 @@
+$ python benchmarks/run_strategy_worker_crash_recovery.py --runtime deploy/qianxing.runtime.paper-strategy.example.json --binary target/debug/qx-cli.exe --output maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json
+exit_code=1
+
+[stdout]
+
+[stderr]
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 215, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 126, in main
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: control_command_persisted: expected injected exit 86, got 0
+stdout:
+牵星 Qianxing — 分级校准，量天定位
+
+[调度 · Scheduler] worker=scheduler-paper day=20261029 queued=1 timed_out=0 skipped=0
+[调度 · Scheduler] worker=scheduler-paper READY jobs=1
+[策略 · Strategy] worker=strategy-paper job=paper-strategy-order run_id=15904535794986836367 result=1 orders: ORDER_INTENT_ACCEPTED
+[策略 · Strategy] worker=strategy-paper READY processed=1
+[Paper · Execution] worker=paper-execution processed=1
+[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) \u2713
+
+stderr:
+

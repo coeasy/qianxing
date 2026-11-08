@@ -1,0 +1,22 @@
+{
+  "account_id": null,
+  "artifacts": {
+    "equity": ".task-tmp/ob-run\\runs\\book-probe-71ad70270e52c967.v7.equity.csv",
+    "event_trace": ".task-tmp/ob-run\\runs\\book-probe-71ad70270e52c967.events.jsonl",
+    "fills": ".task-tmp/ob-run\\runs\\book-probe-71ad70270e52c967.v7.fills.csv",
+    "run_manifest": ".task-tmp/ob-run\\runs\\book-probe-71ad70270e52c967.run.json",
+    "summary": ".task-tmp/ob-run\\runs\\book-probe-71ad70270e52c967.v7.summary.json"
+  },
+  "data_fingerprint": "depth:example-depth-l2-v1:bb98a3580a92ee38",
+  "equity_points": 80,
+  "fills": 1,
+  "instrument": "BTCUSDT.BINANCE",
+  "manifest_digest": "71ad70270e52c967",
+  "manifest_run_id": null,
+  "max_drawdown_bps": 0,
+  "result_hash": "214f88e04bdfae69",
+  "return_bps": 0,
+  "run_id": "book-probe",
+  "snapshots": 80,
+  "tier": "l2"
+}

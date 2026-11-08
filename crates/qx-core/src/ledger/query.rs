@@ -42,10 +42,7 @@ impl Ledger {
             let entry_amount = entry
                 .exact_amounts
                 .map(|exact| exact.amount)
-                .unwrap_or_else(|| {
-                    ExactDecimal::from_parts(entry.amount.raw(), 9)
-                        .expect("legacy ledger amounts use scale 9")
-                });
+                .unwrap_or_else(|| ExactDecimal::from_legacy_raw(entry.amount.raw()));
             *amount = amount
                 .checked_add(entry_amount)
                 .ok_or_else(|| QxError::Invariant("标的现金归因累计溢出".into()))?;
@@ -357,6 +354,9 @@ impl Ledger {
             if account != account_id {
                 continue;
             }
+            if position.quantity.raw() == 0 {
+                continue;
+            }
             let mark = marks.get(instrument)?;
             let n = position
                 .quantity
@@ -368,6 +368,9 @@ impl Ledger {
         }
         for ((account, instrument, _), position) in self.iter_hedge_positions() {
             if account != account_id {
+                continue;
+            }
+            if position.quantity.raw() == 0 {
                 continue;
             }
             let mark = marks.get(instrument)?;

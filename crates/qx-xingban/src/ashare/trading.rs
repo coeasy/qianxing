@@ -26,8 +26,8 @@ impl AshareCorporateActionSchedule {
         Self::build(actions, Some(bars))
     }
 
-    pub(crate) fn has_events_at(&self, ts: u64) -> bool {
-        self.by_timestamp.contains_key(&ts)
+    pub(crate) fn has_events_at(&self, actions: &[AshareCorporateActionEvent], ts: u64) -> bool {
+        self.events_at(actions, ts).next().is_some()
     }
 
     fn build(actions: &[AshareCorporateActionEvent], bars: Option<&[Bar]>) -> Self {
@@ -35,6 +35,11 @@ impl AshareCorporateActionSchedule {
         let mut by_timestamp = HashMap::<u64, Vec<usize>>::new();
         let mut bar_timestamp_by_action_timestamp = HashMap::new();
         for (index, event) in actions.iter().enumerate() {
+            // Suspension events gate fills directly through AshareRuleConfig and must not be
+            // dispatched to the ledger event path.
+            if event.action_type == AshareCorporateActionType::Suspension {
+                continue;
+            }
             let mut timestamps = [None; 5];
             let mut timestamp_count = 0;
             let mut scheduled_bar_timestamps = [None; 5];
@@ -78,10 +83,12 @@ impl AshareCorporateActionSchedule {
                     bar_timestamp_by_action_timestamp.get(&event.ts).copied(),
                     event.rights_instrument.as_ref(),
                 ) {
-                    explicit_rights_expiries
-                        .entry(bar_ts)
-                        .or_default()
-                        .insert(instrument.clone());
+                    if event.is_visible_at(bar_ts) {
+                        explicit_rights_expiries
+                            .entry(bar_ts)
+                            .or_default()
+                            .insert(instrument.clone());
+                    }
                 }
             }
         }
@@ -113,6 +120,7 @@ impl AshareCorporateActionSchedule {
             .into_iter()
             .flatten()
             .map(move |index| &actions[*index])
+            .filter(move |event| event.is_visible_at(ts))
     }
 
     pub(crate) fn has_explicit_rights_expiry(
@@ -153,10 +161,32 @@ impl AshareRuleConfig {
         let day_start = Self::day_key(ts)
             .saturating_mul(DAY_MS)
             .saturating_sub(SHANGHAI_OFFSET_MS);
+        let action_index = self
+            .corporate_actions
+            .partition_point(|event| event.ts < day_start);
+        let mut has_suspension_fact = false;
+        let mut suspension_visible = false;
+        for event in self.corporate_actions[action_index..]
+            .iter()
+            .take_while(|event| {
+                AshareRuleConfig::day_key(event.ts) == AshareRuleConfig::day_key(ts)
+            })
+            .filter(|event| event.action_type == AshareCorporateActionType::Suspension)
+        {
+            has_suspension_fact = true;
+            suspension_visible |= event.is_visible_at(ts);
+        }
+        let halted = if has_suspension_fact {
+            suspension_visible
+                || (ts != day_start && self.halted_timestamps.binary_search(&ts).is_ok())
+        } else {
+            self.halted_timestamps.binary_search(&ts).is_ok()
+                || self.halted_timestamps.binary_search(&day_start).is_ok()
+        };
         (self.trading_timestamps.is_empty() || self.trading_timestamps.binary_search(&ts).is_ok())
             && (self.trading_days.is_empty() || self.trading_days.binary_search(&day_start).is_ok())
             && (self.session_windows.is_empty() || ts == day_start || in_session)
-            && self.halted_timestamps.binary_search(&ts).is_err()
+            && !halted
     }
 
     pub(crate) fn bar_restrictions(
@@ -385,6 +415,24 @@ mod corporate_action_schedule_tests {
             None,
             "an intraday action after the final bar must not be pulled backward"
         );
+    }
+
+    #[test]
+    fn action_published_after_the_bar_is_not_visible_to_its_schedule() {
+        let midnight = super::super::date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+        let first_bar_ts = midnight + 9 * 60 * 60 * 1_000 + 30 * 60 * 1_000;
+        let actions = [AshareCorporateActionEvent {
+            ts: midnight,
+            record_ts: Some(midnight),
+            action_type: AshareCorporateActionType::CashDividend,
+            published_at_ms: Some(first_bar_ts + 1),
+            ..AshareCorporateActionEvent::default()
+        }];
+        let bars = [Bar::new(first_bar_ts, 1, 1, 1, 1, 1)];
+        let schedule = AshareCorporateActionSchedule::for_bars(&actions, &bars);
+
+        assert!(schedule.events_at(&actions, first_bar_ts).next().is_none());
+        assert!(!schedule.has_events_at(&actions, first_bar_ts));
     }
 }
 

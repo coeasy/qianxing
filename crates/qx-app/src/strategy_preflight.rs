@@ -8,6 +8,7 @@
 use crate::{
     validate_dataset, AppError, AppErrorCategory, CallerCapability, DatasetSpec, RunContext,
 };
+use qx_strategy::capabilities::{StrategyCapability, StrategyHostCapabilitiesV1};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -32,6 +33,8 @@ pub struct StrategyExecutionPreflightSpecV1 {
     pub target_strategy_id: Option<String>,
     #[serde(default)]
     pub split_plan: Option<Value>,
+    #[serde(default)]
+    pub require_dataset_snapshots: bool,
 }
 
 impl StrategyExecutionPreflightSpecV1 {
@@ -59,6 +62,8 @@ pub struct StrategyPreflightMarketV1 {
     pub instrument: String,
     pub rows: u64,
     pub content_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_snapshot_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -71,6 +76,12 @@ pub struct StrategyExecutionPreflightResultV1 {
     pub data_level: Option<String>,
     pub warmup_bars: Option<u64>,
     pub checked_markets: Vec<StrategyPreflightMarketV1>,
+    #[serde(default = "unknown_local_capabilities")]
+    pub host_capabilities: StrategyHostCapabilitiesV1,
+}
+
+fn unknown_local_capabilities() -> StrategyHostCapabilitiesV1 {
+    StrategyHostCapabilitiesV1::local_python(None)
 }
 
 /// Validate a normalized strategy manifest against an execution/search specification.
@@ -83,9 +94,24 @@ pub fn validate_strategy_execution_preflight_v1(
     context: &RunContext,
 ) -> Result<StrategyExecutionPreflightResultV1, AppError> {
     let correlation_id = context.correlation_id().to_owned();
-    let result = validate_strategy_execution_preflight_inner(spec, context)
-        .map_err(|error| attach(error, &correlation_id));
-    result
+    validate_strategy_execution_preflight_inner(spec, context)
+        .map_err(|error| attach(error, &correlation_id))
+}
+
+fn local_host_capabilities(execution: &Value) -> StrategyHostCapabilitiesV1 {
+    let execution = execution.get("base").unwrap_or(execution);
+    let data_level = if !execution.is_object() {
+        None
+    } else if execution.get("depth_path").is_some() {
+        match execution.get("tier").and_then(Value::as_str) {
+            Some("l1") => Some("tick"),
+            Some("l2") => Some("orderbook"),
+            _ => None,
+        }
+    } else {
+        Some("bar")
+    };
+    StrategyHostCapabilitiesV1::local_python(data_level)
 }
 
 fn validate_strategy_execution_preflight_inner(
@@ -118,6 +144,7 @@ fn validate_strategy_execution_preflight_inner(
                 | "completeness"
                 | "source_sha256"
                 | "bundle_sha256"
+                | "required_capabilities"
         ) {
             return Err(invalid(format!(
                 "strategy_manifest has unknown field {key:?}"
@@ -157,8 +184,18 @@ fn validate_strategy_execution_preflight_inner(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let warmup_bars = manifest.get("warmup_bars").and_then(Value::as_u64);
+    let required: Vec<StrategyCapability> = manifest
+        .get("required_capabilities")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|error| invalid(format!("invalid required_capabilities: {error}")))?
+        .unwrap_or_default();
+    local_host_capabilities(&spec.execution_spec)
+        .validate_required(&required)
+        .map_err(invalid)?;
     if completeness == "partial" {
         return Ok(StrategyExecutionPreflightResultV1 {
+            host_capabilities: local_host_capabilities(&spec.execution_spec),
             schema_version: STRATEGY_EXECUTION_PREFLIGHT_SCHEMA_VERSION,
             strategy_id,
             strategy_version,
@@ -327,11 +364,54 @@ fn validate_strategy_execution_preflight_inner(
                 ),
             ));
         }
+        let dataset_snapshot_sha256 = if spec.require_dataset_snapshots {
+            let snapshot_path = market
+                .get("dataset_snapshot_path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{label} ({instrument}) requires dataset_snapshot_path for project execution"
+                    ))
+                })?;
+            let snapshot_payload = std::fs::read_to_string(snapshot_path).map_err(|error| {
+                invalid(format!(
+                    "{label} ({instrument}) cannot read DatasetSnapshotV1 {snapshot_path}: {error}"
+                ))
+            })?;
+            let snapshot =
+                qx_data::DatasetSnapshotV1::from_json(&snapshot_payload).map_err(|error| {
+                    invalid(format!(
+                        "{label} ({instrument}) DatasetSnapshotV1 is invalid: {error}"
+                    ))
+                })?;
+            let frame_bytes = std::fs::read(bars_path).map_err(|error| {
+                invalid(format!(
+                    "{label} ({instrument}) cannot read frozen BarFrame {bars_path}: {error}"
+                ))
+            })?;
+            if snapshot.manifest.instrument != instrument
+                || snapshot.manifest.dataset.fingerprint
+                    != verdict
+                        .content_fingerprint
+                        .strip_prefix("barframe:")
+                        .unwrap_or(&verdict.content_fingerprint)
+                || snapshot.manifest.content_hash != qx_data::sha256_hex_bytes(&frame_bytes)
+            {
+                return Err(invalid(format!(
+                    "{label} ({instrument}) DatasetSnapshotV1 does not bind to the validated BarFrame"
+                )));
+            }
+            Some(snapshot.content_sha256().map_err(invalid)?)
+        } else {
+            None
+        };
         checked_markets.push(StrategyPreflightMarketV1 {
             label: label.clone(),
             instrument: instrument.to_owned(),
             rows: verdict.rows,
             content_fingerprint: verdict.content_fingerprint,
+            dataset_snapshot_sha256,
         });
     }
 
@@ -348,6 +428,7 @@ fn validate_strategy_execution_preflight_inner(
     }
 
     Ok(StrategyExecutionPreflightResultV1 {
+        host_capabilities: local_host_capabilities(&spec.execution_spec),
         schema_version: STRATEGY_EXECUTION_PREFLIGHT_SCHEMA_VERSION,
         strategy_id,
         strategy_version,
@@ -362,6 +443,7 @@ fn validate_strategy_execution_preflight_inner(
 /// parsing and validating the market-data frame when the actual run starts; this
 /// preflight validates the file-backed strategy's declared level, tier, config,
 /// and any instrument requirements that can be proven from the explicit spec.
+#[allow(clippy::too_many_arguments)]
 fn validate_depth_strategy_preflight(
     spec: &StrategyExecutionPreflightSpecV1,
     manifest: &Map<String, Value>,
@@ -417,6 +499,78 @@ fn validate_depth_strategy_preflight(
             data_level
         )));
     }
+    let depth_path = depth_spec
+        .get("depth_path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| invalid("depth strategy execution_spec.depth_path 必须是非空字符串"))?;
+    let checked_depth_market = if spec.require_dataset_snapshots {
+        let snapshot_path = depth_spec
+            .get("quality_manifest_path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| {
+                invalid("depth project execution requires quality_manifest_path bound to DatasetSnapshotV1")
+            })?;
+        let snapshot_payload = std::fs::read_to_string(snapshot_path).map_err(|error| {
+            invalid(format!(
+                "cannot read DatasetSnapshotV1 {snapshot_path}: {error}"
+            ))
+        })?;
+        let snapshot = qx_data::DatasetSnapshotV1::from_json(&snapshot_payload)
+            .map_err(|error| invalid(format!("DatasetSnapshotV1 is invalid: {error}")))?;
+        let frame_bytes = std::fs::read(depth_path).map_err(|error| {
+            invalid(format!(
+                "cannot read frozen DepthFrame {depth_path}: {error}"
+            ))
+        })?;
+        let frame = qx_xingban::DepthFrame::from_json(
+            std::str::from_utf8(&frame_bytes)
+                .map_err(|error| invalid(format!("DepthFrame is not UTF-8 JSON: {error}")))?,
+        )
+        .map_err(|error| invalid(format!("DepthFrame is invalid: {error}")))?;
+        let expected_dataset_tier = if expected_tier == "l1" {
+            qx_data::DatasetTier::L1
+        } else {
+            qx_data::DatasetTier::L2
+        };
+        let fingerprint = format!("{:016x}", frame.input_hash());
+        let frame_instrument = frame.instrument.to_string();
+        let requested_instrument_mismatch = depth_spec
+            .get("market_spec")
+            .and_then(|market| market.get("instrument"))
+            .is_some_and(|value| {
+                serde_json::from_value::<qx_core::InstrumentId>(value.clone())
+                    .map(|requested| requested.to_string() != frame_instrument)
+                    .unwrap_or(true)
+            });
+        if requested_instrument_mismatch
+            || snapshot.manifest.instrument != frame_instrument
+            || snapshot.manifest.tier != expected_dataset_tier
+            || snapshot.timestamp_semantics != qx_data::DatasetTimestampSemantics::EventTime
+            || snapshot.manifest.dataset.fingerprint != fingerprint
+            || snapshot.manifest.content_hash != qx_data::sha256_hex_bytes(&frame_bytes)
+            || snapshot.manifest.dataset.start_timestamp
+                != frame.snapshots.first().map(|item| item.ts).unwrap_or(0)
+            || snapshot.manifest.dataset.end_timestamp
+                != frame.snapshots.last().map(|item| item.ts).unwrap_or(0)
+        {
+            return Err(invalid(
+                "DatasetSnapshotV1 does not bind to the requested depth tier and exact DepthFrame",
+            ));
+        }
+        let snapshot_sha256 = snapshot.content_sha256().map_err(invalid)?;
+        let checked_market = StrategyPreflightMarketV1 {
+            label: "depth".into(),
+            instrument: frame_instrument,
+            rows: frame.snapshots.len() as u64,
+            content_fingerprint: format!("depth:{}:{:016x}", frame.source, frame.input_hash()),
+            dataset_snapshot_sha256: Some(snapshot_sha256.clone()),
+        };
+        Some(checked_market)
+    } else {
+        None
+    };
     let warmup_bars =
         warmup_bars.ok_or_else(|| invalid("complete manifest warmup_bars 必须是非负整数"))?;
     if warmup_bars != 0 {
@@ -501,6 +655,7 @@ fn validate_depth_strategy_preflight(
     }
 
     Ok(StrategyExecutionPreflightResultV1 {
+        host_capabilities: local_host_capabilities(&spec.execution_spec),
         schema_version: STRATEGY_EXECUTION_PREFLIGHT_SCHEMA_VERSION,
         strategy_id,
         strategy_version,
@@ -509,7 +664,7 @@ fn validate_depth_strategy_preflight(
         warmup_bars: Some(warmup_bars),
         // Depth file parsing and frame identity are revalidated by the Rust
         // depth engine during execution, rather than by Bar ValidateDataset.
-        checked_markets: Vec::new(),
+        checked_markets: checked_depth_market.into_iter().collect(),
     })
 }
 
@@ -606,7 +761,11 @@ fn validate_parameter_values(
     };
     for candidate in candidates {
         for (name, definition) in definitions {
-            let definition = definition.as_object().expect("validated definition");
+            let definition = definition.as_object().ok_or_else(|| {
+                invalid(format!(
+                    "strategy parameter {name:?} definition must be an object"
+                ))
+            })?;
             if definition.get("required").and_then(Value::as_bool) == Some(true)
                 && !definition.contains_key("default")
                 && !candidate.contains_key(name)

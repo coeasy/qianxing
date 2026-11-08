@@ -4,6 +4,8 @@
 //! raw 定点语义；边界层同时提供 Arrow C Data Interface 借用视图和 JSON/Python 转换，
 //! 不能重新解释领域数据。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_core::InstrumentId;
 use qx_core::{ExactDecimal, ExactOhlcv, Fnv1a};
 use qx_guanxing::{Bar, DataSourceId, DataView};
@@ -271,6 +273,7 @@ pub enum FrameError {
     NumericOverflow,
     ArrowDecimalOverflow,
     InvalidJson(String),
+    InvalidExactOhlcv(String),
     InvalidInstrument(String),
 }
 
@@ -788,10 +791,12 @@ impl BarFrame {
             .exact_ohlcv
             .as_ref()
             .map(|values| {
-                format!(
-                    ",\"exact_ohlcv\":{}",
-                    serde_json::to_string(values).expect("ExactOhlcv is serializable")
-                )
+                let rows = values
+                    .iter()
+                    .map(exact_ohlcv_json)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(",\"exact_ohlcv\":[{rows}]")
             })
             .unwrap_or_default();
         format!(
@@ -808,6 +813,24 @@ impl BarFrame {
             exact_json,
         )
     }
+}
+
+fn exact_ohlcv_json(values: &ExactOhlcv) -> String {
+    fn amount(value: ExactDecimal) -> String {
+        format!(
+            "{{\"coefficient\":\"{}\",\"scale\":{}}}",
+            value.coefficient(),
+            value.scale()
+        )
+    }
+    format!(
+        "{{\"open\":{},\"high\":{},\"low\":{},\"close\":{},\"volume\":{}}}",
+        amount(values.open),
+        amount(values.high),
+        amount(values.low),
+        amount(values.close),
+        amount(values.volume),
+    )
 }
 
 fn write_text(hash: &mut Fnv1a, value: &str) {
@@ -831,23 +854,25 @@ fn escape_json(value: &str) -> String {
     escaped
 }
 
-impl From<&BarFrame> for Vec<Bar> {
-    fn from(frame: &BarFrame) -> Self {
-        (0..frame.len())
+impl BarFrame {
+    /// Convert aligned columns to bars, preserving exact values and rejecting a stale or
+    /// externally-mutated exact sidecar instead of panicking or silently dropping precision.
+    pub fn bars(&self) -> Result<Vec<Bar>, FrameError> {
+        (0..self.len())
             .map(|index| {
                 let bar = Bar::new(
-                    frame.ts[index],
-                    frame.open_raw[index],
-                    frame.high_raw[index],
-                    frame.low_raw[index],
-                    frame.close_raw[index],
-                    frame.volume_raw[index],
+                    self.ts[index],
+                    self.open_raw[index],
+                    self.high_raw[index],
+                    self.low_raw[index],
+                    self.close_raw[index],
+                    self.volume_raw[index],
                 );
-                match frame.exact_ohlcv.as_ref().map(|values| values[index]) {
+                match self.exact_ohlcv.as_ref().map(|values| values[index]) {
                     Some(exact) => bar
                         .with_exact_ohlcv(exact)
-                        .expect("validated exact BarFrame projection remains consistent"),
-                    None => bar,
+                        .map_err(FrameError::InvalidExactOhlcv),
+                    None => Ok(bar),
                 }
             })
             .collect()
@@ -855,7 +880,7 @@ impl From<&BarFrame> for Vec<Bar> {
 }
 
 fn exact_raw(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy BarFrame values use supported scale 9")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 fn json_array<T: std::fmt::Display>(values: &[T]) -> String {

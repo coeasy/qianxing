@@ -10,6 +10,9 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import os
+import random
+import time as _time
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
@@ -24,14 +27,34 @@ from qianxing_bridge import (
 )
 from qianxing_bridge import native
 
+from . import cache as data_cache
+from .sources import (
+    AUTO_SOURCE,
+    DATA_CACHE_ENV,
+    DATA_ENVIRONMENT,
+    DATA_RETRIES_ENV,
+    DATA_SOURCE_ENV,
+    SAMPLE_SOURCE,
+    AshareProviderError,
+    DataSource,
+    SourceResolution,
+    describe_chain,
+    exit_code_for,
+    module_available,
+    provider_status,
+    provider_version,
+    registry,
+    resolve_data_config,
+    resolve_source,
+    source as source_entry,
+    source_names,
+    _validate_retries,
+)
+
 
 _ADJUSTMENTS = {"none", "qfq", "hfq"}
 _FREQUENCIES = {"daily", "weekly", "monthly", "1m", "5m", "15m", "30m", "60m"}
 _CODE_REPLACEMENTS = str.maketrans({"．": ".", "　": " "})
-
-
-class AshareProviderError(RuntimeError):
-    """数据源不可用、返回结构异常或无法安全标准化时抛出。"""
 
 
 def _shanghai() -> ZoneInfo:
@@ -1173,7 +1196,7 @@ class AkShareProvider:
         except AshareProviderError:
             raise
         except Exception as exc:
-            raise AshareProviderError(f"AkShare fetch failed: {exc}") from exc
+            raise _provider_failure("AkShare fetch failed", exc, self.name) from exc
         frame = normalize_bar_rows(
             rows,
             code=query.code,
@@ -1357,7 +1380,7 @@ class EasyTdxProvider:
         except AshareProviderError:
             raise
         except Exception as exc:
-            raise AshareProviderError(f"easy_tdx fetch failed: {exc}") from exc
+            raise _provider_failure("easy_tdx fetch failed", exc, self.name) from exc
         frame = normalize_bar_rows(
             rows,
             code=query.code,
@@ -1411,7 +1434,9 @@ class EasyTdxProvider:
         except AshareProviderError:
             raise
         except Exception as exc:
-            raise AshareProviderError(f"easy_tdx corporate action fetch failed: {exc}") from exc
+            raise _provider_failure(
+                "easy_tdx corporate action fetch failed", exc, self.name
+            ) from exc
         actions = normalize_corporate_action_rows(
             rows,
             code=query.code,
@@ -1435,24 +1460,438 @@ class EasyTdxProvider:
             return method(market, code, period, count=5000)
 
 
-def create_provider(name: str = "auto") -> AshareDataProvider:
-    """按显式选择或可用依赖选择数据源；不会在失败时静默切换数据源。"""
+_MOOTDX_FREQUENCIES = {
+    "1m": 8,
+    "5m": 0,
+    "15m": 1,
+    "30m": 2,
+    "60m": 3,
+    "daily": 9,
+    "weekly": 10,
+    "monthly": 11,
+}
+_MOOTDX_PAGE = 800
+_MOOTDX_MAX_PAGES = 200
 
-    normalized = name.lower().replace("-", "_")
-    providers: dict[str, type[Any]] = {
+
+def _transient_error(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return any(
+        marker in name for marker in ("timeout", "connection", "network", "ratelimit", "http")
+    ) or any(
+        marker in text
+        for marker in ("timed out", "timeout", "connection", "rate limit", "temporarily")
+    )
+
+
+def _provider_failure(prefix: str, exc: BaseException, provider: str) -> AshareProviderError:
+    transient = _transient_error(exc)
+    return AshareProviderError(
+        f"{prefix}: {exc}",
+        category="network" if transient else "provider",
+        retryable=transient,
+        suggestion="稍后重试或改用另一个数据源（qianxing data sources）" if transient else "",
+        source=provider,
+    )
+
+
+class MootdxProvider:
+    """mootdx（通达信协议）薄适配层：只提供不复权 K 线，公司行为显式标为不支持。
+
+    注册表把它标成 ``adjustments=("none",)`` 与 ``corporate_actions=False``；
+    请求复权或公司行为时抛 ``unsupported``，不静默降级成不复权。
+    """
+
+    name = "mootdx"
+
+    def __init__(self, client: Any | None = None, module: Any | None = None) -> None:
+        self._client = client
+        self._module = module
+        self._module_injected = module is not None
+
+    def _load(self) -> Any:
+        if self._module is not None:
+            return self._module
+        try:
+            self._module = importlib.import_module("mootdx")
+        except ImportError as exc:
+            raise AshareProviderError(
+                "mootdx 未安装，请执行 pip install 'qianxing[a-share-mootdx]'",
+                category="missing-extra",
+                suggestion=source_entry(self.name).install_hint(),
+                source=self.name,
+            ) from exc
+        return self._module
+
+    def _quotes(self) -> Any:
+        if self._client is not None:
+            return self._client
+        module = self._load()
+        quotes = getattr(module, "quotes", None)
+        factory = getattr(quotes, "Quotes", None) or getattr(module, "Quotes", None)
+        if factory is None and not self._module_injected:
+            # The real package does not normally re-export Quotes from its root.
+            try:
+                quotes = importlib.import_module("mootdx.quotes")
+            except ImportError as exc:
+                raise AshareProviderError(
+                    f"mootdx version incompatible: cannot import mootdx.quotes: {exc}",
+                    category="provider",
+                    source=self.name,
+                    suggestion=source_entry(self.name).install_hint(),
+                ) from exc
+            factory = getattr(quotes, "Quotes", None)
+        create = getattr(factory, "factory", None)
+        if not callable(create):
+            raise AshareProviderError(
+                "mootdx version incompatible: missing quotes.Quotes.factory",
+                category="provider",
+                source=self.name,
+                suggestion=source_entry(self.name).install_hint(),
+            )
+        self._client = create(market="std")
+        return self._client
+
+    def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:
+        if query.adjustment != "none":
+            raise AshareProviderError(
+                f"mootdx 不支持 {query.adjustment} 复权（能力位 adjustments=none）",
+                category="unsupported",
+                suggestion="改用 --source akshare 或 --source baostock 获取复权行情",
+                source=self.name,
+            )
+        if query.frequency not in _MOOTDX_FREQUENCIES:
+            raise AshareProviderError(
+                f"mootdx 不支持频率 {query.frequency}",
+                category="unsupported",
+                suggestion="可用频率：" + ", ".join(_MOOTDX_FREQUENCIES),
+                source=self.name,
+            )
+        query.validate()
+        try:
+            client = self._quotes()
+            rows = self._call(client, query)
+            frame = normalize_bar_rows(
+                rows,
+                code=query.code,
+                source=f"mootdx:bars:{query.frequency}:{query.adjustment}",
+                start=query.start,
+                end=query.end,
+                frequency=query.frequency,
+                adjustment=query.adjustment,
+            )
+            version = getattr(self._module, "__version__", None) or "unknown"
+            return frame, _manifest(query, frame, self.name, str(version))
+        except AshareProviderError as exc:
+            if not exc.source:
+                exc.source = self.name
+            raise
+        except TypeError as exc:
+            raise AshareProviderError(
+                f"mootdx version incompatible: {exc}",
+                category="provider",
+                source=self.name,
+                suggestion=source_entry(self.name).install_hint(),
+            ) from exc
+        except Exception as exc:
+            raise _provider_failure("mootdx fetch failed", exc, self.name) from exc
+
+    def fetch_corporate_actions(
+        self, query: AshareActionQuery
+    ) -> tuple[tuple[AshareCorporateAction, ...], AshareActionManifest]:
+        query.validate()
+        raise AshareProviderError(
+            "mootdx 不提供公司行为接口（能力位 corporate_actions=false）",
+            category="unsupported",
+            suggestion="改用 --source baostock 或 --source akshare 获取公司行为",
+            source=self.name,
+        )
+
+    @staticmethod
+    def _call(client: Any, query: AshareQuery) -> list[Mapping[str, Any]]:
+        method = getattr(client, "bars", None)
+        if not callable(method):
+            raise AshareProviderError(
+                "mootdx version incompatible: client missing bars", category="provider", source="mootdx"
+            )
+        frequency = _MOOTDX_FREQUENCIES[query.frequency]
+        start_ts = _timestamp(query.start_compact)
+        end_ts = _timestamp(query.end_compact)
+        # Daily/coarser candles may be stamped at the close, not midnight.
+        if query.frequency in {"daily", "weekly", "monthly"}:
+            start_ts += 86_399_999
+        collected: list[Mapping[str, Any]] = []
+        oldest: int | None = None
+        newest: int | None = None
+        for page_number in range(_MOOTDX_MAX_PAGES):
+            # Documented bars(symbol, frequency, start, offset) keyword interface.
+            # Never retry TypeError positionally: it can come from inside the call.
+            page = method(
+                symbol=_bare_code(query.code),
+                frequency=frequency,
+                start=page_number * _MOOTDX_PAGE,
+                offset=_MOOTDX_PAGE,
+            )
+            records = _records(page)
+            if not records:
+                if not collected:
+                    raise AshareProviderError(
+                        "mootdx returned no bars", category="provider", source="mootdx"
+                    )
+                break
+            timestamps = []
+            for row in records:
+                for field in ("open", "high", "low", "close", "volume"):
+                    _pick(row, field)
+                timestamps.append(_timestamp(_pick(row, "ts")))
+            earliest, latest = min(timestamps), max(timestamps)
+            newest = latest if newest is None else max(newest, latest)
+            if oldest is not None and earliest >= oldest:
+                break  # A server ignoring start must not loop or imply full coverage.
+            oldest = earliest
+            collected.extend(records)
+            if earliest <= start_ts:
+                if newest >= end_ts:
+                    return collected
+                break
+            if len(records) < _MOOTDX_PAGE:
+                break
+        # Without listing dates or a trading calendar a short page cannot prove
+        # completeness (including suspension/holiday boundaries). Fail closed.
+        raise AshareProviderError(
+            f"mootdx history does not cover {query.start_compact}..{query.end_compact} "
+            f"within {_MOOTDX_MAX_PAGES} pages",
+            category="partial",
+            suggestion="缩小查询区间或改用 --source akshare；无法确认停牌/非交易日边界",
+            source="mootdx",
+        )
+
+
+def create_provider(
+    name: str | SourceResolution | None = None,
+    *,
+    module: Any | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> AshareDataProvider:
+    """按唯一优先级链选择数据源；不会在失败时静默切换数据源。"""
+
+    resolution = _resolution_for(name, environ)
+    entry = source_entry(resolution.name)
+    factories: dict[str, type[Any]] = {
         "akshare": AkShareProvider,
         "baostock": BaoStockProvider,
         "easy_tdx": EasyTdxProvider,
+        "mootdx": MootdxProvider,
     }
-    if normalized != "auto":
-        if normalized not in providers:
-            raise ValueError(f"unsupported A-share provider: {name}")
-        return providers[normalized]()
-    for candidate in ("akshare", "baostock", "easy_tdx"):
-        module_name = "easy_tdx" if candidate == "easy_tdx" else candidate
-        if importlib.util.find_spec(module_name) is not None:
-            return providers[candidate]()
-    raise AshareProviderError("没有可用 A 股数据源，请安装 a-share-akshare/baostock/easy-tdx 之一")
+    factory = factories.get(entry.name)
+    if factory is None:
+        raise AshareProviderError(
+            f"{entry.name} 不是可直接取数的数据源：{entry.description}",
+            category="unsupported",
+            suggestion="qianxing data sources",
+            source=entry.name,
+        )
+    return factory(module=module)
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    """一次取数的结果：帧 + 血缘清单 + 缓存状态。"""
+
+    frame: BarFrame
+    manifest: AshareManifest
+    source: str
+    cached: bool
+    cache_path: Path | None
+    bars_json: str
+    manifest_json: str
+
+
+def _retry_limit(environ: Mapping[str, str] | None) -> int:
+    environment = os.environ if environ is None else environ
+    raw = environment.get(DATA_RETRIES_ENV)
+    return 2 if raw in (None, "") else _validate_retries(raw, allow_text=True)
+
+
+def _fetch_retry_limit(
+    *, offline: bool, refresh: bool, retries: int | None, environ: Mapping[str, str] | None,
+    use_cache: bool = True,
+) -> int:
+    # Reject conflicting options before source probing, cache access or provider IO.
+    if offline and (refresh or not use_cache):
+        raise AshareProviderError(
+            "offline cannot be used with refresh or no-cache", category="invalid-request"
+        )
+    return _retry_limit(environ) if retries is None else _validate_retries(retries)
+
+
+def _retry_provider(call: Any, *, retries: int, sleep: Any | None) -> Any:
+    attempt = 0
+    while True:
+        try:
+            return call()
+        except AshareProviderError as exc:
+            if not exc.retryable or attempt >= retries:
+                raise
+            delay = min(2.0, 0.05 * 2**attempt) * (0.5 + random.random() / 2)
+            (sleep or _time.sleep)(delay)
+            attempt += 1
+
+
+def _resolution_for(
+    source_name: str | SourceResolution | None,
+    environ: Mapping[str, str] | None,
+) -> SourceResolution:
+    if isinstance(source_name, SourceResolution):
+        return source_name
+    return resolve_source(explicit=source_name, environ=environ, default=AUTO_SOURCE)
+
+
+def fetch_bars(
+    query: AshareQuery,
+    *,
+    source_name: str | SourceResolution | None = None,
+    offline: bool = False,
+    refresh: bool = False,
+    use_cache: bool = True,
+    cache_directory: Path | str | None = None,
+    retries: int | None = None,
+    environ: Mapping[str, str] | None = None,
+    sleep: Any | None = None,
+    _cache_writer: Any | None = None,
+) -> FetchResult:
+    """取日/分钟线：先查内容寻址缓存，未命中才触网；失败按固定 category 报错。"""
+
+    limit = _fetch_retry_limit(
+        offline=offline, refresh=refresh, use_cache=use_cache, retries=retries, environ=environ
+    )
+    query.validate()
+    resolution = _resolution_for(source_name, environ)
+    entry = source_entry(resolution.name)
+    descriptor = data_cache.request_descriptor(
+        entry.name,
+        instrument=normalize_instrument(query.code),
+        start=query.start_compact,
+        end=query.end_compact,
+        frequency=query.frequency,
+        adjustment=query.adjustment,
+    )
+    key = data_cache.request_key(descriptor)
+    root = Path(cache_directory) if cache_directory else data_cache.cache_root(environ)
+    if use_cache and not refresh:
+        hit = data_cache.read_cached(root, entry.name, key)
+        if hit is not None:
+            bars_json, manifest_json = hit
+            try:
+                frame = BarFrame.from_json(bars_json)
+                manifest = AshareManifest.from_json(manifest_json)
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError):
+                pass  # An incompatible record is a miss, including in offline mode.
+            else:
+                return FetchResult(
+                    frame,
+                    manifest,
+                    entry.name,
+                    True,
+                    data_cache.entry_directory(root, entry.name, key),
+                    bars_json,
+                    manifest_json,
+                )
+        if offline:
+            raise AshareProviderError(
+                f"离线缓存未命中：{data_cache.describe_request(descriptor)}",
+                category="cache-miss",
+                suggestion=f"先在线取一次，或去掉 --offline；缓存目录 {root}",
+                source=entry.name,
+            )
+    provider = create_provider(resolution, environ=environ)
+    frame, manifest = _retry_provider(
+        lambda: provider.fetch(query), retries=limit, sleep=sleep
+    )
+    bars_json = frame.to_json()
+    manifest_json = manifest.to_json()
+    cache_path = None
+    if use_cache:
+        # CLI batches stage coherent records until every symbol has succeeded.
+        writer = data_cache.write_cached if _cache_writer is None else _cache_writer
+        cache_path = writer(root, entry.name, key, descriptor, bars_json, manifest_json)
+    return FetchResult(frame, manifest, entry.name, False, cache_path, bars_json, manifest_json)
+
+
+def fetch_actions(
+    query: AshareActionQuery,
+    *,
+    source_name: str | SourceResolution | None = None,
+    offline: bool = False,
+    refresh: bool = False,
+    use_cache: bool = True,
+    cache_directory: Path | str | None = None,
+    retries: int | None = None,
+    environ: Mapping[str, str] | None = None,
+    sleep: Any | None = None,
+) -> tuple[tuple[AshareCorporateAction, ...], AshareActionManifest, bool, Path | None]:
+    """取公司行为：与 K 线共用缓存与失败分类。"""
+
+    limit = _fetch_retry_limit(
+        offline=offline, refresh=refresh, use_cache=use_cache, retries=retries, environ=environ
+    )
+    query.validate()
+    resolution = _resolution_for(source_name, environ)
+    entry = source_entry(resolution.name)
+    descriptor = data_cache.request_descriptor(
+        entry.name,
+        instrument=normalize_instrument(query.code),
+        start=query.start_date,
+        end=query.end_date,
+        frequency="daily",
+        adjustment="none",
+        kind="actions",
+        as_of=query.as_of,
+    )
+    key = data_cache.request_key(descriptor)
+    root = Path(cache_directory) if cache_directory else data_cache.cache_root(environ)
+    if use_cache and not refresh:
+        hit = data_cache.read_cached(root, entry.name, key, kind="actions")
+        if hit is not None:
+            actions_json, manifest_json = hit
+            try:
+                document = AshareCorporateActionDocument.from_json(actions_json)
+                actions = document.visible_actions()
+                manifest = AshareActionManifest.from_json(manifest_json)
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError):
+                pass
+            else:
+                return (
+                    actions,
+                    manifest,
+                    True,
+                    data_cache.entry_directory(root, entry.name, key),
+                )
+        if offline:
+            raise AshareProviderError(
+                f"离线缓存未命中：{data_cache.describe_request(descriptor)}",
+                category="cache-miss",
+                suggestion=f"先在线取一次，或去掉 --offline；缓存目录 {root}",
+                source=entry.name,
+            )
+    provider = create_provider(resolution, environ=environ)
+    actions, manifest = _retry_provider(
+        lambda: provider.fetch_corporate_actions(query), retries=limit, sleep=sleep
+    )
+    actions_json = AshareCorporateActionDocument(
+        actions=tuple(actions),
+        source=manifest.provider,
+        instrument=manifest.instrument,
+        as_of=query.as_of,
+    ).to_json()
+    manifest_json = manifest.to_json()
+    cache_path = None
+    if use_cache:
+        cache_path = data_cache.write_cached(
+            root, entry.name, key, descriptor, actions_json, manifest_json, kind="actions"
+        )
+    return actions, manifest, False, cache_path
 
 
 def screen_bar_frames(
@@ -1880,6 +2319,28 @@ __all__ = [
     "AkShareProvider",
     "BaoStockProvider",
     "EasyTdxProvider",
+    "MootdxProvider",
+    "DataSource",
+    "SourceResolution",
+    "FetchResult",
+    "AUTO_SOURCE",
+    "SAMPLE_SOURCE",
+    "DATA_SOURCE_ENV",
+    "DATA_CACHE_ENV",
+    "DATA_RETRIES_ENV",
+    "DATA_ENVIRONMENT",
+    "describe_chain",
+    "exit_code_for",
+    "fetch_actions",
+    "fetch_bars",
+    "module_available",
+    "provider_status",
+    "provider_version",
+    "registry",
+    "resolve_data_config",
+    "resolve_source",
+    "source_entry",
+    "source_names",
     "BarFrame",
     "SCALE",
     "ASHARE_SCHEMA_VERSION",

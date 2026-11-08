@@ -55,7 +55,7 @@ fn bar(instrument: &InstrumentId, ts: u64, offset: i128) -> MarketEvent {
 
 fn context(instrument: &InstrumentId) -> StrategyContext {
     StrategyContext {
-        strategy_id: format!("builtin-{}", instrument.symbol),
+        strategy_id: format!("builtin-{}", instrument.symbol()),
         strategy_version: "builtin-v1".into(),
         account_id: "main".into(),
         venue_id: instrument.venue.to_string(),

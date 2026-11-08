@@ -81,7 +81,7 @@ class BridgeTest(unittest.TestCase):
         self.assertIsNone(
             load_account_snapshot(json.dumps({**payload, "equity_raw": None}))["equity_raw"]
         )
-        # v1/v2/v3 都是声明过的契约；范围外版本必须与 Rust 的 from_json 一样拒绝。
+        # v1-v4 都是声明过的契约；范围外版本必须与 Rust 的 from_json 一样拒绝。
         current = {**payload, "schema_version": 2}
         self.assertEqual(load_account_snapshot(json.dumps(current))["schema_version"], 2)
         current_with_settlement = {
@@ -114,11 +114,28 @@ class BridgeTest(unittest.TestCase):
             load_account_snapshot(json.dumps(version_three))["cash_exact"]["USDT"]["coefficient"],
             "3",
         )
+        version_four = {
+            **version_three,
+            "schema_version": 4,
+            "equity_raw": None,
+            "equity_diagnostic": {
+                "reason": "missing_mark_prices",
+                "missing_mark_instruments": ["BTC/USDT:USDT.BINANCE"],
+            },
+        }
+        self.assertEqual(
+            load_account_snapshot(json.dumps(version_four))["equity_diagnostic"][
+                "missing_mark_instruments"
+            ],
+            ["BTC/USDT:USDT.BINANCE"],
+        )
+        with self.assertRaisesRegex(ValueError, "computed equity"):
+            load_account_snapshot(json.dumps({**version_four, "equity_raw": 1}))
         with self.assertRaisesRegex(ValueError, "cannot declare exact"):
             load_account_snapshot(json.dumps({**current, "cash_exact": version_three["cash_exact"]}))
         with self.assertRaisesRegex(ValueError, "disagrees with cash_raw"):
             load_account_snapshot(json.dumps({**version_three, "cash_raw": {"USDT": 1}}))
-        for version in (0, 4):
+        for version in (0, 5):
             with self.assertRaisesRegex(ValueError, "unsupported account snapshot schema"):
                 load_account_snapshot(json.dumps({**payload, "schema_version": version}))
         with self.assertRaisesRegex(ValueError, "version mismatch"):

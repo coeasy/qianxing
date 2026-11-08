@@ -3,6 +3,87 @@
 性能基线与复现入口。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
 `benchmarks/results/baseline.json`。
 
+## PreparedEvaluation 持久化批次与崩溃恢复
+
+该专用工作负载通过 `bench-prepared-evaluation` Cargo feature 编译隐藏 benchmark 命令；默认 `qx-cli`
+参数面不包含它。固定测量 1/16/64/256/1,024/4,096/8,192/16,384 个冻结命令的 PreparedEvaluation
+单日志写入和读取，校验读回 DTO 与原始决策完全相等，并记录 JSON 文件尺寸、日志内 p50/p95、进程峰值 RSS。
+驱动另在临时目录为临时文件创建、payload 写入、临时文件 fsync、陈旧备份删除、旧主文件转备份、
+新主文件发布、备份清理边界注入硬进程退出，再启动全新 CLI 进程恢复，核对恢复到旧批次还是新批次，记录
+恢复路径、耗时和 RSS。所有批次都受当前 8 MiB 写入上限约束；超限会使 workload 失败。驱动还会填满配置的 durable JobQueue 容量，验证第 N+1 条得到容量冲突，并确认 Strategy worker owner 查询最多返回 256 条。
+
+```powershell
+cargo build --release -p qx-cli --features bench-prepared-evaluation -j 1
+python benchmarks/run_prepared_evaluation_capacity.py `
+  --binary target/release/qx-cli.exe `
+  --iterations 25 `
+  --queue-capacity 4096 `
+  --out maturity/evidence/prepared-evaluation-capacity-2026-10-29.json
+```
+
+单独对队列后端做精确容量与 owner batch 验收时，可选择 `file`、`sqlite` 或 `postgres`。PostgreSQL 通过环境变量 `QX_BENCH_POSTGRES_DSN` 提供指向隔离数据库的连接字符串；驱动不把 DSN 写进证据。此模式也会确认全部基准任务能租用并确认：
+
+```powershell
+python benchmarks/run_prepared_evaluation_capacity.py `
+  --binary target/debug/qx-cli.exe `
+  --queue-backend sqlite `
+  --queue-only `
+  --queue-capacity 4096 `
+  --out maturity/evidence/job-queue-capacity-sqlite-2026-10-29.json
+```
+
+`ControlCommandQueue` 的容量、序列化字节上限和确认路径用同一驱动的 `--control-queue-only` 模式测量：
+
+```powershell
+python benchmarks/run_prepared_evaluation_capacity.py `
+  --binary target/debug/qx-cli.exe `
+  --queue-backend sqlite `
+  --control-queue-only `
+  --queue-capacity 4096 `
+  --out maturity/evidence/control-command-queue-capacity-sqlite-2026-10-29.json
+```
+
+当前 Windows 证据覆盖文件、SQLite 与 PostgreSQL 队列的 4,096 条精确填充及溢出拒绝；JobQueue 证据同时确认 worker batch 上限和全部 benchmark 任务确认。ControlCommandQueue 的三种后端均验证 16 KiB 单命令上限、超长拒绝和所有命令确认。PostgreSQL 18.6 证据见 `maturity/evidence/job-queue-capacity-postgres-2026-11-04.json` 与 `maturity/evidence/control-command-queue-capacity-postgres-2026-11-04.json`。PreparedEvaluation 原子替换测量仍覆盖本地文件 journal；实际 worker 恢复有独立的 Paper 演练如下。
+
+### Paper Strategy worker 崩溃恢复
+
+使用 feature-enabled CLI，在真实 Paper scheduler → strategy → execution 流程的六个边界硬退出，再等待策略 job lease 到期并完整重启链路。所有数据、调度任务和队列都放在临时目录；Paper 交易不连接网络。验收校验每次恢复只留下一个 SubmitOrder，控制审计恰有一次 `Accepted` 和一次 `Executed`，并新增一笔订单与四条 Ledger 记录。短 lease 只通过 benchmark feature 下的 `QX_BENCH_STRATEGY_LEASE_SECONDS` 启用，不改变默认构建的 worker 行为。
+
+```powershell
+cargo build -p qx-cli --no-default-features --features postgres,bench-prepared-evaluation -j 1
+python tools/record_strategy_acceptance.py `
+  --acceptance-id R21-AC01 `
+  --input benchmarks/run_strategy_worker_crash_recovery.py `
+  --notes "Windows Paper Strategy worker crash/restart; local file backend" `
+  -- python benchmarks/run_strategy_worker_crash_recovery.py `
+  --runtime deploy/qianxing.runtime.paper-strategy.example.json `
+  --binary target/debug/qx-cli.exe `
+  --output maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json
+```
+
+本机 Windows 文件后端 6/6 边界恢复通过，结果见 `maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json`。各测量版本、机器、源码指纹和结果哈希留在 JSON；合成与 Paper 证据不构成产品 profile 容量承诺。
+
+同一驱动支持 SQLite runtime（Paper 事实流、控制面、JobQueue 与 ControlCommandQueue 共用隔离数据库），使用 `--backend sqlite` 并选择 SQLite-enabled CLI。Windows SQLite 6/6 边界恢复证据见 `maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json`。Linux worker 恢复尚未验收；R12 live venue 的 Failed/Unknown 与 reconciliation 时间边界也仍待覆盖。
+
+PostgreSQL worker 恢复的 Windows 6/6 证据见 `maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json`。该模式使用 `--backend postgres`、PostgreSQL-enabled CLI，以及 `QX_BENCH_POSTGRES_DSN` 环境变量中的管理员 URI DSN。驱动会为六个崩溃点各自创建独立临时数据库，恢复并核验后清理数据库；需提供 PostgreSQL 客户端 `psql`（或通过 `--psql` 指定其路径）。例如：
+
+```powershell
+$env:QX_BENCH_POSTGRES_DSN = "postgresql://postgres:<password>@127.0.0.1:5432/postgres?sslmode=disable"
+python tools/record_strategy_acceptance.py `
+  --acceptance-id R21-AC01 `
+  --input benchmarks/run_strategy_worker_crash_recovery.py `
+  --input benchmarks/README.md `
+  --notes "Windows Paper Strategy worker crash/restart; isolated PostgreSQL databases" `
+  -- python benchmarks/run_strategy_worker_crash_recovery.py `
+  --backend postgres `
+  --psql "C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe" `
+  --runtime deploy/qianxing.runtime.paper-strategy.example.json `
+  --binary target/debug/qx-cli.exe `
+  --output maturity/evidence/strategy-worker-crash-recovery-postgres.json
+```
+
+此证据验证六个 worker 持久化边界在 PostgreSQL 上的崩溃恢复与重复启动幂等性，不覆盖 Linux 或 live venue 的 Failed/Unknown 与 reconciliation 时间边界。
+
 当前可复核负载的统一资源表见[容量与资源画像](../docs/容量与资源画像-2026-10-23.md)；表中数字按证据路径区分合成研究负载、异步 API 压测与未测产品 profile，不构成通用最低配置承诺。
 
 ## Targets（延续 V5 口径）
@@ -122,13 +203,21 @@ SQLite EventLog manifest 的增量写入使用带 `v2:` 标记的 rolling event 
 EventLog 前缀摘要同时测量追加后复用缓存的摘要+序号核对，与旧实现分别扫描摘要和最大序号的两趟路径，覆盖 1k/8k/64k
 事件。追加会自动缓存追加前的不可变前缀摘要，存储写入可直接核对；缓存有界且不改变公开 digest 格式，超过八个未提交追加导致边界淘汰时仍会扫描前缀。
 
-分段 EventLog 文件写入另有独立基准，不依赖 Criterion：同一 `qx-storage` 实例复用已验证 manifest 的热追加，与新建 store 实例、在计时区内读取并校验历史后追加，分别测量 1k/8k/64k 历史各 7 次。运行命令和落盘证据：
+EventLog 文件后端对照不依赖 Criterion：同一份 1k/8k/64k 历史各测 7 次单事件追加，对比每次完整读取/校验/序列化/原子替换的单文件后端、同一 `qx-storage` 实例复用已验证 manifest 的分段热追加，以及新建分段 store 并在计时区内读取校验历史后追加。运行命令和落盘证据：
 
 ```bash
 python benchmarks/run_segmented_event_log_bench.py
 ```
 
-它报告同实例热写、新实例完整校验后追加及 manifest 字节数；操作系统文件缓存不受控，因此“新实例”不等于冷盘。它是合成 `Settle` 历史的存储微基准，不替代端到端回测或九档产品 profile。
+它报告三条路径的中位耗时及分段 manifest 字节数；操作系统文件缓存不受控，因此“新实例”不等于冷盘。基准用于观察文件格式的稳态扩展斜率，不替代端到端回测或九档产品 profile。
+
+`run_event_log_pipeline_tail_bench.py` 进一步比较真实 `LiveEventPipeline` 写入与跨实例刷新：预置 1k/8k/64k 条合成 `Settle` 事实，每个样本通过写者 pipeline ingest 一条 `MarketQuote`，完成文件持久化和 Outbox 追加后，再让第二个 pipeline `refresh`。计时不包括历史构造和两个 pipeline 的启动；每档 7 次，Release 中位数与来源指纹保存在 `maturity/evidence/rust-event-log-pipeline-tail-comparison-2026-11-07.json`。
+
+```bash
+python benchmarks/run_event_log_pipeline_tail_bench.py
+```
+
+该负载测量 EventLog pipeline 的真实 ingest/persist/Outbox/refresh 链路，但不含交易所 I/O、订单/风控处理或完整 Paper worker tick；不外推为九档产品 profile 容量结论。
 
 稳定 Rust 基准另含 `steady_state_pipeline_ingest`，证据 JSON 的 `steady_state_tick_curve` 字段
 输出每档的单 tick p50/p95、相邻边际成本和候选拐点：SQLite EventLog 预置 N 条确定性历史，随后
@@ -466,3 +555,5 @@ python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli
 驱动器在相同候选与 seed 下交错运行完整训练和早停版本；合成输入先涨后跌，早停版本必须至少剪枝一项才记为有效样本。报告中 `pruned_bars_saved`、`pruning_trace_sha256`、候选结果/提议轨迹哈希和进程树资源只描述此剪枝负载，不说明 OOS 选参质量或完整 profile 容量。
 
 2026-10-23 当前 Release（SHA-256 `450f317e0102e7e745bec9a11c70a359fb7feb6447d3314db3575f4718e9c000`）的 64k × 32 候选样本中，剪枝 P50 为 3,593.355 ms，完整基线为 29,598.086 ms，配对比值 8.2369×；进程树 RSS 峰值约 69.0 MiB，32 个候选共节省 1,332,440 个训练 Bar。其余三格及 Release/source fingerprint 以原始证据为准。所有候选在 1 bp 合成回撤压力下都被剪枝，因此该数据不能用来判断搜索收益或样本外质量。
+
+2026-10-29 Windows 11 AMD64 Release 样本（25 次日志内读写重复）：1/16/64/256/1,024/4,096/8,192/16,384 命令分别生成 1,008/7,322/27,626/109,471/437,508/1,761,540/3,526,916/7,083,209 字节 journal；最大负载仍低于 8 MiB。写入 P50/P95 从 2.299/2.506 ms 增至 52.598/62.181 ms，读取 P50/P95 从 0.141/0.214 ms 增至 35.228/39.544 ms；16,384 批次进程树峰值 RSS 约 39.5 MiB。七个崩溃点各重复五次，均恢复到预期的旧/新 run_id；重启全程（含进程启动）P50 为 493–508 ms、P95 为 497–543 ms，journal 读取 P50 为 0.402–0.646 ms、P95 为 0.474–1.537 ms。文件 JobQueue 的 4,096 条配置容量实际写满，4,097 条被拒绝，队列仍有 4,096 条；owner worker batch 返回 256 条，入队 P50/P95 为 4.668/6.775 ms，填充进程树峰值 RSS 11.5 MiB、端到端约 21.6 秒。证据运行 `7c6ddfa8-9f79-4da0-86dc-418ca33a50f1`，构建 SHA-256 `0ea14b822af2089f9091d66f668e173ef9dedc7580efd668500dd415de8fafd3`，源码指纹 `bf9ee2f2393ec916751b34e4b90fb72bd42250da090c0972b640dc3a49700012`；所有样本见 `maturity/evidence/prepared-evaluation-capacity-2026-10-29.json`。该日期的 PreparedEvaluation 恢复与队列基准只覆盖 Windows 本地文件后端；后续 Windows PostgreSQL 18.6 的队列容量及 Paper worker 恢复证据见本节上述文件。SQLite 与 Linux 的 PreparedEvaluation 文件 journal 测量和 Linux worker 恢复仍未覆盖。

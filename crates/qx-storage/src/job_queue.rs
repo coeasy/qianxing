@@ -10,7 +10,18 @@ pub(crate) fn compare_queued_job_order(left: &QueuedJob, right: &QueuedJob) -> O
 /// File/SQLite/PostgreSQL job queues share request validation and keep storage semantics local.
 pub trait JobQueueBackend {
     fn validate_enqueue_job_request(&self, envelope: &QueuedJob) -> Result<(), StorageError> {
-        envelope.validate()
+        envelope.validate()?;
+        let encoded = serde_json::to_vec(envelope)
+            .map_err(|error| StorageError::Io(format!("任务序列化失败: {error}")))?;
+        if encoded.len() > crate::MAX_QUEUED_JOB_BYTES {
+            return Err(StorageError::Conflict(format!(
+                "队列任务 {} 序列化大小 {} 超过 {} 字节上限",
+                envelope.run.run_id,
+                encoded.len(),
+                crate::MAX_QUEUED_JOB_BYTES
+            )));
+        }
+        Ok(())
     }
 
     fn validate_claim_job_request(
@@ -52,6 +63,12 @@ pub trait JobQueueBackend {
         enqueued_ts: u64,
     ) -> Result<PathBuf, StorageError>;
     fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError>;
+    fn available_jobs_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError>;
     fn claim_job(
         &self,
         run_id: u64,

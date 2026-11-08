@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+requires = ["maturin==1.15.0"]
 build-backend = "maturin"
 
 [project]
@@ -60,6 +60,12 @@ a-share-easy-tdx = [
     "easy-tdx>=0.1.0",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
+# mootdx 走通达信协议、无官方 SLA，且只提供不复权行情；刻意不并入 `a-share` 元 extra，
+# 避免首跑默认源落在能力最弱的来源上（方案 D13 / §7.6）。
+a-share-mootdx = [
+    "mootdx>=0.11.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
 a-share = [
     "akshare>=1.16.0",
     "baostock>=0.8.9",
@@ -97,6 +103,8 @@ exclude = [
     "**/.uv-cache/**",
     "build/**",
     "runs/**",
+    "target/**",
+    "**/*.pdb",
 ]
 
 [tool.pytest.ini_options]

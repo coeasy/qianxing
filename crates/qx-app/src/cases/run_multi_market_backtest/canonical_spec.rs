@@ -12,6 +12,7 @@ use qx_spec::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_multi_market_canonical_run_spec(
     spec: &MultiMarketBacktestSpec,
     strategy_identities: &[StrategyArtifactIdentity],

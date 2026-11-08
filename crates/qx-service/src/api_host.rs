@@ -70,7 +70,63 @@ pub fn build_configured_api_service(
     let metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let metrics_now_ms = now_ms;
     let gateway_config = config.clone();
+    let deployment_config = config.clone();
+    let deployment_revision_config = config.clone();
+    let deployment_runtime_config_path = runtime_config_path.to_path_buf();
+    let deployment_store = crate::strategy_deployment_store::StrategyDeploymentStore::configured(
+        &config.storage.data_dir,
+        config,
+    )?;
+    let deployment_read_store = deployment_store.clone();
     let mut service = api_service_from_runtime(state, config)
+        .with_strategy_deployments_provider(move || {
+            crate::strategy_deployments::read_strategy_deployments_with_store(
+                &deployment_config,
+                now_ms(),
+                &deployment_read_store,
+            )
+        })
+        .with_strategy_deployment_management(
+            {
+                let store = deployment_store.clone();
+                move |mut revision| {
+                    let base = match store.latest_revision(&revision.worker_id)? {
+                        Some(previous) => crate::strategy_deployments::deployment_runtime_config(
+                            &deployment_revision_config,
+                            &previous,
+                        )?,
+                        None => deployment_revision_config.clone(),
+                    };
+                    let candidate =
+                        crate::strategy_deployments::deployment_runtime_config(&base, &revision)
+                            .map_err(|error| {
+                                format!("invalid deployment revision payload: {error}")
+                            })?;
+                    let bundle_path = crate::strategy_deployments::snapshot_strategy_bundle(
+                        Path::new(&deployment_revision_config.storage.data_dir),
+                        &deployment_runtime_config_path,
+                        &mut revision,
+                        &candidate,
+                    )
+                    .map_err(|error| format!("invalid deployment revision bundle: {error}"))?;
+                    revision.bundle_file_name = Some(
+                        bundle_path
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .ok_or_else(|| {
+                                "deployment bundle path has no safe UTF-8 file name".to_string()
+                            })?
+                            .to_string(),
+                    );
+                    store.create_revision(revision)
+                }
+            },
+            {
+                let store = deployment_store.clone();
+                move |operation| store.accept_operation(operation)
+            },
+            move |operation_id| deployment_store.operation(operation_id),
+        )
         .with_worker_metrics_provider(move || {
             crate::worker_metrics::read_worker_metrics(
                 &metrics_dir,
@@ -136,6 +192,39 @@ pub fn build_configured_api_service(
         python_interpreter,
     )? {
         service = service.with_provider_registry(registry);
+    }
+    if !config.api.strategy_deployment_nodes.is_empty() {
+        let registered_nodes = config
+            .api
+            .strategy_deployment_nodes
+            .iter()
+            .map(|node| qx_api::RegisteredStrategyDeploymentNodeV1 {
+                node_id: node.node_id.clone(),
+                authenticated_operator_id: node.operator_id.clone(),
+                freshness_window_ms: node.freshness_window_ms,
+            })
+            .collect::<Vec<_>>();
+        let node_store =
+            crate::strategy_deployment_node_store::StrategyDeploymentNodeSnapshotStore::new(
+                &config.storage.data_dir,
+            );
+        service = service
+            .with_strategy_deployment_nodes_provider({
+                let store = node_store.clone();
+                let registered = registered_nodes.clone();
+                move || store.read(&registered, now_ms())
+            })
+            .with_strategy_deployment_node_snapshot_acceptor({
+                let store = node_store;
+                move |authenticated_operator_id, snapshot, received_at_ms| {
+                    store.accept(
+                        &registered_nodes,
+                        authenticated_operator_id,
+                        snapshot,
+                        received_at_ms,
+                    )
+                }
+            });
     }
     configure_api_host_policies(service, config, &control_root)
 }
@@ -702,6 +791,7 @@ mod tests {
                     body["readiness_layers"]["O"]["exchange_gateways"]["gateways"]
                 )
             });
+        assert_eq!(gateway["schema_version"], 2);
         let ports = gateway["ports"].as_array().expect("ports are exposed");
         let port_status = |name: &str| {
             ports
@@ -749,7 +839,8 @@ mod tests {
             .expect("open account ledger writer");
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     10,
                     Price::from_i64(99),
@@ -827,7 +918,8 @@ mod tests {
             .expect("open account ledger writer");
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     20,
                     Price::from_i64(199),

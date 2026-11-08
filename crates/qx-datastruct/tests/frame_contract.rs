@@ -7,7 +7,7 @@
 //! 读侧对更高版本 fail closed、没有版本的老文档仍然读得回来。
 
 use qx_core::{ExactDecimal, ExactOhlcv, InstrumentId};
-use qx_datastruct::BarFrame;
+use qx_datastruct::{BarFrame, FrameError};
 use qx_guanxing::{Bar, DataSourceId, DataView};
 
 fn frame() -> BarFrame {
@@ -121,7 +121,7 @@ fn v2_round_trip_preserves_sub_nano_ohlcv_and_resampling_precision() {
     assert_eq!(restored, frame);
     assert_eq!(restored.digest(), frame.digest());
     assert_eq!(
-        Vec::<Bar>::from(&restored)[0].close_exact(),
+        restored.bars().expect("valid frame bars")[0].close_exact(),
         decimal("1.0000000002")
     );
 
@@ -132,7 +132,7 @@ fn v2_round_trip_preserves_sub_nano_ohlcv_and_resampling_precision() {
         close: decimal("1.0000000003"),
         volume: decimal("1.00000000007"),
     };
-    let mut bars = Vec::<Bar>::from(&frame);
+    let mut bars = frame.bars().expect("valid frame bars");
     bars.push(
         Bar::new(
             2,
@@ -153,6 +153,16 @@ fn v2_round_trip_preserves_sub_nano_ohlcv_and_resampling_precision() {
         decimal("2.00000000012")
     );
     assert_eq!(resampled.volume_raw, vec![2_000_000_000]);
+}
+
+#[test]
+fn bar_conversion_refuses_a_stale_exact_sidecar() {
+    let mut frame = exact_frame();
+    frame.open_raw[0] += 1;
+    assert!(matches!(
+        frame.bars(),
+        Err(FrameError::InvalidExactOhlcv(_))
+    ));
 }
 
 #[test]

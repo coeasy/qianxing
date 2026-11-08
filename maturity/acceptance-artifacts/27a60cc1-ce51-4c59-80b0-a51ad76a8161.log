@@ -1,0 +1,27 @@
+$ python -m unittest discover -s python/tests -p test_project_runs.py
+exit_code=1
+
+[stdout]
+
+[stderr]
+.....E.................................
+======================================================================
+ERROR: test_dependency_lock_snapshot_mutation_is_detected (test_project_runs.ProjectRunTests.test_dependency_lock_snapshot_mutation_is_detected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\python\tests\test_project_runs.py", line 400, in test_dependency_lock_snapshot_mutation_is_detected
+    self.assertEqual(runs.run_project(self.root, execute), 0)
+                     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\aex_work\qianxing\python\qianxing\project_runs.py", line 970, in run_project
+    snapshot_project_dependency_lock(root)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\aex_work\qianxing\python\qianxing\project_runs.py", line 1391, in snapshot_project_dependency_lock
+    installed = _installed_distribution_versions()
+  File "D:\aex_work\qianxing\python\qianxing\project_runs.py", line 1126, in _installed_distribution_versions
+    raise ValueError(f"multiple installed distributions claim the name {name}")
+ValueError: multiple installed distributions claim the name qianxing
+
+----------------------------------------------------------------------
+Ran 39 tests in 81.752s
+
+FAILED (errors=1)

@@ -38,6 +38,13 @@ artifacts:
     on_unknown_version: refuse
     refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
     refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
+  - schema_id: account-snapshot-v4
+    reader: crates/qx-protocol/src/lib.rs
+    version_field: schema_version
+    version_const: ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
+    refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
   - schema_id: strategy-api-v1
     reader: crates/qx-strategy/src/contract.rs
     version_field: schema_version
@@ -190,9 +197,9 @@ migrations:
 backtest_summary_contract:
   writer_file: crates/qx-app/src/artifact_store/backtest_summary.rs
   writer_const: BACKTEST_SUMMARY_SCHEMA_VERSION
-  current_version: 7
-  report_reader_file: crates/qx-cli/src/report_command.rs
-  report_accepts: "5,6,7"
+  current_version: 8
+  report_reader_file: crates/qx-cli/src/report_command/verified_summary.rs
+  report_accepts: "5,6,7,8"
   acceptance_case: backtest_summary_reader_compatibility_matches_matrix
   refusal_case: legacy_summary_refusal_precedes_html_and_evidence_side_effects
 backtest_summary_versions:
@@ -209,8 +216,10 @@ backtest_summary_versions:
   v6:
     report: read
   v7:
-    report: read_write
+    report: read
   v8:
+    report: read_write
+  v9:
     report: refuse
   future:
     report: refuse
@@ -227,3 +236,5 @@ backtest_summary_features:
     introduced_in: 6
   execution_attempts:
     introduced_in: 7
+  max_drawdown_raw:
+    introduced_in: 8

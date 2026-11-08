@@ -288,7 +288,7 @@ pub enum VenueEvent {
         venue_order_id: String,
         ts: u64,
     },
-    Fill(Fill),
+    Fill(Box<Fill>),
     FeeAdjustment {
         account_id: String,
         venue_id: String,
@@ -1908,14 +1908,14 @@ impl PaperVenue {
                         });
                     }
                     let local_exact = local.exact_amounts.map(|amounts| amounts.filled);
-                    if local_exact.is_some() || remote.filled_exact.is_some() {
-                        if local_exact != remote.filled_exact {
-                            issues.push(VenueReconcileIssue::ExactFilledMismatch {
-                                client_order_id: *id,
-                                local: local_exact,
-                                venue: remote.filled_exact,
-                            });
-                        }
+                    if (local_exact.is_some() || remote.filled_exact.is_some())
+                        && local_exact != remote.filled_exact
+                    {
+                        issues.push(VenueReconcileIssue::ExactFilledMismatch {
+                            client_order_id: *id,
+                            local: local_exact,
+                            venue: remote.filled_exact,
+                        });
                     }
                 }
             }
@@ -2154,7 +2154,7 @@ impl PaperVenue {
                     });
                 }
                 order.trace_fill(&mut fill, Some(&self.id), None);
-                out.push(VenueEvent::Fill(fill));
+                out.push(VenueEvent::Fill(Box::new(fill)));
             } else {
                 let px = match order.side {
                     Side::Buy => quote.ask,
@@ -2210,7 +2210,7 @@ impl PaperVenue {
                     ..Fill::default()
                 };
                 order.trace_fill(&mut fill, Some(&self.id), None);
-                out.push(VenueEvent::Fill(fill));
+                out.push(VenueEvent::Fill(Box::new(fill)));
             }
         }
         self.orders = orders;

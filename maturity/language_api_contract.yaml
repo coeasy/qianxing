@@ -56,6 +56,10 @@ python_native_helpers:
     note: "完整多市场 Bar 研究报告读取：统一校验输入质量、运行身份、账簿、权益/成交副产物与因果 Bar 上下文，并返回有界报告 DTO"
   - name: validate_strategy_execution_preflight_v1
     note: "策略边界预检：CLI/Python 将规范化 manifest 和运行配置交给 qx-app；Rust 单点校验参数、市场要求、Bar 身份与 warmup 后才允许执行"
+  - name: validate_strategy_project_v1
+    note: "策略项目静态校验：规范化项目结构和声明式执行计划，不加载或执行用户策略代码"
+  - name: plan_strategy_runtime_v1
+    note: "策略运行时规划：根据策略宿主能力与项目声明生成可复核的运行计划，不启动 worker"
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:
@@ -89,6 +93,8 @@ python_remote_lifecycle_methods:
     note: "Paper TWAP/VWAP 父单取消生命周期入口"
   - name: list_paper_algo_executions
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
+  - name: get_strategy_deployments
+    note: "Python 远端读取 worker 配置、观察状态与阻塞原因；运行状态不授予交易权限"
 
 python_remote_helpers:
   - name: application_capabilities
@@ -335,6 +341,12 @@ contracts:
     http: []
   - use_case: paper_available_margin_raw
     rust: ["paper_available_margin_raw"]
+    python_native: []
+    python_remote: []
+    cpp_remote: []
+    http: []
+  - use_case: publish_dataset_snapshot
+    rust: ["publish_dataset_snapshot"]
     python_native: []
     python_remote: []
     cpp_remote: []

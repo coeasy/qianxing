@@ -20,6 +20,7 @@ qx-factor = { version = "0.3.0", path = "../qx-factor" }
 qx-strategy = { version = "0.3.0", path = "../qx-strategy" }
 qx-zhenlu = { version = "0.3.0", path = "../qx-zhenlu" }
 qx-control = { version = "0.3.0", path = "../qx-control" }
+qx-spec = { version = "0.3.0", path = "../qx-spec" }
 qx-storage = { version = "0.3.0", path = "../qx-storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }

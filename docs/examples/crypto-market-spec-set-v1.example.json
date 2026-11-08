@@ -3,7 +3,10 @@
   "schema_version": 1,
   "markets": {
     "BTC/USDT:USDT.OKX": {
-      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "OKX"},
+      "instrument": {
+        "symbol": "BTC/USDT:USDT",
+        "venue": "OKX"
+      },
       "product": "perpetual",
       "base_currency": "BTC",
       "quote_currency": "USDT",
@@ -18,10 +21,14 @@
       "max_leverage": 100,
       "maintenance_margin_bps": 500,
       "valid_from": 0,
-      "valid_to": null
+      "valid_to": null,
+      "dataset_instrument_role": "future"
     },
     "ETH/USDT:USDT.OKX": {
-      "instrument": {"symbol": "ETH/USDT:USDT", "venue": "OKX"},
+      "instrument": {
+        "symbol": "ETH/USDT:USDT",
+        "venue": "OKX"
+      },
       "product": "perpetual",
       "base_currency": "ETH",
       "quote_currency": "USDT",
@@ -36,7 +43,8 @@
       "max_leverage": 100,
       "maintenance_margin_bps": 500,
       "valid_from": 0,
-      "valid_to": null
+      "valid_to": null,
+      "dataset_instrument_role": "future"
     }
   }
 }

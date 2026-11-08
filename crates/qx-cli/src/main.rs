@@ -5,6 +5,10 @@
 //! 2. 修改任一参数   → 结果哈希发生变化（不是恒定输出）
 //! 3. 决策只用 as_of(ts) 之前的数据（无前视偏差）
 
+// CLI orchestration functions deliberately keep their policy and artifact inputs visible.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_adapter::{
     BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotVenue,
     HttpTransport, TlsHttpTransport,
@@ -115,6 +119,7 @@ mod report_multi_market;
 mod report_multi_market_depth;
 mod report_multi_market_depth_render;
 mod report_output_paths;
+mod report_publish;
 mod report_readout;
 mod report_svg;
 mod report_xlsx;
@@ -211,7 +216,7 @@ pub(crate) use worker_runtime::*;
 #[allow(unused_imports)] // 默认特性下 join 只由 NATS event pipeline 使用
 pub(crate) use worker_shutdown::*;
 
-use data_validate::{validate_dataset, validate_depth_dataset};
+use data_validate::{publish_dataset_snapshot, validate_dataset, validate_depth_dataset};
 #[cfg(test)]
 use dataset_commands::verify_dataset_bundle_binding;
 use dataset_commands::{run_dataset_bundle, run_dataset_ingest};

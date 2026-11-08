@@ -1,0 +1,14 @@
+$ cargo test -p qx-cli --bin qx-cli live_command_resolution_tests --offline
+exit_code=0
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::admission::live_command_resolution_tests::failed_command_resolves_only_with_terminal_venue_fact_and_post_failure_clean_report ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 473 filtered out; finished in 0.00s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.79s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

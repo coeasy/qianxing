@@ -79,14 +79,7 @@ pub(crate) struct Contract {
 
 impl Contract {
     pub(crate) fn open(label: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-venue-report-{label}-{}-{nanos}",
-            std::process::id()
-        ));
+        let root = test_temp_root(&format!("venue-report-{label}"));
         let mut contract = Self {
             pipeline: LiveEventPipeline::open(&root, "events", "USDT").unwrap(),
             root,

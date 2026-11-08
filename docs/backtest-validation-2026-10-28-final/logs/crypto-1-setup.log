@@ -1,0 +1,54 @@
+牵星 Qianxing — 分级校准，量天定位
+
+quickstart 依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 D:\workspace\qval-1028b\c1：
+[初始化] 已创建 D:\workspace\qval-1028b\c1\qianxing.runtime.json profile=builtin environment=paper fingerprint=72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3 assets=7 strategy=macd
+[ProjectManifest] path=D:\workspace\qval-1028b\c1\qianxing.project.json fingerprint=6d6631a5c0e0135e
+下一步：qx-cli doctor D:\workspace\qval-1028b\c1\qianxing.runtime.json；qx-cli backtest D:\workspace\qval-1028b\c1\qianxing.runtime.json D:\workspace\qval-1028b\c1\qianxing.bar-frame.example.json D:\workspace\qval-1028b\c1\qianxing.binance.spot.spec.json
+[完成] 建项目：qx-cli init D:\workspace\qval-1028b\c1\qianxing.runtime.json --strategy macd
+[Doctor] 检查配置、路径、策略输入与监督器可构建性（不启动 worker）
+[PASS] build_identity: qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile debug)
+[PASS] config: 配置解析与领域校验通过
+[PASS] fingerprint: 配置指纹=72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3
+[WARN] storage.data_dir: storage.data_dir 尚不存在，将在首次运行时创建: D:\workspace\qval-1028b\c1\data\qianxing
+[PASS] account_log_settlement: 账户事实日志的启用写入方共用同一记账币种
+[PASS] event_logs.orphan: data_dir 中的 EventLog 都被当前配置引用
+[PASS] runtime_supervisor_build: 监督器可构建，启用 worker=2（未启动，不代表运行健康）
+[Doctor] 通过：1 个警告；未连接交易所、未发送订单
+[完成] 静态检查：qx-cli doctor D:\workspace\qval-1028b\c1\qianxing.runtime.json
+[Data · Dataset] dataset=strategy-bars:BTCUSDT.BINANCE version=barframe-json-v1 source=example-bars-v1 fingerprint=613fdc1dc0b779e7
+[Strategy · Signal] source=config fast_window=5 slow_window=20 period=14 threshold_bps=100 \
+             knobs=none declared_unused=builtin_fast_window,builtin_slow_window,builtin_period,builtin_threshold_bps
+[Strategy · Account] initial_cash_raw=100000000000000 account_base_source=builtin-default
+[Strategy · Backtest] strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=45038cdcb863b87f
+[Strategy · Integrity] rejected_orders=0 rejection_reasons=none
+[RunManifest] run_id=strategy-backtest:strategy-macd:BTCUSDT.BINANCE:72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3:a39e6659a192d57841ae6abb data_fingerprint=dataset-bundle:8bf50b57f8204ab9 result_hash=45038cdcb863b87f digest=1c7a66c2eb6250ac
+[RunManifest] path=D:\workspace\qval-1028b\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_a39e6659a192d57841ae6abb-1c7a66c2eb6250ac.run.json
+[Artifacts] summary=D:\workspace\qval-1028b\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_a39e6659a192d57841ae6abb-1c7a66c2eb6250ac.v7.summary.json equity=D:\workspace\qval-1028b\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_a39e6659a192d57841ae6abb-1c7a66c2eb6250ac.v7.equity.csv fills=D:\workspace\qval-1028b\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_a39e6659a192d57841ae6abb-1c7a66c2eb6250ac.v7.fills.csv
+[完成] 跑一轮回测：qx-cli backtest D:\workspace\qval-1028b\c1\qianxing.runtime.json
+[Report] summary=D:\workspace\qval-1028b\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_a39e6659a192d57841ae6abb-1c7a66c2eb6250ac.v7.summary.json
+[Report]  schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+[Report]  strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1
+[Report]  return_bps=1 max_drawdown_bps=0 fees_raw=43250000 turnover_raw=86500000000 final_equity_raw=100018956750000
+[Report]  input_data_hash=e5c20c038f1bb74c result_hash=45038cdcb863b87f replay_log_digest=45038cdcb863b87f
+[Report]  input_verified=D:\workspace\qval-1028b\c1\qianxing.bar-frame.example.json input_kind=barframe input_id=strategy-bars:BTCUSDT.BINANCE input_fingerprint=613fdc1dc0b779e7
+[Report]  account_initial_cash_raw=100000000000000 account_source=builtin-default
+[Report]  replay_events=77 replay_ledger_entries=4/4
+[Report]  risk_rule_set_version=conservative-default-v1+implicit-no-short
+[完成] 读回摘要：qx-cli report D:\workspace\qval-1028b\c1\qianxing.runtime.json
+[Status] runtime=D:\workspace\qval-1028b\c1\qianxing.runtime.json
+  environment=paper profile=SingleNode storage=Files consistency=LocalDurable
+  data_dir=D:\workspace\qval-1028b\c1\data\qianxing backtest_summaries=1 network_accessed=false orders_sent=false
+  worker id=api role=Api account=- venue=- configured
+  worker id=strategy-builtin role=Strategy account=main venue=paper configured
+[Latest Backtest] schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+  strategy=strategy-macd instrument=BTCUSDT.BINANCE fills=1 return_bps=1 max_drawdown_bps=0 result_hash=45038cdcb863b87f
+[完成] 看安全状态：qx-cli status D:\workspace\qval-1028b\c1\qianxing.runtime.json
+
+你刚做完了 5 步：建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态，项目里共 16 份文件。
+回测产物在 D:\workspace\qval-1028b\c1\data 下（summary / equity.csv / fills.csv / run.json / record.json 与数据集清单）。
+下一步三条命令：
+  qx-cli report D:\workspace\qval-1028b\c1\qianxing.runtime.json --json
+  qx-cli strategy list
+  qx-cli init D:\workspace\qval-1028b\c1\ashare\qianxing.runtime.json --profile ashare
+本地 Paper 验收（qx-cli paper-check D:\workspace\qval-1028b\c1\qianxing.runtime.json）要先把运行时换成 paper profile 那份模板，否则会如实报「Paper 主链路缺少启用的 Scheduler worker」。
+全部入口：qx-cli help；这一行是哪个构建：qx-cli version

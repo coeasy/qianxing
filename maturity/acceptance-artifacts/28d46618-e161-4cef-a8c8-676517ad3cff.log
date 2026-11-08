@@ -1,0 +1,15 @@
+$ D:\aex_work\qianxing\python\.venv\Scripts\python.exe tools/accept_clean_install.py --python D:\aex_work\qianxing\python\.venv\Scripts\python.exe --work-dir C:\Users\Administrator\.codex\visualizations\2026\10\28\01a181de-2843-7dd0-ad2c-d4ab1255f74e\qx-r20-windows-acceptance --wheel D:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl
+exit_code=1
+
+[stdout]
+
+[stderr]
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 164, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 40, in main
+    work.mkdir(parents=True, exist_ok=True)
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+PermissionError: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'C:\\Users\\Administrator\\.codex\\visualizations\\2026\\10\\28\\01a181de-2843-7dd0-ad2c-d4ab1255f74e\\qx-r20-windows-acceptance'

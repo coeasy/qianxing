@@ -66,6 +66,8 @@ pub(crate) fn accepted_query_params(route: &str) -> Option<&'static [&'static st
         return Some(params);
     }
     match route {
+        "/strategies/deployments" => Some(&["worker_id"]),
+        "/strategies/deployments/operations" => Some(&["operation_id"]),
         "/account/activity" => Some(&ACCOUNT_ACTIVITY_PARAMS),
         "/account/portfolio" => Some(&PORTFOLIO_FILTER_PARAMS),
         "/events" | "/events/live" => Some(&EVENT_SCOPED_PARAMS),

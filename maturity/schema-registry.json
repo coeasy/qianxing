@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "registry_version": 17,
+  "registry_version": 30,
   "entries": [
     {
       "schema_id": "funding-rate-provider-payload-v1",
@@ -378,6 +378,23 @@
       ]
     },
     {
+      "schema_id": "account-snapshot-v4",
+      "version": 4,
+      "path": "schemas/account-snapshot-v4.json",
+      "producer": "qx-protocol",
+      "consumers": [
+        "qx-python",
+        "qx-cli",
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-protocol/tests/snapshot_schema_contract.rs",
+        "crates/qx-protocol/src/tests.rs",
+        "python/tests/test_bridge.py"
+      ]
+    },
+    {
       "schema_id": "strategy-api-v1",
       "version": 1,
       "path": "schemas/strategy_api_v1.schema.json",
@@ -635,6 +652,22 @@
       "path": "schemas/strategy-api-input-v9.json",
       "version": 9,
       "schema_id": "strategy-api-input-v9"
+    },
+    {
+      "producer": "qx-strategy StrategyContractInput",
+      "consumers": [
+        "qx-cli external process host",
+        "Python Strategy worker",
+        "C++ Strategy worker"
+      ],
+      "golden_fixtures": [
+        "schemas/strategy-process-checkpoint-restore-ack-v1.json",
+        "docs/strategy-deployment-observations.md"
+      ],
+      "compatibility": "backward",
+      "path": "schemas/strategy-api-input-v10.json",
+      "version": 10,
+      "schema_id": "strategy-api-input-v10"
     },
     {
       "schema_id": "strategy-context-v2",
@@ -1473,6 +1506,21 @@
       "golden_fixtures": [
         "crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs",
         "crates/qx-app/src/artifact_store/run_manifest.rs"
+      ]
+    },
+    {
+      "schema_id": "provider-run-lineage-v2",
+      "version": 2,
+      "path": "schemas/provider-run-lineage-v2.json",
+      "producer": "qx-app Provider Bar workflow",
+      "consumers": [
+        "qx-app RunManifest verifier",
+        "qx-api research artifact reader"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs",
+        "crates/qx-api/src/provider_backtest_tests.rs"
       ]
     },
     {
@@ -2319,6 +2367,347 @@
         "crates/qx-xingban/src/orderbook/tests.rs",
         "crates/qx-app/src/cases/run_provider_depth_backtest.rs",
         "docs/examples/depth-frame-v2.example.json"
+      ]
+    },
+    {
+      "schema_id": "dataset-bundle-v1",
+      "version": 1,
+      "path": "schemas/dataset-bundle-v1.json",
+      "producer": "qx-data DatasetBundleManifest / qx-cli dataset-bundle",
+      "consumers": [
+        "qx-cli",
+        "qx-service",
+        "qx-app"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-data/src/catalog.rs",
+        "crates/qx-cli/src/dataset_commands.rs",
+        "crates/qx-service/src/backtest_bindings/strategy_batch.rs"
+      ]
+    },
+    {
+      "schema_id": "dataset-snapshot-context-v1",
+      "version": 1,
+      "path": "schemas/dataset-snapshot-context-v1.json",
+      "producer": "Dataset owner",
+      "consumers": [
+        "qx-app",
+        "qx-data"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/dataset-snapshot-v1.md"
+      ]
+    },
+    {
+      "schema_id": "dataset-snapshot-v1",
+      "version": 1,
+      "path": "schemas/dataset-snapshot-v1.json",
+      "producer": "qx-app",
+      "consumers": [
+        "qx-data",
+        "qx-cli",
+        "qx-app"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/dataset-snapshot-v1.md"
+      ]
+    },
+    {
+      "schema_id": "dataset-instrument-role-catalog-v1",
+      "version": 1,
+      "path": "schemas/dataset-instrument-role-catalog-v1.json",
+      "producer": "External instrument-data supplier",
+      "consumers": [
+        "qx-service live worker startup preflight",
+        "qx-data signature verification"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "schemas/dataset-instrument-role-catalog-v1.json",
+        "docs/dataset-snapshot-v1.md"
+      ]
+    },
+    {
+      "schema_id": "binance-history-acquisition-evidence-v1",
+      "version": 1,
+      "path": "schemas/binance-history-acquisition-evidence-v1.json",
+      "producer": "tools/acquire_binance_history.py and qx-cli dataset acceptance",
+      "consumers": [
+        "R15 historical data acceptance review"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "maturity/evidence/binance-spot-btcusdt-2017-2026-09.json",
+        "docs/binance-history-source-acceptance.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-deployment-operation-v1",
+      "version": 1,
+      "path": "schemas/strategy-deployment-operation-v1.json",
+      "producer": "qx-spec/qx-service/qx-api",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-deployment-revision-v1",
+      "version": 1,
+      "path": "schemas/strategy-deployment-revision-v1.json",
+      "producer": "qx-spec/qx-service/qx-api",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-deployment-status-v1",
+      "version": 1,
+      "path": "schemas/strategy-deployment-status-v1.json",
+      "producer": "qx-api/qx-service",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-service/src/strategy_deployments.rs",
+        "web/console/app.js"
+      ]
+    },
+    {
+      "schema_id": "strategy-deployment-node-snapshot-v1",
+      "version": 1,
+      "path": "schemas/strategy-deployment-node-snapshot-v1.json",
+      "producer": "registered strategy nodes over authenticated mTLS",
+      "consumers": [
+        "qx-api POST /strategies/deployment-nodes",
+        "qx-service durable snapshot receiver"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/fixtures/strategy-deployment-node-snapshot-v1.json"
+      ]
+    },
+    {
+      "schema_id": "strategy-deployment-node-status-v1",
+      "version": 1,
+      "path": "schemas/strategy-deployment-node-status-v1.json",
+      "producer": "qx-api authenticated strategy deployment node aggregation",
+      "consumers": [
+        "qx-api GET /strategies/deployment-nodes",
+        "web strategy deployment operator view"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-api/src/fixtures/strategy-deployment-node-status-v1.json"
+      ]
+    },
+    {
+      "schema_id": "strategy-host-capabilities-v1",
+      "version": 1,
+      "path": "schemas/strategy-host-capabilities-v1.json",
+      "producer": "qx-strategy",
+      "consumers": [
+        "qx-cli",
+        "qx-api",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-host-capabilities.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-project-v1",
+      "version": 1,
+      "path": "schemas/strategy-project-v1.json",
+      "producer": "qx-spec",
+      "consumers": [
+        "qx-app",
+        "qx-cli",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-project-runs.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-worker-observation-v1",
+      "version": 1,
+      "path": "schemas/strategy-worker-observation-v1.json",
+      "producer": "qx-api/qx-cli",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-run-acceptance-v1",
+      "version": 1,
+      "path": "schemas/strategy-run-acceptance-v1.json",
+      "producer": "strategy refactor acceptance ledger",
+      "consumers": [
+        "tools/check_strategy_refactor_ledger.py",
+        "project maintainers"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "maturity/strategy-run-acceptance-v1.json",
+        "tools/check_strategy_refactor_ledger.py"
+      ]
+    },
+    {
+      "schema_id": "strategy-worker-observation-v2",
+      "version": 2,
+      "path": "schemas/strategy-worker-observation-v2.json",
+      "producer": "qx-api/qx-cli",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-worker-lifecycle-v1",
+      "version": 1,
+      "path": "schemas/strategy-worker-lifecycle-v1.json",
+      "producer": "qx-api/qx-cli",
+      "consumers": [
+        "qx-api",
+        "qx-service",
+        "python-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-worker-observation-v3",
+      "version": 3,
+      "path": "schemas/strategy-worker-observation-v3.json",
+      "producer": "qx-service/qx-cli",
+      "consumers": [
+        "qx-service",
+        "qx-orchestrator",
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-worker-lifecycle-v2",
+      "version": 2,
+      "path": "schemas/strategy-worker-lifecycle-v2.json",
+      "producer": "qx-cli",
+      "consumers": [
+        "qx-service",
+        "qx-orchestrator",
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "docs/strategy-deployment-observations.md"
+      ]
+    },
+    {
+      "schema_id": "strategy-process-checkpoint-restore-ack-v1",
+      "version": 1,
+      "path": "schemas/strategy-process-checkpoint-restore-ack-v1.json",
+      "producer": "qx-strategy",
+      "consumers": [
+        "external Strategy process workers",
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "schemas/strategy_api_v1.md"
+      ]
+    },
+    {
+      "schema_id": "c-strategy-required-capabilities-v1",
+      "version": 1,
+      "path": "schemas/c-strategy-required-capabilities-v1.json",
+      "producer": "C ABI Strategy plugin",
+      "consumers": [
+        "qx-strategy DynamicCAbiStrategy"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-strategy/tests/fixtures/c-strategy-required-capabilities-v1.json"
+      ]
+    },
+    {
+      "schema_id": "strategy-host-capability-ack-v1",
+      "version": 1,
+      "path": "schemas/strategy-host-capability-ack-v1.json",
+      "producer": "external Strategy process host",
+      "consumers": [
+        "qx-cli",
+        "qx-orchestrator"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-strategy/tests/fixtures/strategy-host-capability-ack-v1.json"
+      ]
+    },
+    {
+      "schema_id": "strategy-prepared-evaluation-v3",
+      "version": 3,
+      "path": "schemas/strategy-prepared-evaluation-v3.json",
+      "producer": "qx-cli strategy worker",
+      "consumers": [
+        "qx-cli strategy worker recovery"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+      ]
+    },
+    {
+      "schema_id": "backtest-metrics-definition-v1",
+      "version": 1,
+      "path": "schemas/backtest-metrics-definition-v1.json",
+      "producer": "qx-app artifact store",
+      "consumers": [
+        "qx-cli report_html",
+        "qx-cli report_xlsx",
+        "qx-api",
+        "qx-sdk"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-core/src/performance.rs",
+        "crates/qx-core/src/benchmark.rs",
+        "crates/qx-cli/src/report_xlsx/rows.rs"
       ]
     }
   ]

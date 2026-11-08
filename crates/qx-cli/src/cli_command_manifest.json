@@ -81,6 +81,11 @@
       "variant": "ConsumerDlqReplay"
     },
     {
+      "name": "data-snapshot",
+      "parent": null,
+      "variant": "DataSnapshot"
+    },
+    {
       "name": "data-validate",
       "parent": null,
       "variant": "DataValidate"

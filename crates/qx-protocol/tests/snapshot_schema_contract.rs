@@ -7,7 +7,7 @@
 
 use qx_protocol::{
     AccountSnapshot, ACCOUNT_SNAPSHOT_JSON_SCHEMA, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1,
-    ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3, ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
 };
 use serde_json::Value;
 
@@ -97,7 +97,7 @@ fn string_array(value: &Value) -> Vec<String> {
 fn served_schema_is_the_repository_file_verbatim() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../schemas/account-snapshot-v3.json"
+        "/../../schemas/account-snapshot-v4.json"
     );
     let on_disk = std::fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("schema 文件必须存在: {error}"));
@@ -119,6 +119,16 @@ fn legacy_v1_schema_and_snapshot_remain_readable() {
     assert_eq!(
         ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1.replace("\r\n", "\n"),
         on_disk.replace("\r\n", "\n")
+    );
+    let v3_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../schemas/account-snapshot-v3.json"
+    );
+    let v3_on_disk =
+        std::fs::read_to_string(v3_path).expect("v3 schema file must remain available");
+    assert_eq!(
+        ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3.replace("\r\n", "\n"),
+        v3_on_disk.replace("\r\n", "\n")
     );
     let legacy = writer_sample();
     let snapshot = AccountSnapshot::from_json(&legacy.to_string())
@@ -379,8 +389,8 @@ fn schema_frame_matches_the_protocol_it_describes() {
     );
     assert_eq!(
         frame["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v3.json"),
-        "$id 里的 v3 必须与 schema_version 常量说的是同一份契约"
+        Some("https://qianxing.dev/schema/account-snapshot-v4.json"),
+        "$id 里的 v4 必须与 schema_version 常量说的是同一份契约"
     );
     assert_eq!(frame["type"].as_str(), Some("object"));
     assert_eq!(

@@ -24,7 +24,10 @@ pub use metrics::{multi_leg_cost_bps, multi_leg_group_totals, multi_leg_leg_inte
 pub use multi_builtin_summary::{
     multi_builtin_composition_summary_json, MultiBuiltinCompositionSummary,
 };
-pub use quality::{aggregate_multi_leg_quality_report, multi_leg_quality_fingerprint};
+pub use quality::{
+    aggregate_multi_leg_quality_report, multi_leg_dataset_quality_identity,
+    multi_leg_quality_fingerprint,
+};
 pub use report_facts::{
     multi_leg_funding_cost, multi_leg_leg_pnl_exact, multi_leg_leg_return_bps,
     multi_leg_leg_return_bps_exact, multi_leg_leg_return_bps_exact_v2,

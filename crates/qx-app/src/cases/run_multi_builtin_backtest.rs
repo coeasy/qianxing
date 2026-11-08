@@ -35,6 +35,7 @@ pub fn validate_multi_builtin_frames(
     primary: &BarFrame,
     reference: &BarFrame,
 ) -> Result<(), AppError> {
+    validate_multi_builtin_capabilities(kind)?;
     if quantity_raw <= 0 {
         return Err(invalid("多腿内置策略 quantity 必须为正整数"));
     }
@@ -57,6 +58,14 @@ pub fn validate_multi_builtin_frames(
         ));
     }
     Ok(())
+}
+
+fn validate_multi_builtin_capabilities(
+    kind: qx_strategy::BuiltinStrategyKind,
+) -> Result<(), AppError> {
+    qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_multi_builtin_rust()
+        .validate_required(kind.required_capabilities())
+        .map_err(invalid)
 }
 
 pub fn run_multi_builtin_backtest(
@@ -153,6 +162,7 @@ pub fn run_multi_builtin_backtest_with_inputs(
 }
 
 fn validate_multi_builtin_inputs(input: &MultiBuiltinBacktestInputs<'_>) -> Result<(), AppError> {
+    validate_multi_builtin_capabilities(input.strategy.kind)?;
     validate_multi_builtin_frames(
         input.strategy.kind,
         input.strategy.quantity_raw,
@@ -216,14 +226,24 @@ fn run_inner(
     spec.validate()?;
     let primary = read_frame(&spec.primary.bars_path, "主腿")?;
     let reference = read_frame(&spec.reference.bars_path, "对冲腿")?;
+    validate_multi_builtin_frames(
+        spec.strategy.kind,
+        spec.strategy.quantity_raw,
+        &primary,
+        &reference,
+    )?;
     if primary.instrument == reference.instrument {
         return Err(invalid("多腿内置回测要求两条腿使用不同标的"));
     }
     if primary.ts != reference.ts {
         return Err(invalid("多腿内置回测要求两条 BarFrame 的时间戳完全对齐"));
     }
-    let primary_bars: Vec<Bar> = (&primary).into();
-    let reference_bars: Vec<Bar> = (&reference).into();
+    let primary_bars: Vec<Bar> = primary
+        .bars()
+        .map_err(|error| invalid(format!("主腿 BarFrame exact OHLCV 无效: {error:?}")))?;
+    let reference_bars: Vec<Bar> = reference
+        .bars()
+        .map_err(|error| invalid(format!("对冲腿 BarFrame exact OHLCV 无效: {error:?}")))?;
     if primary_bars.len() < MIN_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,

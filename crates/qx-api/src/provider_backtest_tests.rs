@@ -242,6 +242,22 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
             signal_source: None,
             signal_declared_unused: None,
         },
+        timezone: "UTC".into(),
+        snapshot_context: qx_data::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 1_000,
+            timestamp_semantics: qx_data::DatasetTimestampSemantics::EventTime,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
+        },
     }
 }
 
@@ -279,6 +295,21 @@ fn provider_spec() -> ProviderBacktestSpec {
         interval_ms: 60_000,
         timezone: "UTC".into(),
         manifest_path: None,
+        snapshot_context: qx_data::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 60_000,
+            timestamp_semantics: qx_data::DatasetTimestampSemantics::BarClose,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
+        },
     }
 }
 

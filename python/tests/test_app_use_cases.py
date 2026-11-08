@@ -334,6 +334,14 @@ class AppUseCaseTests(unittest.TestCase):
             use_case for use_case, _entrypoints in native.APP_USE_CASE_ENTRYPOINTS
         ]
         self.assertEqual(report["implemented_use_cases"], expected_use_cases)
+        self.assertEqual(report["native_extension_compatibility"], "unknown")
+        with patch.object(native, "extension_version", return_value=report["version"]):
+            self.assertEqual(doctor()["native_extension_compatibility"], "matched")
+        with patch.object(native, "extension_version", return_value="0.0.0-mismatch"):
+            mismatch = doctor()
+        self.assertEqual(mismatch["native_extension_compatibility"], "mismatch")
+        self.assertEqual(mismatch["native_extension_version"], "0.0.0-mismatch")
+        self.assertIn("same qianxing wheel", mismatch["native_extension_action"])
         self.assertIn("report.read.depth.v1", report["implemented_use_cases"])
         self.assertIn("report.read.multi-leg.facts.v1", report["implemented_use_cases"])
         self.assertIn("report.read.multi-leg.event-page.v1", report["implemented_use_cases"])
@@ -345,6 +353,34 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIn("backtest.multi-leg.bar.v1", report["implemented_use_cases"])
         self.assertIn("experiment.grid.multi-leg.bar.v1", report["implemented_use_cases"])
         self.assertFalse(any("multi-leg" in item for item in report["limitations"]))
+
+        # 方案 D10：首跑只承诺本机后端；远端沙箱即便装了分发包也只登记为"未验证就绪"。
+        runtimes = report["strategy_runtimes"]
+        self.assertEqual(runtimes["local_default"], "trusted_python")
+        self.assertTrue(runtimes["local"]["trusted_python"]["available"])
+        self.assertIsNone(runtimes["remote_selected"])
+        self.assertEqual(runtimes["remote_readiness"], "unverified")
+        self.assertEqual(
+            {row["extra"] for row in runtimes["remote"].values()},
+            {"sandbox-e2b", "sandbox-llm", "sandbox-opensandbox", "sandbox-microsandbox"},
+        )
+        for row in runtimes["remote"].values():
+            self.assertEqual(row["readiness"], "unverified")
+            self.assertIsNone(row["configured"])
+            self.assertIsNone(row["running"])
+        self.assertIn("Local trusted_python is the default", runtimes["note"])
+
+        # 方案 D3：doctor 报告渲染器来自 wheel 内置副本、PATH 还是缺失，且不做静默回落。
+        renderer = report["report_renderer"]
+        self.assertIn(renderer["origin"], {"bundled", "external", "missing"})
+        self.assertEqual(renderer["selection"], renderer["origin"])
+        if renderer["origin"] == "missing":
+            self.assertIsNone(renderer["path"])
+        else:
+            self.assertTrue(Path(renderer["path"]).is_absolute())
+        if renderer["status"] != "ready":
+            self.assertIn("--cli PATH", renderer["action"])
+            self.assertIn("No fallback was attempted", renderer["action"])
 
         partial_extension = SimpleNamespace(app_run_multi_market_backtest=object())
         with patch.object(native, "_extension", return_value=partial_extension):
@@ -361,6 +397,53 @@ class AppUseCaseTests(unittest.TestCase):
         )
         with patch.object(native, "_extension", return_value=old_extension):
             self.assertFalse(native.app_available())
+
+    def test_doctor_compares_cli_schema_build_and_platform_identity(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import app
+
+        schema_digest = "a" * 64
+        identity = (
+            "qianxing 0.3.0 (build 1234567, target riscv64-unknown-none, "
+            f"profile release, schemas {schema_digest})"
+        )
+        completed = SimpleNamespace(returncode=0, stdout=identity, stderr="")
+        with (
+            patch("qianxing.sdk_diagnostics.shutil.which", return_value="C:/tools/qx-cli.exe"),
+            patch("qianxing.sdk_diagnostics.subprocess.run", return_value=completed) as run,
+        ):
+            report = app._probe_qx_cli("0.3.0", schema_digest)
+
+        run.assert_called_once_with(
+            ["C:/tools/qx-cli.exe", "version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(report["status"], "matched")
+        self.assertEqual(report["schema_catalog_compatibility"], "matched")
+        self.assertEqual(report["platform_compatibility"], "mismatch")
+
+        with (
+            patch("qianxing.sdk_diagnostics.shutil.which", return_value="C:/tools/qx-cli.exe"),
+            patch(
+                "qianxing.sdk_diagnostics.subprocess.run",
+                return_value=SimpleNamespace(
+                    returncode=0,
+                    stdout=identity.replace(schema_digest, "b" * 64),
+                    stderr="",
+                ),
+            ),
+        ):
+            mismatch = app._probe_qx_cli("0.3.0", schema_digest)
+        self.assertEqual(mismatch["schema_catalog_compatibility"], "mismatch")
+
+    def test_doctor_uses_source_project_version_when_old_metadata_shadows_checkout(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import app
+
+        self.assertEqual(app._sdk_package_version(), "0.3.0")
 
     def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -385,7 +468,7 @@ class AppUseCaseTests(unittest.TestCase):
             target="strategy-1",
             payload={},
         )
-        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
             paper_receipt = PaperClient(
                 "https://localhost:8443", headers={"Authorization": "Bearer paper-token"}
             ).submit(command)
@@ -469,7 +552,7 @@ class AppUseCaseTests(unittest.TestCase):
             ),
             Response({"run_id": "remote-1", "status": "cancelling"}),
         ]
-        with patch("qianxing.app.urlopen", side_effect=replies) as open_url:
+        with patch("qianxing.client_transport.urlopen", side_effect=replies) as open_url:
             client = AppClient("https://localhost:8443/api", headers={"Authorization": "Bearer sdk"})
             handle = client.start_depth_backtest({"schema_version": 1, "run_id": "remote-1"})
             self.assertIsInstance(handle, RemoteRunHandle)
@@ -505,7 +588,7 @@ class AppUseCaseTests(unittest.TestCase):
                 return self.body
 
         page = [{"seq": 8, "cursor": "8:abcd", "event": {"kind": "OrderAccepted"}}]
-        with patch("qianxing.app.urlopen", side_effect=[Response(page), Response([])]) as open_url:
+        with patch("qianxing.client_transport.urlopen", side_effect=[Response(page), Response([])]) as open_url:
             client = AppClient("https://localhost")
             self.assertEqual(client.get_live_events(7), page)
             self.assertEqual(client.get_live_events(), [])
@@ -574,7 +657,7 @@ class AppUseCaseTests(unittest.TestCase):
                     }
                 ).encode("utf-8")
 
-        with patch("qianxing.app.urlopen", return_value=Response()):
+        with patch("qianxing.client_transport.urlopen", return_value=Response()):
             handle = RemoteRunHandle(AppClient("https://localhost"), "remote-failed")
             with self.assertRaises(DataUnavailableError) as caught:
                 handle.result()
@@ -948,7 +1031,7 @@ class AppUseCaseTests(unittest.TestCase):
             for method, _route, is_start in cases
         ]
         with patch(
-            "qianxing.app.urlopen",
+            "qianxing.client_transport.urlopen",
             side_effect=replies,
         ) as open_url:
             client = AppClient("https://localhost")
@@ -1007,7 +1090,7 @@ class AppUseCaseTests(unittest.TestCase):
                 "event_trace": "events.jsonl",
             },
         }
-        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             result = client.research_artifacts(outcome)
         self.assertTrue(result["verified"])
@@ -1034,7 +1117,7 @@ class AppUseCaseTests(unittest.TestCase):
             "schema_version": 1,
             "outcome": {"run_id": "multi-leg"},
         }
-        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             result = asyncio.run(client.async_read_multi_leg_research_report_v1(request))
         self.assertEqual(result["run_id"], "multi-leg")
@@ -1067,7 +1150,7 @@ class AppUseCaseTests(unittest.TestCase):
             "end": 10,
             "as_of": 10,
         }
-        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             response = asyncio.run(client.async_provider_preflight(request))
         self.assertFalse(response["matched"])

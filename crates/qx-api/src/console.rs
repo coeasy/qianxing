@@ -544,7 +544,16 @@ mod tests {
     }
 
     fn request(method: &str, target: &str, extra: &str) -> String {
-        format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:18082\r\n{extra}Content-Length: 0\r\n\r\n")
+        format!(
+            "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:18082\r\n{extra}Content-Length: 0\r\n\r\n"
+        )
+    }
+
+    fn request_with_body(method: &str, target: &str, extra: &str, body: &str) -> String {
+        format!(
+            "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:18082\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
     }
 
     fn set_cookies(extra: &[(String, String)]) -> BTreeMap<String, String> {
@@ -635,6 +644,42 @@ mod tests {
         );
         assert_eq!(response.status, 403);
         assert!(response.body.contains("console_csrf_token_invalid"));
+    }
+
+    #[test]
+    fn a_same_origin_csrf_write_reaches_the_api_as_the_configured_operator() {
+        let front = front();
+        let (_, extra) = front.handle(&request("GET", &format!("/?token={TOKEN}"), ""), 1_000);
+        let cookies = set_cookies(&extra);
+        let cookie = format!(
+            "Cookie: {CONSOLE_SESSION_COOKIE}={}; {CONSOLE_CSRF_COOKIE}={}\r\n",
+            cookies[CONSOLE_SESSION_COOKIE], cookies[CONSOLE_CSRF_COOKIE]
+        );
+        let body = r#"{"command_id":1,"request_id":"console-auth-1","operator_id":"forged-body-identity","reason":"R18 console auth acceptance","kind":"PauseStrategy","target":"strategy-1","payload":{},"permission":"Trading","dry_run":true}"#;
+        let (response, _) = front.handle(
+            &request_with_body(
+                "POST",
+                "/control/commands",
+                &format!(
+                    "{cookie}Origin: http://127.0.0.1:18082\r\n{CONSOLE_CSRF_HEADER}: {}\r\n",
+                    cookies[CONSOLE_CSRF_COOKIE]
+                ),
+                body,
+            ),
+            1_000,
+        );
+
+        assert_eq!(
+            response.status, 202,
+            "authorized same-origin write: {}",
+            response.body
+        );
+        let state = front.service.state();
+        let state = state.lock().expect("API state lock");
+        let audit = state.control.audit();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].request_id, "console-auth-1");
+        assert_eq!(audit[0].operator_id, "console-operator");
     }
 
     #[test]

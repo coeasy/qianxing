@@ -8,6 +8,7 @@ use crate::identity::InstrumentId;
 use crate::numeric::{ExactDecimal, Money, Price, Quantity};
 use crate::trading::OrderPolicy;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Side {
@@ -67,6 +68,47 @@ impl OrderStatus {
                     Accepted | Working | PartiallyFilled | Filled | Cancelled | Rejected | Expired
                 )
         )
+    }
+
+    /// Return the shortest legal lifecycle path to an authoritative reconciliation snapshot.
+    /// Intermediate states are replayed from the snapshot fact; no venue side effect is implied.
+    pub fn reconciliation_path(self, target: Self) -> Option<Vec<Self>> {
+        const STATUSES: [OrderStatus; 11] = [
+            OrderStatus::PendingSubmit,
+            OrderStatus::Submitted,
+            OrderStatus::Accepted,
+            OrderStatus::Working,
+            OrderStatus::PartiallyFilled,
+            OrderStatus::Filled,
+            OrderStatus::CancelPending,
+            OrderStatus::Cancelled,
+            OrderStatus::Rejected,
+            OrderStatus::Expired,
+            OrderStatus::Unknown,
+        ];
+        if self == target {
+            return Some(Vec::new());
+        }
+        let mut queue = VecDeque::from([(self, Vec::new())]);
+        let mut visited = vec![self];
+        while let Some((status, path)) = queue.pop_front() {
+            for next in STATUSES {
+                if !status.can_transition_to(next)
+                    || (next == OrderStatus::Unknown && self != OrderStatus::Unknown)
+                    || visited.contains(&next)
+                {
+                    continue;
+                }
+                let mut next_path = path.clone();
+                next_path.push(next);
+                if next == target {
+                    return Some(next_path);
+                }
+                visited.push(next);
+                queue.push_back((next, next_path));
+            }
+        }
+        None
     }
 
     pub fn transition(&mut self, next: Self) -> Result<(), String> {
@@ -273,7 +315,7 @@ impl Order {
     /// Exact quantity including a high-precision payload when present.
     pub fn quantity_decimal(&self) -> ExactDecimal {
         self.exact_amounts.map_or_else(
-            || ExactDecimal::from_parts(self.qty.raw(), 9).expect("legacy scale is supported"),
+            || ExactDecimal::from_legacy_raw(self.qty.raw()),
             |amounts| amounts.quantity,
         )
     }
@@ -311,7 +353,7 @@ impl Order {
 
     pub fn filled_decimal(&self) -> ExactDecimal {
         self.exact_amounts.map_or_else(
-            || ExactDecimal::from_parts(self.filled.raw(), 9).expect("legacy scale is supported"),
+            || ExactDecimal::from_legacy_raw(self.filled.raw()),
             |amounts| amounts.filled,
         )
     }
@@ -319,9 +361,8 @@ impl Order {
     pub fn limit_price_decimal(&self) -> Option<ExactDecimal> {
         self.exact_amounts.map_or_else(
             || {
-                self.limit.map(|price| {
-                    ExactDecimal::from_parts(price.raw(), 9).expect("legacy scale is supported")
-                })
+                self.limit
+                    .map(|price| ExactDecimal::from_legacy_raw(price.raw()))
             },
             |amounts| amounts.limit_price,
         )
@@ -407,9 +448,7 @@ pub struct Fill {
 }
 
 impl Fill {
-    /// Stable suffix for identities that must distinguish scale-aware fills from their
-    /// legacy 1e-9 projections. Empty for legacy fills so existing event dedup keys remain
-    /// stable across the wire migration.
+    /// Stable suffix for trade identities and scale-aware fill fields used by replay dedup.
     pub fn exact_identity_suffix(&self) -> String {
         let mut components = Vec::new();
         if let Some(amounts) = self.exact_amounts {
@@ -435,6 +474,23 @@ impl Fill {
                     .collect::<Vec<_>>()
                     .join(","),
             ));
+        }
+        if self.exact_fees.is_empty() {
+            for fee in &self.fees {
+                if fee.source_trade_ids.is_empty() {
+                    continue;
+                }
+                let mut trade_ids = fee.source_trade_ids.clone();
+                trade_ids.sort();
+                components.push(format!(
+                    "trades={}",
+                    trade_ids
+                        .iter()
+                        .map(|trade_id| format!("{}:{trade_id}", trade_id.len()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ));
+            }
         }
         if components.is_empty() {
             return String::new();
@@ -471,14 +527,14 @@ impl Fill {
 
     pub fn quantity_decimal(&self) -> ExactDecimal {
         self.exact_amounts.map_or_else(
-            || ExactDecimal::from_parts(self.qty.raw(), 9).expect("legacy scale is supported"),
+            || ExactDecimal::from_legacy_raw(self.qty.raw()),
             |amounts| amounts.quantity,
         )
     }
 
     pub fn price_decimal(&self) -> ExactDecimal {
         self.exact_amounts.map_or_else(
-            || ExactDecimal::from_parts(self.price.raw(), 9).expect("legacy scale is supported"),
+            || ExactDecimal::from_legacy_raw(self.price.raw()),
             |amounts| amounts.price,
         )
     }

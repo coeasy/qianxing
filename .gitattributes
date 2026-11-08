@@ -4,3 +4,9 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.sh text eol=lf
+# DatasetSnapshotV1 的 content_hash 绑的是 BarFrame 文件的原始字节（crates/qx-service/src/backtest_bindings/strategy_batch.rs 的 verify_bundle_bar_snapshot），而 qx-cli quickstart 落盘的就是二进制内嵌的同一份字节，所以换行符是这两份夹具身份的一部分。钉 CRLF（与 *.bat 同一个用法）：`eol=crlf` 是检出期的强制规则，与本机 core.autocrlf 无关，任何平台拿到的工作副本字节相同（本机实测：`git check-attr text eol -- deploy/qianxing.bar-frame.example.json` 回 `eol: crlf`，两份字节都是纯 CRLF、无孤立 LF）。钉 LF 反而会让 autocrlf 的 Windows 工作副本与 blob 逐字节相同却被 git 报成 M。
+deploy/qianxing.bar-frame.example.json text eol=crlf
+deploy/qianxing.dataset-bundle.bar-frame.example.json text eol=crlf
+# A 股那条链与币圈同判据：DatasetSnapshotV1.content_hash 绑 BarFrame 的原始字节，qx-cli init 落盘的又是二进制内嵌的同一份字节，所以钉住换行符之后夹具身份才与台账里那一格对得上（Linux/macOS 检出未实测，靠 eol 规则的强制性推断）。
+deploy/qianxing.ashare.bar-frame.example.json text eol=crlf
+deploy/qianxing.dataset-bundle.ashare.example.json text eol=crlf

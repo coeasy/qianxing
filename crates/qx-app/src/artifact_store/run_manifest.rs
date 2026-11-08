@@ -220,7 +220,10 @@ fn verify_canonical_run_spec(
             "CanonicalRunSpec 市场规则与 RunManifest 不一致 {pointer}"
         ));
     }
-    let behavior = spec.behavior.as_object().expect("validated as object");
+    let behavior = spec
+        .behavior
+        .as_object()
+        .ok_or_else(|| format!("CanonicalRunSpec behavior 必须为对象 {pointer}"))?;
     if spec.run_type == "bar_backtest"
         && (behavior
             .get("instrument")
@@ -279,7 +282,7 @@ fn verify_canonical_run_spec(
     let execution_model = spec
         .execution_model
         .as_object()
-        .expect("validated as object");
+        .ok_or_else(|| format!("CanonicalRunSpec execution_model 必须为对象 {pointer}"))?;
     if execution_model
         .get("runtime_version")
         .and_then(serde_json::Value::as_str)
@@ -492,7 +495,7 @@ fn verify_experiment_canonical_run_spec(
             .is_some_and(|fingerprint| fingerprint != manifest.result_hash)
         || summary_spec != Some(canonical_json.as_str())
         || summary_fingerprint != Some(manifest.config_hash.as_str())
-        || manifest.determinism_mode != true
+        || !manifest.determinism_mode
         || manifest.strategy_version != expected_strategy_version
         || manifest.instrument_spec_version != expected_market_version
         || manifest.model_fingerprint != qx_strategy::sha256_hex(&model_json)
@@ -596,7 +599,7 @@ fn verify_depth_experiment_canonical_run_spec(
             .is_some_and(|fingerprint| fingerprint != manifest.result_hash)
         || summary_spec != Some(canonical_json.as_str())
         || summary_fingerprint != Some(manifest.config_hash.as_str())
-        || manifest.determinism_mode != true
+        || !manifest.determinism_mode
         || manifest.strategy_version != "depth-experiment-strategy-set-v1"
         || manifest.instrument_spec_version != expected_market_version
         || manifest.model_fingerprint != qx_strategy::sha256_hex(&model_json)
@@ -1448,16 +1451,15 @@ fn verify_provider_lineage(
         .get("input")
         .and_then(serde_json::Value::as_object)
         .and_then(|input| input.get("provider_lineage"));
-    match (canonical_lineage, summary_lineage) {
+    let lineage = match (canonical_lineage, summary_lineage) {
         (None, None) => return Ok(()),
-        (Some(canonical), Some(declared)) if canonical == declared => {}
+        (Some(canonical), Some(declared)) if canonical == declared => canonical,
         _ => {
             return Err(format!(
                 "Provider lineage 必须同时存在于 CanonicalRunSpec 和回测输入摘要且内容一致 {pointer}"
             ));
         }
-    }
-    let lineage = canonical_lineage.expect("matched Some");
+    };
     let field = |name: &str| -> Result<&str, String> {
         lineage
             .get(name)
@@ -1465,11 +1467,10 @@ fn verify_provider_lineage(
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| format!("Provider lineage 缺少有效字段 {name} {pointer}"))
     };
-    if lineage
+    let lineage_version = lineage
         .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(1)
-    {
+        .and_then(serde_json::Value::as_u64);
+    if !matches!(lineage_version, Some(1 | 2)) {
         return Err(format!(
             "Provider lineage schema_version 不受支持 {pointer}"
         ));
@@ -1493,6 +1494,27 @@ fn verify_provider_lineage(
     }
     let provider_manifest = qx_data::DatasetManifestV2::from_json(manifest_json)
         .map_err(|error| format!("Provider DatasetManifest 无效 {pointer}: {error}"))?;
+    if lineage_version == Some(2) {
+        let snapshot_json = field("dataset_snapshot_json")?;
+        if qx_data::sha256_hex_bytes(snapshot_json.as_bytes()) != field("dataset_snapshot_sha256")?
+        {
+            return Err(format!("Provider DatasetSnapshot SHA-256 不匹配 {pointer}"));
+        }
+        let snapshot = qx_data::DatasetSnapshotV1::from_json(snapshot_json)
+            .map_err(|error| format!("Provider DatasetSnapshot 无效 {pointer}: {error}"))?;
+        if snapshot.manifest != provider_manifest
+            || snapshot.manifest.instrument != dataset.instrument
+            || snapshot.manifest.dataset.fingerprint
+                != dataset
+                    .content_fingerprint
+                    .strip_prefix("barframe:")
+                    .unwrap_or(dataset.content_fingerprint.as_str())
+        {
+            return Err(format!(
+                "Provider DatasetSnapshot 与 DatasetManifest/CanonicalRunSpec 不一致 {pointer}"
+            ));
+        }
+    }
     for (label, actual, expected) in [
         (
             "instrument",

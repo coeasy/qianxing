@@ -148,7 +148,8 @@ fn order(seq: u64) -> qx_core::Order {
     use qx_core::{InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, Side, VenueId};
     Order {
         client_id: 100 + seq,
-        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture"),
         side: Side::Buy,
         qty: Quantity::from_i64(2),
         limit: Some(Price::from_i64(100)),

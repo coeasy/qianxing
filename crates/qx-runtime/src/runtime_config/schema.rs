@@ -3,6 +3,9 @@
 use super::*;
 
 pub const RUNTIME_SCHEMA_VERSION: u32 = 1;
+/// Default EventLog segment size used by newly initialized file-backed projects.
+/// Existing runtime configurations that omit the field remain on the legacy flat format.
+pub const DEFAULT_EVENT_LOG_SEGMENT_EVENTS: usize = 1_024;
 
 /// production 这一档的规范写法。
 ///
@@ -86,6 +89,13 @@ pub struct ApiRuntimeConfig {
     pub tls: Option<TlsPaths>,
     #[serde(default)]
     pub operators: BTreeMap<String, OperatorConfig>,
+    /// Explicit mTLS peers whose deployment snapshots this API may aggregate.
+    /// Empty preserves the single-node API surface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strategy_deployment_nodes: Vec<StrategyDeploymentNodeRuntimeConfig>,
+    /// Optional authenticated publisher for this process's local deployment observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_deployment_publisher: Option<StrategyDeploymentPublisherRuntimeConfig>,
     /// 本 API 服务拥有的历史行情 Provider。空数组保持旧配置行为；每个源必须显式声明能力与适配器配置。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data_providers: Vec<ApiDataProviderRuntimeConfig>,
@@ -107,6 +117,28 @@ pub struct ApiRuntimeConfig {
     /// 本机回环上的同源 BFF 控制台；`None` 表示这份部署不开控制台面（`qx-cli console` 拒绝启动）。
     #[serde(default)]
     pub console: Option<ConsoleRuntimeConfig>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyDeploymentNodeRuntimeConfig {
+    pub node_id: String,
+    /// Must name a uniquely registered ReadOnly mTLS operator.
+    pub operator_id: String,
+    pub freshness_window_ms: u64,
+}
+
+/// mTLS connection settings for publishing this node's observed deployments to an aggregator.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyDeploymentPublisherRuntimeConfig {
+    /// DNS name or IPv4 address used both for dialing and TLS server-name verification.
+    pub server_host: String,
+    pub server_port: u16,
+    pub server_ca: String,
+    pub client_certificate_chain: String,
+    pub client_private_key: String,
+    pub interval_ms: u64,
 }
 
 /// 配置化 API Provider 的能力声明和适配器来源。
@@ -176,13 +208,20 @@ pub struct StorageRuntimeConfig {
     /// PostgreSQL 单进程连接池大小；仅 Postgres backend 使用。
     #[serde(default = "default_postgres_pool_size")]
     pub postgres_pool_size: usize,
-    /// 可选的 EventLog 分段大小。未配置时使用兼容的单文件日志；配置后
-    /// 运行时应通过 `LiveEventPipeline::open_configured` 打开不可变分段日志。
+    /// 可选的 EventLog 分段大小。旧配置未配置时使用兼容的单文件日志；新初始化的文件后端项目
+    /// 默认使用 [`DEFAULT_EVENT_LOG_SEGMENT_EVENTS`] 条/段。配置后
+    /// 运行时通过 `LiveEventPipeline::open_configured` 打开不可变分段日志。
     ///
     /// 两种形状写的是互不相交的文件（`{name}.json` 与 `{name}.manifest.json` +
     /// `segments/`），改这个字段等于换一本账：同一 `storage.data_dir` 下留着另一本
     /// 历史时打开会当场拒绝，账户不会静默归零（`LiveEventPipeline` 的换后端闸门）。
-    /// 分段换来的是按段归档与摘要校验，不是更省的稳态写入。
+    /// 单文件每次写入都读/校验并重写整本 JSON，代价随历史长度增长；分段热写只重写
+    /// 当前活动段并提交小 manifest，运行中也可从已验证 manifest 增量读取新尾部。冷启动仍会
+    /// 全量验证历史，遇到旧格式、布局变化或摘要不符时回退全量重建。2026-11-07 Windows
+    /// 存储微基准（每段 1024 事件）测得 1k/8k/64k 历史下，单文件追加为
+    /// 5.86/21.02/155.47ms、同实例分段热写为 3.55/3.69/3.93ms。Release
+    /// `MarketQuote ingest + persist + Outbox + second-reader refresh` 对照为单文件
+    /// 12.93/55.11/390.15ms、分段 8.35/8.80/8.98ms；不含完整 Paper worker 或交易所 I/O。
     #[serde(default)]
     pub event_log_segment_events: Option<usize>,
 }

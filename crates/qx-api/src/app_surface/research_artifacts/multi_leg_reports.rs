@@ -98,7 +98,7 @@ pub(super) fn build(
     let order_markets = &report_facts.order_markets;
     let mut event_market_contexts = BTreeMap::<u64, Vec<Value>>::new();
     for row in &event_page.rows {
-        let instruments = multi_leg_event_instruments(row, &order_markets, &frames);
+        let instruments = multi_leg_event_instruments(row, order_markets, &frames);
         let Some(seq) = row.get("seq").and_then(Value::as_u64) else {
             continue;
         };

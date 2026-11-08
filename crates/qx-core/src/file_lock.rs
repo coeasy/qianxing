@@ -28,8 +28,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// 锁文件年龄达到该阈值即视为孤儿，允许接管。
 pub const DEFAULT_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
-/// 锁仍新鲜时最多等待多少次（默认 100 × 1ms ≈ 100ms，与存储信封历史形状一致）。
-pub const DEFAULT_LOCK_WAIT_ATTEMPTS: u32 = 100;
+/// 锁仍新鲜时最多等待多少次（默认 5,000 × 1ms ≈ 5s）。
+///
+/// 100ms 在低配 Linux runner 的真实双 worker 文件存储并发下不足：持锁方尚在完成原子
+/// EventLog/outbox 写入时，等待方就会把正常竞争上抛为永久失败。5s 仍明显短于 30s 孤儿阈值，
+/// 同时给磁盘抖动与线程调度留出足够空间。
+pub const DEFAULT_LOCK_WAIT_ATTEMPTS: u32 = 5_000;
 /// 每次等待之间睡多久。
 pub const DEFAULT_LOCK_WAIT_INTERVAL: Duration = Duration::from_millis(1);
 
@@ -456,6 +460,31 @@ mod tests {
         );
         drop(waiter);
         assert!(!path.exists(), "等待得到的锁同样由 Drop 收回");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Default lock acquisition must tolerate a live writer that runs longer than the historical
+    /// 100ms budget. This reproduces the contention window seen by two concurrent Paper workers.
+    #[test]
+    fn default_policy_waits_for_a_live_holder_past_the_historical_budget() {
+        let dir = temp_dir("default-budget");
+        let path = dir.join("brief.lock");
+        let held = FileLock::acquire(&path).expect("acquire initial lock");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(held);
+        });
+        let started = std::time::Instant::now();
+        let waiter = FileLock::acquire(&path);
+        let elapsed = started.elapsed();
+        releaser.join().expect("releaser panicked");
+        let waiter = waiter.expect("default policy must wait for a live critical section");
+        assert!(
+            elapsed >= Duration::from_millis(100) && elapsed < Duration::from_secs(5),
+            "the live lock should be observed until release and remain within the default budget: {elapsed:?}"
+        );
+        drop(waiter);
+        assert!(!path.exists(), "the waiter must release the acquired lock");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

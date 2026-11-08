@@ -41,7 +41,7 @@ fn temp_root(label: &str) -> PathBuf {
 fn broker(label: &str) -> (String, String, String, String) {
     let required = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("{key} must be set"));
     let prefix = required("QX_TEST_NATS_SUBJECT_PREFIX");
-    let stream_name_prefix = prefix.replace('.', "-").replace('_', "-");
+    let stream_name_prefix = prefix.replace(['.', '_'], "-");
     let stream = format!("{}-STREAM", stream_name_prefix.to_ascii_uppercase());
     let url = required("QX_TEST_NATS_URL");
     let consumer = format!("qx-acceptance-{label}");

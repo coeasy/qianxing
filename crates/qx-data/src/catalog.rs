@@ -22,10 +22,6 @@ pub enum DatasetComponentFormat {
     Arrow,
 }
 
-fn is_json_component_format(format: &DatasetComponentFormat) -> bool {
-    matches!(format, DatasetComponentFormat::Json)
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArrowFieldManifest {
     pub name: String,
@@ -108,7 +104,7 @@ impl DatasetManifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetComponentManifest {
     pub kind: String,
-    #[serde(default, skip_serializing_if = "is_json_component_format")]
+    #[serde(default)]
     pub format: DatasetComponentFormat,
     #[serde(flatten)]
     pub dataset: DatasetManifest,
@@ -147,6 +143,10 @@ pub struct DatasetBundleManifest {
     pub source: String,
     pub schema_version: u32,
     pub components: BTreeMap<String, DatasetComponentManifest>,
+    /// Metadata-bound market-data snapshots, keyed by the matching component kind.
+    /// Empty maps are omitted so legacy v1 bundle fingerprints remain stable.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub snapshots: BTreeMap<String, crate::DatasetSnapshotV1>,
 }
 
 impl DatasetBundleManifest {
@@ -161,6 +161,7 @@ impl DatasetBundleManifest {
             source: source.into(),
             schema_version: 1,
             components: BTreeMap::new(),
+            snapshots: BTreeMap::new(),
         }
     }
 
@@ -199,6 +200,33 @@ impl DatasetBundleManifest {
                 ));
             }
             component.validate()?;
+        }
+        for (kind, snapshot) in &self.snapshots {
+            let component = self.components.get(kind).ok_or_else(|| {
+                format!("dataset snapshot has no matching bundle component: {kind}")
+            })?;
+            snapshot.validate()?;
+            let expected_tier = match kind.as_str() {
+                "bars" => Some(crate::DatasetTier::Bar),
+                "l1" => Some(crate::DatasetTier::L1),
+                "l2" => Some(crate::DatasetTier::L2),
+                "l3" => Some(crate::DatasetTier::L3),
+                _ => None,
+            };
+            if expected_tier != Some(snapshot.manifest.tier)
+                || snapshot.manifest.dataset.dataset_id != component.dataset.dataset_id
+                || snapshot.manifest.dataset.version != component.dataset.version
+                || snapshot.manifest.dataset.source != component.dataset.source
+                || snapshot.manifest.dataset.fingerprint != component.dataset.fingerprint
+                || snapshot.manifest.dataset.schema_version != component.dataset.schema_version
+                || snapshot.manifest.dataset.start_timestamp != component.dataset.start_timestamp
+                || snapshot.manifest.dataset.end_timestamp != component.dataset.end_timestamp
+                || snapshot.manifest.quality_report.row_count != component.row_count
+            {
+                return Err(format!(
+                    "dataset snapshot identity does not match bundle component: {kind}"
+                ));
+            }
         }
         Ok(())
     }
@@ -355,6 +383,46 @@ mod tests {
             })
             .is_err());
         assert!(bundle.validate().is_err());
+    }
+
+    #[test]
+    fn json_component_format_is_preserved_and_canonicalized_on_round_trip() {
+        let manifest = component("bars", "bars.daily");
+        let encoded = serde_json::to_string(&manifest).unwrap();
+        assert!(encoded.contains("\"format\":\"json\""));
+
+        let restored: DatasetComponentManifest = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored, manifest);
+        assert_eq!(serde_json::to_string(&restored).unwrap(), encoded);
+    }
+
+    #[test]
+    fn legacy_json_component_without_format_is_canonicalized() {
+        let mut value = serde_json::to_value(component("bars", "bars.daily")).unwrap();
+        value.as_object_mut().unwrap().remove("format");
+        let restored: DatasetComponentManifest = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.format, DatasetComponentFormat::Json);
+        assert!(serde_json::to_string(&restored)
+            .unwrap()
+            .contains("\"format\":\"json\""));
+    }
+
+    #[test]
+    fn legacy_bundle_without_json_format_uses_the_canonical_fingerprint() {
+        let mut current = DatasetBundleManifest::new("bundle", "v1", "test");
+        current
+            .add_component(component("bars", "bars.daily"))
+            .unwrap();
+        let canonical_fingerprint = current.fingerprint().unwrap();
+
+        let mut legacy = serde_json::to_value(&current).unwrap();
+        legacy["components"]["bars"]
+            .as_object_mut()
+            .unwrap()
+            .remove("format");
+        let restored: DatasetBundleManifest = serde_json::from_value(legacy).unwrap();
+
+        assert_eq!(restored.fingerprint().unwrap(), canonical_fingerprint);
     }
 
     #[test]

@@ -68,15 +68,13 @@ impl BookLevel {
     }
 
     pub fn price_decimal(&self) -> ExactDecimal {
-        self.price_exact.unwrap_or_else(|| {
-            ExactDecimal::from_parts(self.price.raw(), 9).expect("legacy price scale is supported")
-        })
+        self.price_exact
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(self.price.raw()))
     }
 
     pub fn qty_decimal(&self) -> ExactDecimal {
-        self.qty_exact.unwrap_or_else(|| {
-            ExactDecimal::from_parts(self.qty.raw(), 9).expect("legacy quantity scale is supported")
-        })
+        self.qty_exact
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(self.qty.raw()))
     }
 
     pub(crate) fn write_identity(&self, hash: &mut qx_core::Fnv1a) {
@@ -443,7 +441,7 @@ impl OrderBookMatchingEngine {
                     .map_err(|error| format!("精确盘口预算订单不符合冻结交易规则: {error}"))?;
                 let reference = amounts
                     .market_reference_price
-                    .or_else(|| amounts.limit_price)
+                    .or(amounts.limit_price)
                     .ok_or_else(|| "精确盘口预算订单缺少冻结参考价".to_string())?;
                 let quantity = spec
                     .base_quantity_for_quote_budget(budget, reference)

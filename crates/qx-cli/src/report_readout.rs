@@ -85,8 +85,14 @@ pub(crate) fn summary_generation_note(summary: &Value) -> String {
         ("run_record", 5),
         ("ashare_analysis", 6),
         ("execution_attempts", 7),
+        ("metrics.max_drawdown_raw", 8),
     ] {
-        let declared = summary_block(summary, key).is_some();
+        let declared = if key.contains('.') {
+            let pointer = format!("/{}", key.replace('.', "/"));
+            summary.pointer(&pointer).is_some()
+        } else {
+            summary_block(summary, key).is_some()
+        };
         let expected = match summary_schema_version(summary) {
             Some(version) => version >= since,
             None => false,
@@ -118,9 +124,10 @@ pub(crate) fn report_readout_lines(summary: &Value, input_verified: &str) -> Vec
             render_number(summary_number(summary, "/fills"))
         ),
         format!(
-            "  return_bps={} max_drawdown_bps={} fees_raw={} turnover_raw={} final_equity_raw={}",
+            "  return_bps={} max_drawdown_bps={} max_drawdown_raw={} fees_raw={} turnover_raw={} final_equity_raw={}",
             render_number(summary_number(summary, "/metrics/return_bps")),
             render_number(summary_number(summary, "/metrics/max_drawdown_bps")),
+            render_number(summary_number(summary, "/metrics/max_drawdown_raw")),
             render_number(summary_number(summary, "/metrics/fees_raw")),
             render_number(summary_number(summary, "/metrics/turnover_raw")),
             render_number(summary_number(summary, "/metrics/final_equity_raw"))

@@ -1,0 +1,49 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+[stderr]
+   Compiling qx-guanxing v0.3.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+   Compiling qx-datastruct v0.3.0 (D:\aex_work\qianxing\crates\qx-datastruct)
+   Compiling qx-data v0.3.0 (D:\aex_work\qianxing\crates\qx-data)
+   Compiling qx-zhenlu v0.3.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+   Compiling libsqlite3-sys v0.30.1
+   Compiling hashlink v0.9.1
+   Compiling rusqlite v0.32.1
+   Compiling qx-spec v0.3.0 (D:\aex_work\qianxing\crates\qx-spec)
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling qx-execution v0.3.0 (D:\aex_work\qianxing\crates\qx-execution)
+   Compiling qx-provider v0.3.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-factor v0.3.0 (D:\aex_work\qianxing\crates\qx-factor)
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-xingban v0.3.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling alloca v0.4.0
+   Compiling qx-app v0.3.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling qx-genglu v0.3.0 (D:\aex_work\qianxing\crates\qx-genglu)
+   Compiling qx-adapter v0.3.0 (D:\aex_work\qianxing\crates\qx-adapter)
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+   Compiling qx-api v0.3.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling walkdir v2.5.0
+   Compiling ciborium v0.2.2
+   Compiling qx-orchestrator v0.3.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling tinytemplate v1.2.1
+   Compiling anes v0.1.6
+   Compiling oorandom v11.1.5
+   Compiling criterion v0.8.2
+   Compiling qx-service v0.3.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling qx-plugin v0.3.0 (D:\aex_work\qianxing\crates\qx-plugin)
+error[E0451]: fields `log_name`, `from_seq` and `through_seq` of struct `strategy_worker::execution_updates::CursorRange` are private
+   --> crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:586:17
+    |
+585 |             &[execution_updates::CursorRange {
+    |               ------------------------------ in this type
+586 |                 log_name: log_name.clone(),
+    |                 ^^^^^^^^ private field
+587 |                 from_seq: 0,
+    |                 ^^^^^^^^ private field
+588 |                 through_seq: 1,
+    |                 ^^^^^^^^^^^ private field
+
+For more information about this error, try `rustc --explain E0451`.
+error: could not compile `qx-cli` (bin "qx-cli" test) due to 1 previous error

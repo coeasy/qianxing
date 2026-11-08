@@ -1,8 +1,8 @@
 // 牵星 Qianxing · 控制台（M1' 快照 + M2' 实时事件 + M3' 控制面）
 //
 // 读面：读取 qx-api 的只读端点，并用 WebSocket 接收增量事件。
-// 写面：**只有一条**——`POST /control/commands`（控制面受理入口）。它不发送订单：
-// 下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场，页面不直连任何下单端点。
+// 写面只提交到受认证的控制命令与策略部署入口；控制命令本身不发送订单：
+// 下单要走控制面受理 → 判定执行者 → 走到终态退场，页面不直连任何下单端点。
 //
 // 下面这份 API_PATHS 是控制台与后端的唯一接线表：门禁 web_console_check 会
 // 逐条核对这里的每个路径都真的出现在 qx-api 的路由表里，"前端调用了一个后端
@@ -20,6 +20,9 @@ const API_PATHS = {
   ledger: "/account/ledger",
   reconcileReports: "/reconcile/reports",
   schedulerRuns: "/scheduler/runs",
+  strategyDeployments: "/strategies/deployments",
+  strategyDeploymentRevisions: "/strategies/deployments/revisions",
+  strategyDeploymentOperations: "/strategies/deployments/operations",
   controlAudit: "/control/audit",
   controlCommands: "/control/commands",
   productCapabilityCatalog: "/app/capabilities",
@@ -89,6 +92,7 @@ const state = {
   base: "",
   timer: null,
   refreshInFlight: false,
+  strategyOperationId: null,
   ws: null,
   wsAlive: false,
   // 连接拓扑：同源 BFF（页面就是这一层发的）与跨源直连 qx-api 是两条不同的路。
@@ -250,11 +254,11 @@ function asNumber(value) {
 // 反方向也核——app.js 里出现的每个 `*_raw` 都必须在这份名册里。
 // 于是"后端改了字段名"与"前端凭空读一列"都在门禁当场变红，而不是等用户看到一列永久的 —。
 const RESPONSE_FIELDS = {
-  snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
+  snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
   snapshotHeader: ["snapshot_id", "account_id", "portfolio_id", "venue_id", "trading_day", "as_of", "event_seq", "state_hash"],
   orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status", "exact_amounts"],
   positionRow: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw", "exact_amounts"],
-  balances: ["cash_raw", "equity_raw", "available_raw", "margin_raw"],
+  balances: ["cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw"],
   eventRow: ["seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata"],
   envelope: ["schema_version", "kind", "tenant_id", "run_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "cursor", "state_hash", "source", "lineage", "data"],
 };
@@ -542,9 +546,20 @@ async function refreshBalances() {
   const cash = b.cash_raw && typeof b.cash_raw === "object" && !Array.isArray(b.cash_raw)
     ? Object.entries(b.cash_raw).map(([k, v]) => `${k}=${money(v)}`).join("  ") || "（无现金记录）"
     : money(b.cash_raw);
+  const diagnostic = b.equity_diagnostic;
+  const equityReasonLabels = {
+    missing_mark_prices: "持仓缺少标记价",
+    exchange_balance_includes_spot_positions: "交易所余额已包含现货持仓，避免重复计值",
+    unsupported_portfolio_valuation: "组合暂不支持此估值口径",
+    arithmetic_overflow: "权益计算溢出",
+  };
+  const equityReason = diagnostic?.reason
+    ? `${equityReasonLabels[diagnostic.reason] ?? diagnostic.reason}${diagnostic.missing_mark_instruments?.length ? `：${diagnostic.missing_mark_instruments.join("、")}` : ""}`
+    : "—";
   rows($("balances-rows"), [
     ["cash_raw", cash],
     ["equity_raw", money(b.equity_raw)],
+    ["权益不可用原因", equityReason],
     ["available_raw", money(b.available_raw)],
     ["margin_raw", money(b.margin_raw)],
     ["字段核对", shapeText(missingFields("balances", b))],
@@ -675,11 +690,12 @@ async function refreshTables() {
 }
 
 async function refreshReadModels() {
-  const [ledger, recon, sched, audit] = await Promise.all([
+  const [ledger, recon, sched, audit, deployments] = await Promise.all([
     getJson(API_PATHS.ledger),
     getJson(API_PATHS.reconcileReports),
     getJson(API_PATHS.schedulerRuns),
     getJson(API_PATHS.controlAudit),
+    getJson(API_PATHS.strategyDeployments),
   ]);
   const count = (r) => (Array.isArray(r.body) ? `${r.body.length} 条` : `HTTP ${r.status}`);
   rows($("readmodels-rows"), [
@@ -689,6 +705,40 @@ async function refreshReadModels() {
     ["/control/audit", count(audit)],
   ]);
   // 控制面②③两阶段从这份审计里推进：受理之后命令走到哪一步，这里看得见。
+  const deploymentRows = [];
+  if (!deployments.ok || !Array.isArray(deployments.body)) {
+    deploymentRows.push(["状态", `HTTP ${deployments.status}: ${errorOf(deployments.body) || "部署观察不可用"}`]);
+  } else if (!deployments.body.length) {
+    deploymentRows.push(["状态", "未配置启用的策略 worker"]);
+  } else {
+    for (const deployment of deployments.body) {
+      deploymentRows.push([
+        String(deployment.worker_id),
+        `${deployment.state}; desired_revision=${deployment.desired_revision ?? "—"}; desired_running=${deployment.desired_running ?? "未声明"}; observed=${tsText(deployment.observed_at_ms)}; trading_enabled=${deployment.trading_enabled === null ? "未评估" : deployment.trading_enabled}`,
+      ]);
+      deploymentRows.push([`${deployment.worker_id} / 阻塞原因`,
+        Array.isArray(deployment.blocking_reasons) ? deployment.blocking_reasons.join(", ") : "响应缺少阻塞原因"]);
+      const reconciliation = deployment.reconciliation;
+      if (reconciliation) {
+        deploymentRows.push([`${deployment.worker_id} / 账户对账`,
+          `${reconciliation.state}; fresh=${reconciliation.fresh_report_count}/${reconciliation.matching_report_count}; age=${reconciliation.freshest_age_ms === null ? "—" : `${reconciliation.freshest_age_ms}ms`}`]);
+        if (Array.isArray(reconciliation.blocking_reasons) && reconciliation.blocking_reasons.length) {
+          deploymentRows.push([`${deployment.worker_id} / 对账阻塞`, reconciliation.blocking_reasons.join(", ")]);
+        }
+      }
+      if (deployment.latest_operation) {
+        const operation = deployment.latest_operation;
+        deploymentRows.push([`${deployment.worker_id} / 最新操作`, `${operation.action} · ${operation.state} · ${operation.operation_id}`]);
+        if (operation.error_message) deploymentRows.push([`${deployment.worker_id} / 操作错误`, `${operation.error_code || "error"}: ${operation.error_message}`]);
+      }
+      if (Array.isArray(deployment.operation_history)) {
+        for (const operation of deployment.operation_history.slice(0, 5)) {
+          deploymentRows.push([`${deployment.worker_id} / 历史操作`, `${operation.action} · ${operation.state} · ${operation.operation_id}`]);
+        }
+      }
+    }
+  }
+  rows($("strategy-deployments-rows"), deploymentRows);
   advancePhases(audit.body);
   renderControl();
 }
@@ -711,10 +761,112 @@ async function postJsonText(path, body) {
   if (csrf) headers[CSRF_HEADER_NAME] = csrf;
   const response = await fetchWithTimeout(state.base + path, {
     method: "POST",
+    credentials: "same-origin",
     headers,
     body,
   });
   return { status: response.status, ok: response.ok, body: await readJson(response) };
+}
+
+function newRequestId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function submitStrategyRevision(event) {
+  event.preventDefault();
+  const output = $("strategy-revision-output");
+  const form = $("strategy-revision-form");
+  const button = form.querySelector('button[type="submit"]');
+  if (!state.base) { output.textContent = "请先连接 API"; return; }
+  if (!isLoopbackControlTarget(state.base)) { renderLocalOnlyRejected(); return; }
+  let config;
+  try {
+    config = JSON.parse($("deployment-runtime-config").value);
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("RuntimeConfig 顶层必须是 JSON 对象");
+  } catch (error) {
+    output.textContent = `RuntimeConfig 无效：${error.message}`;
+    return;
+  }
+  const payload = {
+    worker_id: $("deployment-worker-id").value.trim(),
+    revision: Number($("deployment-revision").value),
+    bundle_sha256: $("deployment-bundle-sha256").value.trim().toLowerCase(),
+    plan_sha256: $("deployment-plan-sha256").value.trim().toLowerCase(),
+    runtime_config_json: JSON.stringify(config),
+    desired_running: $("deployment-desired-running").checked,
+  };
+  button.disabled = true;
+  output.textContent = "正在提交不可变修订…";
+  try {
+    const response = await postJson(API_PATHS.strategyDeploymentRevisions, payload);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok) {
+      $("operation-worker-id").value = payload.worker_id;
+      $("operation-target-revision").value = String(payload.revision);
+      void refreshReadModels();
+    }
+  } catch (error) {
+    output.textContent = `提交失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitStrategyDeploymentOperation(event) {
+  event.preventDefault();
+  const output = $("strategy-operation-output");
+  const form = $("strategy-operation-form");
+  const button = form.querySelector('button[type="submit"]');
+  if (!state.base) { output.textContent = "请先连接 API"; return; }
+  if (!isLoopbackControlTarget(state.base)) { renderLocalOnlyRejected(); return; }
+  const operationId = newRequestId();
+  state.strategyOperationId = operationId;
+  const payload = {
+    operation_id: operationId,
+    idempotency_key: newRequestId(),
+    worker_id: $("operation-worker-id").value.trim(),
+    action: $("deployment-action").value,
+    target_revision: Number($("operation-target-revision").value),
+  };
+  button.disabled = true;
+  output.textContent = "正在提交部署操作…";
+  try {
+    const response = await postJson(API_PATHS.strategyDeploymentOperations, payload);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok && response.body?.state === "accepted") {
+      void pollStrategyDeploymentOperation(operationId, 15);
+    } else if (response.ok) {
+      void refreshReadModels();
+    }
+  } catch (error) {
+    output.textContent = `提交失败。操作 ID：${operationId}。可用“查询操作状态”确认是否已受理。\n${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshStrategyDeploymentOperation() {
+  const operationId = state.strategyOperationId;
+  const output = $("strategy-operation-output");
+  if (!state.base) { output.textContent = "请先连接 API"; return null; }
+  if (!operationId) { output.textContent = "还没有本页提交的 operation_id"; return null; }
+  try {
+    const response = await getJson(`${API_PATHS.strategyDeploymentOperations}?operation_id=${encodeURIComponent(operationId)}`);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok && response.body?.state !== "accepted") void refreshReadModels();
+    return response;
+  } catch (error) {
+    output.textContent = `查询失败：${error.message}`;
+    return null;
+  }
+}
+
+async function pollStrategyDeploymentOperation(operationId, remaining) {
+  if (remaining <= 0 || state.strategyOperationId !== operationId) return;
+  const response = await refreshStrategyDeploymentOperation();
+  if (!response?.ok || response.body?.state !== "accepted") return;
+  window.setTimeout(() => { void pollStrategyDeploymentOperation(operationId, remaining - 1); }, 2000);
 }
 
 async function loadProductCapabilityCatalog() {
@@ -3415,7 +3567,7 @@ function advancePhases(audit) {
 function renderControl() {
   const container = $("control-rows");
   if (!state.lastCommand) {
-    rows(container, [["状态", "未提交（写面只有 POST /control/commands）"]]);
+    rows(container, [["状态", "未提交（需要受认证的 API 操作权限）"]]);
     return;
   }
   const pairs = state.lastCommand.phases.map((entry) => [entry.phase, entry.detail]);
@@ -3802,6 +3954,9 @@ window.addEventListener("DOMContentLoaded", () => {
     state.activitySelectionDirty = true;
   });
   $("control-form").addEventListener("submit", submitCommand);
+  $("strategy-revision-form").addEventListener("submit", submitStrategyRevision);
+  $("strategy-operation-form").addEventListener("submit", submitStrategyDeploymentOperation);
+  $("strategy-operation-refresh").addEventListener("click", () => { void refreshStrategyDeploymentOperation(); });
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
   $("product-capability-load").addEventListener("click", loadProductCapabilityCatalog);

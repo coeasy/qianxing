@@ -3,6 +3,8 @@
 //! This crate depends on runtime contracts and service adapters, and must never depend on a
 //! facade such as `qx-cli`.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod api_host;
 pub mod api_read_model;
 pub mod backtest_bindings;
@@ -40,3 +42,8 @@ pub mod worker_config;
 pub mod worker_host;
 pub mod worker_market_spec;
 pub mod worker_metrics;
+
+pub mod strategy_deployment_node_store;
+pub mod strategy_deployment_publisher;
+pub mod strategy_deployment_store;
+pub mod strategy_deployments;

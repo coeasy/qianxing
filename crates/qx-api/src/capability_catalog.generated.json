@@ -3,12 +3,12 @@
   "kind": "qianxing-capability-catalog",
   "source_updated_at": {
     "matrix": "2026-10-24",
-    "maturity": "2026-10-27",
+    "maturity": "2026-11-08",
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "1c31d9805e70a38ed9b3aa20cda363ffdab9c8015e320434eb2b060c172d3fc3",
-    "maturity/capabilities.yaml": "4e5cce6e405178c9cb1a548edd75fb1cc9fd4bdffaa48436dc82e23beaa04a4c",
+    "maturity/capability-matrix.yaml": "d15fca39784f6b5c2d0c7e4ae310e79463db557429b0e363e29b4c000ae2f035",
+    "maturity/capabilities.yaml": "84864f5a41724b2ddcc7b5fcae7543f5dd7b07645af39b81c8dad7627a140108",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -90,7 +90,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 111,
+      "evidence_path_count": 118,
       "limitation_count": 1
     },
     {
@@ -110,7 +110,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 138,
+      "evidence_path_count": 140,
       "limitation_count": 8
     },
     {
@@ -165,7 +165,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 96,
+      "evidence_path_count": 109,
       "limitation_count": 3
     },
     {
@@ -185,7 +185,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 227,
+      "evidence_path_count": 240,
       "limitation_count": 10
     },
     {
@@ -203,7 +203,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 80,
+      "evidence_path_count": 83,
       "limitation_count": 1
     },
     {
@@ -224,7 +224,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 90,
+      "evidence_path_count": 93,
       "limitation_count": 2
     },
     {
@@ -253,7 +253,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 107,
+      "evidence_path_count": 110,
       "limitation_count": 3
     },
     {
@@ -282,7 +282,7 @@
       ],
       "execution_scope_count": 1,
       "account_query_scope_count": 1,
-      "evidence_path_count": 14,
+      "evidence_path_count": 15,
       "limitation_count": 3
     },
     {
@@ -312,7 +312,7 @@
       ],
       "execution_scope_count": 8,
       "account_query_scope_count": 6,
-      "evidence_path_count": 31,
+      "evidence_path_count": 34,
       "limitation_count": 4
     },
     {
@@ -334,7 +334,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 40,
+      "evidence_path_count": 43,
       "limitation_count": 2
     },
     {
@@ -356,7 +356,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 58,
+      "evidence_path_count": 60,
       "limitation_count": 1
     },
     {
@@ -474,14 +474,15 @@
             "crates/qx-core/src/sourcing.rs replay is the single re-drive kernel (per-event append_checked, re-applied LedgerApplied facts, whole-log validate) and replay_facts/rebuild_ledger/verify are only its projections (V11 Q62)",
             "crates/qx-core/src/sourcing.rs verify(events, &Ledger) compares the replayed ledger against the run ledger, so a mutated account with a matching digest still fails (V11 Q62)",
             "tools/check_architecture.py replay_kernel_check holds 11 items over that kernel, both engine exits, the artifact choke point, the depth-chain causality slots and the named cases (V11 Q62)",
+            "crates/qx-xingban/src/report_validation.rs is the shared final report-return boundary for Bar and order-book engines; duplicate-sequence and ledger-without-fact cases prove replay failures prevent report return",
             "tools/check_architecture.py kernel_timeline_check ensures the retired independent Python reference model is absent and its archive notice identifies Rust implementation/tests as the authority (WP-7/D17, 2026-10-20)",
             "crates/qx-protocol/src/lib.rs write_scalar_money tags presence before the value, so an uncomputed money field and a computed zero are two different state_hash inputs (V11 Q67)",
             "crates/qx-protocol/tests/snapshot_single_source/optional_money.rs uncomputed_money_is_not_the_same_state_as_computed_zero walks all eight account money scalars through hash, seal/validate, both wire formats and both diff directions; the eighth one is equity_raw, added to OPTIONAL_MONEY_FIELDS by V11 Q70 (V11 Q67/Q70)",
             "crates/qx-protocol/src/lib.rs AccountSnapshot.equity_raw is Option<i128> and scalar_money_raw reads all eight fields straight, so no Some(...)/unwrap_or inside that fn can fold an uncomputed amount back into a legal zero (V11 Q70)",
-            "crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_SCHEMA_VERSION is the current version and from_json/from_wire_json accept only the declared v1..=v3 range; validate checks self-consistency, while explicit version gates reject unknown documents (V12 R2, updated 2026-10-24)",
+            "crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_SCHEMA_VERSION is the current version and from_json/from_wire_json accept only the declared v1..=v4 range; validate checks self-consistency, while explicit version gates reject unknown documents (V12 R2, updated 2026-11-08)",
             "crates/qx-protocol/src/tests.rs covers unknown versions, header normalization, and hash behavior; snapshot_schema_contract.rs proves old v1/v2 hashes still load and current v3 includes exact cash/position amounts (2026-10-24)",
             "tools/check_architecture.py snapshot_contract_version_check gates the supported range, the two entry points, header normalization and version cases",
-            "crates/qx-protocol/src/lib.rs publishes schemas/account-snapshot-v3.json from /schema/account-snapshot-v3 and retains schemas/account-snapshot-v1.json and v2 for legacy reads; Python accepts all three versions",
+            "crates/qx-protocol/src/lib.rs publishes schemas/account-snapshot-v4.json from /schema/account-snapshot-v4 and retains v1-v3 for legacy reads; Python accepts all four versions, and v4 records the unavailable-equity reason plus the sorted instruments missing mark prices",
             "crates/qx-protocol/src/wire.rs fold_stable_order_row is the only read-side fold from the hand-written stable order row (display instrument, numeric side/status codes) back to the struct's serde shape, and side_code/order_status_code/ALL_SIDES/ALL_ORDER_STATUSES live only there, so an unknown code is refused instead of guessed as Buy (V12 TX5)",
             "crates/qx-protocol/src/tests.rs rows_keyed_by_integer_still_produce_and_recover_valid_json puts an order/fill/transfer row into a snapshot, reads the whole document back through from_json, and refuses a tampered side=9 / status=99 (V12 TX5)",
             "tools/check_architecture.py snapshot_row_wire_check holds 6 items over the three quoted row keys, the single fold call site, the code table being absent from the crate root and present once in wire.rs, the read-side ban on unwrap_or and .or(Some, and the named cases (V12 TX5)",
@@ -492,7 +493,7 @@
             "crates/qx-zhenlu/src/lib.rs",
             "maturity/evidence/checked-financial-arithmetic-2026-10-27.json"
           ],
-          "limitations_count": 2
+          "limitations_count": 1
         },
         {
           "id": "event_fact_metadata",
@@ -557,9 +558,15 @@
             "crates/qx-runtime/src/pipeline/backend_switch.rs 把「换 EventLog 后端」关成 fail-closed：单文件写 {name}.json、分段写 {name}.manifest.json + segments/，两套形状在同一 storage.root 下互不相交，而三条打开入口原先把「自己那份文件不在」一律当成首次启动（logs/s406_pass18_backend_switch_probe_before.txt 实测读到 0 条事实、现金 0、下一条 append 拿 seq 0，同一目录并存 5 条与 1 条两本账）。闸门只看当前配置没选中的那套文件后端有没有非空历史，空占位文件不算历史，报错点名被留下的那本历史并写出两条出路（logs/s407_pass18_backend_switch_probe_after.txt）(V13 R2 第十八遍",
             "crates/qx-runtime/tests/event_log_backend_switch.rs 六条用例全是行为：两个方向都拒绝且不动磁盘（拒绝后旧历史摘要逐字可读、不建出 segments/ 目录）、read_face_open_is_refused_too 要求读面同样拒绝、the_gate_does_not_fire_on_a_fresh_root_or_an_unrelated_log_name 守住首次启动与同目录别的日志名、the_database_gate_sees_both_file_backends 要求数据库那侧看得见两套文件形状、same_backend_open_still_recovers_the_crash_gap 确认拒绝路径没把恢复逻辑一起带走 (V13 R2 第十八遍",
             "crates/qx-cli/tests/unit/account_event_log_identity.rs 的 switching_event_log_backend_refuses_to_start_an_account_from_an_empty_book 走真实编排链：只改 storage.event_log_segment_events 一个字段即被拒，换成 storage.backend: sqlite 同样被拒且报错点名 .json 而不是先报 feature 未启用（闸门与 feature 检查的先后由此钉住）；调用点现由 qx-service::pipeline::PipelineStorage 提供，CLI runtime_wiring 只保留兼容委托 (V13 R2 第十八遍 #226)",
-            "crates/qx-runtime/src/runtime_config/schema.rs 的 event_log_segment_events 文档写出「改这个字段等于换一本账、留史会当场拒绝、分段换来的是归档抓手与摘要校验而不是更省的稳态写入」，deploy/README.md 的「换 EventLog 后端会被当场拒绝」一节给出报错原文与两条出路 (V13 R2 第十八遍"
+            "crates/qx-runtime/src/runtime_config/schema.rs documents the compatibility switch between flat and segmented EventLog storage, its fail-closed history guard, and the measured warm-append versus reopen costs; deploy/README.md documents the history-preserving switch requirement",
+            "crates/qx-api/src/read_scope.rs classifies /account/ledger and /reconcile/reports as MODEL_FILTER_ROUTES with per-route accepted account keys; crates/qx-api/src/lib.rs applies those filters to every returned row; crates/qx-cli/tests/unit/api_read_route_query_contract.rs model_filter_routes_honor_the_account_scope covers both accounts, while the venue-only and invalid-key cases verify each route accepts only keys represented by its model (V13 R31 follow-up)",
+            "`crates/qx-core/src/identity.rs` makes the InstrumentId symbol private; `new`, `parse`, and Serde `Deserialize` use the same ASCII grammar and length cap, with path-shaped constructor/deserialization cases. `crates/qx-strategy/src/lib.rs` validates bare and account-qualified `account_id|instrument` context keys by parsing the instrument component. A compatibility scan of 19 JSON identities in the deploy and maturity directories found no rejected symbols.",
+            "crates/qx-service/src/configured_backends.rs implements JobQueueBackend for ConfiguredJobQueue and routes production convenience methods through the shared contract; behavioral trait-object regression test covers file backend dispatch",
+            "maturity/evidence/rust-event-log-file-backend-append-comparison-2026-11-07.json flat-versus-segmented append storage microbenchmark with hardware, Rust version and source SHA-256 fingerprints",
+            "maturity/evidence/rust-event-log-pipeline-tail-comparison-2026-11-07.json Release pipeline comparison evidence for MarketQuote ingest, file persistence, Outbox append, and a second pipeline refresh",
+            "crates/qx-storage/src/segmented_event_log.rs implements verified v2 manifest tail reads; crates/qx-storage/src/lib.rs tests suffix digest verification and fallback; qx-runtime tests prove a second segmented pipeline refreshes through tail_appends without rebuilds"
           ],
-          "limitations_count": 21
+          "limitations_count": 11
         },
         {
           "id": "canonical_order_risk_decision",
@@ -611,12 +618,12 @@
             "schemas/evidence-bundle-v3.json",
             "schemas/schema-registry-v1.json",
             "crates/qx-cli/src/plan_commands.rs verify_foundation_specs 在 ecosystem/all 自检里跑「合法夹具通过 + 坏夹具被拒」",
-            "crates/qx-cli/src/plan_commands.rs 的 plan_readout 与 crates/qx-cli/src/plan_args.rs 的 PlanArgs：plan <kind> <file> [--json] 是七类对象的用户级只读入口，复用同一份 describe 漏斗，坏载荷/缺版本号当场退 2（help / clap 表 / 派发三方一致，门禁 cli_help_surface_check 钉住）",
+            "crates/qx-cli/src/plan_commands.rs 的 plan_readout 与 plan_template：九类对象复用 describe 严格读口；experiment/capability/schema-registry 可用 --template 创建经过 describe 校验的占位模板，create_new 拒绝覆盖，CapabilityManifest 模板固定 L0 且测试/审批字段全为 false；EvidenceBundle/run-evidence 只由 report/evidence 真实运行与验收入口生成，拒绝伪造模板",
             "crates/qx-spec/src/tests.rs 十条用例：七类读入、指纹稳定、未知类型拒绝、逐类硬约束与未知字段拒绝",
             "tools/check_architecture.py foundation_specs_check 九颗：Schema 与常量同源 / 对象各一处定义 / qx-spec 是成员且被 qx-cli 依赖 / describe 派发臂齐全 / ProjectManifest init 接线 / RunRecord 写读与篡改拒绝 / 能力清单证据闸门 / DatasetManifestV2 只读诊断入口 / 七类对象有使用者可达的读入入口",
             "maturity/baseline.yaml 冻结七类对象的 schema 版本常量"
           ],
-          "limitations_count": 2
+          "limitations_count": 1
         },
         {
           "id": "contract_registry_layer",
@@ -739,7 +746,7 @@
             "python/qianxing_bridge/__init__.py load_account_snapshot accepts declared v1/v2 account snapshots and checks header version consistency; python/tests/test_bridge.py exercises both supported versions, unknown versions, and v1 settlement-currency rejection",
             "python/tests/test_ashare.py 两条日历用例：共用夹具的摘要与 .fingerprint 全等、夹具是 to_json 的定点，且摘要只随 calendar_id/trading_days/sessions 动而 source 改了不动 (V11 T2)",
             "tools/build_python_wheel.sh and tools/build_python_wheel.ps1",
-            ".github/workflows/release.yml Python 3.10-3.13 wheel builds and clean-install backtest checks on Linux, macOS, and Windows",
+            ".github/workflows/python-wheels.yml Python 3.10-3.13 wheel builds and clean-install backtest checks on Linux, macOS, and Windows",
             "schemas/strategy_api_v1.schema.json now states the same field list the Rust contract writes and requires, refuses decimal-string money, and carries margin_mode/position_mode/leverage; tools/check_architecture.py does not own that alignment, crates/qx-runtime/tests/strategy_contract_schema.rs does (V12 R4-k)",
             "C++ 插件通过稳定 vtable 外的可选 `qx_strategy_get_order_policy_v1` 传递完整 `margin_mode` / `position_mode` / `leverage` 策略字段；`schemas/c-strategy-order-policy-v1.json` 固定载荷，`cpp/examples/momentum_strategy.cpp` 发出字段，`crates/qx-strategy/tests/cpp_plugin_host.rs` 通过实际动态库加载逐字段断言 Rust 宿主读回（V12 R4-k，2026-10-27 补证）",
             "crates/qx-runtime/tests/strategy_contract_schema.rs four cases: the schema declares exactly the fields Rust writes and requires, unknown keys are rejected rather than dropped, fixed-point fields travel as JSON integers only, and the const schema version is the version the runtime accepts (V12 R4-k)",
@@ -755,9 +762,10 @@
             "python/pyproject.toml 的 [project].dependencies 收成为空列表，`ccxt>=4.4.0` 与 `tzdata; sys_platform=='win32'` 两颗从强制依赖降为可选 extras（python/qianxing_ccxt/__init__.py 的 _load_ccxt 缺 ccxt 时、python/qianxing_ashare/__init__.py 的 _shanghai 缺 tzdata 时各自在调用点抛点名 extras 的可执行提示），于是干净 venv 里 `pip install --no-index` 不带 --no-deps 也能离线装成 wheel；tools/check_architecture.py wheel_optional_dependency_check 三条钉住「强制清单不含 ccxt/tzdata + 七档 extras 齐 + qianxing-bridge[<name>] 引用逐个被 extras 覆盖」，python/tests/test_packaging_contract.py 三条用例从 Python 侧对照，logs/s804_pass34_offline_install.txt 实测离线安装退 0、四包 import、缺 ccxt 回 UNSUPPORTED、缺 tzdata 抛 AshareProviderError（V13 R2 第三十二遍",
             "当轮重打的 wheel 装进不带任何可选依赖的干净 uv venv 后，发布包自带的 `python -m qianxing_ashare fetch --provider akshare` 抛出的 AshareProviderError 逐字节是 python/qianxing_ashare/__init__.py 里",
             "未过时的独立 exe 就地跑通核心链路（判据 `find crates -name '*.rs' -newer target/release/qx-cli.exe` 得 0、`deploy/` 下最新 JSON 早于它，本轮只动 Python/门禁/文档），产物只落临时目录：`qx-cli quickstart` 五步全过、BTC `backtest` fills=1；A 股 `qx-cli backtest deploy/qianxing.runtime.ashare.example.json deploy/qianxing.ashare.bar-frame.example.json deploy/qianxing.ashare.spot.spec.json` fills=1；重打后 wheel 内 _qianxing_native.pyd 的 md5 仍 ≡ target/release 那份（#194）（V13 R2 第三十二遍 ③",
-            "crates/qx-strategy/src/contract.rs 与 python/qianxing_bridge/strategy.py 的输出侧校验从两句折叠诊断（Rust「StrategyContractOutput 与输入身份、标的或有效期不一致」、Python「strategy output identity or expiry does not match input」）拆成一臂一句：schema_version / request_id / strategy_id / signal_id / instrument 与输入不一致 / instrument 非法（Python 侧另有点名空串）/ expires_at 地板 各说各话，OrderIntent 侧仍是一条但点名到「非法或重复」，两侧各 8 句且去重后仍 8 句；最需要点名的「worker 已放行、宿主才挡下」那条跨语言分叉——策略返回 dict 时漏写 schema_version——此前恰好被念成「身份不一致」，作者按那句话去查 request_id 永远查不出问题；版本号一律由宿主解码入口裁决：Rust from_json_for、Python from_dict 读回后都调 validate_for，且 Python 缺键记 0 而不采纳自家 SCHEMA_VERSION 默认；过期地板两侧同一个式子（非 0 才生效、不早于输入 as_of）；判据 tools/check_architecture.py strategy_output_arm_diagnostics_check 八个读数（每臂一句 × 两侧、首臂点名 schema_version × 两侧、折叠句不许回来、两侧地板同式、解码入口裁决版本、跨语言用例在位），回归用例在 crates/qx-runtime/src/strategy_contract/tests.rs （六臂各说各话 + 解码入口拒别家版本号）与 python/tests/test_strategy_contract.py （同六臂 + 空 instrument + 漏写版本号，折进既有方法、用例总数不变）（V13 R7 收口 · 台账"
+            "crates/qx-strategy/src/contract.rs 与 python/qianxing_bridge/strategy.py 的输出侧校验从两句折叠诊断（Rust「StrategyContractOutput 与输入身份、标的或有效期不一致」、Python「strategy output identity or expiry does not match input」）拆成一臂一句：schema_version / request_id / strategy_id / signal_id / instrument 与输入不一致 / instrument 非法（Python 侧另有点名空串）/ expires_at 地板 各说各话，OrderIntent 侧仍是一条但点名到「非法或重复」，两侧各 8 句且去重后仍 8 句；最需要点名的「worker 已放行、宿主才挡下」那条跨语言分叉——策略返回 dict 时漏写 schema_version——此前恰好被念成「身份不一致」，作者按那句话去查 request_id 永远查不出问题；版本号一律由宿主解码入口裁决：Rust from_json_for、Python from_dict 读回后都调 validate_for，且 Python 缺键记 0 而不采纳自家 SCHEMA_VERSION 默认；过期地板两侧同一个式子（非 0 才生效、不早于输入 as_of）；判据 tools/check_architecture.py strategy_output_arm_diagnostics_check 八个读数（每臂一句 × 两侧、首臂点名 schema_version × 两侧、折叠句不许回来、两侧地板同式、解码入口裁决版本、跨语言用例在位），回归用例在 crates/qx-runtime/src/strategy_contract/tests.rs （六臂各说各话 + 解码入口拒别家版本号）与 python/tests/test_strategy_contract.py （同六臂 + 空 instrument + 漏写版本号，折进既有方法、用例总数不变）（V13 R7 收口 · 台账",
+            "crates/qx-orchestrator/src/strategy_worker.rs + tests.rs: a deliberately non-consuming SharedMemoryJson worker is given a full input ring; request returns the timeout diagnostic within budget and the child process is killed (V13 R8-C follow-up)"
           ],
-          "limitations_count": 4
+          "limitations_count": 3
         },
         {
           "id": "python_sdk_facade",
@@ -796,10 +804,11 @@
             "maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json records shared normalized Bar warmup, order/fill, account/position, exact OrderBook, Timer, error, stop and unsupported-input rows consumed by Rust Strategy, Python file-loaded STRATEGY_CLASS/BaseStrategy Runtime adapter, and a dynamically loaded C ABI/C++ example plugin; Python Runtime checkpoint tests cover Bar cursor, warmup, account EventLog cursor replay, and mutation-before-error rollback/retry from the last committed checkpoint; Rust strategy worker tests cover cursor/checkpoint atomic persistence, write-failure preservation, temporary-file cleanup, per-process queue owner isolation and fresh-time lease validation; C ABI durable state recovery uses paired optional snapshot/restore exports bound to the verified library digest, and external JSONL workers use shared checkpoint envelopes bound to executable artifact SHA-256, while third-party process conformance, complete per-hook capability refusal and full all-host-pair coverage remain open W3 work; §13.41 module-function checkpoint recovery, §13.42 fake E2B/Microsandbox/OpenSandbox checkpoint rotation, §13.43 C ABI state recovery, §13.44 external-process recovery, and §13.45 fake SDK remote Docker llm-sandbox policy/lifecycle coverage are recorded in the same evidence, alongside the prior 553/10 and latest 560/10 Python suites, the 10/10 llm-sandbox targeted run, and the 445+9 fresh-binary qx-cli suite diagnostic",
             "python/qianxing_bridge/strategy.py normalizes ASCII enum spelling when StrategyIntent is constructed/from_dict; python/tests/test_strategy_contract.py covers uppercase round-trip; tools/check_architecture.py compares the four Python vocabularies with Rust validation and the published JSON schema",
             "python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point",
-            ".github/workflows/release.yml Python wheel matrix and opt-in PyPI Trusted Publishing job",
+            ".github/workflows/python-wheels.yml Python wheel matrix and PyPI Trusted Publishing job; the publisher is triggered after every successful tagged release gate",
             "locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke",
             "maturity/evidence/python-wheel-llm-sandbox-provider-2026-10-27.json records the rebuilt uncommitted Windows CPython 3.13 abi3 wheel, packaged llm-sandbox worker and optional extra metadata, sandbox-free base install, fresh-venv import, and 17-strategy/backtest/experiment/multi-account smoke; Linux/macOS and other Python versions remain unbuilt",
             "maturity/evidence/python-wheel-release-candidate-2026-10-27.json records the uncommitted Windows CPython 3.13 0.3.0 abi3 candidate wheel, clean install, pinned Microsandbox extra metadata, and 17-strategy/backtest/experiment/multi-account smoke; the local Microsandbox guest still awaits a Windows restart",
+            "maturity/evidence/clean-install-current-worktree-2026-11-07.json records a current-worktree Windows CPython 3.13.13 abi3 wheel and separate qx-cli install; wheel/native doctor/schema/platform match, quickstart created 17 files, 13 Python examples compiled, and the strategy callback contract ran; source was dirty/unpublished and Linux/macOS remain pending",
             "2026-10-13 Windows x64 ABI3 release proof: `maturin build --release` produced `qianxing-0.1.0-cp310-abi3-win_amd64.whl`; `tools/check_python_wheel.py` verified the native extension tag; offline `pip install --no-deps --target` into a fresh target succeeded; importing from that installed target reported `native_extension_available=true`, and a typed `BacktestSpec` ran 1 fill and passed `verify_run`"
           ],
           "limitations_count": 1
@@ -975,7 +984,7 @@
             "cpp/CMakeLists.txt exports Qianxing::StrategySDK and installable headers/config metadata",
             "cpp/tests/app_client_smoke.cpp verifies the installable C++ app client forwards product-aware Tick/OrderBook depth specs unchanged to qx-api",
             ".github/workflows/ci.yml installs the CMake package and builds a downstream find_package consumer on Linux, Windows, and macOS",
-            ".github/workflows/release.yml packages the installed CMake SDK archive"
+            ".github/workflows/python-wheels.yml packages the installed CMake SDK archive"
           ],
           "limitations_count": 0
         },
@@ -1072,12 +1081,12 @@
             "schemas/evidence-bundle-v3.json",
             "schemas/schema-registry-v1.json",
             "crates/qx-cli/src/plan_commands.rs verify_foundation_specs 在 ecosystem/all 自检里跑「合法夹具通过 + 坏夹具被拒」",
-            "crates/qx-cli/src/plan_commands.rs 的 plan_readout 与 crates/qx-cli/src/plan_args.rs 的 PlanArgs：plan <kind> <file> [--json] 是七类对象的用户级只读入口，复用同一份 describe 漏斗，坏载荷/缺版本号当场退 2（help / clap 表 / 派发三方一致，门禁 cli_help_surface_check 钉住）",
+            "crates/qx-cli/src/plan_commands.rs 的 plan_readout 与 plan_template：九类对象复用 describe 严格读口；experiment/capability/schema-registry 可用 --template 创建经过 describe 校验的占位模板，create_new 拒绝覆盖，CapabilityManifest 模板固定 L0 且测试/审批字段全为 false；EvidenceBundle/run-evidence 只由 report/evidence 真实运行与验收入口生成，拒绝伪造模板",
             "crates/qx-spec/src/tests.rs 十条用例：七类读入、指纹稳定、未知类型拒绝、逐类硬约束与未知字段拒绝",
             "tools/check_architecture.py foundation_specs_check 九颗：Schema 与常量同源 / 对象各一处定义 / qx-spec 是成员且被 qx-cli 依赖 / describe 派发臂齐全 / ProjectManifest init 接线 / RunRecord 写读与篡改拒绝 / 能力清单证据闸门 / DatasetManifestV2 只读诊断入口 / 七类对象有使用者可达的读入入口",
             "maturity/baseline.yaml 冻结七类对象的 schema 版本常量"
           ],
-          "limitations_count": 2
+          "limitations_count": 1
         },
         {
           "id": "contract_registry_layer",
@@ -1158,6 +1167,8 @@
             "python/qianxing_ccxt/__init__.py exact contract leverage-tier preflight uses rational decimal amounts, tier boundaries, positions, and open orders; python/tests/test_ccxt_worker.py exercises a sub-nano contract request through the worker without float conversion (2026-10-24)",
             "crates/qx-cli/src/ccxt_facts.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption",
             "crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as \"unreported\" rather than zero (V11 Q68)",
+            "crates/qx-core/src/event.rs + crates/qx-storage/src/segmented_event_log.rs + crates/qx-storage/src/sqlite.rs verify exact Q68-era stored event-log digests on read, then rewrite current digests on append; regression tests cover both storage manifests",
+            "crates/qx-service/src/ccxt_facts.rs funding and cashflow facts reject missing, zero, or malformed source timestamps instead of persisting a fabricated epoch timestamp; unit cases cover valid and invalid timestamps",
             "crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)",
             "deploy/qianxing.runtime.ccxt.example.json",
             "python/qianxing_ccxt/worker.py binds JSONL stdin/stdout to UTF-8 on Windows; python/tests/test_ccxt_worker.py forces PYTHONIOENCODING=cp1252 and verifies valid UTF-8 protocol output",
@@ -1179,9 +1190,10 @@
             "crates/qx-cli/src/venue_runtime/paper_worker.rs the Paper recovery loop skips opening the account EventLog at all when no group is pending, so an idle book no longer pays a full replay every 100ms (V13 R2",
             "crates/qx-cli/tests/unit/spread_recovery_cadence.rs 扫描待恢复分组的循环名单**由源码派生**（递归收 `pending_spread_recovery_groups(&` 的调用形状），每处都要按「分组没减少」记账并走共享节律；用墙钟闸门节流的那一类还须留下 100ms 的队列轮询，否则恢复退避会把下单时延一起拖到 8 秒。#168 当时按三个手写文件名核对，两条执行 worker 里的第四、第五处内联扫描不在名单里，于是判据一路绿着放过了「每 100ms 起灭一个子进程」的回归（V13 R2",
             "deploy/qianxing.submit-order.ccxt-derivatives.example.json 的 policy 三格按 `crates/qx-core/src/trading.rs` 的 `rename_all = \"snake_case\"` 写成 `net`/`cross`/`one_way`；此前写着 `Net`/`Cross`/`OneWay`，照抄这份示例的提交在反序列化那一格就失败，本轮由 deploy 模板覆盖用例的 SubmitOrder 读点抓到 (V13 R1-A6)",
-            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍"
+            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍",
+            "crates/qx-zhenlu/src/venue_capabilities.rs + crates/qx-execution/src/lib.rs + crates/qx-adapter/src/ccxt.rs: VenueCapabilities is read by the execution gateway and CCXT query/reconciliation entry points; execution_readiness is checked before submit/cancel. crates/qx-execution/src/tests/gateway_port.rs covers disconnected/snapshotting side-effect refusal and capability enforcement. Binance UserStream publishes monotonic reconnect totals and source-event timestamps through worker metrics; exchange_gateway projects venue-matched diagnostics into /ready schema v2 without changing health status. Behavior coverage: crates/qx-adapter/tests/binance_stream_retry.rs, crates/qx-service/src/pipeline_metrics_report.rs, crates/qx-service/src/exchange_gateway.rs for health projection behavior."
           ],
-          "limitations_count": 5
+          "limitations_count": 2
         },
         {
           "id": "binance_direct",
@@ -1196,6 +1208,7 @@
             "production_approved"
           ],
           "evidence": [
+            "crates/qx-adapter/src/binance.rs rejects Binance Spot symbols outside ASCII alphanumerics before request construction; crates/qx-adapter/src/binance/tests.rs pins traversal-like, slash, query, control-byte and Unicode inputs (2026-11-06)",
             "crates/qx-adapter/src/lib.rs",
             "crates/qx-cli/src/venue_runtime/binance_submit.rs",
             "crates/contract-tests/tests/venue_report_contract/venues.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类",
@@ -1282,7 +1295,9 @@
             "crates/qx-xingban/tests/ashare_pit_asof.rs",
             "crates/qx-app/src/ashare_readout.rs builds the completed-run dividend/rights/convertible-interest read model through Ledger APIs and receives issuer capital snapshots from BacktestReport",
             "crates/qx-cli/src/report_html_ashare.rs and crates/qx-cli/src/report_xlsx/ashare.rs render the same versioned A-share read model in offline HTML and XLSX",
-            "runtime behavior of the v6 summary, HTML and XLSX readout has not been exercised in this implementation turn",
+            "crates/qx-app/src/ashare_readout.rs exercises nonzero rights/dividend/convertible-interest Ledger balances and issuer snapshots through the persisted read-model builder (`readout_preserves_ledger_entitlement_balances_and_issuer_capital`)",
+            "crates/qx-cli/tests/cli_behavior_parity/ashare_report_product.rs runs a real A-share report through JSON/HTML/XLSX with issuer capital, then exports a v5-shaped summary with later-version fields removed and a freshly verified RunRecord; the v5 input verdict is verified and its exports omit A-share-only fields (`ashare_runs_export_documents_and_compare_on_the_same_input`)",
+            "crates/qx-cli/tests/unit/report_html.rs and crates/qx-cli/tests/unit/report_readout.rs pin v5 absence semantics and accepted report schema generations (`legacy_v5_summary_without_ashare_readout_renders_without_invented_facts`, `backtest_summary_reader_compatibility_matches_matrix`)",
             "crates/qx-xingban/src/ashare/trading.rs ex_rights_reference folds the loaded actions into the limit-band anchor: cash dividends subtract from the numerator, bonus shares and rights ratios enter the share factor, the rights subscription money enters the numerator, and the result is rounded to price_tick, so an ex-rights day no longer anchors to an unadjusted previous close (V13 R1-A1)",
             "crates/qx-xingban/src/ashare/tests.rs two cases run the real loader: a 0.50 CNY dividend alone moves the anchor 10.00 to 9.50 and its limit band to 10.45, and dividend plus 1.3 bonus shares plus 3-for-10 rights at 5.00 land together on 6.88, each with the sealed board blocked and the manual override still winning (V13 R1-A1)",
             "crates/qx-cli/src/backtests/ashare_binding.rs and crates/qx-cli/src/runtime_check.rs are the two non-test writers that load those actions, which is what makes the folded anchor reachable from the product config path rather than only from tests (V13 R1-A1)",
@@ -1290,9 +1305,16 @@
             "python/tests/fixtures/ashare_actions_cross_check.rows.json / .payload.json / .expectations.json 是两侧共读的一份对照夹具：rows 是数据源原始行，payload 由 Python `serialize_corporate_actions` 写出，expectations 由 payload 派生，锚定那格 `(10 + 5×0.2 − 0.5) ÷ (1 + 0.3 + 0.2) = 7.00` 由 Python 与 Rust 各自独立复算，谁都不抄它 (V13 R1-A2)",
             "python/tests/test_ashare_cross_language_contract.py 六条用例：payload 逐字节重算比对、期望值从 payload 派生、折算锚独立复算、16 个动作名逐个认回、`*_raw` 已定点与别名按元/股两种口径不混、ISO `T` 公告日期不回落成除权日 (V13 R1-A2)",
             "crates/qx-xingban/src/ashare/tests.rs 两条用例把同一份 payload 读回 Rust：信封五格与逐动作八格逐字段比，停牌行必须登记成停牌事实而非普通资金事件，并把装载好的事件喂进 A1 那道折算锚得到 7.00 (V13 R1-A2)",
+            "crates/qx-xingban/src/backtest/tests/ashare_virtual_events.rs covers timed rights expiry and an explicit expiry at the same subscription end; the explicit fact is applied once and the remaining entitlement reaches zero",
+            "crates/qx-xingban/src/ashare.rs preserves publication timestamps on all strict action rows, filters issuer capital snapshots through the run as-of time, and retains suspension publication metadata",
+            "crates/qx-xingban/src/ashare/trading.rs filters scheduled actions per Bar and applies published suspension facts on their Shanghai trading day",
+            "crates/qx-xingban/src/ashare/trading/previous_close.rs applies PIT visibility in both the daily and indexed ex-rights paths; the indexed path uses a neutral share factor when no event is visible",
+            "crates/qx-xingban/src/backtest/tests/ashare_virtual_events.rs corporate_action_published_after_trigger_is_not_applied_retroactively exercises the actual virtual-event application path",
+            "crates/qx-xingban/src/ashare/tests.rs pins late suspension visibility, capital snapshot as-of filtering and ordinary/indexed ex-rights visibility (`suspension_published_after_its_bar_does_not_retroactively_halt_it`, `capital_snapshots_exclude_publications_after_the_run_as_of_time`, `ex_rights_adjustment_ignores_actions_published_after_the_first_bar`, `indexed_ex_rights_adjustment_uses_publication_visibility`)",
+            "tools/check_architecture.py ashare_pit_check requires the runtime PIT consumers and their behavior regressions to remain connected",
             "tools/check_architecture.py ashare_cross_language_contract_check holds 14 items over the version number, the three field rosters (item by item, in order, equal to the declared Rust array length), the 16-action vocabulary, the writer recognising its own line-format names, the single fixed-point unit rule, both ISO date separators, the shared fixture trio and the fact that neither side may copy the anchor expectation into a numeric literal (V13 R1-A2)"
           ],
-          "limitations_count": 5
+          "limitations_count": 2
         },
         {
           "id": "dataset_bundle_manifest",
@@ -1432,6 +1454,7 @@
             "crates/qx-cli/tests/unit/backtest_fill_model.rs depth_chain_refuses_a_configured_fill_model pins the named-declaration error and the zero-artifact negative row (V11 R11)",
             "crates/qx-cli/tests/ashare_builtin_backtest.rs five subprocess cases pin lot-size rejection, the A-share fee model alone changing result_hash, both fail-closed rejections and both no-hook entries refusing the config (V11 Q61)",
             "crates/qx-cli/src/strategy_binding.rs is the only place in the repo that assigns builtin_fast_window/slow_window/period/threshold_bps onto a BuiltinStrategyConfig (V11 Q64)",
+            "crates/qx-runtime/src/runtime_config/strategy_validation.rs resolves a missing fast/slow value from BuiltinStrategyConfig's canonical defaults before pair validation; strategy_tests.rs verifies invalid and valid one-sided overrides (V13 Q64 follow-up)",
             "apply_configured_builtin_signal revalidates the merged values before any chain prints its provenance line, so a one-sided window override fails closed instead of failing later (V11 Q64)",
             "crates/qx-cli/src/backtests/single_strategy.rs, depth.rs and multi_builtin.rs each print one [X · Signal] source line built by the single builtin_signal_note (V11 Q64)",
             "crates/qx-cli/tests/builtin_signal_from_config.rs seven subprocess cases pin declared-windows, declared-period-and-threshold three-tier hashes, illegal pairing, one-sided recheck on three entries, cross-chain equality, depth tier and multi-leg (V11 Q64)",
@@ -1445,8 +1468,9 @@
             "crates/qx-xingban/src/orderbook_backtest.rs puts the initial deposit on Priority::TIMER and the late fill reports plus their ledger facts on Priority::FEEDBACK, which is what makes the depth chain's fact stream replayable at all (V11 Q62)",
             "crates/qx-cli/src/market_spec.rs market_value_is_product_spec is the one shape question and market_spec_source_label answers through it, so instrument_spec_version states the shape actually parsed instead of whether a spec path was passed (V11 Q63)",
             "MarketSpecLoad carries spec, margin and source out of the single loader market_spec_with_margin; the strategy and depth chains publish it unchanged and the built-in chain that writes no manifest prints it as spec_source (V11 Q63)",
-            "crates/qx-cli/tests/unit/market_spec_single_source.rs two cases walk all three reachable inputs through run_strategy_backtest and run_depth_backtest and read the landed manifest label back off disk, asserting three inputs yield three sources (V11 Q63)",
-            "tools/check_architecture.py market_spec_source_check holds 9 items over that single predicate, the three distinct constants, the loader-only source call, the brace-matched RunManifestIdentity blocks and the two named cases (V11 Q63)",
+            "crates/qx-cli/tests/unit/market_spec_single_source.rs three real backtest cases cover product/CCXT/absent source labels across Bar and depth chains; changed_market_spec_in_the_same_runtime_gets_a_distinct_run_artifact changes a future valid_to boundary and proves result_hash/model_fingerprint stay equal while run_id changes",
+            "crates/qx-app/src/strategy_backtest_identity.rs strategy_backtest_run_id serializes the complete resolved market_spec separately from model_fingerprint, so rule identity is bound without mislabeling execution-model identity",
+            "tools/check_architecture.py market_spec_source_check holds 11 items over that single predicate, the three distinct constants, loader-only source call, RunManifestIdentity blocks, source label behavior cases and unchanged-result market rule identity case (V11 Q63)",
             "crates/qx-cli/src/backtests/artifacts.rs owns the only two frame readers in the repo and derives the dataset identity back through qx-data's JsonBarFrameProvider with a column-by-column consistency check, so the published fingerprint is the one the registry verified (V11 Q66)",
             "summary schema v3 carries an input block (kind/path/dataset_id/dataset_version/fingerprint) written once by input_provenance_json, and recompute_declared_backtest_input re-reads through that same reader to refuse a declared input that no longer matches or has vanished (V11 Q66)",
             "RunManifest.data_fingerprint falls back to the verified dataset fingerprint instead of the engine's own bars digest; the OKX shipped example moved from data_fingerprint d1eae507fc0a5d80 (identical to its own input_event_hash) to barframe:673fd995f8625b97 (V11 Q66)",
@@ -1456,9 +1480,11 @@
             "BarBacktestAssembly::new takes initial_cash as a required argument and the field is private, so a fourth chain cannot skip the question nor overwrite the answer after the fact; the whole qx-cli production tree scans clean of a from_i64(100_000) literal (V11 Q72)",
             "all three single-leg chains read strategy.initial_cash_raw and print their booked principal plus source before the result line ([Strategy/Builtin/Depth · Account]); the built-in chain writes no summary, so that stdout line is its only exit for the number (V11 Q72)",
             "summary schema v4 lands an account block whose two keys are taken from the account base actually booked, and a new summary-writing chain must answer the required account_base field to compile (V11 Q72)",
-            "crates/qx-app/src/artifact_store/backtest_summary.rs publishes summary v7 and versioned .v7 artifact names; report reads legacy v5/v6 and current v7, while v6 added the optional A-share analysis block",
+            "crates/qx-app/src/artifact_store/backtest_summary.rs publishes summary v8 and versioned .v8 artifact names; report reads legacy v5/v6/v7 and current v8, while v6 added the optional A-share analysis block and v8 exposes max_drawdown_raw",
+            "`BacktestReport.max_drawdown_raw` is serialized as an i128-safe decimal string in summary v8 metrics, and the shared CLI report reader prints the same value without narrowing; `backtest_entries` and `report_readout` tests cover publication and readback (V13 §9.594)",
             "`qx-data::fingerprint_bars` is the canonical Bar content fingerprint; its BarFrame adapter delegates to that algorithm, and qx-app + Python A-share manifests publish the same content identity (WP-6.1, 2026-10-15)",
-            "crates/qx-cli/src/report_command.rs accepts v5/v6 and refuses older summaries before report side effects; blessed_artifacts.rs checks all 16 tracked v1 summaries, and multi_builtin.rs emits separately replayable versioned leg artifacts",
+            "crates/qx-cli/src/report_command.rs accepts v5/v6/v7/v8 and refuses unsupported summaries before report side effects; multi_builtin.rs emits separately replayable versioned leg artifacts",
+            "crates/qx-cli/tests/unit/blessed_artifacts.rs recursively checks every checked-in deploy/data summary: current v5-v8 or complete shared qx-app RunSummary v1 is accepted; legacy incomplete v1 summaries, including all 16 tracked files that still contain the retired replay_hash field, are explicitly refused with the command needed to regenerate a current v8 summary. The test never blesses or rewrites fixtures.",
             "crates/qx-cli/tests/backtest_account_base.rs five subprocess cases: the default is printed even when nothing is declared, the same config differing only in that one key must change fills 0 to 1 and the result_hash, a non-positive declaration exits 2, both summary chains land the principal they used, and the multi-leg entry refuses the key outright (V11 Q72)",
             "tools/check_architecture.py backtest_account_base_check holds 10 items over that literal ban, the three labels, assembly privacy, the per-chain reads and prints, the fail-closed gate, the v4 account block, the schema field shape, the question-mark-carrying multi-leg refusal and the eight case names (V11 Q72)",
             "crates/qx-cli/src/report_readout.rs is the only place the read model words an absent key: report and status share report_readout_lines and latest_backtest_readout_lines, a missing key prints absent while a declared zero still prints 0, and summary_generation_note separates \"that generation had no such block\" from \"this block is missing in this generation\" (V12 R1)",
@@ -1478,9 +1504,12 @@
             "crates/qx-core/src/trading.rs resolve_settlement_currency is the one spec-or-default rule: both CLI Bar/depth and qx-app multi-builtin leg assembly call it, and its absent-spec arm uses crates/qx-core/src/identity.rs DEFAULT_SETTLEMENT_CURRENCY; the Bar chain's initial deposit and independent legs therefore book cash in the same currency the account ledger reads (V13 R1-A4; 2026-10-20 single-source follow-up)",
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs changing_only_the_settlement_currency_moves_the_published_fingerprint runs the real backtest entry twice with nothing but `settlement_currency` changed and demands different result_hash values, so a published artifact proves which currency its returns are denominated in (V13 R1-A4)",
             "crates/qx-cli/tests/backtest_artifact_root.rs three subprocess cases pin one artifact root: the fast-backtest writer lands under the launch directory's data_dir and never beside the runtime config, report reads back exactly the summary that run wrote and refuses to cross into the config tree when launched elsewhere, and an init-generated project bakes an absolute data_dir so its printed command works from any directory (V13 R2 #255)",
-            "crates/qx-cli/src/path_resolution.rs anchor_init_data_dir is the only place init rewrites storage.data_dir, it leaves an already-absolute value untouched, and the backtest writer plus the report and status readers all take Path::new on that same field, so one runtime config cannot name two artifact trees (V13 R2"
+            "tools/check_cli_test_data_isolation.py + .github/workflows/ci.yml verify the post-test checkout has no tracked, untracked, or ignored outputs under deploy/data or crates/qx-cli/data; tools/test_cli_test_data_isolation.py tests each detection class, and tools/check_architecture.py cli_test_data_isolation_check keeps the gate wired after workspace and CLI subprocess tests (V13 R2",
+            "crates/qx-cli/src/path_resolution.rs anchor_init_data_dir is the only place init rewrites storage.data_dir, it leaves an already-absolute value untouched, and the backtest writer plus the report and status readers all take Path::new on that same field, so one runtime config cannot name two artifact trees (V13 R2",
+            "crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs verifies [Multi-leg · Account] reports combined and per-leg principal, pooled ending equity, and the multi-leg funding-rule source against persisted facts",
+            "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs and strategy_batch.rs bind builtin strategy.version to the selected BuiltinStrategyKind, and crates/qx-cli/tests/builtin_signal_from_config.rs both_bar_chains_read_the_same_declared_signal asserts equal result_hash as well as fills/return/drawdown; tools/check_architecture.py builtin_signal_check keeps the invariant wired (V13 Q64 result identity)"
           ],
-          "limitations_count": 17
+          "limitations_count": 11
         },
         {
           "id": "paper_execution",
@@ -1501,6 +1530,7 @@
             "crates/qx-execution/src/application.rs",
             "crates/qx-cli/src/venue_runtime/paper_worker.rs",
             "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+            "crates/qx-runtime/src/runtime_config/schema.rs RuntimeConfig::is_production is the sole production-environment predicate; tools/check_architecture.py environment_production_single_source_check verifies one declaration, no copied comparison, and all six production consumers; crates/qx-runtime/src/runtime_config/topology_tests.rs and crates/qx-cli/tests/unit/environment_submit_arm_table.rs cover case-insensitivity, the closed vocabulary, and admitted submission arms (V13 R2 #245 follow-up)",
             "crates/qx-service/src/paper_execution_host.rs Paper 初始资金、worker 匹配、账户锁内风控、行情与成交提交由服务层持有；CLI 仅保留一次性命令编排适配",
             "paper-e2e",
             "benchmarks/run_crypto_paper_e2e.py + maturity/evidence/crypto-paper-e2e-capacity-2026-10-23.json: 3 isolated acceptance repeats all passed; captures wall time, main/process-tree peak RSS, process count, CPU, I/O and verified per-root order/fill/ledger counts. The single-order fixture is resource evidence only and does not measure the complete Crypto Paper profile",
@@ -1539,7 +1569,7 @@
             "crates/qx-cli/tests/unit/api_default_account_reads.rs unkeyed_read_models_describe_the_same_account：两条账户域同场，无键快照与无键账簿必须同指 main，而带 account_id/venue_id 的查询仍读得到第二个账户 (V11 R12)",
             "crates/qx-api/src/lib.rs validate_projection_event compares orders and ledger entries by account only：paper 账户交易的符号就叫 BTCUSDT.BINANCE，拿标的后缀当账户 venue 会把本账户自己的事实判成外来事实 (V11 R13)",
             "crates/qx-api/tests/account_projection_identity.rs 一条用例三向钉住那条判定：本账户的无 venue 事实必须全投影、换账户必须拒（订单与账簿各一次）、带显式 venue 的成交仍必须守住交易所边界。R13 的修复此前只有一轮临时验证，生产代码本轮零改动 (V11 R13 → T1)",
-            "crates/qx-protocol/src/lib.rs publishes account-snapshot-v3.json as the current schema and retains v1/v2 for legacy reads; v3 preserves exact cash and position amounts while v1/v2 snapshots retain their historical hash semantics (2026-10-24)",
+            "crates/qx-protocol/src/lib.rs publishes account-snapshot-v4.json as the current schema and retains v1-v3 for legacy reads; v3 introduced exact cash/position amounts and v4 adds a hash-bound equity diagnostic while preserving historical hashes (2026-11-08)",
             "crates/qx-protocol/tests/snapshot_schema_contract.rs covers v1/v2 compatibility, v3 schema, exact sidecars, optional maps, nullable money, cross-version rejection, and public schema routes",
             "crates/qx-cli/src/worker_entry.rs configured_reconcile_worker_id resolves the reconcile default by role + venue binding, and zero or several candidates both fail closed with the candidates listed：字面量 reconciler-main 遇改名拓扑报「找不到 worker」，遇同名 execution worker 会真跑一次下单执行 (V11 S12 → T4)",
             "crates/qx-cli/tests/unit/reconcile_worker_identity.rs 五条用例：改名的 reconciler 解析得到、关掉的报错只说口径缺失而不提字面量名、两个候选不挑第一个、paper 腿不是 Binance 候选、四份发布示例各自解析出自己的名字 (V11 T4)",
@@ -1559,6 +1589,7 @@
             "crates/qx-cli/tests/unit/account_principal_source.rs two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read drives the real run_paper_submit_order and asserts the refusal lands before the command file is even parsed (V12 R3)",
             "crates/qx-runtime/src/supervision/shutdown.rs install_shutdown_signals turns the process' Ctrl+C/SIGINT/SIGTERM into RuntimeSupervisor::request_shutdown, and wait_for_worker_finish reports StopTimedOut once shutdown_timeout_ms passes instead of waiting on a worker that ignores the token (V12 R4-a)",
             "crates/qx-runtime/src/supervision/tests.rs four ladder cases: a worker that ends on its own is not reported as stopped by shutdown, a request reaches the worker token inside the budget, a token pressed before joining still counts as stopped not finished, and a worker that ignores the token fails after the budget (V12 R4-a)",
+            "crates/qx-runtime/src/supervision/tests.rs operating_system_shutdown_signal_reaches_worker_ladder starts a child process, sends POSIX SIGTERM or Windows CTRL_BREAK_EVENT, and asserts the installed handler reaches the real worker shutdown ladder and bounded join (V13 R1-F)",
             "crates/qx-runtime/src/host.rs owns bounded join_worker_handle and the panic-to-diagnostic boundary; crates/qx-cli/src/worker_shutdown.rs and panic_boundary.rs are compatibility re-exports only, while qx-orchestrator uses the same RuntimeSupervisor shutdown contract (WP-3.1, 2026-10-20)",
             "crates/qx-runtime/src/supervision/shutdown.rs and crates/qx-orchestrator/src/supervisor_stop.rs count shutdown_timeout_ms, and the waited_ms they report, from the first observed stop request rather than from the start of waiting: a worker supervised for an hour before Ctrl+C still gets the whole grace budget (V13 R2 #217)",
             "crates/qx-runtime/src/supervision/tests.rs the_grace_budget_is_counted_from_the_request_not_from_the_start_of_waiting，加 crates/qx-orchestrator/src/supervisor_stop.rs 的同族两条：注入的假时钟把终止请求推到预算倍数之后落下，计时起点退回进门即当场判 StopTimedOut (V13 R2",
@@ -1577,7 +1608,7 @@
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/control_command_executor_coverage.rs 四条用例：八颗 CommandKind 逐个过真实提交入口（四受理、四以 Invalid 拒绝且拒绝时既不写审计也不留待办）、`executed()` 名单与生产派发者文件双向对齐、`CommandKind::ALL` 与源码里的变体清点数量与顺序都相等、deploy/README.md 那两行受理/拒绝名单与 `executed()` 双向对齐（V13 R2 第十一遍",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
-            "crates/qx-api/src/lib.rs `KEYLESS_READ_ROUTES` 四条无键读面（/account/ledger、/scheduler/runs、/reconcile/reports、/control/audit）带上任何查询串即 400：此前接口文档把 `/account/ledger` 写成 `[?…]`，而那条臂从头到尾不读 query，于是问 B 账户的日记得回 A 账户的真实流水且退 200（V13 R2",
+            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
             "crates/qx-cli/tests/unit/api_read_route_query_contract.rs 五条：文档写的收窄键必须与实现真读的键一一对应（双向），两张端点表的非 200 名单与 400 文案按**该行**取数而不是整篇 README 数子串（V13 R2",
             "deploy/README.md 第 856 行（现第 858 行）那条幽灵路由改成真形状 `GET /account/snapshot?account_id=&venue_id=`，「### 端点表按张核对」里新增第 303 行点名本判据与它住的文件；改后该文档实测 103,477 字节、1078 行、CR 与 LF 计数相等（无 bareCR）(V13 R2 第二十二遍",
@@ -1598,12 +1629,13 @@
             "crates/qx-cli/src/strategy_contract.rs `strategy_order_identity(round_scope, intent_id)` 把策略订单身份从\"轮内第几条意图\"改成\"哪一轮的第几条\"（Fnv1a 折 `output.request_id` 与 `intent_id`，`.max(1)` 保证 `client_order_id` 为正）；`build_strategy_order_from_contract_intent` 多收一个 `round_scope`，两处生产装配点（`strategy_contract.rs` 的 ContractBarStrategy 循环、`workers/strategy_worker.rs:307` 的 worker 循环）都传当轮 request_id。改前第二轮的第一条意图会复用第一轮的身份，被控制面按 DuplicateCommand 静默丢掉——`crates/qx-cli/src/strategy_host.rs:792` 每轮新建 BuiltinStrategy，而 `builtin.rs:248` 的 `next_intent_id` 从 1 起算。判据在 crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs 两条：同轮重放落回同一身份且跨轮必须不同（含同轮不同意图不相等、`trace.intent_id` 保留策略侧原值），连投三轮被真实 `ControlPlane::submit` 收进三个不同 command_id（V13 R2 第二十五遍",
             "crates/qx-service/src/paper_execution_host.rs 与 qx-cli 的 paper_submit.rs/paper_worker.rs 把 Accepted 之后那一段收敛成同一个 `paper_submit_match_attempt`：一次性验收入口与常驻 worker 循环都调用服务函数，所以同一条缺行情命令在两个入口拿同一裁决（V13 第三十一遍 ②",
             "crates/qx-service/src/paper_execution_host.rs `terminal_submit_rejection` 是终态失败指路文案唯一出口；CLI Paper/Binance/CCXT 提交入口继续复用同一句口径，Accepted 后的拒绝要求换新的 `command_id` 与 `request_id` 重投（V13 第三十一遍 ②",
-            "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 三条用例跑真的 `run_paper_submit_order` 与真的 paper 执行 worker：缺行情必须 Accepted+Failed 两格齐、`control-queue/` 清空且 worker 退 0；注入行情那一腿必须仍落到 Executed；常驻循环必须终掉这条命令自己继续（V13 第三十一遍 ②",
-            "tools/check_architecture.py submit_terminal_state_check holds 10 items over that pair of entries：提交顺序、Accepted 之后的 `?` 退出必须逐项等于在册的队列管线调用（多一处、或修好一处不撤登记，都判红）、回写之前不许 `return`、Paper 的 ack 排在回写之后且中间不夹分支、指路口径与撮合尝试各只有一个定义点、两个消费者各一处调用、三条用例挂载在位（V13 第三十一遍 ②",
+            "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 六条用例覆盖真实 `run_paper_submit_order` 与 Paper worker：缺行情落 Failed、有行情仍 Executed、常驻循环拒绝后继续、one-shot 遇到 resident lease 保留 Accepted 并原租约移交、真实队列写失败后保留 Accepted 并由 worker 恢复成交、队列缺项时 worker 从 Accepted 重建并完成命令（V13 第三十一遍 ②",
+            "tools/check_architecture.py submit_terminal_state_check 覆盖提交顺序、Accepted 后退出登记、租约 owner 唯一性、LeaseHeld 移交、终态回写/ack 顺序、共享指路与撮合尝试单点，以及六条 Paper 终态/移交/恢复用例挂载；独立 one-shot owner 不能复用常驻 worker 的 fencing token（V13 第三十一遍 ②",
             "判据取数按 `_collapsed_code` 压行并去掉尾逗号：`cargo fmt` 把长实参拆成多行会给最后一个实参补尾逗号，按字面取段的判据当场读出 0 处——本轮 `lease_clock_domain_check` 的 ack 秒域判据就是这么红的。格式重排因此成为常驻负对照（重排后必须仍绿，退回缺陷形状必须红）",
-            "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②"
+            "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
+            "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 25
+          "limitations_count": 21
         },
         {
           "id": "factor_research_bridge",
@@ -1658,6 +1690,8 @@
             "crates/qx-app/tests/multi_leg_backtest.rs 的 multi_leg_sizing_validates_market_semantics_before_run：双腿固定名义金额支持显式永续/交割规格并按合约类型/lot 换算；缺规格、现货空腿和动态资金 sizing 在运行前拒绝",
             "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs 的 account_id 多腿回测归一化账簿投影与逐事件重放一致性校验；该投影明确标记 fixed_per_leg_reservation，不代表撮合期资金互借",
             "crates/qx-app/tests/multi_leg_backtest.rs",
+            "crates/qx-app/tests/multi_leg_backtest.rs 的 multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent 删除已提交 manifest 对应的归因报告模拟两阶段发布中断，重跑后验证归因文件逐字节恢复、manifest 字节不变且 RunOutcome 身份稳定；multi_leg_honesty_check 将此恢复合同纳入门禁 (2026-11-07)",
+            "crates/qx-app/tests/multi_leg_backtest/lifecycle_failures.rs 的 strategy_lifecycle_failures_stop_cleanly_without_publishing_partial_artifacts 对 on_init/on_start/on_event/on_stop 四种故障注入逐项验证，并包含 on_init 与 on_stop 同时失败的双诊断情形；另有 cancellation_waits_for_callback_then_stops_without_publishing_artifacts 验证在途 callback 协作取消、Cancelled 生命周期事件、on_stop 和无半成品产物。错误保持可见、on_stop 恰好执行一次、失败运行不创建产物目录。qx-app 在 on_init 失败时现也执行 on_stop 清理并保留双重错误，architecture gate multi_leg_honesty_check 锁定该行为矩阵 (2026-11-07)",
             "crates/qx-api/src/app_surface.rs",
             "crates/qx-api/src/app_runs.rs",
             "crates/qx-python/src/lib.rs",
@@ -1671,6 +1705,7 @@
             "crates/qx-cli/tests/multi_leg_attribution/entries.rs",
             "crates/qx-service/src/backtest_bindings.rs",
             "crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs 的四个 Q58 端到端用例，加 crates/qx-app/tests/multi_builtin_backtest.rs 的共享规格校验用例：缺规格/全现货拒绝、混合规格只向衍生品腿计提、声明 perpetual 缺主腿 spec 拒绝；这些拒绝条件由 MultiBuiltinBacktestSpec.validate 单点执行，其他 facade 不能绕过",
+            "crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs verifies the composition summary JSON publishes the pooled combined return, both leg capital weights, and their declared funding rule",
             "HedgeRecoveryWorker idempotency test",
             "crates/qx-execution/src/tests/recovery_and_replay.rs hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeeping：补偿回包与正经提交共用同一道形状+精度闸门，越界只留一条待对账，在 tick 上按冻结规格落成 FillWithSpec",
             "FileSpreadOrderGroupStore claim lease + fencing token test",
@@ -1682,7 +1717,7 @@
             "crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均",
             "crates/qx-service/src/backtest_bindings.rs 统一解析并投影初始本金；qx-app 输入校验单点拒绝非法金额且有 InvalidInput 行为用例，CLI 外部入口保持 exit 2 和提示改用 quantity，归因产物写 `accounts.account_base_source = multi-leg-funding-rule`（V11 Q72；WP-3.28）"
           ],
-          "limitations_count": 11
+          "limitations_count": 10
         },
         {
           "id": "broker_gateway",
@@ -1807,6 +1842,7 @@
             "crates/qx-cli/src/report_credibility.rs 与 report_xlsx.rs 只读同一份 dataset_quality 质量块，HTML 可信度面板和 XLSX Overview 显示行数、缺口、重复/乱序、时区与公司行为覆盖",
             "crates/qx-app/src/artifact_store/backtest_summary.rs 风险调整收益比率单源：Sharpe/Sortino/Calmar/胜率/收益因子只由 compute_risk_ratios 算一次并写进摘要 metrics，报告只读不算（Calmar 复用已算出的 return_bps，不从权益曲线再算一套总收益）",
             "crates/qx-cli/tests/unit/grafana_dashboard_metrics.rs 校验 deploy/grafana/qianxing-overview.json 是合法 JSON 且 expr 里出现的 qx_ 前缀指标全部来自已知前缀集，防止面板引用不存在的指标名",
+            "`crates/qx-cli/build.rs` recursively embeds every JSON asset below `deploy/`; `qx-cli init` copies `grafana/qianxing-overview.json` into every generated project, and onboarding/deploy lookup tests verify the nested asset is present and byte-identical to the source",
             "crates/qx-api/src/app_surface/research_artifacts.rs attaches market_context and a causally visible, fingerprint-bound Bar context to multi-market Bar event pages; strategy/risk facts resolve directly through instrument/spec, and fill/submit/ledger facts inherit market identity through order IDs. web/console/app.js displays the linked market and Bar visibility status in the interactive timeline; the multi-market regression checks all three market links, prior-Bar visibility for command-time decisions, fill inheritance, and rejection after input mutation",
             "web/console/app.js lets a selected account curve join the same-input comparison using that account's own replay-verified outcome; curve labels retain account identity and the existing instrument/data-fingerprint gate remains in force",
             "crates/qx-app/src/cases/run_multi_leg_backtest.rs persists the source spec, both BarFrame identities, replay ledger entries and the shared equity curve; qx-app::verify_multi_leg_report_quality_evidence_v1 reuses the producer's multi-market dataset-quality contract to check the rooted frame, manifest bytes and attached evidence; qx-api/src/app_surface/research_artifacts/multi_leg_reports.rs authorizes/loads the artifact and requests the shared EventLog replay, while qx-app multi_leg::report_facts rebuilds and verifies the shared-account ledger summary, reconciles aggregate fee/funding/turnover declarations against fills and pending trades, and owns account/instrument-scoped funding-cost and per-leg return recomputation from ledger, fills, market specification and final mark; qx-app::report_analysis::equity_total_return_bps_v1 and equity_max_drawdown_bps_v1 own replay-verified return/drawdown arithmetic shared by multi-leg and multi-market reports; the API then projects a paged, per-leg causal report as research-artifact-view-v10; web/console/app.js renders both legs, tags fills by instrument, links single-leg events through order IDs and shows both Bar contexts on cross-leg decisions",
@@ -1819,7 +1855,7 @@
             "crates/qx-cli/src/quickstart.rs adds explicit --html support by calling the verified report path; crates/qx-cli/tests/quickstart_first_run.rs verifies the standalone HTML, three SVGs, project-only outputs and unchanged result_hash; default quickstart keeps the 16-file contract",
             "crates/qx-cli/src/quickstart.rs adds explicit --html support by calling the verified report path; crates/qx-cli/tests/quickstart_first_run.rs verifies the standalone HTML, three SVGs, project-only outputs and unchanged result_hash; default quickstart keeps the 16-file contract"
           ],
-          "limitations_count": 3
+          "limitations_count": 2
         },
         {
           "id": "run_evidence_bundle",
@@ -1847,11 +1883,13 @@
             "crates/qx-cli/src/run_evidence.rs 从复核过的策略回测摘要聚合可选 DatasetQualityReport；无质量清单仍写 null，不制造全零报告",
             "crates/qx-cli/src/backtests/ccxt_builtin.rs materializes CCXT OHLCV as immutable content-addressed BarFrame + DatasetManifestV2 and delegates to the persistent builtin report chain; crates/qx-cli/tests/ccxt_builtin_backtest_parity.rs pins range/instrument/timeframe and summary lineage",
             "crates/qx-spec/src/run_evidence.rs + schemas/evidence-bundle-v3.json record a single-input quality manifest path/SHA-256; `evidence export-run` relocates it, and `verify-run --recompute` replays the bound report from both the original and portable CCXT bundle in `ccxt_builtin_backtest_parity.rs`",
+            "crates/qx-xingban/src/orderbook_backtest/tests/queue_position.rs adds fifo_queue_resets_missing_level_and_rebases_before_estimating_again: unchanged visible level, missing level, reappearance, then estimation of observed 5→4→2 reductions; tools/check_architecture.py replay_kernel_check keeps the regression case registered (2026-11-06)",
             "maturity/evidence/ccxt-okx-public-ohlcv-probe-2026-10-23.json records an anonymous OKX public 1m OHLCV request timing out after 10 seconds through the Release CLI; no credentials, orders or dataset writes were involved, so the result is only a failed reachability attempt and does not satisfy a supplier profile",
             "maturity/evidence/binance-testnet-public-recheck-20261023T010208Z.meta.json records a fresh anonymous Release CLI fetch of 60 Binance Spot Testnet BTC/USDT 1m bars, with data and binary SHA-256; no credentials, private account calls, or orders were used, so it is a current public-market-data smoke only",
-            "maturity/evidence/binance-testnet-pit-import-2026-10-23/refetch-evidence.json records a third anonymous Release CLI fetch of the same 15 historical Testnet bars; its BarFrame SHA-256 matches the first captures and the rebuilt PIT ledger has 75 facts with zero multi-version facts. This verifies repeat-read stability for one window only; it does not establish vendor publication time, revision history, or authenticated sandbox acceptance"
+            "maturity/evidence/binance-testnet-pit-import-2026-10-23/refetch-evidence.json records a third anonymous Release CLI fetch of the same 15 historical Testnet bars; its BarFrame SHA-256 matches the first captures and the rebuilt PIT ledger has 75 facts with zero multi-version facts. This verifies repeat-read stability for one window only; it does not establish vendor publication time, revision history, or authenticated sandbox acceptance",
+            "tools/backtest_acceptance.py creates `report --evidence` bundles for every crypto quickstart and A-share example rerun, then requires `evidence verify-run` before recording the five artifact SHA-256 values; same-directory reruns compare bundle bytes and independent directories compare normalized bundle contents with referenced artifact digests rebound after verification; maturity/backtest_acceptance.yaml and maturity/ashare_example_backtest_acceptance.yaml record verified bundle hashes; python/tests/test_backtest_acceptance.py checks path/config normalization without erasing run identity"
           ],
-          "limitations_count": 4
+          "limitations_count": 2
         }
       ]
     },
@@ -1935,7 +1973,10 @@
           "evidence": [
             "crates/qx-storage/src/postgres.rs",
             "crates/qx-storage/tests/outbox_backend_semantics.rs postgres lease/fencing/retry contract",
-            "crates/qx-storage/src/postgres.rs 的 connect_with_pool_size 建池走带 `connect_timeout` 的 `Config::connect`（原 `Client::connect(dsn, ..)` 对握手无界：一台接受 TCP 却不完成握手的库、或一个挂起的 DNS，会让同步启动路径按存储后端逐个无限阻塞，而会话级 statement/lock/idle 三条 SET 只在连上之后生效、管不到这一段）；预算常量 `CONNECT_TIMEOUT = Duration::from_secs(5)`。tools/check_architecture.py postgres_connect_budget_check 两条钉住「建池调用点有且仅有一处 connect_timeout 且无裸 Client::connect( 残留」与「预算常量是正的 from_secs(N)」；镜像树注入两种变异（删 timeout、预算改 0）各只咬对应一条、真文件不动。门禁 549 全绿见 logs/s830_pass33_gate_263.txt，变异取证见 logs/s831_pass33_263_mutation.txt (V13 R2 第三十三遍",
+            "crates/qx-storage/src/postgres/connection.rs `BoundedClient::connect` wraps `tokio_postgres::Config::connect` with `tokio::time::timeout` and drops the pending connect future on deadline, bounding the caller-visible address resolution, socket connection, TLS, PostgreSQL startup/authentication, and target-session checks; per-address `connect_timeout` remains configured.",
+            "crates/qx-storage/src/postgres/connection.rs `connect_deadline_cancels_a_stalled_postgres_startup_handshake` and `connect_deadline_cancels_a_stalled_tls_handshake` use local TCP stubs to verify bounded return and peer socket closure when either handshake stalls.",
+            "Cargo test -p qx-storage --features postgres -j 1 passes; database-backed PostgreSQL integration tests remain ignored without `QX_TEST_POSTGRES_DSN`. tools/check_architecture.py postgres_connect_budget_check checks the total deadline and both cancellation regressions.",
+            "crates/qx-storage/src/postgres/connection.rs synchronously drives rollback when a pooled `BoundedTransaction` is dropped; `crates/qx-storage/tests/queue_backend_semantics.rs` exercises a `LeaseHeld` error followed by takeover on a two-connection PostgreSQL pool. Linux Alpine 3.22 + PostgreSQL 16 ran the regular and all nine ignored qx-storage PostgreSQL tests successfully (V13 §9.618).",
             ".github/workflows/ci.yml service-backends job"
           ],
           "limitations_count": 2
@@ -1986,7 +2027,7 @@
             "crates/qx-control/src/lib.rs 的终态退场与 RetirementSummary 两条计数接上 /metrics",
             ".github/workflows/ci.yml:174 那条腿只跑 --ignored，本轮在它下面补了一条非 ignore 的 NATS 腿（实跑 8 passed / 1 ignored），8 颗门后用例自此有执行者",
             "V13 R10 按「先牙齿后功能」逐族排期重落 fam06：tools/check_architecture.py 新增 environment_production_single_source_check（5 颗），；写法单源 crates/qx-runtime/src/runtime_config/schema.rs 的 pub const PRODUCTION_ENVIRONMENT、判定单源同文件 RuntimeConfig::is_production，14 处手抄判定全部改走出口",
-            "V13 R11 按同一排期重落 fam13：tools/check_architecture.py 新增 ci_feature_matrix_check（7 颗），，；把 .github/workflows/ci.yml 的 feature-matrix job 与 NATS 真执行腿从「只有文本存在性保证」升级为「有判据看守」，关闭 §12.2 的 nats_ci_leg_has_no_gate_teeth 缺口",
+            "V13 R11 按同一排期重落 fam13：tools/check_architecture.py 新增 ci_feature_matrix_check（10 颗），，；把 .github/workflows/ci.yml 的 feature-matrix job 与 NATS 真执行腿从「只有文本存在性保证」升级为「有判据看守」，关闭 §12.2 的 nats_ci_leg_has_no_gate_teeth 缺口",
             "V13 R12 按同一排期重落 fam10 的两格（exposition 真换行 + 告警名册有样本）：tools/check_architecture.py 新增 ops_read_surface_check（4 颗），，；把 crates/qx-api/src/lib.rs 的 to_prometheus 真换行与 deploy/prometheus/qianxing-alerts.yml 的 7 条规则从「只有用例/文本保证」升级为「有判据看守」",
             "V13 R13 按同一排期重落 fam02 的两格（停机令牌 + 连接上界）：tools/check_architecture.py 新增 api_read_model_liveness_check（3 颗），，；把 crates/qx-api/src/lib.rs 的 session_shutdown 令牌与 crates/qx-api/src/ws.rs 的 WS_MAX_IDLE_ROUNDS 空闲上界从「只有用例保证」升级为「有判据看守」",
             "V13 R14 按同一排期补 fam11「分层处置」的最后一处闭环口子：tools/check_architecture.py 新增 surface_allowlist_hygiene_check（2 颗），，；零读者判据只遍历在盘定义，补上「允许清单不许留幽灵条目（函数删了条目还在）」与「理由不许是占位符」两颗",
@@ -2130,6 +2171,7 @@
             "crates/qx-execution/src/application.rs",
             "crates/qx-cli/src/venue_runtime/paper_worker.rs",
             "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+            "crates/qx-runtime/src/runtime_config/schema.rs RuntimeConfig::is_production is the sole production-environment predicate; tools/check_architecture.py environment_production_single_source_check verifies one declaration, no copied comparison, and all six production consumers; crates/qx-runtime/src/runtime_config/topology_tests.rs and crates/qx-cli/tests/unit/environment_submit_arm_table.rs cover case-insensitivity, the closed vocabulary, and admitted submission arms (V13 R2 #245 follow-up)",
             "crates/qx-service/src/paper_execution_host.rs Paper 初始资金、worker 匹配、账户锁内风控、行情与成交提交由服务层持有；CLI 仅保留一次性命令编排适配",
             "paper-e2e",
             "benchmarks/run_crypto_paper_e2e.py + maturity/evidence/crypto-paper-e2e-capacity-2026-10-23.json: 3 isolated acceptance repeats all passed; captures wall time, main/process-tree peak RSS, process count, CPU, I/O and verified per-root order/fill/ledger counts. The single-order fixture is resource evidence only and does not measure the complete Crypto Paper profile",
@@ -2168,7 +2210,7 @@
             "crates/qx-cli/tests/unit/api_default_account_reads.rs unkeyed_read_models_describe_the_same_account：两条账户域同场，无键快照与无键账簿必须同指 main，而带 account_id/venue_id 的查询仍读得到第二个账户 (V11 R12)",
             "crates/qx-api/src/lib.rs validate_projection_event compares orders and ledger entries by account only：paper 账户交易的符号就叫 BTCUSDT.BINANCE，拿标的后缀当账户 venue 会把本账户自己的事实判成外来事实 (V11 R13)",
             "crates/qx-api/tests/account_projection_identity.rs 一条用例三向钉住那条判定：本账户的无 venue 事实必须全投影、换账户必须拒（订单与账簿各一次）、带显式 venue 的成交仍必须守住交易所边界。R13 的修复此前只有一轮临时验证，生产代码本轮零改动 (V11 R13 → T1)",
-            "crates/qx-protocol/src/lib.rs publishes account-snapshot-v3.json as the current schema and retains v1/v2 for legacy reads; v3 preserves exact cash and position amounts while v1/v2 snapshots retain their historical hash semantics (2026-10-24)",
+            "crates/qx-protocol/src/lib.rs publishes account-snapshot-v4.json as the current schema and retains v1-v3 for legacy reads; v3 introduced exact cash/position amounts and v4 adds a hash-bound equity diagnostic while preserving historical hashes (2026-11-08)",
             "crates/qx-protocol/tests/snapshot_schema_contract.rs covers v1/v2 compatibility, v3 schema, exact sidecars, optional maps, nullable money, cross-version rejection, and public schema routes",
             "crates/qx-cli/src/worker_entry.rs configured_reconcile_worker_id resolves the reconcile default by role + venue binding, and zero or several candidates both fail closed with the candidates listed：字面量 reconciler-main 遇改名拓扑报「找不到 worker」，遇同名 execution worker 会真跑一次下单执行 (V11 S12 → T4)",
             "crates/qx-cli/tests/unit/reconcile_worker_identity.rs 五条用例：改名的 reconciler 解析得到、关掉的报错只说口径缺失而不提字面量名、两个候选不挑第一个、paper 腿不是 Binance 候选、四份发布示例各自解析出自己的名字 (V11 T4)",
@@ -2188,6 +2230,7 @@
             "crates/qx-cli/tests/unit/account_principal_source.rs two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read drives the real run_paper_submit_order and asserts the refusal lands before the command file is even parsed (V12 R3)",
             "crates/qx-runtime/src/supervision/shutdown.rs install_shutdown_signals turns the process' Ctrl+C/SIGINT/SIGTERM into RuntimeSupervisor::request_shutdown, and wait_for_worker_finish reports StopTimedOut once shutdown_timeout_ms passes instead of waiting on a worker that ignores the token (V12 R4-a)",
             "crates/qx-runtime/src/supervision/tests.rs four ladder cases: a worker that ends on its own is not reported as stopped by shutdown, a request reaches the worker token inside the budget, a token pressed before joining still counts as stopped not finished, and a worker that ignores the token fails after the budget (V12 R4-a)",
+            "crates/qx-runtime/src/supervision/tests.rs operating_system_shutdown_signal_reaches_worker_ladder starts a child process, sends POSIX SIGTERM or Windows CTRL_BREAK_EVENT, and asserts the installed handler reaches the real worker shutdown ladder and bounded join (V13 R1-F)",
             "crates/qx-runtime/src/host.rs owns bounded join_worker_handle and the panic-to-diagnostic boundary; crates/qx-cli/src/worker_shutdown.rs and panic_boundary.rs are compatibility re-exports only, while qx-orchestrator uses the same RuntimeSupervisor shutdown contract (WP-3.1, 2026-10-20)",
             "crates/qx-runtime/src/supervision/shutdown.rs and crates/qx-orchestrator/src/supervisor_stop.rs count shutdown_timeout_ms, and the waited_ms they report, from the first observed stop request rather than from the start of waiting: a worker supervised for an hour before Ctrl+C still gets the whole grace budget (V13 R2 #217)",
             "crates/qx-runtime/src/supervision/tests.rs the_grace_budget_is_counted_from_the_request_not_from_the_start_of_waiting，加 crates/qx-orchestrator/src/supervisor_stop.rs 的同族两条：注入的假时钟把终止请求推到预算倍数之后落下，计时起点退回进门即当场判 StopTimedOut (V13 R2",
@@ -2206,7 +2249,7 @@
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/control_command_executor_coverage.rs 四条用例：八颗 CommandKind 逐个过真实提交入口（四受理、四以 Invalid 拒绝且拒绝时既不写审计也不留待办）、`executed()` 名单与生产派发者文件双向对齐、`CommandKind::ALL` 与源码里的变体清点数量与顺序都相等、deploy/README.md 那两行受理/拒绝名单与 `executed()` 双向对齐（V13 R2 第十一遍",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
-            "crates/qx-api/src/lib.rs `KEYLESS_READ_ROUTES` 四条无键读面（/account/ledger、/scheduler/runs、/reconcile/reports、/control/audit）带上任何查询串即 400：此前接口文档把 `/account/ledger` 写成 `[?…]`，而那条臂从头到尾不读 query，于是问 B 账户的日记得回 A 账户的真实流水且退 200（V13 R2",
+            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
             "crates/qx-cli/tests/unit/api_read_route_query_contract.rs 五条：文档写的收窄键必须与实现真读的键一一对应（双向），两张端点表的非 200 名单与 400 文案按**该行**取数而不是整篇 README 数子串（V13 R2",
             "deploy/README.md 第 856 行（现第 858 行）那条幽灵路由改成真形状 `GET /account/snapshot?account_id=&venue_id=`，「### 端点表按张核对」里新增第 303 行点名本判据与它住的文件；改后该文档实测 103,477 字节、1078 行、CR 与 LF 计数相等（无 bareCR）(V13 R2 第二十二遍",
@@ -2227,12 +2270,13 @@
             "crates/qx-cli/src/strategy_contract.rs `strategy_order_identity(round_scope, intent_id)` 把策略订单身份从\"轮内第几条意图\"改成\"哪一轮的第几条\"（Fnv1a 折 `output.request_id` 与 `intent_id`，`.max(1)` 保证 `client_order_id` 为正）；`build_strategy_order_from_contract_intent` 多收一个 `round_scope`，两处生产装配点（`strategy_contract.rs` 的 ContractBarStrategy 循环、`workers/strategy_worker.rs:307` 的 worker 循环）都传当轮 request_id。改前第二轮的第一条意图会复用第一轮的身份，被控制面按 DuplicateCommand 静默丢掉——`crates/qx-cli/src/strategy_host.rs:792` 每轮新建 BuiltinStrategy，而 `builtin.rs:248` 的 `next_intent_id` 从 1 起算。判据在 crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs 两条：同轮重放落回同一身份且跨轮必须不同（含同轮不同意图不相等、`trace.intent_id` 保留策略侧原值），连投三轮被真实 `ControlPlane::submit` 收进三个不同 command_id（V13 R2 第二十五遍",
             "crates/qx-service/src/paper_execution_host.rs 与 qx-cli 的 paper_submit.rs/paper_worker.rs 把 Accepted 之后那一段收敛成同一个 `paper_submit_match_attempt`：一次性验收入口与常驻 worker 循环都调用服务函数，所以同一条缺行情命令在两个入口拿同一裁决（V13 第三十一遍 ②",
             "crates/qx-service/src/paper_execution_host.rs `terminal_submit_rejection` 是终态失败指路文案唯一出口；CLI Paper/Binance/CCXT 提交入口继续复用同一句口径，Accepted 后的拒绝要求换新的 `command_id` 与 `request_id` 重投（V13 第三十一遍 ②",
-            "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 三条用例跑真的 `run_paper_submit_order` 与真的 paper 执行 worker：缺行情必须 Accepted+Failed 两格齐、`control-queue/` 清空且 worker 退 0；注入行情那一腿必须仍落到 Executed；常驻循环必须终掉这条命令自己继续（V13 第三十一遍 ②",
-            "tools/check_architecture.py submit_terminal_state_check holds 10 items over that pair of entries：提交顺序、Accepted 之后的 `?` 退出必须逐项等于在册的队列管线调用（多一处、或修好一处不撤登记，都判红）、回写之前不许 `return`、Paper 的 ack 排在回写之后且中间不夹分支、指路口径与撮合尝试各只有一个定义点、两个消费者各一处调用、三条用例挂载在位（V13 第三十一遍 ②",
+            "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 六条用例覆盖真实 `run_paper_submit_order` 与 Paper worker：缺行情落 Failed、有行情仍 Executed、常驻循环拒绝后继续、one-shot 遇到 resident lease 保留 Accepted 并原租约移交、真实队列写失败后保留 Accepted 并由 worker 恢复成交、队列缺项时 worker 从 Accepted 重建并完成命令（V13 第三十一遍 ②",
+            "tools/check_architecture.py submit_terminal_state_check 覆盖提交顺序、Accepted 后退出登记、租约 owner 唯一性、LeaseHeld 移交、终态回写/ack 顺序、共享指路与撮合尝试单点，以及六条 Paper 终态/移交/恢复用例挂载；独立 one-shot owner 不能复用常驻 worker 的 fencing token（V13 第三十一遍 ②",
             "判据取数按 `_collapsed_code` 压行并去掉尾逗号：`cargo fmt` 把长实参拆成多行会给最后一个实参补尾逗号，按字面取段的判据当场读出 0 处——本轮 `lease_clock_domain_check` 的 ack 秒域判据就是这么红的。格式重排因此成为常驻负对照（重排后必须仍绿，退回缺陷形状必须红）",
-            "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②"
+            "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
+            "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 25
+          "limitations_count": 21
         }
       ]
     },
@@ -2267,7 +2311,7 @@
         ],
         "limitations": [
           "运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证",
-          "余额与订单私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified",
+          "余额、订单和成交历史私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified",
           "只覆盖现货；衍生品与多市场未声明"
         ],
         "account_query_scopes": [
@@ -2279,7 +2323,8 @@
             ],
             "operations": [
               "balance.read",
-              "orders.read"
+              "orders.read",
+              "trades.read"
             ],
             "maturity_refs": [
               "binance_direct"
@@ -2400,7 +2445,8 @@
           ],
           "operations": [
             "balance.read",
-            "orders.read"
+            "orders.read",
+            "trades.read"
           ],
           "maturity_refs": [
             "binance_direct"
@@ -2425,6 +2471,7 @@
             "production_approved"
           ],
           "evidence": [
+            "crates/qx-adapter/src/binance.rs rejects Binance Spot symbols outside ASCII alphanumerics before request construction; crates/qx-adapter/src/binance/tests.rs pins traversal-like, slash, query, control-byte and Unicode inputs (2026-11-06)",
             "crates/qx-adapter/src/lib.rs",
             "crates/qx-cli/src/venue_runtime/binance_submit.rs",
             "crates/contract-tests/tests/venue_report_contract/venues.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类",
@@ -3591,6 +3638,8 @@
             "python/qianxing_ccxt/__init__.py exact contract leverage-tier preflight uses rational decimal amounts, tier boundaries, positions, and open orders; python/tests/test_ccxt_worker.py exercises a sub-nano contract request through the worker without float conversion (2026-10-24)",
             "crates/qx-cli/src/ccxt_facts.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption",
             "crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as \"unreported\" rather than zero (V11 Q68)",
+            "crates/qx-core/src/event.rs + crates/qx-storage/src/segmented_event_log.rs + crates/qx-storage/src/sqlite.rs verify exact Q68-era stored event-log digests on read, then rewrite current digests on append; regression tests cover both storage manifests",
+            "crates/qx-service/src/ccxt_facts.rs funding and cashflow facts reject missing, zero, or malformed source timestamps instead of persisting a fabricated epoch timestamp; unit cases cover valid and invalid timestamps",
             "crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)",
             "deploy/qianxing.runtime.ccxt.example.json",
             "python/qianxing_ccxt/worker.py binds JSONL stdin/stdout to UTF-8 on Windows; python/tests/test_ccxt_worker.py forces PYTHONIOENCODING=cp1252 and verifies valid UTF-8 protocol output",
@@ -3612,9 +3661,10 @@
             "crates/qx-cli/src/venue_runtime/paper_worker.rs the Paper recovery loop skips opening the account EventLog at all when no group is pending, so an idle book no longer pays a full replay every 100ms (V13 R2",
             "crates/qx-cli/tests/unit/spread_recovery_cadence.rs 扫描待恢复分组的循环名单**由源码派生**（递归收 `pending_spread_recovery_groups(&` 的调用形状），每处都要按「分组没减少」记账并走共享节律；用墙钟闸门节流的那一类还须留下 100ms 的队列轮询，否则恢复退避会把下单时延一起拖到 8 秒。#168 当时按三个手写文件名核对，两条执行 worker 里的第四、第五处内联扫描不在名单里，于是判据一路绿着放过了「每 100ms 起灭一个子进程」的回归（V13 R2",
             "deploy/qianxing.submit-order.ccxt-derivatives.example.json 的 policy 三格按 `crates/qx-core/src/trading.rs` 的 `rename_all = \"snake_case\"` 写成 `net`/`cross`/`one_way`；此前写着 `Net`/`Cross`/`OneWay`，照抄这份示例的提交在反序列化那一格就失败，本轮由 deploy 模板覆盖用例的 SubmitOrder 读点抓到 (V13 R1-A6)",
-            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍"
+            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍",
+            "crates/qx-zhenlu/src/venue_capabilities.rs + crates/qx-execution/src/lib.rs + crates/qx-adapter/src/ccxt.rs: VenueCapabilities is read by the execution gateway and CCXT query/reconciliation entry points; execution_readiness is checked before submit/cancel. crates/qx-execution/src/tests/gateway_port.rs covers disconnected/snapshotting side-effect refusal and capability enforcement. Binance UserStream publishes monotonic reconnect totals and source-event timestamps through worker metrics; exchange_gateway projects venue-matched diagnostics into /ready schema v2 without changing health status. Behavior coverage: crates/qx-adapter/tests/binance_stream_retry.rs, crates/qx-service/src/pipeline_metrics_report.rs, crates/qx-service/src/exchange_gateway.rs for health projection behavior."
           ],
-          "limitations_count": 5
+          "limitations_count": 2
         },
         {
           "id": "broker_gateway",
@@ -3687,6 +3737,8 @@
             "python/qianxing_ccxt/__init__.py exact contract leverage-tier preflight uses rational decimal amounts, tier boundaries, positions, and open orders; python/tests/test_ccxt_worker.py exercises a sub-nano contract request through the worker without float conversion (2026-10-24)",
             "crates/qx-cli/src/ccxt_facts.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption",
             "crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as \"unreported\" rather than zero (V11 Q68)",
+            "crates/qx-core/src/event.rs + crates/qx-storage/src/segmented_event_log.rs + crates/qx-storage/src/sqlite.rs verify exact Q68-era stored event-log digests on read, then rewrite current digests on append; regression tests cover both storage manifests",
+            "crates/qx-service/src/ccxt_facts.rs funding and cashflow facts reject missing, zero, or malformed source timestamps instead of persisting a fabricated epoch timestamp; unit cases cover valid and invalid timestamps",
             "crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)",
             "deploy/qianxing.runtime.ccxt.example.json",
             "python/qianxing_ccxt/worker.py binds JSONL stdin/stdout to UTF-8 on Windows; python/tests/test_ccxt_worker.py forces PYTHONIOENCODING=cp1252 and verifies valid UTF-8 protocol output",
@@ -3708,9 +3760,10 @@
             "crates/qx-cli/src/venue_runtime/paper_worker.rs the Paper recovery loop skips opening the account EventLog at all when no group is pending, so an idle book no longer pays a full replay every 100ms (V13 R2",
             "crates/qx-cli/tests/unit/spread_recovery_cadence.rs 扫描待恢复分组的循环名单**由源码派生**（递归收 `pending_spread_recovery_groups(&` 的调用形状），每处都要按「分组没减少」记账并走共享节律；用墙钟闸门节流的那一类还须留下 100ms 的队列轮询，否则恢复退避会把下单时延一起拖到 8 秒。#168 当时按三个手写文件名核对，两条执行 worker 里的第四、第五处内联扫描不在名单里，于是判据一路绿着放过了「每 100ms 起灭一个子进程」的回归（V13 R2",
             "deploy/qianxing.submit-order.ccxt-derivatives.example.json 的 policy 三格按 `crates/qx-core/src/trading.rs` 的 `rename_all = \"snake_case\"` 写成 `net`/`cross`/`one_way`；此前写着 `Net`/`Cross`/`OneWay`，照抄这份示例的提交在反序列化那一格就失败，本轮由 deploy 模板覆盖用例的 SubmitOrder 读点抓到 (V13 R1-A6)",
-            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍"
+            "crates/qx-adapter/src/ccxt.rs 的 CCXT_WORKER_MIN_TIMEOUT_MS/CCXT_WORKER_MAX_TIMEOUT_MS 把 timeout_ms 收成启动前就具名拒绝的区间，用户流空闲窗口只能经 ccxt_idle_window_ms 从同一个读窗推导（crates/qx-cli/src/venue_runtime/ccxt_execution.rs 取它），两侧不再各写一份 4/5；下界挪位会被用例判红（V13 R2 第十四遍",
+            "crates/qx-zhenlu/src/venue_capabilities.rs + crates/qx-execution/src/lib.rs + crates/qx-adapter/src/ccxt.rs: VenueCapabilities is read by the execution gateway and CCXT query/reconciliation entry points; execution_readiness is checked before submit/cancel. crates/qx-execution/src/tests/gateway_port.rs covers disconnected/snapshotting side-effect refusal and capability enforcement. Binance UserStream publishes monotonic reconnect totals and source-event timestamps through worker metrics; exchange_gateway projects venue-matched diagnostics into /ready schema v2 without changing health status. Behavior coverage: crates/qx-adapter/tests/binance_stream_retry.rs, crates/qx-service/src/pipeline_metrics_report.rs, crates/qx-service/src/exchange_gateway.rs for health projection behavior."
           ],
-          "limitations_count": 5
+          "limitations_count": 2
         },
         {
           "id": "provider_capability_registry",
@@ -3791,7 +3844,7 @@
             "python/qianxing_bridge/__init__.py load_account_snapshot accepts declared v1/v2 account snapshots and checks header version consistency; python/tests/test_bridge.py exercises both supported versions, unknown versions, and v1 settlement-currency rejection",
             "python/tests/test_ashare.py 两条日历用例：共用夹具的摘要与 .fingerprint 全等、夹具是 to_json 的定点，且摘要只随 calendar_id/trading_days/sessions 动而 source 改了不动 (V11 T2)",
             "tools/build_python_wheel.sh and tools/build_python_wheel.ps1",
-            ".github/workflows/release.yml Python 3.10-3.13 wheel builds and clean-install backtest checks on Linux, macOS, and Windows",
+            ".github/workflows/python-wheels.yml Python 3.10-3.13 wheel builds and clean-install backtest checks on Linux, macOS, and Windows",
             "schemas/strategy_api_v1.schema.json now states the same field list the Rust contract writes and requires, refuses decimal-string money, and carries margin_mode/position_mode/leverage; tools/check_architecture.py does not own that alignment, crates/qx-runtime/tests/strategy_contract_schema.rs does (V12 R4-k)",
             "C++ 插件通过稳定 vtable 外的可选 `qx_strategy_get_order_policy_v1` 传递完整 `margin_mode` / `position_mode` / `leverage` 策略字段；`schemas/c-strategy-order-policy-v1.json` 固定载荷，`cpp/examples/momentum_strategy.cpp` 发出字段，`crates/qx-strategy/tests/cpp_plugin_host.rs` 通过实际动态库加载逐字段断言 Rust 宿主读回（V12 R4-k，2026-10-27 补证）",
             "crates/qx-runtime/tests/strategy_contract_schema.rs four cases: the schema declares exactly the fields Rust writes and requires, unknown keys are rejected rather than dropped, fixed-point fields travel as JSON integers only, and the const schema version is the version the runtime accepts (V12 R4-k)",
@@ -3807,9 +3860,10 @@
             "python/pyproject.toml 的 [project].dependencies 收成为空列表，`ccxt>=4.4.0` 与 `tzdata; sys_platform=='win32'` 两颗从强制依赖降为可选 extras（python/qianxing_ccxt/__init__.py 的 _load_ccxt 缺 ccxt 时、python/qianxing_ashare/__init__.py 的 _shanghai 缺 tzdata 时各自在调用点抛点名 extras 的可执行提示），于是干净 venv 里 `pip install --no-index` 不带 --no-deps 也能离线装成 wheel；tools/check_architecture.py wheel_optional_dependency_check 三条钉住「强制清单不含 ccxt/tzdata + 七档 extras 齐 + qianxing-bridge[<name>] 引用逐个被 extras 覆盖」，python/tests/test_packaging_contract.py 三条用例从 Python 侧对照，logs/s804_pass34_offline_install.txt 实测离线安装退 0、四包 import、缺 ccxt 回 UNSUPPORTED、缺 tzdata 抛 AshareProviderError（V13 R2 第三十二遍",
             "当轮重打的 wheel 装进不带任何可选依赖的干净 uv venv 后，发布包自带的 `python -m qianxing_ashare fetch --provider akshare` 抛出的 AshareProviderError 逐字节是 python/qianxing_ashare/__init__.py 里",
             "未过时的独立 exe 就地跑通核心链路（判据 `find crates -name '*.rs' -newer target/release/qx-cli.exe` 得 0、`deploy/` 下最新 JSON 早于它，本轮只动 Python/门禁/文档），产物只落临时目录：`qx-cli quickstart` 五步全过、BTC `backtest` fills=1；A 股 `qx-cli backtest deploy/qianxing.runtime.ashare.example.json deploy/qianxing.ashare.bar-frame.example.json deploy/qianxing.ashare.spot.spec.json` fills=1；重打后 wheel 内 _qianxing_native.pyd 的 md5 仍 ≡ target/release 那份（#194）（V13 R2 第三十二遍 ③",
-            "crates/qx-strategy/src/contract.rs 与 python/qianxing_bridge/strategy.py 的输出侧校验从两句折叠诊断（Rust「StrategyContractOutput 与输入身份、标的或有效期不一致」、Python「strategy output identity or expiry does not match input」）拆成一臂一句：schema_version / request_id / strategy_id / signal_id / instrument 与输入不一致 / instrument 非法（Python 侧另有点名空串）/ expires_at 地板 各说各话，OrderIntent 侧仍是一条但点名到「非法或重复」，两侧各 8 句且去重后仍 8 句；最需要点名的「worker 已放行、宿主才挡下」那条跨语言分叉——策略返回 dict 时漏写 schema_version——此前恰好被念成「身份不一致」，作者按那句话去查 request_id 永远查不出问题；版本号一律由宿主解码入口裁决：Rust from_json_for、Python from_dict 读回后都调 validate_for，且 Python 缺键记 0 而不采纳自家 SCHEMA_VERSION 默认；过期地板两侧同一个式子（非 0 才生效、不早于输入 as_of）；判据 tools/check_architecture.py strategy_output_arm_diagnostics_check 八个读数（每臂一句 × 两侧、首臂点名 schema_version × 两侧、折叠句不许回来、两侧地板同式、解码入口裁决版本、跨语言用例在位），回归用例在 crates/qx-runtime/src/strategy_contract/tests.rs （六臂各说各话 + 解码入口拒别家版本号）与 python/tests/test_strategy_contract.py （同六臂 + 空 instrument + 漏写版本号，折进既有方法、用例总数不变）（V13 R7 收口 · 台账"
+            "crates/qx-strategy/src/contract.rs 与 python/qianxing_bridge/strategy.py 的输出侧校验从两句折叠诊断（Rust「StrategyContractOutput 与输入身份、标的或有效期不一致」、Python「strategy output identity or expiry does not match input」）拆成一臂一句：schema_version / request_id / strategy_id / signal_id / instrument 与输入不一致 / instrument 非法（Python 侧另有点名空串）/ expires_at 地板 各说各话，OrderIntent 侧仍是一条但点名到「非法或重复」，两侧各 8 句且去重后仍 8 句；最需要点名的「worker 已放行、宿主才挡下」那条跨语言分叉——策略返回 dict 时漏写 schema_version——此前恰好被念成「身份不一致」，作者按那句话去查 request_id 永远查不出问题；版本号一律由宿主解码入口裁决：Rust from_json_for、Python from_dict 读回后都调 validate_for，且 Python 缺键记 0 而不采纳自家 SCHEMA_VERSION 默认；过期地板两侧同一个式子（非 0 才生效、不早于输入 as_of）；判据 tools/check_architecture.py strategy_output_arm_diagnostics_check 八个读数（每臂一句 × 两侧、首臂点名 schema_version × 两侧、折叠句不许回来、两侧地板同式、解码入口裁决版本、跨语言用例在位），回归用例在 crates/qx-runtime/src/strategy_contract/tests.rs （六臂各说各话 + 解码入口拒别家版本号）与 python/tests/test_strategy_contract.py （同六臂 + 空 instrument + 漏写版本号，折进既有方法、用例总数不变）（V13 R7 收口 · 台账",
+            "crates/qx-orchestrator/src/strategy_worker.rs + tests.rs: a deliberately non-consuming SharedMemoryJson worker is given a full input ring; request returns the timeout diagnostic within budget and the child process is killed (V13 R8-C follow-up)"
           ],
-          "limitations_count": 4
+          "limitations_count": 3
         },
         {
           "id": "python_sdk_facade",
@@ -3848,10 +3902,11 @@
             "maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json records shared normalized Bar warmup, order/fill, account/position, exact OrderBook, Timer, error, stop and unsupported-input rows consumed by Rust Strategy, Python file-loaded STRATEGY_CLASS/BaseStrategy Runtime adapter, and a dynamically loaded C ABI/C++ example plugin; Python Runtime checkpoint tests cover Bar cursor, warmup, account EventLog cursor replay, and mutation-before-error rollback/retry from the last committed checkpoint; Rust strategy worker tests cover cursor/checkpoint atomic persistence, write-failure preservation, temporary-file cleanup, per-process queue owner isolation and fresh-time lease validation; C ABI durable state recovery uses paired optional snapshot/restore exports bound to the verified library digest, and external JSONL workers use shared checkpoint envelopes bound to executable artifact SHA-256, while third-party process conformance, complete per-hook capability refusal and full all-host-pair coverage remain open W3 work; §13.41 module-function checkpoint recovery, §13.42 fake E2B/Microsandbox/OpenSandbox checkpoint rotation, §13.43 C ABI state recovery, §13.44 external-process recovery, and §13.45 fake SDK remote Docker llm-sandbox policy/lifecycle coverage are recorded in the same evidence, alongside the prior 553/10 and latest 560/10 Python suites, the 10/10 llm-sandbox targeted run, and the 445+9 fresh-binary qx-cli suite diagnostic",
             "python/qianxing_bridge/strategy.py normalizes ASCII enum spelling when StrategyIntent is constructed/from_dict; python/tests/test_strategy_contract.py covers uppercase round-trip; tools/check_architecture.py compares the four Python vocabularies with Rust validation and the published JSON schema",
             "python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point",
-            ".github/workflows/release.yml Python wheel matrix and opt-in PyPI Trusted Publishing job",
+            ".github/workflows/python-wheels.yml Python wheel matrix and PyPI Trusted Publishing job; the publisher is triggered after every successful tagged release gate",
             "locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke",
             "maturity/evidence/python-wheel-llm-sandbox-provider-2026-10-27.json records the rebuilt uncommitted Windows CPython 3.13 abi3 wheel, packaged llm-sandbox worker and optional extra metadata, sandbox-free base install, fresh-venv import, and 17-strategy/backtest/experiment/multi-account smoke; Linux/macOS and other Python versions remain unbuilt",
             "maturity/evidence/python-wheel-release-candidate-2026-10-27.json records the uncommitted Windows CPython 3.13 0.3.0 abi3 candidate wheel, clean install, pinned Microsandbox extra metadata, and 17-strategy/backtest/experiment/multi-account smoke; the local Microsandbox guest still awaits a Windows restart",
+            "maturity/evidence/clean-install-current-worktree-2026-11-07.json records a current-worktree Windows CPython 3.13.13 abi3 wheel and separate qx-cli install; wheel/native doctor/schema/platform match, quickstart created 17 files, 13 Python examples compiled, and the strategy callback contract ran; source was dirty/unpublished and Linux/macOS remain pending",
             "2026-10-13 Windows x64 ABI3 release proof: `maturin build --release` produced `qianxing-0.1.0-cp310-abi3-win_amd64.whl`; `tools/check_python_wheel.py` verified the native extension tag; offline `pip install --no-deps --target` into a fresh target succeeded; importing from that installed target reported `native_extension_available=true`, and a typed `BacktestSpec` ran 1 fill and passed `verify_run`"
           ],
           "limitations_count": 1

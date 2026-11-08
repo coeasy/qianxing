@@ -91,6 +91,10 @@ fn advertised_commands_only_name_files_the_profile_generated() {
         let args = init_args(&runtime, profile, strategy);
         let (code, stdout) = qx_cli(&args);
         assert_eq!(code, Some(0), "init --profile {profile} failed:\n{stdout}");
+        assert!(
+            root.join("grafana/qianxing-overview.json").is_file(),
+            "profile={profile} must include the portable Grafana dashboard"
+        );
         let readme = std::fs::read_to_string(root.join("README.qianxing.md"))
             .expect("init should generate README.qianxing.md");
         let advertised = advertised_backtest(&stdout);
@@ -102,6 +106,7 @@ fn advertised_commands_only_name_files_the_profile_generated() {
         let has_frame = [
             "qianxing.bar-frame.example.json",
             "qianxing.ashare.bar-frame.example.json",
+            "qianxing.bar-frame.okx.example.json",
         ]
         .iter()
         .any(|name| root.join(name).is_file());
@@ -323,7 +328,7 @@ fn count_files(dir: &Path) -> usize {
 }
 
 #[test]
-fn init_lands_ten_files_and_the_advertised_backtest_adds_six() {
+fn init_lands_eleven_files_and_the_advertised_backtest_adds_six() {
     let root = temp_case_dir("r2-init-file-count");
     let runtime = root.join("qianxing.runtime.json");
     let (code, stdout) = qx_cli(&[
@@ -335,11 +340,11 @@ fn init_lands_ten_files_and_the_advertised_backtest_adds_six() {
         "macd",
     ]);
     assert_eq!(code, Some(0), "init failed:\n{stdout}");
-    assert_eq!(count_files(&root), 10, "init project asset count changed");
+    assert_eq!(count_files(&root), 11, "init project asset count changed");
     let command = advertised_backtest(&stdout).expect("builtin profile should advertise backtest");
     let (code, output) = run_as_printed(&command);
     assert_eq!(code, Some(0), "{command} failed:\n{output}");
-    assert_eq!(count_files(&root), 16, "backtest artifact count changed");
+    assert_eq!(count_files(&root), 17, "backtest artifact count changed");
     assert!(
         root.join("data/qianxing/datasets.manifest.json").is_file(),
         "dataset manifest was not written"

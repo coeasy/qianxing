@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R09",
+  "acceptance_id": "R09-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_id": "7570c915-b9e2-4ec1-9e6d-e05d453c2839",
+  "reviewed_artifacts": [
+    "maturity/evidence/strategy-deployment-lifecycle-2026-11-04.json",
+    "maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-restart-2026-11-05.json",
+    "maturity/acceptance-artifacts/83cf9c7c-1413-4bb4-a582-394217e75bef.log",
+    "tools/accept_strategy_deployment_lifecycle.py",
+    "tools/check_strategy_deployment_lifecycle_evidence.py",
+    "crates/qx-orchestrator/src/strategy_deployment.rs",
+    "docs/strategy-deployment-observations.md",
+    "maturity/evidence/r13-strategy-deployment-lifecycle-windows-postgres-2026-11-05.json",
+    "maturity/acceptance-artifacts/155259d0-9e95-4f88-8efc-424c585fb733.log",
+    "maturity/acceptance-artifacts/155259d0-9e95-4f88-8efc-424c585fb733.source-tree.json",
+    "maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json",
+    "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.log",
+    "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.source-tree.json",
+    "crates/qx-runtime/src/supervision/shutdown.rs",
+    "crates/qx-orchestrator/src/lib.rs"
+  ],
+  "findings": [
+    "The Windows Paper loopback run used the real supervisor and authenticated console flow. Deploy, pause, resume, rollback, failed replacement restoration, and stop all reached their expected operation states.",
+    "The structured lifecycle record explicitly reports venue_worker_started=false, orders_sent=false, and external_network_access=false.",
+    "The SQLite restart run verifies the durable terminal state after supervisor restart: desired revision 4, desired_running=false, observation phase=stopped. The failed replacement reports restoration of the prior revision.",
+    "The lifecycle evidence validator accepts the recorded backend/environment and enforces the expected operation sequence and stopped state.",
+    "A Windows local PostgreSQL 18.6 run also passed the complete distributed/transactional Paper deployment lifecycle, including failed replacement restoration and durable stop; the backend-aware lifecycle evidence validator passes.",
+    "The extended Windows SQLite Paper lifecycle completed a clean supervisor stop through stdin EOF and restarted with a different strategy worker PID; the Python checkpoint was supplied, roundtripped, and observed by one restore callback."
+  ],
+  "limitations": [
+    "This is isolated Paper loopback acceptance; it does not provide full live readiness, account/venue reconciliation, or live authorization.",
+    "Linux lifecycle CI and authoritative live readiness/venue authorization remain pending."
+  ]
+}

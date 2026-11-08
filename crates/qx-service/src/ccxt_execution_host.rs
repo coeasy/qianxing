@@ -553,6 +553,7 @@ pub fn run_ccxt_execution_worker(input: CcxtExecutionWorkerInput) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the queued cancellation context without hiding policy inputs.
 fn execute_ccxt_queued_cancel(
     worker: &WorkerConfig,
     pipeline_storage: &PipelineStorage,

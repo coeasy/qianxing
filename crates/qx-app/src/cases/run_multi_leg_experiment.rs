@@ -562,6 +562,7 @@ fn persist_multi_leg_experiment_result(
 
 /// Rebuild pathless run identity and content-addressed references when a report is copied into a
 /// portable bundle or another storage root.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_multi_leg_experiment_artifacts(
     mut result: RunMultiLegExperimentResult,
     canonical: &qx_spec::CanonicalRunSpec,

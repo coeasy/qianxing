@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "control_command_queue_bounded_capacity",
+  "generated_at_utc": "2026-10-29T14:03:58Z",
+  "platform": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64"
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "3.13.13"
+  },
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\debug\\qx-cli.exe",
+  "binary_sha256": "1efc853b5fec2830f097a85ec26952bb0da242ea4ff1c155536b13b4eaa5e6c5",
+  "build_identity": "qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile debug, schemas c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa)",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "60ae664b431bf32184f5cd00f0a750ab43a3f18dcddc33e9e58ccdea05ac695a",
+  "batch_sizes": [
+    1,
+    16,
+    64,
+    256,
+    1024,
+    4096,
+    8192,
+    16384
+  ],
+  "iterations_per_batch": 25,
+  "repeats_per_crash_point": 5,
+  "queue_capacity": 4096,
+  "queue_backend": "file",
+  "queue_kind": "control-command",
+  "job_queue_capacity": 4096,
+  "job_queue_backend": "file",
+  "write_limit_bytes": 8388608,
+  "crash_recovery_semantics": "synthetic local journal only; no venue or command side effects",
+  "workloads": [],
+  "crash_recovery": [],
+  "control_queue": {
+    "backend": "file",
+    "commands_acknowledged": 4096,
+    "enqueue_p50_ms": 4.8287,
+    "enqueue_p95_ms": 6.6911000000000005,
+    "fill_count": 4096,
+    "max_command_bytes": 16384,
+    "max_pending_commands": 4096,
+    "overflow_rejected": true,
+    "oversize_rejected": true,
+    "pending_count": 4096,
+    "peak_rss_bytes": 8863744,
+    "process_tree_peak_rss_bytes": 8810496,
+    "process_wall_ms_including_startup": 33751.18559997645
+  }
+}

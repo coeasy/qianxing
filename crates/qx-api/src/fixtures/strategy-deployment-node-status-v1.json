@@ -1,0 +1,12 @@
+[
+  {
+    "schema_version": 1,
+    "node_id": "node-east",
+    "authenticated_operator_id": "strategy-node-east",
+    "freshness": "unobserved",
+    "received_at_ms": null,
+    "source_observed_at_ms": null,
+    "age_ms": null,
+    "deployments": []
+  }
+]

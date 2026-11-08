@@ -1,0 +1,43 @@
+  OK  changelog_sha_equals_last_booked_bytes disk=0ddf106e0b8b29a8 booked=0ddf106e0b8b29a8
+  OK  changelog_bytes_equals_last_booked_bytes disk=584551 booked=584551
+  OK  changelog_pure_crlf crlf=3183 lf=3183 cr=3183
+  OK  changelog_crlf_count_equals_booked_lines crlf=3183 booked=3183
+  OK  dead_uuid_lives_on_exactly_one_line lines=[257]
+  OK  dead_uuid_occurs_twice_on_that_line count=2
+  OK  line_matches_the_head_anchor chars=177
+  OK  line_matches_the_tail_anchor chars=177
+  OK  line_carries_exactly_two_artifact_refs prefix=1
+  OK  new_uuid_absent_from_page_before_write count=0
+  OK  pre_line_shape_needle_named_the_dead_uuid labels=['be0f3ba8-5d42-4460-a19f-2e218efd7b4a']
+  OK  new_target_log_exists_on_disk 
+  OK  new_target_source_tree_exists_on_disk 
+  OK  cited_log_exit_code_zero 
+  OK  cited_log_runs_the_suite 
+  OK  cited_log_declares_twenty_nine count=1
+  OK  cited_log_result_line_twenty_nine_pass 
+  OK  cited_log_has_no_failed_row failed=0 panic=0
+  OK  cited_log_names_the_process_restart_test 
+  OK  ledger_has_exactly_one_record_for_new_run count=1
+  OK  ledger_has_no_record_for_dead_run count=0
+  OK  ledger_record_outcome_passed outcome=passed
+  OK  ledger_record_acceptance_id id=R12-AC01
+  OK  ledger_record_command_is_the_suite 
+  OK  ledger_record_notes_cover_success_branch 
+  OK  ledger_record_notes_cover_failure_branch 
+  OK  ledger_record_notes_cover_cursor_discipline 
+  OK  ledger_record_artifacts_point_at_the_cited_log artifacts=2
+  OK  class_face_artifact_link_count_is_120 links=120
+  OK  class_face_label_uuid_count_is_46 labelled=46
+  OK  class_face_label_target_mismatch_is_zero mismatch=0
+  OK  class_face_dead_targets_is_exactly_one dead=1
+  OK  the_only_dead_target_is_this_one 
+  OK  checker_refuses_before_fix rc=1
+  OK  checker_prints_exactly_one_broken_link rows=1
+  OK  checker_broken_row_names_this_doc_and_line row=docs/changelog/current.md:258
+  OK  checker_broken_row_names_the_dead_uuid 
+  OK  uuid_audit_refuses_before_fix rc=1
+  BAD uuid_audit_dead_rows_equal_doc_occurrences rows=1 occurrences=2
+  OK  uuid_audit_dead_distinct_is_one distinct=1
+  OK  uuid_audit_citation_total_parsed total=204
+  OK  watched_sibling_citations_are_nonzero counts={'221f0bc3': 1, '133058f2': 0}
+REFUSE pre-write gates failed: PRE uuid_audit_dead_rows_equal_doc_occurrences rows=1 occurrences=2

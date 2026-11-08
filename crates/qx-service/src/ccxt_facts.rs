@@ -334,10 +334,8 @@ pub fn ccxt_position_facts(
             ));
         }
         let contracts = contracts_raw;
-        if contracts == 0 {
-            if contracts_exact.is_zero() {
-                continue;
-            }
+        if contracts == 0 && contracts_exact.is_zero() {
+            continue;
         }
         // `contracts_raw` 是无符号的张数，持仓的正负完全由 side 决定。连接器在交易所
         // 没给方向时会填 "unknown"（python/qianxing_ccxt 的 _normalize_position），
@@ -391,12 +389,12 @@ pub fn ccxt_position_facts(
                 return Err(format!("CCXT position {symbol}.{exact_key} 必须为正"));
             }
             let raw = ccxt_exact_to_raw(exact, &format!("{symbol}.{exact_key}"))?;
-            if position.get(raw_key).is_some_and(|value| !value.is_null()) {
-                if raw_json_i128(position, raw_key)? != raw {
-                    return Err(format!(
-                        "CCXT position {symbol}.{raw_key} 与精确价格投影不一致"
-                    ));
-                }
+            if position.get(raw_key).is_some_and(|value| !value.is_null())
+                && raw_json_i128(position, raw_key)? != raw
+            {
+                return Err(format!(
+                    "CCXT position {symbol}.{raw_key} 与精确价格投影不一致"
+                ));
             }
             Ok((raw > 0).then_some(Price::from_raw(raw)))
         };
@@ -514,7 +512,8 @@ pub fn ccxt_funding_fact(
     let timestamp = funding
         .get("timestamp_ms")
         .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
+        .filter(|timestamp| *timestamp > 0)
+        .ok_or_else(|| "CCXT funding 缺少有效 timestamp_ms".to_string())?;
     Ok((
         FundingRateSnapshot {
             instrument,
@@ -565,7 +564,8 @@ pub fn ccxt_cashflow_facts(
         let timestamp = row
             .get("timestamp_ms")
             .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
+            .filter(|timestamp| *timestamp > 0)
+            .ok_or_else(|| format!("CCXT cashflow {external_id} 缺少有效 timestamp_ms"))?;
         facts.push((
             AccountCashflow {
                 account_id: account_id.into(),
@@ -902,5 +902,101 @@ mod wallet_cash_tests {
         assert!(ccxt_position_facts(&response, "OKX")
             .expect_err("conflicting money projection must not enter the event log")
             .contains("与精确金额投影不一致"));
+    }
+}
+
+#[cfg(test)]
+mod funding_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn funding_snapshot_requires_a_positive_source_timestamp() {
+        let valid = serde_json::json!({
+            "funding": {
+                "symbol": "BTC/USDT:USDT",
+                "funding_rate_bps": 3,
+                "timestamp_ms": 100,
+                "next_funding_timestamp_ms": 200
+            }
+        });
+        let (snapshot, timestamp) = ccxt_funding_fact(&valid, "okx").unwrap();
+        assert_eq!(timestamp, 100);
+        assert_eq!(snapshot.next_funding_timestamp_ms, Some(200));
+
+        for funding in [
+            serde_json::json!({
+                "funding": {
+                    "symbol": "BTC/USDT:USDT",
+                    "funding_rate_bps": 3
+                }
+            }),
+            serde_json::json!({
+                "funding": {
+                    "symbol": "BTC/USDT:USDT",
+                    "funding_rate_bps": 3,
+                    "timestamp_ms": 0
+                }
+            }),
+            serde_json::json!({
+                "funding": {
+                    "symbol": "BTC/USDT:USDT",
+                    "funding_rate_bps": 3,
+                    "timestamp_ms": "100"
+                }
+            }),
+        ] {
+            assert!(ccxt_funding_fact(&funding, "okx")
+                .expect_err("missing or malformed source time must fail closed")
+                .contains("缺少有效 timestamp_ms"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod cashflow_timestamp_tests {
+    use super::*;
+
+    #[test]
+    fn cashflow_facts_require_a_positive_source_timestamp() {
+        let valid = serde_json::json!({
+            "cashflows": [{
+                "external_id": "funding-1",
+                "currency": "USDT",
+                "kind": "funding",
+                "amount_raw": 5,
+                "timestamp_ms": 100
+            }]
+        });
+        let facts = ccxt_cashflow_facts(&valid, "account-1", "okx").unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].1, 100);
+
+        for row in [
+            serde_json::json!({
+                "external_id": "funding-1",
+                "currency": "USDT",
+                "kind": "funding",
+                "amount_raw": 5
+            }),
+            serde_json::json!({
+                "external_id": "funding-1",
+                "currency": "USDT",
+                "kind": "funding",
+                "amount_raw": 5,
+                "timestamp_ms": 0
+            }),
+            serde_json::json!({
+                "external_id": "funding-1",
+                "currency": "USDT",
+                "kind": "funding",
+                "amount_raw": 5,
+                "timestamp_ms": "100"
+            }),
+        ] {
+            let response = serde_json::json!({"cashflows": [row]});
+            assert!(ccxt_cashflow_facts(&response, "account-1", "okx")
+                .expect_err("missing or malformed source time must fail closed")
+                .contains("缺少有效 timestamp_ms"));
+        }
     }
 }

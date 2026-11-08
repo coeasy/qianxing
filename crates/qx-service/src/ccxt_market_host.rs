@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)] // Keep ticker conversion tests adjacent to the helpers they cover.
+
 use crate::ccxt_live_bars::{closed_live_frame, write_live_bar_snapshot, LiveStrategyBarSpec};
 use crate::ccxt_stream_retry::CcxtChannelBudgets;
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};

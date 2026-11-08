@@ -31,13 +31,15 @@ pub use backtest_input_verification::{
     VerifiedDepthLevel,
 };
 pub use backtest_summary::{
-    account_base_source_label, persist_backtest_artifacts, persist_backtest_artifacts_with_summary,
-    serialize_backtest_fills_csv, serialize_multi_leg_backtest_fills_csv, write_backtest_artifact,
-    BacktestAccountBase, BacktestArtifacts, BacktestInputProvenance, BacktestSampleTimestamps,
-    BacktestSignalParams, PersistedBacktestArtifacts, PortfolioFillAttribution,
+    account_base_source_label, backtest_metrics_definition_json, persist_backtest_artifacts,
+    persist_backtest_artifacts_with_summary, serialize_backtest_fills_csv,
+    serialize_multi_leg_backtest_fills_csv, write_backtest_artifact, BacktestAccountBase,
+    BacktestArtifacts, BacktestInputProvenance, BacktestSampleTimestamps, BacktestSignalParams,
+    PersistedBacktestArtifacts, PortfolioFillAttribution,
     BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE, BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE,
     BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE, BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE,
-    BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE, BACKTEST_SUMMARY_SCHEMA_VERSION,
+    BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE, BACKTEST_METRICS_DEFINITION_VERSION,
+    BACKTEST_SUMMARY_SCHEMA_VERSION,
 };
 pub use evidence_bundle::serialize_verified_evidence_bundle;
 pub use multi_builtin_artifacts::{
@@ -77,7 +79,7 @@ pub use reader::{
 };
 pub use run_evidence_assembly::{
     assemble_run_evidence_payload, persist_run_evidence_bundle, prepare_run_evidence_assembly,
-    RunEvidenceAssembly, RunEvidencePreparation,
+    prepare_run_evidence_bundle, RunEvidenceAssembly, RunEvidencePreparation,
 };
 pub use run_evidence_files::{
     canonical_run_evidence_path, load_run_evidence_identity_files,

@@ -19,6 +19,8 @@ pub mod run_evidence;
 pub mod run_evidence_fidelity;
 pub mod run_record;
 pub mod schema_registry;
+pub mod strategy_deployment;
+pub mod strategy_project;
 
 pub use canonical_run_spec::{
     CanonicalDatasetIdentity, CanonicalRunClock, CanonicalRunSpec, CanonicalStrategyIdentity,
@@ -46,6 +48,18 @@ pub use run_record::{
 };
 pub use schema_registry::{
     SchemaCompatibility, SchemaEntry, SchemaRegistry, SCHEMA_REGISTRY_SCHEMA_VERSION,
+};
+pub use strategy_deployment::{
+    StrategyDependencyTreeFileV1, StrategyDependencyTreeV1, StrategyDeploymentActionV1,
+    StrategyDeploymentOperationStateV1, StrategyDeploymentOperationV1,
+    StrategyDeploymentRevisionV1, MAX_STRATEGY_DEPENDENCY_TREE_BYTES,
+    MAX_STRATEGY_DEPENDENCY_TREE_FILES, MAX_STRATEGY_DEPENDENCY_TREE_FILE_BYTES,
+    MAX_STRATEGY_DEPLOYMENT_CONFIG_BYTES, STRATEGY_DEPENDENCY_TREE_SCHEMA_VERSION,
+    STRATEGY_DEPLOYMENT_OPERATION_SCHEMA_VERSION, STRATEGY_DEPLOYMENT_REVISION_SCHEMA_VERSION,
+};
+pub use strategy_project::{
+    StrategyProjectDataV1, StrategyProjectManifestV1, STRATEGY_PROJECT_KIND,
+    STRATEGY_PROJECT_SCHEMA_VERSION,
 };
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};

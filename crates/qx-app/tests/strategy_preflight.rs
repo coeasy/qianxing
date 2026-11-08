@@ -105,6 +105,7 @@ fn preflight(manifest: Value, execution_spec: Value) -> StrategyExecutionPreflig
         purpose: StrategyPreflightPurpose::Run,
         target_strategy_id: None,
         split_plan: None,
+        require_dataset_snapshots: false,
     }
 }
 
@@ -253,4 +254,86 @@ fn multi_market_preflight_checks_only_the_selected_strategy_market() {
         .expect("unselected market must not block the selected Python callback slot");
     assert_eq!(result.checked_markets.len(), 1);
     assert_eq!(result.checked_markets[0].label, "markets[0]");
+}
+
+#[test]
+fn required_capabilities_fail_before_dataset_access_even_for_partial_manifests() {
+    for completeness in ["complete", "partial"] {
+        for capability in ["durable_checkpoint", "account_updates", "timer"] {
+            let mut manifest = complete_manifest(0);
+            manifest["completeness"] = json!(completeness);
+            manifest["required_capabilities"] = json!([capability]);
+            let error = validate_strategy_execution_preflight_v1(
+                &preflight(manifest, single_market_spec("does-not-exist.json", 2)),
+                &research(),
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .message()
+                    .contains("does not support required capabilities"),
+                "{error:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn required_capabilities_are_checked_and_reported_by_the_rust_host() {
+    let root = scratch("strategy-preflight-capabilities");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 12);
+    let mut manifest = complete_manifest(0);
+    manifest["required_capabilities"] =
+        json!(["bar", "bar_history", "fill_updates", "order_status_updates"]);
+    let result = validate_strategy_execution_preflight_v1(
+        &preflight(manifest, single_market_spec(&bars, 12)),
+        &research(),
+    )
+    .unwrap();
+    assert_eq!(result.host_capabilities.host_id, "local_python_bar");
+    assert_eq!(result.host_capabilities.profile, "local");
+}
+
+#[test]
+fn malformed_required_capabilities_cannot_bypass_partial_preflight() {
+    for required in [
+        json!(["bar", "bar"]),
+        json!(["unknown_capability"]),
+        json!(null),
+        json!("bar"),
+    ] {
+        let mut manifest = complete_manifest(0);
+        manifest["completeness"] = json!("partial");
+        manifest["required_capabilities"] = required;
+        assert!(validate_strategy_execution_preflight_v1(
+            &preflight(manifest, single_market_spec("does-not-exist.json", 2)),
+            &research(),
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn partial_manifest_cannot_claim_bar_capabilities_for_a_tick_host() {
+    let mut manifest = complete_manifest(0);
+    manifest["completeness"] = json!("partial");
+    manifest["required_capabilities"] = json!(["bar_history"]);
+    let error = validate_strategy_execution_preflight_v1(
+        &preflight(manifest, depth_strategy_spec("l1")),
+        &research(),
+    )
+    .unwrap_err();
+    assert!(error.message().contains("local_python_tick"));
+}
+
+#[test]
+fn legacy_preflight_result_deserializes_without_promoting_capability_evidence() {
+    let result: qx_app::StrategyExecutionPreflightResultV1 = serde_json::from_value(json!({
+        "schema_version": 1, "strategy_id": "legacy", "strategy_version": "1",
+        "completeness": "partial", "data_level": "bar", "warmup_bars": 0,
+        "checked_markets": []
+    }))
+    .unwrap();
+    assert_eq!(result.host_capabilities.host_id, "local_python_unresolved");
+    assert!(result.host_capabilities.supported.is_empty());
 }

@@ -148,7 +148,7 @@ fn venue_events_to_application(events: Vec<VenueEvent>) -> Vec<ExecutionEvent> {
                 client_order_id,
                 venue_order_id,
             },
-            VenueEvent::Fill(fill) => ExecutionEvent::Fill(Box::new(fill)),
+            VenueEvent::Fill(fill) => ExecutionEvent::Fill(fill),
             VenueEvent::FeeAdjustment {
                 account_id,
                 venue_id,
@@ -1799,6 +1799,7 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 format!("{worker_id}:accepted:{client_order_id}"),
             ),
             VenueEvent::Fill(fill) => {
+                let fill = *fill;
                 let event_ts = fill.ts;
                 let fill_order_id = fill.order_id;
                 let seq = *source_seq;

@@ -10,6 +10,9 @@ use super::{
     StrategyFillUpdateV2, StrategyHistoryRequirements, StrategyOrderIntent,
     StrategyOrderStatusUpdate, StrategyStopContextV1, StrategyStopReason,
 };
+use crate::capabilities::{
+    StrategyCapability, StrategyHostCapabilitiesV1, StrategyRequiredCapabilitiesV1,
+};
 use qx_core::{
     ExactDecimal, ExactOrderAmounts, InstrumentId, OrderPolicy, PositionSide, Price, Quantity, Side,
 };
@@ -32,6 +35,7 @@ const MAX_PLUGIN_STRING_BYTES: usize = 1_048_576;
 const ERROR_BUFFER_SIZE: usize = 512;
 const MAX_DIAGNOSTIC_STATE_BYTES: usize = 64 * 1024;
 const MAX_ORDER_POLICY_BYTES: usize = 4 * 1024;
+const MAX_REQUIRED_CAPABILITIES_BYTES: usize = 16 * 1024;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     ring::digest::digest(&ring::digest::SHA256, bytes)
@@ -218,6 +222,10 @@ pub struct QxStrategyVTable {
 /// It writes one bounded UTF-8 JSON value into host-owned memory and never transfers ownership.
 pub type QxStrategyDiagnosticState =
     unsafe extern "C" fn(QxStrategyHandle, *mut c_char, usize, *mut usize) -> i32;
+/// Optional dynamic-library export `qx_strategy_required_capabilities_v1`.
+/// It writes a bounded StrategyRequiredCapabilitiesV1 JSON value into host memory.
+pub type QxStrategyRequiredCapabilitiesCallbackV1 =
+    unsafe extern "C" fn(*mut c_char, usize, *mut usize, *mut c_char, usize) -> i32;
 /// Optional dynamic-library export that writes strategy-owned checkpoint JSON into a bounded
 /// host buffer. The JSON value must be an object and must fit the strategy checkpoint limit.
 pub type QxStrategyCheckpointSnapshotV1 =
@@ -2051,12 +2059,46 @@ impl DynamicCAbiLoadPolicy {
 }
 
 impl DynamicCAbiStrategy {
+    unsafe fn read_declared_required_capabilities(
+        callback: QxStrategyRequiredCapabilitiesCallbackV1,
+    ) -> Result<StrategyRequiredCapabilitiesV1, String> {
+        let mut output = vec![0 as c_char; MAX_REQUIRED_CAPABILITIES_BYTES];
+        let mut output_len = 0_usize;
+        let mut error_buffer = [0 as c_char; ERROR_BUFFER_SIZE];
+        let code = unsafe {
+            callback(
+                output.as_mut_ptr(),
+                output.len(),
+                &mut output_len,
+                error_buffer.as_mut_ptr(),
+                error_buffer.len(),
+            )
+        };
+        if code != 0 {
+            return Err(CAbiStrategy::call_error(
+                "C ABI required capabilities declaration",
+                code,
+                &error_buffer,
+            ));
+        }
+        if output_len == 0 || output_len > output.len() {
+            return Err(format!(
+                "C ABI required capabilities JSON length is invalid: len={output_len} max={}",
+                output.len()
+            ));
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(output.as_ptr().cast::<u8>(), output_len) };
+        let declaration: StrategyRequiredCapabilitiesV1 = serde_json::from_slice(bytes)
+            .map_err(|error| format!("C ABI StrategyRequiredCapabilitiesV1 JSON 无效: {error}"))?;
+        Ok(declaration)
+    }
+
     /// # Safety
     ///
     /// 动态库必须是受信任、与当前进程 ABI/架构兼容的插件；不受信任插件
     /// 应在独立进程或沙箱内运行，而不是直接加载到交易进程。
     pub unsafe fn load(path: impl AsRef<Path>, config_json: &str) -> Result<Self, String> {
-        Self::load_unverified(path.as_ref(), config_json)
+        Self::load_unverified(path.as_ref(), config_json, &[], false)
     }
 
     /// 仅在调用方已经通过外部发布策略校验后加载动态库。
@@ -2077,10 +2119,32 @@ impl DynamicCAbiStrategy {
     ) -> Result<Self, String> {
         policy.validate()?;
         verify_library_file(path.as_ref(), policy)?;
-        Self::load_unverified(path.as_ref(), config_json)
+        Self::load_unverified(path.as_ref(), config_json, &[], false)
     }
 
-    unsafe fn load_unverified(path: &Path, config_json: &str) -> Result<Self, String> {
+    /// Load only after checking host requirements against the callbacks exported by the library.
+    /// The check runs after symbol resolution and before `qx_strategy_create_v1` is invoked.
+    ///
+    /// # Safety
+    /// The same native-code trust requirements as `load_verified` apply.
+    pub unsafe fn load_verified_with_required_capabilities(
+        path: impl AsRef<Path>,
+        config_json: &str,
+        policy: &DynamicCAbiLoadPolicy,
+        required: &[StrategyCapability],
+        scoped_account_updates: bool,
+    ) -> Result<Self, String> {
+        policy.validate()?;
+        verify_library_file(path.as_ref(), policy)?;
+        Self::load_unverified(path.as_ref(), config_json, required, scoped_account_updates)
+    }
+
+    unsafe fn load_unverified(
+        path: &Path,
+        config_json: &str,
+        required: &[StrategyCapability],
+        scoped_account_updates: bool,
+    ) -> Result<Self, String> {
         let library = libloading::Library::new(path)
             .map_err(|error| format!("加载 C ABI Strategy 动态库失败: {error}"))?;
         let get_vtable: libloading::Symbol<unsafe extern "C" fn() -> *const QxStrategyVTable> =
@@ -2167,6 +2231,25 @@ impl DynamicCAbiStrategy {
             .get::<QxStrategyOrderPolicyCallbackV1>(b"qx_strategy_get_order_policy_v1\0")
             .ok()
             .map(|callback| *callback);
+        let required_capabilities_declaration = library
+            .get::<QxStrategyRequiredCapabilitiesCallbackV1>(
+                b"qx_strategy_required_capabilities_v1\0",
+            )
+            .ok()
+            .map(|callback| *callback)
+            .map(|callback| unsafe { Self::read_declared_required_capabilities(callback) })
+            .transpose()?;
+        let host_capabilities = StrategyHostCapabilitiesV1::c_abi(
+            on_order_status.is_some() || on_order_status_v2.is_some(),
+            on_fill_update_v2.is_some() || vtable.on_order_update.is_some(),
+            on_account_update.is_some(),
+            checkpoint_snapshot.is_some() && checkpoint_restore.is_some(),
+            scoped_account_updates,
+        );
+        host_capabilities.validate_required(required)?;
+        if let Some(declaration) = required_capabilities_declaration {
+            declaration.validate_required_capabilities_against_host(&host_capabilities)?;
+        }
         let mut inner = CAbiStrategy::from_vtable(vtable, config_json)?;
         inner.diagnostic_state = diagnostic_state;
         inner.checkpoint_snapshot = checkpoint_snapshot;

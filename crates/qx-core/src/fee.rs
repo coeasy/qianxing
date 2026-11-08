@@ -317,7 +317,7 @@ impl FeeModel for AShareFeeModel {
             || !(0..=10_000).contains(&self.commission_bp)
             || !(0..=10_000).contains(&self.stamp_duty_bp)
             || !(0..=10_000).contains(&self.transfer_fee_bp)
-            || !total_bps.is_some_and(|value| value <= 10_000)
+            || total_bps.is_none_or(|value| value > 10_000)
         {
             return Err(crate::QxError::BusinessViolation(
                 "AShareFeeModel 要求各费率非负、合计不超过 10000 bps 且最低佣金非负".into(),

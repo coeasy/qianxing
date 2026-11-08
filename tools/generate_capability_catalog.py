@@ -56,6 +56,7 @@ ACCOUNT_QUERY_SCOPE_FIELDS = (
 ACCOUNT_QUERY_OPERATIONS = {
     "balance.read",
     "orders.read",
+    "trades.read",
     "positions.read",
     "cashflows.read",
     "funding.read",

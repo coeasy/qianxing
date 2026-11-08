@@ -7,40 +7,127 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "strategy_manifest", "execution_spec", "purpose"],
+      "required": [
+        "schema_version",
+        "strategy_manifest",
+        "execution_spec",
+        "purpose"
+      ],
       "properties": {
-        "schema_version": { "const": 1 },
-        "strategy_manifest": { "type": "object" },
-        "execution_spec": { "type": "object" },
-        "purpose": { "enum": ["run", "search", "diagnose"] },
-        "target_strategy_id": { "type": ["string", "null"] },
-        "split_plan": { "type": ["object", "null"] }
+        "schema_version": {
+          "const": 1
+        },
+        "strategy_manifest": {
+          "type": "object"
+        },
+        "execution_spec": {
+          "type": "object"
+        },
+        "purpose": {
+          "enum": [
+            "run",
+            "search",
+            "diagnose"
+          ]
+        },
+        "target_strategy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "split_plan": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "require_dataset_snapshots": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "strategy_id", "strategy_version", "completeness", "data_level", "warmup_bars", "checked_markets"],
+      "required": [
+        "schema_version",
+        "strategy_id",
+        "strategy_version",
+        "completeness",
+        "data_level",
+        "warmup_bars",
+        "checked_markets"
+      ],
       "properties": {
-        "schema_version": { "const": 1 },
-        "strategy_id": { "type": "string", "minLength": 1 },
-        "strategy_version": { "type": "string", "minLength": 1 },
-        "completeness": { "enum": ["complete", "partial"] },
-        "data_level": { "type": ["string", "null"] },
-        "warmup_bars": { "type": ["integer", "null"], "minimum": 0 },
+        "schema_version": {
+          "const": 1
+        },
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "strategy_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "data_level": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warmup_bars": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
         "checked_markets": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["label", "instrument", "rows", "content_fingerprint"],
+            "required": [
+              "label",
+              "instrument",
+              "rows",
+              "content_fingerprint"
+            ],
             "properties": {
-              "label": { "type": "string", "minLength": 1 },
-              "instrument": { "type": "string", "minLength": 1 },
-              "rows": { "type": "integer", "minimum": 0 },
-              "content_fingerprint": { "type": "string", "pattern": "^barframe:[0-9a-f]{16}$" }
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instrument": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "content_fingerprint": {
+                "type": "string",
+                "pattern": "^(barframe:[0-9a-f]{16}|depth:.+:[0-9a-f]{16})$"
+              },
+              "dataset_snapshot_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
             }
           }
+        },
+        "host_capabilities": {
+          "$ref": "strategy-host-capabilities-v1.json"
         }
       }
     }

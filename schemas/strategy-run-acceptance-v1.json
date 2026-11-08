@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-run-acceptance-v1.json",
+  "title": "Qianxing Strategy Run Acceptance Records V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schema", "scenarios", "runs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "schema": {"const": "schemas/strategy-run-acceptance-v1.json"},
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["acceptance_id", "work_package", "status", "acceptance_criteria", "required_artifacts"],
+        "properties": {
+          "acceptance_id": {"type": "string", "pattern": "^R[0-9]{2}-AC[0-9]{2,}$"},
+          "work_package": {"type": "string", "pattern": "^R[0-9]{2}$"},
+          "status": {"enum": ["planned", "accepted", "blocked"]},
+          "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "required_artifacts": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "acceptance_id", "recorded_at_utc", "source_revision", "source_tree_sha256", "command", "inputs", "outcome", "artifacts"],
+        "properties": {
+          "run_id": {"type": "string", "format": "uuid"},
+          "acceptance_id": {"type": "string", "pattern": "^R[0-9]{2}-AC[0-9]{2,}$"},
+          "recorded_at_utc": {"type": "string", "format": "date-time"},
+          "source_revision": {"type": "string", "minLength": 1},
+          "source_tree_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Digest of sorted tracked and non-ignored untracked repository file paths and file digests, excluding this append-only catalog and generated acceptance-artifacts directory."},
+          "source_manifest": {"type": "string", "minLength": 1, "description": "Optional hashed artifact listing the files whose digests form source_tree_sha256; absent on legacy V1 runs."},
+          "environment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["system", "release", "machine", "python_version", "python_executable"],
+            "properties": {
+              "system": {"type": "string", "minLength": 1},
+              "release": {"type": "string", "minLength": 1},
+              "machine": {"type": "string", "minLength": 1},
+              "python_version": {"type": "string", "minLength": 1},
+              "python_executable": {"type": "string", "minLength": 1}
+            }
+          },
+          "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "inputs": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+          "outcome": {"enum": ["passed", "failed", "inconclusive"]},
+          "artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/artifact"}},
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

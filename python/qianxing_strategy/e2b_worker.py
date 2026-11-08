@@ -199,6 +199,7 @@ def _remote_worker_command(
     account_id: str | None,
     venue_id: str | None,
     artifact_sha256: str | None,
+    host_capabilities_json: str | None,
     ready_file: str,
 ) -> str:
     # `env -i` prevents template-level environment variables (including secrets)
@@ -217,6 +218,10 @@ def _remote_worker_command(
         values["QX_STRATEGY_VENUE_ID"] = venue_id
     if artifact_sha256:
         values["QX_STRATEGY_ARTIFACT_SHA256"] = artifact_sha256
+    if host_capabilities_json:
+        values["QX_STRATEGY_HOST_CAPABILITIES_JSON"] = host_capabilities_json
+    if os.environ.get("QX_STRATEGY_REQUIRE_CHECKPOINT") == "true":
+        values["QX_STRATEGY_REQUIRE_CHECKPOINT"] = "true"
     values["QX_STRATEGY_STDOUT_TO_STDERR"] = "1"
     assignments = " ".join(
         shlex.quote(f"{key}={value}") for key, value in values.items()
@@ -399,6 +404,7 @@ class E2BPythonStrategyWorker:
                 account_id=self._account_id,
                 venue_id=self._venue_id,
                 artifact_sha256=self._artifact_sha256,
+                host_capabilities_json=os.environ.get("QX_STRATEGY_HOST_CAPABILITIES_JSON"),
                 ready_file=f"/workspace/strategy/.ready-{session_id}",
             )
             self.output = _RemoteOutput()

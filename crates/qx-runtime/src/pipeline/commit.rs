@@ -564,6 +564,26 @@ impl LiveEventPipeline {
                 },
                 Priority::FEEDBACK,
             ),
+            RuntimeExternalEvent::OrderStatusReconciled {
+                client_order_id,
+                account_id,
+                venue_id,
+                status,
+                venue_order_id,
+                filled_raw,
+                filled_exact,
+            } => (
+                EventKind::OrderStatusReconciled {
+                    client_order_id: *client_order_id,
+                    account_id: account_id.clone(),
+                    venue_id: venue_id.clone(),
+                    status: *status,
+                    venue_order_id: venue_order_id.clone(),
+                    filled_raw: *filled_raw,
+                    filled_exact: *filled_exact,
+                },
+                Priority::FEEDBACK,
+            ),
         };
         let primary = self.append_fact(
             event_ts,
@@ -730,6 +750,24 @@ impl LiveEventPipeline {
             }
             RuntimeExternalEvent::ReconcileRequired { client_order_id } => {
                 self.apply_reconcile_required(client_order_id)?;
+            }
+            RuntimeExternalEvent::OrderStatusReconciled {
+                client_order_id,
+                account_id,
+                venue_id,
+                status,
+                filled_raw,
+                filled_exact,
+                ..
+            } => {
+                self.apply_reconciled_order_status(
+                    client_order_id,
+                    &account_id,
+                    &venue_id,
+                    status,
+                    filled_raw,
+                    filled_exact,
+                )?;
             }
         }
         self.persist()?;

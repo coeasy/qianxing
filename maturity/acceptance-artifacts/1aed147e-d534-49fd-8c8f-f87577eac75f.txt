@@ -1,0 +1,44 @@
+local-only rows: 146 (booked face 146)
+distinct local-only targets: 134
+local-only rows by cause:
+  untracked-committable  rows=146 targets=134
+
+non-artifact local-only rows:
+  README.md:82 -> docs/first-run.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:27 -> docs/hs300-sma-2010-present/status.json  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:317 -> docs/牵星Qianxing-本地与服务端策略运行架构对标及重构实施方案-2026-10-28.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:317 -> maturity/strategy-run-refactor-work-packages.json  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/strategy-host-capabilities.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/strategy-deployment-observations.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/backtest-report-layout.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/local-backtest-validation.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/hs300-sma-2010-present/README.md  [untracked-committable]
+  docs/installation.md:12 -> docs/first-run.md  [untracked-committable]
+  docs/installation.md:129 -> docs/first-run.md  [untracked-committable]
+  docs/multi-language-strategies.md:22 -> schemas/strategy-project-v1.json  [untracked-committable]
+  docs/multi-language-strategies.md:29 -> docs/strategy-hooks.md  [untracked-committable]
+  docs/multi-language-strategies.md:87 -> docs/strategy-host-capabilities.md  [untracked-committable]
+  docs/project-guide.md:30 -> docs/first-run.md  [untracked-committable]
+  docs/project-guide.md:31 -> docs/strategy-hooks.md  [untracked-committable]
+  docs/project-guide.md:34 -> docs/first-run.md  [untracked-committable]
+  docs/project-guide.md:39 -> maturity/strategy-run-refactor-work-packages.json  [untracked-committable]
+  docs/project-guide.md:39 -> docs/strategy-run-acceptance.md  [untracked-committable]
+  docs/project-guide.md:41 -> docs/牵星Qianxing-易用性对照RQAlpha架构评审与优化重构方案-2026-10-30.md  [untracked-committable]
+  docs/strategy-project-runs.md:211 -> docs/backtest-report-layout.md  [untracked-committable]
+  python/README.md:246 -> docs/strategy-host-capabilities.md  [untracked-committable]
+  python/README.md:657 -> docs/strategy-host-capabilities.md  [untracked-committable]
+  python/README.md:659 -> docs/strategy-deployment-observations.md  [untracked-committable]
+  schemas/strategy_api_v1.md:37 -> schemas/strategy-process-checkpoint-restore-ack-v1.json  [untracked-committable]
+
+HEAD rows: 10 (booked face 10)
+  docs/architecture-local-server-refactor-review-2026-10-28.md:27 -> docs/hs300-sma-2010-present/status.json  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:317 -> docs/牵星Qianxing-本地与服务端策略运行架构对标及重构实施方案-2026-10-28.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:317 -> maturity/strategy-run-refactor-work-packages.json  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/strategy-host-capabilities.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/strategy-deployment-observations.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/backtest-report-layout.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/local-backtest-validation.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:319 -> docs/hs300-sma-2010-present/README.md  [untracked-committable]
+  docs/architecture-local-server-refactor-review-2026-10-28.md:658 -> maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log  [untracked-committable]
+  docs/strategy-project-runs.md:211 -> docs/backtest-report-layout.md  [untracked-committable]
+HEAD rows by cause: untracked-committable=10

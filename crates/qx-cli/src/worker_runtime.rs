@@ -93,8 +93,8 @@ pub(crate) fn run_ccxt_worker_inner(
 ) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let worker = venue_worker(&config, worker_id, &VenueEntry::CCXT)?;
-    validate_worker_market_specs(path, &worker)?;
     reject_ashare_rules_on_submit_path(path, Some(&worker), "ccxt-worker")?;
+    validate_worker_market_specs(path, &worker)?;
     let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let pipeline_storage = PipelineStorage::from_config(&config)?;

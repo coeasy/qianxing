@@ -210,7 +210,7 @@ enum PositionUpdate {
 }
 
 fn raw_decimal(raw: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(raw, 9).expect("legacy ledger values use supported scale 9")
+    ExactDecimal::from_legacy_raw(raw)
 }
 
 fn exact_raw_projection(value: ExactDecimal) -> Option<i128> {
@@ -250,10 +250,7 @@ fn apply_entry_position_delta(
         let multiplier = entry
             .exact_amounts
             .and_then(|exact| exact.contract_size)
-            .unwrap_or_else(|| {
-                ExactDecimal::from_parts(entry.multiplier, 0)
-                    .expect("legacy position multiplier is an integer")
-            });
+            .unwrap_or_else(|| ExactDecimal::from_integer(entry.multiplier));
         return apply_exact_position_state_delta(
             state,
             delta,
@@ -284,8 +281,7 @@ fn apply_entry_position_delta(
             state,
             delta,
             price,
-            ExactDecimal::from_parts(entry.multiplier, 0)
-                .expect("legacy position multiplier is an integer"),
+            ExactDecimal::from_integer(entry.multiplier),
             false,
             entry.leverage,
             preserve_margin_ratio,

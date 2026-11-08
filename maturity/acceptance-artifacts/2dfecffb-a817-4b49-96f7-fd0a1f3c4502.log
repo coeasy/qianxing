@@ -1,0 +1,14 @@
+baseline_bytes_sha=5ff9c858e44fa414
+ROW gun1_no_retry_on_nt rc=1 ran=37 red=test_posix_never_retries_a_replace_permission_error secs=81.79
+   test_receipt_write_retries_a_windows_sharing_violation                         green
+   test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt  green
+   test_posix_never_retries_a_replace_permission_error                            RED
+ROW gun2_attempt_budget_13 rc=1 ran=37 red=test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt secs=82.18
+   test_receipt_write_retries_a_windows_sharing_violation                         green
+   test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt  RED
+   test_posix_never_retries_a_replace_permission_error                            green
+ROW verdict_final_bytes rc=0 ran=37 red=- secs=81.44
+   test_receipt_write_retries_a_windows_sharing_violation                         green
+   test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt  green
+   test_posix_never_retries_a_replace_permission_error                            green
+fired=2 killed=2 survivor_rows=0

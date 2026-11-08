@@ -38,14 +38,45 @@ def available() -> bool:
     return True
 
 
+def extension_version() -> str | None:
+    """Return the version compiled into the loaded native extension, if exposed."""
+    try:
+        value = getattr(_extension(), "__version__", None)
+    except RuntimeError:
+        return None
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def schema_catalog_sha256() -> str | None:
+    """Return the schema catalog digest compiled into the loaded extension, if exposed."""
+    try:
+        value = getattr(_extension(), "__schema_catalog_sha256__", None)
+    except RuntimeError:
+        return None
+    return value if isinstance(value, str) and len(value) == 64 else None
+
+
+def extension_target_triple() -> str | None:
+    """Return the compiler target of the loaded extension, if exposed."""
+    try:
+        value = getattr(_extension(), "__target_triple__", None)
+    except RuntimeError:
+        return None
+    return value if isinstance(value, str) and value.strip() else None
+
+
 #: 应用层用例入口。扩展是构建产物，旧世代没有它们——所以"扩展能 import"
 #: 与"这个世代有应用层入口"是两件事，探针必须按名字问，不能按 import 成功推断。
 APP_ENTRYPOINTS = (
     "app_screen_ashare_bars",
     "app_validate_dataset",
+    "app_validate_dataset_manifest",
+    "app_publish_dataset_snapshot",
     "app_assemble_dataset_bundle",
     "app_prepare_quick_research_spec_v1",
     "app_validate_strategy_execution_preflight_v1",
+    "app_validate_strategy_project_v1",
+    "app_plan_strategy_runtime_v1",
     "app_run_backtest",
     "app_run_backtest_with_strategy",
     "app_start_backtest_with_strategy",
@@ -127,6 +158,8 @@ APP_USE_CASE_ENTRYPOINTS = (
     ("dataset.validate.bar.v1", ("app_validate_dataset",)),
     ("dataset.bundle.assemble.v1", ("app_assemble_dataset_bundle",)),
     ("strategy.execution.preflight.v1", ("app_validate_strategy_execution_preflight_v1",)),
+    ("strategy.project.validate.v1", ("app_validate_strategy_project_v1",)),
+    ("strategy.runtime.plan.v1", ("app_plan_strategy_runtime_v1",)),
     ("backtest.bar.v1", ("app_run_backtest", "app_start_backtest")),
     ("backtest.bar.python-strategy.v1", ("app_run_backtest_with_strategy", "app_start_backtest_with_strategy")),
     ("run.verify.v1", ("app_verify_run",)),
@@ -180,11 +213,16 @@ def app_available() -> bool:
     上一次构建的 `.pyd`，`python/qianxing_bridge/` 里是新的一份）。按名字问一次，才能让
     "扩展没构建"与"扩展是旧世代"在调用方那里分得开。
     """
+    return not missing_app_entrypoints()
+
+
+def missing_app_entrypoints() -> list[str]:
+    """Return required Rust application functions missing from the loaded binary."""
     try:
         extension = _extension()
     except RuntimeError:
-        return False
-    return all(hasattr(extension, name) for name in APP_ENTRYPOINTS)
+        return list(APP_ENTRYPOINTS)
+    return [name for name in APP_ENTRYPOINTS if not hasattr(extension, name)]
 
 
 def app_implemented_use_cases() -> list[str]:
@@ -339,9 +377,36 @@ def app_validate_dataset(spec_json: str) -> str:
     return str(_extension().app_validate_dataset(spec_json))
 
 
+def app_validate_dataset_manifest(spec_json: str) -> str:
+    """Publish or re-verify a ``DatasetManifestV2`` sidecar for a frozen BarFrame.
+
+    Returns ``{"manifest", "verified_existing", "degraded_fingerprint", "output_path"}``.
+    The manifest itself is validated in Rust; Python never recomputes fingerprints.
+    """
+    return str(_extension().app_validate_dataset_manifest(spec_json))
+
+
+def app_publish_dataset_snapshot(spec_json: str) -> str:
+    """Publish an idempotent ``DatasetSnapshotV1`` binding a manifest to exact frame bytes.
+
+    Returns ``{"snapshot", "snapshot_sha256", "output_path", "verified_existing"}``.
+    """
+    return str(_extension().app_publish_dataset_snapshot(spec_json))
+
+
 def app_validate_strategy_execution_preflight_v1(payload_json: str) -> str:
     """Validate a complete strategy manifest and its selected execution inputs in Rust."""
     return str(_extension().app_validate_strategy_execution_preflight_v1(payload_json))
+
+
+def app_validate_strategy_project_v1(payload_json: str) -> str:
+    """Validate project metadata using the shared Rust schema."""
+    return str(_extension().app_validate_strategy_project_v1(payload_json))
+
+
+def app_plan_strategy_runtime_v1(payload_json: str) -> str:
+    """Resolve the runtime strategy selected for one worker using Rust."""
+    return str(_extension().app_plan_strategy_runtime_v1(payload_json))
 
 
 def app_account_query_capability_preflight_v1(payload_json: str) -> str:

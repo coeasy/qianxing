@@ -111,7 +111,7 @@ impl TradingInstrumentSpec {
         Self {
             instrument: instrument.clone(),
             product: TradingProduct::Spot,
-            base_currency: instrument.symbol.clone(),
+            base_currency: instrument.symbol().to_owned(),
             quote_currency: currency.clone(),
             settlement_currency: currency,
             contract_size: SCALE,
@@ -758,7 +758,7 @@ impl TradingInstrumentSpec {
 }
 
 fn raw_decimal(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy raw values always use supported scale 9")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 fn result_at_scale_floor(
@@ -771,7 +771,7 @@ fn result_at_scale_floor(
 }
 
 fn exact_one() -> ExactDecimal {
-    ExactDecimal::from_parts(1, 0).expect("one is a supported exact decimal")
+    ExactDecimal::ONE
 }
 
 fn raw_zero(value: &i128) -> bool {

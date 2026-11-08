@@ -58,6 +58,7 @@ fn build_bar(
     let (provider, report, root) = verify_bar_report(provider, paths)?;
     let metadata = json!({
         "kind": "bar",
+        "dataset_snapshot_sha256": report.dataset_snapshot.content_sha256().map_err(invalid_report)?,
         "dataset_verdict": report.dataset_verdict,
         "dataset": {
             "dataset_id": report.manifest.dataset.dataset_id,
@@ -99,6 +100,7 @@ fn verify_bar_report(
     let reader = RootedArtifactReader { root: root.clone() };
     root_bar_artifacts(&mut provider.outcome, &root)?;
     provider.manifest_path = rooted_file(&provider.manifest_path, &root)?;
+    provider.snapshot_path = rooted_file(&provider.snapshot_path, &root)?;
 
     let context = RunContext::new(CallerCapability::Research, provider.outcome.run_id.clone());
     let report =
@@ -117,6 +119,8 @@ fn build_depth(
     let (provider, report, root) = verify_depth_report(provider, paths)?;
     let metadata = json!({
         "kind": "depth",
+        "dataset_snapshot_sha256": report.dataset_snapshot_sha256,
+        "dataset_id": report.manifest.dataset.dataset_id,
         "provider_id": report.provider_id,
         "provider_version": report.provider_version,
         "request_id": report.request_id,
@@ -152,6 +156,8 @@ fn verify_depth_report(
     let reader = RootedArtifactReader { root: root.clone() };
     root_depth_artifacts(&mut provider.outcome, &root)?;
     provider.depth_path = rooted_file(&provider.depth_path, &root)?;
+    provider.manifest_path = rooted_file(&provider.manifest_path, &root)?;
+    provider.snapshot_path = rooted_file(&provider.snapshot_path, &root)?;
 
     let context = RunContext::new(CallerCapability::Research, provider.outcome.run_id.clone());
     let report = qx_app::read_provider_depth_backtest_report_v1_with_readers(

@@ -27,6 +27,7 @@ qx-risk = { version = "0.3.0", path = "../qx-risk" }
 qx-orchestrator = { version = "0.3.0", path = "../qx-orchestrator" }
 qx-runtime = { version = "0.3.0", path = "../qx-runtime" }
 qx-scheduler = { version = "0.3.0", path = "../qx-scheduler" }
+qx-spec = { version = "0.3.0", path = "../qx-spec" }
 qx-strategy = { version = "0.3.0", path = "../qx-strategy" }
 qx-storage = { version = "0.3.0", path = "../qx-storage" }
 qx-xingban = { version = "0.3.0", path = "../qx-xingban" }

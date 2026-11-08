@@ -36,6 +36,56 @@ fn diff_is_deterministic_and_replayable() {
 }
 
 #[test]
+fn unavailable_equity_diagnostic_is_hash_bound_and_diffable() {
+    let mut base = AccountSnapshot::new(30, "main", "default", "BINANCE", 100);
+    base.equity_diagnostic = Some(EquityDiagnostic {
+        reason: EquityUnavailableReason::MissingMarkPrices,
+        missing_mark_instruments: vec![
+            "BTC/USDT:USDT.BINANCE".into(),
+            "ETH/USDT:USDT.BINANCE".into(),
+        ],
+    });
+    base.seal();
+    let serialized = base.to_json().expect("v4 snapshot serializes");
+    assert!(serialized.contains("missing_mark_prices"));
+    assert!(serialized.contains("ETH/USDT:USDT.BINANCE"));
+    assert_eq!(AccountSnapshot::from_json(&serialized).unwrap(), base);
+
+    let mut target = base.clone();
+    target.equity_diagnostic = Some(EquityDiagnostic {
+        reason: EquityUnavailableReason::ArithmeticOverflow,
+        missing_mark_instruments: Vec::new(),
+    });
+    target.header.event_seq += 1;
+    target.seal();
+    assert_ne!(base.state_hash(), target.state_hash());
+    let diff = base.diff(&target).expect("same account diff");
+    assert_eq!(diff.apply(&base).unwrap(), target);
+
+    let mut missing =
+        serde_json::from_str::<serde_json::Value>(&base.to_json().expect("v4 snapshot serializes"))
+            .unwrap();
+    missing.as_object_mut().unwrap().remove("equity_diagnostic");
+    assert!(matches!(
+        AccountSnapshot::from_json(&missing.to_string()),
+        Err(ProtocolError::Invalid(message)) if message.contains("requires equity_diagnostic")
+    ));
+
+    let mut missing_wire = serde_json::from_str::<serde_json::Value>(
+        &base.to_wire_json().expect("v4 wire snapshot serializes"),
+    )
+    .unwrap();
+    missing_wire
+        .as_object_mut()
+        .unwrap()
+        .remove("equity_diagnostic");
+    assert!(matches!(
+        AccountSnapshot::from_wire_json(&missing_wire.to_string()),
+        Err(ProtocolError::Invalid(message)) if message.contains("requires equity_diagnostic")
+    ));
+}
+
+#[test]
 fn wrong_base_is_rejected() {
     let base = snapshot();
     let mut target = base.clone();
@@ -361,7 +411,7 @@ fn stable_json_and_file_snapshot_store_are_recoverable_and_idempotent() {
     std::fs::remove_dir_all(root).expect("remove workspace-local snapshot test data");
 }
 
-/// 契约版本要"会失败"：读侧接受声明过的 v1/v2，并明确拒绝超出范围的自洽版本。
+/// 契约版本要"会失败"：读侧接受声明过的 v1-v4，并明确拒绝超出范围的自洽版本。
 #[test]
 fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     let mut value: serde_json::Value =
@@ -374,7 +424,7 @@ fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     let error = AccountSnapshot::from_json(&future).expect_err("自洽的 schema_version=7 必须被拒");
     assert!(
         matches!(error, ProtocolError::Invalid(ref message)
-            if message.contains("schema_version=7") && message.contains("支持 1..=3")),
+            if message.contains("schema_version=7") && message.contains("支持 1..=4")),
         "拒绝理由必须点出实到版本与本构建认的版本，实际: {error:?}"
     );
 
@@ -400,7 +450,7 @@ fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     assert_eq!(
         AccountSnapshot::from_wire_json(&foreign.to_wire_json().unwrap()).err(),
         Some(ProtocolError::Invalid(
-            "账户快照 schema_version=7 不受支持（本构建支持 1..=3）".into()
+            "账户快照 schema_version=7 不受支持（本构建支持 1..=4）".into()
         )),
         "wire 入口与稳定 JSON 入口必须共用同一道版本闸门"
     );
@@ -483,12 +533,12 @@ fn future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_prob
         .expect_err("自洽的高版本号即使形状读不出来也必须被拒");
     assert!(
         matches!(error, ProtocolError::Invalid(ref message)
-            if message.contains("schema_version=7") && message.contains("支持 1..=3")),
+            if message.contains("schema_version=7") && message.contains("支持 1..=4")),
         "版本判定必须排在字段解析之前，实际: {error:?}"
     );
 }
 
-/// 当前常量与 `/schema/account-snapshot-v3` 公布的契约必须同号，
+/// 当前常量与 `/schema/account-snapshot-v4` 公布的契约必须同号，
 /// 否则"只接受契约声明的 const"这句话本身就是一份假话。
 ///
 /// 这里原本还比一次"内嵌文本 vs 仓库契约文件"：那份内嵌文本是手写的第二份 schema，
@@ -508,7 +558,7 @@ fn known_version_constant_matches_the_served_contract() {
     // 外部读者拿错契约，所以公布身份也要落在文本里。
     assert_eq!(
         contract["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v3.json"),
+        Some("https://qianxing.dev/schema/account-snapshot-v4.json"),
         "公布的 $id 必须指向当前契约，读者才知道自己校验的是哪一份"
     );
     let legacy: serde_json::Value =

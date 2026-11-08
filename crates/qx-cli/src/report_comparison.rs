@@ -22,14 +22,14 @@ pub(crate) fn rank_comparison(entries: &mut [ComparisonEntry]) {
     qx_app::report_analysis::rank_comparison_by_return(entries);
 }
 
-pub(crate) fn write_comparison_html(
+pub(crate) fn prepare_comparison_html(
     base_summary: &Path,
     instrument: &str,
     data_fingerprint: &str,
     entries: &[ComparisonEntry],
     equity_series: &[Value],
     output: Option<&Path>,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<u8>), String> {
     let stem = base_summary
         .file_name()
         .and_then(|value| value.to_str())
@@ -51,12 +51,6 @@ pub(crate) fn write_comparison_html(
             output_path.display()
         ));
     }
-    let parent = output_path
-        .parent()
-        .filter(|value| !value.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("创建比较报告目录失败 {}: {error}", parent.display()))?;
     let mut html = String::from(
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>牵星回测对照报告</title><style>",
     );
@@ -65,7 +59,7 @@ pub(crate) fn write_comparison_html(
     html.push_str(&escape_html(instrument));
     html.push_str("</b> · 数据指纹 <code>");
     html.push_str(&escape_html(data_fingerprint));
-    html.push_str("</code></p><p class=\"note\">排名按收益率降序、最大回撤升序、运行摘要名升序；每个指标直接读取对应 v5/v6/v7 summary。可选基准指标按同一份 benchmark BarFrame 与每轮权益曲线逐时间戳精确对齐，基准指纹、价格口径、对齐与周期口径在表中列明。可信度分类列展示字段来源类别和 JSON Pointer，不代表数据或模型已独立认证。缺失指标显示 ");
+    html.push_str("</code></p><p class=\"note\">排名按收益率降序、最大回撤升序、运行摘要名升序；每个指标直接读取对应 v5/v6/v7/v8 summary。可选基准指标按同一份 benchmark BarFrame 与每轮权益曲线逐时间戳精确对齐，基准指纹、价格口径、对齐与周期口径在表中列明。可信度分类列展示字段来源类别和 JSON Pointer，不代表数据或模型已独立认证。缺失指标显示 ");
     html.push_str(READOUT_ABSENT);
     html.push_str("，不按零参与比较。下面的筛选、排序均在本地浏览器执行，不发送回测数据。</p><section class=\"toolbar\"><label>搜索运行/策略 <input id=\"qx-search\" type=\"search\" placeholder=\"输入关键字\"></label><label>策略 <select id=\"qx-strategy\"><option value=\"\">全部策略</option>");
     let mut strategies = entries
@@ -238,13 +232,7 @@ canvas.addEventListener('pointermove',event=>{{const chart=canvas._chart;if(!cha
 </script>"#
     );
     html = html.replace("</body>", &format!("{chart_script}</body>"));
-    qx_app::artifact_store::sink::publish(
-        &output_path,
-        &html,
-        qx_app::artifact_store::sink::PublishMode::Overwrite,
-    )
-    .map_err(|error| format!("发布比较报告失败 {}: {error}", output_path.display()))?;
-    Ok(output_path)
+    Ok((output_path, html.into_bytes()))
 }
 
 fn escaped_option(value: Option<&str>) -> String {
@@ -331,7 +319,7 @@ const STYLE: &str = "body{margin:0;background:#f5f7fa;color:#202124;font:14px sy
 
 #[cfg(test)]
 mod interactive_report_tests {
-    use super::write_comparison_html;
+    use super::prepare_comparison_html;
     use serde_json::json;
     use std::path::Path;
 
@@ -348,7 +336,7 @@ mod interactive_report_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let output = dir.join("comparison.html");
-        write_comparison_html(
+        let (prepared_path, payload) = prepare_comparison_html(
             &dir.join("run.summary.json"),
             "BTCUSDT.BINANCE",
             "data-fingerprint",
@@ -357,6 +345,8 @@ mod interactive_report_tests {
             Some(&output),
         )
         .unwrap();
+        assert_eq!(prepared_path, output);
+        qx_app::artifact_store::sink::publish_bundle(&[(prepared_path, payload)]).unwrap();
         let html = std::fs::read_to_string(&output).unwrap();
         assert!(html.contains("function nearestPoint(points,ts)"));
         assert!(html.contains("nearestPoint(item.points,nearest)"));

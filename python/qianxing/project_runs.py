@@ -19,6 +19,7 @@ import subprocess
 import sys
 import sysconfig
 import threading
+import time
 import uuid
 import zipfile
 from contextvars import ContextVar
@@ -38,6 +39,7 @@ _RUNTIME_PATH_FINDER = None
 _RUN_ID = re.compile(r"^[0-9a-f]{32}$")
 _TERMINAL = {"succeeded", "failed", "cancelled"}
 _KNOWN_STATUSES = _TERMINAL | {"preparing", "running", "cancelling"}
+_REPLACE_ATTEMPTS = 12
 _DEPENDENCY_LOCK_NAME = "requirements.lock"
 _DEPENDENCY_LOCK_MAX_BYTES = 8 * 1024 * 1024
 _RUNTIME_IMPORT_MAX_FILES = 50_000
@@ -678,6 +680,28 @@ def _verify_runtime_import_files(
     return "matched"
 
 
+def _replace(source: Path, destination: Path) -> None:
+    """Swap a receipt in, retrying the Windows sharing violation a concurrent reader causes.
+
+    A status query or a strategy that reads its own receipt holds ``run.json`` without delete
+    sharing, so `os.replace` fails with ERROR_ACCESS_DENIED while the parent writes the next
+    state transition. The retry budget is bounded: a locked-for-good receipt still fails closed.
+    """
+    if os.name != "nt":
+        os.replace(source, destination)
+        return
+    delay = 0.005
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.2)
+
+
 def _write(path: Path, value: Any) -> None:
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
@@ -686,7 +710,7 @@ def _write(path: Path, value: Any) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -698,6 +722,60 @@ def _directory(root: Path, run_id: str) -> Path:
     if not directory.is_dir():
         raise ValueError(f"project run does not exist: {run_id}")
     return directory
+
+
+def _darwin_process_start_time(pid: int) -> tuple[int, int] | None:
+    """Read the Darwin process start timestamp at microsecond resolution."""
+    import ctypes
+
+    class ProcBsdInfo(ctypes.Structure):
+        _fields_ = [
+            ("pbi_flags", ctypes.c_uint32),
+            ("pbi_status", ctypes.c_uint32),
+            ("pbi_xstatus", ctypes.c_uint32),
+            ("pbi_pid", ctypes.c_uint32),
+            ("pbi_ppid", ctypes.c_uint32),
+            ("pbi_uid", ctypes.c_uint32),
+            ("pbi_gid", ctypes.c_uint32),
+            ("pbi_ruid", ctypes.c_uint32),
+            ("pbi_rgid", ctypes.c_uint32),
+            ("pbi_svuid", ctypes.c_uint32),
+            ("pbi_svgid", ctypes.c_uint32),
+            ("rfu_1", ctypes.c_uint32),
+            ("pbi_comm", ctypes.c_char * 16),
+            ("pbi_name", ctypes.c_char * 32),
+            ("pbi_nfiles", ctypes.c_uint32),
+            ("pbi_pgid", ctypes.c_uint32),
+            ("pbi_pjobc", ctypes.c_uint32),
+            ("e_tdev", ctypes.c_uint32),
+            ("e_tpgid", ctypes.c_uint32),
+            ("pbi_nice", ctypes.c_int32),
+            ("pbi_start_tvsec", ctypes.c_uint64),
+            ("pbi_start_tvusec", ctypes.c_uint64),
+        ]
+
+    if ctypes.sizeof(ProcBsdInfo) != 136:
+        return None
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        proc_pidinfo = libproc.proc_pidinfo
+        proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidinfo.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        result = proc_pidinfo(
+            pid, 3, 0, ctypes.byref(info), ctypes.sizeof(ProcBsdInfo)
+        )
+        if result != ctypes.sizeof(ProcBsdInfo):
+            return None
+        return int(info.pbi_start_tvsec), int(info.pbi_start_tvusec)
+    except (AttributeError, OSError):
+        return None
 
 
 def _process_identity(pid: int) -> dict[str, str] | None:
@@ -745,6 +823,13 @@ def _process_identity(pid: int) -> dict[str, str] | None:
         except (OSError, IndexError):
             return None
     if platform.system() == "Darwin":
+        start_time = _darwin_process_start_time(pid)
+        if start_time is not None:
+            start_seconds, start_microseconds = start_time
+            identity["process_start"] = f"{start_seconds}.{start_microseconds:06d}"
+            identity["process_start_source"] = "proc_pidinfo"
+            identity["process_start_precision"] = "one_microsecond"
+            return identity
         try:
             completed = subprocess.run(
                 ["ps", "-o", "lstart=", "-p", str(pid)],
@@ -2227,11 +2312,12 @@ def _file_sha256(path: Path) -> str:
 
 
 def generate_project_report(
-    root: Path, run_id: str, *, executable: str = "qx-cli", output: str | None = None,
+    root: Path, run_id: str, *, executable: str | None = None, output: str | None = None,
     formats: Any = ("html",),
 ) -> dict:
-    """Delegate a completed run's verified report to Rust in the requested formats."""
-    import subprocess
+    """Render with an explicit CLI, or the wheel's CLI before considering PATH."""
+    from .report_renderer import ReportRendererError, require_report_renderer
+
     selected = _report_formats(formats)
     status = project_run_status(root, run_id)
     integrity = verify_project_artifacts(root, run_id)
@@ -2270,13 +2356,6 @@ def generate_project_report(
     for path in targets.values():
         if path in protected:
             raise ValueError("report output aliases a project input or run evidence file")
-    command = [executable, "report", summary["path"]]
-    if "html" in targets:
-        command += ["--html", "-o", str(targets["html"])]
-    if "xlsx" in targets:
-        command += ["--xlsx", str(targets["xlsx"])]
-    if "json" in targets:
-        command += ["--json"]
     identity = {
         "project_run_id": run_id,
         "formats": list(selected),
@@ -2288,6 +2367,29 @@ def generate_project_report(
         "runtime_import_files_sha256": runtime_import_files_sha256,
         "generated_at": _now(),
     }
+    try:
+        renderer = require_report_renderer(executable, cwd=root)
+    except ReportRendererError as error:
+        reason = "report_renderer_" + error.diagnostic["status"]
+        _write(directory / "report-status.json", {
+            **identity, "status": "failed", "reason": reason,
+            "report_renderer": error.diagnostic,
+            "report_sha256": None,
+            "error": project_error_envelope(
+                {"category": "TIMEOUT" if error.diagnostic["status"] == "timeout" else "REPORT_FAILED",
+                 "message": str(error), "reason": reason},
+                stage="report", run_id=run_id,
+            ),
+        })
+        raise
+    identity["report_renderer"] = renderer
+    command = [renderer["path"], "report", summary["path"]]
+    if "html" in targets:
+        command += ["--html", "-o", str(targets["html"])]
+    if "xlsx" in targets:
+        command += ["--xlsx", str(targets["xlsx"])]
+    if "json" in targets:
+        command += ["--json"]
     try:
         process = subprocess.run(
             command, cwd=root, capture_output=True, encoding="utf-8", errors="replace", timeout=300,

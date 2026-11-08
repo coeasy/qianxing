@@ -66,8 +66,12 @@ pub(crate) fn run_multi_builtin_backtest(
             )
         })
         .transpose()?;
-    let primary_bars: Vec<Bar> = (&primary_frame).into();
-    let reference_bars: Vec<Bar> = (&reference_frame).into();
+    let primary_bars: Vec<Bar> = primary_frame
+        .bars()
+        .map_err(|error| format!("主腿 BarFrame exact OHLCV 无效: {error:?}"))?;
+    let reference_bars: Vec<Bar> = reference_frame
+        .bars()
+        .map_err(|error| format!("对冲腿 BarFrame exact OHLCV 无效: {error:?}"))?;
     // 先解析规格：策略现金腿落在主腿账簿，币种从 spec 读取。
     let MarketSpecLoad {
         spec: primary_spec,
@@ -133,6 +137,14 @@ pub(crate) fn run_multi_builtin_backtest(
         ));
     }
     let combined_return_bps = attribution.combined_return_bps;
+    let combined_initial_cash_raw = primary_cash
+        .raw()
+        .checked_add(reference_cash.raw())
+        .ok_or("多腿初始本金合计溢出")?;
+    let combined_final_equity_raw = primary_report
+        .final_equity()
+        .checked_add(reference_report.final_equity())
+        .ok_or("多腿最终权益合计溢出")?;
     let groups = &attribution.groups;
     let totals = attribution.totals;
     let residual_fees_raw = attribution.residual_fees_raw;
@@ -155,6 +167,14 @@ pub(crate) fn run_multi_builtin_backtest(
         combined_return_bps,
         primary_report.result_hash(),
         reference_report.result_hash()
+    );
+    println!(
+        "[Multi-leg · Account] initial_cash_raw={} primary_initial_cash_raw={} reference_initial_cash_raw={} final_equity_raw={} account_base_source={}",
+        combined_initial_cash_raw,
+        primary_cash.raw(),
+        reference_cash.raw(),
+        combined_final_equity_raw,
+        BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE
     );
     let strategy_id = format!("builtin-{}-multi", kind.name());
     println!(

@@ -3,9 +3,11 @@
 //! 因果顺序固定为：先撮合上一时刻订单，再让策略看到当前盘口并提交新订单；
 //! 因此策略不会用当前快照直接成交，避免回测中的同一快照作弊。
 
+#[cfg(test)]
+use qx_core::ReplayVerifier;
 use qx_core::{
     Event, EventKind, EventLog, ExactDecimal, ExactValuationContext, Fnv1a, Ledger, OrderStatus,
-    Price, Priority, ReplayVerifier, TradingInstrumentSpec, ValuationContext,
+    Price, Priority, TradingInstrumentSpec, ValuationContext,
 };
 use qx_risk::{ExactOrderRiskFacts, OrderRiskContext, OrderRiskPosition};
 use qx_zhenlu::{Oms, RiskGate};
@@ -434,7 +436,9 @@ impl OrderBookBacktestEngine {
                 .peek()
                 .is_some_and(|(settlement_ts, _)| *settlement_ts < snapshot.ts)
             {
-                let (settlement_ts, rates) = settlements.next().expect("peeked settlement");
+                let (settlement_ts, rates) = settlements.next().ok_or_else(|| {
+                    qx_core::QxError::Invariant("settlement iterator diverged from peek".into())
+                })?;
                 settlement::apply_settlements(
                     settlement_ts,
                     &rates,
@@ -457,7 +461,9 @@ impl OrderBookBacktestEngine {
                 .peek()
                 .is_some_and(|(settlement_ts, _)| *settlement_ts == snapshot.ts)
             {
-                let (settlement_ts, rates) = settlements.next().expect("peeked settlement");
+                let (settlement_ts, rates) = settlements.next().ok_or_else(|| {
+                    qx_core::QxError::Invariant("settlement iterator diverged from peek".into())
+                })?;
                 settlement::apply_settlements(
                     settlement_ts,
                     &rates,
@@ -1183,6 +1189,13 @@ impl OrderBookBacktestEngine {
             .unwrap_or_default()
             .clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32;
         let max_drawdown_bps = exact_metrics.max_drawdown_bps.clamp(0, 10_000) as u32;
+        let max_drawdown_raw = equity_curve
+            .iter()
+            .fold((None::<i128>, 0_i128), |(peak, drawdown), equity| {
+                let peak = peak.map_or(*equity, |peak| peak.max(*equity));
+                (Some(peak), drawdown.max(peak.saturating_sub(*equity)))
+            })
+            .1;
         let mut report = OrderBookBacktestReport {
             fills,
             execution_attempts: matcher.execution_attempts().to_vec(),
@@ -1202,6 +1215,7 @@ impl OrderBookBacktestEngine {
                 .map(|spec| spec.settlement_currency.trim().to_ascii_uppercase())
                 .filter(|currency| !currency.is_empty())
                 .unwrap_or_else(|| currency.trim().to_ascii_uppercase()),
+            max_drawdown_raw,
             return_bps,
             max_drawdown_bps,
             initial_equity_raw: initial_cash.raw(),
@@ -1226,7 +1240,9 @@ impl OrderBookBacktestEngine {
         };
         report.append_limit_order_fill_rate_descriptor();
         // Facts must replay into the same ledger before this report is returned (V11 Q62).
-        ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
+        let report = crate::report_validation::validate_before_return(report, |report| {
+            (&report.event_log, &report.ledger)
+        })?;
         Ok(Some(report))
     }
 }

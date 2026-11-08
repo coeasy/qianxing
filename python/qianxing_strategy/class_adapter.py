@@ -617,7 +617,10 @@ class BaseStrategyProcessAdapter:
             count = self._bars_seen.get(instrument, 0) + 1
             self._bars_seen[instrument] = count
             self._last_bar_ts[instrument] = timestamp
-            context = self._context(request, timestamp)
+            # The callback's context must describe the event currently being
+            # dispatched. In multi-market requests, request.instrument is only
+            # the primary instrument and may differ from this Bar's instrument.
+            context = self._context(request, timestamp, instrument=instrument)
             if self._warmup_bars == 0 and instrument not in self._warmup_completed:
                 self._complete_warmup(request, instrument, timestamp, 0)
             if count == self._warmup_bars and self._warmup_bars > 0:
@@ -711,7 +714,12 @@ class BaseStrategyProcessAdapter:
     ) -> None:
         if instrument in self._warmup_completed:
             return
-        context = self._context(request, as_of, include_history=include_history)
+        context = self._context(
+            request,
+            as_of,
+            instrument=instrument,
+            include_history=include_history,
+        )
         self._track_callback_error("warmup_complete", context, instrument, as_of)
         self.strategy.on_warmup_complete(
             context,

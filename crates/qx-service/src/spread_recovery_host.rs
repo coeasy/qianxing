@@ -179,12 +179,11 @@ pub fn sync_spread_groups_after_cancel(
             .legs
             .iter()
             .any(|leg| leg.order.client_id == client_order_id)
+            && matched.replace(group_id.clone()).is_some()
         {
-            if matched.replace(group_id.clone()).is_some() {
-                return Err(format!(
-                    "订单 {client_order_id} 同时属于多个多腿组，拒绝推测归属"
-                ));
-            }
+            return Err(format!(
+                "订单 {client_order_id} 同时属于多个多腿组，拒绝推测归属"
+            ));
         }
     }
     if let Some(group_id) = matched {
@@ -215,6 +214,20 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
     context: SpreadRecoveryContext<'_>,
     venue: V,
 ) -> Result<(V, Vec<String>), String> {
+    let (venue, diagnostics, _) = recover_spread_groups_for_venue_until(context, venue, || false)?;
+    Ok((venue, diagnostics))
+}
+
+/// Recover spread groups while honoring a stop request between durable group operations.
+///
+/// A group already being reconciled is allowed to finish its idempotent operation. The
+/// callback is checked before each next group so shutdown cannot start another venue RPC
+/// batch after the current group reaches a durable boundary.
+pub fn recover_spread_groups_for_venue_until<V: Venue>(
+    context: SpreadRecoveryContext<'_>,
+    venue: V,
+    mut should_stop: impl FnMut() -> bool,
+) -> Result<(V, Vec<String>, bool), String> {
     let SpreadRecoveryContext {
         root,
         account_id,
@@ -247,7 +260,7 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
         })
         .collect::<Result<Vec<_>, String>>()?;
     if groups.is_empty() {
-        return Ok((venue, Vec::new()));
+        return Ok((venue, Vec::new(), false));
     }
     if !accept_any_venue && account_id.is_none_or(|account| account.trim().is_empty()) {
         return Err("live 多腿恢复缺少 account_id，拒绝使用错误账户处理补偿订单".into());
@@ -261,6 +274,9 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
     };
     let mut diagnostics = Vec::new();
     for group in groups {
+        if should_stop() {
+            return Ok((router.into_inner(), diagnostics, true));
+        }
         let group_id = group.group_id.clone();
         let worker = HedgeRecoveryWorker::new(
             group,
@@ -292,7 +308,7 @@ pub fn recover_spread_groups_for_venue<V: Venue>(
                 .map(|error| format!("spread_group={group_id} hedge=pending reason={error}")),
         );
     }
-    Ok((router.into_inner(), diagnostics))
+    Ok((router.into_inner(), diagnostics, false))
 }
 
 /// 待恢复的多腿分组数：`HedgeRequired` 且本 venue 至少有一条腿已成交。
@@ -410,6 +426,13 @@ pub fn recovery_order_validator<'a>(
 
 impl HedgeOrderValidator for RecoveryGuard<'_> {
     fn validate(&self, order: &Order) -> Result<(), String> {
+        crate::risk_host::require_no_unresolved_live_order_operations(
+            &self.worker.id,
+            self.worker.account_id.as_deref(),
+            self.worker.venue_id.as_deref(),
+            &self.risk_pipeline,
+            Some(order.client_id),
+        )?;
         crate::risk_host::require_fresh_live_balance_snapshot(
             &self.worker.id,
             self.worker.account_id.as_deref(),
@@ -698,9 +721,7 @@ pub fn persist_strategy_submit(
                     Ok("ORDER_INTENT_ALREADY_ACCEPTED".into())
                 }
                 qx_control::CommandStatus::Executed => Ok("ORDER_INTENT_ALREADY_EXECUTED".into()),
-                qx_control::CommandStatus::Failed => {
-                    Err("Strategy 原 OrderIntent 已执行失败".into())
-                }
+                qx_control::CommandStatus::Failed => Ok("ORDER_INTENT_ALREADY_FAILED".into()),
             }
         }
         Err(error) => Err(format!("Strategy SubmitOrder 被控制面拒绝: {error:?}")),
@@ -1034,6 +1055,123 @@ mod tests {
         assert_eq!(
             store.load("restart-finalize").unwrap().unwrap().status,
             SpreadOrderGroupStatus::Hedged
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn venue_recovery_checks_shutdown_between_durable_groups() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qx-service-spread-stop-checkpoint-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        for group_id in ["a-complete", "b-pending"] {
+            let first = Order {
+                client_id: if group_id == "a-complete" { 911 } else { 921 },
+                instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+                side: Side::Buy,
+                qty: Quantity::from_i64(2),
+                limit: Some(Price::from_i64(100)),
+                status: OrderStatus::PendingSubmit,
+                filled: Quantity::ZERO,
+                account_id: "account-binance".into(),
+                trace: None,
+                policy: None,
+                exact_amounts: None,
+            };
+            let mut second = first.clone();
+            second.client_id += 1;
+            second.instrument = InstrumentId::parse("ETHUSDT.OKX").unwrap();
+            second.side = Side::Sell;
+            second.account_id = "account-okx".into();
+            let recovery_orders = [first.clone(), second.clone()];
+            let mut group = SpreadOrderGroup::new(
+                group_id,
+                "shutdown-checkpoint",
+                vec![
+                    SpreadOrderLeg {
+                        leg_id: "binance-leg".into(),
+                        venue_id: "BINANCE".into(),
+                        order: first.clone(),
+                    },
+                    SpreadOrderLeg {
+                        leg_id: "okx-leg".into(),
+                        venue_id: "OKX".into(),
+                        order: second,
+                    },
+                ],
+            )
+            .unwrap();
+            group.begin_submission().unwrap();
+            for (leg_id, order) in [
+                ("binance-leg", &recovery_orders[0]),
+                ("okx-leg", &recovery_orders[1]),
+            ] {
+                group.record_accepted(leg_id).unwrap();
+                group
+                    .record_fill(
+                        leg_id,
+                        &Fill {
+                            order_id: order.client_id,
+                            qty: Quantity::from_i64(1),
+                            price: Price::from_i64(100),
+                            ..Fill::default()
+                        },
+                    )
+                    .unwrap();
+                group.record_cancelled(leg_id).unwrap();
+                group
+                    .record_compensation_fill(leg_id, Quantity::from_i64(1))
+                    .unwrap();
+            }
+            assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+            store.save(&group).unwrap();
+        }
+
+        let mut pipeline = LiveEventPipeline::open(&root, "shutdown-checkpoint", "USDT").unwrap();
+        let mut checkpoint_count = 0;
+        let (venue, diagnostics, stopped) = recover_spread_groups_for_venue_until(
+            SpreadRecoveryContext {
+                root: &root,
+                account_id: Some("account-binance"),
+                venue_id: "BINANCE",
+                accept_any_venue: false,
+                order_validator: None,
+                pipeline: &mut pipeline,
+                worker_id: "shutdown-checkpoint",
+                now: 1_000,
+                source_seq: &mut 0,
+            },
+            PaperVenue::new("paper", ExecutionCostBinding::builtin_default().fee_model()),
+            || {
+                checkpoint_count += 1;
+                checkpoint_count > 1
+            },
+        )
+        .unwrap();
+        drop(venue);
+        assert!(stopped, "the second checkpoint must honor shutdown");
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "only the completed first group is reported"
+        );
+        assert_eq!(
+            store.load("a-complete").unwrap().unwrap().status,
+            SpreadOrderGroupStatus::Hedged
+        );
+        assert_eq!(
+            store.load("b-pending").unwrap().unwrap().status,
+            SpreadOrderGroupStatus::HedgeRequired,
+            "the next durable group must not be touched after shutdown"
         );
         let _ = std::fs::remove_dir_all(root);
     }

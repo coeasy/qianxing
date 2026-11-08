@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-worker-lifecycle-v2.json",
+  "title": "Strategy worker host lifecycle evidence v2",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 2 },
+    "host_id": { "type": "string", "minLength": 1 },
+    "constructed": { "type": "boolean" },
+    "initialized": { "type": "boolean" },
+    "checkpoint_input_supplied": { "type": "boolean" },
+    "checkpoint_restore_required": {
+      "type": ["boolean", "null"],
+      "description": "true only when an external process must restore a persisted checkpoint; null means not applicable."
+    },
+    "checkpoint_restore_acknowledged": {
+      "type": ["boolean", "null"],
+      "description": "true only after the digest-bound response acknowledgment was validated; false while required evidence is pending; null when not applicable."
+    },
+    "warmup_applicable": { "type": "boolean" },
+    "warmup_required_instruments": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "warmup_completed_instruments": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    }
+  },
+  "required": [
+    "schema_version",
+    "host_id",
+    "constructed",
+    "initialized",
+    "checkpoint_input_supplied",
+    "warmup_applicable",
+    "warmup_required_instruments",
+    "warmup_completed_instruments"
+  ]
+}

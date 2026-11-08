@@ -13,5 +13,7 @@
 //! - 现金对账由运行时管线 `qx-runtime` 的 `settlement_balance_discrepancies`
 //!   承担，它读的是账户账本与柜台余额事实，不在这里重复实现。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 mod reconcile;
 pub use reconcile::*;

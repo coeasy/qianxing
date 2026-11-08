@@ -107,6 +107,9 @@ fn assert_control_queue_semantics(queue: &dyn ControlCommandQueueBackend) {
 
     let first = queue.claim_command(101, "worker-a", 10, 10).unwrap();
     assert_eq!(first.fencing_token, 1);
+    // This LeaseHeld error returns without an explicit transaction commit. The next calls
+    // use the other pooled connection before retrying a takeover, so they prove the dropped
+    // transaction released its PostgreSQL advisory lock before the connection was reused.
     assert!(matches!(
         queue.claim_command(101, "worker-b", 11, 10),
         Err(StorageError::LeaseHeld { .. })
@@ -151,6 +154,10 @@ fn assert_job_queue_semantics(queue: &dyn JobQueueBackend) {
             .collect::<Vec<_>>(),
         expected
     );
+    let available_for_owner = queue
+        .available_jobs_for_owner(10, "contract-test", 10)
+        .unwrap();
+    assert_eq!(available_for_owner.len(), 3);
     for (_, run_id) in expected {
         let lease = queue.claim_job(run_id, "ordering-worker", 11, 10).unwrap();
         queue

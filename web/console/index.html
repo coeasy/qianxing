@@ -27,9 +27,8 @@
     要同源形态（服务端会话 + CSRF 双提交 + 身份注入，浏览器只跟一个源说话）就用
     <code>qx-cli console &lt;runtime.json&gt;</code>——它在回环地址上同时发这一页并代理 API，
     凭据全留在服务端。
-    <strong>写面只有一条</strong>：本页的读面板全部只做查询，唯一的写操作是
-    <code>POST /control/commands</code>（控制面受理入口）。它<strong>不直接下单</strong>——
-    下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场。
+    <strong>写操作</strong>仅提交到 API 的受认证入口：控制命令与策略部署修订/操作。
+    控制命令<strong>不直接下单</strong>——下单要走控制面受理 → 判定执行者 → 走到终态退场。
     身份边界：<code>operator_id</code> 是审计字段，启用访问策略的部署里由 mTLS 认证边界覆盖，
     页面<strong>不能自声明</strong>身份（那时会回 <code>403 authenticated_operator_required</code>）。
     跨源读取必须在部署配置的 <code>api.cors_allowed_origins</code> 里逐字符登记本源
@@ -94,6 +93,50 @@
     <section class="card" id="card-readmodels">
       <h2>读模型计数 <span class="hint">/account/ledger · /reconcile/reports · /scheduler/runs · /control/audit</span></h2>
       <div class="rows" id="readmodels-rows"><span class="muted">未连接</span></div>
+    </section>
+
+    <section class="card wide" id="card-strategy-deployments">
+      <h2>策略部署 <span class="hint">观察 / 修订 / 操作</span></h2>
+      <p class="foot">展示 worker 实际运行状态、观察时间及阻塞原因。进程运行不代表已完成交易所对账和实盘就绪验收。</p>
+      <div class="rows" id="strategy-deployments-rows"><span class="muted">未连接</span></div>
+      <details>
+        <summary>创建部署修订</summary>
+        <p class="foot">需要已认证的操作员身份。冻结配置引用的策略文件必须能被服务端读取；服务端会校验摘要并存入不可变部署仓库。回滚请先创建一个高于当前版本的新修订，并在该修订中放入所选历史配置；checkpoint 身份发生变化时，还需绑定精确的迁移清单。</p>
+        <form id="strategy-revision-form">
+          <div class="actions">
+            <label>Worker ID <input id="deployment-worker-id" required maxlength="256" autocomplete="off" /></label>
+            <label>修订号 <input id="deployment-revision" required type="number" min="1" step="1" /></label>
+            <label>Bundle SHA-256 <input id="deployment-bundle-sha256" required pattern="[0-9a-fA-F]{64}" /></label>
+            <label>Plan SHA-256 <input id="deployment-plan-sha256" required pattern="[0-9a-fA-F]{64}" /></label>
+          </div>
+          <label for="deployment-runtime-config">冻结的 RuntimeConfig JSON</label>
+          <textarea id="deployment-runtime-config" required spellcheck="false" rows="12" placeholder='{"strategy_workers":[]}'></textarea>
+          <label><input id="deployment-desired-running" type="checkbox" checked /> 修订期望运行</label>
+          <div class="actions"><button type="submit">创建不可变修订</button></div>
+        </form>
+        <pre id="strategy-revision-output" class="result" aria-live="polite">尚未提交</pre>
+      </details>
+      <details>
+        <summary>提交部署操作</summary>
+        <form id="strategy-operation-form">
+          <div class="actions">
+            <label>Worker ID <input id="operation-worker-id" required maxlength="256" autocomplete="off" /></label>
+            <label>操作
+              <select id="deployment-action">
+                <option value="deploy">Deploy</option><option value="stop">Stop</option>
+                <option value="rollback">Rollback（新建高版本修订）</option><option value="pause">Pause</option>
+                <option value="resume">Resume</option>
+              </select>
+            </label>
+            <label>目标修订 <input id="operation-target-revision" required type="number" min="1" step="1" /></label>
+          </div>
+          <div class="actions">
+            <button type="submit">提交操作</button>
+            <button id="strategy-operation-refresh" type="button" class="ghost">查询操作状态</button>
+          </div>
+        </form>
+        <pre id="strategy-operation-output" class="result" aria-live="polite">尚未提交</pre>
+      </details>
     </section>
 
     <section class="card wide" id="card-research">
@@ -421,7 +464,7 @@
 
     <section class="card wide" id="card-control">
       <h2>控制命令
-        <span class="hint">POST /control/commands · 受理 → 执行者判定 → 终态退场</span>
+        <span class="hint">POST /control/commands · 部署操作另见上方策略部署面板</span>
       </h2>
       <form id="control-form" class="form" autocomplete="off">
         <label>kind

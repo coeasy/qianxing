@@ -89,6 +89,31 @@ pub(super) fn enrich_runtime_event_context(
                 context.signal_id = cashflow.venue_id.clone();
             }
         }
+        RuntimeExternalEvent::OrderStatusReconciled {
+            client_order_id,
+            account_id,
+            venue_id,
+            ..
+        } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{account_id}");
+            }
+            if context.signal_id.trim().is_empty() {
+                context.signal_id = venue_id.clone();
+            }
+            if context.intent_id.trim().is_empty() {
+                context.intent_id = format!("order:{client_order_id}");
+            }
+        }
         RuntimeExternalEvent::FeeAdjustment {
             account_id,
             venue_id,

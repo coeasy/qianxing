@@ -124,10 +124,30 @@ fn python_action_json_is_converted_with_suspension_and_pit_fields() {
             .unwrap(),
         2
     );
-    assert_eq!(rules.corporate_actions.len(), 1);
+    assert_eq!(rules.corporate_actions.len(), 2);
     assert_eq!(rules.corporate_actions[0].cash_dividend_raw, 100_000_000);
+    assert_eq!(
+        rules.corporate_actions[1].action_type,
+        AshareCorporateActionType::Suspension
+    );
     assert_eq!(rules.halted_timestamps.len(), 1);
     assert!(!rules.is_trading(rules.halted_timestamps[0]));
+}
+
+#[test]
+fn suspension_published_after_its_bar_does_not_retroactively_halt_it() {
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    let payload = r#"[{"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"suspension","published_at":"2024-06-03T00:00:01+08:00","source":"exchange"}]"#;
+    rules
+        .apply_corporate_actions_json("000001.SZSE", payload)
+        .unwrap();
+    let suspension_ts = rules.halted_timestamps[0];
+
+    assert!(rules.is_trading(suspension_ts));
+    assert!(!rules.is_trading(suspension_ts + 1_000));
 }
 
 #[test]
@@ -196,6 +216,36 @@ fn capital_change_from_data_maps_absolute_supply_fields() {
     );
     assert_eq!(events[0].issuer_total_shares_raw, 1_000);
     assert_eq!(events[0].issuer_free_float_shares_raw, Some(700));
+}
+
+#[test]
+fn capital_snapshots_exclude_publications_after_the_run_as_of_time() {
+    let rules = AshareRuleConfig {
+        corporate_actions: vec![
+            AshareCorporateActionEvent {
+                ts: 10,
+                action_type: AshareCorporateActionType::CapitalChange,
+                issuer_total_shares_raw: 1_000,
+                published_at_ms: Some(9),
+                ..AshareCorporateActionEvent::default()
+            },
+            AshareCorporateActionEvent {
+                ts: 10,
+                action_type: AshareCorporateActionType::CapitalChange,
+                issuer_total_shares_raw: 2_000,
+                published_at_ms: Some(11),
+                ..AshareCorporateActionEvent::default()
+            },
+        ],
+        ..AshareRuleConfig::default()
+    };
+
+    let snapshots = rules
+        .issuer_capital_snapshots("000001.SZSE", Some(10))
+        .unwrap();
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].total_shares_raw, 1_000);
 }
 
 #[test]
@@ -709,8 +759,23 @@ fn python_written_action_envelope_round_trips_into_the_rust_reader() {
     );
 
     let rows = expectations["applied_actions"].as_array().unwrap();
-    assert_eq!(rules.corporate_actions.len(), rows.len());
-    for (event, row) in rules.corporate_actions.iter().zip(rows) {
+    let ledger_actions = rules
+        .corporate_actions
+        .iter()
+        .filter(|event| event.action_type != AshareCorporateActionType::Suspension)
+        .collect::<Vec<_>>();
+    assert_eq!(ledger_actions.len(), rows.len());
+    let suspension_events = rules
+        .corporate_actions
+        .iter()
+        .filter(|event| event.action_type == AshareCorporateActionType::Suspension)
+        .collect::<Vec<_>>();
+    assert_eq!(suspension_events.len(), 1);
+    assert_eq!(
+        suspension_events[0].ts, rules.halted_timestamps[0],
+        "停牌行必须保留公告可见时间，供回测运行时按 Bar 做 PIT 判定"
+    );
+    for (event, row) in ledger_actions.into_iter().zip(rows) {
         let label = row["action_type"].as_str().unwrap();
         assert_eq!(
             event.ts,

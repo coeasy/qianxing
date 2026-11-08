@@ -140,7 +140,7 @@ fn builtin_runtime_backtest_publishes_a_current_summary() {
     let payload: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summary).expect("读取 summary"))
             .expect("summary JSON 有效");
-    assert_eq!(payload["schema_version"], 7);
+    assert_eq!(payload["schema_version"], 8);
     assert_eq!(payload["result_hash"], payload["replay"]["log_digest"]);
     let manifest = payload["run_manifest"]
         .as_str()

@@ -125,6 +125,89 @@ impl StrategyWorkerProcess {
         }
     }
 
+    /// Wait for a freshly allocated startup marker before publishing worker readiness.
+    /// Protocol responses remain untouched; no synthetic market request is sent.
+    pub fn wait_for_ready_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms);
+        loop {
+            match std::fs::read(path) {
+                Ok(content) if content == b"ready\n" || content == b"ready\r\n" => return Ok(()),
+                // The Python write may be observed before all marker bytes are flushed.
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("cannot read strategy startup marker: {error}")),
+            }
+            if let Some(child) = self.child.as_mut() {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Err(format!(
+                        "strategy initialization failed: {}",
+                        self.death_note()
+                    ));
+                }
+            }
+            if Instant::now() >= deadline {
+                self.kill_child();
+                return Err(format!(
+                    "strategy initialization timed out{}",
+                    self.diagnostics()
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Wait for a bounded, atomically published protocol acknowledgment file.
+    pub fn wait_for_ack_file(
+        &mut self,
+        path: &std::path::Path,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, String> {
+        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms);
+        loop {
+            match std::fs::read(path) {
+                Ok(content) if content.is_empty() => {}
+                Ok(content) if content.len() <= max_bytes => return Ok(content),
+                Ok(_) => {
+                    self.kill_child();
+                    return Err(format!(
+                        "strategy capability acknowledgment exceeds {max_bytes} bytes"
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    self.kill_child();
+                    return Err(format!(
+                        "cannot read strategy capability acknowledgment: {error}"
+                    ));
+                }
+            }
+            if let Some(child) = self.child.as_mut() {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Err(format!(
+                        "strategy capability initialization failed: {}",
+                        self.death_note()
+                    ));
+                }
+            }
+            if Instant::now() >= deadline {
+                self.kill_child();
+                return Err(format!(
+                    "strategy capability acknowledgment timed out{}",
+                    self.diagnostics()
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn death_note(&mut self) -> String {
         let exit = match self.child.as_mut() {
             None => "worker 子进程句柄不可用".to_string(),

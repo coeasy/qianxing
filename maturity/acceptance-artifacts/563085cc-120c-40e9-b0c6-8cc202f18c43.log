@@ -1,0 +1,393 @@
+$ D:\aex_work\qianxing\python\.venv\Scripts\python.exe tools/accept_clean_install.py --python D:\aex_work\qianxing\python\.venv\Scripts\python.exe --work-dir D:\aex_work\qianxing\target\r20-install-work-sdkdiag
+exit_code=1
+
+[stdout]
+$ 'D:\aex_work\qianxing\python\.venv\Scripts\maturin.exe' build --release --out 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\wheelhouse' --interpreter 'D:\aex_work\qianxing\python\.venv\Scripts\python.exe'
+$ 'D:\aex_work\qianxing\python\.venv\Scripts\python.exe' -m venv 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-venv'
+$ 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-venv\Scripts\python.exe' -m pip install --no-index 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\wheelhouse\qianxing-0.3.0-cp310-abi3-win_amd64.whl'
+Processing d:\aex_work\qianxing\target\r20-install-work-sdkdiag\wheelhouse\qianxing-0.3.0-cp310-abi3-win_amd64.whl
+Installing collected packages: qianxing
+Successfully installed qianxing-0.3.0
+$ cargo install --path 'D:\aex_work\qianxing\crates\qx-cli' --locked --offline --root 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli' --force
+$ 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli\bin\qx-cli.exe' version
+qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile release, schemas c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa)
+$ 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli\bin\qx-cli.exe' help
+牵星 Qianxing — 分级校准，量天定位
+
+牵星 Qianxing CLI
+
+配置与运维入口：
+  init [runtime.json] [--force]
+      创建本地运行时配置及可复用的样例数据/调度文件。
+  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest|research-local|crypto-paper|crypto-sandbox-acceptance> [--force]
+      按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
+  init [runtime.json] --strategy <name> [--force]
+      创建绑定内置策略和样例 BarFrame 的可直接回测项目。
+  quickstart [项目目录] [--html] [--force]
+      一条命令跑完首跑链条：建 macd 项目 → doctor → backtest → report → status；
+      --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
+  guide [researcher|strategy-author|operator|integrator]
+      按角色打印可复制的上手步骤；不传角色时列出四条路径。
+  doctor [runtime.json] [--json]
+      一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
+      因此不判运行健康，也不连接交易所、不发送订单。
+  doctor --capabilities [--json]
+      离线查看统一产品能力矩阵；用 --capability-id <ID> 查看支持限制与验收证据。
+      用 --operation balance.read|orders.read|positions.read|cashflows.read|funding.read|account_settings.read 查询私有读取范围。
+      静态登记不代表当前环境连通、凭据可用或沙盒验收通过。
+  config explain [runtime.json] [--json]
+      输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
+  config validate [runtime.json]
+      校验配置和所有已配置的本地文件引用。
+  config fingerprint [runtime.json]
+      输出不含 config_fingerprint 字段自身的稳定配置指纹。
+  config lock <runtime.json> [output.json] [--force]
+      生成带发布指纹锁的配置副本，不读取或输出密钥内容。
+  run <子命令> [参数...]
+      统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
+  status [runtime.json] [--json]
+      查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
+  report [runtime.json|summary.json|run.multi-market-depth.json] [--json] [--html] [--evidence] [--against SUMMARY]... [--benchmark-bars BAR_FRAME] [--benchmark-calendar JSON] [--benchmark-csv PATH] [--strategy-diagnostics JSON] [--xlsx PATH] [-o|--output PATH]
+      查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
+      --html 写出 <stem>.report.html 与三张 SVG；-o/--output 可改输出前缀，需与 --html 同用。
+      --against 可重复指定其他 summary，生成同标的、同数据指纹的横向指标排名；与 --html 同用时输出离线对照表。
+      --benchmark-bars 输入基准 BarFrame，要求与权益曲线时间戳逐项精确对齐；按原始未复权 close 计算每 Bar 相对指标，不年化；可与 --evidence 同用并纳入可搬运证据包，也可与 --against 同用为每轮比较结果绑定同一基准。
+      --benchmark-calendar 可选传入带来源与 calendar_id 的 A 股交易日历；严格验证基准/组合日线覆盖日历范围内每个交易日，拒绝缺日、非交易日或日内多条记录。
+      --benchmark-csv 与 --benchmark-bars 同用时，导出逐 Bar 组合/基准收益序列及主动收益 CSV；结合 --against 时合并输出各轮序列并附 run_id。
+      --strategy-diagnostics 绑定诊断 JSON；核对策略、标的与数据身份，可导出到 HTML、JSON、XLSX；与 --evidence 同用时进入单次 Bar/多市场 Bar/多市场深度证据包。
+      --xlsx 导出 Excel 工作簿；单轮报告含摘要、权益/持仓、成交、月度收益及可选基准序列，同输入对照另含排序与指标明细。
+      多市场 Bar/深度报告可将已预计算诊断绑定到 HTML/JSON/XLSX 报告并筛选查看；XLSX 包含诊断摘要和可分段还原的完整 JSON。多市场 Bar 与深度 --against 的 --strategy-diagnostics 分别使用 schemas/multi-market-bar-diagnostic-comparison-v1.json 和 schemas/multi-market-depth-diagnostic-comparison-v1.json，按 run_id 为每次运行提供诊断数组；报告会重开摘要并重验输入身份。
+      单次 Bar、多市场 Bar 与多市场深度可将诊断附件随 EvidenceBundle 导出并离线校验；该校验验证文件摘要和身份，不重算诊断。多市场深度运行摘要可导出逐市场质量 HTML/XLSX；--against 接受相同市场顺序和数据指纹的深度运行，输出排序和可筛选诊断对照。
+      --evidence 在复核链通过后再聚一份 <stem>.evidence.json（EvidenceBundle，generation=run）：把 RunManifest
+      身份、四份产物指针、数据身份、配置与策略身份、模型假设、构建身份、验证级别、未验证清单与
+      离线复算指引收进同一份文档，供「同一运行由 RunManifest 离线复算」用；只聚合不重算指标。
+      报告含指标卡、内嵌图与产物身份表，无外链、可离线打开；未连接真实交易所。
+  evidence sign <venue.evidence.json> --signing-key-file <seed.hex> --signature-file <signature.json>
+      使用文件中的 32 字节 Ed25519 种子为 L3/L4 venue EvidenceBundle 签名；私钥不写入产物。
+  evidence verify <venue.evidence.json> --signature-file <signature.json> --trusted-key-file <public.hex>
+      离线核验签名与规范化证据内容；可信公钥由调用方独立提供。签名不替代真实 venue 事实核验。
+  evidence verify-run <run.evidence.json> [--recompute]
+      核验文件摘要、RunManifest 身份与输入指纹；--recompute 支持 Bar 策略、单标的 L1/L2 深度、双腿 multi-builtin 与多市场 Bar，
+      要求匹配代码版本，并逐字段核对重跑得到的 RunManifest。
+  evidence pack-multi-market-run <run.multi-market.json>
+      从已完成的多市场 Bar 回测产物、RunManifest、权益/成交副件与各市场输入生成 run EvidenceBundle。
+  evidence pack-multi-account-run <multi-account-result.json> --spec <multi-account-spec.json> --output-dir <DIR>
+      先对每个成功账户执行 report --evidence，再将批次结果、规格及所有账户便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-run <DIR> [--recompute]
+  evidence pack-multi-account-joint-run <multi-account-joint-result.json> --spec <multi-account-joint-spec.json> --output-dir <DIR>
+  evidence verify-multi-account-joint-run <DIR> [--recompute]
+      离线验真批次规格/结果身份、全部账户 EvidenceBundle、输入指纹与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence pack-multi-account-depth-run <multi-account-depth-result.json> --spec <multi-account-depth-spec.json> --output-dir <DIR>
+      将多账户 Tick/OrderBook 批次结果、规格与每个成功账户的便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-depth-run <DIR> [--recompute]
+      离线验真多账户深度输入与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence recompute-experiment <experiment.json>
+      在匹配代码构建上复算单市场 Bar 参数网格的全部候选，并验证原始与重跑产物。
+  evidence recompute-depth-experiment <depth-experiment.json>
+      在匹配代码构建上复算单市场 Tick/OrderBook 参数网格的全部候选，并验证原始与重跑产物。
+  evidence recompute-multi-market-experiment <experiment.multi-market-experiment.json>
+      在匹配代码构建上复算 Bar 参数网格中的全部候选，并逐项比较结果与 RunManifest。
+  evidence recompute-multi-market-depth-experiment <experiment.multi-market-depth-experiment.json>
+      在匹配代码构建上复算深度参数网格中的全部候选，并逐项比较结果与 RunManifest。
+  evidence recompute-multi-leg-experiment <experiment.multi-leg-experiment.json>
+      在匹配代码构建上复算多腿参数网格中的全部候选，重放共享事件流并比较双腿归因结果。
+  evidence pack-multi-leg-experiment <experiment.multi-leg-experiment.json> --output-dir <DIR>
+      将完整多腿实验报告、原始规格、双腿输入及候选归因产物封装为独立目录，并记录逐文件 SHA-256。
+  evidence verify-multi-leg-experiment <DIR> [--recompute]
+      核验实验包的文件清单与身份；--recompute 在匹配代码构建上从包内输入重跑完整候选网格。
+  evidence pack-multi-market-experiment <experiment.multi-market-experiment.json> --output-dir <DIR>
+        将多市场 Bar 实验报告、原始规格、市场输入和候选运行产物封装为可搬运目录。
+  evidence pack-multi-market-depth-experiment <experiment.multi-market-depth-experiment.json> --output-dir <DIR>
+        将多市场深度实验报告、原始规格、市场输入和候选运行产物封装为可搬运目录。
+  evidence verify-multi-market-experiment <DIR> [--recompute]
+        核验多市场 Bar/depth 实验包文件与身份；--recompute 从包内输入重跑完整候选网格。
+  evidence export-run <run.evidence.json> --output-dir <DIR> [--runtime-config <PATH>] [--market-spec <PATH>] [--build-attestation <PATH>]
+      将运行证据、工件和输入数据复制到可搬运目录；双腿回测会分别复制 primary/reference 输入；可附带运行时配置及引用文件，并校验/搬运第三方策略构建材料。
+      深度回测的配置摘要不是 RuntimeConfig 指纹；是否匹配由离线 RunManifest 复算确认。导出后如需签名，应签新 evidence.json。
+  live-check [production.runtime.json] [--json]
+      执行实盘启动前静态门禁，不连接交易所、不发送订单。
+  runtime-check [runtime.json] [--json]
+      校验运行时拓扑并输出健康与配置指纹。
+  storage-adopt-postgres --schema <名称> [--dsn-env <环境变量名>]
+      显式认领与仓库已知迁移完全匹配的无台账 PostgreSQL schema；默认从 QX_POSTGRES_DSN 读取连接串。
+
+策略与回测入口（撮合内核统一为 qx-xingban）：
+  strategy list
+      列出内置策略，以及各自被哪个回测入口接受、信号读哪几个参数（同 builtin-strategies）。
+  strategy init <strategy> [runtime.json] [bar-frame.json] [--force]
+      从模板生成可直接回测的内置策略配置。
+  strategy backtest <runtime.json> <bar-frame.json> [market-spec.json] [--dataset-manifest <manifest-v2.json>]
+      使用统一回测引擎运行策略并保存结果产物。strategy.builtin_* 信号参数在这里生效，
+      并印进 [Strategy · Signal] 行；同一份配置在 backtest builtin 上必须给出同一套信号。
+      可选数据质量清单须由 data-validate 针对同一文件生成，dataset-id/version 分别为
+      strategy-bars:<instrument> 与 barframe-json-v1；运行前会核对内容 SHA-256 和数据身份。
+  strategy diagnose-depth <run.multi-market-depth.json> --output <diagnostics.json> [--html]
+      复验深度输入、质量清单和 RunManifest 后，从 Rust 内置策略配置生成多标的预热窗口与历史轨迹诊断。
+      --html 会继续复核并生成交互式 HTML 研究报告。外部策略和动态账户 sizing 暂不支持自动重建；
+      未来扰动明确标注为未执行，供应商 PIT 可见性标记未知。
+  strategy diagnose-multi-bar <run.multi-market.json> --output <diagnostics.json> [--html]
+      复验多市场 Bar 输入、质量清单和 RunManifest 后，为全部 Rust 内置策略槽生成未来扰动、预热轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入交互式研究报告；外部策略和动态账户 sizing 失败关闭，并受总 Bar 数和重放预算限制。
+  strategy diagnose-multi-account <multi-account-result.json> --spec <multi-account-spec.json> --output <diagnostics.json> [--html]
+      按账户身份重验并为成功的 Rust 内置 Bar 策略生成未来扰动、预热轨迹与 PIT 可见性诊断；失败账户不生成诊断。
+      所有成功账户诊断会合并成可复核附件，最多 32 个账户、累计 262,144 根 Bar、1 MiB 输出；--html 接入多账户交互报告。
+  strategy diagnose-bar <run.summary.json> --spec <backtest-spec.json> --output <diagnostics.json> [--html]
+      复验摘要、RunManifest、完整规格和 BarFrame 指纹，再重建 Rust 内置策略，生成未来扰动、预热窗口/轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入现有交互式回测研究报告；动态账户 sizing 与多策略组合明确拒绝自动重建。
+  backtest [runtime.json] [bar-frame.json] [market-spec.json]
+      使用统一 Rust 撮合引擎运行跨语言策略回测。
+  backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity] [--config <runtime.json>]
+      使用内置策略和统一 Rust 撮合引擎回测。
+      --config 读取的是策略口径（风控规则、撮合模型、成本规则、market spec 与 A 股段），
+      可选 strategy.max_bar_volume_participation_bps 会限制每根 Bar 上所有订单的累计成交量占比；
+      配置范围为 1..=10000，缺省不启用，剩余挂单延至后续 Bar。该 OHLCV 容量约束不声称重建盘口/队列，
+      实际模型与比例写入 summary 的 FillModel 描述子。
+      以及 strategy.builtin_fast_window / builtin_slow_window / builtin_period /
+      builtin_threshold_bps 这四个信号参数：逐项可省，写了就必须生效并在 stdout 印出 [· Signal] 行，
+      非法取值整轮失败。四个键按 kind 分成子集，子集外的键不会偷偷改结果（MACD 的 12/26/9 是
+      内核常数，四旋钮一个都不读）：生效的那几项印在 knobs 格，提了却没上场的键名印在
+      declared_unused 格，摘要里同样落这两格。每个 kind 读哪几项由 builtin-strategies 第四列给出。
+      下单数量仍由命令行 quantity 点名；配了 A 股快照就必须生效，快照非法即整轮失败。
+  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>] [--config <runtime.json>] [--primary-dataset-manifest <清单>] [--reference-dataset-manifest <清单>]
+      对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
+      保证金与资金费只向 market spec 声明为衍生品的腿计提；--funding-bps 非零时两条腿都必须带 spec，缺失一律先拒再跑。
+      --config 的 A 股段（strategy.ashare_rules_path 等）在这里没有落点：一份策略段套不住两条腿各自的交易制度，配置了即整轮拒绝。
+      strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
+      --root 会持久化两份腿级摘要/RunManifest/权益与成交 CSV、组合摘要与 EvidenceBundle；可用 report 导出 JSON/HTML/XLSX，并在同一组腿数据上比较不同运行。
+      质量清单须成对提供；回测前逐腿核对源文件摘要、数据身份和质量字段，结果报告保留两腿各自的清单身份。
+  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
+      一次完成 CCXT OHLCV 获取、不可变 BarFrame 快照与 DatasetManifestV2 绑定、持久内置策略回测。
+      交易所/交易对/timeframe/请求窗口写入来源 lineage，内容变化形成新数据身份；A 股段与费用口径同样生效。
+  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>] [--config <runtime.json>] [--dataset-manifest <manifest-v2.json>]
+      深度档回测：--fill-tier 只认 l1 与 l2 两个值。l1 走 Tick 内核，帧里每一 snapshot 必须只有一档
+      盘口（多一档即拒）；l2 走订单簿内核，按内核的 L2L3 档位吃掉帧里带的全部深度，因此没有第三个
+      l3 旗标——更深档位不是另一个参数，而是 depth frame 里那些档；产物会写明实际使用的撮合内核。
+      可用 data-validate-depth 生成质量清单，回测时核对源文件 SHA-256、标的、档位、时间范围及重算缺口。
+      --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
+      成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
+      --config 的 A 股段同理：盘口引擎没有 T+1、整手与涨跌停的挂钩点，配置了即整轮拒绝。
+      strategy.fill_model 在这条链同样没有落点——深度档的撮合口径就是上面那三个参数，配了即整轮拒绝。
+      strategy.builtin_* 信号参数在本链生效，生效口径印进 [Depth · Signal] 行。
+      --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
+      两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于
+      限价单，而内置策略一律发市价单，因此没有做成旗标。
+  builtin-strategies
+      列出 17 个内置策略及各自被哪个回测入口接受：13 个单标的策略可走 builtin / ccxt-builtin /
+      book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。第四列写明该 kind 的
+      信号真正读哪几个参数，清单外的 strategy.builtin_* 键不会改结果（none 表示四项都不读）。
+  fast-backtest <manifest.json>
+      并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证；每个 job 可选填 dataset_manifest，
+      与 strategy backtest 一样复核数据身份、源文件摘要和质量报告。
+  dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
+      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。可追加
+      --snapshot-context <context.json> --timezone <tz>，把合并后的完整 BarFrame、v2 manifest
+      与 owner context 校验后幂等发布 DatasetSnapshotV1；同身份内容漂移会被拒绝。
+  dataset-bundle <bundle.json> <data-dir> [bar-frame.json] [--snapshot <DatasetSnapshotV1.json>]
+        校验并持久化 DatasetBundleManifest；含 bars 的 bundle 必须提供 BarFrame 与 DatasetSnapshotV1，核对精确字节、清单指纹和缺口。
+        bars snapshot 纳入 bundle fingerprint，并在策略回测时与实际 BarFrame 重核；无 snapshot 的旧 bundle 不具备执行资格。
+  data-validate <bar-frame.json> <dataset-id> <version> <interval-ms> <output.json> [--timezone <tz>] [--json]
+      只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
+  data-validate-depth <depth-frame.json> --tier <l1|l2> <interval-ms> <output.json> [--timezone <tz>]
+      诊断 L1/L2 深度帧的采样间隔并落 DatasetManifestV2；depth frame 文件保持只读。
+      清单会记录 interval_ms，后续回测可据此独立复算 missing_intervals。
+      output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
+      --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
+  data-snapshot <data.json> <manifest.json> <context.json> <snapshot.json>
+      用 DatasetSnapshotContextV1 将 instrument role、采集语义、交易日历、精度/单位及公司行为口径绑定到清单；
+      发布前复核原始数据 SHA-256，output 只接受幂等相同内容。
+  app <validate-dataset|backtest|verify> <spec.json>
+      应用层用例入口（T2-2）：三条入口分别调 qx-app 的 validate_dataset / run_backtest / verify_run。
+      validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测；数据不足是裁决不是错误。
+      backtest <BacktestSpec.json>         跑一次 Bar 回测，落 <run_id>.run.json / .summary.json 与 .equity.csv / .fills.csv。
+      verify <BacktestOutcome.json>        复核那四份产物，输入取 `app backtest` 的 stdout。
+      成功时 stdout 只有一份 JSON；失败时 stderr 给出同一份 AppError JSON，与 Python/HTTP 两个入口
+      逐字节可比（同一 use case、同一错误 code 与 correlation id）。这条链是同步 Bar 切片，不含
+      market spec、A 股制度与跨语言策略——那些能力在 backtest builtin 上，两者互不替代。
+  plan <kind> <file> [--json]
+      按类型名读入并校验一份地基规格对象，印出身份、规格版本与稳定指纹；
+      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry。
+      --json 改印规范化正文；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
+  ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
+      拉取并冻结 CCXT 市场规格；同时按交易产品写入标的角色，供实盘角色门禁校验（需要 CCXT worker 依赖）。
+
+运行时与服务入口：
+  serve [runtime.json]
+      启动 qx-api HTTP 服务，只读查询与受权限约束的控制命令。
+      它受理的 SubmitOrder 会写进与执行 worker 同一条队列，因此这里也当场拒绝
+      strategy.ashare_rules_path：订单形状在入队前就定死了，A 股段改变不了它（V12 R1）。
+  console [runtime.json] [--init <path>] [--generate-token]
+      在回环地址上启动同源 BFF 控制台：一个源同时发静态控制台资源并代理 API，
+      浏览器侧因此不需要 CORS 名单。引导令牌优先从配置点名的环境变量读（不进命令行），
+      缺失时临时生成一次性令牌并打印入口 URL；用它换一份 HttpOnly 会话 cookie；
+      非 GET 请求还必须带 X-QX-CSRF 且 Origin 与 Host 同源。
+      身份由这一层按配置注入，页面不能自声明；没有 api.console 段的配置一律拒绝启动。
+      --init <path> 写出一份就绪模板（拒绝覆盖已有文件）；--generate-token 只打印一枚令牌。
+  supervise [runtime.json] [--allow-unmanaged-roles]
+      按配置拉起并监督 worker 子进程。
+  scheduler-worker <runtime.json> <worker-id> [--once]
+      运行调度 worker；--once 只推进一个 tick。
+  strategy-worker <runtime.json> <worker-id> [--once]
+      运行策略 worker；信号在 Rust 侧过风控后入队。
+      入队的每一笔订单形状已经定死，所以这里同样当场拒绝 strategy.ashare_rules_path（V12 R1）。
+  paper-worker <runtime.json> <worker-id> [--once]
+      运行 Paper 执行 worker（也承载配置中的 spread_recovery 角色）。
+      strategy.ashare_rules_path 在这里会被当场拒绝：提交前的闸门没有 T+1/整手/涨跌停的落点（V11 Q65）。
+  binance-worker <runtime.json> <worker-id> [--once]
+      运行 Binance 行情/执行/对账 worker。
+      执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情与对账角色不受影响。
+  ccxt-worker <runtime.json> <worker-id> <ccxt-config.json> [--once]
+      运行 CCXT 执行 worker。
+      执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情角色不受影响。
+  ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe]
+      下载一段 CCXT OHLCV 并写成标准 BarFrame 文件。
+  outbox-relay <data-root> <nats-url> <subject-prefix> [limit]
+      把文件 outbox 中的事件转发到 NATS（需 --features nats 构建）。
+  outbox-relay-postgres <runtime.json> <nats-url> <subject-prefix> [limit]
+      从 PostgreSQL outbox 转发事件到 NATS（需 --features 'nats postgres' 构建）。
+  outbox-relay-worker <runtime.json> <worker-id> [--once]
+      以配置驱动的 outbox relay worker（需 --features nats 构建）。
+  event-consumer-worker <runtime.json> <worker-id> [--once]
+      事件消费 worker，带消费位点与死信队列（需 --features nats 构建）。
+  consumer-dlq-replay <runtime.json> <group-id> <event-id>
+      回放一条进入死信的事件（需 --features nats 构建）。
+  recovery-child <queue-root> <action> <owner> <now> [token-or-lease] <command-id>
+      供跨进程恢复验收器调用的最小子命令：只操作持久化控制命令队列。
+      <now> 与 lease 参数都是 epoch 秒（队列租约域），不是运行时的毫秒墙钟。
+
+实盘与订单入口（会访问交易所）：
+  binance-public-probe <testnet|mainnet> [instrument]
+      只读探测 Binance 公共接口，不需要凭据。
+  binance-private-probe [runtime.json] [worker-id]
+      只读探测 Binance 私有接口，需要配置引用的凭据。
+  binance-submit-order <runtime.json> <worker-id> <command.json>
+      向 Binance 提交一条命令队列中的 SubmitOrder，真实下单。
+      配了 strategy.ashare_rules_path 即在任何副作用之前拒绝（V11 Q65）。
+  paper-submit-order <runtime.json> <command.json>
+      在 Paper venue 上提交一条 SubmitOrder，不访问交易所。
+      配了 strategy.ashare_rules_path 即在任何副作用之前拒绝（V11 Q65）。
+  ccxt-submit-order <runtime.json> <worker-id> <ccxt-config.json> <command.json>
+      经公共 CCXT Worker 提交一条 SubmitOrder（Binance/OKX/Bybit 等由 exchange_id 决定），真实下单。
+      CCXT 凭据只经环境变量名引用（写在 ccxt-config.json 的 credential_env），不进命令行/运行时配置。
+  paper-e2e [runtime.json]
+      跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
+  paper-check [runtime.json]
+      按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路；与 paper-e2e 一样注入
+      一条固定合成 L1 报价（99/100），不接真实 feed。
+      --json 输出共享体检报告与本轮 Paper 执行层结果；当日调度复用既有事实时 P 层为 not_assessed。
+  reconcile <runtime.json> [worker-id]
+      用运行时配置指向的本地 EventLog 账本与配置内 Binance 账户做真实对账；
+      缺少本地或远端来源时按用法错误退出，不再打印演示差异。
+
+自校验与帮助：
+  all
+      完整自校验：质量门 + 真实 qx-xingban 内核算法回测 + 插件装配 + Paper venue 冒烟。
+      --json 输出共享 R/P/O/L 分层报告；仅覆盖合成输入与本地 PaperVenue，不表示运行时或实盘就绪。
+  verify
+      只校验确定性内核：质量门与同输入同哈希的重放校验。
+      --json 输出共享 R/P/O/L 分层报告；P/O/L 不在本命令范围内。
+  ecosystem
+      因子/协议/数据源/调度/控制面/API 路由的进程内生态冒烟，全部使用合成数据。
+      --json 输出共享 R/P/O/L 分层报告；P/O/L 不在本命令范围内。
+  paper
+      Paper venue 的进程内冒烟，不写入任何账本产物。
+  help
+      打印本入口摘要；--help 与 -h 是同一条入口的别名。用法错误不再打印它，只回错误正文与下一步。
+  version
+      打印一行构建身份：版本、git 提交前 7 位、目标三元组与构建档；--version 与 -V 是同一条入口的别名。
+
+使用 `qx-cli help` 查看入口摘要；worker 与下单入口必须显式给出 runtime 配置，完整说明见 README.md 与 deploy/README.md。
+$ 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli\bin\qx-cli.exe' quickstart sample-project
+牵星 Qianxing — 分级校准，量天定位
+
+quickstart 依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project：
+[初始化] 已创建 D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json profile=builtin environment=paper fingerprint=c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061 assets=7 strategy=macd
+[ProjectManifest] path=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.project.json fingerprint=36b8cb889304fa12
+下一步：qx-cli doctor D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json；qx-cli backtest D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.bar-frame.example.json D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.binance.spot.spec.json
+[完成] 建项目：qx-cli init D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json --strategy macd
+[Doctor] 检查配置、路径、策略输入与监督器可构建性（不启动 worker）
+[PASS] build_identity: qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile release, schemas c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa)
+[PASS] config: 配置解析与领域校验通过
+[PASS] fingerprint: 配置指纹=c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061
+[WARN] storage.data_dir: storage.data_dir 尚不存在，将在首次运行时创建: D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing
+[PASS] account_log_settlement: 账户事实日志的启用写入方共用同一记账币种
+[PASS] event_logs.orphan: data_dir 中的 EventLog 都被当前配置引用
+[PASS] runtime_supervisor_build: 监督器可构建，启用 worker=2（未启动，不代表运行健康）
+[Doctor] 通过：1 个警告；未连接交易所、未发送订单
+[完成] 静态检查：qx-cli doctor D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json
+[Data · Dataset] dataset=strategy-bars:BTCUSDT.BINANCE version=barframe-json-v1 source=example-bars-v1 fingerprint=613fdc1dc0b779e7
+[Strategy · Signal] source=config fast_window=5 slow_window=20 period=14 threshold_bps=100 \
+             knobs=none declared_unused=builtin_fast_window,builtin_slow_window,builtin_period,builtin_threshold_bps
+[Strategy · Account] initial_cash_raw=100000000000000 account_base_source=builtin-default
+[Strategy · Backtest] strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=45038cdcb863b87f
+[Strategy · Integrity] rejected_orders=0 rejection_reasons=none
+[RunManifest] run_id=strategy-backtest:strategy-macd:BTCUSDT.BINANCE:c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061:5eb250c4685f6890824315f1 data_fingerprint=barframe:613fdc1dc0b779e7 result_hash=45038cdcb863b87f digest=8f8bf72e1b7dc976
+[RunManifest] path=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061_5eb250c4685f6890824315f1-8f8bf72e1b7dc976.run.json
+[Artifacts] summary=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061_5eb250c4685f6890824315f1-8f8bf72e1b7dc976.v7.summary.json equity=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061_5eb250c4685f6890824315f1-8f8bf72e1b7dc976.v7.equity.csv fills=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061_5eb250c4685f6890824315f1-8f8bf72e1b7dc976.v7.fills.csv
+[完成] 跑一轮回测：qx-cli backtest D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json
+[Report] summary=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_c033b7ce93bd44b452aa5a5e1448e3e0becbeb2931aa3ee0940eeef7721df061_5eb250c4685f6890824315f1-8f8bf72e1b7dc976.v7.summary.json
+[Report]  schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+[Report]  strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1
+[Report]  return_bps=1 max_drawdown_bps=0 fees_raw=43250000 turnover_raw=86500000000 final_equity_raw=100018956750000
+[Report]  input_data_hash=e5c20c038f1bb74c result_hash=45038cdcb863b87f replay_log_digest=45038cdcb863b87f
+[Report]  input_verified=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.bar-frame.example.json input_kind=barframe input_id=strategy-bars:BTCUSDT.BINANCE input_fingerprint=613fdc1dc0b779e7
+[Report]  account_initial_cash_raw=100000000000000 account_source=builtin-default
+[Report]  replay_events=77 replay_ledger_entries=4/4
+[Report]  risk_rule_set_version=conservative-default-v1+implicit-no-short
+[完成] 读回摘要：qx-cli report D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json
+[Status] runtime=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json
+  environment=paper profile=SingleNode storage=Files consistency=LocalDurable
+  data_dir=D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data\qianxing backtest_summaries=1 network_accessed=false orders_sent=false
+  worker id=api role=Api account=- venue=- configured
+  worker id=strategy-builtin role=Strategy account=main venue=paper configured
+[Latest Backtest] schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+  strategy=strategy-macd instrument=BTCUSDT.BINANCE fills=1 return_bps=1 max_drawdown_bps=0 result_hash=45038cdcb863b87f
+[完成] 看安全状态：qx-cli status D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json
+
+你刚做完了 5 步：建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态，项目里共 16 份文件。
+回测产物在 D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\data 下（summary / equity.csv / fills.csv / run.json / record.json 与数据集清单）。
+下一步三条命令：
+  qx-cli report D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json --json
+  qx-cli strategy list
+  qx-cli init D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\ashare\qianxing.runtime.json --profile ashare
+本地 Paper 验收（qx-cli paper-check D:\aex_work\qianxing\target\r20-install-work-sdkdiag\quickstart\sample-project\qianxing.runtime.json）要先把运行时换成 paper profile 那份模板，否则会如实报「Paper 主链路缺少启用的 Scheduler worker」。
+全部入口：qx-cli help；这一行是哪个构建：qx-cli version
+$ 'D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-venv\Scripts\python.exe' -c 'import json, pathlib, sys
+import qianxing, qianxing.core, qianxing.strategy, qianxing.reports
+from qianxing import BacktestSpec, BuiltinStrategySpec, doctor, list_builtin_strategies
+report = doctor()
+assert report["native_extension_compatibility"] == "matched", report
+assert report["native_app_compatibility"] == "complete", report
+assert report["application_use_cases_available"] is True, report
+assert len(report["native_schema_catalog_sha256"] or "") == 64, report
+assert report["cli"]["status"] == "matched", report["cli"]
+assert report["cli"]["schema_catalog_compatibility"] == "matched", report["cli"]
+strategies = list_builtin_strategies()
+assert strategies, "native built-in strategy capability catalog is empty"
+spec = BacktestSpec("install-smoke", "BTCUSDT.BINANCE", "bars.json", "USDT", 1000000000, "runs", BuiltinStrategySpec(kind="sma_cross", strategy_id="install-smoke"))
+assert spec.to_dict()["schema_version"] == 1
+assert pathlib.Path(qianxing.__file__).resolve().is_relative_to(pathlib.Path.cwd().resolve()) is False
+print(json.dumps({"version": report["version"], "schema_catalog_sha256": report["native_schema_catalog_sha256"], "native_app": report["native_app_compatibility"], "cli": report["cli"]["status"], "builtin_strategy_count": len(strategies), "backtest_schema_version": spec.to_dict()["schema_version"]}, sort_keys=True))'
+
+[stderr]
+\U0001f379 Building a mixed python/rust project
+\U0001f40d Not using a specific python interpreter (automatically generating windows import library)
+\U0001f517 Found pyo3 bindings with abi3-py3.10 support
+    Finished `release` profile [optimized] target(s) in 0.43s
+\U0001f4e6 Built wheel for abi3 Python ≥ 3.10 to D:\aex_work\qianxing\target\r20-install-work-sdkdiag\wheelhouse\qianxing-0.3.0-cp310-abi3-win_amd64.whl
+  Installing qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `release` profile [optimized] target(s) in 1.10s
+  Installing D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli\bin\qx-cli.exe
+   Installed package `qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)` (executable `qx-cli.exe`)
+warning: be sure to add `D:\aex_work\qianxing\target\r20-install-work-sdkdiag\installed-cli\bin` to your PATH to be able to run the installed binaries
+Traceback (most recent call last):
+  File "<string>", line 15, in <module>
+AssertionError
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 184, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 143, in main
+    run([str(python), "-c", smoke], cwd=work, env=cli_env)
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 36, in run
+    raise subprocess.CalledProcessError(result.returncode, command, result.stdout, result.stderr)
+subprocess.CalledProcessError: Command '['D:\\aex_work\\qianxing\\target\\r20-install-work-sdkdiag\\installed-venv\\Scripts\\python.exe', '-c', 'import json, pathlib, sys\nimport qianxing, qianxing.core, qianxing.strategy, qianxing.reports\nfrom qianxing import BacktestSpec, BuiltinStrategySpec, doctor, list_builtin_strategies\nreport = doctor()\nassert report["native_extension_compatibility"] == "matched", report\nassert report["native_app_compatibility"] == "complete", report\nassert report["application_use_cases_available"] is True, report\nassert len(report["native_schema_catalog_sha256"] or "") == 64, report\nassert report["cli"]["status"] == "matched", report["cli"]\nassert report["cli"]["schema_catalog_compatibility"] == "matched", report["cli"]\nstrategies = list_builtin_strategies()\nassert strategies, "native built-in strategy capability catalog is empty"\nspec = BacktestSpec("install-smoke", "BTCUSDT.BINANCE", "bars.json", "USDT", 1000000000, "runs", BuiltinStrategySpec(kind="sma_cross", strategy_id="install-smoke"))\nassert spec.to_dict()["schema_version"] == 1\nassert pathlib.Path(qianxing.__file__).resolve().is_relative_to(pathlib.Path.cwd().resolve()) is False\nprint(json.dumps({"version": report["version"], "schema_catalog_sha256": report["native_schema_catalog_sha256"], "native_app": report["native_app_compatibility"], "cli": report["cli"]["status"], "builtin_strategy_count": len(strategies), "backtest_schema_version": spec.to_dict()["schema_version"]}, sort_keys=True))']' returned non-zero exit status 1.

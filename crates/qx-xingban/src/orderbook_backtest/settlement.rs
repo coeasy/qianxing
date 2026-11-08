@@ -5,6 +5,7 @@ use qx_core::{
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_FUNDING_SETTLEMENTS: u64 = 100_000;
+type ScheduledSettlements = BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>;
 
 pub(super) fn scheduled_settlements(
     start: u64,
@@ -12,7 +13,7 @@ pub(super) fn scheduled_settlements(
     rates: &BTreeMap<InstrumentId, i64>,
     events: &[FundingRateEvent],
     specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
-) -> Result<BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>, qx_core::QxError> {
+) -> Result<ScheduledSettlements, qx_core::QxError> {
     if start > end || events.len() > MAX_FUNDING_SETTLEMENTS as usize {
         return Err(qx_core::QxError::BusinessViolation(
             "深度资金费时间范围或历史事件数无效".into(),
@@ -121,6 +122,7 @@ pub(super) fn scheduled_settlements(
     Ok(settlements)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_settlements(
     ts: u64,
     rates: &BTreeMap<InstrumentId, (i64, u64)>,
@@ -177,10 +179,7 @@ pub(super) fn apply_settlements(
             .exact_rules
             .as_ref()
             .map(|rules| rules.contract_size)
-            .unwrap_or_else(|| {
-                ExactDecimal::from_parts(spec.contract_size, 9)
-                    .expect("validated contract size fits supported scale")
-            });
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(spec.contract_size));
         let entry_id = ledger.apply_instrument_funding_exact(
             account_id,
             currency,

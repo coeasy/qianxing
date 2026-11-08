@@ -595,6 +595,18 @@ pub enum EventKind {
     ReconcileRequired {
         client_order_id: u64,
     },
+    /// Authoritative venue snapshot applied only after cumulative fills match locally.
+    OrderStatusReconciled {
+        client_order_id: u64,
+        account_id: String,
+        venue_id: String,
+        status: crate::order::OrderStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        venue_order_id: Option<String>,
+        filled_raw: i128,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filled_exact: Option<ExactDecimal>,
+    },
     /// 日终结算。
     Settle,
 }
@@ -663,6 +675,20 @@ impl Event {
 
     /// 稳定摘要：用于重放校验。**不得依赖 Debug 输出**（格式可能随版本变化）。
     pub fn digest(&self, h: &mut crate::sourcing::Fnv1a) {
+        self.digest_with_q68_position_money_presence(h, true);
+    }
+
+    /// Q68 之前的事件摘要格式，用于严格验证旧版已提交的存储 manifest。
+    /// 新写入必须使用 [`Self::digest`]；此格式只用于向前读取。
+    pub fn digest_legacy_q68(&self, h: &mut crate::sourcing::Fnv1a) {
+        self.digest_with_q68_position_money_presence(h, false);
+    }
+
+    fn digest_with_q68_position_money_presence(
+        &self,
+        h: &mut crate::sourcing::Fnv1a,
+        include_position_money_presence: bool,
+    ) {
         h.write_u64(self.seq);
         h.write_u64(self.ts);
         h.write_u64(self.prio as u64);
@@ -786,9 +812,11 @@ impl Event {
                         position.initial_margin,
                         position.maintenance_margin,
                     ] {
-                        // 与账户快照的 state_hash 同一条纪律：未报与报为零必须是两份内容，
-                        // 否则把日志里的 `null` 改成 `0` 不会改动摘要。
-                        h.write_u64(u64::from(value.is_some()));
+                        if include_position_money_presence {
+                            // 与账户快照的 state_hash 同一条纪律：未报与报为零必须是两份内容，
+                            // 否则把日志里的 `null` 改成 `0` 不会改动摘要。
+                            h.write_u64(u64::from(value.is_some()));
+                        }
                         h.write_i128(value.map(Money::raw).unwrap_or_default());
                     }
                     h.write_u64(position.leverage.unwrap_or(0) as u64);
@@ -1171,6 +1199,36 @@ impl Event {
                 h.write_u64(11);
                 h.write_u64(*client_order_id);
             }
+            EventKind::OrderStatusReconciled {
+                client_order_id,
+                account_id,
+                venue_id,
+                status,
+                venue_order_id,
+                filled_raw,
+                filled_exact,
+            } => {
+                h.write_u64(23);
+                h.write_u64(*client_order_id);
+                h.write_text(account_id);
+                h.write_text(venue_id);
+                h.write_u64(match status {
+                    crate::order::OrderStatus::PendingSubmit => 1,
+                    crate::order::OrderStatus::Submitted => 2,
+                    crate::order::OrderStatus::Accepted => 3,
+                    crate::order::OrderStatus::Working => 4,
+                    crate::order::OrderStatus::PartiallyFilled => 5,
+                    crate::order::OrderStatus::Filled => 6,
+                    crate::order::OrderStatus::CancelPending => 7,
+                    crate::order::OrderStatus::Cancelled => 8,
+                    crate::order::OrderStatus::Rejected => 9,
+                    crate::order::OrderStatus::Expired => 10,
+                    crate::order::OrderStatus::Unknown => 11,
+                });
+                h.write_text(venue_order_id.as_deref().unwrap_or_default());
+                h.write_i128(*filled_raw);
+                digest_optional_exact_decimal(h, *filled_exact);
+            }
             EventKind::Settle => h.write_u64(6),
         }
     }
@@ -1545,8 +1603,8 @@ mod tests {
             position_side: None,
             exact_amounts: None,
         };
-        let digest_of = |pnl: Option<Money>| {
-            let event = Event::new(
+        let event_of = |pnl: Option<Money>| {
+            Event::new(
                 1,
                 1,
                 Priority::APPLY,
@@ -1555,12 +1613,22 @@ mod tests {
                     venue_id: "OKX".into(),
                     positions: vec![position(pnl)],
                 },
-            );
+            )
+        };
+        let unreported = event_of(None);
+        let reported_zero = event_of(Some(Money::ZERO));
+        let digest = |event: &Event, legacy: bool| {
             let mut hasher = crate::sourcing::Fnv1a::new();
-            event.digest(&mut hasher);
+            if legacy {
+                event.digest_legacy_q68(&mut hasher);
+            } else {
+                event.digest(&mut hasher);
+            }
             hasher.finish()
         };
-        assert_ne!(digest_of(None), digest_of(Some(Money::ZERO)));
+        assert_ne!(digest(&unreported, false), digest(&reported_zero, false));
+        // Before Q68, absent and explicit zero intentionally shared the stored digest.
+        assert_eq!(digest(&unreported, true), digest(&reported_zero, true));
 
         let reported: AccountPositionSnapshot =
             serde_json::from_value(serde_json::to_value(position(Some(Money::ZERO))).unwrap())

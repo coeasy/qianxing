@@ -12,6 +12,7 @@
 from qianxing.app import (
     DepthExperimentCandidateResult,
     DepthExperimentRankedCandidate,
+    InvalidInputError,
     ExperimentBaselineReport,
     ExperimentCandidatePruning,
     ExperimentCandidateResult,
@@ -33,6 +34,7 @@ from qianxing.app import (
     MultiLegExperimentRankedCandidate,
     RunDepthExperimentResult,
     RunDepthExperimentSpec,
+    RunHandle,
     RunExperimentResult,
     RunExperimentSpec,
     RunMultiLegExperimentResult,
@@ -65,7 +67,10 @@ from qianxing.app import (
     start_multi_leg_experiment,
     start_multi_market_experiment,
     start_multi_market_experiment_with_strategy,
+    _prepare_quick_research_spec,
 )
+
+from .guided import GuidedResearchHandle, GuidedResearchResult, GuidedResearchSpec, research, start_research
 
 __all__ = [
     "DepthExperimentCandidateResult",
@@ -123,4 +128,9 @@ __all__ = [
     "start_multi_leg_experiment",
     "start_multi_market_experiment",
     "start_multi_market_experiment_with_strategy",
+    "research",
+    "start_research",
+    "GuidedResearchResult",
+    "GuidedResearchHandle",
+    "GuidedResearchSpec",
 ]

@@ -146,7 +146,10 @@ fn run_paper_execution_worker_with_output(
 ///
 /// 该入口不是新的业务分支，而是把 Scheduler、Strategy 和 Execution 的
 /// `--once` 验收顺序固定下来，便于 CI、部署检查和故障恢复测试复用。
-pub(crate) use pipeline::{run_paper_pipeline_once, run_paper_pipeline_once_with_report};
+pub(crate) use pipeline::{
+    run_paper_pipeline_once, run_paper_pipeline_once_with_quote,
+    run_paper_pipeline_once_with_report, PaperE2eQuoteOverride,
+};
 mod pipeline;
 
 pub(crate) fn run_paper_check(path: &Path, as_json: bool) -> Result<(), String> {

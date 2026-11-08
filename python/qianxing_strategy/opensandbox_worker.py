@@ -83,6 +83,7 @@ def _guest_command(
     account_id: str | None,
     venue_id: str | None,
     artifact_sha256: str | None,
+    host_capabilities_json: str | None,
     ready_file: str,
 ) -> str:
     values = {
@@ -100,6 +101,10 @@ def _guest_command(
         values["QX_STRATEGY_VENUE_ID"] = venue_id
     if artifact_sha256:
         values["QX_STRATEGY_ARTIFACT_SHA256"] = artifact_sha256
+    if host_capabilities_json:
+        values["QX_STRATEGY_HOST_CAPABILITIES_JSON"] = host_capabilities_json
+    if os.environ.get("QX_STRATEGY_REQUIRE_CHECKPOINT") == "true":
+        values["QX_STRATEGY_REQUIRE_CHECKPOINT"] = "true"
     assignments = " ".join(
         shlex.quote(f"{key}={value}") for key, value in values.items()
     )
@@ -256,6 +261,7 @@ class OpenSandboxPythonStrategyWorker:
                 account_id=self.account_id,
                 venue_id=self.venue_id,
                 artifact_sha256=self.artifact_sha256,
+                host_capabilities_json=os.environ.get("QX_STRATEGY_HOST_CAPABILITIES_JSON"),
                 ready_file=ready_file,
             )
             execution = self.sandbox.commands.run(

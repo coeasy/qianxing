@@ -1032,8 +1032,8 @@ fn verify_v2_artifact_metadata(
             .find(|artifact| artifact.name == name)
             .ok_or_else(|| format!("RunRecord V2 缺少 {name} 产物引用"))?;
         let schema_matches = match name {
-            "fills" => matches!(artifact.schema_version, 1 | 2 | 3),
-            "equity" => matches!(artifact.schema_version, 1 | 2 | 3 | 4 | 5),
+            "fills" => matches!(artifact.schema_version, 1..=3),
+            "equity" => matches!(artifact.schema_version, 1..=5),
             _ => artifact.schema_version == schema_version,
         };
         if artifact.kind != kind || !schema_matches {

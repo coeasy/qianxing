@@ -1,0 +1,70 @@
+HIT docs/changelog/current.md:2698 col=13
+   line: **口径**：`docs/竞品对比与易用性改进优化计划-V1.md` §1 把最大的产品差距概括为三个词，第一个就是**「看不见」**——竞品默认
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=7 path-shaped=1
+HIT docs/changelog/v11.md:513 col=35
+   line: 位置：`docs/工业化易用性收口指南-V1.md`、`docs/CCXT多交易所接入与策略运行方案-V1.md`、
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=2 path-shaped=2
+HIT docs/changelog/v11.md:514 col=38
+   line: `docs/A股数据源接入与快速选股回测方案-V1.md`、`docs/工业级多语言策略与高性能交易方案-V1.md`、`deploy/README.md`。
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=3 path-shaped=3
+HIT docs/changelog/v11.md:514 col=8
+   line: `docs/A股数据源接入与快速选股回测方案-V1.md`、`docs/工业级多语言策略与高性能交易方案-V1.md`、`deploy/
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=3 path-shaped=3
+HIT docs/changelog/v13.md:56 col=8
+   line: `docs/A股数据源接入与快速选股回测方案-V1.md` 安装块各一处，一并补上 wheel 派写法、把 editable 降为「从源
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:210 col=8
+   line: 把 `docs/竞品对比与易用性改进优化计划-V1.md` §4.2 的 U 序列当成待敲命令逐条敲，而不只是读。现场
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:311 col=21
+   line: 这一遍仍不做断链取证，而是把 `docs/竞品对比与易用性改进优化计划-V1.md` §4.3 里 P2 的第一格做掉：
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:397 col=20
+   line: 这一遍不做断链取证，而是按 `docs/竞品对比与易用性改进优化计划-V1.md` §4.3 的排序把 P1 的三格做掉：
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:553 col=19
+   line: - 跨文档引用的一次追账：`docs/竞品对比与易用性改进优化计划-V1.md`（第二十四遍落盘的改进计划）里有三处引用本审计文档的规模与本仓待暂存路径数，全
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:586 col=18
+   line: 上一遍（#247）只落 `docs/竞品对比与易用性改进优化计划-V1.md`，没有代码条目。
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/changelog/v13.md:1419 col=15
+   line: - 接口文档同步：`docs/CCXT多交易所接入与策略运行方案-V1.md` 的 `timeout_ms` 段落新增合法区间与推导函数两处指向，并写明"改
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=2 path-shaped=1
+HIT docs/competitive-analysis/牵星Qianxing-架构不合理清单与优化重构方案-2026-10-10.md:45 col=105
+   line: rity/targets.yaml` 无实验相关目标；README 未提 walk-forward/OOS；既有文档 `竞品对比与易用性改进优化计划-V1.md` 已把 F1/F2（可视化/寻优）列为未完成 |
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=4 path-shaped=1
+HIT docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md:43 col=24
+   line: | `工业化易用性收口指南-V1.md` / `竞品对比与易用性改进优化计划-V1.md` | 易用性与产品面 | 本文只在 §3.12 与 P2 引用 |
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=2 path-shaped=0
+HIT docs/牵星Qianxing-Python全能力包与桌面客户端及可扩展性改造方案-2026-10-10.md:461 col=8
+   line: | `docs/竞品对比与易用性改进优化计划-V1.md` | **19** | 🟠 **建议归档** | 部分结论已被 2026-10
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+HIT docs/牵星Qianxing-Python全能力包与桌面客户端及可扩展性改造方案-2026-10-10.md:463 col=8
+   line: | `docs/CCXT多交易所接入与策略运行方案-V1.md` | 0 | 🟢 **可归档** | 方案已落地（`ccxt-submit-o
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=2 path-shaped=1
+HIT docs/牵星Qianxing-Python全能力包与桌面客户端及可扩展性改造方案-2026-10-10.md:464 col=8
+   line: | `docs/A股数据源接入与快速选股回测方案-V1.md` | 0 | 🟢 **可归档** | 主要能力已落地（`qianxing_as
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=2 path-shaped=1
+HIT docs/牵星Qianxing-Python全能力包与桌面客户端及可扩展性改造方案-2026-10-10.md:465 col=8
+   line: | `docs/工业级多语言策略与高性能交易方案-V1.md` | 0 | 🟢 **可归档** | 三语言策略已落地（Rust/Python
+   prefixed-with-docs/archive = False
+   backticked-on-this-line=1 path-shaped=1
+bare-name occurrences on disk: 17
+full-path (docs/archive/…) occurrences on disk: 0

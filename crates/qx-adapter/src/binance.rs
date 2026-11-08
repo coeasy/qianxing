@@ -343,7 +343,7 @@ pub enum BinanceStreamPoll {
 /// 行情流一次读取窗口的结局；静默交给调用方判 staleness，不作为致命错误上抛。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum BinanceQuotePoll {
-    Quote(QuoteTick),
+    Quote(Box<QuoteTick>),
     Idle,
     Closed,
 }
@@ -366,11 +366,11 @@ impl BinanceUserStreamSession for BinanceSpotUserStream {
 
 /// 驱动长连接的确定性重连循环。连接器、休眠和停止条件均可替换，便于沙盒/故障注入验收。
 pub fn run_binance_user_stream<S, C, Stop, Sleep, Event>(
-    mut connect: C,
+    connect: C,
     policy: BinanceStreamRetryPolicy,
-    mut should_stop: Stop,
-    mut sleep: Sleep,
-    mut on_event: Event,
+    should_stop: Stop,
+    sleep: Sleep,
+    on_event: Event,
 ) -> Result<BinanceStreamRunReport, String>
 where
     S: BinanceUserStreamSession,
@@ -379,12 +379,35 @@ where
     Sleep: FnMut(std::time::Duration),
     Event: FnMut(&str) -> Result<(), String>,
 {
+    run_binance_user_stream_observing(connect, policy, should_stop, sleep, on_event, |_| {})
+}
+
+/// Drive the user stream and report each reconnect boundary as it is reached.
+/// The callback runs after the monotonically increasing reconnect count is committed, including
+/// the final failed boundary when the retry budget is exhausted.
+pub fn run_binance_user_stream_observing<S, C, Stop, Sleep, Event, Reconnect>(
+    mut connect: C,
+    policy: BinanceStreamRetryPolicy,
+    mut should_stop: Stop,
+    mut sleep: Sleep,
+    mut on_event: Event,
+    mut on_reconnect: Reconnect,
+) -> Result<BinanceStreamRunReport, String>
+where
+    S: BinanceUserStreamSession,
+    C: FnMut() -> Result<S, String>,
+    Stop: FnMut() -> bool,
+    Sleep: FnMut(std::time::Duration),
+    Event: FnMut(&str) -> Result<(), String>,
+    Reconnect: FnMut(u32),
+{
     let mut report = BinanceStreamRunReport::default();
     while !should_stop() {
         let mut session = match connect() {
             Ok(session) => session,
             Err(error) => {
                 report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+                on_reconnect(report.reconnects);
                 report.consecutive_failures =
                     retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
                 if !policy.allows_reconnect(report.consecutive_failures) {
@@ -439,6 +462,7 @@ where
             break;
         }
         report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+        on_reconnect(report.reconnects);
         report.consecutive_failures =
             retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
         if !policy.allows_reconnect(report.consecutive_failures) {
@@ -449,20 +473,21 @@ where
     Ok(report)
 }
 
-/// 使用凭据加载器维护用户流：每次新建 WebSocket 会话前重新读凭据，允许部署系统原子
-/// 替换投影的 key/secret 文件（已有会话不被打断）；加载失败进入既有重连退避。
-pub fn run_binance_user_stream_with_config_loader<Stop, Sleep, Event, Load>(
+/// Credential-loading user stream with a live reconnect observer for worker diagnostics.
+pub fn run_binance_user_stream_with_config_loader_observing<Stop, Sleep, Event, Load, Reconnect>(
     mut load_auth: Load,
     config: BinanceUserStreamRunConfig,
     should_stop: Stop,
     sleep: Sleep,
     on_event: Event,
+    on_reconnect: Reconnect,
 ) -> Result<BinanceStreamRunReport, String>
 where
     Stop: FnMut() -> bool,
     Sleep: FnMut(std::time::Duration),
     Event: FnMut(&str) -> Result<(), String>,
     Load: FnMut() -> Result<BinanceSpotAuth, String>,
+    Reconnect: FnMut(u32),
 {
     let mut request_sequence = 0_u64;
     let ws_host = config.ws_host;
@@ -470,7 +495,7 @@ where
     let request_id_prefix = config.request_id_prefix;
     let timeout = config.timeout;
     let retry_policy = config.retry_policy;
-    run_binance_user_stream(
+    run_binance_user_stream_observing(
         || {
             request_sequence = request_sequence.saturating_add(1);
             let auth = load_auth()?;
@@ -486,6 +511,7 @@ where
         should_stop,
         sleep,
         on_event,
+        on_reconnect,
     )
 }
 
@@ -548,7 +574,7 @@ impl BinanceSpotMarketData {
             port: self.port,
             path: format!(
                 "/api/v3/ticker/bookTicker?symbol={}",
-                percent_encode(&instrument.symbol.to_ascii_uppercase())
+                percent_encode(&instrument.symbol().to_ascii_uppercase())
             ),
             body: String::new(),
             headers: BTreeMap::new(),
@@ -569,10 +595,10 @@ impl BinanceSpotMarketData {
             )));
         }
         let (raw_symbol, quote) = parse_book_ticker(&response.body, receive_ts)?;
-        if raw_symbol != instrument.symbol.to_ascii_uppercase() {
+        if raw_symbol != instrument.symbol().to_ascii_uppercase() {
             return Err(QxError::ReconcileRequired(format!(
                 "Binance 行情 symbol 不匹配: expected={}, actual={raw_symbol}",
-                instrument.symbol
+                instrument.symbol()
             )));
         }
         Ok(quote)
@@ -596,7 +622,10 @@ impl BinanceSpotMarketStream {
             QxError::Permanent(message) => message,
             other => format!("Binance instrument 非法: {other:?}"),
         })?;
-        let path = format!("/ws/{}@bookTicker", instrument.symbol.to_ascii_lowercase());
+        let path = format!(
+            "/ws/{}@bookTicker",
+            instrument.symbol().to_ascii_lowercase()
+        );
         let host = host.into();
         let stream = TlsWebSocketUserStream::connect(host, port, path, timeout)?;
         Ok(Self { stream, instrument })
@@ -621,13 +650,13 @@ impl BinanceSpotMarketStream {
             .map_err(|error| format!("Binance bookTicker 不是 UTF-8: {error}"))?;
         let (symbol, quote) = parse_book_ticker(&payload, receive_ts)
             .map_err(|error| format!("Binance bookTicker 解析失败: {error}"))?;
-        if symbol != self.instrument.symbol.to_ascii_uppercase() {
+        if symbol != self.instrument.symbol().to_ascii_uppercase() {
             return Err(format!(
                 "Binance bookTicker symbol 不匹配: expected={}, actual={symbol}",
-                self.instrument.symbol
+                self.instrument.symbol()
             ));
         }
-        Ok(BinanceQuotePoll::Quote(quote))
+        Ok(BinanceQuotePoll::Quote(Box::new(quote)))
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -769,6 +798,24 @@ struct BinanceSnapshotWire {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+struct BinanceAccountTradeWire {
+    symbol: String,
+    #[serde(rename = "id")]
+    trade_id: u64,
+    #[serde(rename = "orderId")]
+    order_id: u64,
+    price: String,
+    qty: String,
+    commission: String,
+    #[serde(rename = "commissionAsset", default)]
+    commission_asset: String,
+    #[serde(rename = "time")]
+    transact_time: u64,
+    #[serde(rename = "isBuyer")]
+    is_buyer: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct BinanceOpenOrderWire {
     symbol: String,
     #[serde(rename = "orderId")]
@@ -848,6 +895,8 @@ const BINANCE_MARKET_RULES_MAX_AGE_MS: u64 = 60_000;
 const BINANCE_REFERENCE_PRICE_MAX_AGE_MS: u64 = 1_000;
 
 /// Binance Spot REST + `executionReport` 用户事件适配器。
+type BinanceSeenFillKey = (u64, u64, i128, u8, i128, u8, i128, u8);
+
 pub struct BinanceSpotVenue {
     id: String,
     auth: BinanceSpotAuth,
@@ -861,7 +910,7 @@ pub struct BinanceSpotVenue {
     /// 退场即升级对账：被退订单再收到回报会落到「成交对应订单不存在」→ ReconcileRequired。
     orders: BTreeMap<u64, Order>,
     venue_order_ids: BTreeMap<u64, String>,
-    seen_fill_keys: BTreeSet<(u64, u64, i128, u8, i128, u8, i128, u8)>,
+    seen_fill_keys: BTreeSet<BinanceSeenFillKey>,
     rate_limiter: RateLimiter,
     market_rules: BTreeMap<String, BinanceSpotMarketRules>,
     /// Cached symbol-to-base-asset map used for Binance's account-wide MAX_POSITION filter.
@@ -1016,6 +1065,11 @@ impl BinanceSpotVenue {
 
     pub fn balances(&self) -> Vec<BinanceBalance> {
         self.balances.values().cloned().collect()
+    }
+
+    /// Latest source event timestamp observed from the private stream or its reducer fallback.
+    pub fn last_event_timestamp_ms(&self) -> Option<u64> {
+        (self.last_event_ts > 0).then_some(self.last_event_ts)
     }
 
     pub fn fetch_account_balances(&mut self, ts: u64) -> QxResult<Vec<BinanceBalance>> {
@@ -1189,7 +1243,7 @@ impl BinanceSpotVenue {
             symbols = self
                 .orders
                 .values()
-                .map(|order| order.instrument.symbol.to_ascii_uppercase())
+                .map(|order| order.instrument.symbol().to_ascii_uppercase())
                 .collect();
         }
         let mut wires = Vec::new();
@@ -1281,6 +1335,160 @@ impl BinanceSpotVenue {
             .collect()
     }
 
+    /// Recover missing fills for one order from Binance `myTrades`. The complete remote history
+    /// must account for the snapshot total, and locally recorded trade IDs must account for the
+    /// restored OMS fill total, before this method mutates the connector's order state.
+    pub fn fetch_missing_order_fills(
+        &mut self,
+        client_order_id: u64,
+        remote_filled: ExactDecimal,
+        recorded_trade_ids: &BTreeSet<String>,
+    ) -> QxResult<Vec<(String, Fill)>> {
+        qx_zhenlu::venue_capabilities::BINANCE_SPOT_VENUE_CAPABILITIES.require_query()?;
+        let order = self
+            .orders
+            .get(&client_order_id)
+            .cloned()
+            .ok_or_else(|| QxError::ReconcileRequired("Binance 成交回补订单不存在".into()))?;
+        if order.status.is_terminal() {
+            return Err(QxError::ReconcileRequired(
+                "Binance 终态本地订单不能回补成交".into(),
+            ));
+        }
+        let remote_order_id = self
+            .venue_order_ids
+            .get(&client_order_id)
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| QxError::ReconcileRequired("Binance 成交回补缺少 orderId".into()))?;
+        let symbol = order.instrument.symbol().to_ascii_uppercase();
+        let mut trades = Vec::new();
+        let mut next_trade_id: Option<u64> = None;
+        let mut previous_last_trade_id: Option<u64> = None;
+        loop {
+            let mut parameters = BTreeMap::new();
+            parameters.insert("limit".into(), "1000".into());
+            parameters.insert("orderId".into(), remote_order_id.to_string());
+            parameters.insert("symbol".into(), symbol.clone());
+            if let Some(trade_id) = next_trade_id {
+                parameters.insert("fromId".into(), trade_id.to_string());
+            }
+            let response = self.request_readonly_params_with_weight(
+                "/api/v3/myTrades",
+                parameters,
+                self.last_event_ts,
+                5,
+            )?;
+            let mut page: Vec<BinanceAccountTradeWire> = parse_success(response, "myTrades")?;
+            let page_len = page.len();
+            let last_trade_id = page.last().map(|trade| trade.trade_id);
+            trades.append(&mut page);
+            if page_len < 1_000 {
+                break;
+            }
+            let last_trade_id = last_trade_id.ok_or_else(|| {
+                QxError::ReconcileRequired("Binance myTrades 分页缺少 trade id".into())
+            })?;
+            if last_trade_id == 0 || previous_last_trade_id == Some(last_trade_id) {
+                return Err(QxError::ReconcileRequired(
+                    "Binance myTrades 分页游标未前进".into(),
+                ));
+            }
+            previous_last_trade_id = Some(last_trade_id);
+            next_trade_id = Some(last_trade_id.checked_add(1).ok_or_else(|| {
+                QxError::ReconcileRequired("Binance trade id 分页游标溢出".into())
+            })?);
+        }
+        trades.sort_by_key(|trade| trade.trade_id);
+        if trades
+            .windows(2)
+            .any(|pair| pair[0].trade_id == pair[1].trade_id)
+        {
+            return Err(QxError::ReconcileRequired(
+                "Binance myTrades 返回重复 trade id".into(),
+            ));
+        }
+        let mut remote_total = ExactDecimal::ZERO;
+        let mut recorded_total = ExactDecimal::ZERO;
+        let mut missing_total = ExactDecimal::ZERO;
+        let mut missing = Vec::new();
+        for trade in trades {
+            if trade.order_id != remote_order_id
+                || !trade.symbol.eq_ignore_ascii_case(&symbol)
+                || trade.is_buyer != (order.side == Side::Buy)
+            {
+                return Err(QxError::ReconcileRequired(format!(
+                    "Binance myTrades 与本地订单身份不匹配 client_order_id={client_order_id} trade_id={}",
+                    trade.trade_id
+                )));
+            }
+            let quantity = parse_exact_decimal(&trade.qty, "myTrades qty")?;
+            if !quantity.is_positive() {
+                return Err(QxError::ReconcileRequired(
+                    "Binance myTrades 数量必须为正数".into(),
+                ));
+            }
+            remote_total = remote_total.checked_add(quantity).ok_or_else(|| {
+                QxError::ReconcileRequired("Binance myTrades 累计成交溢出".into())
+            })?;
+            let trade_id = trade.trade_id.to_string();
+            if recorded_trade_ids.contains(&trade_id) {
+                recorded_total = recorded_total.checked_add(quantity).ok_or_else(|| {
+                    QxError::ReconcileRequired("Binance 已入账成交累计溢出".into())
+                })?;
+            } else {
+                missing_total = missing_total.checked_add(quantity).ok_or_else(|| {
+                    QxError::ReconcileRequired("Binance 待回补成交累计溢出".into())
+                })?;
+                missing.push((trade_id, trade));
+            }
+        }
+        let local_filled = if let Some(amounts) = order.exact_amounts {
+            amounts.filled
+        } else {
+            ExactDecimal::from_parts(order.filled.raw(), 9).map_err(|error| {
+                QxError::ReconcileRequired(format!("本地累计成交精度转换失败: {error}"))
+            })?
+        };
+        let expected_missing = remote_filled
+            .checked_sub(local_filled)
+            .ok_or_else(|| QxError::ReconcileRequired("远端累计成交小于本地".into()))?;
+        if remote_total != remote_filled
+            || recorded_total != local_filled
+            || missing_total != expected_missing
+        {
+            return Err(QxError::ReconcileRequired(format!(
+                "Binance myTrades 无法证明完整回补 remote={remote_total} recorded={recorded_total} local={local_filled} missing={missing_total} expected_missing={expected_missing} snapshot={remote_filled}"
+            )));
+        }
+        let venue_order_id = remote_order_id.to_string();
+        let mut fills = Vec::with_capacity(missing.len());
+        for (trade_id, trade) in missing {
+            let wire = BinanceFillWire {
+                price: trade.price,
+                qty: trade.qty,
+                commission: trade.commission,
+                commission_asset: trade.commission_asset,
+                trade_id: trade.trade_id,
+                transact_time: trade.transact_time,
+            };
+            match self.ingest_fill_wire(client_order_id, &venue_order_id, wire)? {
+                Some(VenueEvent::Fill(fill)) => fills.push((trade_id, *fill)),
+                Some(_) => {
+                    return Err(QxError::Invariant(
+                        "Binance 成交回补生成了非 Fill venue event".into(),
+                    ));
+                }
+                None => {
+                    return Err(QxError::ReconcileRequired(
+                        "Binance myTrades 成交已在连接器中去重，但 EventLog 身份缺失".into(),
+                    ));
+                }
+            }
+        }
+        Ok(fills)
+    }
+
     pub fn reconcile_remote(
         &mut self,
         remote: &[VenueOrderSnapshot],
@@ -1325,6 +1533,12 @@ impl BinanceSpotVenue {
             ConnectorState::ReconcileRequired
         };
         Ok(issues)
+    }
+
+    pub fn venue_order_id(&self, client_order_id: u64) -> Option<&str> {
+        self.venue_order_ids
+            .get(&client_order_id)
+            .map(String::as_str)
     }
 
     pub fn fetch_and_reconcile(&mut self) -> QxResult<Vec<super::AdapterReconcileIssue>> {
@@ -1512,11 +1726,11 @@ impl BinanceSpotVenue {
             ts: wire.transact_time,
             account_id: order.account_id.clone(),
             fee_currency: fee_currency.clone(),
-            fees: (!is_exact_order && fee.raw() != 0)
+            fees: (!is_exact_order)
                 .then(|| FillFee {
                     amount: fee,
                     currency: fee_currency.clone(),
-                    source_trade_ids: Vec::new(),
+                    source_trade_ids: vec![wire.trade_id.to_string()],
                 })
                 .into_iter()
                 .collect(),
@@ -1529,18 +1743,16 @@ impl BinanceSpotVenue {
                 quote_cost: quote_cost.is_positive().then_some(quote_cost),
                 quote_budget_complete: false,
             });
-            if !fee_exact.is_zero() {
-                fill.exact_fees.push(ExactFillFee {
-                    amount: fee_exact,
-                    currency: fee_currency.clone(),
-                    source_trade_ids: vec![wire.trade_id.to_string()],
-                });
-            }
+            fill.exact_fees.push(ExactFillFee {
+                amount: fee_exact,
+                currency: fee_currency.clone(),
+                source_trade_ids: vec![wire.trade_id.to_string()],
+            });
         }
         order.trace_fill(&mut fill, Some(&self.id), Some(venue_order_id));
         self.last_event_ts = self.last_event_ts.max(fill.ts);
         Self::remember_fill(&mut self.seen_fill_keys, key);
-        Ok(Some(VenueEvent::Fill(fill)))
+        Ok(Some(VenueEvent::Fill(Box::new(fill))))
     }
 
     /// 应用远端撤单回报，返回本地是否真的推进到 `Cancelled`：重复回报返回 `false`（幂等）；
@@ -1645,6 +1857,16 @@ impl BinanceSpotVenue {
         now_ms: u64,
         weight: u64,
     ) -> QxResult<HttpResponse> {
+        self.request_readonly_params_with_weight(path, BTreeMap::new(), now_ms, weight)
+    }
+
+    fn request_readonly_params_with_weight(
+        &mut self,
+        path: &str,
+        parameters: BTreeMap<String, String>,
+        now_ms: u64,
+        weight: u64,
+    ) -> QxResult<HttpResponse> {
         if !self.connected {
             return Err(QxError::VenueState(
                 "Binance Spot 连接中断，无法读取账户状态".into(),
@@ -1658,7 +1880,7 @@ impl BinanceSpotVenue {
         }
         let request = self
             .auth
-            .signed_request("GET", &self.host, self.port, path, BTreeMap::new());
+            .signed_request("GET", &self.host, self.port, path, parameters);
         match self.transport.send(request) {
             Ok(response) if (200..300).contains(&response.status) => Ok(response),
             Ok(response) if response.status == 429 || response.status == 418 => {
@@ -2189,7 +2411,7 @@ impl Venue for BinanceSpotVenue {
                 spec.instrument.venue
             )));
         }
-        let symbol = spec.instrument.symbol.to_ascii_uppercase();
+        let symbol = spec.instrument.symbol().to_ascii_uppercase();
         let live = self.current_spot_market_rules(&symbol)?;
         if live.status != "TRADING" {
             return Err(QxError::VenueState(format!(
@@ -2235,7 +2457,7 @@ impl Venue for BinanceSpotVenue {
                 "Binance Spot 订单 instrument 与冻结规格不一致".into(),
             ));
         }
-        let symbol = spec.instrument.symbol.to_ascii_uppercase();
+        let symbol = spec.instrument.symbol().to_ascii_uppercase();
         let rules = self.current_spot_market_rules(&symbol)?;
         if rules.status != "TRADING" {
             return Err(QxError::VenueState(format!(
@@ -2416,7 +2638,7 @@ impl Venue for BinanceSpotVenue {
             ));
         }
         validate_binance_instrument(&order.instrument)?;
-        let symbol = order.instrument.symbol.to_ascii_uppercase();
+        let symbol = order.instrument.symbol().to_ascii_uppercase();
         let mut parameters = BTreeMap::new();
         parameters.insert("symbol".into(), symbol);
         parameters.insert(
@@ -2500,7 +2722,7 @@ impl Venue for BinanceSpotVenue {
         validate_binance_instrument(&order.instrument)?;
         parameters.insert(
             "symbol".into(),
-            order.instrument.symbol.to_ascii_uppercase(),
+            order.instrument.symbol().to_ascii_uppercase(),
         );
         parameters.insert("origClientOrderId".into(), client_order_id(local_id));
         let response = self.request("DELETE", "/api/v3/order", parameters, ts)?;
@@ -2546,7 +2768,12 @@ fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {
             instrument.venue
         )));
     }
-    if instrument.symbol.trim().is_empty() || instrument.symbol.contains('.') {
+    if instrument.symbol().is_empty()
+        || !instrument
+            .symbol()
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
+    {
         return Err(QxError::Permanent("Binance Spot symbol 非法".into()));
     }
     Ok(())
@@ -2744,10 +2971,13 @@ fn parse_spot_market_rules(
                     .ok_or_else(|| {
                         QxError::Permanent("Binance PRICE_FILTER 缺少 maxPrice".into())
                     })?;
-                exact_price_tick = Some(parse_exact_decimal(tick, "PRICE_FILTER.tickSize")?);
-                exact_min_price = Some(parse_exact_decimal(minimum, "PRICE_FILTER.minPrice")?);
-                exact_max_price = Some(parse_exact_decimal(maximum, "PRICE_FILTER.maxPrice")?);
-                price_tick = Some(exact_decimal_projection(exact_price_tick.unwrap())?);
+                let exact_tick = parse_exact_decimal(tick, "PRICE_FILTER.tickSize")?;
+                let exact_min = parse_exact_decimal(minimum, "PRICE_FILTER.minPrice")?;
+                let exact_max = parse_exact_decimal(maximum, "PRICE_FILTER.maxPrice")?;
+                price_tick = Some(exact_decimal_projection(exact_tick)?);
+                exact_price_tick = Some(exact_tick);
+                exact_min_price = Some(exact_min);
+                exact_max_price = Some(exact_max);
             }
             Some("LOT_SIZE") => {
                 let step = filter
@@ -2762,11 +2992,14 @@ fn parse_spot_market_rules(
                     .get("maxQty")
                     .and_then(Value::as_str)
                     .ok_or_else(|| QxError::Permanent("Binance LOT_SIZE 缺少 maxQty".into()))?;
-                exact_qty_step = Some(parse_exact_decimal(step, "LOT_SIZE.stepSize")?);
-                exact_min_qty = Some(parse_exact_decimal(minimum, "LOT_SIZE.minQty")?);
-                exact_max_qty = Some(parse_exact_decimal(maximum, "LOT_SIZE.maxQty")?);
-                qty_step = Some(exact_decimal_projection(exact_qty_step.unwrap())?);
-                min_qty = Some(exact_decimal_projection(exact_min_qty.unwrap())?);
+                let exact_step = parse_exact_decimal(step, "LOT_SIZE.stepSize")?;
+                let exact_min = parse_exact_decimal(minimum, "LOT_SIZE.minQty")?;
+                let exact_max = parse_exact_decimal(maximum, "LOT_SIZE.maxQty")?;
+                qty_step = Some(exact_decimal_projection(exact_step)?);
+                min_qty = Some(exact_decimal_projection(exact_min)?);
+                exact_qty_step = Some(exact_step);
+                exact_min_qty = Some(exact_min);
+                exact_max_qty = Some(exact_max);
             }
             Some("MARKET_LOT_SIZE") => {
                 let step = filter

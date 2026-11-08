@@ -45,8 +45,7 @@ impl OrderBookStrategySlot {
             priority,
             strategy_id: strategy_id.into(),
             reserved_capital_raw,
-            reserved_capital_exact: qx_core::ExactDecimal::from_parts(reserved_capital_raw, 9)
-                .expect("legacy strategy budget fits its raw money representation"),
+            reserved_capital_exact: qx_core::ExactDecimal::from_legacy_raw(reserved_capital_raw),
             strategy,
         }
     }

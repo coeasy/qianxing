@@ -1,6 +1,6 @@
 //! Independent adaptive search on each walk-forward training window.
 
-use super::artifacts::{artifact_paths, equity_series, read_text, write_text};
+use super::artifacts::{equity_series, read_text, write_text};
 use super::experiment_grid::apply_parameters;
 use super::experiment_search::{
     continuous_neighborhood_report_with_radius_and_budget, neighborhood_parameter_sets,
@@ -21,14 +21,17 @@ use super::run_experiment::{
     ExecutionCostSensitivityNeighborhoodResult, ExecutionCostSensitivityResult,
     ExperimentCandidateResult, RunExperimentSpec, StrategyFactory,
 };
-use super::verify_run::verify_run;
 use crate::run_handle::CancellationToken;
-use crate::{AppError, AppErrorCategory, BacktestOutcome, RunContext, StrategyArtifactIdentity};
-use qx_core::Fnv1a;
+use crate::{AppError, AppErrorCategory, RunContext, StrategyArtifactIdentity};
 use qx_datastruct::BarFrame;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
+
+mod checkpoint;
+pub(super) use checkpoint::{
+    artifact_fingerprint, load_cost_scenario_checkpoint, write_cost_scenario_checkpoint,
+};
+use checkpoint::{load_fold_candidate_checkpoint, write_fold_candidate_checkpoint};
 
 pub(super) const MAX_FOLD_LOCAL_RUNS: usize = 4_096;
 
@@ -46,114 +49,6 @@ type BestFoldCandidate = (
     String,
     BTreeMap<String, i128>,
 );
-
-#[derive(Serialize, Deserialize)]
-pub(super) struct CostScenarioCheckpoint {
-    spec_fingerprint: String,
-    input_data_fingerprint: String,
-    fold: usize,
-    selected_ordinal: usize,
-    scenario_index: usize,
-    scenario_name: String,
-    parameters: BTreeMap<String, i128>,
-    outcome: BacktestOutcome,
-    artifact_fingerprint: String,
-}
-
-/// Reuse a successful cost-stress run only after checking the experiment identity,
-/// selected training candidate, scenario position, run paths, replay verification,
-/// and the full bytes of every produced artifact. Failed scenarios are not cached.
-// Keep the cache identity fields explicit so callers cannot accidentally omit part of the key.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn load_cost_scenario_checkpoint(
-    checkpoint_path: &Path,
-    spec_fingerprint: &str,
-    input_data_fingerprint: &str,
-    fold: usize,
-    selected_ordinal: usize,
-    scenario_index: usize,
-    scenario_name: &str,
-    parameters: &BTreeMap<String, i128>,
-    candidate: &crate::BacktestSpec,
-    context: &RunContext,
-) -> Result<Option<BacktestOutcome>, AppError> {
-    let payload = match std::fs::read_to_string(checkpoint_path) {
-        Ok(payload) => payload,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(AppError::from_io("读取成本情景检查点", &error)),
-    };
-    let checkpoint: CostScenarioCheckpoint = serde_json::from_str(&payload).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::StorageFailure,
-            format!("成本情景检查点无法解析: {error}"),
-        )
-    })?;
-    if checkpoint.spec_fingerprint != spec_fingerprint
-        || checkpoint.input_data_fingerprint != input_data_fingerprint
-        || checkpoint.fold != fold
-        || checkpoint.selected_ordinal != selected_ordinal
-        || checkpoint.scenario_index != scenario_index
-        || checkpoint.scenario_name != scenario_name
-        || checkpoint.parameters != *parameters
-        || checkpoint.outcome.run_id != candidate.run_id
-        || checkpoint.outcome.artifacts != artifact_paths(candidate)
-    {
-        return Err(AppError::new(
-            AppErrorCategory::Conflict,
-            format!("成本情景 {scenario_index} 检查点身份、选中候选或情景序号不一致"),
-        ));
-    }
-    let verification = verify_run(&checkpoint.outcome, context)?;
-    if !verification.verified {
-        return Err(AppError::new(
-            AppErrorCategory::StorageFailure,
-            format!(
-                "成本情景 {scenario_index} 检查点回测产物复核不通过: {}",
-                verification.mismatches.join("; ")
-            ),
-        ));
-    }
-    if checkpoint.artifact_fingerprint != artifact_fingerprint(&checkpoint.outcome)? {
-        return Err(AppError::new(
-            AppErrorCategory::StorageFailure,
-            format!("成本情景 {scenario_index} 检查点产物内容已变化"),
-        ));
-    }
-    Ok(Some(checkpoint.outcome))
-}
-
-// Persist the same explicit cache identity that the loader verifies.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn write_cost_scenario_checkpoint(
-    checkpoint_path: &Path,
-    spec_fingerprint: &str,
-    input_data_fingerprint: &str,
-    fold: usize,
-    selected_ordinal: usize,
-    scenario_index: usize,
-    scenario_name: &str,
-    parameters: &BTreeMap<String, i128>,
-    outcome: &BacktestOutcome,
-) -> Result<(), AppError> {
-    let checkpoint = CostScenarioCheckpoint {
-        spec_fingerprint: spec_fingerprint.to_owned(),
-        input_data_fingerprint: input_data_fingerprint.to_owned(),
-        fold,
-        selected_ordinal,
-        scenario_index,
-        scenario_name: scenario_name.to_owned(),
-        parameters: parameters.clone(),
-        outcome: outcome.clone(),
-        artifact_fingerprint: artifact_fingerprint(outcome)?,
-    };
-    let payload = serde_json::to_string(&checkpoint).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("成本情景检查点序列化失败: {error}"),
-        )
-    })?;
-    write_text(&checkpoint_path.to_string_lossy(), &payload)
-}
 
 pub(super) fn fold_local_execution_count(
     fold_count: usize,
@@ -179,22 +74,6 @@ pub(super) fn search_execution_count(
     search_budget
         .checked_add(cost_scenario_count)?
         .checked_add(neighborhood_extra)
-}
-
-#[derive(Serialize, Deserialize)]
-struct FoldCandidateCheckpoint {
-    spec_fingerprint: String,
-    input_data_fingerprint: String,
-    fold: usize,
-    ordinal: usize,
-    proposal: String,
-    parameters: BTreeMap<String, i128>,
-    outcome: BacktestOutcome,
-    artifact_fingerprint: String,
-    training_score_bps: i32,
-    training_max_drawdown_bps: u32,
-    #[serde(default)]
-    training_robustness_score_bps: Option<i32>,
 }
 
 // These are independent fold/search inputs; grouping them would hide the data provenance.
@@ -282,8 +161,14 @@ pub(super) fn evaluate_fold_local_search(
             .continuous_parameter_space
             .is_empty()
             .then(|| SearchState::new(grid.len(), seed));
-        let mut continuous_state = (!plan.continuous_parameter_space.is_empty())
-            .then(|| ContinuousSearchState::new(&plan.continuous_parameter_space, seed));
+        let mut continuous_state = if plan.continuous_parameter_space.is_empty() {
+            None
+        } else {
+            Some(ContinuousSearchState::new(
+                &plan.continuous_parameter_space,
+                seed,
+            )?)
+        };
         let mut observed_scores = Vec::<(usize, i32)>::new();
         let mut observed_drawdowns = Vec::<(usize, u32)>::new();
         let mut trials: Vec<ExperimentSearchTrial> = Vec::with_capacity(plan.budget);
@@ -404,59 +289,18 @@ pub(super) fn evaluate_fold_local_search(
                 .to_string_lossy()
                 .into_owned();
             let checkpoint_path = fold_root.join(format!("trial-{ordinal:04}.checkpoint.json"));
-            let cached = match std::fs::read_to_string(&checkpoint_path) {
-                Ok(payload) => {
-                    let checkpoint: FoldCandidateCheckpoint = serde_json::from_str(&payload)
-                        .map_err(|error| {
-                            AppError::new(
-                                AppErrorCategory::StorageFailure,
-                                format!("折内候选检查点无法解析: {error}"),
-                            )
-                        })?;
-                    if checkpoint.spec_fingerprint != spec_fingerprint
-                        || checkpoint.input_data_fingerprint != input_data_fingerprint
-                        || checkpoint.fold != fold_index + 1
-                        || checkpoint.ordinal != ordinal
-                        || checkpoint.proposal != proposal
-                        || checkpoint.parameters != parameters
-                        || checkpoint.outcome.run_id != run_spec.run_id
-                        || checkpoint.outcome.data_fingerprint != fold_data_fingerprint
-                        || checkpoint.outcome.artifacts != artifact_paths(&run_spec)
-                    {
-                        return Err(AppError::new(
-                            AppErrorCategory::Conflict,
-                            format!(
-                                "第 {} 折候选 {ordinal} 检查点身份或搜索轨迹不一致",
-                                fold_index + 1
-                            ),
-                        ));
-                    }
-                    let verification = verify_run(&checkpoint.outcome, context)?;
-                    if !verification.verified {
-                        return Err(AppError::new(
-                            AppErrorCategory::StorageFailure,
-                            format!(
-                                "第 {} 折候选 {ordinal} 检查点产物复核不通过: {}",
-                                fold_index + 1,
-                                verification.mismatches.join("; ")
-                            ),
-                        ));
-                    }
-                    if checkpoint.artifact_fingerprint != artifact_fingerprint(&checkpoint.outcome)?
-                    {
-                        return Err(AppError::new(
-                            AppErrorCategory::StorageFailure,
-                            format!(
-                                "第 {} 折候选 {ordinal} 检查点产物内容已变化",
-                                fold_index + 1
-                            ),
-                        ));
-                    }
-                    Some(checkpoint)
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(AppError::from_io("读取折内候选检查点", &error)),
-            };
+            let cached = load_fold_candidate_checkpoint(
+                &checkpoint_path,
+                spec_fingerprint,
+                input_data_fingerprint,
+                fold_index + 1,
+                ordinal,
+                &proposal,
+                &parameters,
+                &run_spec,
+                &fold_data_fingerprint,
+                context,
+            )?;
             let attempt = if let Some(checkpoint) = &cached {
                 Ok(SearchBacktestAttempt::Completed(Some(
                     checkpoint.outcome.clone(),
@@ -546,26 +390,19 @@ pub(super) fn evaluate_fold_local_search(
                             ));
                         }
                     } else {
-                        let checkpoint = FoldCandidateCheckpoint {
-                            spec_fingerprint: spec_fingerprint.to_owned(),
-                            input_data_fingerprint: input_data_fingerprint.to_owned(),
-                            fold: fold_index + 1,
+                        write_fold_candidate_checkpoint(
+                            &checkpoint_path,
+                            spec_fingerprint,
+                            input_data_fingerprint,
+                            fold_index + 1,
                             ordinal,
-                            proposal: proposal.clone(),
-                            parameters: parameters.clone(),
-                            artifact_fingerprint: artifact_fingerprint(&outcome)?,
-                            outcome: outcome.clone(),
-                            training_score_bps: training_score,
-                            training_max_drawdown_bps: training_drawdown,
-                            training_robustness_score_bps: training_robustness_score,
-                        };
-                        let payload = serde_json::to_string(&checkpoint).map_err(|error| {
-                            AppError::new(
-                                AppErrorCategory::InternalInvariant,
-                                format!("折内候选检查点序列化失败: {error}"),
-                            )
-                        })?;
-                        write_text(&checkpoint_path.to_string_lossy(), &payload)?;
+                            &proposal,
+                            &parameters,
+                            &outcome,
+                            training_score,
+                            training_drawdown,
+                            training_robustness_score,
+                        )?;
                     }
                     score = Some(training_score);
                     drawdown = Some(training_drawdown);
@@ -633,7 +470,7 @@ pub(super) fn evaluate_fold_local_search(
             };
             trials.push(ExperimentSearchTrial {
                 ordinal,
-                proposal,
+                proposal: proposal.to_owned(),
                 parameters,
                 training_score_bps: score,
                 training_max_drawdown_bps: drawdown,
@@ -1019,7 +856,12 @@ pub(super) fn evaluate_fold_local_search(
                     continue;
                 }
             };
-            let outcome = outcome.expect("successful cost scenario outcome");
+            let outcome = outcome.ok_or_else(|| {
+                AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    "成功的成本情景没有回测结果",
+                )
+            })?;
             let payload = read_text(&outcome.artifacts.equity)?;
             let stressed_values = equity_series(&payload).ok_or_else(|| {
                 AppError::new(
@@ -1146,20 +988,4 @@ pub(super) fn evaluate_fold_local_search(
     }
     let out_of_sample = (!has_unselected_fold).then(|| summarize_folds(reports));
     Ok(Some((out_of_sample, searches)))
-}
-
-pub(super) fn artifact_fingerprint(outcome: &BacktestOutcome) -> Result<String, AppError> {
-    let mut hash = Fnv1a::new();
-    let paths = [
-        Some(outcome.artifacts.run_manifest.as_str()),
-        Some(outcome.artifacts.summary.as_str()),
-        Some(outcome.artifacts.equity.as_str()),
-        Some(outcome.artifacts.fills.as_str()),
-        outcome.artifacts.event_trace.as_deref(),
-    ];
-    for path in paths.into_iter().flatten() {
-        hash.write_text(path);
-        hash.write_text(&read_text(path)?);
-    }
-    Ok(format!("{:016x}", hash.finish()))
 }

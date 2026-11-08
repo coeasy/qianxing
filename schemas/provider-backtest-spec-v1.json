@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/provider-backtest-spec-v1.json",
   "title": "Qianxing ProviderBacktestSpec v1",
-  "description": "Provider Bar fetch, immutable freeze, dataset validation, and shared deterministic backtest input. Runtime validates that the query is Bar for exactly the backtest instrument and that interval/dataset identity match.",
+  "description": "Provider Bar fetch, immutable freeze, dataset validation, and shared deterministic backtest input. A complete owner-supplied snapshot_context is required and must match the Bar interval and actual frame gaps.",
   "type": "object",
   "required": [
     "data_request",
@@ -10,7 +10,8 @@
     "dataset_id",
     "dataset_version",
     "interval_ms",
-    "timezone"
+    "timezone",
+    "snapshot_context"
   ],
   "properties": {
     "data_request": {
@@ -38,6 +39,9 @@
       "type": "string",
       "minLength": 1,
       "pattern": ".*\\S.*"
+    },
+    "snapshot_context": {
+      "$ref": "dataset-snapshot-context-v1.json"
     },
     "manifest_path": {
       "type": "string",

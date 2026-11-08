@@ -4,7 +4,7 @@
 //! 判的是"屏幕上那行命令能不能跑"，本文件判的是一个纯算术性质——计数走到预算必须停。用子
 //! 进程只能靠超时区分"卡死"与"还在跑"，而卡死正是这条判据要防的东西（`Path::is_dir()` 跟随
 //! 符号链接，一个指回祖先的链接就能让五步全部跑完后的收尾行永不印出）。真实项目的落盘份数
-//! 由 `init_onboarding.rs` 的 9+5 判据钉住，这里只补一句：生产预算不会把真实项目截断。
+//! 由 `init_onboarding_process.rs` 的 11+6 判据钉住，这里只补一句：生产预算不会把真实项目截断。
 
 use super::*;
 use std::path::Path;
@@ -58,6 +58,9 @@ fn production_budget_never_truncates_a_real_project() {
     let (files, truncated) =
         quickstart::project_file_count(&root, quickstart::PROJECT_FILE_COUNT_BUDGET);
     assert!(!truncated, "真实项目被生产预算截断了：份数 {files}");
-    assert_eq!(files, 10, "与 init_onboarding.rs 的 10 份口径不一致");
+    assert_eq!(
+        files, 11,
+        "与 init_onboarding_process.rs 的 11 份口径不一致"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

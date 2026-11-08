@@ -80,13 +80,14 @@ pub fn run_binance_market_worker(
             BinanceQuotePoll::Quote(quote) => {
                 idle_windows = 0;
                 let received_ts = runtime_timestamp_ms();
+                let source_seq = quote.source_seq;
                 pipeline
                     .ingest(RuntimeEventEnvelope::market_quote(
                         instrument.clone(),
-                        quote,
+                        *quote,
                         received_ts,
-                        quote.source_seq,
-                        format!("{}:quote:{}", worker.id, quote.source_seq),
+                        source_seq,
+                        format!("{}:quote:{}", worker.id, source_seq),
                     ))
                     .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
                 metrics.observe_gateway_port_business_status(

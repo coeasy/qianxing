@@ -11,7 +11,7 @@ use crate::init_guidance;
 use crate::path_resolution::anchor_init_data_dir;
 use crate::project_manifest::write_init_project_manifest;
 use crate::runtime_wiring::read_runtime_config;
-use qx_runtime::RuntimeConfig;
+use qx_runtime::{RuntimeConfig, DEFAULT_EVENT_LOG_SEGMENT_EVENTS};
 use qx_strategy::BuiltinStrategyKind;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -113,8 +113,9 @@ pub(crate) fn init_profile_template(
         "qianxing.dataset-component.arrow.example.json",
         "qianxing.binance.spot.spec.json",
         "qianxing.strategy-target.paper.json",
+        "grafana/qianxing-overview.json",
     ];
-    match selected {
+    let (template_name, mut assets, profile_name) = match selected {
         "base" | "builtin" => Ok((
             if selected == "builtin" {
                 "qianxing.runtime.builtin-strategy.example.json"
@@ -134,6 +135,7 @@ pub(crate) fn init_profile_template(
             vec![
                 "qianxing.ccxt.exchange.example.json",
                 "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.bar-frame.okx.example.json",
                 "qianxing.scheduler.jobs.example.json",
             ],
             selected,
@@ -185,6 +187,7 @@ pub(crate) fn init_profile_template(
             vec![
                 "qianxing.ccxt.exchange.example.json",
                 "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.bar-frame.okx.example.json",
                 "qianxing.scheduler.jobs.example.json",
             ],
             selected,
@@ -193,7 +196,11 @@ pub(crate) fn init_profile_template(
             "未知 init profile={selected}；可用值：{}",
             INIT_PROFILES.join("、")
         )),
+    }?;
+    if !assets.contains(&"grafana/qianxing-overview.json") {
+        assets.push("grafana/qianxing-overview.json");
     }
+    Ok((template_name, assets, profile_name))
 }
 
 pub(crate) fn normalize_init_template_paths(
@@ -271,6 +278,64 @@ pub(crate) fn run_init_with_profile(
     .map_err(|error| format!("运行时模板 JSON 无效 {}: {error}", template.display()))?;
     let mut init_assets = profile_assets.into_iter().map(str::to_owned).collect();
     normalize_init_template_paths(&mut document, &mut init_assets);
+    if let Some(storage) = document
+        .get_mut("storage")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if storage.get("backend").and_then(serde_json::Value::as_str) == Some("files") {
+            storage.insert(
+                "event_log_segment_events".into(),
+                serde_json::Value::from(DEFAULT_EVENT_LOG_SEGMENT_EVENTS),
+            );
+        }
+    }
+    if matches!(
+        profile_name,
+        "ccxt" | "multi-venue" | "crypto-sandbox-acceptance"
+    ) {
+        // A fresh scaffold cannot assert a supplier-signed role catalog or venue credentials.
+        // Leave private execution unarmed until the operator installs those prerequisites.
+        if let Some(workers) = document
+            .get_mut("workers")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for worker in workers {
+                if worker.get("role").and_then(serde_json::Value::as_str) == Some("execution") {
+                    if let Some(fields) = worker.as_object_mut() {
+                        fields.insert("enabled".into(), serde_json::Value::Bool(false));
+                    }
+                }
+            }
+        }
+        if let Some(strategies) = document
+            .get_mut("strategies")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for strategy in strategies {
+                if let Some(fields) = strategy.as_object_mut() {
+                    fields.insert("live_enabled".into(), serde_json::Value::Bool(false));
+                    if !matches!(profile_name, "multi-venue") {
+                        fields.insert(
+                            "bars_snapshot_path".into(),
+                            serde_json::Value::String("qianxing.bar-frame.okx.example.json".into()),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(strategy) = document
+            .get_mut("strategy")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            strategy.insert("live_enabled".into(), serde_json::Value::Bool(false));
+            if !matches!(profile_name, "multi-venue") {
+                strategy.insert(
+                    "bars_snapshot_path".into(),
+                    serde_json::Value::String("qianxing.bar-frame.okx.example.json".into()),
+                );
+            }
+        }
+    }
     let project_root = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -297,10 +362,10 @@ pub(crate) fn run_init_with_profile(
             "bars_snapshot_path".into(),
             serde_json::Value::String("qianxing.bar-frame.example.json".into()),
         );
-        strategy.insert(
-            "dataset_bundle_path".into(),
-            serde_json::Value::String("qianxing.dataset-bundle.bar-frame.example.json".into()),
-        );
+        // `init --strategy` ships a BarFrame fixture, but the copied legacy DatasetBundle
+        // template has no byte-bound DatasetSnapshotV1. Bind this generated local project
+        // to the actual BarFrame; users can attach a verified bundle through dataset-bundle.
+        strategy.remove("dataset_bundle_path");
         if let Some(storage) = document
             .get_mut("storage")
             .and_then(serde_json::Value::as_object_mut)
@@ -428,16 +493,10 @@ pub(crate) fn run_strategy_init(
         "bars_snapshot_path".into(),
         serde_json::Value::String(bars.clone()),
     );
-    if bars_path.is_none() {
-        strategy.insert(
-            "dataset_bundle_path".into(),
-            serde_json::Value::String(
-                "deploy/qianxing.dataset-bundle.bar-frame.example.json".into(),
-            ),
-        );
-    } else {
-        strategy.remove("dataset_bundle_path");
-    }
+    // The bundled example manifest predates byte-bound DatasetSnapshotV1 and is not
+    // executable evidence. A local strategy init binds bars directly; an explicit
+    // DatasetBundle can be attached after publishing its snapshot.
+    strategy.remove("dataset_bundle_path");
     // 与 `init` 共用同一套归一：`deploy/…` 一律改成配置文件同目录的裸文件名并复制过去。
     // 少了这一步，`strategy init` 打印的首条命令只在仓库根可用——运行时相对路径按配置
     // 文件所在目录解析，`deploy/qianxing.bar-frame.example.json` 会拼成

@@ -1,0 +1,25 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 0.01s
+
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 44.32s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-cd4cbe8459ea2802.exe)
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (5256) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:163:10:
+called `Result::unwrap()` on an `Err` value: "Strategy 作业引用的 EventLog 不存在: binance-main-binance-events"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`

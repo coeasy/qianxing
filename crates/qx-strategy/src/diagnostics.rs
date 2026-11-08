@@ -348,7 +348,7 @@ where
     windows.sort_unstable();
     let reference_window_bars = *windows
         .last()
-        .expect("validated startup windows are non-empty");
+        .ok_or("startup trajectory requires at least one startup window")?;
     let eligible_indices = (0..events.len())
         .filter(|index| index + 1 >= reference_window_bars)
         .collect::<Vec<_>>();
@@ -404,7 +404,7 @@ where
             let (decision, state) = if end_index + 1 == events.len() {
                 let row = terminal_by_window
                     .get(requested)
-                    .expect("terminal comparison has every validated startup window");
+                    .ok_or("terminal comparison is missing a validated startup window")?;
                 (row.decision.clone(), row.intermediate_state.clone())
             } else {
                 let suffix = &events[start..=end_index];
@@ -430,7 +430,7 @@ where
         result.decision_points_checked += 1;
         let (_, reference_decision, reference_state) = point_rows
             .last()
-            .expect("validated startup windows are non-empty");
+            .ok_or("startup trajectory produced no point rows")?;
         let reference_view = decision_view(reference_decision)?;
         for (requested, decision, state) in point_rows.iter().take(point_rows.len() - 1) {
             let view = decision_view(decision)?;
@@ -536,7 +536,9 @@ where
     }
     let mut windows = startup_windows.to_vec();
     windows.sort_unstable();
-    let final_event = events.last().expect("non-empty checked");
+    let final_event = events
+        .last()
+        .ok_or("startup diagnostics require at least one event")?;
     let mut observations = Vec::with_capacity(windows.len());
     for requested in &windows {
         let available = (*requested).min(events.len());
@@ -563,17 +565,12 @@ where
             changed_intermediate_fields: Vec::new(),
         });
     }
-    let reference = observations
+    let terminal_observation = observations
         .last()
-        .expect("non-empty startup windows checked")
-        .decision
-        .clone();
+        .ok_or("startup diagnostics produced no window observations")?;
+    let reference = terminal_observation.decision.clone();
     let reference_view = decision_view(&reference)?;
-    let reference_state = observations
-        .last()
-        .expect("non-empty startup windows checked")
-        .intermediate_state
-        .clone();
+    let reference_state = terminal_observation.intermediate_state.clone();
     for observation in &mut observations {
         let view = decision_view(&observation.decision)?;
         observation.changed_fields = [
@@ -597,7 +594,7 @@ where
         .any(|row| !row.changed_fields.is_empty() || !row.changed_intermediate_fields.is_empty());
     let reference = observations
         .last()
-        .expect("non-empty startup windows checked");
+        .ok_or("startup diagnostics produced no window observations")?;
     let reference_satisfied = reference.available_bars >= reference.requested_bars;
     Ok(StartupDiagnostics {
         status: if sensitive {
@@ -607,7 +604,9 @@ where
         } else {
             "stable_across_requested_windows".into()
         },
-        reference_window_bars: *windows.last().expect("non-empty startup windows checked"),
+        reference_window_bars: *windows
+            .last()
+            .ok_or("startup diagnostics lost its validated startup windows")?,
         decision_timestamp: final_event.ts(),
         windows: observations,
         interpretation: "Different terminal decisions or exported intermediate state across requested history windows identify startup sensitivity only for this event sample and these windows; the largest requested window is the reference. Strategies that do not export state are compared by terminal decision only.".into(),

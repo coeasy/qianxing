@@ -24,6 +24,8 @@ pub struct OrderBookBacktestReport {
     /// Exact traded notional in the configured quote/settlement currency.
     pub turnover_exact: ExactDecimal,
     pub turnover_currency: String,
+    /// Maximum peak-to-trough loss on the legacy fixed-point raw equity curve.
+    pub max_drawdown_raw: i128,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub initial_equity_raw: i128,

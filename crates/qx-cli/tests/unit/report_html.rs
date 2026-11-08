@@ -40,7 +40,7 @@ fn sample_summary() -> serde_json::Value {
             "dataset_version": "fixture-dataset-v1",
             "fingerprint": "abc123"
         },
-        "account": { "initial_cash_raw": "100000000000000", "source": "builtin-default" },
+        "account": { "initial_cash_raw": "100000000000000", "source": "builtin-default", "currency": "USDT" },
         "fills": 1,
         "execution_attempt_count": 1,
         "execution_attempts": [{
@@ -167,6 +167,7 @@ fn report_output_flag_is_part_of_direct_cli_surface() {
 fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
     let (dir, summary) = current_summary_fixture("report-json-output");
     let html = dir.join("reports").join("chosen.html");
+    let xlsx = dir.join("reports").join("chosen.xlsx");
     let json_only = std::process::Command::new(qx_cli_binary())
         .arg("report")
         .arg(&summary)
@@ -181,6 +182,8 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
         .arg(&summary)
         .arg("--json")
         .arg("--html")
+        .arg("--xlsx")
+        .arg(&xlsx)
         .arg("-o")
         .arg(&html)
         .output()
@@ -195,6 +198,11 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
         report["generated_artifacts"]["html"],
         html.display().to_string()
     );
+    assert_eq!(
+        report["generated_artifacts"]["xlsx"],
+        xlsx.display().to_string()
+    );
+    assert!(xlsx.is_file(), "JSON 声明的 XLSX 必须真实落盘");
     for key in ["equity_svg", "fills_svg", "monthly_svg"] {
         let path = PathBuf::from(report["generated_artifacts"][key].as_str().unwrap());
         assert!(
@@ -203,6 +211,42 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
             path.display()
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn report_bundle_validation_failure_preserves_existing_outputs() {
+    let (dir, summary) = current_summary_fixture("report-bundle-rollback");
+    let report_dir = dir.join("custom-reports");
+    std::fs::create_dir_all(&report_dir).unwrap();
+    let html = report_dir.join("custom.html");
+    let xlsx = report_dir.join("custom.xlsx");
+    let equity_svg = report_dir.join("custom.equity.svg");
+    let fills_svg = report_dir.join("custom.fills.svg");
+    let monthly_svg = report_dir.join("custom.monthly.svg");
+    std::fs::write(&html, b"old html").unwrap();
+    std::fs::write(&xlsx, b"old xlsx").unwrap();
+    std::fs::write(&equity_svg, b"old equity").unwrap();
+    std::fs::create_dir(&monthly_svg).unwrap();
+
+    let output = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary)
+        .arg("--html")
+        .arg("--xlsx")
+        .arg(&xlsx)
+        .arg("-o")
+        .arg(&html)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "目录目标应使整份报告 bundle 拒绝发布"
+    );
+    assert_eq!(std::fs::read(&html).unwrap(), b"old html");
+    assert_eq!(std::fs::read(&xlsx).unwrap(), b"old xlsx");
+    assert_eq!(std::fs::read(&equity_svg).unwrap(), b"old equity");
+    assert!(!fills_svg.exists(), "验证失败时不应发布任何新图表");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -547,20 +591,87 @@ fn cards_read_from_summary_fields_only() {
         "回撤卡应等于 metrics.max_drawdown_bps"
     );
     assert!(
-        html.contains("¥100125.00"),
+        html.contains("100125.00 USDT"),
         "期末权益应等于 metrics.final_equity_raw"
     );
     assert!(
-        html.contains("¥100000.00"),
+        html.contains("100000.00 USDT"),
         "期初本金应等于 account.initial_cash_raw"
     );
-    assert!(html.contains("¥0.04"), "手续费应等于 metrics.fees_raw");
+    assert!(html.contains("0.04 USDT"), "手续费应等于 metrics.fees_raw");
     for displayed in [">1.25<", ">1.75<", ">3.12<", ">0.67<", ">1.90<"] {
         assert!(
             html.contains(displayed),
             "风险比率卡必须读取 summary.metrics: {displayed}"
         );
     }
+}
+
+#[test]
+fn detailed_report_keeps_recorded_currency_exact_values_and_parameters() {
+    let mut summary = sample_summary();
+    summary["metrics_exact"] = serde_json::json!({
+        "equity": {"initial":"100000", "final":"100125.000000001", "return":"125.000000001"},
+        "turnover": {"currency":"USDT", "amount":"86.5"},
+        "fees_by_currency": {"USDT":"0.04325", "BNB":"0.00000001"}
+    });
+    summary["signal"] = serde_json::json!({"kind":"macd", "fast_window":5, "slow_window":20});
+    let html = render(&summary, &sample_equity(), &sample_fills());
+    assert!(html.contains("100125.000000001 USDT"));
+    assert!(html.contains("0.00000001 BNB / 0.04325 USDT"));
+    assert!(!html.contains('¥'));
+    assert!(html.contains("fast_window"));
+    assert!(html.contains("id=\"report-equity\""));
+    assert!(html.contains("id=\"download-summary\""));
+    assert!(html.contains("timeZone:'Asia/Shanghai'"));
+}
+
+#[test]
+fn report_navigation_links_resolve_to_existing_sections() {
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
+    for link in html.split("href=\"#").skip(1) {
+        let anchor = link.split('"').next().unwrap();
+        assert!(
+            html.contains(&format!("id=\"{anchor}\"")),
+            "missing navigation target {anchor}"
+        );
+    }
+}
+
+#[test]
+fn downloadable_summary_retains_source_json_without_script_injection() {
+    let mut summary = sample_summary();
+    summary["strategy_id"] = serde_json::json!("</script><img src=x onerror=alert(1)>");
+    let html = render(&summary, &sample_equity(), &sample_fills());
+    let payload = html
+        .split("id=\"verified-summary\">")
+        .nth(1)
+        .unwrap()
+        .split("</script>")
+        .next()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+        summary
+    );
+    assert!(!payload.contains('<'));
+    assert!(!html.contains("<img src=x"));
+}
+
+#[test]
+fn legacy_v5_summary_without_ashare_readout_renders_without_invented_facts() {
+    let mut summary = sample_summary();
+    summary["schema_version"] = serde_json::json!(5);
+    summary.as_object_mut().unwrap().remove("ashare_analysis");
+
+    let html = render(&summary, &sample_equity(), &sample_fills());
+
+    assert!(
+        !html.contains("A 股公司行为分析")
+            && !html.contains("发行人股本快照")
+            && !html.contains("权益余额（raw）"),
+        "v5 summaries predate the A-share readout and must not render invented values"
+    );
 }
 
 #[test]
@@ -788,7 +899,7 @@ fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
     assert!(html.contains("&lt;img src=&quot;http://invalid&quot;&gt; &amp; more"));
     assert_eq!(
         html.matches("<script>").count(),
-        2,
+        3,
         "只包含联动图与成交筛选的本地内联脚本"
     );
     assert!(!html.contains("<script>alert(1)</script>"));

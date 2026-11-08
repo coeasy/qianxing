@@ -90,6 +90,11 @@ non-file module removed before completion. Attempt-only observations do not
 alone invalidate the run. This records observed import provenance; it does not
 archive arbitrary in-memory importer contents. The lock digest also does not
 prove every lock entry was installed from its declared wheel hash.
+The local synthetic-fixture regression tests mutate both the captured lock
+snapshot and a hash-pinned wheel snapshot after capture; artifact verification
+reports each mutation and refuses to mark the run verified. These tests verify
+the integrity checks without claiming a licensed package supply-chain or HS300
+data acceptance.
 The process working directory is not changed.
 
 The HS300 evidence runner additionally copies its runner and acceptance helper
@@ -182,10 +187,13 @@ command. No operating system kill signal is sent by `project cancel`.
 
 If the owner process no longer exists or its recorded start identity differs,
 status reports `interrupted`; inability to observe the process reports
-`unknown`. Windows and Linux receipts include a process-start identity; macOS
-currently uses `ps lstart` with one-second precision. Platforms where identity
-cannot be read may only expose PID liveness. Such a receipt is not automatically
-converted to success, and it cannot be resumed as a durable strategy checkpoint.
+`unknown`. Windows and Linux receipts include a process-start identity. On
+macOS, the runner reads the kernel-reported start seconds and microseconds via
+`proc_pidinfo(PROC_PIDTBSDINFO)`; it falls back to `ps lstart` and records
+one-second precision when libproc is unavailable or returns incomplete data.
+Platforms where identity cannot be read may only expose PID liveness. Such a
+receipt is not automatically converted to success, and it cannot be resumed as
+a durable strategy checkpoint.
 
 `artifacts` checks recorded artifact bytes for missing or changed files. It does
 not rerun Rust accounting/EventLog verification; use `qianxing verify RESULT_JSON` with the
@@ -208,6 +216,22 @@ identity changes have not yet received a new runtime acceptance pass. Native tes
 
 ## Generate a verified report
 
-Use `qianxing project report PROJECT PROJECT_RUN_ID --cli PATH_TO_QX_CLI` to generate the completed run report. It checks indexed artifact bytes before invoking Rust. The default HTML, `report.log` and `report-status.json` live beside the run receipt; `-o` chooses an HTML path relative to the project root. See [report layout and details](backtest-report-layout.md).
+Use `qianxing project report PROJECT PROJECT_RUN_ID` to generate the completed run report. It checks indexed artifact bytes before invoking Rust. The default HTML, `report.log` and `report-status.json` live beside the run receipt; `-o` chooses an HTML path relative to the project root. See [report layout and details](backtest-report-layout.md).
+
+The renderer is the shared Rust `qx-cli`, selected by one chain with no silent substitute:
+`--cli PATH` always wins, otherwise the copy bundled inside the installed wheel
+(`qianxing/_bin/qx-cli`, `qx-cli.exe` on Windows), otherwise `qx-cli` on `PATH`. If none of the
+three exists, the command reports `missing` and stops — it does not try a second candidate, and
+`qianxing doctor` shows the same decision under `report_renderer` with `origin` equal to the
+`selection` that produced it. `tools/build_python_wheel.ps1` and `.sh` stage the host `qx-cli`
+into `qianxing/_bin` before `pip wheel`, so a clean venv with only the wheel installed can render
+reports; that staging order is pinned by `tools/check_architecture.py` and the payload itself by
+`tools/check_python_wheel.py`.
+
+A renderer that exists but does not match the SDK's version, schema catalog, or platform is a
+mismatch, not a fallback opportunity; the recorded diagnostic names `--cli PATH` as the repair.
+Report failure is a separate stage: `report-status.json` gets `status: failed` with a
+`report_renderer_<status>` reason and a null `report_sha256`, while the run receipt keeps its own
+terminal state, so a succeeded backtest stays succeeded when only the report stage fails.
 
 `--format html,xlsx,json` selects one or more outputs. `html` renders the document, `xlsx` writes the workbook, and `json` persists the Rust report projection that `qx-cli report --json` prints to stdout. XLSX and JSON targets take the HTML target's stem, so `-o reports/run.html` also produces `reports/run.xlsx` and `reports/run.json`. Requested formats that resolve to the same path are rejected before Rust starts, and every target is compared with the protected path set (run artifacts, receipts, plan, strategy sources, input snapshots) so a report cannot overwrite evidence. JSON is written through a temporary file and `os.replace`, because the Rust renderer only streams it on stdout. `report-status.json` records `formats`, per-format `path`/`present`/`sha256`/`bytes`, and the HTML digest in `report_sha256`; a successful run also requires every requested artifact to exist and every indexed engine artifact to reverify after the renderer exits. Missing outputs, invalid JSON, an unwritable target, a nonzero exit, or changed source evidence produce a `failed` status with a `reason` and a `REPORT_FAILED` error envelope; the engine run itself keeps its own terminal state.

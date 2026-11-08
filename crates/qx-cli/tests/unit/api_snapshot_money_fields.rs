@@ -5,8 +5,8 @@
 //! 长得一样。这里钉住三件结果各自不同的事：算得出的按自己的来源算、算不出的必须缺席而不是零、
 //! 以及"缺席"与"零"在哈希与线格式上都不是同一份状态。
 //!
-//! V11 Q68 把同一条纪律推到持仓行：读模型用 Ledger 自己拼出来的那一行同样没有
-//! 未实现盈亏与保证金来源，交易所报了零的那一行则必须把零留在原地。
+//! V11 Q68 把同一条纪律推到持仓行：没有冻结规格时，读模型不得把未实现盈亏或保证金
+//! 缺席伪装成零；规格到位后的 PnL 生产者与验收由 `api_snapshot_pnl_fields.rs` 单独覆盖。
 //!
 //! V13 R26 把账户级已实现/未实现盈亏接上生产者（前者取 Ledger 逐条持仓累计的已实现盈亏之和、
 //! 后者取与 `equity_raw` 同源的现货乘数尺子），于是"这一层算不出哪几格"从五格收到三格
@@ -207,11 +207,9 @@ fn overflowing_fee_total_is_refused_instead_of_wrapping() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 读模型自己用 Ledger 拼出来的那一行持仓同样没有"未实现盈亏"和"占用的保证金"：
-/// 这一层只有成交与现金，那两个量要按冻结的 market spec 逐标的算。写死 0 会让一个
-/// 上涨 5% 的仓位长期报着"没有浮亏"（V11 Q68）。
+/// 账户持仓 PnL 已在冻结规格和行情齐全时计算；本层仍没有保证金生产者，所以不得将它写成零。
 #[test]
-fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
+fn ledger_fallback_position_row_leaves_uncomputed_margin_absent() {
     let root = temp_cli_case_dir("api-money-fields-row");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -225,21 +223,18 @@ fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
         .get(&instrument)
         .expect("paper 成交必须投影出一行持仓");
     assert_ne!(row.quantity_raw, 0, "夹具必须真的留下一笔持仓");
-    assert_eq!(
-        (row.unrealized_pnl_raw, row.margin_raw),
-        (None, None),
-        "本层算不出这两个钱字段，必须报未算而不是 0"
+    assert!(
+        row.unrealized_pnl_raw.is_some(),
+        "冻结市场规格和标记价已提供时，行 PnL 必须有计算结果"
     );
-    // 逐行断言要读解析后的 JSON：账户级标量在本层同样是 null，整串 `contains` 会
-    // 被它先命中而永远为真。
+    assert_eq!(row.margin_raw, None, "本层算不出保证金，必须保持未算");
+    // 逐行断言要读解析后的 JSON：保证金必须保持 null，不能被别处的标量同名字段误命中。
     let wire: serde_json::Value = serde_json::from_str(&snapshot.to_wire_json().unwrap()).unwrap();
     let json_row = &wire["positions"]["BTCUSDT.BINANCE"];
-    for name in ["unrealized_pnl_raw", "margin_raw"] {
-        assert!(
-            json_row[name].is_null(),
-            "{name} 未经交易所上报时线格式必须印 null: {json_row}"
-        );
-    }
+    assert!(
+        json_row["margin_raw"].is_null(),
+        "margin_raw 未经交易所上报时线格式必须印 null: {json_row}"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R11",
+  "acceptance_id": "R11-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_id": "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4",
+  "reviewed_artifacts": [
+    "maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json",
+    "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log",
+    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "benchmarks/run_strategy_worker_crash_recovery.py"
+  ],
+  "findings": [
+    "File, SQLite, and PostgreSQL Paper worker evidence each covers six persisted crash boundaries from control command persistence through prepared-journal cleanup after acknowledgement.",
+    "The Windows PostgreSQL run uses six isolated databases, exits with the injected failure at each boundary, recovers successfully, then performs an idempotent restart; each boundary retains one Accepted/Executed control command and does not send real orders or access a venue.",
+    "The final-source PostgreSQL run is bound to a passed R21-AC01 run with a source-tree manifest and hashed command log."
+  ],
+  "limitations": [
+    "This accepts Windows local backend coverage only; Linux strategy-storage-recovery CI remains pending.",
+    "The backend uses isolated PostgreSQL on Windows and Paper fixtures; no external venue is exercised.",
+    "This review covers the six worker crash/restart boundaries; it does not independently claim every persistence micro-boundary beyond those represented by the recorded crash points."
+  ]
+}

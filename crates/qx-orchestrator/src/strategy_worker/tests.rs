@@ -191,6 +191,82 @@ fn worker_exit_before_first_request_preserves_exit_code_and_stderr() {
 }
 
 #[test]
+fn shared_memory_full_input_times_out_and_kills_the_non_consuming_worker() {
+    let ring_config = SharedRingConfig {
+        capacity: 2,
+        slot_bytes: 128,
+    };
+    let ring_directory = std::env::current_dir()
+        .expect("workspace directory")
+        .join("target")
+        .join(format!(
+            "qx-orchestrator-ring-timeout-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after UNIX_EPOCH")
+                .as_nanos()
+        ));
+    std::fs::create_dir_all(&ring_directory).expect("isolated ring directory");
+    let (executable, args) = idle_worker();
+    let env = std::collections::BTreeMap::new();
+    let mut worker = StrategyWorkerProcess::spawn(StrategyWorkerSpawnConfig {
+        executable: &executable,
+        args: &args,
+        env: &env,
+        timeout_ms: 40,
+        label: "shared-memory-stall-test",
+        diagnostic_program: &executable,
+        transport: StrategyTransport::SharedMemoryJson,
+        ring_config,
+        ring_directory: Some(&ring_directory),
+    })
+    .expect("non-consuming worker starts");
+
+    let writer = worker
+        .shared_rings
+        .as_mut()
+        .and_then(StrategySharedRings::input_mut)
+        .expect("shared input ring exists");
+    writer.try_push(b"occupied-1").expect("first slot fills");
+    writer.try_push(b"occupied-2").expect("second slot fills");
+
+    let started = Instant::now();
+    let error = worker
+        .request("{}".into(), None)
+        .expect_err("a full input ring must time out");
+    assert!(
+        error.contains("worker 输入写入超时 timeout_ms=40"),
+        "{error}"
+    );
+    assert!(error.contains("共享输入 ring 满"), "{error}");
+    assert!(error.contains("worker 已停止消费"), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "ring timeout exceeded its single request budget: {:?}",
+        started.elapsed()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if worker
+            .child
+            .as_mut()
+            .expect("worker child is present")
+            .try_wait()
+            .expect("worker status is readable")
+            .is_some()
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "stalled worker was not killed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    drop(worker);
+    std::fs::remove_dir(&ring_directory).expect("ring directory is empty after worker drop");
+}
+
+#[test]
 fn e2b_host_provider_key_uses_separate_allowlisted_environment_channel() {
     let (executable, args) = print_e2b_key_worker();
     let strategy_env = std::collections::BTreeMap::new();
@@ -332,5 +408,25 @@ fn malformed_frame_worker(bytes: &[u8]) -> (String, Vec<String>) {
             "/bin/sh".into(),
             vec!["-c".into(), format!("sleep 0.1; printf '{bytes}'; sleep 2")],
         )
+    }
+}
+
+fn idle_worker() -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let executable = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string())
+            + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        (
+            executable,
+            vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Start-Sleep -Seconds 30".into(),
+            ],
+        )
+    }
+    #[cfg(unix)]
+    {
+        ("/bin/sh".into(), vec!["-c".into(), "sleep 30".into()])
     }
 }

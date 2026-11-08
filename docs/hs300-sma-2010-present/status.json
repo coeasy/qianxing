@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "blocked_missing_verified_history",
+  "generated_at": "2026-10-28",
+  "instrument": "000300.SSE",
+  "requested_start": "2010-01-01",
+  "requested_end": "2026-10-28",
+  "strategy": {"kind": "long_only_sma_cross", "fast_window": 20, "slow_window": 60, "exposure_bps": 9500, "fill_model": "next_bar_open", "fee_bps_per_side": 3, "extra_slippage_bps": 0, "initial_cash": "1000000 CNY"},
+  "result": null,
+  "blocked_reason": "No verified full-range HS300 daily CSV plus independent trading calendar is available in the workspace; external price-data requests are denied by the execution environment.",
+  "synthetic_pipeline_test_is_market_evidence": false
+}

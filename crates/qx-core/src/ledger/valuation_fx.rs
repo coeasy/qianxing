@@ -137,9 +137,9 @@ impl Ledger {
         position: &PositionState,
         mark: ExactDecimal,
     ) -> QxResult<(ExactDecimal, &'a str)> {
-        let quantity = position.exact_quantity.unwrap_or_else(|| {
-            ExactDecimal::from_parts(position.quantity.raw(), 9).expect("legacy scale is supported")
-        });
+        let quantity = position
+            .exact_quantity
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(position.quantity.raw()));
         if quantity.is_zero() {
             return Ok((
                 ExactDecimal::ZERO,
@@ -149,10 +149,9 @@ impl Ledger {
                 },
             ));
         }
-        let average_entry = position.exact_average_entry.unwrap_or_else(|| {
-            ExactDecimal::from_parts(position.average_entry.raw(), 9)
-                .expect("legacy scale is supported")
-        });
+        let average_entry = position
+            .exact_average_entry
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(position.average_entry.raw()));
         match spec.product {
             crate::TradingProduct::Spot => {
                 let positive_quantity = if quantity.is_negative() {

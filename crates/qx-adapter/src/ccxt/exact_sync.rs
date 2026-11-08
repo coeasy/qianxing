@@ -354,7 +354,7 @@ impl CcxtProcessVenue {
         }
         let mut events = pending_fills
             .into_iter()
-            .map(|(_, fill)| VenueEvent::Fill(fill))
+            .map(|(_, fill)| VenueEvent::Fill(Box::new(fill)))
             .collect::<Vec<_>>();
         let mut next = order.clone();
         next.exact_amounts = Some(ExactOrderAmounts {

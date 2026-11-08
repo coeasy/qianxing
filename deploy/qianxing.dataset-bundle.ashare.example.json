@@ -37,5 +37,61 @@
       "end_timestamp": 1717430400000,
       "row_count": 2
     }
+  },
+  "snapshots": {
+    "bars": {
+      "schema_version": 1,
+      "manifest": {
+        "manifest_version": 1,
+        "dataset": {
+          "dataset_id": "strategy-bars:000001.SZSE",
+          "version": "barframe-json-v1",
+          "source": "ashare-example-qfq-v1",
+          "fingerprint": "5e59cfcf3adca434",
+          "schema_version": 1,
+          "start_timestamp": 1717378200000,
+          "end_timestamp": 1717466400000
+        },
+        "instrument": "000001.SZSE",
+        "timezone": "UTC",
+        "tier": "bar",
+        "provider_version": "barframe-json-v1",
+        "content_hash": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082",
+        "quality_report": {
+          "row_count": 6,
+          "duplicate_rows": 0,
+          "out_of_order_rows": 0,
+          "missing_intervals": 44,
+          "interval_ms": 1800000,
+          "timezone": "UTC",
+          "corporate_action_coverage": false,
+          "usable_tiers": [
+            "bar"
+          ]
+        },
+        "source_lineage": {
+          "primary_source": "ashare-example-qfq-v1"
+        }
+      },
+      "instrument_role": "equity",
+      "captured_at_ms": 1730000000000,
+      "frequency_ms": 1800000,
+      "timestamp_semantics": "bar_open",
+      "price_precision": 2,
+      "quantity_precision": 0,
+      "price_unit": "CNY",
+      "quantity_unit": "000001",
+      "coverage_start_ts_ms": 1717378200000,
+      "coverage_end_ts_ms": 1717466400000,
+      "calendar_id": "ashare.example.000001.calendar",
+      "calendar_version": "cn-example-2024",
+      "gaps": [
+        {
+          "start_ts_ms": 1717385400000,
+          "end_ts_ms": 1717464600000
+        }
+      ],
+      "corporate_action_policy": "adjusted"
+    }
   }
 }

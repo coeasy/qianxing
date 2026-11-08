@@ -858,6 +858,42 @@ fn equity_uses_explicit_contract_multiplier() {
 }
 
 #[test]
+fn flat_positions_do_not_require_a_mark_to_publish_cash_equity() {
+    let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USD", Money::from_i64(1_000), 1)
+        .unwrap();
+    for (client_id, side, ts) in [(20, Side::Buy, 2), (21, Side::Sell, 3)] {
+        let mut order = order(side);
+        order.client_id = client_id;
+        order.instrument = instrument.clone();
+        ledger
+            .apply_fill(
+                &order,
+                &Fill {
+                    order_id: client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ts,
+                    ..Fill::default()
+                },
+                "USD",
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        ledger.position_for("main", &instrument).quantity,
+        Quantity::ZERO
+    );
+    assert_eq!(
+        ledger.equity_for_with_multiplier("main", &BTreeMap::new(), "USD", 1),
+        Some(ledger.cash_for("main", "USD")),
+        "a flat position has no exposure whose mark is needed for equity"
+    );
+}
+
+#[test]
 fn cross_currency_equity_requires_and_applies_explicit_fx_rates() {
     let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
     let spec = TradingInstrumentSpec {

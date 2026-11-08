@@ -1,8 +1,24 @@
 //! 双腿数据质量身份与报告投影。
 
-/// 基于两条腿的数据集清单指纹生成组合级数据质量身份。
+/// 基于每条腿的数据集清单与可选 snapshot digest 生成质量身份。
 ///
 /// 只有两侧都提供质量信息时才返回指纹，保持 CLI 产物的既有身份规则。
+pub fn multi_leg_dataset_quality_identity(quality: &serde_json::Value) -> Option<String> {
+    let manifest_fingerprint = quality
+        .get("manifest_fingerprint")
+        .and_then(serde_json::Value::as_str)?;
+    let snapshot_sha256 = quality
+        .get("dataset_snapshot_sha256")
+        .and_then(serde_json::Value::as_str);
+    Some(
+        crate::multi_market_report::dataset_quality_identity_fingerprint(
+            manifest_fingerprint,
+            snapshot_sha256,
+        ),
+    )
+}
+
+/// 基于两条腿的数据集质量身份生成组合级数据质量指纹。
 pub fn multi_leg_quality_fingerprint(
     dataset_quality: [Option<&serde_json::Value>; 2],
 ) -> Option<String> {
@@ -12,8 +28,8 @@ pub fn multi_leg_quality_fingerprint(
     Some(qx_strategy::sha256_hex(
         format!(
             "primary:{}|reference:{}",
-            primary["manifest_fingerprint"].as_str().unwrap_or(""),
-            reference["manifest_fingerprint"].as_str().unwrap_or("")
+            multi_leg_dataset_quality_identity(primary).unwrap_or_default(),
+            multi_leg_dataset_quality_identity(reference).unwrap_or_default()
         )
         .as_bytes(),
     ))

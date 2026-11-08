@@ -1,0 +1,51 @@
+LEG r17_arch rc=0 seconds=125.98 bytes=68
+LEG r17_ledger rc=0 seconds=7.20 bytes=104
+LEG r17_pyfull rc=0 seconds=460.57 bytes=1791
+LEG r17_ladder rc=0 seconds=0.34 bytes=265
+LEG r17_pyc rc=0 seconds=0.44 bytes=0
+LEG r17_diffcheck rc=0 seconds=0.42 bytes=23669
+LEG r17_mdlinks rc=0 seconds=1.09 bytes=51
+LEG r17_pointers rc=1 seconds=19.69 bytes=1939
+SUMMARY_WRITTEN .task-tmp\r17_gate_summary.json
+R r17_arch_checks=336
+R r17_arch_rc=0
+R r17_arch_seconds=125.65
+R r17_arch_shards=4
+R r17_diffcheck_lines=179
+R r17_diffcheck_rc=0
+R r17_ladder_rc=0
+R r17_ladder_tests=1
+R r17_ledger_binds=132
+R r17_ledger_range=R01–R23
+R r17_ledger_rc=0
+R r17_ledger_scenes=23
+R r17_mdlinks_broken=0
+R r17_mdlinks_files=78
+R r17_mdlinks_rc=0
+R r17_pointers_artifact_links=121
+R r17_pointers_audit_exit=1
+R r17_pointers_baseline=146
+R r17_pointers_broken_everywhere=0
+R r17_pointers_head_face=10
+R r17_pointers_head_rows=10
+R r17_pointers_local_only=146
+R r17_pointers_other_links=25
+R r17_pointers_rc=0
+R r17_pointers_scanned_files=78
+R r17_py_failed_count=0
+R r17_py_rc=0
+R r17_py_seconds=459.449
+R r17_py_skipped=5
+R r17_py_tests=589
+R r17_py_verdict=OK
+R r17_pyc_files=55
+R r17_pyc_rc=0
+R t_r17_arch=125.98
+R t_r17_diffcheck=0.42
+R t_r17_ladder=0.34
+R t_r17_ledger=7.2
+R t_r17_mdlinks=1.09
+R t_r17_pointers=19.69
+R t_r17_pyc=0.44
+R t_r17_pyfull=460.57
+legs_nonzero=-

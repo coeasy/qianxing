@@ -12,5 +12,6 @@
   "max_leverage": 10,
   "maintenance_margin_bps": 500,
   "valid_from": 0,
-  "valid_to": null
+  "valid_to": null,
+  "dataset_instrument_role": "future"
 }

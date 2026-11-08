@@ -2,13 +2,16 @@
 
 use crate::artifact_store::{
     persist_run_manifest, persist_verified_run_record, serialize_multi_leg_backtest_fills_csv,
-    write_backtest_artifact, BacktestInputProvenance, BACKTEST_SUMMARY_SCHEMA_VERSION,
+    write_backtest_artifact, BacktestInputProvenance,
 };
 use crate::{multi_leg_combined_equity_metrics, multi_leg_combined_exact_equity_metrics};
 use qx_datastruct::BarFrame;
 use qx_xingban::{BacktestReport, RunManifestIdentity};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// This composition artifact has its own schema and does not follow single-run summary versions.
+const MULTI_BUILTIN_COMPOSITION_SCHEMA_VERSION: u32 = 7;
 
 /// Inputs already resolved and verified by the facade for one multi-leg composition report.
 pub struct MultiLegCompositionArtifactInput<'a> {
@@ -132,7 +135,7 @@ pub fn persist_multi_leg_composition_artifacts(
         .unwrap_or("multi-composition.run.json")
         .strip_suffix(".run.json")
         .unwrap_or("multi-composition");
-    let stem = format!("{manifest_stem}.v{BACKTEST_SUMMARY_SCHEMA_VERSION}");
+    let stem = format!("{manifest_stem}.v{MULTI_BUILTIN_COMPOSITION_SCHEMA_VERSION}");
     let runs = root.join("runs");
     let summary_path = runs.join(format!("{stem}.summary.json"));
     let equity_path = runs.join(format!("{stem}.equity.csv"));
@@ -159,7 +162,7 @@ pub fn persist_multi_leg_composition_artifacts(
             }
         }
     });
-    summary["schema_version"] = serde_json::json!(BACKTEST_SUMMARY_SCHEMA_VERSION);
+    summary["schema_version"] = serde_json::json!(MULTI_BUILTIN_COMPOSITION_SCHEMA_VERSION);
     summary["instrument"] = serde_json::json!(format!(
         "{}+{}",
         primary_frame.instrument, reference_frame.instrument

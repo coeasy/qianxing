@@ -1,0 +1,8 @@
+SHOT c1-original variant=original rc=2 bundle_bytes=1338 sha=12550e2ad7235c36 replaced=False
+  READ [qx-cli · CLI] 统一策略回测失败: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-ashare
+SHOT c2-candidate variant=candidate rc=0 bundle_bytes=3123 sha=7d412448505daa4a replaced=True
+  READ [Strategy · Backtest] strategy=strategy-ashare instrument=000001.SZSE bars=6 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=6e120606d81369b5
+  READ [RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:e81491fcb163c47f217be7d0dadac2aea30e08e6442643502ca2ae65a0218d49:3fc04a5af452decfb95071e4 data_fingerprint=dataset-bundle:099c5f20c38bc423 result_hash=6e120606d81369b5 diges
+SHOT c3-corrupt variant=corrupt rc=2 bundle_bytes=3123 sha=5fa93e29ee79158e replaced=True
+  READ [qx-cli · CLI] 统一策略回测失败: 策略 DatasetBundle bars snapshot does not bind to the exact BarFrame
+SHOT_DIR .task-tmp\test-tmp\ashare-shot-1793494998

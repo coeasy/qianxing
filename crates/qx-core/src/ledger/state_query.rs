@@ -36,12 +36,7 @@ impl Ledger {
         let mut balances = self
             .cash_balances_for_ref(account_id)
             .iter()
-            .map(|(currency, raw)| {
-                (
-                    currency.clone(),
-                    ExactDecimal::from_parts(*raw, 9).expect("legacy scale is supported"),
-                )
-            })
+            .map(|(currency, raw)| (currency.clone(), ExactDecimal::from_legacy_raw(*raw)))
             .collect::<BTreeMap<_, _>>();
         if let Some(currencies) = self.exact_cash.get(account_id) {
             balances.extend(
@@ -58,10 +53,7 @@ impl Ledger {
             .get(account_id)
             .and_then(|currencies| currencies.get(currency))
             .copied()
-            .unwrap_or_else(|| {
-                ExactDecimal::from_parts(self.cash_for(account_id, currency), 9)
-                    .expect("legacy scale is supported")
-            })
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(self.cash_for(account_id, currency)))
     }
 
     pub fn position_for(&self, account_id: &str, instrument: &InstrumentId) -> PositionState {
@@ -132,18 +124,15 @@ impl Ledger {
                 realized_pnl: ExactDecimal::ZERO,
             },
             |state| ExactPositionState {
-                quantity: state.exact_quantity.unwrap_or_else(|| {
-                    ExactDecimal::from_parts(state.quantity.raw(), 9)
-                        .expect("legacy scale is supported")
-                }),
-                average_entry: state.exact_average_entry.unwrap_or_else(|| {
-                    ExactDecimal::from_parts(state.average_entry.raw(), 9)
-                        .expect("legacy scale is supported")
-                }),
-                realized_pnl: state.exact_realized_pnl.unwrap_or_else(|| {
-                    ExactDecimal::from_parts(state.realized_pnl.raw(), 9)
-                        .expect("legacy scale is supported")
-                }),
+                quantity: state
+                    .exact_quantity
+                    .unwrap_or_else(|| ExactDecimal::from_legacy_raw(state.quantity.raw())),
+                average_entry: state
+                    .exact_average_entry
+                    .unwrap_or_else(|| ExactDecimal::from_legacy_raw(state.average_entry.raw())),
+                realized_pnl: state
+                    .exact_realized_pnl
+                    .unwrap_or_else(|| ExactDecimal::from_legacy_raw(state.realized_pnl.raw())),
             },
         )
     }

@@ -19,13 +19,20 @@ Python 示例通过 `StrategyContractInput` 接收不可变行情帧，返回带
 
 文件策略可继承 `qianxing_strategy.BaseStrategy`，并导出 `STRATEGY_CLASS` 或 `create_strategy(spec)`。
 
+Python SDK 另提供项目根工作流：`qianxing project init ./my-strategy` 生成 `qianxing.strategy.json` 和最小策略模板；把版本化 BacktestSpec 路径写入 manifest 的 `input_spec` 后，可运行 `qianxing project doctor ./my-strategy`、`qianxing project plan ./my-strategy --profile local` 和 `qianxing project run ./my-strategy`。配置格式见 [`strategy-project-v1.json`](../schemas/strategy-project-v1.json)。输入文件保持链接，不会复制或覆盖；Spec 内行情文件路径按项目根目录解析。`--profile server` 只输出静态部署计划；真正启动前仍必须运行 Rust `runtime-check`、`live-check` 并完成 scope/provider/venue 验收。
+
 策略回调失败时，Rust `Strategy` 可选实现 `on_error(&StrategyErrorV1)`；C/C++ 插件可选导出 `qx_strategy_on_error_v1` 接收同一版本化 JSON。Python `BaseStrategy` 和模块函数可选实现 `on_error_v1(StrategyErrorV1)`，旧 `on_error(context, error)` / `on_error(request, error)` 接口保持兼容。Bar、Tick、原生 OrderBook/DepthBar 回测、Python 本地/Runtime 宿主及候选偏差诊断 worker 会在可确定阶段时通知；`history_requirements()` 失败使用 `history_requirements` 阶段。观察器返回错误或 panic 都不会替换原始失败。旧 C ABI 插件缺少可选符号时继续运行。
 策略可按需覆盖 `on_init`、`on_start`、`history_requirements`、`on_warmup_complete`、`on_bar`、
 `on_tick`、`on_order_book`、`on_timer`，以及 `on_error_v1` / `on_stop`；兼容错误钩子 `on_error` 仍接收原上下文和 Python 异常。Bar 策略也可使用
 `prenext` / `nextstart` / `next`。运行宿主提供对应的权威更新输入时，还可覆盖 `on_order`、`on_trade`、
-`on_account`、`on_position`。`on_error` 不能把宿主判定的失败改成继续交易。策略的 `buy`、`sell`、`short`、`cover` 与
+`on_account`、`on_position`。逐钩子的宿主支持、可复制命令与实测读数见
+[策略作者进阶钩子](strategy-hooks.md)。`on_error` 不能把宿主判定的失败改成继续交易。策略的 `buy`、`sell`、`short`、`cover` 与
 `close_position` 只构造订单意图，最终由 Rust 风控、OMS、执行和账本链路处理。历史数据门面按
 `context["as_of"]` 截断，精确 OHLCV 可用 `Decimal` 读取。
+
+多标的 Bar 请求中，`context["instrument"]` 始终指向当前正在处理的 Bar；
+`on_warmup_complete` 的上下文也指向对应完成预热的标的。策略可直接用该字段
+构造当前标的的订单意图，无需把请求的主标的当作每个回调的标的。
 
 从仓库根目录运行示例：
 
@@ -75,3 +82,6 @@ C++ 示例展示 C ABI 生命周期和 Bar 回调契约。C ABI 当前示例只�
 
 统一回测产物可用 `qx-cli compare-runs` 与 `qx-cli report` 对照策略结果；相同冻结 BarFrame、费用配置、
 仓位单位和运行参数是跨语言比较的前提。策略样例用于演示接口与链路，不代表投资建议或收益承诺。
+
+
+Local file strategies can declare `required_capabilities`; the shared Rust preflight checks the actual execution host and returns its versioned catalog. See [strategy host capabilities](strategy-host-capabilities.md) for the current local matrix, legacy compatibility, and the persistent process negotiation gate.

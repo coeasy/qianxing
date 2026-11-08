@@ -103,6 +103,7 @@ pub fn persist_multi_leg_run_artifacts(
                 issuer_capital_at_end: report.issuer_capital_at(report.clock_end),
                 return_bps: report.return_bps,
                 max_drawdown_bps: report.max_drawdown_bps,
+                max_drawdown_raw: report.max_drawdown_raw,
                 fees_raw: report.fees_raw,
                 turnover_raw: report.turnover_raw,
                 final_equity_raw: report.final_equity(),

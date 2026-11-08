@@ -1,0 +1,20 @@
+PROFILE base                       init_rc=0 bt_rc=2   declared=None                                                 bars=None                                     fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library
+PROFILE builtin                    init_rc=0 bt_rc=0   declared=qianxing.dataset-bundle.bar-frame.example.json       bars=qianxing.bar-frame.example.json          fp_kind=dataset-bundle
+PROFILE paper                      init_rc=0 bt_rc=2   declared=None                                                 bars=None                                     fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library
+PROFILE ccxt                       init_rc=0 bt_rc=2   declared=None                                                 bars=None                                     fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 内置策略回测 instrument 不一致: strategy=BTC/USDT:USDT.OKX frame=BTCUSDT.BINANCE
+PROFILE ashare                     init_rc=0 bt_rc=0   declared=qianxing.dataset-bundle.ashare.example.json          bars=qianxing.ashare.bar-frame.example.json   fp_kind=dataset-bundle
+PROFILE multi-venue                init_rc=0 bt_rc=2   declared=None                                                 bars=data/qianxing-multi-venue-arbitrage/btc-usdt-okx.bar-frame.json fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 双腿套利必须配置 reference_instrument；runtime_config=.task-tmp\test-tmp\guard-census-1793496168\multi-venue\qianxing.runtime.json
+PROFILE backtest                   init_rc=0 bt_rc=0   declared=None                                                 bars=None                                     fp_kind=barframe
+PROFILE research-local             init_rc=0 bt_rc=0   declared=None                                                 bars=None                                     fp_kind=barframe
+PROFILE crypto-paper               init_rc=0 bt_rc=2   declared=None                                                 bars=None                                     fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library
+PROFILE crypto-sandbox-acceptance  init_rc=0 bt_rc=2   declared=None                                                 bars=None                                     fp_kind=none
+   FAIL [qx-cli · CLI] 统一策略回测失败: 内置策略回测 instrument 不一致: strategy=BTC/USDT:USDT.OKX frame=BTCUSDT.BINANCE
+CENSUS profiles=10 init_ok=10 declared=2 guard_entered=2 buckets={"barframe": 2, "dataset-bundle": 2, "none": 6}
+  DECLARED_PROFILES builtin,ashare
+  GUARD_PROFILES builtin,ashare
+READINGS .task-tmp\r7_guard_census_readings.json

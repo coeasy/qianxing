@@ -56,7 +56,7 @@ pub(crate) use multi_market_depth_experiment::multi_market_depth_experiment;
 
 /// Read the generated product capability catalog without starting an API server or contacting a venue.
 pub fn product_capability_catalog_document() -> Result<serde_json::Value, String> {
-    capabilities::product_capability_catalog().map(Clone::clone)
+    capabilities::product_capability_catalog().cloned()
 }
 
 /// Query the same generated product catalog used by `/app/capabilities/query`.

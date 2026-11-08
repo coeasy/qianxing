@@ -53,6 +53,27 @@ fn artifact_files(root: &Path) -> Vec<String> {
     files
 }
 
+fn canonical_artifact_paths(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .map(|path| {
+            let parts = path.split('/').collect::<Vec<_>>();
+            if parts.len() >= 4
+                && parts[0..2] == ["data", "qianxing-paper"]
+                && parts[2] == "strategy-observations"
+            {
+                let mut normalized = parts;
+                normalized[3] = "<run-id>";
+                normalized[4] = "<observation-id>.json";
+                normalized.truncate(5);
+                normalized.join("/")
+            } else {
+                path.clone()
+            }
+        })
+        .collect()
+}
+
 fn artifact_digests(root: &Path, files: &[String]) -> Vec<(String, u64)> {
     files
         .iter()
@@ -219,12 +240,81 @@ mod full_health_readout;
 mod plan_readout_parity;
 #[path = "cli_behavior_parity/quickstart_parity.rs"]
 mod quickstart_parity;
+#[path = "cli_behavior_parity/report_metrics_projection.rs"]
+mod report_metrics_projection;
 #[path = "cli_behavior_parity/verify_json_parity.rs"]
 mod verify_json_parity;
 
 fn observe(label: &str, args: &[&str], replay: usize) -> Observation {
     let cwd = temp_dir(label, replay);
     let observation = observe_in(&cwd, args);
+    let _ = std::fs::remove_dir_all(cwd);
+    observation
+}
+
+fn isolated_paper_runtime(cwd: &Path) -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli tests are two levels below the workspace root");
+    let template = workspace.join("deploy/qianxing.runtime.paper-strategy.example.json");
+    let deploy_dir = workspace.join("deploy");
+    let mut runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&template).expect("read Paper runtime fixture"))
+            .expect("Paper runtime fixture is JSON");
+    let absolute = |path: &str| {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            workspace.join(path)
+        }
+    };
+
+    let data_dir = cwd.join("data/qianxing-paper");
+    runtime["storage"]["data_dir"] = serde_json::json!(data_dir.to_string_lossy());
+    runtime["scheduler"]["state_path"] =
+        serde_json::json!(data_dir.join("scheduler.json").to_string_lossy());
+    runtime["scheduler"]["jobs_path"] = serde_json::json!(deploy_dir
+        .join(
+            runtime["scheduler"]["jobs_path"]
+                .as_str()
+                .expect("Paper scheduler fixture has jobs_path")
+        )
+        .to_string_lossy());
+    runtime["scheduler"]["job_queue_path"] =
+        serde_json::json!(data_dir.join("job-queue").to_string_lossy());
+    runtime["strategy"]["target_snapshot_path"] = serde_json::json!(deploy_dir
+        .join(
+            runtime["strategy"]["target_snapshot_path"]
+                .as_str()
+                .expect("Paper strategy fixture has target_snapshot_path")
+        )
+        .to_string_lossy());
+    for worker in runtime["workers"]
+        .as_array_mut()
+        .expect("Paper runtime fixture has workers")
+    {
+        if let Some(path) = worker["instrument_spec_path"].as_str() {
+            worker["instrument_spec_path"] = serde_json::json!(absolute(path).to_string_lossy());
+        }
+    }
+
+    let runtime_path = cwd.join("runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec_pretty(&runtime).expect("encode isolated Paper runtime"),
+    )
+    .expect("write isolated Paper runtime");
+    runtime_path
+}
+
+fn observe_paper(label: &str, route: &[&str]) -> Observation {
+    let cwd = temp_dir(label, 1);
+    let runtime = isolated_paper_runtime(&cwd);
+    let mut args = route.to_vec();
+    args.push(runtime.to_str().expect("Paper runtime path is UTF-8"));
+    let observation = observe_in(&cwd, &args);
     let _ = std::fs::remove_dir_all(cwd);
     observation
 }
@@ -488,23 +578,21 @@ fn config_lock_replay_preserves_the_locked_artifact_bytes() {
 
 #[test]
 fn run_paper_aliases_match_the_top_level_paper_process_contract() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("qx-cli tests are two levels below the workspace root");
-    let runtime = root
-        .join("deploy/qianxing.runtime.paper-strategy.example.json")
-        .to_string_lossy()
-        .into_owned();
-    let direct = observe("paper-direct", &["paper-e2e", runtime.as_str()], 1);
-    for (label, alias) in [
-        ("run-paper", vec!["run", "paper", runtime.as_str()]),
-        (
-            "run-paper-check",
-            vec!["run", "paper-check", runtime.as_str()],
-        ),
+    let direct = observe_paper("paper-direct", &["paper-e2e"]);
+    for artifact in [
+        "data/qianxing-paper/scheduler.json",
+        "data/qianxing-paper/paper-main-paper-events.json",
     ] {
-        let routed = observe(label, &alias, 1);
+        assert!(
+            direct.artifacts.iter().any(|path| path == artifact),
+            "Paper process must persist {artifact} under its isolated working directory: {direct:?}"
+        );
+    }
+    for (label, route) in [
+        ("run-paper", &["run", "paper"][..]),
+        ("run-paper-check", &["run", "paper-check"][..]),
+    ] {
+        let routed = observe_paper(label, route);
         assert_eq!(
             direct.exit_code, 0,
             "top-level Paper route failed: {direct:?}"
@@ -516,7 +604,8 @@ fn run_paper_aliases_match_the_top_level_paper_process_contract() {
         );
         assert_eq!(routed.result_hashes, direct.result_hashes);
         assert_eq!(
-            routed.artifacts, direct.artifacts,
+            canonical_artifact_paths(&routed.artifacts),
+            canonical_artifact_paths(&direct.artifacts),
             "{label} wrote a different file set"
         );
         assert!(

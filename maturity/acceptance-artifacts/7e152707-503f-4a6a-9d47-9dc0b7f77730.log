@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['strategy_contract_input_module_check']()
+exit_code=0
+
+[stdout]
+[PASS] StrategyContractInput 的账户/市场事实、事件指纹与 schema 校验由 contract_input 唯一装配，保留稳定构造入口和 evaluator 边界
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.52s

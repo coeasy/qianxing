@@ -1,10 +1,12 @@
 //! 可复用的 Bar 事件回测驱动器；CLI 只是入口，闭环固定为 as_of → 风控 → OMS → 下一根 bar 撮合 → Fill → Ledger → EventLog。
 
+#[cfg(test)]
+use qx_core::ReplayVerifier;
 use qx_core::{
     DecimalRounding, Event, EventContext, EventKind, EventLog, EventMetadata, ExactDecimal,
     ExactValuationContext, FeeModel, Fill, Fnv1a, InstrumentId, Ledger, Money, Order, OrderStatus,
-    Price, Priority, Quantity, QxError, ReplayVerifier, RunManifest, Side, TradingInstrumentSpec,
-    ValuationContext, SCALE,
+    Price, Priority, Quantity, QxError, RunManifest, Side, TradingInstrumentSpec, ValuationContext,
+    SCALE,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView};
 use qx_strategy::StrategyOrderStatusUpdate;
@@ -433,14 +435,9 @@ impl BacktestEngine {
         // 反向合约的费用基准须匹配按 `spec.notional` 记账的名义额。
         matcher.set_inverse_fee_basis(derivative_spec.is_some_and(|spec| spec.inverse));
         let mut ledger = Ledger::new();
-        let initial_cash_exact = initial_cash_exact.unwrap_or_else(|| {
-            ExactDecimal::from_parts(initial_cash.raw(), 9)
-                .expect("legacy initial cash has supported decimal scale")
-        });
-        let deposit_id = if initial_cash_exact
-            == ExactDecimal::from_parts(initial_cash.raw(), 9)
-                .expect("legacy initial cash has supported decimal scale")
-        {
+        let legacy_initial_cash_exact = ExactDecimal::from_legacy_raw(initial_cash.raw());
+        let initial_cash_exact = initial_cash_exact.unwrap_or(legacy_initial_cash_exact);
+        let deposit_id = if initial_cash_exact == legacy_initial_cash_exact {
             // Preserve historical event identity and replay hashes whenever the exact value fits
             // the legacy 1e-9 amount exactly.
             ledger.deposit(
@@ -526,9 +523,11 @@ impl BacktestEngine {
                 .delivery
                 .iter()
                 .any(|event| event.ts == start_ts)
-            || ashare_action_schedule
-                .as_ref()
-                .is_some_and(|schedule| schedule.has_events_at(start_ts));
+            || ashare_rules
+                .zip(ashare_action_schedule.as_ref())
+                .is_some_and(|(rules, schedule)| {
+                    schedule.has_events_at(&rules.corporate_actions, start_ts)
+                });
         let initial_state_priority = if has_pre_decision_start_event {
             Priority::TIMER
         } else {
@@ -1099,7 +1098,9 @@ impl BacktestEngine {
             clock_end: bars.last().map(|bar| bar.ts).unwrap_or(0),
         };
         // 事实必须能重新驱动账户：就地改了账簿而没有对应事实事件，报告在这里就出不去（V11 Q62）。
-        ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
+        let report = crate::report_validation::validate_before_return(report, |report| {
+            (&report.event_log, &report.ledger)
+        })?;
         Ok((BacktestRunStatus::Completed, Some(report)))
     }
 }

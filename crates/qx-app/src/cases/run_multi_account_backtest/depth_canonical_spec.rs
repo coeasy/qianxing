@@ -394,9 +394,10 @@ fn without_status(value: &Value) -> Result<Value, String> {
 fn verify_all_failed_result(result: &MultiAccountDepthBacktestResult) -> Result<(), String> {
     for run in &result.runs {
         if run.outcome.is_some()
-            || run.error_json.as_deref().map_or(true, |payload| {
-                serde_json::from_str::<Value>(payload).is_err()
-            })
+            || run
+                .error_json
+                .as_deref()
+                .is_none_or(|payload| serde_json::from_str::<Value>(payload).is_err())
         {
             return Err("无父 RunManifest 的多账户 Depth 结果只能包含结构化失败账户".into());
         }

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use super::cli_value_parsers::{parse_bps, parse_quantity, parse_relay_limit};
 use super::console_args::ConsoleArgs;
-use super::data_validate_args::DepthDatasetValidateArgs;
+use super::data_validate_args::{DatasetSnapshotArgs, DepthDatasetValidateArgs};
 use super::evidence_signature_args::EvidenceArgs;
 use super::report_args::ReportArgs;
 use super::storage_adopt_args::PostgresSchemaAdoptArgs;
@@ -140,17 +140,25 @@ pub(crate) enum Command {
         dataset_id: String,
         version: String,
         data_dir: PathBuf,
+        #[arg(long, requires = "timezone")]
+        snapshot_context: Option<PathBuf>,
+        #[arg(long, requires = "snapshot_context")]
+        timezone: Option<String>,
     },
     #[command(name = "dataset-bundle")]
     DatasetBundle {
         bundle: PathBuf,
         data_dir: PathBuf,
         bars: Option<PathBuf>,
+        #[arg(long, requires = "bars")]
+        snapshot: Option<PathBuf>,
     },
     #[command(name = "data-validate")]
     DataValidate(DatasetValidateArgs),
     #[command(name = "data-validate-depth")]
     DataValidateDepth(DepthDatasetValidateArgs),
+    #[command(name = "data-snapshot")]
+    DataSnapshot(DatasetSnapshotArgs),
     #[command(name = "plan")]
     Plan(PlanArgs),
     #[command(name = "ccxt-market-spec")]
@@ -294,6 +302,12 @@ pub(crate) enum Command {
     PaperE2e {
         #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
+        /// Override the synthetic Paper E2E quote with a raw fixed-point price.
+        #[arg(long)]
+        quote_price_raw: Option<i128>,
+        /// Synthetic bid/ask quantity in raw fixed-point units (defaults to 1000 units).
+        #[arg(long)]
+        quote_qty_raw: Option<i128>,
     },
     #[command(name = "paper-check")]
     PaperCheck {
@@ -351,6 +365,40 @@ impl Command {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod plan_args_tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn plan_template_flag_parses_and_cannot_be_combined_with_json() {
+        let parsed = Cli::try_parse_from([
+            "qx-cli",
+            "plan",
+            "capability",
+            "capability.json",
+            "--template",
+        ])
+        .expect("plan --template 必须可解析");
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Plan(args)) if args.template && !args.json
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "qx-cli",
+                "plan",
+                "capability",
+                "capability.json",
+                "--template",
+                "--json"
+            ])
+            .is_err(),
+            "模板写入和 JSON 读出不可同时请求"
+        );
     }
 }
 #[derive(Subcommand)]

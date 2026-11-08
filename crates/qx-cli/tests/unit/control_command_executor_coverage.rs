@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 
 /// 生产派发者名单按实际命令执行宿主登记，Venue runner 生命周期由 qx-service 持有。
 const EXECUTOR_SOURCES: [&str; 4] = [
-    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "crates/qx-cli/src/workers/strategy_worker/commands.rs",
     "crates/qx-service/src/paper_execution_host.rs",
     "crates/qx-service/src/binance_execution_host.rs",
     "crates/qx-service/src/ccxt_execution_host.rs",

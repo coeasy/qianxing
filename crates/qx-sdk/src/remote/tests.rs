@@ -180,6 +180,21 @@ fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
         interval_ms: 60_000,
         timezone: "UTC".into(),
         manifest_path: None,
+        snapshot_context: crate::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: crate::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 60_000,
+            timestamp_semantics: crate::DatasetTimestampSemantics::BarClose,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: crate::CorporateActionPolicy::NotApplicable,
+        },
     };
     let _ = client.run_provider_backtest_with_manifest(&spec).unwrap();
     let calls = client.transport.0.lock().unwrap();

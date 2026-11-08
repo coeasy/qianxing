@@ -1,0 +1,7 @@
+$ cargo test -p qx-cli --lib --features sqlite prepared_command_replay::tests:: --offline -j1
+exit_code=101
+
+[stdout]
+
+[stderr]
+error: no library targets found in package `qx-cli`

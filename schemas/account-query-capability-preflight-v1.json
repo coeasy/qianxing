@@ -95,6 +95,7 @@
       "enum": [
         "balance.read",
         "orders.read",
+        "trades.read",
         "positions.read",
         "cashflows.read",
         "funding.read",

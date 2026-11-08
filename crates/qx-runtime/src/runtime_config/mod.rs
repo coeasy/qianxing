@@ -18,6 +18,10 @@ fn default_scheduler_job_queue_path() -> String {
     "job-queue".into()
 }
 
+fn default_scheduler_max_pending_jobs() -> usize {
+    qx_storage::DEFAULT_MAX_PENDING_JOBS
+}
+
 fn default_scheduler_tick_interval_ms() -> u64 {
     1_000
 }

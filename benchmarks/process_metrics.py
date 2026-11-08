@@ -97,7 +97,10 @@ class ProcessMeasurement:
 
 
 def run_measured(
-    command: list[str], cwd: Path, timeout_seconds: float | None = None
+    command: list[str],
+    cwd: Path,
+    timeout_seconds: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> ProcessMeasurement:
     """Run without pipe backpressure and return elapsed ms plus process peak RSS.
 
@@ -113,6 +116,7 @@ def run_measured(
         process = subprocess.Popen(
             command,
             cwd=cwd,
+            env=env,
             stdout=stdout_file,
             stderr=stderr_file,
             text=True,

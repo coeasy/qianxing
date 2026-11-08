@@ -186,6 +186,22 @@ fn cross_venue_intent_uses_its_account_and_frozen_market_rules() {
     let mut config = read_runtime_config(&runtime).unwrap();
     let data_dir = temp_cli_case_dir("cross-venue-account-route");
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let market_spec_source = runtime
+        .parent()
+        .unwrap()
+        .join("qianxing.crypto.multi-venue-perpetual-spec.example.json");
+    let market_spec_path = write_signed_market_spec_set_fixture(
+        &data_dir,
+        "signed-multi-venue-market-specs.json",
+        &market_spec_source,
+    );
+    for worker in config
+        .workers
+        .iter_mut()
+        .filter(|worker| worker.role == WorkerRole::Execution)
+    {
+        worker.instrument_spec_path = Some(market_spec_path.to_string_lossy().into_owned());
+    }
     let intent = StrategyContractIntent {
         intent_id: 11,
         instrument: "BTC/USDT:USDT.BINANCE".into(),

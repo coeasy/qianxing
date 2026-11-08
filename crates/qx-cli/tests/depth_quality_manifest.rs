@@ -62,7 +62,7 @@ fn summary_path(root: &Path) -> PathBuf {
         .find(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".v7.summary.json"))
+                .is_some_and(|name| name.ends_with(".v8.summary.json"))
         })
         .expect("depth backtest summary exists")
 }

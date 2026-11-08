@@ -129,6 +129,15 @@ pub enum RuntimeExternalEvent {
     ReconcileRequired {
         client_order_id: u64,
     },
+    OrderStatusReconciled {
+        client_order_id: u64,
+        account_id: String,
+        venue_id: String,
+        status: qx_core::OrderStatus,
+        venue_order_id: Option<String>,
+        filled_raw: i128,
+        filled_exact: Option<ExactDecimal>,
+    },
 }
 
 /// 外部事实的时间与血缘元数据。
@@ -176,6 +185,8 @@ impl RuntimeEventEnvelope {
         }
     }
 
+    // Preserve the envelope constructor's explicit market sequence and timestamp inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn market_order_book(
         instrument: InstrumentId,
         sequence: u64,
@@ -353,19 +364,33 @@ impl RuntimeEventStore {
         }
     }
 
-    /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。`Ok(None)` 有两种含义，调用方都按
-    /// 同一件事处理（退回整份重建）：本后端没提供行级尾部读（文件后端按 DD-3 定位降级、
-    /// PostgreSQL 行式读排在 §7 M2 的下一步），或本地这份已经不是 store 的前缀（被改写/分叉）。
-    /// 这是**显式**回落不是静默降级；默认特征（`default = []`）下三个入参都不被读，`let _` 压住它。
+    /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。分段文件后端从已验证的 manifest
+    /// 前缀读尾部，并用滚动摘要核对；SQLite 使用 position 行读取。`Ok(None)` 表示不支持该读取
+    /// 形状，或本地前缀与 store 不一致，调用方会退回整份重建。单文件后端与 PostgreSQL 仍走
+    /// 全量重建。这是**显式**回落；默认特征（`default = []`）下 SQLite 专用入参不被读取。
     fn read_since(
         &self,
         name: &str,
         after_seq: Option<u64>,
         expected_prefix: Option<(&Event, usize)>,
+        expected_event_digest: u64,
+        expected_next_seq: u64,
     ) -> Result<Option<Vec<Event>>, StorageError> {
         #[cfg(not(feature = "sqlite"))]
-        let _ = (&name, &after_seq, &expected_prefix);
+        let _ = (
+            &name,
+            &after_seq,
+            &expected_prefix,
+            &expected_event_digest,
+            &expected_next_seq,
+        );
         match self {
+            Self::Segmented(store, _) => store.read_since(
+                name,
+                expected_prefix,
+                expected_event_digest,
+                expected_next_seq,
+            ),
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store
                 .read_since(name, after_seq, expected_prefix)
@@ -441,9 +466,14 @@ impl LiveEventPipeline {
     /// 使用完整段不可变、尾段追加并由 manifest 摘要校验的分段后端，
     /// `max_events_per_segment` 决定恢复和归档粒度。
     ///
-    /// 分段换来的是**不可变段与按段归档/摘要校验**，不是更快的稳态运行：本轮实测
-    /// 8000 条日志下每次追加的稳态代价是分段 0.417s vs 单文件 0.343s（约 +21%），
-    /// 因为两种后端每次写都要按 chunk 重新序列化整本日志（见 #169）。
+    /// 分段日志以不可变封段、活动尾段追加和 manifest 摘要校验换取恢复与归档边界。
+    /// 存储微基准在 2026-11-07 显示，已验证的同实例分段写成本基本不随历史长度变化
+    /// （1k/8k/64k：3.55/3.69/3.93ms），单文件完整读取/校验/序列化/原子替换则为
+    /// 5.86/21.02/155.47ms；新建分段 store 的 64k 追加仍需全量验证，耗时 91.85ms。
+    /// 同版本的 Release 对照已测 MarketQuote ingest、持久化、Outbox 追加及第二实例 refresh：
+    /// 1k/8k/64k 历史下单文件中位数 12.93/55.11/390.15ms，分段 8.35/8.80/8.98ms。
+    /// 该负载不含订单/风控和完整 Paper worker；V13 R26 的 8k Paper tick 探针是另一口径，
+    /// 完整 worker 对照仍需复测后再决定部署默认值。
     /// 另外：两套文件后端写的是互不相交的文件，换这个参数等于换一本账。三条打开入口
     /// 都会在同一目录下发现另一本历史时当场拒绝（口径同
     /// [`Self::assert_no_abandoned_file_log`]），不会静默从空账本起步。
@@ -841,6 +871,11 @@ impl LiveEventPipeline {
                     client_order_id: id,
                     venue_order_id,
                 } if *id == client_order_id => venue_order_id.clone(),
+                EventKind::OrderStatusReconciled {
+                    client_order_id: id,
+                    venue_order_id,
+                    ..
+                } if *id == client_order_id => venue_order_id.clone(),
                 _ => None,
             })
     }
@@ -1089,6 +1124,11 @@ impl LiveEventPipeline {
             } => {
                 self.apply_accepted(*client_order_id)?;
             }
+            EventKind::Rejected {
+                client_order_id, ..
+            } => {
+                self.apply_rejected(*client_order_id)?;
+            }
             EventKind::Filled { fill } => {
                 self.seen_fills.insert(fill_key(fill));
                 // 索引重建只回放订单状态；现金与持仓由 Ledger 自身的回放恢复，
@@ -1103,6 +1143,24 @@ impl LiveEventPipeline {
             }
             EventKind::ReconcileRequired { client_order_id } => {
                 self.apply_reconcile_required(*client_order_id)?;
+            }
+            EventKind::OrderStatusReconciled {
+                client_order_id,
+                account_id,
+                venue_id,
+                status,
+                venue_order_id: _,
+                filled_raw,
+                filled_exact,
+            } => {
+                self.apply_reconciled_order_status(
+                    *client_order_id,
+                    account_id,
+                    venue_id,
+                    *status,
+                    *filled_raw,
+                    *filled_exact,
+                )?;
             }
             EventKind::MarketQuote {
                 instrument, ask, ..
@@ -1151,7 +1209,6 @@ impl LiveEventPipeline {
             | EventKind::OrderRiskDecision { .. }
             | EventKind::ExecutionCapabilityDecision { .. }
             | EventKind::Submit { .. }
-            | EventKind::Rejected { .. }
             | EventKind::Settle => {}
         }
         Ok(())
@@ -1286,6 +1343,20 @@ impl LiveEventPipeline {
         }
     }
 
+    fn apply_rejected(&mut self, client_order_id: u64) -> QxResult<()> {
+        let order = self
+            .oms
+            .get_mut(client_order_id)
+            .ok_or_else(|| QxError::ReconcileRequired("Rejected 对应未知订单".into()))?;
+        if order.status == OrderStatus::Rejected {
+            return Ok(());
+        }
+        order
+            .status
+            .transition(OrderStatus::Rejected)
+            .map_err(QxError::Invariant)
+    }
+
     fn apply_fill(&mut self, fill: &Fill) -> QxResult<Vec<u64>> {
         qx_core::apply_fill_to_books(
             &mut self.ledger,
@@ -1385,6 +1456,66 @@ impl LiveEventPipeline {
         Ok(())
     }
 
+    fn apply_reconciled_order_status(
+        &mut self,
+        client_order_id: u64,
+        account_id: &str,
+        venue_id: &str,
+        status: OrderStatus,
+        filled_raw: i128,
+        filled_exact: Option<ExactDecimal>,
+    ) -> QxResult<()> {
+        let order = self
+            .oms
+            .get_mut(client_order_id)
+            .ok_or_else(|| QxError::ReconcileRequired("订单状态快照对应未知订单".into()))?;
+        if order.account_id != account_id
+            || !order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(venue_id)
+        {
+            return Err(QxError::ReconcileRequired(format!(
+                "订单 {client_order_id} 的对账快照账户/venue 与本地订单不匹配"
+            )));
+        }
+        let fills_match = if let Some(amounts) = order.exact_amounts {
+            filled_exact == Some(amounts.filled)
+        } else {
+            order.filled.raw() == filled_raw
+                && filled_exact.is_none_or(|remote| {
+                    ExactDecimal::from_parts(order.filled.raw(), 9).ok() == Some(remote)
+                })
+        };
+        if !fills_match {
+            return Err(QxError::ReconcileRequired(format!(
+                "订单 {client_order_id} 的远端累计成交与本地账本不一致，拒绝仅推进订单状态"
+            )));
+        }
+        if matches!(
+            status,
+            OrderStatus::PendingSubmit
+                | OrderStatus::Submitted
+                | OrderStatus::CancelPending
+                | OrderStatus::Unknown
+        ) {
+            return Err(QxError::ReconcileRequired(format!(
+                "订单 {client_order_id} 的远端快照状态 {status:?} 不是权威终态/受理状态"
+            )));
+        }
+        let path = order.status.reconciliation_path(status).ok_or_else(|| {
+            QxError::ReconcileRequired(format!(
+                "订单 {client_order_id} 不能从 {:?} 按合法生命周期推进到 {status:?}",
+                order.status
+            ))
+        })?;
+        for next in path {
+            order.status.transition(next).map_err(QxError::Invariant)?;
+        }
+        Ok(())
+    }
+
     fn persist(&mut self) -> QxResult<()> {
         let cursor = self.outbox_projection_cursor;
         match self.store.write(&self.log_name, &self.log, cursor) {
@@ -1410,7 +1541,7 @@ impl LiveEventPipeline {
     /// 旧实现每次都把整条日志读回来 + 整份重放重建（`rebuild_ledger` +
     /// `rebuild_runtime_indexes` + 整份替换），而本方法在每条外部事实之前都会被调一次——
     /// 没有别的写者时这些工作全是白做。现在分三支：没有新事实直接返回；有新增且本地这份仍是
-    /// store 的前缀时只把尾部接上去；前缀对不上或后端没有行级尾部读时退回整份重建。
+    /// store 的前缀时只把尾部接上去；前缀对不上或后端没有尾部读时退回整份重建。
     fn refresh_latest(&mut self) -> QxResult<()> {
         let after_seq = self.log.events().last().map(|event| event.seq);
         let prefix = self
@@ -1420,7 +1551,13 @@ impl LiveEventPipeline {
             .map(|event| (event, self.log.len()));
         match self
             .store
-            .read_since(&self.log_name, after_seq, prefix)
+            .read_since(
+                &self.log_name,
+                after_seq,
+                prefix,
+                self.log.event_digest(),
+                self.log.next_seq(),
+            )
             .map_err(storage_error)?
         {
             Some(tail) if tail.is_empty() => Ok(()),
@@ -1437,7 +1574,7 @@ impl LiveEventPipeline {
 
     /// 整份重建：读回整条日志并按事实重放全部索引。
     ///
-    /// 三个调用场景：① 本地这份不是 store 的前缀（被改写/分叉）；② 后端没有行级尾部读——
+    /// 三个调用场景：① 本地这份不是 store 的前缀（被改写/分叉）；② 后端没有尾部读——
     /// 这两条都是增量路径的兜底（`force=false`，日志逐条相等可短路）；③ 提交失败回滚
     /// （`force=true`，见 `pipeline::commit` 的薄包装，必须强制重放才能把 `next_seq` 一起收回）。
     /// 它也是"日志在运行期间消失"这类异常的报错点。
@@ -1673,7 +1810,8 @@ mod tests {
     fn order() -> Order {
         Order {
             client_id: 7,
-            instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+            instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                .expect("valid instrument fixture"),
             side: Side::Buy,
             qty: Quantity::from_i64(2),
             limit: Some(Price::from_i64(100)),
@@ -2205,6 +2343,514 @@ mod tests {
         remote_order_path: std::path::PathBuf,
     }
 
+    struct ExitAfterRemoteSubmitVenue {
+        remote_order_path: std::path::PathBuf,
+    }
+
+    struct ExitBeforeRemoteSubmitVenue;
+
+    impl qx_execution::VenuePort for ExitBeforeRemoteSubmitVenue {
+        fn venue_id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> qx_execution::VenueCapabilities {
+            qx_execution::PAPER_VENUE_CAPABILITIES
+        }
+
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn submit_order(
+            &mut self,
+            _order: Order,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            // The durable intent already exists, but the simulated Venue has
+            // not applied the request yet. The process dies at this boundary.
+            std::process::exit(85)
+        }
+
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            panic!("submit crash fixture must not cancel")
+        }
+    }
+
+    impl qx_execution::VenuePort for ExitAfterRemoteSubmitVenue {
+        fn venue_id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> qx_execution::VenueCapabilities {
+            qx_execution::PAPER_VENUE_CAPABILITIES
+        }
+
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn submit_order(
+            &mut self,
+            order: Order,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            // Model the exchange accepting the order, then the worker exiting
+            // before it can append the Accepted fact to the local EventLog.
+            std::fs::write(
+                &self.remote_order_path,
+                format!(
+                    "order_id={}\nstatus=accepted\nsubmit_calls=1\n",
+                    order.client_id
+                ),
+            )
+            .expect("persist simulated remote submission before dropping response");
+            std::process::exit(86)
+        }
+
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            panic!("submit crash fixture must not cancel")
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingSubmitVenue {
+        submit_calls: usize,
+    }
+
+    #[derive(Default)]
+    struct FailedSubmitVenue {
+        submit_calls: usize,
+    }
+
+    impl qx_execution::VenuePort for FailedSubmitVenue {
+        fn venue_id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> qx_execution::VenueCapabilities {
+            qx_execution::PAPER_VENUE_CAPABILITIES
+        }
+
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn submit_order(
+            &mut self,
+            _order: Order,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            self.submit_calls += 1;
+            Err("simulated transport timeout; remote outcome unknown".into())
+        }
+
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            panic!("failed submit fixture must not cancel")
+        }
+    }
+
+    impl qx_execution::VenuePort for CountingSubmitVenue {
+        fn venue_id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> qx_execution::VenueCapabilities {
+            qx_execution::PAPER_VENUE_CAPABILITIES
+        }
+
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn submit_order(
+            &mut self,
+            _order: Order,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            self.submit_calls += 1;
+            Ok(vec![qx_execution::ExecutionEvent::Accepted {
+                client_order_id: 7,
+                venue_order_id: "remote-7".into(),
+            }])
+        }
+
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<qx_execution::ExecutionEvent>, String> {
+            panic!("submit recovery fixture must not cancel")
+        }
+    }
+
+    #[test]
+    fn submission_worker_process_exit_after_venue_call_replays_pending_without_retry() {
+        const CHILD_ENV: &str = "QX_TEST_SUBMIT_PROCESS_EXIT_CHILD";
+        const ROOT_ENV: &str = "QX_TEST_SUBMIT_PROCESS_EXIT_ROOT";
+        const REMOTE_ENV: &str = "QX_TEST_SUBMIT_PROCESS_EXIT_REMOTE";
+        if std::env::var(CHILD_ENV).as_deref() == Ok("1") {
+            let root = std::env::var_os(ROOT_ENV).expect("crash child needs its EventLog root");
+            let remote_order_path = std::env::var_os(REMOTE_ENV)
+                .map(std::path::PathBuf::from)
+                .expect("crash child needs the simulated venue state path");
+            let mut pipeline =
+                LiveEventPipeline::open(std::path::PathBuf::from(root), "binance-main", "USDT")
+                    .unwrap();
+            let mut venue = ExitAfterRemoteSubmitVenue { remote_order_path };
+            let mut source_seq = 1;
+            let mut gateway = qx_execution::PortExecutionService::new(
+                &mut venue,
+                &mut pipeline,
+                "submit-crash-child",
+                120,
+                &mut source_seq,
+            );
+            let _ = gateway.submit(order());
+            panic!("Venue exit fixture did not terminate the child process");
+        }
+
+        let root = writable_eventlog_root("submit-process-exit");
+        let remote_order_path = root.join("simulated-remote-order.txt");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pipeline::tests::submission_worker_process_exit_after_venue_call_replays_pending_without_retry",
+            ])
+            .env(CHILD_ENV, "1")
+            .env(ROOT_ENV, &root)
+            .env(REMOTE_ENV, &remote_order_path)
+            .output()
+            .expect("spawn submission crash-injection child");
+        assert_eq!(
+            output.status.code(),
+            Some(86),
+            "child must exit from the Venue call after writing Submitted; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&remote_order_path).unwrap(),
+            "order_id=7\nstatus=accepted\nsubmit_calls=1\n"
+        );
+
+        let mut recovered = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Submitted);
+        assert_eq!(
+            recovered
+                .log()
+                .events()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::OrderSubmitted { .. }))
+                .count(),
+            1,
+        );
+        assert!(!recovered.log().events().iter().any(|event| matches!(
+            event.kind,
+            EventKind::Accepted {
+                client_order_id: 7,
+                ..
+            }
+        )));
+
+        // A restarted worker sees the durable intent and must reconcile before
+        // trying the Venue again. The simulated exchange still records one call.
+        let mut venue = CountingSubmitVenue::default();
+        let mut source_seq = 2;
+        let error = qx_execution::PortExecutionService::new(
+            &mut venue,
+            &mut recovered,
+            "submit-recovery-worker",
+            130,
+            &mut source_seq,
+        )
+        .submit(order())
+        .expect_err("recovered Submitted must require reconciliation");
+        assert!(error.contains("必须先对账"), "{error}");
+        assert_eq!(venue.submit_calls, 0);
+        assert_eq!(
+            std::fs::read_to_string(&remote_order_path).unwrap(),
+            "order_id=7\nstatus=accepted\nsubmit_calls=1\n"
+        );
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Unknown);
+        assert!(recovered.log().events().iter().any(|event| matches!(
+            event.kind,
+            EventKind::ReconcileRequired { client_order_id: 7 }
+        )));
+        recovered
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderStatusReconciled {
+                    client_order_id: 7,
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    status: OrderStatus::Accepted,
+                    venue_order_id: Some("remote-7".into()),
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+                140,
+                140,
+                3,
+                "submit-accepted-after-reconcile-7",
+            ))
+            .unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Accepted);
+        let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(final_recovery.orders()[0].status, OrderStatus::Accepted);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_submission_worker_process_exit_after_venue_call_replays_pending_without_retry() {
+        const CHILD_ENV: &str = "QX_TEST_SQLITE_SUBMIT_PROCESS_EXIT_CHILD";
+        const ROOT_ENV: &str = "QX_TEST_SQLITE_SUBMIT_PROCESS_EXIT_ROOT";
+        const REMOTE_ENV: &str = "QX_TEST_SQLITE_SUBMIT_PROCESS_EXIT_REMOTE";
+        if std::env::var(CHILD_ENV).as_deref() == Ok("1") {
+            let root = std::path::PathBuf::from(
+                std::env::var_os(ROOT_ENV).expect("crash child needs its SQLite root"),
+            );
+            let database = root.join("qx-runtime.sqlite");
+            let remote_order_path = std::env::var_os(REMOTE_ENV)
+                .map(std::path::PathBuf::from)
+                .expect("crash child needs the simulated venue state path");
+            let mut pipeline =
+                LiveEventPipeline::open_sqlite(database, "binance-main", "USDT").unwrap();
+            let mut venue = ExitAfterRemoteSubmitVenue { remote_order_path };
+            let mut source_seq = 1;
+            let mut gateway = qx_execution::PortExecutionService::new(
+                &mut venue,
+                &mut pipeline,
+                "sqlite-submit-crash-child",
+                120,
+                &mut source_seq,
+            );
+            let _ = gateway.submit(order());
+            panic!("Venue exit fixture did not terminate the SQLite child process");
+        }
+
+        let root = writable_eventlog_root("sqlite-submit-process-exit");
+        let database = root.join("qx-runtime.sqlite");
+        let remote_order_path = root.join("simulated-remote-order.txt");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pipeline::tests::sqlite_submission_worker_process_exit_after_venue_call_replays_pending_without_retry",
+            ])
+            .env(CHILD_ENV, "1")
+            .env(ROOT_ENV, &root)
+            .env(REMOTE_ENV, &remote_order_path)
+            .output()
+            .expect("spawn SQLite submission crash-injection child");
+        assert_eq!(
+            output.status.code(),
+            Some(86),
+            "SQLite child must exit from the Venue call after writing Submitted; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&remote_order_path).unwrap(),
+            "order_id=7\nstatus=accepted\nsubmit_calls=1\n"
+        );
+
+        let mut recovered =
+            LiveEventPipeline::open_sqlite(&database, "binance-main", "USDT").unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Submitted);
+        assert_eq!(
+            recovered
+                .log()
+                .events()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::OrderSubmitted { .. }))
+                .count(),
+            1,
+        );
+        let mut venue = CountingSubmitVenue::default();
+        let mut source_seq = 2;
+        let error = qx_execution::PortExecutionService::new(
+            &mut venue,
+            &mut recovered,
+            "sqlite-submit-recovery-worker",
+            130,
+            &mut source_seq,
+        )
+        .submit(order())
+        .expect_err("recovered SQLite Submitted must require reconciliation");
+        assert!(error.contains("必须先对账"), "{error}");
+        assert_eq!(venue.submit_calls, 0);
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Unknown);
+        assert_eq!(
+            std::fs::read_to_string(&remote_order_path).unwrap(),
+            "order_id=7\nstatus=accepted\nsubmit_calls=1\n"
+        );
+        let final_recovery =
+            LiveEventPipeline::open_sqlite(&database, "binance-main", "USDT").unwrap();
+        assert_eq!(final_recovery.orders()[0].status, OrderStatus::Unknown);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn submission_worker_process_exit_before_venue_effect_still_requires_reconciliation() {
+        const CHILD_ENV: &str = "QX_TEST_SUBMIT_BEFORE_EFFECT_CHILD";
+        const ROOT_ENV: &str = "QX_TEST_SUBMIT_BEFORE_EFFECT_ROOT";
+        if std::env::var(CHILD_ENV).as_deref() == Ok("1") {
+            let root = std::env::var_os(ROOT_ENV).expect("crash child needs its EventLog root");
+            let mut pipeline =
+                LiveEventPipeline::open(std::path::PathBuf::from(root), "binance-main", "USDT")
+                    .unwrap();
+            let mut venue = ExitBeforeRemoteSubmitVenue;
+            let mut source_seq = 1;
+            let mut gateway = qx_execution::PortExecutionService::new(
+                &mut venue,
+                &mut pipeline,
+                "submit-before-effect-child",
+                120,
+                &mut source_seq,
+            );
+            let _ = gateway.submit(order());
+            panic!("Venue exit fixture did not terminate the child process");
+        }
+
+        let root = writable_eventlog_root("submit-before-effect");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pipeline::tests::submission_worker_process_exit_before_venue_effect_still_requires_reconciliation",
+            ])
+            .env(CHILD_ENV, "1")
+            .env(ROOT_ENV, &root)
+            .output()
+            .expect("spawn pre-effect submission crash-injection child");
+        assert_eq!(
+            output.status.code(),
+            Some(85),
+            "child must exit at the Venue boundary; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let mut recovered = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Submitted);
+        let remote_order_path = root.join("remote-effect-never-happened.txt");
+        assert!(!remote_order_path.exists());
+        let mut venue = CountingSubmitVenue::default();
+        let mut source_seq = 2;
+        let error = qx_execution::PortExecutionService::new(
+            &mut venue,
+            &mut recovered,
+            "submit-before-effect-recovery",
+            130,
+            &mut source_seq,
+        )
+        .submit(order())
+        .expect_err("even a pre-effect crash must not be guessed safe to resubmit");
+        assert!(error.contains("必须先对账"), "{error}");
+        assert_eq!(venue.submit_calls, 0);
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Unknown);
+        assert!(!remote_order_path.exists());
+        recovered
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderStatusReconciled {
+                    client_order_id: 7,
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    status: OrderStatus::Rejected,
+                    venue_order_id: None,
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+                140,
+                140,
+                3,
+                "submit-rejected-after-reconcile-7",
+            ))
+            .unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Rejected);
+        let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(final_recovery.orders()[0].status, OrderStatus::Rejected);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_submit_reopens_as_unknown_and_requires_authoritative_rejection() {
+        let root = writable_eventlog_root("submit-failed-unknown");
+        let mut pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        let mut failed_venue = FailedSubmitVenue::default();
+        let mut source_seq = 1;
+        let failure = qx_execution::PortExecutionService::new(
+            &mut failed_venue,
+            &mut pipeline,
+            "submit-timeout-worker",
+            120,
+            &mut source_seq,
+        )
+        .submit(order())
+        .expect_err("transport timeout must remain an unknown remote outcome");
+        assert!(failure.contains("结果未知"), "{failure}");
+        assert_eq!(failed_venue.submit_calls, 1);
+        assert_eq!(pipeline.orders()[0].status, OrderStatus::Unknown);
+        drop(pipeline);
+
+        let mut recovered = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Unknown);
+        let mut retry_venue = CountingSubmitVenue::default();
+        let retry_error = qx_execution::PortExecutionService::new(
+            &mut retry_venue,
+            &mut recovered,
+            "submit-retry-worker",
+            130,
+            &mut source_seq,
+        )
+        .submit(order())
+        .expect_err("unknown result must block another Venue call after restart");
+        assert!(retry_error.contains("必须先对账"), "{retry_error}");
+        assert_eq!(retry_venue.submit_calls, 0);
+
+        recovered
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderStatusReconciled {
+                    client_order_id: 7,
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    status: OrderStatus::Rejected,
+                    venue_order_id: None,
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+                140,
+                140,
+                2,
+                "submit-timeout-rejected-after-reconcile-7",
+            ))
+            .unwrap();
+        assert_eq!(recovered.orders()[0].status, OrderStatus::Rejected);
+        let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(final_recovery.orders()[0].status, OrderStatus::Rejected);
+        assert_eq!(
+            final_recovery
+                .log()
+                .events()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::OrderSubmitted { .. }))
+                .count(),
+            1,
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     impl qx_execution::VenuePort for ExitAfterRemoteCancelVenue {
         fn venue_id(&self) -> &str {
             "BINANCE"
@@ -2438,7 +3084,8 @@ mod tests {
             ))
             .unwrap();
         let quote = RuntimeEventEnvelope::market_quote(
-            InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+            InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                .expect("valid instrument fixture"),
             QuoteTick::new(
                 90,
                 Price::from_i64(99),
@@ -2500,7 +3147,8 @@ mod tests {
         assert_eq!(pipeline.snapshot().log_len, 8);
         let late_quote = pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     100,
                     Price::from_i64(98),
@@ -2547,7 +3195,8 @@ mod tests {
     fn market_event_preserves_sub_nano_bid_ask_through_recovery() {
         let root = temp_root("sub-nano-market-quote");
         let mut pipeline = LiveEventPipeline::open(&root, "ccxt-market", "USDT").unwrap();
-        let instrument = InstrumentId::new("TINYUSDT", VenueId::new("OKX"));
+        let instrument =
+            InstrumentId::new("TINYUSDT", VenueId::new("OKX")).expect("valid instrument fixture");
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
                 instrument.clone(),
@@ -2925,7 +3574,8 @@ mod tests {
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::MarketQuote {
-                    instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                    instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                        .expect("valid instrument fixture"),
                     bid: Price::from_i64(99),
                     ask: Price::from_i64(100),
                     bid_qty: Quantity::from_i64(2),
@@ -2972,7 +3622,8 @@ mod tests {
     fn external_fact_metadata_is_persisted_and_explicit_dedup_is_authoritative() {
         let root = temp_root("fact-metadata");
         let mut pipeline = LiveEventPipeline::open(&root, "ccxt-main", "USDT").unwrap();
-        let instrument = InstrumentId::new("BTCUSDT", VenueId::new("OKX"));
+        let instrument =
+            InstrumentId::new("BTCUSDT", VenueId::new("OKX")).expect("valid instrument fixture");
         let envelope = RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::MarketQuote {
                 instrument: instrument.clone(),
@@ -3036,7 +3687,8 @@ mod tests {
     #[test]
     fn market_order_book_is_validated_persisted_and_replayed_with_exact_precision() {
         let root = writable_eventlog_root("market-order-book");
-        let instrument = InstrumentId::new("ALTUSDT", VenueId::new("BINANCE"));
+        let instrument = InstrumentId::new("ALTUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture");
         let level = |price: &str, quantity: &str| MarketDepthLevel {
             price: Price::from_raw(0),
             quantity: Quantity::from_raw(0),
@@ -3121,6 +3773,60 @@ mod tests {
             LiveEventPipeline::open_configured(&root, "paper-segmented", "USDT", Some(2)).unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
         assert!(root.join("paper-segmented.manifest.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn segmented_pipeline_refresh_takes_the_verified_cursor_incremental_path() {
+        let root = temp_root("segmented-cursor");
+        let mut writer =
+            LiveEventPipeline::open_configured(&root, "paper-segmented", "USDT", Some(2)).unwrap();
+        writer.register_order(order(), 100).unwrap();
+        let mut reader =
+            LiveEventPipeline::open_configured(&root, "paper-segmented", "USDT", Some(2)).unwrap();
+
+        writer
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: None,
+                },
+                110,
+                111,
+                1,
+                "segmented-cursor-ack-7",
+            ))
+            .unwrap();
+        writer
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill {
+                    fill: Fill {
+                        order_id: 7,
+                        qty: Quantity::from_i64(2),
+                        price: Price::from_i64(100),
+                        fee: Money::from_i64(1),
+                        ts: 115,
+                        account_id: "main".into(),
+                        venue_id: Some("BINANCE".into()),
+                        venue_order_id: Some("9001".into()),
+                        ..Fill::default()
+                    },
+                },
+                115,
+                121,
+                2,
+                "segmented-cursor-fill-1",
+            ))
+            .unwrap();
+
+        reader.refresh().unwrap();
+        assert_eq!(reader.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
+        assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
+
+        reader.refresh().unwrap();
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
+        assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 

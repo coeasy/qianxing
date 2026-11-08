@@ -21,7 +21,8 @@
 //! `live_strategy_input_digest`（调度器读取最新行情 EventLog 生成策略输入触发摘要）、
 //! `populate_strategy_execution_positions`（策略服务按请求打开的只读持仓投影 pipeline，
 //! 存活期与「按 worker 进程累计」不符，接它要另立一份跨请求的身份），以及
-//! `run_paper_pipeline_once_with_report`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`
+//! `require_live_strategy_commands_resolved`（live admission 按策略轮次读取命令与账户 EventLog 的短生命周期只读快照），
+//! `run_paper_pipeline_once_with_quote`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`
 //! （一次性验收入口，不是长驻 worker：
 //! 给它们落 `.prom` 等于替一个已经退出的进程宣称健康。它们写入的事实照旧进 EventLog，
 //! 只是不在这族样本里 —— `paper-submit-order` 那条还会以 `paper-execution` 的名义领取租约，
@@ -56,6 +57,8 @@ pub struct PipelineMetricsReporter {
     ingest_budget_warning_emitted: bool,
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
     gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
+    gateway_venue_reconnects: BTreeMap<String, u64>,
+    gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
 }
 
@@ -155,6 +158,31 @@ impl PipelineMetricsReporter {
         }
     }
 
+    /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
+    /// participates in readiness or execution authorization.
+    pub(crate) fn observe_gateway_venue_reconnects(&mut self, venue_id: &str, total: u64) {
+        if venue_id.trim().is_empty() {
+            return;
+        }
+        let count = self
+            .gateway_venue_reconnects
+            .entry(venue_id.trim().to_ascii_uppercase())
+            .or_default();
+        *count = (*count).max(total);
+    }
+
+    /// Publish the latest source-event timestamp in Unix milliseconds. Zero means unobserved.
+    pub(crate) fn observe_gateway_venue_last_event(&mut self, venue_id: &str, timestamp_ms: u64) {
+        if venue_id.trim().is_empty() || timestamp_ms == 0 {
+            return;
+        }
+        let timestamp = self
+            .gateway_venue_last_event_seconds
+            .entry(venue_id.trim().to_ascii_uppercase())
+            .or_default();
+        *timestamp = (*timestamp).max(timestamp_ms / 1_000);
+    }
+
     fn warn_if_over_budget(&mut self) {
         if !self.ingest_budget_warning_emitted
             && self.ingest_duration_ns_max > PIPELINE_INGEST_WARNING_BUDGET_NS
@@ -229,12 +257,24 @@ qx_pipeline_ingest_budget_exceeded{{{label}}} {}\n",
         );
         for (port, (status, timestamp_seconds)) in &self.gateway_business_status {
             let port_label = port.metric_label();
-            let value = status
-                .metric_value()
-                .expect("unobserved business status is not persisted as a probe");
+            let Some(value) = status.metric_value() else {
+                continue;
+            };
             body.push_str(&format!(
                 "qx_gateway_port_business_status{{{label},port=\"{port_label}\"}} {value}\n\
 qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {timestamp_seconds}\n"
+            ));
+        }
+        for (venue, reconnects) in &self.gateway_venue_reconnects {
+            body.push_str(&format!(
+                "qx_gateway_venue_reconnects_total{{{label},venue=\"{}\"}} {reconnects}\n",
+                prometheus_label(venue)
+            ));
+        }
+        for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {
+            body.push_str(&format!(
+                "qx_gateway_venue_last_event_timestamp_seconds{{{label},venue=\"{}\"}} {timestamp_seconds}\n",
+                prometheus_label(venue)
             ));
         }
         body
@@ -294,6 +334,32 @@ mod tests {
             "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"reconciliation\"} 1"
         ));
         assert!(!body.contains("port=\"venue_execution\""));
+    }
+
+    #[test]
+    fn worker_metrics_publish_venue_reconnects_and_latest_source_event_time() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-user-stream", "main");
+        reporter.observe_gateway_venue_reconnects("binance", 2);
+        reporter.observe_gateway_venue_reconnects("BINANCE", 1);
+        reporter.observe_gateway_venue_last_event("binance", 91_999);
+        reporter.observe_gateway_venue_last_event("binance", 89_000);
+        reporter.observe_gateway_venue_last_event("binance", 0);
+
+        let body = reporter.body(true, 100_000);
+        assert!(body.contains(
+            "qx_gateway_venue_reconnects_total{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_venue_last_event_timestamp_seconds{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 91"
+        ));
+        assert_eq!(
+            body.matches("qx_gateway_venue_reconnects_total{").count(),
+            1
+        );
     }
 
     struct ProbeVenue {

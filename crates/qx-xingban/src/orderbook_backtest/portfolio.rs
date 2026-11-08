@@ -359,8 +359,9 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     .peek()
                     .is_some_and(|(settlement_ts, _)| *settlement_ts < ts)
                 {
-                    let (settlement_ts, rates) =
-                        settlement_cursor.next().expect("peeked settlement");
+                    let (settlement_ts, rates) = settlement_cursor.next().ok_or_else(|| {
+                        qx_core::QxError::Invariant("settlement iterator diverged from peek".into())
+                    })?;
                     super::settlement::apply_settlements(
                         settlement_ts,
                         &rates,
@@ -390,8 +391,9 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     .peek()
                     .is_some_and(|(settlement_ts, _)| *settlement_ts == ts)
                 {
-                    let (settlement_ts, rates) =
-                        settlement_cursor.next().expect("peeked settlement");
+                    let (settlement_ts, rates) = settlement_cursor.next().ok_or_else(|| {
+                        qx_core::QxError::Invariant("settlement iterator diverged from peek".into())
+                    })?;
                     super::settlement::apply_settlements(
                         settlement_ts,
                         &rates,

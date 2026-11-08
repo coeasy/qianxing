@@ -551,10 +551,9 @@ pub(super) fn validate_exact_derivative_margin_after_fill(
         .remaining_decimal()
         .ok_or_else(|| qx_core::QxError::Invariant("成交后精确订单剩余量溢出".into()))?;
     let mut candidate = order_after_fill.clone();
-    let amounts = candidate
-        .exact_amounts
-        .as_mut()
-        .expect("exact derivative order was checked above");
+    let amounts = candidate.exact_amounts.as_mut().ok_or_else(|| {
+        qx_core::QxError::Invariant("exact derivative amounts disappeared".into())
+    })?;
     amounts.quantity = remaining;
     amounts.filled = ExactDecimal::ZERO;
     amounts.quote_budget = None;
@@ -1231,9 +1230,9 @@ impl SpotCashReservations {
                 )));
             }
             let remaining_qty = if quote_budget_order {
-                let budget = exact_reservation
-                    .remaining_quote_budget
-                    .expect("quote budget reservation checked above");
+                let budget = exact_reservation.remaining_quote_budget.ok_or_else(|| {
+                    qx_core::QxError::Invariant("quote budget reservation disappeared".into())
+                })?;
                 let quote_cost = fill_amounts.quote_cost.ok_or_else(|| {
                     qx_core::QxError::ReconcileRequired(
                         "计价币预算订单成交缺少精确计价币金额".into(),
@@ -1302,7 +1301,9 @@ impl SpotCashReservations {
                             "精确成交成本超过该订单的资金预留".into(),
                         )
                     })?;
-                let original = reservation.exact.expect("exact reservation exists");
+                let original = reservation.exact.ok_or_else(|| {
+                    qx_core::QxError::Invariant("exact cash reservation disappeared".into())
+                })?;
                 let other_reserved = context
                     .total_reserved_cash_exact_before_fill
                     .checked_sub(original.remaining_cash)
@@ -1327,7 +1328,9 @@ impl SpotCashReservations {
             }
 
             if exact_reservation.remaining_inventory.is_positive() {
-                let original = reservation.exact.expect("exact reservation exists");
+                let original = reservation.exact.ok_or_else(|| {
+                    qx_core::QxError::Invariant("exact inventory reservation disappeared".into())
+                })?;
                 exact_reservation.remaining_inventory = original
                     .remaining_inventory
                     .checked_sub(fill_amounts.quantity)

@@ -1,0 +1,7 @@
+$ python benchmarks/run_prepared_evaluation_capacity.py --binary target/debug/qx-cli.exe --control-queue-only --queue-backend postgres --queue-capacity 4096 --out maturity/evidence/control-command-queue-capacity-postgres-2026-11-04.json
+exit_code=0
+
+[stdout]
+{"crash_recovery_count": 0, "crash_recovery_samples": 0, "largest_journal_bytes": 0, "out": "maturity\\evidence\\control-command-queue-capacity-postgres-2026-11-04.json", "queue_backend": "postgres", "queue_kind": "control-command", "queue_overflow_rejected": true, "queue_pending": 4096, "result_sha256": "10720216a8fbdb4d29bb01acfba13b1fee1ed176367df59313e8347fedf0b1b0", "workload_count": 0}
+
+[stderr]

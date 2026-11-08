@@ -661,6 +661,7 @@ impl<'a> PortfolioBarEngine<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_instrument_equity_contributions(
     curves: &mut BTreeMap<InstrumentId, Vec<(u64, u64, i128)>>,
     exact_curves: &mut BTreeMap<InstrumentId, Vec<(u64, u64, ExactDecimal)>>,

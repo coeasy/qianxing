@@ -3,6 +3,7 @@ use super::*;
 use qx_core::FUNDING_INTERVAL_MS;
 
 const MAX_FUNDING_SETTLEMENTS: u64 = 100_000;
+type ScheduledSettlements = BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>;
 
 pub(super) struct PreparedTimeline {
     pub start: u64,
@@ -57,7 +58,7 @@ pub(super) fn scheduled_settlements(
     rates: &BTreeMap<InstrumentId, i64>,
     funding_events: &[FundingRateEvent],
     specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
-) -> Result<BTreeMap<u64, BTreeMap<InstrumentId, (i64, u64)>>, qx_core::QxError> {
+) -> Result<ScheduledSettlements, qx_core::QxError> {
     if funding_events.len() > MAX_FUNDING_SETTLEMENTS as usize {
         return Err(qx_core::QxError::BusinessViolation(format!(
             "历史资金费事件数 {} 超过上限 {MAX_FUNDING_SETTLEMENTS}",

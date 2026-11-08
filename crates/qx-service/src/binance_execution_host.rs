@@ -80,6 +80,7 @@ fn binance_execution_command_matches_worker(
 
 /// Execute one explicitly accepted Binance SubmitOrder command, including EventLog reduction and
 /// spread recovery. The facade only provides the authenticated Venue constructor.
+#[allow(clippy::too_many_arguments)] // Keeps the venue execution dependencies explicit at the host boundary.
 pub fn execute_binance_one_shot_order<F>(
     command: &ControlCommand,
     worker: &WorkerConfig,

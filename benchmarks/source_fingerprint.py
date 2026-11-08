@@ -67,6 +67,7 @@ def measurement_source_fingerprint(root: Path) -> str:
             "run_crypto_paper_e2e.py",
             "run_multi_account_capacity.py",
             "run_multi_market_depth_capacity.py",
+            "run_prepared_evaluation_capacity.py",
             "process_metrics.py",
             "hardware.py",
             "source_fingerprint.py",

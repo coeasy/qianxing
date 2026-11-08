@@ -87,7 +87,9 @@ fn barframe_dataset_identity_with_version(
     frame: &BarFrame,
     version: String,
 ) -> Result<qx_data::DatasetManifest, String> {
-    let bars: Vec<qx_guanxing::Bar> = frame.into();
+    let bars = frame
+        .bars()
+        .map_err(|error| format!("BarFrame exact OHLCV conversion failed: {error:?}"))?;
     let provider = JsonBarFrameProvider::new(frame.source.0.clone(), version, frame_path);
     let (provider_bars, manifest) = provider.load_bars_with_manifest(
         &format!("strategy-bars:{}", frame.instrument),
@@ -161,7 +163,8 @@ pub fn verify_barframe_dataset_quality(
 ) -> Result<serde_json::Value, String> {
     let payload = std::fs::read_to_string(path)
         .map_err(|error| format!("读取数据集质量清单失败 {}: {error}", path.display()))?;
-    let quality = qx_data::DatasetManifestV2::from_json(&payload)?;
+    let (quality, snapshot) = qx_data::parse_dataset_manifest_or_snapshot(&payload)
+        .map_err(|error| format!("无法解析数据集质量清单/快照 {}: {error}", path.display()))?;
     let expected_content_hash = qx_strategy::file_digest::sha256_file_hex(frame_path)?;
     let declared = &quality.dataset;
     for (field, actual, expected) in [
@@ -251,12 +254,18 @@ pub fn verify_barframe_dataset_quality(
         ));
     }
     let manifest_fingerprint = quality.fingerprint()?;
+    let snapshot_sha256 = snapshot
+        .as_ref()
+        .map(qx_data::DatasetSnapshotV1::content_sha256)
+        .transpose()?;
     Ok(serde_json::json!({
         "manifest_path": path.to_string_lossy(),
         "manifest_fingerprint": manifest_fingerprint,
         "content_hash": quality.content_hash,
         "quality_report": quality.quality_report,
         "manifest": quality,
+        "dataset_snapshot": snapshot,
+        "dataset_snapshot_sha256": snapshot_sha256,
     }))
 }
 
@@ -421,7 +430,7 @@ fn recompute_multi_barframe_input_inner(
                 || leg_summary["input"]["kind"] != "barframe"
             {
                 return Err(format!(
-                    "组合级第 {} 腿引用的不是可复核的 v5/v6/v7 BarFrame 摘要",
+                    "组合级第 {} 腿引用的不是可复核的 v5/v6/v7/v8 BarFrame 摘要",
                     index + 1
                 ));
             }

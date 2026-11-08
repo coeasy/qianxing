@@ -3,6 +3,10 @@
 //! `qx_execution` 会出现两份编译产物（cfg(test) 版与 rlib 版），端口 trait 对不上；
 //! 只有集成测试链接单一 rlib，跨 crate 断言才成立。用例函数与断言未改动。
 
+#[path = "common/temp_root.rs"]
+mod temp_root;
+use temp_root::test_temp_root;
+
 use qx_control::{CommandKind, ControlCommand, Permission};
 use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, Price, Quantity, Side,
@@ -14,7 +18,6 @@ use qx_risk::OrderRiskPosition;
 use qx_runtime::LiveEventPipeline;
 use qx_zhenlu::RiskContext;
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 成本口径的两种显式选择：`shared_fee` 与 Bar 回测装配同源（Q0a 要钉住的就是它），
 /// `zero_fee` 只属于"本用例不关心钱"的期望。
@@ -28,14 +31,7 @@ fn zero_fee() -> Box<dyn qx_core::FeeModel + Send> {
 
 #[test]
 fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-paper-derivative-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("paper-derivative");
     let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
     let order = Order {
         client_id: 3,
@@ -127,14 +123,7 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
 /// P0 fail-closed：风控快照或行情事实缺失时禁止执行，且不得留下任何事实。
 #[test]
 fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-fail-closed-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("fail-closed");
     let order = Order {
         client_id: 7,
         instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
@@ -217,14 +206,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
 /// 直接返回 `ALREADY_APPLIED_FROM_EVENT_LOG`，且不再追加任何行情/成交事实。
 #[test]
 fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-paper-idempotency-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("paper-idempotency");
     let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
     let order = Order {
         client_id: 71,
@@ -326,14 +308,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
 /// 同输入回测"的缺陷形状（`PaperVenue` 曾自带零费默认）。
 #[test]
 fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-paper-fee-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("paper-fee");
     let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
     let order = Order {
         client_id: 81,

@@ -12,6 +12,8 @@
 //!    内核不提供第二套事件循环——回测（`qx-xingban`）与 paper/live（`qx-runtime` 的
 //!    `pipeline.rs`）的循环各在自己的 crate 里，但都只能通过 `EventLog` 落地事实。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod benchmark;
 pub mod clock;
 pub mod contract;

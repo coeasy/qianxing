@@ -124,9 +124,10 @@ impl SegmentedEventLogStore {
         }
         log.validate().map_err(StorageError::Core)?;
         let digest_matches = if manifest.schema_version == 1 {
-            log.digest() == manifest.digest
+            log.digest() == manifest.digest || log.legacy_q68_digest() == manifest.digest
         } else {
             log.event_digest() == manifest.digest
+                || log.legacy_q68_event_digest() == manifest.digest
         };
         if log.len() != manifest.event_count
             || log.next_seq() != manifest.next_seq
@@ -142,6 +143,91 @@ impl SegmentedEventLogStore {
             .map_err(|_| StorageError::Conflict("segment manifest 缓存锁中毒".into()))? =
             Some((name.into(), manifest));
         Ok(Some(log))
+    }
+
+    /// Read and verify only the suffix after a previously validated EventLog prefix.
+    /// A cold store, legacy manifest, changed layout, shortened log, or mismatched prefix
+    /// returns `Ok(None)` so the caller can use the full validation path.
+    pub fn read_since(
+        &self,
+        name: &str,
+        expected_prefix: Option<(&Event, usize)>,
+        expected_event_digest: u64,
+        expected_next_seq: u64,
+    ) -> Result<Option<Vec<Event>>, StorageError> {
+        validate_segment_name(name)?;
+        let cached_manifest = self
+            .validated_manifest
+            .lock()
+            .map_err(|_| StorageError::Conflict("segment manifest 缓存锁中毒".into()))?
+            .as_ref()
+            .filter(|(cached_name, manifest)| cached_name == name && manifest.schema_version == 2)
+            .map(|(_, manifest)| manifest.clone());
+        let Some(cached_manifest) = cached_manifest else {
+            return Ok(None);
+        };
+
+        let _lock = acquire_storage_lock(self.root.join(format!(".{name}.segments.lock")))?;
+        let Some(manifest) = self.read_manifest(name)? else {
+            return Ok(None);
+        };
+        if manifest.schema_version != 2
+            || manifest.name != name
+            || manifest.events_per_segment == 0
+            || manifest.events_per_segment != cached_manifest.events_per_segment
+            || manifest.event_count < cached_manifest.event_count
+            || manifest.event_count < expected_prefix.map_or(0, |(_, len)| len)
+        {
+            return Ok(None);
+        }
+
+        let expected_len = expected_prefix.map_or(0, |(_, len)| len);
+        if let Some((expected_tail, len)) = expected_prefix {
+            let position = len
+                .checked_sub(1)
+                .ok_or_else(|| StorageError::Conflict("空 EventLog 不应携带尾事件".into()))?;
+            let stored =
+                read_segment_event_at(&self.root, name, manifest.events_per_segment, position)?;
+            if stored != *expected_tail {
+                return Ok(None);
+            }
+        } else if expected_len != 0 {
+            return Ok(None);
+        }
+
+        if manifest.event_count == expected_len {
+            if manifest.digest != expected_event_digest || manifest.next_seq != expected_next_seq {
+                return Ok(None);
+            }
+            *self
+                .validated_manifest
+                .lock()
+                .map_err(|_| StorageError::Conflict("segment manifest 缓存锁中毒".into()))? =
+                Some((name.into(), manifest));
+            return Ok(Some(Vec::new()));
+        }
+
+        let tail = read_segment_range(
+            &self.root,
+            name,
+            manifest.events_per_segment,
+            expected_len,
+            manifest.event_count,
+        )?;
+        let digest = EventLog::extend_event_digest(expected_event_digest, &tail);
+        let next_seq = tail.iter().fold(expected_next_seq, |next, event| {
+            next.max(event.seq.saturating_add(1))
+        });
+        if digest != manifest.digest || next_seq != manifest.next_seq {
+            return Ok(None);
+        }
+
+        *self
+            .validated_manifest
+            .lock()
+            .map_err(|_| StorageError::Conflict("segment manifest 缓存锁中毒".into()))? =
+            Some((name.into(), manifest));
+        Ok(Some(tail))
     }
 
     fn read_manifest(&self, name: &str) -> Result<Option<SegmentManifest>, StorageError> {
@@ -160,6 +246,82 @@ impl SegmentedEventLogStore {
         validate_segment_name(name)?;
         Ok(self.root.join(format!("{name}.manifest.json")))
     }
+}
+
+fn read_segment_event_at(
+    root: &Path,
+    name: &str,
+    events_per_segment: usize,
+    position: usize,
+) -> Result<Event, StorageError> {
+    let segment_index = position / events_per_segment;
+    let segment_name = format!("{name}-{segment_index:016}.jsonl");
+    let path = root.join("segments").join(segment_name);
+    let bytes = std::fs::read(path).map_err(|error| StorageError::Io(error.to_string()))?;
+    let offset = position % events_per_segment;
+    let mut row = 0usize;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if row == offset {
+            let text = std::str::from_utf8(line)
+                .map_err(|error| StorageError::Io(format!("segment event 非 UTF-8: {error}")))?;
+            return serde_json::from_str(text)
+                .map_err(|error| StorageError::Io(format!("segment event 无效: {error}")));
+        }
+        row += 1;
+    }
+    Err(StorageError::Conflict(format!(
+        "segment 缺少已提交事件位置 {position}"
+    )))
+}
+
+fn read_segment_range(
+    root: &Path,
+    name: &str,
+    events_per_segment: usize,
+    start: usize,
+    end: usize,
+) -> Result<Vec<Event>, StorageError> {
+    let mut events = Vec::with_capacity(end.saturating_sub(start));
+    if start >= end {
+        return Ok(events);
+    }
+    let first_segment = start / events_per_segment;
+    let last_segment = (end - 1) / events_per_segment;
+    for segment_index in first_segment..=last_segment {
+        let segment_start = segment_index * events_per_segment;
+        let first_row = start.saturating_sub(segment_start);
+        let end_row = (end - segment_start).min(events_per_segment);
+        let segment_name = format!("{name}-{segment_index:016}.jsonl");
+        let bytes = std::fs::read(root.join("segments").join(segment_name))
+            .map_err(|error| StorageError::Io(error.to_string()))?;
+        let mut row = 0usize;
+        for line in bytes.split(|byte| *byte == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            if row >= first_row && row < end_row {
+                let text = std::str::from_utf8(line).map_err(|error| {
+                    StorageError::Io(format!("segment event 非 UTF-8: {error}"))
+                })?;
+                let event = serde_json::from_str(text)
+                    .map_err(|error| StorageError::Io(format!("segment event 无效: {error}")))?;
+                events.push(event);
+            }
+            row += 1;
+            if row >= end_row {
+                break;
+            }
+        }
+        if row < end_row {
+            return Err(StorageError::Conflict(format!(
+                "segment 缺少已提交范围 {start}..{end}"
+            )));
+        }
+    }
+    Ok(events)
 }
 
 impl SegmentedEventLogStore {

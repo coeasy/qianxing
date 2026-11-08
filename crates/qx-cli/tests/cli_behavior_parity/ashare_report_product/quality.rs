@@ -55,7 +55,8 @@ pub(super) fn assert_html_and_evidence_quality(report: &Value) {
     assert!(
         html.contains("lang=\"zh-CN\"")
             && html.contains("name=\"viewport\"")
-            && html.contains("<section class=\"charts\">")
+            && html.contains("class=\"charts\"")
+            && html.contains("id=\"report-charts\"")
             && html.matches("<svg").count() >= 3
             && html.contains("<style>")
             && html.contains("<script>")
@@ -96,7 +97,7 @@ pub(super) fn assert_xlsx_quality(path: &Path) {
     );
     let mut execution = String::new();
     workbook
-        .by_name("xl/worksheets/sheet5.xml")
+        .by_name("xl/worksheets/sheet6.xml")
         .expect("XLSX Execution sheet")
         .read_to_string(&mut execution)
         .expect("read XLSX Execution sheet");

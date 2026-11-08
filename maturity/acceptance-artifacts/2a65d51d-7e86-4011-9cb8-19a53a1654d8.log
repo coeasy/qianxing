@@ -1,0 +1,59 @@
+  OK   map_has_five_rows                              rows=5 booked=5
+  OK   booked_copy_present_and_sha_matches_r10_post_book_ledger.log name=8b5e04b7-c52a-42f8-934a-74bd6d316c4f.log map=2baa86413ab39add disk=2baa86413ab39add
+  OK   booked_copy_present_and_sha_matches_r11_gate_arch.log name=dbc0bcd8-6b84-45e2-96fe-e041ac22a20a.log map=4bf6fd45c71e1b71 disk=4bf6fd45c71e1b71
+  OK   booked_copy_present_and_sha_matches_r11_gate_launch.log name=b2df94a1-21a5-47fe-81eb-65c1a64196d3.log map=d28f5c820d6f8e84 disk=d28f5c820d6f8e84
+  OK   booked_copy_present_and_sha_matches_r11_gate_ledger.log name=d8df8654-4c93-49ef-abcf-a9e2a7a85446.log map=2baa86413ab39add disk=2baa86413ab39add
+  OK   booked_copy_present_and_sha_matches_r11_gate_summary.json name=09bca419-8594-43e5-9fe7-bf1c860a6ebb.log map=f434bf0935523bf3 disk=f434bf0935523bf3
+  OK   booked_ledger_two_copies_same_sha              r10=2baa86413ab39add r11=2baa86413ab39add
+  OK   map_names_equal_readings_count                 count=5
+  OK   booked_arch_log_carries_the_face               line=架构分片汇总通过：4 片，完整覆盖 336 个具名检查且无重复
+  OK   booked_arch_face_equals_readings               shards=4 checks=336
+  OK   booked_ledger_log_carries_readings_range       body=Strategy refactor ledger: R01-R23 valid; 23 acceptance scenarios and 1
+  OK   booked_summary_rc_keys_are_two_and_zero        keys=r11_gate_arch_rc,r11_gate_ledger_rc
+  OK   booked_launch_has_both_leg_lines               legs=arch,ledger
+  OK   booked_launch_nonzero_face_is_dash             
+  OK   arch_three_runs_same_face                      values={"r11_gate_": ["4", "336"], "r8_gate_": ["4", "336"], "r9_gate_": ["4", "336"]}
+  OK   r9_arch_sha_matches_readings                   disk=af2240cc460fd879 readings=af2240cc460fd879
+  OK   run3_arch_log_fresh_vs_run2                    r9=af2240cc460fd879 r11=4bf6fd45c71e1b71
+  OK   ledger_three_faces_same_values                 values=["('01', '23', '23', '132')"]
+  OK   ledger_three_faces_same_log_sha                shas=['2baa86413ab39add', '2baa86413ab39add', '2baa86413ab39add']
+  OK   run3_ledger_range_scenes_binds_parsed          face=R01–R23/23/132
+  OK   driver_clock_ge_arch_self_report               driver=111.76 tool=111.45
+  OK   launch_bytes_equals_disk_chars_arch            bytes=68 chars=68 disk_bytes=156
+  OK   launch_bytes_equals_disk_chars_ledger          bytes=104 chars=104 disk_bytes=105
+  OK   changelog_sha_is_the_run3_pinned_bytes         disk=39c5c05a267c7ff5 pinned=39c5c05a267c7ff5
+  OK   changelog_pure_crlf_before_write               crlf=3181 lf=3181 cr=3181
+  OK   plan_doc_untouched_since_run2                  now=1199a736b11af81f then=1199a736b11af81f
+  OK   run3_bullet_absent_before_write                found=0
+  OK   pinned_sha_absent_from_page_before_write       sha=39c5c05a267c7ff5 count=0
+  OK   run2_bullet_anchor_unique                      hits=[30]
+  OK   blank_after_run2_bullet                        next=''
+  OK   section_head_after_blank                       head='### 易用性首跑收口 · wheel 自带报告渲染器、Windows run.'
+  OK   arch_tool_skip_needle_exactly_once             count=1
+  OK   ledger_tool_reads_no_docs                      count=0
+WROTE sha 39c5c05a267c7ff5 -> 0ddf106e0b8b29a8 bytes 582066 -> 584551
+  OK   line_count_plus_two                            before=3182 after=3184
+  OK   run2_bullet_untouched                          chars=3076
+  OK   new_bullet_position                            line='- **run 3 · 把上一条末尾那句「这是结构性判据，不是实'
+  OK   blank_before_and_after_new_bullet              before='' after=''
+  OK   section_head_untouched                         head='### 易用性首跑收口 · wheel 自带报告渲染器、Wind'
+  OK   tail_lines_untouched                           before=3149 after=3149
+  OK   changelog_pure_crlf_after_write                crlf=3183 lf=3183 cr=3183
+  OK   new_bullet_appears_once                        count=1
+  OK   pinned_sha_literal_once                        count=1
+  OK   arch_sha_arrow_in_text                         arrow=af2240cc460fd879->4bf6fd45c71e1b71
+  OK   ledger_sha_mention_link_label_run3             count=1 needle=`r11_gate_ledger.log` [`2baa86413ab39add`]
+  OK   ledger_sha_mention_link_label_post_book        count=1 needle=`r10_post_book_ledger.log` [`2baa86413ab39add`]
+  OK   ledger_sha_mention_three_faces_same            count=1 needle=同为 `2baa86413ab39add`
+  OK   ledger_sha_has_no_unattributed_mention         total=3
+  OK   all_five_booked_links_present                  found=5
+  OK   every_new_bullet_link_resolves                 names=dbc0bcd8-6b84-45e2-96fe-e041ac22a20a.log,d8df8654-4c93-49ef-abcf-a9e2a7a85446.log,09bca419-8594-43e5-9fe7-bf1c860a6ebb.log,b2df94a1-21a5-47fe-81eb-65c1a64196d3.log,8b5e04b7-c52a-42f8-934a-74bd6d316c4f.log
+  OK   no_doubled_paren_after_any_link                doubled=none
+  OK   every_link_closed_exactly_once                 counts=[1, 1, 1, 1, 1]
+  OK   new_bullet_sits_in_this_rounds_section         heads_above=[0]
+  OK   skip_needle_recount_matches_text               after=1
+  OK   docs_needle_recount_matches_text               after=0
+  OK   changelog_grew_by_one_bullet_only              before=316 after=317
+  OK   plan_doc_still_untouched                       sha=1199a736b11af81f
+LANDED line=33 chars=1508 booked_links=5 gates=56 sha16 39c5c05a267c7ff5 -> 0ddf106e0b8b29a8 restored=False
+CHECKS_FIRED=56 PROBLEMS=none

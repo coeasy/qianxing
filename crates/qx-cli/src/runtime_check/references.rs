@@ -5,6 +5,7 @@ use crate::{
 use qx_app::fill_model_failure;
 use qx_runtime::{RuntimeConfig, StrategyRuntimeConfig, WorkerRole};
 use qx_xingban::AshareRuleConfig;
+use std::net::SocketAddr;
 use std::path::Path;
 
 pub(crate) fn validate_runtime_references(
@@ -21,6 +22,18 @@ pub(crate) fn validate_runtime_references(
         config.api.max_concurrent_connections,
     ) {
         failures.push(format!("api {problem}"));
+    }
+    if config.api.cors_allowed_origins.is_empty()
+        && config
+            .api
+            .bind
+            .parse::<SocketAddr>()
+            .is_ok_and(|bind| !bind.ip().is_loopback())
+    {
+        warnings.push(format!(
+            "api.cors_allowed_origins 为空且 api.bind={} 不是回环地址；带 Origin 的 /events/live WebSocket 不受来源限制。若该端口可从共享网络访问，请配置精确来源名单或限制网络入口",
+            config.api.bind
+        ));
     }
 
     let require_file = |failures: &mut Vec<String>, label: String, configured: &str| {

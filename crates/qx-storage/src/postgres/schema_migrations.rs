@@ -51,10 +51,35 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
             .into_iter()
             .map(|row| row.get::<_, String>(0))
             .collect::<Vec<_>>();
-        if versions != ["1", "2"] {
+        if versions != ["1", "2", "3", "4"] {
             return Err(StorageError::Conflict(format!(
                 "PostgreSQL v1 upgrade recorded unexpected versions: {versions:?}"
             )));
+        }
+        client
+            .batch_execute(
+                "DELETE FROM qx_schema_migrations WHERE version = '4';
+                 DROP TABLE qx_deployment_blobs;",
+            )
+            .map_err(pg_error)?;
+        migrate_client(&mut client)?;
+        let blob_table_exists: bool = client
+            .query_one("SELECT to_regclass('qx_deployment_blobs') IS NOT NULL", &[])
+            .map_err(pg_error)?
+            .get(0);
+        let version_four_exists: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1 FROM qx_schema_migrations WHERE version = '4'
+                 )",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        if !blob_table_exists || !version_four_exists {
+            return Err(StorageError::Conflict(
+                "PostgreSQL v3 upgrade did not restore the deployment blob schema".into(),
+            ));
         }
         for index in [
             "qx_jobs_pending_idx",
@@ -80,10 +105,12 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
 
         client
             .batch_execute(
-                "DELETE FROM qx_schema_migrations WHERE version = '2';
+                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4');
                  DROP INDEX qx_jobs_pending_idx;
                  DROP INDEX qx_control_commands_pending_idx;
                  DROP INDEX qx_outbox_pending_idx;
+                 DROP TABLE qx_deployment_blobs;
+                 DROP TABLE qx_json_state;
                  DROP TABLE qx_control_commands;",
             )
             .map_err(pg_error)?;
@@ -111,7 +138,26 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
             )
             .map_err(pg_error)?
             .get(0);
-        if version_two_exists || partial_index_exists {
+        let version_three_exists: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1 FROM qx_schema_migrations WHERE version = '3'
+                 )",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        let version_four_exists: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1 FROM qx_schema_migrations WHERE version = '4'
+                 )",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        if version_two_exists || version_three_exists || version_four_exists || partial_index_exists
+        {
             return Err(StorageError::Conflict(
                 "failed PostgreSQL migration leaked v2 DDL or marker".into(),
             ));
@@ -240,7 +286,7 @@ fn postgres_legacy_schema_adoption_recognizes_v1_v2_and_rejects_drift() {
             .into_iter()
             .map(|row| row.get(0))
             .collect();
-        if upgraded != ["1", "2"] {
+        if upgraded != ["1", "2", "3", "4"] {
             return Err(StorageError::Conflict(format!(
                 "PostgreSQL adopted v1 schema did not upgrade to v2: {upgraded:?}"
             )));

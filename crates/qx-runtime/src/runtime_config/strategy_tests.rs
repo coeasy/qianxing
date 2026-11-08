@@ -65,6 +65,31 @@ fn research_snapshot_required_rejects_missing_path() {
 }
 
 #[test]
+fn a_single_builtin_window_override_is_checked_against_the_default_pair() {
+    let mut config = config();
+    config.strategy.builtin_strategy = Some("ema_cross".into());
+    config.strategy.bars_snapshot_path = Some("bars.json".into());
+    config.strategy.builtin_fast_window = Some(25);
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("builtin_fast_window 必须小于 builtin_slow_window"));
+
+    config.strategy.builtin_fast_window = Some(4);
+    config.validate().unwrap();
+
+    config.strategy.builtin_fast_window = None;
+    config.strategy.builtin_slow_window = Some(4);
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("builtin_fast_window 必须小于 builtin_slow_window"));
+
+    config.strategy.builtin_slow_window = Some(25);
+    config.validate().unwrap();
+}
+
+#[test]
 fn c_abi_strategy_requires_digest_and_exclusive_source() {
     let mut config = config();
     config.strategy.c_abi_library = Some("strategy.dll".into());
@@ -134,6 +159,7 @@ fn runtime_timer_strategy_requires_an_explicit_live_base_strategy_binding() {
 #[test]
 fn runtime_orderbook_strategy_uses_the_durable_live_base_strategy_path() {
     let mut config = config();
+    configure_testnet_mtls(&mut config);
     config.strategy.python_strategy_spec = Some(serde_json::json!({"data_level": "orderbook"}));
     assert!(config
         .validate()
@@ -268,6 +294,7 @@ fn live_builtin_and_pair_arbitrage_require_stream_inputs() {
 #[test]
 fn live_strategy_requires_market_data_and_execution_topology() {
     let mut config = config();
+    configure_testnet_mtls(&mut config);
     config.workers.push(WorkerConfig {
         id: "strategy-live".into(),
         role: WorkerRole::Strategy,
@@ -401,6 +428,7 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
     config.strategies.push(StrategyRuntimeConfig {
         id: Some("strategy-alpha".into()),
         version: "alpha-v1".into(),
+        checkpoint_state_migration: None,
         max_orders: 10,
         risk_rules: None,
         cost_rules_path: None,
@@ -410,6 +438,8 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         initial_cash_raw: None,
         venue_id: Some("okx".into()),
         instrument: Some("BTC/USDT.OKX".into()),
+        python_resource_paths: Vec::new(),
+        required_capabilities: Vec::new(),
         target_qty: 0,
         target_snapshot_path: None,
         research_snapshot_path: None,

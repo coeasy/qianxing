@@ -3,6 +3,8 @@
 //! 文件名由调用方提供，但内容必须先经过 EventLog 的序号、时间和 JSON 校验；写入
 //! 使用临时文件+rename，避免进程中断留下半个事实日志。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::retry;
 use qx_core::{EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
@@ -33,6 +35,15 @@ pub use control_queue::ControlCommandQueueBackend;
 use event_log_rules::validate_event_log_name as validate_segment_name;
 use event_log_rules::{validate_event_log, validate_event_log_name};
 pub use job_queue::JobQueueBackend;
+
+/// Default hard cap for durable, unacknowledged jobs in a queue.
+pub const DEFAULT_MAX_PENDING_JOBS: usize = 4_096;
+/// Maximum serialized size accepted for one durable job envelope.
+pub const MAX_QUEUED_JOB_BYTES: usize = 16 * 1024;
+/// Default hard cap for durable, unacknowledged control commands in a queue.
+pub const DEFAULT_MAX_PENDING_CONTROL_COMMANDS: usize = 4_096;
+/// Maximum serialized size accepted for one durable control command.
+pub const MAX_CONTROL_COMMAND_BYTES: usize = 16 * 1024;
 pub use segmented_event_log::SegmentedEventLogStore;
 pub(crate) use state_envelope::JsonStateEnvelope;
 use state_envelope::{
@@ -59,9 +70,10 @@ pub use sqlite::{
 mod postgres;
 #[cfg(feature = "postgres")]
 pub use postgres::{
-    adopt_legacy_postgres_schema, PostgresAuditStore, PostgresConsumerStateStore,
-    PostgresControlCommandQueue, PostgresControlStore, PostgresEventLogStore, PostgresJobQueue,
-    PostgresOutboxStore, PostgresSnapshotStore, PostgresStorage,
+    adopt_legacy_postgres_schema, PostgresAuditStore, PostgresBlobStore,
+    PostgresConsumerStateStore, PostgresControlCommandQueue, PostgresControlStore,
+    PostgresEventLogStore, PostgresJobQueue, PostgresJsonStateStore, PostgresOutboxStore,
+    PostgresSnapshotStore, PostgresStorage,
 };
 
 mod wait_budget;
@@ -109,10 +121,26 @@ impl EventLogFileStore {
 
     pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
         let path = self.path(name)?;
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(format!(".{name}.write.lock")))?;
+        std::fs::create_dir_all(&self.root).map_err(|error| {
+            StorageError::Io(format!(
+                "创建 EventLog 目录 {} 失败: {error}",
+                self.root.display()
+            ))
+        })?;
+        let lock_path = self.root.join(format!(".{name}.write.lock"));
+        let _lock = acquire_storage_lock(lock_path.clone()).map_err(|error| {
+            StorageError::Io(format!(
+                "获取 EventLog 写锁 {} 失败: {error:?}",
+                lock_path.display()
+            ))
+        })?;
         if path.exists() {
-            let existing = self.read(name)?;
+            let existing = self.read(name).map_err(|error| {
+                StorageError::Io(format!(
+                    "读取现有 EventLog {} 失败: {error:?}",
+                    path.display()
+                ))
+            })?;
             if existing.len() > log.len()
                 || existing
                     .events()
@@ -131,8 +159,9 @@ impl EventLogFileStore {
 
     pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
         let path = self.path(name)?;
-        let content =
-            std::fs::read_to_string(path).map_err(|error| StorageError::Io(error.to_string()))?;
+        let content = std::fs::read_to_string(&path).map_err(|error| {
+            StorageError::Io(format!("读取 EventLog {} 失败: {error}", path.display()))
+        })?;
         EventLog::from_json(&content).map_err(StorageError::Core)
     }
 
@@ -1000,6 +1029,7 @@ impl ControlCommandQueue {
         };
         let path = self.command_path(queued.command.command_id)?;
         self.ensure_dirs()?;
+        let _capacity_lock = acquire_storage_lock(self.root.join(".enqueue.lock"))?;
         let _enqueue_lock = acquire_storage_lock(
             self.root
                 .join("commands")
@@ -1009,6 +1039,13 @@ impl ControlCommandQueue {
             let existing = self.read_json::<QueuedControlCommand>(&path)?;
             self.validate_existing_command(&existing.command, &queued.command)?;
             return Ok(path);
+        }
+        let pending_count = self.pending_count()?;
+        if pending_count >= DEFAULT_MAX_PENDING_CONTROL_COMMANDS {
+            return Err(StorageError::Conflict(format!(
+                "ControlCommandQueue pending capacity reached: {pending_count}/{}",
+                DEFAULT_MAX_PENDING_CONTROL_COMMANDS
+            )));
         }
         write_atomic_path(
             &path,
@@ -1046,6 +1083,26 @@ impl ControlCommandQueue {
         }
         commands.sort_by(crate::control_queue::compare_control_command_order);
         Ok(commands)
+    }
+
+    fn pending_count(&self) -> Result<usize, StorageError> {
+        let dir = self.root.join("commands");
+        let mut entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(StorageError::Io(error.to_string())),
+        };
+        entries.try_fold(0usize, |count, entry| {
+            let path = entry
+                .map_err(|error| StorageError::Io(error.to_string()))?
+                .path();
+            let is_pending_command = path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".lease.json"));
+            Ok(count + usize::from(is_pending_command))
+        })
     }
 
     pub fn available(&self, now: u64) -> Result<Vec<QueuedControlCommand>, StorageError> {
@@ -1511,6 +1568,118 @@ mod tests {
         .unwrap();
         let corrupted = store.read("run");
         assert!(corrupted.is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn segmented_event_store_accepts_exact_q68_manifest_digest() {
+        let root = crate::test_temp_dir().join(format!(
+            "qianxing-segmented-q68-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SegmentedEventLogStore::new(&root, 8).unwrap();
+        let mut log = EventLog::new();
+        let seq = log.alloc_seq();
+        log.append(Event::new(
+            seq,
+            1,
+            Priority::APPLY,
+            EventKind::AccountPositionSnapshot {
+                account_id: "main".into(),
+                venue_id: "OKX".into(),
+                positions: vec![qx_core::event::AccountPositionSnapshot {
+                    instrument: qx_core::InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap(),
+                    settlement_currency: None,
+                    quantity: qx_core::Quantity::from_i64(1),
+                    average_price: None,
+                    mark_price: None,
+                    liquidation_price: None,
+                    unrealized_pnl: None,
+                    initial_margin: None,
+                    maintenance_margin: None,
+                    leverage: None,
+                    margin_mode: None,
+                    position_side: None,
+                    exact_amounts: None,
+                }],
+            },
+        ));
+        store.write("run", &log).unwrap();
+
+        let manifest_path = root.join("run.manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["digest"] = serde_json::json!(log.legacy_q68_event_digest());
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        assert_eq!(store.read("run").unwrap().events(), log.events());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn segmented_event_store_reads_and_verifies_only_a_trusted_suffix() {
+        let root = crate::test_temp_dir().join(format!(
+            "qianxing-segmented-tail-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let writer = SegmentedEventLogStore::new(&root, 2).unwrap();
+        let reader = SegmentedEventLogStore::new(&root, 2).unwrap();
+        let mut prefix = EventLog::new();
+        for ts in 1..=3 {
+            let seq = prefix.alloc_seq();
+            prefix.append(Event::new(seq, ts, Priority::POST, EventKind::Settle));
+        }
+        writer.write("run", &prefix).unwrap();
+        assert_eq!(reader.read("run").unwrap().digest(), prefix.digest());
+
+        let mut latest = prefix.clone();
+        for ts in 4..=5 {
+            let seq = latest.alloc_seq();
+            latest.append(Event::new(seq, ts, Priority::POST, EventKind::Settle));
+        }
+        writer.write("run", &latest).unwrap();
+        let tail = reader
+            .read_since(
+                "run",
+                prefix.events().last().map(|event| (event, prefix.len())),
+                prefix.event_digest(),
+                prefix.next_seq(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(tail, latest.events()[prefix.len()..]);
+        assert_eq!(
+            EventLog::extend_event_digest(prefix.event_digest(), &tail),
+            latest.event_digest()
+        );
+
+        let no_tail = reader
+            .read_since(
+                "run",
+                latest.events().last().map(|event| (event, latest.len())),
+                latest.event_digest(),
+                latest.next_seq(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(no_tail.is_empty());
+        assert!(reader
+            .read_since(
+                "run",
+                latest.events().last().map(|event| (event, latest.len())),
+                latest.event_digest() ^ 1,
+                latest.next_seq(),
+            )
+            .unwrap()
+            .is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

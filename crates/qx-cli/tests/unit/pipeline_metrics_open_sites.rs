@@ -22,7 +22,7 @@ const COUNTED_OPEN_SITES: [(&str, usize); 2] = [
 /// 不并账的函数：函数名 -> 站点数与"为什么不该出现在按 worker 进程累计的量纲里"。
 ///
 /// 这里的每一项都必须在 qx-service `pipeline_metrics_report.rs` 模块文档里点名，反过来也一样。
-const EXEMPT_OPEN_SITES: [(&str, usize, &str); 17] = [
+const EXEMPT_OPEN_SITES: [(&str, usize, &str); 18] = [
     (
         "open_account_pipeline",
         1,
@@ -77,7 +77,12 @@ const EXEMPT_OPEN_SITES: [(&str, usize, &str); 17] = [
         1,
         "策略账户持仓只读投影",
     ),
-    ("run_paper_pipeline_once_with_report", 2, "一次性验收入口"),
+    (
+        "require_live_strategy_commands_resolved",
+        1,
+        "live admission 按策略轮次读取命令和账户 EventLog 的短生命周期只读快照",
+    ),
+    ("run_paper_pipeline_once_with_quote", 2, "一次性验收入口"),
     ("run_paper_submit_order", 1, "一次性验收入口"),
     ("paper_submit_action", 1, "一次性验收入口拆出的提交尝试"),
 ];

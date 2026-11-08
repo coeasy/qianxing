@@ -60,7 +60,7 @@ enum Reader {
 /// 新增模板必须在这里登记，否则 `every_deploy_template_is_registered_with_a_reader` 变红；
 /// `tools/check_architecture.py` 的模板覆盖判据用同一份清单和磁盘核对，双向都不许漏。
 const COVERAGE: &[(&str, Reader, Expected)] = &[
-    // —— 运行时配置（20）：`config validate` 的完整引用体检 ——
+    // —— 运行时配置（21）：`config validate` 的完整引用体检 ——
     (
         "qianxing.runtime.example.json",
         Reader::Runtime,
@@ -69,10 +69,11 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     (
         "qianxing.runtime.production.example.json",
         Reader::Runtime,
-        // 它引用的是部署机上的研究快照与数据集包（`/var/lib/qianxing/research/…`），仓库里
-        // 没有、也不该有那两格产物。除此之外它必须过完整的引用体检。
+        // 它引用部署机上的研究快照与数据集包，且 live worker 未列出可绑定的标的。
+        // 仓库里没有、也不该有生产数据或供应商签名材料。
         Expected::Refuses(&[
-            "config validate 失败 2 项",
+            "config validate 失败 3 项",
+            "live execution must list symbols",
             "research_snapshot_path",
             "dataset_bundle_path",
         ]),
@@ -105,7 +106,7 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     (
         "qianxing.runtime.ccxt.example.json",
         Reader::Runtime,
-        Expected::Ok,
+        Expected::Refuses(&["config validate 失败 1 项", "缺少签名角色目录"]),
     ),
     (
         "qianxing.runtime.paper-strategy.example.json",
@@ -115,7 +116,7 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     (
         "qianxing.runtime.binance-testnet.example.json",
         Reader::Runtime,
-        Expected::Ok,
+        Expected::Refuses(&["config validate 失败 1 项", "缺少签名角色目录"]),
     ),
     (
         "qianxing.runtime.ashare.example.json",
@@ -135,15 +136,20 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     (
         "qianxing.runtime.multi-venue-arbitrage.example.json",
         Reader::Runtime,
-        Expected::Ok,
+        Expected::Refuses(&["config validate 失败 2 项", "缺少签名角色目录"]),
     ),
     (
         "qianxing.runtime.multi-venue-contract.example.json",
         Reader::Runtime,
-        Expected::Ok,
+        Expected::Refuses(&["config validate 失败 2 项", "缺少签名角色目录"]),
     ),
     (
         "qianxing.runtime.strategy-backtest.example.json",
+        Reader::Runtime,
+        Expected::Ok,
+    ),
+    (
+        "qianxing.runtime.product-spec-backtest.example.json",
         Reader::Runtime,
         Expected::Ok,
     ),
@@ -197,7 +203,7 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
     (
         "qianxing.crypto.multi-venue-perpetual-spec.example.json",
         Reader::MarketSpecSet("qianxing.runtime.multi-venue-contract.example.json"),
-        Expected::Ok,
+        Expected::Refuses(&["缺少签名角色目录"]),
     ),
     // —— CCXT endpoint 配置（5）：worker 绑定体检 ——
     (

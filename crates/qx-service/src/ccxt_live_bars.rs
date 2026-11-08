@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)] // Keep the focused fixture next to scheduling logic it covers.
+
 use qx_core::InstrumentId;
 use qx_datastruct::BarFrame;
 use qx_runtime::{resolve_runtime_relative_path, RuntimeConfig, WorkerConfig};

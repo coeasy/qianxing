@@ -280,6 +280,7 @@ pub(crate) fn build_joint_run_identity(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn joint_result_hash(
     canonical_fingerprint: &str,
     accounts: &[JointAccountBacktestResult],

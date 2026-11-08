@@ -25,6 +25,34 @@ answers `{"ok": true, "output": {…}}` or `{"ok": false, "error": "…"}`. The
 columnar mode moves bar history as fixed-width little-endian columns (`QXCB` magic) and
 keeps the identity fields as canonical JSON.
 
+External process workers using durable checkpoints must include `strategy_checkpoint`
+in successful responses and, when the input checkpoint has
+`adapter_state.state_mode == "external-process"`, include a
+`checkpoint_restore_ack` object. Its `schema_version` is `1` and its
+`checkpoint_sha256` must equal the SHA-256 of the input checkpoint encoded as compact
+UTF-8 JSON with every object recursively sorted by key. This binds the acknowledgment
+to the exact persisted checkpoint supplied to that request; missing or mismatched
+acknowledgments reject the response before the worker can commit its cursor.
+Bootstrap inputs (`state_mode == "bootstrap"`) do not require an acknowledgment.
+See [`strategy-process-checkpoint-restore-ack-v1.json`](strategy-process-checkpoint-restore-ack-v1.json).
+For Python workers, the digest can be computed after restoring the input state:
+
+```python
+import hashlib
+import json
+
+checkpoint_bytes = json.dumps(
+    request["strategy_checkpoint"],
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+).encode("utf-8")
+response["checkpoint_restore_ack"] = {
+    "schema_version": 1,
+    "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+}
+```
+
 Strategies never receive credentials, Venue clients, mutable Ledger handles, or
 control-plane handles. `StrategyContractOutput` is an *order intent*, not an order: every
 intent is rebuilt into a core `Order` by `build_strategy_order_from_contract_intent` and

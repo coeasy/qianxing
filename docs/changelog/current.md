@@ -1,4 +1,378 @@
+### 0.3.0 发布候选复验 · Windows 本机门禁通过（2026-11-08，未发布工作区）
+
+- Linux 复测修复了三类失败：将测试子进程指向隔离 Python venv、把明文模板数契约从 15 更新为当前的 16、将并发文件锁等待预算从约 100ms 提至约 5s；PreparedEvaluation 无待清理文件时不再同步不存在的父目录。相关 7 个定向回归、SQLite 严格 Clippy 与 `cargo check` 通过。随后取消构建争用，Linux 默认 SQLite CLI 全套复测通过 696 项、14 个 harness、0 失败，先前 7 项 Python/外部 worker 超时未复现；证据见 `maturity/evidence/linux-sqlite-cli-retest-2026-11-08.json`。PostgreSQL/NATS feature matrix 与真实服务仍未验收。
+- Windows 全量测试捕获并修复 A 股 portable EvidenceBundle 导出配置指纹不一致：声明配置现与回测共同规范化 built-in strategy version。修复后 `cargo test --workspace --all-features -j 1 --quiet` 通过（qx-cli 498 passed、1 ignored，另有需 PostgreSQL DSN/C++ fixture 的测试按条件忽略），严格 workspace Clippy 通过；Python 604 passed、3 skipped，架构快检 372 项通过。`maturity/evidence/windows-release-candidate-rebuild-2026-11-08.json` 记录本轮证据。
+- Rust CLI crate 增加 crates.io 元数据并从包文件清单排除 `.task-tmp`；检查确认 0 个测试临时文件会进入 tarball。源码包生成目前被未发布的 workspace 依赖拦截（配置 registry index 中找不到 `qx-adapter`），因此 Rust 发布渠道保持 GitHub Release 二进制或 `cargo install --git`；本轮未进行任何外部上传。
+- 当前 tag 发布供应链工作流通过 actionlint 1.7.7 静态检查：Linux/macOS/Windows CLI 与三平台 wheel 构建、哈希/SBOM/来源证明、GitHub Release 和 PyPI Trusted Publishing 的依赖与权限结构均可解析；这不等于跑过 tag 发布或实际上传。
+- 由最新源码重建 Windows CLI 与 wheel 并重复构建 wheel：wheel 为 22,790,887 字节，SHA-256 `893b8ccbc9b8dc7bcf5a6b0bf33ebd4cbf7f72a27635888748b1cc5582520cab`；CLI 为 43,920,384 字节，SHA-256 `9e9a987a04120de458e8517d3e70df9f8b494e49b45f0a50f9a8ad326f7282e0`。两次 wheel 字节一致，stable-ABI 审计、全新虚拟环境离线安装和 17 策略端到端 smoke 通过。候选 build identity 为 dirty，尚未发布。
+
+- 账户快照升级到 v4，余额接口与 Python bridge 同步公开 `equity_diagnostic`：权益为空时注明原因，并列出缺少标记价格的持仓；保留 v1–v3 读取与 v3 schema 路由。平仓/零数量仓位不再因缺少标记价而阻断现金权益计算。协议、服务、API、Python 与控制台回归已补齐。修复后的 Windows 统一复验通过：Rust `cargo test --workspace --all-features -j 1 --quiet` 全通过（`qx-cli` 497 passed、1 ignored；真实 PostgreSQL DSN 与 C++ shared-library fixture 用例按环境条件忽略）；Python `unittest discover` 604 passed、3 skipped；改动 crate 严格 Clippy、4 分片架构快检（372 项）、能力目录/路由清单生成检查、rustfmt、`git diff --check`、Python bridge 与控制台测试均通过。Linux/PostgreSQL 实例运行仍须在 Linux runner 验收。
+- 回测轨验收现会对 crypto quickstart 与 A 股示例的每次回测生成 EvidenceBundle 并运行 `evidence verify-run`；五类产物摘要纳入记录。同目录要求 bundle 字节一致，独立项目先校验引用摘要，再归一化路径/config 派生身份后比较。币圈、A 股真实验收通过，脚本重写并更新两份 maturity 记录；Python 全套 604 passed、3 skipped，归一化回归与更新后架构快检（372 项）均通过。
+
+- 当前工作树 Rust 全量测试通过（`cargo test --workspace --all-features -j 1 --quiet`）；Python 全套 687 passed、14 skipped；workspace Clippy、生产代码 `unwrap/expect` 门禁、无后端 feature-off 检查及 5 条 CI feature matrix 均通过；格式与架构 372 项检查通过；actionlint、控制台 JavaScript 语法、testnet 验收工具单测（6/6）及四处版本号与 v0.3.0 tag 一致性检查通过。
+- 本轮改动后的统一复验：`cargo test --workspace --all-features -j 1` 通过，`cargo clippy --workspace --all-targets --all-features -j 1 -- -D warnings` 通过；Python 全套 603 passed、3 skipped；架构快检 4 片覆盖 372 项，格式、能力目录生成检查和 Markdown 链接检查通过。PostgreSQL feature 测试 32 passed、4 个需真实数据库的用例按缺少 `QX_TEST_POSTGRES_DSN` 忽略。
+- 2026-11-08 发布构建器收敛后重新统一测试：`cargo test --workspace --all-features -j 1 --quiet` 通过（qx-cli 497 passed、1 ignored），Clippy 与 rustfmt 检查通过；Python 全套 603 passed、3 skipped。该轮先发现并修复本地 wheel 脚本缺少 pip 前置探测、Rust 文档契约仍引用旧 `pip wheel` 命令的问题；修复后定向契约测试通过，Rust 全 workspace 重跑通过。actionlint、POSIX 脚本语法、Markdown 链接与架构快检 372 项均通过。
+- 从当前工作树重建 Windows Release CLI 与 stable-ABI wheel，并在全新 Python 3.12 虚拟环境离线安装：wheel 结构审计通过，68 个 `.py` 文件与源码一致，包元数据、Python `__version__` 与原生扩展版本均为 `0.3.0`，wheel 端到端冒烟通过；正式构建脚本现直接调用 maturin（本机验证 pip wheel 前端长时间占用 CPU 且无产物后切换），文件为 `qianxing-0.3.0-cp310-abi3-win_amd64.whl`，22,764,886 字节，SHA-256 `0805d9cf59e48046d4e7fd57ba7476bd00e25bee71dcbf4c63a4af4c6bd13db8`。内嵌 `.pyd` SHA-256 与 `target/release/_qianxing_native.dll` 相同。CLI 为 43,707,904 字节，SHA-256 `0ec080e742d4a3aad49770a7ef2362c2968d62309291d65c9136f597310d298c`；`qx-cli version` 为 0.3.0、Windows x86_64 Release。两项产物与 `SHA256SUMS` 已放入 `dist/release-candidate-v0.3.0-windows-x86_64/`。该本地候选仍带 dirty 构建身份，尚未发布。
+- 2026-11-08 为避免构建工具链漂移，正式构件将 Rust 固定为 `1.98.1`，Python PEP 517 元数据、本地构建脚本与 PyPI 发布工作流统一固定 `maturin==1.15.0`；两个 wheel 入口从当前 Git commit 导出 `SOURCE_DATE_EPOCH`，稳定 SBOM UUID/时间戳。Rust 版本与本机全量构建环境一致。连续两次 Windows 构建得到逐字节相同的 wheel（22,764,840 字节，SHA-256 `9a2b951007bec40de6ba5d7ee12ddac4ab65e3b3bd7e6065ae10490e8424ae28`），内含 CycloneDX SBOM；stable-ABI 审计、全新虚拟环境安装和端到端 smoke 通过。发布 matrix 已增加每个原生平台的重复构建与逐字节比较门禁；Windows 本地复建已通过，Linux/macOS 需由 tag 工作流提供实测结果。架构门禁核对工具版本、时间戳来源和 wheel 重复构建步骤；GitHub Actions `actionlint`、架构快检（4 片、372 项）通过。本地候选目录 `dist/release-candidate-v0.3.0-windows-x86_64/` 已更新 wheel、当前 Release CLI 与 `SHA256SUMS`，清单逐项复核通过；构件 build identity 仍标记 dirty，不能作为正式 tag 构件。
+- PostgreSQL 建连已改为可取消的统一总 deadline，并由本地 TCP stub 覆盖 startup 与 TLS 停滞握手及 socket 关闭。系统 DNS 的 libc resolver worker 不能强制取消；该剩余限制、真实 DNS 故障注入以及 Linux/PostgreSQL 实例验收已保留在能力台账。PyPI Trusted Publisher 与发布工作流文件名 `python-wheels.yml` 对齐；发布 tag 尚未触发，未上传 PyPI/GitHub Release。
+- 2026-11-08 本机 WSL/Podman 因 WSL `HCS_E_SERVICE_NOT_AVAILABLE` 且 `vmcompute`/`hns` 服务不存在，无法启动 Linux VM。使用临时 Zig/cargo-zigbuild 工具链交叉构建 `qx-cli`（`x86_64-unknown-linux-gnu`）成功：生成 ELF64 little-endian、ET_DYN x86_64，36,211,952 字节，SHA-256 `4376d143f81b534ff20948be84270e6135a405f99cb063329c757232b31ddd63`；动态依赖含 `libc.so.6`。这是 Linux 目标编译证据，不是 Linux 运行、PostgreSQL 集成或 sandbox 验收；未提升 `sandbox_tested` 状态。
+- 2026-11-08 Simular Linux Box 实际构建并验证当前源码 wheel：`qianxing-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl`（23,007,155 字节，SHA-256 `0c5a3a3e885ac651fb293a7c048c75bbd65c0aa76180f5790a9b1e8181e54488`）。构建脚本绝对输出目录回归、stable-ABI/载荷审计、干净 venv 离线安装和完整 wheel smoke 全通过；maturity 证据为 `linux-wheel-release-preflight-2026-11-08.json`。工作区含未提交修改，此 wheel 仍是未发布候选，不代表 tag/PyPI/GitHub Release 构件；PostgreSQL live 与 macOS 运行验收仍待完成。
+- 同机 `cargo zigbuild check -p qx-cli --features postgres --target x86_64-unknown-linux-gnu` 未能完成：跨编译环境没有 Linux OpenSSL sysroot/headers，`openssl-sys` 因缺失目标库而停止；这不是测试通过。Windows PostgreSQL feature 测试与 Clippy 已通过，当前工作树的 Linux/PostgreSQL feature 编译和运行仍须由带 OpenSSL 开发库的 Linux runner/VM 验收。
+- Windows C++ SDK Release 构建、3 项 CTest、安装包消费者、Rust C ABI 插件、JSONL 与 JSON/columnar 共享内存 worker smoke 全通过。wheel 与 CLI 在干净环境重装，quickstart 和 13 个 Python 示例检查通过。
+- 机器结果及哈希记录于 [`windows-local-release-preflight-2026-11-07.json`](../../maturity/evidence/windows-local-release-preflight-2026-11-07.json)、[`clean-install-current-worktree-2026-11-07.json`](../../maturity/evidence/clean-install-current-worktree-2026-11-07.json) 与 [`dataset-manifest-json-canonicalization-2026-11-07.json`](../../maturity/evidence/dataset-manifest-json-canonicalization-2026-11-07.json)。较早预检源树含 689 项未提交改动，本次序列化修复后的 clean-install 源树含 691 项；工作树仍为 dirty。Linux/macOS、PostgreSQL 实例用例及干净提交的发行构件尚未验收，因此这不是正式发布证明。
+- 使用同一隔离安装 CLI 重跑回测与 Paper 验收：crypto、A 股示例均可确定性复现，Paper 主链、审计链与重跑幂等通过；三条均不需要交易所凭据、不访问网络、不发送订单。生成记录位于 `maturity/backtest_acceptance.yaml`、`maturity/ashare_example_backtest_acceptance.yaml` 与 `maturity/paper_acceptance.yaml`。
+- DatasetBundle 的 JSON 组件格式现在始终以显式 `format: json` 序列化，保留显式字段的 round-trip 字节稳定性，并将历史缺字段输入归一到同一规范形式；回归覆盖显式格式和旧版缺省格式。该规范化会改变 JSON 组件 Bundle fingerprint，依赖旧 fingerprint 的运行证据已重跑，完整验收见 [`dataset-manifest-json-canonicalization-2026-11-07.json`](../../maturity/evidence/dataset-manifest-json-canonicalization-2026-11-07.json)。
+- `qx-cli init` 为新文件后端项目写入 `event_log_segment_events: 1024`，以分段日志作为新项目默认；既有配置缺字段时继续读取单文件历史，避免自动换账。初始化进程测试覆盖生成值，运行时配置测试覆盖旧 JSON 缺字段兼容。完整 Paper worker 性能和 Linux/数据库环境验收仍待完成；复验记录见 [`event-log-init-segment-default-2026-11-07.json`](../../maturity/evidence/event-log-init-segment-default-2026-11-07.json)。
+- 当前源码 Python Windows wheel 已重建并在隔离虚拟环境安装、运行端到端冒烟：`qianxing-0.3.0-cp310-abi3-win_amd64.whl`，SHA-256 `f35078108ea554867a969321219c43cf7738667e4161682a3d66a4e5d3b062e4`。macOS/Linux wheel 由发布流水线矩阵生成；该 wheel 是未发布的本机候选包。
+- Rust 通过 GitHub Release 平台二进制或 `cargo install --git` 安装（暂未上 crates.io）；Python wheel 经 GitHub Release 与 PyPI Trusted Publishing 同步发布。发布工作流文件已与 `coeasy/qianxing` 的 PyPI publisher 配置 `python-wheels.yml` 对齐，移除仅靠仓库变量才启用的发布开关；示例 Git 安装命令现带 `--locked`。
+- Rust CLI 已用 `cargo install --path crates/qx-cli --locked --root <隔离目录>` 实装，并从已安装二进制跑通 quickstart 五步、`runtime-check` 与 1024 段事件日志默认；生成 17 个项目文件、回测 `result_hash=45038cdcb863b87f`，未访问网络或发送订单。记录见 [`rust-cargo-install-quickstart-2026-11-07.json`](../../maturity/evidence/rust-cargo-install-quickstart-2026-11-07.json)。
+- 账户快照在交易所未提供持仓未实现盈亏时，现使用匹配的冻结市场规格和完整数量/开仓价/标记价计算，并同步写入精确十进制与旧版 1e-9 字段；保留交易所原值，缺输入时继续发布 null。规格币种冲突会拒绝该快照投影。
+
+### 0.3.0 发布候选收敛 · Windows 产物与本机门禁通过（2026-11-06，未发布工作区）
+
+- 市场规则身份补上无结果变化回归：同一真实回测仅将 `valid_to` 延到样例行情之后，结果哈希与执行模型指纹保持不变，RunManifest `run_id` 必须变化；这验证了完整规格内容绑定在运行身份上，同时 `model_fingerprint` 保留撮合/风险模型语义。架构门禁将此回归纳入市场规格来源契约，共 11 项判据；目标回归通过。
+- 延伸核对市场规格样例：`the_backtest_chain_reads_the_generated_frozen_spec` 现在不仅确认受跟踪的产品型 `deploy/qianxing.binance.spot.spec.json` 能走完整真实回测并产生成交，也核对生成的 RunManifest 明确写出 `PRODUCT_MARKET_SPEC_VERSION`。目标用例通过。当前跟踪的历史 summary/run 仍不适合携带为可移植样例（其旧 summary 已被拒绝，且输出指向机器路径），所以没有把临时运行产物伪装成发布样例；该项继续作为未收口限制保留。
+- 本轮收尾：`cargo test --workspace -j 1` 通过；严格 workspace Clippy 通过。Clippy 指出的 `InstrumentId::symbol()` 多余借用已修正，并由 qx-core 120 项单测、30 项集成测试及全 workspace Clippy 复验。完整 Python 测试集 603 项通过、3 项跳过；schema 测试显式保留 InstrumentId 私有 symbol 的自定义 Serde wire 字段。架构判据更新为检查私有 getter 的实际调用形态，四片 367/367 通过。Windows Release CLI 与 stable-ABI wheel 以修复后的源码重建，wheel 审计、隔离安装、quickstart 和 13 个 Python 示例检查通过；本地候选状态与 SHA256SUMS 已刷新。候选仍为 dirty 本地构建，不构成正式发布证明。
+- 复核成熟度台账时发现 `tracked_sample_artifacts_are_validated_by_nothing` 已被当前代码与 `blessed_artifacts` 全量样例测试收口：16 份遗留 summary 均显式拒绝并给出 v7 重跑命令，测试不会重写或重 bless；移除这条过期限制，补充拒绝路径证据并重生成能力目录与未验证清单。
+- 能力目录重生成后，Windows Release CLI 与 stable-ABI wheel 再次从当前源码构建；wheel 结构审计、隔离安装/CLI 与 native 兼容性、quickstart、13 个示例编译及最终候选 6 项 SHA-256 检查均通过。
+
+在 R19 本机验收基础上收敛发布候选。初始化生成的 CCXT、多交易所与 sandbox 项目默认关闭交易执行及 live 策略；CCXT 与 sandbox 示例使用随模板提供的 OKX 行情样例。生成的 README 说明启用前需导入供应商签名角色目录、审阅市场规格并配置 sandbox 凭据，初始化器不生成授权材料。
+
+- PreparedEvaluation 文件替换新增真实子进程崩溃矩阵，覆盖临时文件创建、写入、同步、旧副本删除/改名、新版本发布、恢复副本清理及 Unix 目录同步边界。每个边界重启后都校验恢复到完整且摘要有效的旧版或新版；该证据只覆盖本机文件后端，不代替 SQLite/PostgreSQL 崩溃注入。
+- 增量复验：qx-cli 二进制单测 490 项通过；严格 Clippy、格式、Markdown 链接与架构快检（4 片、365 项）通过。本轮未重跑 workspace 全量测试；上方 workspace 计数保持为前次实测值。
+- 修正 GitHub Release 的 `release-identity.json`：`schema_registry_version` 从 `maturity/schema-registry.json` 读取，移除与当前登记册（29）不符的硬编码 `1`；发布供应链门禁现在检查该数据来源及禁止回退到常量。
+- 正式 tag 发布现在复用完整 CI 工作流，并将三平台 CLI、wheel、C++ SDK、Web 控制台、SBOM、可选 PyPI 发布和 GitHub Release 全部置于 CI 成功之后；避免测试失败的提交绕过主分支检查直接发版。actionlint 与新增发布架构判据通过；尚未在 GitHub tag 上实际触发验证。
+- C++ SDK Release 归档改用确定性打包器，固定条目顺序、时间戳和 uid/gid，拒绝符号链接并避免输出写入源目录。3 项打包测试通过；当前 Windows SDK 候选重复打包所得 tar.gz 字节一致。GitHub tag 工作流尚未实跑。
+- 收口 L2 FIFO 队列估算边界：新增真实回测序列，覆盖可见深度零变化、目标档位消失与重现，以及重建基线后才按后续深度减少估算成交；qx-xingban 220 项单测及 24 项集成测试、严格 Clippy、qx-api 148 项测试、qx-python 6 项 Rust 测试及 3 项原生目录 Python 测试通过。架构门禁登记该行为用例，成熟度台账现为 150 条限制、755 条证据路径、143 条未收口。
+- Binance Spot 现在在构造请求前只接受 ASCII 字母数字标的，拒绝路径样式、斜杠、查询语法、控制字符与 Unicode；qx-adapter 110 项测试和严格 Clippy 通过，架构门禁新增边界判据。共享 InstrumentId/Python symbol grammar 仍登记为未收口，没有把 venue 局部规则冒充为跨语言完成。
+- 随后为 `InstrumentId::parse` 与 Serde `Deserialize` 增加共用 ASCII symbol 词法校验（长度上限 128），并将 StrategyContext 的 `account_id|instrument` 持仓键按两段分别验证；兼容用例覆盖历史多账户键与路径/控制字符拒绝。`cargo test --workspace -j 1`、格式、qx-core/qx-strategy 严格 Clippy 和 367 项架构门禁通过。`InstrumentId` 的 symbol 字段现为私有，构造器、解析器与反序列化统一校验；台账已关闭该路径输入缺口。Windows exe/wheel 随后再次按当前源码重建，并通过 stable-ABI、clean-install 检查。
+- 重新运行完整 Python 测试集：**603 passed, 3 skipped**（454.240 秒），包含新增 C++ SDK 归档测试。
+
+- 多腿恢复 worker 现在在每个耐久分组完成后检查停机令牌；收到停机请求时不会继续启动下一组恢复 RPC。新增跨组停机回归，并从未收口台账移除该缺口；scheduler 轮询睡眠此前已改为可取消等待。
+- 受管 worker 的 stdout/stderr 现在经后台排空并按流轮转：每个流只保留最多 8 MiB 当前日志与 8 MiB 轮转副本，磁盘写失败后仍继续排空管道。初始启动与部署重启共用实现；边界、轮转和线程泵用例通过，该项从未收口台账移除。
+- Paper one-shot 现在使用独立进程租约 owner；常驻 worker 已持有租约时会移交且保留 Accepted，不再与 worker 共用 fencing token。Paper worker 丢失队列项时会从 Accepted 控制面待办恢复；新增两条真实进程回归覆盖租约移交与队列恢复。
+- 收口成熟度台账中过期的 production 环境分散判定项：当前唯一 `RuntimeConfig::is_production()` 供 14 个加固判定点共用，架构门禁检查其唯一实现、消费文件名册与不存在手抄比较；环境闭合名单和模拟/真实提交臂另有行为回归。README 未收口限制计数由 147 降至 146。
+- 收口 `/account/ledger` 与 `/reconcile/reports` 多账户过滤限制：两者已不在无键名单内，按模型现有账户列实施收窄，并有跨账户及非法键回归；相关 API 证据和旧状态描述已与现状对齐。README 未收口限制计数由 146 降至 145。
+- Binance UserStream 现在实时发布累计重连数及最近来源事件时间到 worker metrics；`/ready` 的 exchange gateway 诊断 schema 升至 v2，并按 venue 映射这些可选字段，不参与健康状态或交易权限判定。adapter 重连边界、metrics、健康投影与 API schema 均有行为用例；移除成熟度台账中的该限制。
+- 本轮全量验收：Rust workspace 186 个测试目标、2,673 通过、2 忽略、0 失败；Python 600 通过、3 跳过；clippy 与架构门禁 365 项通过。Windows x86_64 CLI 从当前源码 release 构建，stable-ABI wheel 结构审计及隔离离线安装通过；本地候选 wheel 保留已审计的 Python/native 文件，仅替换为当前 CLI renderer 并重算 `RECORD`，不代表由发布 CI 重建或签名。候选 wheel SHA-256：`e96650ca92d0560aa77ee49856f48726d4d3a6dbb4b4d48fa5a64ed6f5189e67`。README 与候选状态已同步到本轮计数。
+
+- 明文 API 安全边界收敛为仅 paper + loopback；paper 明文服务只接受固定 Trading 授权的 Paper workflow，未认证的通用控制请求返回 403。sandbox/testnet/production 配置统一要求 mTLS，paper 明文拓扑拒绝真实 venue 执行/恢复 worker。仓库 16 份 paper 明文与 5 份 mTLS runtime 模板由测试逐份核验。
+
+- deploy 模板构建期清单改为递归收集 `deploy/` 下全部 JSON，并保留相对目录和内容签名；`qx-cli init` 的每个 profile 现在都会把 Grafana 概览面板复制到项目的 `grafana/` 目录。无源码树时，内置面板也能在临时模板桶中按原目录结构落盘。添加了模板清单、逐字节一致性和十种初始化 profile 资产覆盖验收；初始化产物从 10 份调整为 11 份，quickstart 全链路由 16 份调整为 17 份，静态与集成口径同步更新；该项从 `maturity/unverified.json` 移除。
+
+- `cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 通过；非 CLI Rust 工作区测试通过，CLI 单元测试 **487/487**、项目命令集 **47/47**、行为对拍 **36/36**，CLI/HTTP/Python 三入口对拍 **33/33**。全量回归统一复跑；测试临时目录设为仓库 `target/test-tmp`，避开 Windows `AppData\Local\Temp` 的拒绝访问限制。
+- 本轮针对 CCXT funding 与 cashflow 的缺失/零值/格式错误来源时间戳加入 fail-closed 校验和回归用例；全量 `cargo test --workspace -j 1` 通过；workspace doctests 最终复跑通过。qx-cli 单元测试 **487/487**、项目命令集 **47/47**、行为对拍 **36/36**、CLI/HTTP/Python 三入口对拍 **33/33** 通过。测试临时目录设为仓库 `target/test-tmp`，避开 Windows `AppData\\Local\\Temp` 的拒绝访问限制。
+- `runtime-check` 现在在 API 非回环绑定且 `cors_allowed_origins` 为空时，明确警告带 `Origin` 的 `/events/live` WebSocket 不受来源限制；回环运维配置与显式 allowlist 不告警。端到端 JSON 报告行为测试通过，能力登记与生成的未验证清单同步移除了该缺口。
+- CCXT funding 与 cashflow 事实映射拒绝缺失、零值或格式错误的来源时间戳，不再把账务事实写成 Unix epoch；对应正反向单测已补充，已纳入下述统一验收。
+- Python 全套测试前次为 **600 passed, 3 skipped**；本轮加入归档行为测试后已更新为 **603 passed, 3 skipped**。`cargo fmt`、Clippy、架构门禁、R01—R23 台账、能力目录生成物检查、actionlint **v1.7.7** 与 Markdown 链接检查通过。
+- Windows x86_64 release CLI 构建成功，身份输出为 `qianxing 0.3.0`；CPython stable-ABI wheel `qianxing-0.3.0-cp310-abi3-win_amd64.whl` 已通过 wheel 结构检查及隔离虚拟环境 clean-install 冒烟（策略、行、成交、账户溢出、深度与多腿入口）。本轮 Paper 租约修复后重新构建并离线安装；独立安装的 CLI 与 wheel 身份匹配，quickstart 生成项目并完成首跑回测，17 个内置策略可见，13 个 Python 示例模块编译且策略示例调用通过。SHA-256 为 `de1a3acaaeee46adfe0da79dfefcd3d417ebc61b60eae3ce3e7a6f155fa8436f`。默认 LTO 在本机受内存限制，候选使用单任务、关闭 LTO、16 个 codegen units 构建；安装验收目录为 `target/release-candidate/clean-install-2026-11-06-045844`。
+- Windows C++ SDK 含 JSONL 示例构建通过；SDK 契约测试 **3/3**、独立安装消费者测试 **1/1** 通过。固定 MSVC UTF-8 输入编码，避免系统代码页导致 JSONL 源文件 C4819 警告。Web 控制台 0.3.0 本机归档已生成。
+- 全量 `tools/check_architecture.py` **1580 项**通过。复核时发现并修复了 4 项静态判据漂移：PreparedEvaluation recovery/finalize 名称与表达式、模板 Refuses 归属解析以及精确零数量跳过表达式；未放宽运行时准入。
+- 控制命令保留策略改按终态审计在控制面中的追加顺序淘汰，避免 NTP 回拨或节点时钟偏移让较新命令先被清理。新增时间戳逆序用例验证命令、请求索引和审计链一致；对应 limitation 已从台账移除。
+- 公共子进程管道写入器现在有回归用例分别钉住“写入预算超时”和“写线程异常退出”：超时报告预算耗尽，线程 panic/断开报告写线程无结果；两种诊断不会再混淆。对应已收口的 limitation 已从能力台账移除。
+- CCXT worker stdout EOF 现在会在最多 100ms 的有界窗口内读取子进程退出状态，并把 `exit_code`、信号终止、仍运行或状态不可用作为诊断字段附在错误上；提交结果未知语义不变，异常退出码 7 的进程用例通过。
+- 本机候选已集中到 `target/release-candidate/windows-x86_64/`，包含 Windows CLI、wheel、安装版 C++ SDK、Web 控制台、172 项 Cargo SBOM 与 6 项校验和；6 个候选文件的 SHA256SUMS 已按最终文件逐项重算。2026-11-06 按最新 CLI、wheel 和状态文件重新计算候选校验和。随包状态文件记录本轮统一回归及 clean-install 结果，并明确标注本机未发布候选、不含来源证明。
+- 发布门禁仍未闭合：需要 hosted Linux/macOS release matrix、Linux/PostgreSQL 复验、授权供应商签名角色目录及对应市场规格审阅，以及外部测试网/live 验收条件。当前只形成 Windows 本机候选，尚未创建正式 tag 或发布。
+
+### CLI R19 本机验收闭合与签名准入夹具校正（2026-11-05，未发布工作区）
+
+补齐 CLI 重构验收中暴露的准入夹具与入口顺序问题。实盘规格测试统一使用确定性的测试密钥签名角色目录；部署样例没有供应商授权材料时继续失败关闭，模板覆盖明确记录这一行为。CCXT 示例执行 worker 现在声明其绑定标的，A 股规则拒绝检查先于 CCXT endpoint/market-spec 读取，旧版策略 worker 观察记录也重新接入生命周期变更读取。
+
+- Windows 本机 qx-cli 全量单元测试 **486/486** 通过；CLI 行为对拍 **36/36** 通过。R19-AC01 全量单测记录：`a0997619-5b3a-4aaf-9d84-906b88fe86dc`；最终行为对拍记录：`fa388f8a-2b7d-4f7b-ac6e-d0d2fbd6523b`。
+- `cargo fmt --all -- --check`、GitHub Actions workflow lint 与 R01—R23 接受台账完整性检查通过；台账校验了 23 个验收场景及 271 个带产物记录的运行。
+- 这些本机结果不替代 Linux/macOS hosted CI、PostgreSQL/Linux 环境复验，也不补造交易所供应商签名数据或外部测试网/live 授权证据；相关项仍按验收台账保留。
+
+### 反引号路径引用进门禁 · 大小写错配 13 行清零、examined 拆成可闭合的五桶与一条已跟踪的判定用例（2026-11-02，未发布工作区）
+
+文档引用仓库路径的写法绝大多数不是链接，是反引号里的散文引用；出厂检查器只解析链接语法，所以这一整类此前对 CI 不可见。本轮把判定补进出厂工具、把 `13` 行大小写错配改掉、把两条腿的口径钉成同一份策略，并发现 `examined` 这张脸此前拆不成闭合的桶——`1782` 行被两条腿同时静默丢掉；文本落盘后的复测又撞出另一类缺陷，它更靠后、也更难看见：突变电池把源码还原回 pre-image sha 之后，跑的可能仍然是突变体的字节码。本轮不改 `crates/`。
+
+- **这一类的形状**：`13` 行错拼集中在 `4` 个不同拼写、指向 `4` 个不同目标，全是 `-V1.md` 对已跟踪的 `-v1.md`——Windows 工作机点得开、Linux CI 检出来是 404，而工具此前一个字都不报，因为它只在链接语法里找目标。改完之后出厂腿的判词是 `Path citations examined: 4617, case-mismatched: 0, ambiguous: 0`，本地审计对同一批行给出的三张脸与它逐字符相同（第 5 条）。
+
+- **判据只取可判的那一半，绿的时候必须自报看了多少**：只有「精确拼写不在跟踪集合」且「大小写不敏感命中恰好一个」才判；多个候选进 `ambiguous`（计数、不判），裸文件名与 URL 不判。顺序是要害——大小写必须在磁盘存在性测试之前判：这台机器不分大小写，一条错拼同时「也存在」，先测磁盘就会把同一行记到两张脸上、并把缺陷本身藏起来。工具的绿面现在打印 `examined`，因为一个停止检视引用的检查器和一个干净的仓库是同一张脸。
+
+- **`./` 是导航不是拼写**：工具新增 `citation_path()`，在任何成员测试之前剥掉 `./` 前缀。实测带前缀的路径引用 `5` 行、`5` 行剥掉前缀后都指向已跟踪路径（`./build.sh`、`./tools/build_python_wheel.ps1` 两种拼写），归一把门禁类从 `41` 降到 `36`——那 `5` 行原本不是缺陷，是工具自己造出来的不可达。`41` 这个数不是手抄的：电池把归一那一行从出厂实现里摘掉重跑，审计自己数出 `41` 行门禁类与 `155` 行本地专有（`150 + 5`）。不归一还有另一半代价：`./docs/archive/X-V1.md` 这种写法会把错拼藏在斜杠底下，看起来「因为别的原因缺席」。反面（`./Build.sh` 仍须判红）钉进已跟踪用例。
+
+- **可达性的边界是 exclude 规则，不是「像不像构建产物」**：盘上有 `363904` 条被忽略路径，本地专有引用 `150` 行按它拆成 `114` 行（`target/`、`dist/`、`.venv` 等——散文描述构建输出，任何提交都变不成签出后可读，所以只报告不设基线）加 `36` 行（既没被跟踪也没被忽略，与 `146` 条链接同一批未提交改动，只许降不许升）。链接那一侧不做这个拆分：本轮实测 `local-only links inside the exclude rules` = `0`，而驱动判据是「非 0 即 die」——链接是给读者打开的，一条指向 `target/` 的链接在新签出里和指向未跟踪源文件的一样点不开。
+
+- **两条腿必须看同一个文件集，且是每跑一次验一次**：`.task-tmp/audit_tracked_pointers.py` 现在直接 import 出厂工具的 `CITATION`、`LINK`、`PATH_CITATION`、`citation_path`、`tracked_markdown`、`tracked_paths`，不再自己抄一份清单；驱动把 `examined`、`case-mismatched`、`ambiguous` 三张脸与扫描集数一起对向 mdlinks 腿，任何一格不等即 die。这不是独立测量（共享实现），它是防「以后有人往审计里再塞一份本地清单」的引信——那种改动历史上真发生过，就是这条腿存在的原因。
+
+- **还原按 sha 核对，不等于跑的是这份字节**：判定用例电池把 `PATH_CITATION` 的结尾锚从 `\Z` 写成 `\A`——这一改动不改变字节数，而字节码缓存只按「源文件秒级 mtime + 字节数」判失效，整轮电池跑在同一秒里，于是源码已按 pre-image sha 还原，`tools/__pycache__` 里那份突变体仍然「有效」。现场是两份判词：同一份已跟踪用例文件、一字节未动的源码，删缓存之前 `7` 条里红 `5` 条，删掉那个被 gitignore 的缓存文件之后 `7` 条全绿。这一枪不靠撞同一秒复现：源真实性电池（`5` 份逐枪日志、`10` 条判据、`VERDICT OK`）在还原之后用 `os.utime` 把源文件的 mtime 拧回缓存记录的那一格，天真 import 于是从 `4627` 塌成 `0` 且再没回来；同一块被污染的盘上，出厂审计先打印「加载到的三个正则与盘上那份字面量逐字符相同」，再照常报出 `examined 4627` 与五桶——它的判词与干净盘那一份逐字节相同（两份的 sha 都是 `642b6a713a4eb03d`）。判据本身是判别性的：先把一份结尾锚写错的副本塞进 `sys.modules`（盘上仍是好字节），审计必须退 `2` 并指名 `AUDIT_REFUSE STALE_IMPORT`；反面也打了枪——字节与缓存都干净时同一条判据放行且照常报数，否则它只是「永远死」。三处收口：审计在 import 之前禁写字节码、把缓存前缀挪进本轮目录，并在打印任何计数之前做那次逐字比对；门禁驱动的每条腿带上 `PYTHONDONTWRITEBYTECODE`；两份判定用例电池都在最后一枪还原之后再跑一遍原样、绿才算判决通过（八枪那一份 `8` 枪 / `50` 条判据 / `VERDICT OK`，四枪那一份 `4` 枪 / `VERDICT OK`）。已登记的读数不受影响：run 1 与闭合复跑的日志 mtime 都早于这次污染（逐个比过），受影响的只有污染之后的第一次复跑，而它死在自己的取数判据「每条判据行必须恰好命中一次」上——两条腿 `examined` 必须相等那面镜像排在同一份脚本的更后面，本轮没轮到它说话。
+
+- **新发现：`examined` 此前拆不成闭合的桶，`1782` 行被两条腿同时丢掉**：五桶闭合 `2685 + 0 + 0 + 150 + 1782 == 4617`（审计现在逐桶打印，驱动断言相加等于 `examined`，两种拆法同时成立才不 die：按别名规则拆三桶、按史册与活文档拆两桶，外加按目录的 `DEAD-DIR` 全量名册相加也要等于死引用脸）。出厂工具只在存在唯一大小写变体时判、本地审计只在 `Path(path).exists()` 时登记，于是一条既不在索引也不在这块盘上的引用只贡献 `examined` +1，不出现在任何名册里。这一桶占 `38.6%`，`1187` 行在 changelog 与档案的史册 prose 里、`595` 行在活文档里；按规则拆：`434` 行是某个已跟踪路径的唯一后缀（`qx-core/src/clock.rs` 这种模块别名写法、`include/…` 这种 README 相对自己工程根的写法），`81` 行后缀有多个候选，`1267` 行整仓没有这个尾巴（`logs/…` 是命令的产物、`../…` 是给人导航的相对方向）。另有 `356` 行按名能对上一个已跟踪文件而路径不同——文件移动或改名后旧路径仍然长得像真话；这条按名的规则跨本地专有与死引用两桶，不是某一桶的子集，其中 `184` 行在活文档、`172` 行在史册。**这一类实测而不进门禁**，理由是它绝大多数是书写约定不是缺陷：真要按缺陷去修 `1782` 行，会改掉史册落笔时的真实路径，那是造假；活文档里那一 `184` 行（其中唯一像真缺陷的是 `deploy/README.md` 的 `crates/qx-cli/src/pipeline_metrics_report.rs`，实际在 `crates/qx-service/`）登记为下一轮候选。
+
+- **本地地板与镜像在签出里不可见，所以把判定钉成一条已跟踪的 CI 用例**：`examined` 的下限、本地专有引用的棘轮、三张脸的镜像都活在 gitignore 的 `.task-tmp/` 里，别人检出什么都没有；而 `tools/check_markdown_links.py` 早就被 `.github/workflows/ci.yml` 的 workflow-lint 步骤跑着，判定语义本身却是没有用例的。本轮补 `python/tests/test_markdown_link_checker.py` 共 `7` 条：精确拼写被清、唯一变体按每次出现判红且消息里两个拼写都在、多变体只计数、`./build.sh` 被清而 `./Build.sh` 判红、裸文件名不是路径引用、远端与非路径反引号跳过、非本地链接目标跳过——全部在合成索引上跑，不碰盘也不碰 git。派生面随之重定价：`py_tests` `589` → `596`、`py_compile` 覆盖 `55` → `56`；历史文档里的旧计数按它自己的口径保留，不改写。
+
+- **电池是判别性的，不是装饰**：引用面 `11` 枪（KILL `4`、EQUIV `2`、REFUSE `5`、survived `0`），期望面全部写成实测 BASE + 声明增量、基线与地板从驱动源码里解析出来，所以本轮文本落盘后再打一遍不用改名册。`5` 张拒签脸逐字读回：地板拧到 `4618` 而盘上仍是 `4617` 必须拒；把扫描正则的结尾锚写成永远匹配不上时 `examined` 归 `0` 必须被地板拒；把 `/` 从字符类里的重复分组删掉后 `examined` 塌到 `3363`（字符类 `[\w\-.]` 本身不含斜杠，所以这不是「更严」而是换一批对象去判）必须被地板拒；把死引用那一桶的计数摘掉——`examined` 一格没动、`gated` 一格没动，任何一张旧脸都是「一切正常」，只有五桶加不回 `examined` 这条闭合判据接得住它（`pointers citation buckets 2685+0+0+150+0 != examined 4617`）；散文里塞一条指向 `target/` 的 Markdown 链接。反面同样打了枪：注入一条既不在索引也不在盘上的引用，`dead` 与 `no_target` 各 +1 而整条腿必须仍然绿——这一类只实测不门禁，把 `1782` 行史册与别名字形当缺陷去拦，等于让门禁改写历史；注入一条拼写与索引一致的引用，`examined` +1 而缺陷面一格不动，证明判据不是「任何反引号路径」。判定用例电池另有 `8` 枪（KILL `7`、EQUIV `1`），按「哪几条 test_ 名字进红名册」逐字判决，并钉住 `Ran` 恒等于 `7`——红名册相等而用例数掉了一格，说明死的是收集而不是断言。这一组里还有一条跨枪判据：形变枪与致盲枪红的是同一份 `5` 条名册（`2` 条仍然绿），也就是说用例面分不清「只看不带斜杠的那批」和「一行都不看」，能分开的只有 examined 那张脸，而那张脸在别人的签出里不存在。被丢弃与被取代的 pass 连原因一起存档、不当证据，一共五趟：引用面 pass「b」的 `5` 条 BAD 全是驱动口径造成的（声明的腿名没带前缀、把散文 needle 拿去驱动 stdout 里找，而腿日志在带前缀的文件里），门禁行为每条都对；引用面 pass「d」的 2 条 BAD 全是归一那一枪的声明增量过期（期望本地专有 158、门禁类 43，盘上各多一条），那个增量数的是「关掉归一之后有几条带斜杠前缀的跟踪命中掉进本地专有」，它随提交移动，写死就一定过期——两条腿与驱动的判据一条都没错，错的是抄下来的数；判定用例 pass「t」的 `3` 条 BAD 是我把 shape-drop 的红名册猜窄了——`[\w\-.]` 里没有斜杠，去掉分组后连 `./build.sh` 都不再被检视，塌的是 `7` 条里的 `5` 条；pass「c」是那份模型修好之后的 `7` 枪绿趟（KILL `6`），被后来补进第八枪的表取代；pass「u」在还原那一次以 `OSError [Errno 22] EINVAL` 死在把工具写回盘的那一步，缺陷字节因此留在盘上、当场按 sha 反写还原并给两把电池都加上重试与读回校验才重发 pass「v」。另有一趟更早的 hot-swap 版（4+4 枪、`8` 份单枪日志）整趟不计为证据：那个脚本只把判决打到 stdout、没有落成判决文件，盘上只剩各枪的 unittest 输出。
+
+- **门禁 run 1（本段文本落盘之前的字节，12 条腿）**：`cargo fmt --all -- --check` rc `0`（`Diff in` 提示 `0` 条）；`check_architecture.py --fast` rc `0`，`4` 片 / `336` 个具名检查（墙钟 `124.38 s）；台账 rc `0`，`R01–R23`、`23` 个验收场景、`132` 个产物绑定；`unittest discover -s python/tests` rc `0`，`596` tests、verdict `OK`、skipped=`5`、红行 `0`（自报 `488.937 s）；定向五腿 rc 全 `0`：test_project_runs `37` 项、test_strategy_project_plan `11` 项、test_cli_strategy_file `22` 项、test_ashare `55` 项、跨语言契约 `6` 项；失败面单源用例 `1` 项 rc `0`；native 扩展腿 `3` 项 rc `0`；`py_compile` 覆盖 `56` 个改动的 .py rc `0`；`git diff --check` rc `0`、`185` 行；mdlinks 腿 rc `0`，`78` 个已跟踪 Markdown、断链 `0`、引用面 `examined 4617 / case-mismatched 0 / ambiguous 0`；pointers 腿 rc `0`（审计自身按设计退 `1`），`146` 条本地专有链接、`0` 条在盘上也一并断掉、门禁类引用 `36` 行、五桶 `2685 + 0 + 0 + 150 + 1782`（这五格读的是 run 1 那批字节，出处是同一份字节在闭合驱动补全逐桶打印后单独复跑的那一趟 `r18_closure_summary.json`：与 run 1 共有的 `15` 张脸逐格相同，回填脚本对每一格都做了相等核对，任何一格不等即拒）、HEAD 名册 `10` 条。基线 `146` / `36` 与地板 `4617` 取这一趟生效的驱动常量。Rust 单元锚点腿读数取自整腿日志（`465` 通过 / `20` 失败、rc `101`），那 `20` 条是上一轮登记的 parked 红名册，本轮没动 `crates/` 也没把它们算进上面任何一条 Python 腿的 rc。
+
+- **本轮日志工件（本页链接 `34` 份，取自 `maturity/acceptance-artifacts`）**：`r18_pre_newtool.log` [`bf0ff0ec5bc29ad6`](../../maturity/acceptance-artifacts/9db545a4-dfab-4cec-8f7c-232b4884794e.log)、`r18_dotnorm.txt` [`589f5f136276944f`](../../maturity/acceptance-artifacts/224bffed-5af2-40ab-96d8-95a1630fafe2.log)、`r18_dead_citations.txt` [`2d49a7162ea5525c`](../../maturity/acceptance-artifacts/37dfc6d0-207d-4212-910c-818c2c8ac554.log)、`r18_stale_paths.txt` [`3d87344a004502eb`](../../maturity/acceptance-artifacts/efaab3b1-142f-485e-89de-31e553573d01.log)、`r18_survivor2.txt` [`70a50b58c7b515fa`](../../maturity/acceptance-artifacts/8162aa7c-0170-4f90-b302-6ea11c286b18.log)、`r18_stem_census.txt` [`48ca386bee0d7c6b`](../../maturity/acceptance-artifacts/f711768c-9ca7-404b-8460-4eb4d6be7713.log)、`r18_write_surface2.txt` [`6f5bdbb4b75d1933`](../../maturity/acceptance-artifacts/2feee8dd-1792-4aaa-9af4-c2a96507415f.log)、`r18_preflight_c.txt` [`7ac8dac0a8ed30f1`](../../maturity/acceptance-artifacts/1a73640e-eeb1-4889-9a59-1b33d09dac23.log)、`r18_battery_c.txt` [`88515ed9dd7063a2`](../../maturity/acceptance-artifacts/c733dce0-fbf9-4a8e-a65a-7d40a8afe2ee.log)、`r18_shotc-5.log` [`e5ebf281065e781f`](../../maturity/acceptance-artifacts/efa8b863-acda-448c-8078-559b00a5a19a.log)、`r18_shotc-6.log` [`190b948e07fcaa40`](../../maturity/acceptance-artifacts/bb44c9a9-a7d9-4e8c-81ae-b35bb3b7a144.log)、`r18_shotc-7.log` [`8e074870b6056896`](../../maturity/acceptance-artifacts/7be5d5dc-a20e-4754-8ba7-1364711e2ae3.log)、`r18_shotc-9.log` [`c5e766cee946388f`](../../maturity/acceptance-artifacts/5217c6f8-a40b-4646-8b1f-8dc23b28f654.log)、`r18_shotc-10.log` [`d0a86b43d389c6e6`](../../maturity/acceptance-artifacts/37fdd799-412b-4bee-805a-e52b33ff1d82.log)、`r18s_c-8_summary.txt` [`a1c2649bd3c28409`](../../maturity/acceptance-artifacts/e9e73089-1e98-4cb6-bcad-8a8b66b363ba.log)、`r18_battery_b.txt` [`031389561e312f98`](../../maturity/acceptance-artifacts/885ebd6d-8cf9-4937-8a83-16a42ef2bfb3.log)、`r18_battery_t.txt` [`8da16c3c58149a96`](../../maturity/acceptance-artifacts/a3cc2d55-6bb4-431a-aea1-46d81623683f.log)、`r18_battery_t3.txt` [`f7ae236f8e7b7d6a`](../../maturity/acceptance-artifacts/4ec799db-607b-4fb6-a78f-e5e0c9d06825.log)、`r18_battery_t4.txt` [`0a7ba79be203703b`](../../maturity/acceptance-artifacts/b2e6752c-c165-4b7c-a2f0-dad24841f35a.log)、`r18_gateA_summary.json` [`7ac205ca0f1f5b95`](../../maturity/acceptance-artifacts/d4bc3b04-e099-431f-b629-447108e7c6ca.log)、`r18_gateA_launch.log` [`3dbafb1a4263d498`](../../maturity/acceptance-artifacts/d3661c34-542e-45dd-bb38-91fa471267f3.log)、`r18a_mdlinks.log` [`8088b10dc5640850`](../../maturity/acceptance-artifacts/8ff0a647-3437-4a4f-a8f6-373e56105496.log)、`r18a_pointers.log` [`f550b4317fd70b8d`](../../maturity/acceptance-artifacts/43e2fbed-7f89-419c-b8d3-1bc179d0beba.log)、`r18_twolegs.txt` [`6f1926cc286372e3`](../../maturity/acceptance-artifacts/705bb9b4-85da-4839-885e-ea438002c592.log)、`r18x_stalepyc_before.log` [`e0e6c7149bdf4997`](../../maturity/acceptance-artifacts/f3cba817-9541-45c2-b2bf-f8bf2b7643e9.log)、`r18x_stalepyc_after.log` [`46412de24c7028dc`](../../maturity/acceptance-artifacts/421b146a-85af-4762-babc-462ce20ab289.log)、`r18sf_f-0_naive.log` [`fe8097a02d1a6f44`](../../maturity/acceptance-artifacts/caaa7645-ba9e-47b0-9c87-eb280671e9ce.log)、`r18sf_f-1_stale.log` [`e5b3140118bff46c`](../../maturity/acceptance-artifacts/42f8a4d4-5c1b-4062-9c84-6cf37ce89f25.log)、`r18sf_f-2_audit_on_poisoned_disk.log` [`642b6a713a4eb03d`](../../maturity/acceptance-artifacts/d9700116-dd08-4531-b08e-b2aef198e4f9.log)、`r18sf_f-3_pin_kill.log` [`68219ec8610f4293`](../../maturity/acceptance-artifacts/45fb8eba-5f99-4f5b-acfb-b0cb15030b60.log)、`r18sf_f-4_pristine_audit.log` [`642b6a713a4eb03d`](../../maturity/acceptance-artifacts/15ee576f-8a09-4de0-8a07-96f61be360f0.log)、`r18_battery_sf.txt` [`9bc8fe5c8e4bd350`](../../maturity/acceptance-artifacts/7fec586c-bb63-410c-92ee-ac436a35ffd8.log)、`r18_battery_x.txt` [`29ad6aff95dfe710`](../../maturity/acceptance-artifacts/40cd681f-9af7-4128-87fa-b0a1b6db468d.log)、`r18_battery_y.txt` [`9023ca0a89e3672c`](../../maturity/acceptance-artifacts/e56653cb-b9d8-451b-8bf3-3a3e1bbf9b95.log)。钉住的是落盘后的字节：本段文本只改本页与方案文档 §6.1、§6.2；`tools/check_architecture.py` 的引用普查显式跳过 `docs/changelog/`，`tools/check_strategy_refactor_ledger.py` 源码里 `docs/` 出现 `0` 次，两条都不读这一页。会读到方案文档的是失败面单源用例那一条腿。名册在登记时还会加长（run 2 的腿日志、pass「e」的判决与 pass「d」的丢弃日志、登记读数），那些不链进本页：它们在本段定稿之后才产生，而 `maturity/acceptance-artifacts` 不在 exclude 规则里，多一条链接就是把本地专有链接那一格推到驱动刚设的基线之上，那一张脸只许降（第 11 条把它钉成等式而不是口号）；run 1 的腿日志留在 `.task-tmp/`，那个目录本身在 exclude 规则里，链接它在新鲜签出里点不开，而本页的链接判据是「非 0 即 die」（第 4 条）。
+
+- **回填后复跑（run 2，判据读的是落盘后的字节）**：本页与方案文档落盘后再跑十二腿，只有读文档的两条腿的计数会动，动多少是量出来的——`examined` `4617` → `@{B:mdlinks_citations_examined}@`、门禁类引用 `36` → `@{B:pointers_citations_gated}@`、本地专有链接 `146` → `@{B:pointers_local_only}@`。涨的是本段文本自己引用的那些还没提交的路径与刚登记的工件链接，不是新造的缺陷；三条棘轮因此按这一趟的实测重设（`@{BASE_LINK_B}@`/`@{BASE_CITE_B}@`，地板 `@{FLOOR_B}@`），仍然只许降。其余格：fmt rc `@{B:fmt_rc}@`、`@{B:fmt_diff_lines}@` 条提示；架构 rc `@{B:arch_rc}@`，`@{B:arch_shards}@` 片 / `@{B:arch_checks}@` 个具名检查，墙钟 `@{B:arch_seconds}@ s；台账 rc `@{B:ledger_rc}@`，`@{B:ledger_range}@` / `@{B:ledger_scenes}@` / `@{B:ledger_binds}@`；Python 全量 rc `@{B:py_rc}@`，`@{B:py_tests}@` tests、verdict `@{B:py_verdict}@`、skipped=`@{B:py_skipped}@`、红行 `@{B:py_failed_count}@`，自报 `@{B:py_seconds}@ s；定向五腿 `@{B:py_pr_tests}@`/`@{B:py_pair_tests}@`/`@{B:py_pair2_tests}@`/`@{B:py_ashare_tests}@`/`@{B:py_contract_tests}@` 项 rc 全 `@{PERFILE_B}@`；单源用例 `@{B:ladder_tests}@` 项 rc `@{B:ladder_rc}@`；native 腿 `@{B:native_tests}@` 项 rc `@{B:native_rc}@`；`py_compile` `@{B:pyc_files}@` 个文件 rc `@{B:pyc_rc}@`；`git diff --check` rc `@{B:diffcheck_rc}@`、`@{B:diffcheck_lines}@` 行；mdlinks rc `@{B:mdlinks_rc}@`、断链 `@{B:mdlinks_broken}@`、case `@{B:mdlinks_citations_bad}@`、ambiguous `@{B:mdlinks_citations_ambiguous}@`；pointers rc `@{B:pointers_rc}@`、审计自身 `@{B:pointers_audit_exit}@`、构建产物引用 `@{B:pointers_citations_build}@` 行、落在 exclude 规则里的本地专有链接仍 `@{LINKBUILD_B}@` 条（那条判据是「非 0 即 die」，第 4 条）、HEAD 名册 `@{B:pointers_head_face}@` 条、五桶相加 `@{BUCKET_SUM_B}@` 等于 `examined`；Rust 单元腿 `@{B:rust_unit_passed}@` 通过 / `@{B:rust_unit_failed}@` 失败、rc `@{B:rust_unit_rc}@`，本轮仍未改 `crates/`。三个驱动常量按这一趟重设，等式而不是口号：run 2 的 `examined` 与地板相等（都是 `@{FLOOR_B}@`）、门禁类引用与引用基线相等（`@{BASE_CITE_B}@`）、本地专有链接与链接基线相等（`@{BASE_LINK_B}@`）——回填脚本把这三格当判据读，任何一格不等即拒绝解后面的数字。引用面电池在文本落盘后原样重打两趟，第一趟 pass「d」死在前面丢弃名册里说的那条声明增量上、第二趟 pass「e」是修好之后的重打，下面的数字读 pass「e」：`@{D:fired}@` 枪、KILL `@{D:kill}@`、EQUIV `@{D:equi}@`、REFUSE `@{D:refuse}@`、BAD `@{D:bad}@`，与 pass「c」四张脸逐格相同——期望面写的是实测 BASE + 声明增量，而其中「关掉归一」那一枪连增量本身也由审计自己第二趟量出来（BASE 里的 norm_gain，这一趟是 6 条）、基线与地板从驱动源码里解析，所以重设常量之后名册一个名字都不用改，这正是那套自校准写法的用途。这一段自己的数字是在带记号占位的字节上量的：占位与它换成的数字都不是路径形状的引用（没有斜杠、也不成链接语法），所以把记号换成数字不动任何一张脸——登记脚本在本段落盘后复跑 mdlinks 与 pointers 两条腿，逐格核对这两趟的引用面、基线与 rc 相等，任何一格不等即拒绝登记。
+
+### 出厂示例数据束补 bars snapshot · A 簇 19 条红清零、A 股五步链走通与剩余红的归因回接（2026-11-01，未发布工作区）
+
+这一页把上一页末尾登记的三条待裁决拆成两段：属于夹具字节的那段落地了（A 簇 19 条红由此清零），属于在途 Rust 重构的那段仍未动，剩余 20 条红逐名回接到归因账本。本轮不改 `crates/`。
+
+- **守卫读的是原始字节，换行符因此是身份的一部分**：`crates/qx-service/src/backtest_bindings/strategy_batch.rs` 的 `verify_bundle_bar_snapshot` 把 `manifest.content_hash` 与读到的 BarFrame 字节比对，而 `qx-cli` 落盘的是二进制内嵌的同一份 `deploy/` 字节，所以钉住换行符才能让同一个 `content_hash` 在检出也成立。`.gitattributes` 为四份出厂夹具钉 `text eol=crlf`（与 `*.bat` 同用法），本机实测：qianxing.bar-frame.example.json 5541B/CRLF 70 行/sha16 6be98878c53b2b65；qianxing.dataset-bundle.bar-frame.example.json 2108B/CRLF 70 行/sha16 84efc597267bbc85；qianxing.ashare.bar-frame.example.json 659B/CRLF 10 行/sha16 07aca52393be3010；qianxing.dataset-bundle.ashare.example.json 3123B/CRLF 97 行/sha16 7d412448505daa4a。两份 BarFrame 与工作副本的关系另有一格可读：把工作副本的 CRLF 折回 LF 就与 `git show HEAD:` 的字节逐字节相同，且 `git diff --quiet` 说它们没改——内容确实一个字节没动，动的只是检出。钉 LF 的反面写在注释里：autocrlf 的 Windows 工作副本会与 blob 逐字节相同却被 git 报成 M。Linux/macOS 检出未实测，只按 `eol` 规则的强制性推断；这句限定已写进 `.gitattributes` 的注释，不冒充多平台已验证。
+
+- **A 簇 19 → 0（币圈那一对夹具）**：`deploy/qianxing.dataset-bundle.bar-frame.example.json` 补上 `snapshots.bars` 一节，其 `content_hash` 逐字符等于 `deploy/qianxing.bar-frame.example.json` 那 5541 B 的 sha256 6be98878c53b2b65e1cfd58314d271848e9746de370a35164b0f155c573cbf12；BarFrame 那份文件的内容不变（上一格的纯行尾判据）。整腿名册因此从 39 条到 20 条，差集逐名等于 A 簇那 19 条：判据 6/6，旧名册排序 sha 230a84cd7e67a2e9、新名册 sha ff15dbf2d579a772，那一轮腿的墙钟 217.26 s。
+
+- **A 股那条出厂链此前是断的**：文档教的五步（`init --profile ashare` → `project doctor` → `backtest` → `report` → `status`）落地前在第三步就退 2，报「策略 DatasetBundle 缺少 bars snapshot」。本轮给 `deploy/qianxing.dataset-bundle.ashare.example.json` 补上同形状的 `snapshots.bars`（3123 B，其 `content_hash` 逐字符等于 `deploy/qianxing.ashare.bar-frame.example.json` 那 659 B 的 sha256 07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082），五步在 landed 字节上 `chain_rc=0` 且 `steps` 读作 doctor=0,backtest=0,report=0,status=0，`init` 落盘的文件与 `deploy/` 逐字节相同 3/3；同一份夹具上的三枪读作 original 退 2、candidate 退 0、把 `content_hash` 改坏后退 2 且不打印结果行（守卫文本 does not bind to the exact BarFrame）。
+
+- **补 snapshot 是来源绑定，不是换输入**：同一份 BarFrame 上，声明 bundle 与摘掉声明两条链的结果行逐字符相同、产物摘要也相同（`result_line_equal=True`、`artifacts_equal=True` 两格都在日志里）；只有 `data_fingerprint` 分开：dataset-bundle:099c5f20c38bc423（绑到数据束）对 barframe:5e59cfcf3adca434（只绑到帧）。也就是说这一步把「输入是哪一份」写进证据，不改变任何一个数字。
+
+- **同一份夹具的两种敲法给两个 result_hash**（新发现，也是台账口径的来处）：`backtest <runtime>` 与 `backtest <runtime> <frame> <spec>` 在 landed 夹具上分别读作 crypto 45038cdcb863b87f/67c176977ad0f81d、A 股 4d4d3e3ba1f18b87/6e120606d81369b5；`data_fingerprint` 不随敲法变（两条 FACE 行都记 `state=same`）。文档五步链是前者（A 股 4d4d3e3ba1f18b87），`tools/backtest_acceptance.py` 与台账是后者（A 股 6e120606d81369b5、crypto 67c176977ad0f81d），两格不能互相冒充——登记脚本把这一点钉成两条交叉判据：台账格等于探针的显式格，五步链格等于探针的 runtime-only 格且异于台账格。
+
+- **守卫在出厂首跑里的可达面是 2/10**：逐个对 10 个 `init` profile 做 init + backtest 普查，init 成功 10/10，声明 `strategy.dataset_bundle_path` 的是 2/10（builtin,ashare），真正进入守卫的数量与声明数相等（2）；指纹分桶 {"barframe": 2, "dataset-bundle": 2, "none": 6}。关键一格：README 与 quickstart 教的 `init --strategy macd` 声明的是 null，币圈首跑根本不进守卫（它的指纹逐字符等于台账里 crypto 那一格 barframe:613fdc1dc0b779e7）；同一个模板用 `--profile builtin` 则声明并进入守卫（dataset-bundle:4ba99b02bd8a0454）。所以本轮这两份 bundle 的快照服务的是 A 股出厂链与测试束，不是币圈 quickstart。
+
+- **三份台账重造，每一格钉回 CLI 实测**：`maturity/backtest_baseline.yaml`、`maturity/backtest_acceptance.yaml`、`maturity/ashare_example_backtest_acceptance.yaml` 由两个工具重新生成，配 12 条判据把台账的 `result_hash`/`data_fingerprint` 逐格对向独立测量（探针、dry-run、五步链三个来源）。移动的格：crypto `data_fingerprint` → barframe:613fdc1dc0b779e7（原因不是夹具，而是出厂模板不再声明 bundle——上一节那条模板探针独立读出同一个值）、crypto `result_hash` → 67c176977ad0f81d、A 股 `data_fingerprint` → dataset-bundle:099c5f20c38bc423（本轮落的那份字节）、A 股 `result_hash` → 6e120606d81369b5；没动的格：BarFrame 输入的 sha256 与快照的 `content_hash` 仍相同（上一节那条当场判据）。
+
+- **顺手修掉台账工具的一处死路（不涉 `crates/`）**：`tools/backtest_baseline.py` 与 `tools/backtest_acceptance.py` 原本把 CLI 打印的 summary 名直接换后缀拼成记录文件名，而 CLI 写的是带 `.v7` 的那个名字——于是工具在当前命名下根本跑不起来（报「输出点名的产物不在盘」）。现在从 CLI 实际打印的产物名推导，不再自己编名。
+
+- **剩余 20 条红逐名回接归因账本**：本轮落 A 股夹具后重跑整腿，465 通过 / 20 失败、rc 101、墙钟 207.29 s，红名册的排序 sha ff15dbf2d579a772 与上一轮逐字符相同——也就是说这一轮没有新增红也没有抄掉红。归因用本轮的聚类探针：A 快照守卫 0 条、B 角色证据 9 条（全部是 `live_pending_order_reservation::*`）、名单与文档平价锁 11 条，未归因与歧义读作 unattributed=none ambiguous=none；回接用的名字被账本截到 70 字符，所以匹配器自带歧义枪：给同一个前缀再造一条名字，必须从 1 变 2。聚类探针判据 11/11，名册差集探针判据 6/6。
+
+- **出厂示例的 doctor 普查把原因从「其它」里拿出来具名**：20 份 runtime 示例逐个跑 `project doctor`，rc=0 的 15 份、非 0 的 5 份。失败原文 20 行去重后是 10 个缺陷（同一个缺陷会同时以 `runtime_reference:` 前缀行与裸行打印两次，镜像判据 原始==2×唯一 已碰）；原因分桶（缺陷/行）role_catalog_missing 5缺陷/10行、single_market_needs_symbols 2缺陷/4行、external_file_absent 2缺陷/4行、parent_dir_absent 1缺陷/2行。上一轮 census 那格「其它=2」在这一轮归档为具名原因 `parent_dir_absent`，且四格行数与 census 的中文成因逐格相等（role_catalog_missing=10、single_market_needs_symbols=4、external_file_absent=4、parent_dir_absent=2），未归档原因的读数是 unarchored_reasons=none。
+
+- **未落地的（按条登记，不冠已完成）**：B 角色证据那 9 条要的是 live worker 的**签名角色目录实例**——`schemas/dataset-instrument-role-catalog-v1.json` 与 Rust 读侧都在，spec 侧声明 `dataset_instrument_role` 的出厂文件当场数得 6 份（7 处），但 `deploy/` 下按该 schema 命名的目录实例 0 份：夹具里无法凭空造出可信签名根——【设计意图，未排期】；production 示例里写死的 `/var/lib/qianxing/...` 绝对路径在 Windows 工作机上必不存在，属示例叙述口径问题，本轮未改——【待裁决】；名单与文档平价锁那 11 条要跟着在途重构同步——【不属本方案】；第三份 `deploy/qianxing.dataset-bundle.example.json` 仍没有 `snapshots`，但它不是守卫的输入：10 个 profile 里没有哪一个声明它，`deploy/` 下也只有 `deploy/README.md` 把它当作生产者命令 `qx-cli dataset-bundle <bundle> <data-root> <frame> --snapshot <snapshot.json>` 的输入模板——需要先有一个 `DatasetSnapshotV1` 才能嵌入，本轮两份夹具的快照按的就是这个形状。
+
+- **门禁（本轮最终字节，与上一页同一口径）**：`cargo fmt --all -- --check` rc 0（`Diff in` 提示 0 条）；`check_architecture.py --fast` rc 0，4 片 / 336 个具名检查（墙钟 114.01 s）；台账 rc 0，R01–R23、23 个验收场景、132 个产物绑定；`unittest discover -s python/tests` rc 0，589 tests、verdict OK、skipped=5（墙钟 447.117 s）；定向五腿 rc 同为 0：test_project_runs 37 项、test_strategy_project_plan 11 项、test_cli_strategy_file 22 项、test_ashare 55 项、跨语言契约 6 项；失败面单源用例 1 项 rc 0；native 扩展腿 3 项 rc 0；`py_compile` 覆盖 55 个改动的 .py rc 0；`git diff --check` rc 0、提示 178 行。Rust 单元锚点腿的读数取自本轮登记的整腿日志（465 通过 / 20 失败、rc 101、207.29 s），本轮没有把它算进上面的 rc 汇总。
+
+- **本轮日志工件（共 31 份，取自 `maturity/acceptance-artifacts`）**：`r6_pre_chain_tree.txt` [`562dd50571cf0bed`](../../maturity/acceptance-artifacts/b3d21752-2aca-43c2-98ee-a2d467d9e7b2.log)、`r6_release_build.log` [`3e8dc1ad7e095398`](../../maturity/acceptance-artifacts/985ab7b0-5e45-4293-821a-465d4a7ed896.log)、`r6_full2.out` [`a0fc0d8335f6df16`](../../maturity/acceptance-artifacts/ea318272-6e52-4cb7-b0fe-3ac831ce5866.log)、`r6_full2.log` [`2a0b2e7564cf8e03`](../../maturity/acceptance-artifacts/695f7efe-a1a8-40df-88ce-4e963c4891a3.log)、`r6_full2_red_names.txt` [`ff15dbf2d579a772`](../../maturity/acceptance-artifacts/428c3955-09f3-48f0-86f3-f7a35d57f416.log)、`r6_roster_delta_full2.txt` [`81c0d7afc378e3eb`](../../maturity/acceptance-artifacts/c7036ea3-2978-4336-9c92-9e253b95c9cb.log)、`r6_doctor_census.stdout.txt` [`65009f8f0e35f14b`](../../maturity/acceptance-artifacts/e98af59f-dfe7-49eb-907b-ce2fd346e20b.log)、`r6_doctor_census_fails.txt` [`b6f59ec48df91228`](../../maturity/acceptance-artifacts/401190d5-4791-4699-a47f-da7601918f88.log)、`r7_doctor_buckets.txt` [`7a42a98146c2c764`](../../maturity/acceptance-artifacts/5a811de0-ac61-49ad-897c-bce390bb4756.log)、`r7_doctor_buckets.stdout.txt` [`da10a30d3881f81b`](../../maturity/acceptance-artifacts/c0b45a65-60fd-44df-bd5b-e87f62609e24.log)、`r7_acceptance_dryrun_before.log` [`7edac46a62491fb9`](../../maturity/acceptance-artifacts/4e5837f8-f92e-4e52-b442-804e02c3074d.log)、`r7_ashare_shot.stdout.txt` [`5f9f42b0f3382e9f`](../../maturity/acceptance-artifacts/9de23571-f7a6-4baa-810a-2a1626da80b3.log)、`r7_debug_build.log` [`a05db0d0b98ac9b8`](../../maturity/acceptance-artifacts/8a14d9ad-f654-457e-8a01-5f2c5c26f179.log)、`r7_release_build.log` [`7eb2d4a203d94706`](../../maturity/acceptance-artifacts/114c78d5-7037-4c43-a444-f9c23d31b4a8.log)、`r7_ashare_landed.stdout.txt` [`0e8cacf5211a3566`](../../maturity/acceptance-artifacts/21cac459-59af-4611-b478-02ea7c843e3c.log)、`r7_ashare_landed_readings.json` [`39778f3910334f50`](../../maturity/acceptance-artifacts/a3f5ce08-93f1-48f1-acca-bd421a131af6.log)、`r7_ashare_semantics.stdout.txt` [`e6b1760e19ada257`](../../maturity/acceptance-artifacts/94972c0e-fbed-4db3-b266-f777fb53c885.log)、`r7_shape_probe.stdout.txt` [`5844e43dfa69a50d`](../../maturity/acceptance-artifacts/acf38420-ba69-4012-8210-51d131669114.log)、`r7_shape_readings.json` [`dfc6666d94858648`](../../maturity/acceptance-artifacts/1a326e88-f15f-4b56-bd48-0f2017980473.log)、`r7_guard_census.stdout.txt` [`fdbf37d9ed9813da`](../../maturity/acceptance-artifacts/1fa2555b-6d44-4200-9787-29a0b9ded2b0.log)、`r7_guard_census_readings.json` [`f941416b29643c20`](../../maturity/acceptance-artifacts/fdeb548c-ac00-42ae-9919-04a49ae96ee5.log)、`r7_builtin_template.stdout.txt` [`be3fd676a540e901`](../../maturity/acceptance-artifacts/015c74ec-921f-405a-906d-b12ff73749bd.log)、`r7_builtin_template_readings.json` [`e7c407d95266b98e`](../../maturity/acceptance-artifacts/42ca17f9-53d9-4798-9089-c0dc8e3725cb.log)、`r7_acceptance_dryrun_after.log` [`32016d8f4575c993`](../../maturity/acceptance-artifacts/3a48fb76-44a8-4aca-8621-7a9d36a9ab81.log)、`r7_ledger_verify.stdout.txt` [`a5f747da5e2801a7`](../../maturity/acceptance-artifacts/81f802e4-3a16-48a4-9aee-3072efc91f0a.log)、`r7_full_leg.stdout.txt` [`00a0a2f6c296105a`](../../maturity/acceptance-artifacts/9dd35a80-b3fb-4925-a2bd-391b8594c1f6.log)、`r7_full.log` [`7173f71a3efe89d2`](../../maturity/acceptance-artifacts/a3c74ce2-3dbb-44a8-b9ee-74681845917c.log)、`r7_full_red_names.txt` [`ff15dbf2d579a772`](../../maturity/acceptance-artifacts/d4afbdf7-192d-4657-ac13-ca029d42b1c1.log)、`r7_roster_delta.txt` [`8a44c24ba93fae92`](../../maturity/acceptance-artifacts/54f35b49-1ce8-42ed-9fe8-96274b053e20.log)、`r7_still_red_clusters.txt` [`8a6d3057e480f143`](../../maturity/acceptance-artifacts/3bf0584e-dbef-4f7d-8c50-49d65ebaae41.log)、`r7_still_red_clusters.stdout.txt` [`5dd0aeea15697970`](../../maturity/acceptance-artifacts/7dc8f089-fa9a-49f0-be6e-2846a3fdc1e2.log)。钉住的是落盘后的字节：本段文本只改本页与方案文档 §6.1 那一段，`tools/check_architecture.py` 的引用普查显式跳过 `docs/changelog/`；会读到方案文档的是失败面单源用例那一条腿，它在落盘后按同一命令复跑一次，那一轮的读数不在本节里预填。
+
+- **回填后复跑（run 2，判据读的是落盘后的字节；上一条末尾那句「不在本节里预填」的读数就是这一段）**：五条腿在最终字节上 rc 全 0——架构不变量 4 片 / 336 个具名检查（墙钟 111.42 s）；`unittest discover -s python/tests` 589 tests、verdict OK、skipped=5、红行 0（自报 438.229 s，驱动外包 439.33 s）；失败面单源用例 1 项 OK，它就是会读方案文档与 `docs/first-run.md` 取数失败面表的那条腿，本轮落盘的文本没把它带红；`git diff --check` 178 行全部是工作副本 EOL 转换告警、空白错误行 0；`py_compile` 覆盖 55 个改动的 .py，日志恰好 0 字节——成功即无输出，驱动那一行也打印 bytes=0 且盘上也是 0 字节，两张脸同时为 0 才算跑过。与 run 1 逐格相同的有 18 格，覆盖片数、具名检查数、用例数、判据词、skipped、红行数、单源用例数、diff 提示行数与其告警/错误拆分、py_compile 覆盖数与五条腿的 rc（登记脚本按名逐条设判据，任何一格不等即拒绝登记）；换掉的只有时间：pyfull 自报 447.117→438.229 s、驱动外包 448.28→439.33 s、两份日志的 sha16 b53c9a9159383143→ac1ac399004052c9，登记脚本对这三格设的是「必须不等」。同一只探针另把 diffcheck 的告警名单钉成两跑逐字节相同（两跑同为 553d6de85cc7555a），因为那张名单与时间无关，且本轮落盘的两份文档都不在其中。登记新增 13 份日志工件（run 1 的五份日志与汇总、run 2 的五份日志与汇总、run 2 驱动的逐腿 stdout）：`r8_gate_arch.log` [`83412805b360c477`](../../maturity/acceptance-artifacts/6495cdf3-425d-46f8-b9bc-df3e3ae3d454.log)、`r8_gate_pyfull.log` [`b53c9a9159383143`](../../maturity/acceptance-artifacts/e5beceb3-519b-4b5c-b250-7cdccfcc7c81.log)、`r8_gate_ladder.log` [`8f895904583f0075`](../../maturity/acceptance-artifacts/2f1a3f08-3bfa-477e-ab9d-ad67b5acb0e4.log)、`r8_gate_diffcheck.log` [`553d6de85cc7555a`](../../maturity/acceptance-artifacts/bc19fc15-df56-45b5-98fd-b968a01d9dbf.log)、`r8_gate_pyc.log` [`e3b0c44298fc1c14`](../../maturity/acceptance-artifacts/d0506d1f-0d79-4595-a790-18b8d1d37ebc.log)、`r8_gate_summary.json` [`8ba12b6c17c1268d`](../../maturity/acceptance-artifacts/dd96282a-1090-4133-94e7-9f1e9b9c9229.log)、`r9_gate_arch.log` [`af2240cc460fd879`](../../maturity/acceptance-artifacts/c04b6cc9-a62b-4c1e-8652-eac2c1b43cd6.log)、`r9_gate_pyfull.log` [`ac1ac399004052c9`](../../maturity/acceptance-artifacts/d7ecd473-2b79-4a01-bd65-cef6abccace4.log)、`r9_gate_ladder.log` [`876c5005c3a98c69`](../../maturity/acceptance-artifacts/c34356e5-c7ff-4b2e-b9af-756fe73de48e.log)、`r9_gate_diffcheck.log` [`553d6de85cc7555a`](../../maturity/acceptance-artifacts/e5c6bcfe-f3b9-4c3b-8d8f-f034c00ad633.log)、`r9_gate_pyc.log` [`e3b0c44298fc1c14`](../../maturity/acceptance-artifacts/bd27dd64-dc13-4c11-b952-110a84df378e.log)、`r9_gate_summary.json` [`7378cb6c62f0195a`](../../maturity/acceptance-artifacts/622a9253-57bd-4d0a-b07e-6db6bfd51517.log)、`r9_gate_launch.log` [`74e10fbad8e65ff4`](../../maturity/acceptance-artifacts/311e67ad-77b7-497a-b41d-0ae2f2610a16.log)。登记之后台账腿复跑一次，读作 R01–R23、23 个验收场景、132 个产物绑定，与 run 1 的同一格逐字符相同；`tools/check_strategy_refactor_ledger.py` 源码里 `docs/` 引用 0 处（本脚本当场判据），所以这一段文本不在它的读数路径上——这是结构性判据，不是实测结果。写入面复核：从本轮起点的 246 条被跟踪改动路径到现在的 251 条，crates/ 下 154 条逐名相同、消失 0 条，新增的 5 条（`deploy/qianxing.dataset-bundle.ashare.example.json`、`maturity/ashare_example_backtest_acceptance.yaml`、`maturity/backtest_acceptance.yaml`、`maturity/backtest_baseline.yaml`、`tools/backtest_baseline.py`）每一条都能在本节上一段的字节里原样找到（本脚本按名判据）。所以「本轮没有碰 `crates/`」这句要按它的读数口径来理解：钉住的是被跟踪改动路径集（crates/ 那 154 条逐名相同、增删各 0），而起点清单不含逐文件 sha，因此它不是字节级证据；字节级的口径是本节点名的写入面——`deploy/` 两份夹具与 `.gitattributes`、三份 maturity 台账、`tools/` 那两个台账工具、本页与方案文档 §6.1，探针与脚本本身都在 gitignore 的 `.task-tmp/` 里，不进这一页的证据面。
+
+- **run 3 · 把上一条末尾那句「这是结构性判据，不是实测结果」补成实测**：run 2 靠源码形状说本页不在两只工具的读数路径上，这一条是实测。两条腿读的是本页 `39c5c05a267c7ff5` 那一份字节——run 2 的正文已在里面，本条还没有；这是字节序，不是缺口，也没有任何一份日志会包含触发它自己的那次落盘。`r11_gate_arch.log` [`4bf6fd45c71e1b71`](../../maturity/acceptance-artifacts/dbc0bcd8-6b84-45e2-96fe-e041ac22a20a.log) 三跑逐字符相同的仍是「4 片 / 336 个具名检查」，而日志换了 sha（`af2240cc460fd879`→`4bf6fd45c71e1b71`）才说明这是新跑的一份而不是复读；`r11_gate_ledger.log` [`2baa86413ab39add`](../../maturity/acceptance-artifacts/d8df8654-4c93-49ef-abcf-a9e2a7a85446.log) 的输出里没有时钟，判据反过来设成「必须逐字节相同」，三张脸（run 1 的 `r8_gate_ledger.log`、登记 13 份后的 `r10_post_book_ledger.log` [`2baa86413ab39add`](../../maturity/acceptance-artifacts/8b5e04b7-c52a-42f8-934a-74bd6d316c4f.log)、本轮）同为 `2baa86413ab39add`，读数 R01–R23 / 23 个验收场景 / 132 个产物绑定与 run 2 那一格逐字符相同——一旦不同就说明这段文本动到了它，实测没动。驱动面 `r11_gate_summary.json` [`f434bf0935523bf3`](../../maturity/acceptance-artifacts/09bca419-8594-43e5-9fe7-bf1c860a6ebb.log) 的 rc 键恰好是 `arch_rc`、`ledger_rc` 两个且全 0，`r11_gate_launch.log` [`d28f5c820d6f8e84`](../../maturity/acceptance-artifacts/b2df94a1-21a5-47fe-81eb-65c1a64196d3.log) 的逐腿秒数与汇总的 `t_` 键相等、`bytes=` 与日志把 CRLF 折回单个换行后的字符数相等（arch 68/156 字节、ledger 104/105 字节：中文在盘上占 3 字节，`bytes=` 记的从来不是盘上字节数）。秒数只报不判：架构腿工具自报 111.45 s、驱动外包 111.76 s（外包不小于自报成立），台账腿 6.84 s。登记 5 份日志。本脚本在写之前对这 5 份已登记副本按名册 sha 复算 33 格，写之后又在最终字节上复数两处静态判据——`docs/changelog/` 在 `tools/check_architecture.py` 里出现 1 次（就是它的引用普查跳过规则）、`docs/` 在 `tools/check_strategy_refactor_ledger.py` 源码里 0 次，写前与写后两次读数相等才放行。这两个数当场可 grep，不依赖任何日志，所以它们对本文最后落到的那一份字节也成立。
+
+### 易用性首跑收口 · wheel 自带报告渲染器、Windows run.json 覆写竞态与文档路由（2026-10-30，未发布工作区）
+
+按 `docs/牵星Qianxing-易用性对照RQAlpha架构评审与优化重构方案-2026-10-30.md` 的 D1–D16 收口本轮：wheel 侧首跑链路补齐、
+报告渲染器随包分发、首跑文档单页化，并把方案文档的状态逐条对齐到代码事实。
+
+- **D3 选项 A 落码**：`tools/build_python_wheel.ps1` / `.sh` 在 `pip wheel` 之前 `cargo build --release -p qx-cli`，
+  把宿主平台二进制装进 `python/qianxing/_bin/`（Windows `qx-cli.exe`），`_bin/` 作为构建副产物进 `.gitignore`，
+  与 `_qianxing_native*` 同口径。装载必须早于打包这件事本身成为判据：`tools/check_architecture.py` 的
+  `wheel_builder_check` 按位置比对 `qianxing/_bin` 与 `pip wheel`，晚于或缺失即红。SDK 侧 `project report --cli`
+  默认改为 `None`，让 `_bin` 内置副本先于 PATH 命中；显式 `--cli` 永远优先，三个落点都不命中时报
+  `missing` 并停下，不回落到"另一个候选"。
+- **Windows run.json 覆写竞态修复**：`project_runs._write` 的 `os.replace` 在 Windows 上会被同机读者
+  （`project status` / 策略自读 `project_runs()`）以 ERROR_ACCESS_DENIED 挡下，导致自取消的策略整轮以
+  `INVALID_INPUT` 失败（本轮在 native 取消用例上实测复现）。新增 `_replace`：仅 `nt` 走有界重试
+  （12 次、5 ms 起指数退避、单次上限 200 ms），POSIX 保持一次即抛，预算耗尽仍 `PermissionError` 且旧收据字节不变、
+  无 `.tmp` 残留。
+- **`run_spec` 日期宽度收紧**：`strptime` 会把 `2024015` 读成 2024-01-05，`_date_ms` 先按 `^\d{8}$` 与
+  宽度（8 或 10）把关，`--end` 的右界改成"当日 23:59:59.999"（`+ _ONE_DAY_MS - 1`），不再多带一根次日 Bar。
+- **首跑文档单页化（D9）**：新增 `docs/first-run.md`，按 wheel / cargo 两支给可复制命令、标明每条命令属于哪个二进制、
+  给"出错时先看这三行"与"首跑不承诺的事"；`README.md` 「安装」、`docs/installation.md` 「安装」与 C 段、
+  `docs/project-guide.md` 文档地图、`docs/strategy-project-runs.md` 与 `docs/backtest-report-layout.md` 的
+  `--cli PATH` 旧口径同步改为"内置副本优先、显式覆盖、不静默回落"。
+- **方案文档状态对齐**：D1–D16 与 P0–P5 各补**状态**行，按事实分【已实现】/【部分已实现】/【设计意图，未排期】
+  （D5、D7、D8 为部分，D3 只落选项 A），§2.9 规模表里三处随本轮拆分漂移的行数改为重测读数
+  （`project_runs.py` 2,426、`cli.py` 1,582、`qianxing_ashare/__init__.py` 2,361），文档头部与 §6 明确
+  "评审时点快照 + `path:NN` 按文件与函数名检索"。
+- **取数失败面单源化（D7/D16 收口）**：`sources.DATA_ERROR_EXIT_CODES` 此前零用例引用——八档退出码只活在文档里，
+  加上三处手抄的 `assertEqual(code, 6/5)`。新增 `python/tests/test_ashare.py` 的
+  `test_data_error_ladder_is_the_only_source_of_data_exit_codes`：钉表值本身、每档的 `exit_code_for` 与
+  `AshareProviderError.exit_code`、未知 category 回落 `provider`、从产出方源码读出的 category 词汇表与表的两个集合差
+  （`credentials` 是表里唯一没有产出方的保留行，判据把它单独定价），以及 `docs/first-run.md` 与方案文档 D7 抄的同一串数字；
+  `invalid-request` / `unsupported` / `partial` 三档另有进程退出码实弹，那三处手抄常量改成从表取值。
+  `missing-extra` 与 `unsupported` 两类的建议命令、能力位与可替代源文本各补断言。文档按 claim 拆开：
+  D16 的"凭据缺失只说放哪、不打印值"改记【设计意图，未排期】（A 股取数面没有 token 类源，注册表 `credentials` 列只有
+  `none` 与 ccxt 行的 `optional`，而 ccxt 行 `fetchable=False` 不经 `data fetch` 路由；CCXT 自己的凭据探针只回变量名）；
+  `docs/first-run.md` 的八档表加"这张表只有一份、由该用例双向钉住"的说明。
+
+- 定向证据（本机 Windows 11 / CPython 3.13，源码树内 `python -m qianxing.cli`）：`test_project_runs`
+  共 37 项通过（本轮新增渲染器选择/失败两格与 `_replace` 三格），`test_app_use_cases`
+  的 doctor 用例新增 D10 后端一格与 D3 渲染器一格断言，`test_strategy_project_plan` +
+  `test_cli_strategy_file` 11+22=33 项通过，`test_ashare` 与跨语言契约 55+6=61 项通过
+  （本轮新增的失败面用例单跑 1 项通过（rc 0，墙钟 0.3 s），它同时是门禁的一条腿，回填文档后还要再复跑一次）。
+  首跑链路的命令级实测（`init --demo` 落 9 份文件、`project doctor` 零 issue、
+  `project run` 与 `run -f` 的 `result_hash` 逐字符相同、`project report --format html,xlsx,json`
+  在 `origin=bundled` 且不带 `--cli`、PATH 上无 `qx-cli` 的情况下 `status=ready` 退 0）记在
+  `docs/first-run.md` 的「本轮实测」表。
+- 变异取证（2 发 2 杀，每枪按 sha 还原后在最终字节复跑 37 项全绿）：
+  `if os.name != "nt":` → `if True:`（任何平台都只覆写一次）打红 Windows 重试格与预算耗尽格；
+  → `if False:`（任何平台都走重试）只打红 POSIX 一次即抛那一格，说明那一格量的是"平台分叉"而不是"重试存在"；
+  `_REPLACE_ATTEMPTS` 12 → 13 打红预算格，证明断言钉的是字面量 11 而不是常量自比。
+  逐枪红行：gun1_no_retry_on_nt 打红 test_posix_never_retries_a_replace_permission_error；gun2_attempt_budget_13 打红 test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt
+- 取数面变异取证：表驱动用例 9 发 9 杀 0 等价，逐枪（红断言落在被改的那一格）：g1_unsupported_code→ladder dict is pinned | {'inv[70 chars]'partial': 5, 'unsupported': 7, 'cache-miss': 7, 'provi；g2_reserved_key→reserved-row set difference | {'inv[18 chars]'creds': 3, 'missing-extra': 3, 'network': 4, [58 chars；g3_accessor_constant→per-row accessor pin | 8 != 2 : invalid-request；g4_doc_drift→published table matches the constant | 'invalid-request2/credentials3/missing-extra3/network4/partial5/unsupp；g5_cli_constant→process exit follows the table | Tuples differ: ('unsupported', 2) != ('unsupported', 6)；g6_default_typo→vocabulary read from producer source | Items in the first set but not the second:；g7_reserved_row_only→reserved row has exactly one owner | Items in the second set but not the first:；g8_fallback_only→unknown category falls to provider | 2 != 8；g9_plan_doc_drift→review doc ladder matches the constant | 'invalid-request2/credentials3/missing-extra3/network4/partial5/unsupp；
+  建议命令与能力位用例 6 发 6 杀 0 等价：s1_install_hint→missing-extra 建议命令 | FAIL: test_source_resolution_has_four_levels_and_explicit_au；s2_adjustment_suggestion→unsupported 可替代源 | FAIL: test_mootdx_unsupported_requests_never_load_provider (；s3_capability_bit→unsupported 能力位 | FAIL: test_mootdx_unsupported_requests_never_load_provider (；s4_frequency_suggestion→频率不支持的可用清单 | FAIL: test_mootdx_unsupported_requests_never_load_provider (；s5_actions_capability_bit→公司行为能力位 | FAIL: test_mootdx_unsupported_requests_never_load_provider (；s6_actions_suggestion→公司行为可替代源 | FAIL: test_mootdx_unsupported_requests_never_load_provider (。两轮的复跑用例数分别是
+  1 / 1 项全绿，每个文件在还原后按 sha 复核过。
+  两条口径留档：`g2`（改表里保留行的键名）先被表值那一格打死，真正给保留行定价的是 `g7`；
+  `g4` 与 `g9` 是同一个循环里的两次迭代，两份文档各自单独打红。
+- 门禁：`python -X utf8 tools/check_architecture.py --fast` 在最终字节上 4 片、
+  完整覆盖 336 个具名检查且无重复（墙钟 125.23 s），台账门禁
+  `tools/check_strategy_refactor_ledger.py` 退出码 0（R01–R23 valid，23 个验收场景、132 个产物绑定运行通过）；全量 `python/tests` 589 项
+  全部通过（`OK`）（skipped=5，墙钟 468.929 s）；native 项目运行用例
+  （`QX_TEST_NATIVE_LIBRARY` 指向本轮 `.pyd`）3 项全部通过（rc 0，墙钟 160.54 s）。`cargo fmt --all -- --check` rc 0
+  （本轮唯一失格的是 `crates/qx-python/src/lib.rs` 的 use 列表，已 `cargo fmt -p qx-python` 收敛）。
+  Rust 文档锚点腿 `cargo test -p qx-cli --release --no-fail-fast --bin qx-cli` 通过 446 项、红 39 项、忽略 0 项（rc 101，墙钟 248.01 s，profile `release`，驱动已把 `TEMP`/`TMP` 指进工作区 `.task-tmp/test-tmp`）。profile 记的是 `--release`：本机 Git Bash 没有 Windows SDK 环境变量，
+  debug 档下 `libsqlite3-sys` 的 C 编译在 `cl.exe` 退 2，这是环境限制不是判据放宽。
+  **这条腿是红的，本轮按裁决只做证据收口、不认领修复**：逐簇归因 A 快照守卫 19 条 / B 角色证据 9 条 / C 沙箱权限 0 条 / 名单与文档平价锁 11 条，合计 39 条，每条红的判据文本与 panic 落点
+  逐行列在同一份归因工件里；可达性实测 实测这批红的读取面（panic 落点测试源文件里出现的仓库路径字面量）与未提交面的交集：9 个在 `crates/` 里、本轮所在的 `python/`、`docs/`、`tools/`、`maturity/` 四个前缀 0 个、其余非 crates 前缀 1 个，即这批红的读取面里 `python/`、`docs/`、`tools/`、
+  `maturity/` 这四个本轮所在的未提交前缀命中 0 个。分簇与成因：A 簇 19 条来自
+  `crates/qx-service/src/backtest_bindings/strategy_batch.rs` 新增的 bars snapshot 强约束——它没有带着
+  `deploy/qianxing.dataset-bundle.*.example.json` 一起走，那三份示例夹具里没有 `snapshots` 键且与 HEAD 逐字节相同；
+  B 簇 9 条来自 `crates/qx-service/src/worker_market_spec.rs` 的 `dataset_instrument_role`
+  fail-closed，live worker 夹具同样没补；余下 11 条是名单与文档平价锁，按模块名分布为
+  `11`、`api_endpoint_table_routes`、`ashare_submit_guard`、`control_command_executor_coverage`、`deploy_template_coverage`、`event_log_face_wiring`、`live_submit_fail_closed`、`pipeline_metrics_open_sites`、`reexport_zero_reader_surface`、`strategy_order_identity_round_scope`。这两处守卫涉及的 `DatasetSnapshotV1` 与 `dataset_instrument_role` 在 HEAD 全树检索
+  0 次，属于未提交的在途重构，不是本轮改出来的。沙箱噪声单独量过：把补 `TEMP` 重定向之前那条腿点名的 41 个红名单独重跑（`--exact` 过滤、同一份 release 构建、只有 `TEMP`/`TMP` 换成工作区目录）：2 条转绿、39 条仍红、0 条没被执行——本仓库文档早写过
+  「收尾跑测试必须先设 `TEMP`」，这条腿的驱动本轮才补上该重定向，环境假失败与真红由此分开计数。
+  本轮日志工件：（共 18 份）`arch` [`bca4235b`](../../maturity/acceptance-artifacts/bca4235b-f1a5-4ac4-aab3-9397c1dd91fb.log)、`ledger` [`c951d0d6`](../../maturity/acceptance-artifacts/c951d0d6-efa0-4d43-b926-f9487eb91cdc.log)、`cargo_unit` [`1a5d81f7`](../../maturity/acceptance-artifacts/1a5d81f7-e2d7-4655-ab62-405d8416ad1a.log)、`pyfull` [`a649a273`](../../maturity/acceptance-artifacts/a649a273-285f-4b0e-a3f3-0727313e7192.log)、`py_native` [`dc793a0e`](../../maturity/acceptance-artifacts/dc793a0e-64b9-4af8-94a6-9b39a6ff20fa.log)、`ladder` [`78927c1e`](../../maturity/acceptance-artifacts/78927c1e-7aba-4eca-b638-817175ef865e.log)、`diffcheck` [`98f5f2a2`](../../maturity/acceptance-artifacts/98f5f2a2-29c9-437e-96ed-92eccd1bedc7.log)、`mut_replace.out` [`2dfecffb`](../../maturity/acceptance-artifacts/2dfecffb-a817-4b49-96f7-fd0a1f3c4502.log)、`mut_gun3.out` [`0c4a0cd0`](../../maturity/acceptance-artifacts/0c4a0cd0-8f6b-47be-ab97-91480ec3fab5.log)、`gun1_no_retry_on_nt` [`3431f4c0`](../../maturity/acceptance-artifacts/3431f4c0-3ed6-4ac4-9966-2d30fabfa0bb.log)、`gun2_attempt_budget_13` [`f3d3687e`](../../maturity/acceptance-artifacts/f3d3687e-6e5a-4bd2-b80a-4e95455d8118.log)、`gun3_single_shot_everywhere` [`6761fa64`](../../maturity/acceptance-artifacts/6761fa64-78b6-4922-945f-2225b0e645fe.log)、`verdict_final_bytes` [`c32ef964`](../../maturity/acceptance-artifacts/c32ef964-494e-4487-8a93-efd35833a224.log)、`mut_ladder.stdout.txt` [`ff41f36e`](../../maturity/acceptance-artifacts/ff41f36e-5cdd-43a6-aca5-08d66acfb2e5.log)、`mut_suggestion.stdout.txt` [`e29d66ec`](../../maturity/acceptance-artifacts/e29d66ec-2817-4c6d-8cf7-36bbdb194431.log)、`cargo_red_roster.txt` [`910dc5e1`](../../maturity/acceptance-artifacts/910dc5e1-0d69-415c-ab9c-1a866ec36a8d.log)、`cargo_red_adjudication.txt` [`8259837c`](../../maturity/acceptance-artifacts/8259837c-72e6-47b3-886f-b623beef037a.log)、`cargo_red41_probe.txt` [`db3e259c`](../../maturity/acceptance-artifacts/db3e259c-85c0-4b9c-9976-541bd86c2449.log)
+- 仍待裁决（在途 Rust 重构的产物面，不属于本方案 D1–D16）：bars snapshot 强约束要按产品已有的 `data bundle`
+  路径重生成三份 deploy 示例夹具（带 `snapshots.bars`）；live worker 夹具要补 `dataset_instrument_role`；
+  上条点名的那些模块的名单锁要跟着重构同步。本轮不改 `crates/`，改与不改由工作区的主人裁决。
+  2026-11-01 更正（逐条对账，详见本页顶部那节）：前一条的两份 bundle 已带 `snapshots.bars` 落地（BarFrame 的内容未动），A 簇 19 条由此清零；后一条的名单锁仍未落地；中间那条要的是签名角色目录的出厂实例，本轮当场数过 `deploy/` 下这样的实例 0 份（spec 侧声明 `dataset_instrument_role` 的文件 6 份）。「三份」那句要更正：守卫只读被 profile 声明的两份（本轮普查 2/10），第三份 `qianxing.dataset-bundle.example.json` 是生产者命令的输入模板，不在守卫可达面内。
+- 回填后复跑（run 2，判据读的是回填后的字节）：四条计数腿退出码 0，cargo 单元锚点腿按「已裁决红」复跑：`cargo test -p qx-cli --release --no-fail-fast --bin qx-cli` 通过 446 项、红 39 项、忽略 0 项、rc 101（墙钟 228.53 s）；`check_architecture --fast` 4 片 / 336 个具名检查（墙钟 124.25 s）；台账 R01–R23 valid、23 个验收场景、132 个产物绑定；失败面单源用例 1 项通过（墙钟 0.27 s）；`git diff --check` 提示 170 行；会读本文档面的 13 个计数与 run 1 逐键一致（漂移 0）；红名单与 run 1 是同一批 39 条，按名字排序后同 sha 230a84cd7e67a2e9，但两次 run 未排序的原始字节 sha 不同（run 1 0754737b3dcec8b1 / run 2 89b23acd8fc2a526——libtest 并发打印 FAILED 行，顺序不是判据）；归因工件与 run 1 同一行读数；run 2 日志工件：（共 7 份）`r2_cargo_unit` [`e877f15d`](../../maturity/acceptance-artifacts/e877f15d-466b-400e-81a4-cc32cd132fb9.log)、`r2_arch` [`110060ae`](../../maturity/acceptance-artifacts/110060ae-0228-4008-a8d6-45e0fffbf377.log)、`r2_ledger` [`a163ff57`](../../maturity/acceptance-artifacts/a163ff57-6f63-47a7-b785-2259a01483ad.log)、`r2_ladder` [`b2888389`](../../maturity/acceptance-artifacts/b2888389-3842-4aef-9657-fbd8c70902f9.log)、`r2_diffcheck` [`b1db1663`](../../maturity/acceptance-artifacts/b1db1663-67eb-4c22-875d-0a664eacdfbf.log)、`r2_cargo_red_roster.txt` [`0d07931e`](../../maturity/acceptance-artifacts/0d07931e-6b1a-4676-82ae-4d140c8d2eda.log)、`r2_cargo_red_adjudication.txt` [`4219c1da`](../../maturity/acceptance-artifacts/4219c1da-206d-4a3a-9d80-914d3a40bf7f.log)
+  这段收口文本是本轮最后落盘的内容，它只改本页——`tools/check_architecture.py` 的引用普查显式跳过
+  `docs/changelog/`，其余各腿也不读它。落盘前后各跑一次 `git diff --check`，两次读数同为 170 提示行，
+  读数相同即证明这段文本没有挪动任何被门禁读到的字节。
+
+- **D5 进阶页收口（2026-10-31）**：新增 `docs/strategy-hooks.md`（175 行），按钩子族各一节——Bar 的事件式与
+  经典式分界、Tick、OrderBook、Timer（只在 Runtime 类宿主送达）、成交回报投影链、预热与多标的；命令一律
+  从仓库根用 `python -m qianxing.cli` 执行，读数写在页内，能力边界指回 `strategy-host-capabilities.md`；
+  `docs/first-run.md` B6 末、`docs/project-guide.md` 文档地图与 `docs/multi-language-strategies.md` 的钩子清单
+  各加一条链接；方案文档 D5 由【部分已实现】改【已实现】，摘要行同步。
+  同轮修掉两处入口事实偏差（只动 `python/`，未改 `crates/`）：（1）本地 `run-strategy` 桥此前只派发
+  `on_event`/`on_bar`，Backtrader 风格的 `prenext`/`nextstart`/`next` 只在 Runtime 类宿主生效——同一份 BarFrame
+  （`barframe:613fdc1dc0b779e7`）上 `strategy_file_nextstyle.py` 读 `fills=0 / return_bps=0`，对照 `on_bar` 版的
+  `fills=1 / return_bps=1 / equity_points=70`；修法是让 `_qx_on_event` 采用与 `class_adapter.py` 相同的谓词
+  （类未覆盖 `on_event` 与 `on_bar` 才算经典式）和同一序号切分，修后同读 `fills=1 / return_bps=1 /
+  equity_points=70`，预热用例 `test_warmup_suppresses_orders_until_each_instrument_is_ready` 扩出
+  `[prenext, nextstart, next, next]` 与意图数 `[0, 1, 1, 1]` 两格（变异：把谓词置 False 即红，还原后绿）；
+  全量 `Ran 589 tests … OK (skipped=5)`，`project run` 的 demo `result_hash=095d45d044ddc688` 未变。
+  （2）两份 Tick 示例 spec 的 `depth_path` 由 `../deploy/...` 改为仓库根相对的 `deploy/...`，
+  `python/README.md` 公布的 Tick 两条命令才真能从仓库根跑通：`run-strategy` 读 `snapshots=80 / fills=1 /
+  tier=l1 / depth:example-depth-l1-v1:c18e516d92940ffd`，`search-strategy --summary` 9 个候选全部出结果。
+  进阶页读数逐条实测：OrderBook 最小类在 80 帧多档数据上 `fills=1 / tier=l2 /
+  depth:example-depth-l2-v1:bb98a3580a92ee38`；本地 Bar 宿主上 `on_bar` 第二根买入、`on_trade` 收到成交后
+  平仓，最终 `fills=2`，成交回调的 `context` 14 键与 `fill` 13 键都不含 `instrument`——Runtime 类宿主在
+  成交/订单状态回调里会放 `instrument`，两侧不一致且本轮不能改 Rust 宿主，登记为待裁决；
+  `on_account`/`on_position` 本地不可用、`on_timer` 只在 Runtime 类宿主送达，页内按【已实现】/【未排期】分开写。
+  收口门禁（改文档前的字节）：`check_architecture --fast` 4 片 / 336 个具名检查（墙钟 115.60 s）、台账 R01–R23
+  valid、23 个验收场景、132 个产物绑定、失败面单源用例 1 项、`py_compile` 55 份、Python 全量 589 项 `OK`
+  （skipped=5，墙钟 453.464 s）、`git diff --check` rc 0 提示 174 行——比 run 2 的 170 多 4 行，逐一核对恰是本轮
+  新改的四个 LF 文件（`python/qianxing_bridge/app.py`、`python/tests/test_strategy_base.py` 与两份 Tick 示例
+  spec），全是「LF will be replaced by CRLF」告警而非空白错误。
+  本轮日志工件：（共 17 份）`pre5_summary` [`81526be5-b3c5-4a49-b8d7-c0ba1d0c5d21.log`](../../maturity/acceptance-artifacts/81526be5-b3c5-4a49-b8d7-c0ba1d0c5d21.log)、`pre5_arch` [`036ae77d-c88b-44a9-8821-9bba4d371b23.log`](../../maturity/acceptance-artifacts/036ae77d-c88b-44a9-8821-9bba4d371b23.log)、`pre5_ledger` [`31c5a001-0e68-4383-b5af-cda9fee8a0d6.log`](../../maturity/acceptance-artifacts/31c5a001-0e68-4383-b5af-cda9fee8a0d6.log)、`pre5_ladder` [`9e2b1f2e-50db-4397-9dc1-08b2e5d04192.log`](../../maturity/acceptance-artifacts/9e2b1f2e-50db-4397-9dc1-08b2e5d04192.log)、`pre5_diffcheck` [`62a22257-3dbe-4488-95d1-d22f5e74e951.log`](../../maturity/acceptance-artifacts/62a22257-3dbe-4488-95d1-d22f5e74e951.log)、`pre5b_summary` [`46ebd452-862f-4ae5-80bd-18b8f7181185.log`](../../maturity/acceptance-artifacts/46ebd452-862f-4ae5-80bd-18b8f7181185.log)、`pre5b_pyfull` [`cefa9f99-8bc9-4fc0-8adb-896ef55c5986.log`](../../maturity/acceptance-artifacts/cefa9f99-8bc9-4fc0-8adb-896ef55c5986.log)、`sma` [`266f6d34-45cf-4de2-b998-7b6f52b7a15d.log`](../../maturity/acceptance-artifacts/266f6d34-45cf-4de2-b998-7b6f52b7a15d.log)、`nextstyle` [`bdede98b-e34b-4778-9b4e-92af55570c7a.log`](../../maturity/acceptance-artifacts/bdede98b-e34b-4778-9b4e-92af55570c7a.log)、`orderbook` [`0136468e-e5c6-4188-8126-654a2d96daa0.log`](../../maturity/acceptance-artifacts/0136468e-e5c6-4188-8126-654a2d96daa0.log)、`tick` [`89cd6171-825c-40e5-bfca-7b0368023b7f.log`](../../maturity/acceptance-artifacts/89cd6171-825c-40e5-bfca-7b0368023b7f.log)、`tick_search` [`7b81873a-ab23-4ed9-b343-b5d96388d9a4.log`](../../maturity/acceptance-artifacts/7b81873a-ab23-4ed9-b343-b5d96388d9a4.log)、`fill` [`3d8908ce-7d54-4731-9aba-cc32033bfd02.log`](../../maturity/acceptance-artifacts/3d8908ce-7d54-4731-9aba-cc32033bfd02.log)、`fill_keys` [`bb8a0cb0-8a0d-490f-832d-6f87f60920e4.log`](../../maturity/acceptance-artifacts/bb8a0cb0-8a0d-490f-832d-6f87f60920e4.log)、`mut_red` [`05d112e2-73ea-4c70-a398-e11ce4bbe9d8.log`](../../maturity/acceptance-artifacts/05d112e2-73ea-4c70-a398-e11ce4bbe9d8.log)、`mut_green` [`b0e1bf58-5f52-42bc-98d3-dfb7eff34e4a.log`](../../maturity/acceptance-artifacts/b0e1bf58-5f52-42bc-98d3-dfb7eff34e4a.log)、`nextstyle_before` [`a0d3ed45-ff53-4173-a831-ede8438e67c1.log`](../../maturity/acceptance-artifacts/a0d3ed45-ff53-4173-a831-ede8438e67c1.log)。
+- 落盘后复跑（run 3，判据读的是加过本段的字节）：`check_architecture --fast` 仍 4 片 / 336 个具名检查
+  （墙钟 118.53 s）、台账仍 R01–R23 valid / 23 个验收场景 / 132 个产物绑定、失败面单源用例 1 项、
+  `py_compile` 55 份、`git diff --check` 仍 174 提示行——与落盘前逐键相同（漂移 0）。这五条腿都不读本页：
+  `tools/check_architecture.py` 的引用普查显式跳过 `docs/changelog/`，其余腿只读代码、台账与工作区字节，
+  所以复跑的用处是证明本段没有挪动被门禁读到的字节；本段落盘后再跑一次 `git diff --check`，
+  读数与复跑时同为 174 行。复跑日志工件：（共 5 份）`r5_summary` [`6ca58eec-5b7c-410b-b5bd-af02ed24cff2.log`](../../maturity/acceptance-artifacts/6ca58eec-5b7c-410b-b5bd-af02ed24cff2.log)、`r5_arch` [`7dbb611c-bcaa-4783-b97c-7274cbf36294.log`](../../maturity/acceptance-artifacts/7dbb611c-bcaa-4783-b97c-7274cbf36294.log)、`r5_ledger` [`ecf7777b-2050-43ca-955e-f11072717abc.log`](../../maturity/acceptance-artifacts/ecf7777b-2050-43ca-955e-f11072717abc.log)、`r5_ladder` [`d27d18f2-1732-4d6e-9a05-5cb1f06c78ca.log`](../../maturity/acceptance-artifacts/d27d18f2-1732-4d6e-9a05-5cb1f06c78ca.log)、`r5_diffcheck` [`462181a2-bd1d-40c9-8f5a-ef267ea24609.log`](../../maturity/acceptance-artifacts/462181a2-bd1d-40c9-8f5a-ef267ea24609.log)。
+- 仍待：D3 选项 B（渲染下沉库 crate、去掉子进程与 300 s 超时）；D7 的 `qx-cli` 与 `qianxing` 共用一张
+  category 表；D8 的 `project_runs.py` 四族与 `qx-cli` worker 树搬移。
+  **本轮没有跑真实的 wheel 构建**：`_bin` 装载是按构建脚本同一动作手工复现（复制本轮 `cargo build --release`
+  产物）后验证 SDK 侧选择链的，`tools/check_python_wheel.py` 对包内载荷的核对仍需在下次真实构建里过一遍，
+  Linux/macOS 两支的 `_bin` 命名与可执行位同样未做实弹验证。
+
+### R17 多市场 Bar/深度基准分析跨格式落地（2026-10-30）
+
+`qx-cli report` 现将 `--benchmark-bars` 与可选 `--benchmark-calendar` 接入多市场 Bar、深度单轮及 `--against` 报告。基准只按严格对齐时间戳计算；Bar 同一时点的权益取最后已验证值，深度分析直接使用 qx-app 完整复核曲线，保留 HTML/XLSX 展示采样边界。
+
+- 单轮 JSON、HTML、XLSX Benchmark sheet 与 benchmark CSV 逐期事实一致；多轮 XLSX/CSV 保留 `run_id`，比较报告继续输出每轮基准分析。定向端到端验收通过：R17-AC01 运行 [`c0c8ecbf-56d1-43ed-8b02-a622a381f704.log`](../../maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log)。
+- R17-AC01 仍待人工复核；跨市场支持的其他平台验收仍按 package ledger 跟踪。
+
+### R17 已复核单市场 report 命令四格式端到端验收（2026-10-30）
+
+单一真实 `app backtest` 先写出带 RunRecord 与 RunManifest 的已验证 RunSummary，再由一次 `qx-cli report` 命令同步生成 JSON、HTML、XLSX 和 benchmark CSV。新 RunSummary 现在内嵌与传统回测摘要共用的 Rust 风险指标投影及版本化口径；旧 schema-v1 摘要仍可从顶层收益字段生成 benchmark。
+
+- 完整 report 验收通过：报告 JSON 标记输入与运行复核均 verified；基准逐期事实从 JSON 与 CSV 对齐到 XLSX Benchmark sheet；HTML/XLSX 展示指标口径。记录 [`270c2c45-0ac9-4548-83a1-d281e98a4cba.log`](../../maturity/acceptance-artifacts/270c2c45-0ac9-4548-83a1-d281e98a4cba.log)。
+- 多市场/深度报告也完成 JSON、HTML、XLSX 收益事实核对，年化与费用定义版本进入三种格式；深度精确手续费按币种在三格式一致。Bar 多市场 exact fee 汇总与跨报告族基准周期验收仍待完成。
+
+### R17 多市场 Bar/深度报告投影及费用口径（2026-10-30）
+
+多市场 Bar CLI 报告现携带与单市场共用的 `metrics_definition`，并从事件重放返回的账簿 Fee entries 精确汇总币种费用；HTML 明示风险期制和费用口径，XLSX Overview 导出定义版本和币种汇总。多市场深度报告保留应用层已验证的 `metrics_exact`，将精确按币种手续费和同一指标定义投影到 JSON、HTML、XLSX。
+
+- R17-AC01 定向验收通过：CLI 实际从 Bar 与 Depth 回测产物生成 JSON/HTML/XLSX；逐项核对收益 bps、定义版本，并独立重算两类账簿的币种手续费。最新记录 [`87b71bd1-c5da-4777-afae-ee2423469174.log`](../../maturity/acceptance-artifacts/87b71bd1-c5da-4777-afae-ee2423469174.log)。
+- 完整 `app_three_entrypoints` 集合有 24 项通过、9 项失败；失败集中于 RunRecord 内容冲突、Provider fixture 时间轴和一个既有 Python 多账户结果断言。完整记录 [`8df2292d-1180-42e9-989d-beab8d8dfc94.log`](../../maturity/acceptance-artifacts/8df2292d-1180-42e9-989d-beab8d8dfc94.log)。
+- 仍待：多市场/深度 benchmark 比较入口及逐期跨格式验收是否纳入 R17 范围，并完成 R17-AC01 人工审阅。
+
+### R17 单一 Rust 基准事实贯穿 HTML、CSV 与 XLSX（2026-10-30）
+
+扩展交易日历基准测试：Rust 先生成一份日频基准分析，HTML 与 benchmark CSV 使用这组结果；测试还实际写出 XLSX 工作簿并解析 Benchmark 工作表，对齐期制和每一期的起止时间、组合/基准原值及三类收益事实。
+
+- R17-AC01 定向验收通过：[`3c49bacf-3de7-4a61-b3df-3eed858b77db.log`](../../maturity/acceptance-artifacts/3c49bacf-3de7-4a61-b3df-3eed858b77db.log)。
+- 后续的命令级验收已覆盖已验证单市场 RunSummary 及多市场 Bar/Depth 报告；剩余边界见本页较新的 R17 报告家族记录。
+
+### R18 打包控制台会话与 CSRF 客户端/服务端验收（2026-10-30）
+
+把服务端 BFF 会话、operator 注入、CSRF 拒绝测试与打包 `app.js` 的实际函数执行串成一组验收证据。客户端测试执行生产页面中的 cookie 解析与 POST 请求构造，核验同源凭据、`X-QX-CSRF` 回填以及缺少 cookie 时不伪造令牌。
+
+- qx-api BFF 服务端会话/CSRF/operator 测试通过；新增有效同源写请求端到端验收，命令被受理且审计 operator 由服务端注入：[`09bfc574-525e-406b-a2ba-c7eaaefd893a.log`](../../maturity/acceptance-artifacts/09bfc574-525e-406b-a2ba-c7eaaefd893a.log)。
+- 打包页面 Node 验收两项通过：[`6f39fcaa-7084-469f-9eb2-525ee22d9a76.log`](../../maturity/acceptance-artifacts/6f39fcaa-7084-469f-9eb2-525ee22d9a76.log)。
+- 仍待：浏览器连接真实本地 BFF 的部署操作/只读投影验收，以及所有 live readiness 前提的权威来源。
+
+### R08 策略宿主能力目录跨宿主正反向验收（2026-10-30）
+
+新增 Rust 跨宿主能力目录矩阵验收，覆盖本地 Python file、Runtime Python class/module-function、本地与双腿 built-in、C ABI、Runtime 和本地 external-process profile。各宿主逐项接受已声明支持的能力并拒绝未提供的能力；legacy C ABI 的空要求仍兼容，声明的 unsupported capability 则 fail closed。
+
+- Windows `qx-strategy` 定向验收通过，运行记录 [`384d1bb8-d922-4956-8f46-90ddfb32c36a.log`](../../maturity/acceptance-artifacts/384d1bb8-d922-4956-8f46-90ddfb32c36a.log)。
+- 新增 external-process 实际构造/ACK 正反向测试通过：精确 host catalog ACK 放行，不支持的 Timer 在 spawn 前拒绝，错误 host identity 拒绝，记录 [`cc7997db-4f84-4bd9-874d-13610fea6008.log`](../../maturity/acceptance-artifacts/cc7997db-4f84-4bd9-874d-13610fea6008.log)。Runtime Python class 改用真实 Runtime host 路径后，四种 transport、声明能力校验及不支持能力的 factory 前置拒绝通过，记录 [`12b03a25-8789-4290-aadd-cc69eb9abbc2.log`](../../maturity/acceptance-artifacts/12b03a25-8789-4290-aadd-cc69eb9abbc2.log)。初次使用 Local 测试助手时 checkpoint 断言失败，原始记录 [`acaa2b00-530e-4c57-89d1-5e1b030547c1.log`](../../maturity/acceptance-artifacts/acaa2b00-530e-4c57-89d1-5e1b030547c1.log) 保留作迭代证据。
+- 本轮补齐本地 Python file 与 Runtime module-function 的正向请求及 Timer 负向拒绝、built-in worker 的配置与算法能力门禁，以及旧式 C ABI 插件的真实动态装载。legacy 插件没有可选要求导出时空要求保持兼容；要求宿主未提供的能力会在 create 前拒绝。记录分别见 [`83b507fd-fce1-4ebe-917c-7835975a1bb8.log`](../../maturity/acceptance-artifacts/83b507fd-fce1-4ebe-917c-7835975a1bb8.log)、[`f1aa248a-8b36-4451-8957-b5cf82d9bb44.log`](../../maturity/acceptance-artifacts/f1aa248a-8b36-4451-8957-b5cf82d9bb44.log) 与 [`613599c9-e643-489c-8978-bbebb9206596.log`](../../maturity/acceptance-artifacts/613599c9-e643-489c-8978-bbebb9206596.log)。Windows 支持宿主的本地行为覆盖已齐；仍待 Linux/POSIX 矩阵与 R08-AC01 人工审阅。
+
+### R13 授权 checkpoint 修订转换与持久化修复（2026-10-30）
+
+补上部署修订状态转换的 Rust 验收后，发现 cursor 持久化防覆盖规则会拒绝合法的跨策略绑定转换，也会把同一 run/fence 下的授权转换误判为 checkpoint 重写。现在只有 deployment migration receipt 的 source/target revision 与 source/target checkpoint SHA-256 同时匹配当前、候选状态时才允许绑定变化；普通写入仍拒绝跨绑定覆盖。
+
+- 验收覆盖错误来源 digest 保持磁盘游标不变、转换仅替换策略状态并保留 adapter/cursor/commit generation、receipt 三项摘要落盘并精确重载，以及旧修订回滚拒绝。17 项 replay 测试通过，包含上述转换回归；定向记录 [`67069960-f295-4505-9e34-5f45c1f7a286.log`](../../maturity/acceptance-artifacts/67069960-f295-4505-9e34-5f45c1f7a286.log) 与完整 replay-suite 记录 [`6bdd16c6-2e72-422a-9e9b-5cbe3d613742.log`](../../maturity/acceptance-artifacts/6bdd16c6-2e72-422a-9e9b-5cbe3d613742.log) 均通过。
+- 仍待：跨持久化后端转换验收，以及运维 pause/resume 和 reconciliation 门控恢复验收。
+
+### R07 Project-run disk-full failure handling acceptance (2026-10-30)
+
+Added Windows ENOSPC fault injection for both result and receipt persistence. A failed `result.json` write is returned to the caller and durably marks the run Failed when the receipt volume remains writable. If the final `run.json` write also fails, the receipt error propagates and the prior durable `preparing` state is retained rather than reporting success.
+
+- Acceptance [`af7564e8-9a37-4ba2-be7b-2f7a353b6e53.log`](../../maturity/acceptance-artifacts/af7564e8-9a37-4ba2-be7b-2f7a353b6e53.log) passed.
+- Still open: Linux/macOS platform matrix; macOS `ps lstart` remains explicitly one-second precision.
+
+### R05 Managed runtime import origin fingerprints (2026-10-30)
+
+Managed import capture now wraps `PathFinder` to retain resolved module origins alongside Python's pre-resolution audit events. This preserves SHA-256 fingerprints when ordinary file modules or ZIP-loaded modules leave `sys.modules` before run completion. Unknown custom importers remain explicitly opaque and fail runtime-inventory verification.
+
+- Windows managed-run acceptance passed end to end: removed file module fingerprint, ZIP container fingerprint, and opaque importer rejection. Record [`8ac64164-bdde-4c28-b4f9-ac8d15392ad6.log`](../../maturity/acceptance-artifacts/8ac64164-bdde-4c28-b4f9-ac8d15392ad6.log).
+- Still open: provenance-backed HS300 history/calendar and dependency lock/wheel mutation acceptance.
+
+### R02 并发策略项目导入隔离验收（2026-10-30）
+
+新增双线程回归：两个项目同时加载相同模块名 `helper`，分别从自己的策略依赖目录读取值，并解析各自的相对数据文件。断言两边结果不串线，`cwd` 与 `sys.path` 不变，项目文件没有遗留在 `sys.modules`。验收使用 R01 刚构建的 Windows wheel native 扩展，避免工作区过期的本地 `.pyd` 影响结果。
+
+- R02-AC01 已通过并接受；运行记录 [`eb5fb6d9-b696-4313-a84d-b166f6c02a53.log`](../../maturity/acceptance-artifacts/eb5fb6d9-b696-4313-a84d-b166f6c02a53.log)。
+
+### R01 clean Windows SDK and CLI installation acceptance (2026-10-30)
+
+The installation acceptance runner now finds maturin beside a Python interpreter or in its Windows `Scripts/` directory. A clean CPython 3.13 virtual environment installed the freshly built 0.3.0 abi3 wheel, and an isolated `cargo install` CLI matched the wheel’s native schema catalog. The doctor smoke verified native extension/app compatibility, CLI schema compatibility, and built-in strategies; quickstart, 13 Python examples, and the packaged strategy example also succeeded.
+
+- Acceptance run [`0cc5ce2a-bdf1-47d2-b53c-c5b3d79eddbf.log`](../../maturity/acceptance-artifacts/0cc5ce2a-bdf1-47d2-b53c-c5b3d79eddbf.log), schema catalog SHA-256 `a02f15d4022e6778ac5ce5b687f6119c12ab915a64a6b3d8a484977fe2426ce3`.
+- Final post-R05 clean rebuild/install also passed from the current Python source tree: [`8c9b1b81-3f90-4ddc-9506-538a288e99c2.log`](../../maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.log). Linux remains the open platform leg.
+- Still open: clean Linux wheel/CLI install and matching doctor evidence.
+
+### R16 LongOnlySma parity evidence human review complete (2026-10-30)
+
+Reviewed the accepted R16-AC01 evidence set: shared-fixture strategy intents match across local and Runtime/Paper hosts; the Rust callback backtest verifies its two fills and exact flat Ledger; and the final Windows file-backed Paper run matches ordered side-aware fills, exact quantity/price, all TradeCash/TradePosition/Fee rows, Executed command audits, and zero ending position. The latest source manifest and artifact hashes pass the strategy refactor ledger checker. Earlier failed harness iterations remain recorded; later passing runs supersede them.
+
+- R16-AC01 is now human-reviewed and accepted; R16 is complete for its scoped Windows local/Paper parity criteria.
+- This does not imply Linux or live-venue acceptance.
+
+### R17 Rust-owned versioned performance metric facts (2026-10-29)
+
+Core performance and benchmark returns now subtract raw integer values before converting to floating point, preserving small real changes in large raw balances. Canonical backtest summaries publish a versioned metric definition for sample basis, timestamp-aligned benchmark periods, and exact ledger fees by currency. HTML and XLSX expose those definitions and exact canonical facts; raw fee totals remain explicitly labeled compatibility projections.
+
+- Acceptance: six focused Rust checks passed for large-value return precision, canonical definition, HTML disclosure, HTML/XLSX fact parity, and benchmark daily CSV equality with the Rust series. Run [`c59dea67-0e7d-4491-b982-d858328baedc.log`](../../maturity/acceptance-artifacts/c59dea67-0e7d-4491-b982-d858328baedc.log); source snapshot: [`c59dea67-0e7d-4491-b982-d858328baedc.source-tree.json`](../../maturity/acceptance-artifacts/c59dea67-0e7d-4491-b982-d858328baedc.source-tree.json). Schema registry is v29.
+- Still open: end-to-end benchmark-backed parity across JSON, HTML, XLSX, and benchmark CSV, plus remaining multi-market and depth report semantics.
+
 # Recent entries
+
+### Strategy Worker 跨进程 Unknown 恢复覆盖成功与失败决议（2026-10-30）
+
+文件与 SQLite 恢复夹具跨独立进程持久化 PreparedEvaluation：首个进程在 Unknown 已落盘后退出；恢复进程通过完整 `strategy-worker --once` 入口加载同一任务。成功分支把控制命令推进到 Executed 并提供终态 Accepted venue fact；失败分支推进到 Failed，并提供 Rejected fact 与失败后的 clean reconciliation。两条路径均验证 cursor 在决议前保持不变，满足条件后才提交。
+
+- 验收：Strategy worker 聚焦套件 **29/29**；记录 [`e8dcc722-6f75-45bc-b6ec-9f472d11bb83.log`](../../maturity/acceptance-artifacts/e8dcc722-6f75-45bc-b6ec-9f472d11bb83.log)；R01–R23 台账校验通过。
+- 仍待：PostgreSQL/Linux 进程恢复及执行 worker 到 live venue 的集成验收。
+
+### R16 LongOnlySma full Rust backtest execution follow-up (2026-10-29)
+
+The shared parity fixture now also runs through the Rust-backed Python callback API and matching engine. Acceptance checks the two fills, verified run artifacts, and exact Ledger position returning to zero after the reduce-only exit. `paper-e2e` now accepts an optional raw-price override for its synthetic quote, while retaining the default 99/100 spread. Full local-backtest versus Paper fill/Ledger parity remains open until the Paper workers are driven through incremental fixture Bars and the resulting artifacts are compared.
 
 ### v0.3.0 发布与 Windows 本地 Microsandbox 验收（2026-10-27）
 
@@ -2613,7 +2987,7 @@ R29 之后做三轮发布前审计（主体链路连通性 / 孤儿逻辑 / 死�
 - **三条诚实话**：「两侧过期极性不一致」这颗**从来没有存在过**（HEAD 两侧都是 `!= 0`），本轮差点把一句注释当缺陷——它现在被钉成不变量，是钉子不是修复；解码入口那次 `validate_for` 在 HEAD 也已在场，同样是钉子；台账里那句「+0 颗 `#[test]`」**半假**——Python 侧真折叠（`Ran 64` 保持），Rust 侧净增一颗（承担用例文件 HEAD 4 颗 / 工作树 5 颗，全仓磁盘在册 1070 → 1071），地板随之 1070 → 1071。
 - **门禁 602 → 610（净增八颗运行时判据）**：轮函数 `strategy_output_arm_diagnostics_check()` 两侧都从源码现取诊断句集合，不写第二份手工清单——把某臂抄回折叠句、删一臂、首臂换人、两侧极性式子分叉、解码入口少一次校验、承担用例改名六种动作全部当场红；`tools/check_architecture.py:542` 的 `GATE_CHECK_FLOOR` 注释里那半句 `602 -> 610` 就是本轮。`_python_scope()` 取不到唯一锚点时返回空串让下游判 FAIL（方向对且不 `die`），剥 `#` 注释让「散文既不替代码定罪也不替代码作证」由 C1/C2 两颗对照枪实测。
 - **变异取证 14 枪 + 4 枪重放**：主轮档位现读 `TALLY {'fired': 14, 'killed': 12, 'equivalent': 0, 'masked': 0, 'noconclusion': 0, 'control_green': 2, 'control_bad': 0, 'restore_ok': 14, 'collateral': 0}`、`IDENTITY fired=14 tiers_sum=14 equal=True restore_ok=14`，BASELINE 与 FINAL pristine 同为 `PASS=610 FAIL=0 八颗在场=8/8`，四份注入文件按 sha16 逐颗比回（`contract.rs=a55080f30dfe5b25` / `strategy.py=e1a3c0d255d0436f` / `tests.rs=b9e40c31c37fb113` / `check_architecture.py=7793ea3c13e54f43`）；形状枪 S1/S2 各读三颗 FAIL（`PASS=607 FAIL=3`）证明锚点取空的方向是红不是静默通过；因主轮开火后 `tests.rs` 又被本轮自己的 clippy 修复改过字节，G1/G2/G8/G10 四颗一律在终字节上重放击杀（4）。**最有价值的一格是 G7**：门禁红而 `Ran=64` 套件仍绿——「两侧同一个式子」这条判据眼下没有用例替它作保、它是唯一读者，按规矩登记为下一轮的活（给极性分叉补一颗常驻反例）。
-- **本轮实测（九腿整跑在终树上，读数全部由日志派生，文档里没有一个手抄数字）**：树摘要九腿前后同为 `142085caa8745541`、rc 全 0、无 host-locked 腿；`fmt --check` rc 0（`Diff in` 0 行）、`clippy --workspace --all-targets -D warnings` rc 0（诊断 0 行，本轮新写的六臂表先被 `type_complexity` 抓过一次）；`cargo test --workspace` rc 0 / 107 段 / 1057 passed / 0 failed / 1 ignored（86 段 Running + 21 段 Doc-tests），`--all-targets` rc 0 / 87 段 / 1057 passed，`--doc` rc 0 / 21 段 / 0 passed；`--list` rc 0 / 1058 行 / 1056 唯一名，恒等式 1057 + 1 = 1058、1071 − 1069 = 1058 − 1056 = 13（`nats` 10 + `postgres` 3）；Python `Ran 64 / OK`（rc 0，本轮这遍 0 skip）；`validate_core.py` rc 0；门禁 rc 0、**[PASS] 610 / [FAIL] 0**。引用普查（落笔后重跑）：活文档 @CENSUS_LIVE_TOTAL@ 条 `path:NN`、@CENSUS_LIVE_DEAD@ 条落空，存档 @CENSUS_ARCHIVE_TOTAL@ 条、@CENSUS_ARCHIVE_DEAD@ 条落空（天花板 9，只降不升）。**Python 的 skip 口径本轮纠正**：此前 README 与终版计划写的 `OK (skipped=2)` 是「没构建 `_qianxing_native.pyd` / 没装 `pyarrow`」那台机器的读数，文档现在写「读数 + 口径」两句而不是把 2 换成 0 了事。
+- **本轮实测（九腿整跑在终树上，读数全部由日志派生，文档里没有一个手抄数字）**：树摘要九腿前后同为 `142085caa8745541`、rc 全 0、无 host-locked 腿；`fmt --check` rc 0（`Diff in` 0 行）、`clippy --workspace --all-targets -D warnings` rc 0（诊断 0 行，本轮新写的六臂表先被 `type_complexity` 抓过一次）；`cargo test --workspace` rc 0 / 107 段 / 1057 passed / 0 failed / 1 ignored（86 段 Running + 21 段 Doc-tests），`--all-targets` rc 0 / 87 段 / 1057 passed，`--doc` rc 0 / 21 段 / 0 passed；`--list` rc 0 / 1058 行 / 1056 唯一名，恒等式 1057 + 1 = 1058、1071 − 1069 = 1058 − 1056 = 13（`nats` 10 + `postgres` 3）；Python `Ran 64 / OK`（rc 0，本轮这遍 0 skip）；`validate_core.py` rc 0；门禁 rc 0、**[PASS] 610 / [FAIL] 0**。引用普查（落笔后重跑）：**该轮四项读数从未回填**——占位符一直留在这一行就是证据。当轮的普查日志已不在工作区，2026-10-30 这一轮不补记、也不拿当天的普查冒充那一轮的读数；判据本身仍在门禁里（活文档 `path:NN` 引用必须可达，`docs/archive/` 与 `docs/changelog/` 不参与，天花板只降不升）。**Python 的 skip 口径本轮纠正**：此前 README 与终版计划写的 `OK (skipped=2)` 是「没构建 `_qianxing_native.pyd` / 没装 `pyarrow`」那台机器的读数，文档现在写「读数 + 口径」两句而不是把 2 换成 0 了事。
 - **发布件重建义务（台账 #251，本轮未做，按依赖图与字面量普查现读定义务）**：`cargo tree -p qx-python -e normal` 不含 `qx-runtime`，而 `qx-cli` 直接依赖它——本轮改动落在 CLI 二进制与 wheel 的 Python 载荷上。wheel 侧 12 份 `.py` 里与仓库逐字节不符的恰好 1 份，正是 `qianxing_bridge/strategy.py`（wheel 内 14504 字节 vs 仓库 15344 字节，折叠句命中 1 次、逐臂句 0 次）——**wheel 内嵌的仍是改前那份代码**；`target/release/qx-cli.exe` 按字面量面已带八句（各 ≥ 1 次、旧折叠字面量 0 次）但字符串普查不担保产物字节；wheel 内 `.pyd` = `f88cd81076318c342659a35b3afb6b9d` 而 `target/release/_qianxing_native.dll` = `1b971292e74a2bbe2fd898b4a2c7d52c`，重打包时「dll → 包内 `.pyd`」那一拷贝步必须一起走。详见 `docs/自研量化框架审计与重构方案-V13.md` §9.54。**尚未 `git add`、未推送**：Rust 一侧、Python 一侧、门禁八颗、capabilities 那一条证据行与五份文档的活面全部仍在未暂存状态。
 
 
@@ -2864,3 +3238,63 @@ Runtime Tick 输入携带冻结行情 EventLog 范围、exact bid/ask 与挂单�
 - 候选偏差诊断的 `BaseStrategy` 路径现在复用正式 class adapter，按 `as_of` 截断主/peer Bar 历史，并执行 `on_init/on_start`、`history_requirements`、经典 `prenext/nextstart/next`、诊断快照和 stop 生命周期。诊断错误通知 class/module observer；观察 hook 异常不改变原错误。非 BaseStrategy 模块式回放保留兼容。
 - 验收：Python Runtime adapter **26/26**、本地策略基类 **33/33**、候选诊断 **16/16**、策略文件 CLI **22/22**，定向合计 **97/97**；随后全量 `python/tests` **538 通过、10 跳过、0 失败**，相关 Python 文件 `py_compile` 通过。证据：`maturity/evidence/strategy-history-diagnostics-error-v1-2026-10-27.json`。
 - 限制：导入失败且策略模块/实例尚不可用时没有实例级 error hook；W3 全生命周期跨宿主 golden matrix、真实 sandbox provider 与生产发布门仍开放。
+
+## 2026-10-29 LongOnlySma 显式分离热身与信号评估
+
+- `LongOnlySma.history_requirements()` 按运行参数声明 `slow_window + 1` 根 Bar 的宿主热身长度，前 N-1 根由 BaseStrategy 生命周期屏蔽决策回调；第 N 根开始才进入完整 SMA 交叉评估窗口。
+- `start_ts` 保持独立的时间门槛，不替代样本数量热身；策略内部仍要求完整的 `slow_window + 当前 Bar` 历史，直接回调调用也不会在数据不足时发出意图。
+- 新增共享 fixture `python/tests/fixtures/long-only-sma-parity-v1.json`，以相同上涨/回撤序列验证本地 Rust-backed Python callback 与 Runtime/Paper Python process adapter 的逐 Bar 意图一致：前 3 根 Bar 无意图，之后整手开多并在下穿时 reduce-only 平仓。
+- `R16-AC01` 初次 Windows 策略意图运行 `e45fb762-3c4b-42fb-ae78-35d605cca3ef` 通过，记录源码清单及日志；后续完整执行与账本对照见下方闭环记录。
+
+## 2026-10-29 LongOnlySma 本地回测与 Paper 账本闭环
+
+- `paper-e2e` 的可选 `--quote-price-raw` / `--quote-qty-raw` 可将共享 fixture 的下一根 Bar 价格注入同一 Paper EventLog。验收脚本先用 4 根 Bar 建仓，再在同一账户和 Strategy checkpoint 上扩展到 6 根 Bar 平仓；两轮各自使用独立 Scheduler 状态与 JobQueue。
+- Paper 精确订单的风控投影现在只接受可无损映射到 1e-9 的数量、限价与已成交量，并构造同一账户的精确现金/持仓风险事实。原订单保持 scale-aware 金额进入撮合与 Ledger；quote-budget、非现货精确保证金和不可无损投影值继续 fail-closed。
+- 新增 `tools/accept_long_only_sma_paper_parity.py`，逐笔比较本地 Rust 回测和 Paper 的买卖方向、精确成交数量/价格与 `TradeCash`、`TradePosition`、`Fee` 账本事实。两端均为 225 单位在 3 和 2 的成交、5 bps 费率、最终净持仓为零，六条交易账本记录逐项一致。`R16-AC01` 闭环运行 `deb98858-f367-4bb2-9840-a841e3ee701f`、格式化后复验 `582f04cd-7366-4cc5-b5e7-ac6f7e663800` 及方向逐笔核对 `69a8e720-e18f-421f-b685-6fb89bb6a930` 均通过。
+- Strategy cursor schema 从 v2 升为 v3，加入单调 `commit_generation`；旧 v1/v2 游标迁移时恢复提交代数。稳定 run ID 不再按 hash 数值比较；跨作业只校验提交代数，同一 run 仍校验 fencing token。
+
+## 2026-10-29 Live Strategy 未决命令恢复闸门
+
+- Live Strategy 的 Failed 命令只有在 EventLog 出现终结 Venue 事实、且账户/venue 对账报告干净并严格晚于失败时间后，才可解除恢复阻断；未决 Venue 事实、失败前对账和脏报告继续走重试/拒绝路径。
+- 新评估路径识别到命令未决时现在明确返回 worker Retry，保留 PreparedEvaluation，等待租约恢复后重放，不继续本轮 finalize。所有 live PreparedEvaluation finalize 入口在刷新租约或写游标/检查点之前校验命令结果已解析。
+- Windows Strategy worker 定向套件 **26/26** 通过，覆盖联合对账判定、finalize 闸门、PreparedEvaluation Unknown 持久化、租约重试、游标代数和 checkpoint 原子性；`R12-AC01` 记录 `91ada453-d1ff-45f6-94c8-671ab338d96b`、`4481a82d-711c-4bcf-b0a2-124c77ea6a13`、`f185b2ae-9d66-44fa-af7e-2cb19a20dc6d` 通过。跨崩溃点 live Failed/Unknown 的 worker 级游标不变性、PostgreSQL 和 Linux 矩阵仍未验收。
+- 崩溃恢复驱动现在在六个退出边界记录游标与 checkpoint 摘要；file 和 SQLite 的 `R12-AC01` 新运行均确认已过提交点的游标不因恢复改变，并在恢复后再次重启验证游标稳定。证据：`3b4814f7-6338-49e2-8dd8-e0f4b163f6dc`、`39a14c52-0911-43d7-a392-2798b6c1c17d`。这两组仍使用 Paper 交易路径，不能替代 live venue Failed/Unknown 故障注入；PostgreSQL/Linux 与该 live 恢复闭环仍待完成。
+- PreparedEvaluation live 命令重放写入 `OUTCOME_UNKNOWN` 后现在使用明确的可重试结果；worker tick 保留 journal、跳过 finalize 并继续轮询，不再把未知提交错误直接向外抛出。定向 worker 套件 26/26 通过，记录 `0f427d72-35ef-44e6-bda9-62cc5e32d171`；process-level live 故障注入仍待补。
+- 新增 file-backed durable replay 回归：先损坏控制面状态制造 Unknown，确认 PreparedEvaluation 已落盘；模拟重启重载该 journal 并恢复命令，再持久化 Failed 审计、Rejected Venue 状态事实和失败后的 clean reconciliation，验证解析前游标字节不变。Strategy worker 定向套件 **27/27** 通过，记录 `c0d8fb74-de3c-4917-8696-3c2c78a93297`。SQLite live-state 与进程 kill/restart 故障矩阵仍待覆盖。
+- 同一 live replay 回归已扩展到 SQLite 控制面、命令队列、作业队列和 EventLog：重启重载 Unknown journal 后命令保持 Accepted 时仍阻止 finalize；写入 Failed 审计、终态 Rejected 事实和失败后的干净报告后解除阻断，游标保持不变。定向套件 **28/28** 通过，记录 `e1102bf2-2bf4-4d39-9942-156f0e1fec12`。当时的测试仍在单进程内模拟重启；下一条补入独立子进程退出/恢复证据。
+- 新增父子进程验收：文件与 SQLite 两种夹具均由第一个独立子进程在 Unknown journal 持久化边界退出 86，第二个子进程重新打开存储并完成 Failed→Rejected Venue 事实和失败后 reconciliation 闭环；cursor 在进程退出与恢复前后逐字节一致。R12 worker 定向套件 **29/29** 通过，记录 `221f0bc3-4974-4a99-ba96-ee83451d53e1`。这是 PreparedEvaluation 恢复入口的跨进程验证，整个 scheduler/worker-host/真实 venue 运行闭环及 PostgreSQL/Linux 仍待覆盖。
+
+
+2026-10-30 R19 多账户 Bar Evidence 身份校验分层：新增 `run_evidence_multi_account::validation`，集中拥有批次成功结果与规格身份校验，以及来源 Evidence 与运行结果、规格和 BarFrame 类型对照。Pack/verify facade 保留原校验顺序；模块地图和 R19 台账同步更新；架构门禁也已同步深度诊断的显式无基准投影参数及报告 facade 按基准请求传递完整权益曲线的调用形状；完整架构快速检查四片覆盖 318 项且无重复。
+
+
+2026-10-30 R19 report summary schema gate 归入 verified_summary：支持版本与完整 qx-app RunSummary v1 的接受规则迁入 summary readback owner，report_command 保留稳定重导出，比较报告继续共用同一 gate。模块地图与唯一 owner 架构门禁同步。
+
+
+2026-10-30 R19 report command workflow 下沉：report 家族分派、单次摘要验证、基准/诊断投影及 HTML/XLSX/CSV/Evidence 原子提交迁入 `report_command::workflow`；CLI 参数入口与 comparison consumer 继续走稳定 report_command 重导出，Evidence 仍在统一 commit 前加入 bundle。架构门禁覆盖唯一 owner、分派顺序与 Evidence-before-commit。
+
+
+2026-10-30 R19 multi-account depth Evidence 身份校验分层：批次/规格计数、稳定规格 fingerprint、成功账户 outcome 与规格身份、来源 EvidenceBundle 与账户结果/DepthFrame 类型、summary 所属账户核验迁入 `run_evidence_multi_account_depth::validation`。Pack 与 verify 继续在原顺序调用同一验证 owner；架构门禁新增唯一 owner 和关键拒绝条件。
+2026-10-30 R19 联合账户 Evidence 身份校验拆分：批次结果与规格身份、稳定规格 fingerprint、子账户 Evidence run/result/data/market 数量与类型核验迁入 `run_evidence_multi_account_joint::validation`。Pack 和 verify 共用同一验证实现，新增唯一 owner 及关键拒绝条件架构门禁。
+2026-10-30 R19 多账户 Bar Evidence 独立复算分层：父 RunManifest revision 校验、临时目录 containment、便携输入重定位、批次重跑与结果/账户身份对拍迁入 `run_evidence_multi_account::recompute`；facade 继续保证输入清单核验先执行，架构门禁固定唯一 owner 和顺序。
+2026-10-30 R19 多账户 Bar Evidence summary 归属核验迁入 `run_evidence_multi_account::validation`，与账户/结果/Evidence 身份校验共用唯一 owner；架构门禁覆盖 containment 与 summary account id。
+2026-10-30 R19 多账户 Bar Evidence 文件生命周期分层：EvidenceBundle 读取、create-new 写入、SHA-256 校验、staging 序列与 RAII 回收迁入 `run_evidence_multi_account::io`；新增函数唯一 owner 与失败清理架构门禁。
+2026-10-30 R19 联合账户 Evidence 文件生命周期拆分：EvidenceBundle 读取、SHA-256 校验、同步 create-new 写入、staging 序列与 RAII 回收迁入 `run_evidence_multi_account_joint::io`；recompute 使用该 owner 的序列，新增唯一 owner 和同步写入门禁。
+2026-10-30 R19 多账户深度 Evidence 文件生命周期拆分：EvidenceBundle 读取、create-new 写入、SHA-256 校验、staging 序列与 Drop 清理迁入 `run_evidence_multi_account_depth::io`；pack/verify/recompute 共用同一 owner，新增唯一 owner 架构门禁。
+2026-10-30 R19 联合账户 portable path owner 扩展：相对路径 fail-closed 规则、包内文件/目录 canonical containment、exchange/account 目录键由 `run_evidence_multi_account_joint::portable_paths` 唯一拥有，pack、verify 与 replay 共用。
+2026-10-30 R19 联合账户 Evidence verify 编排拆分：manifest/规格/结果身份、逐账户 Evidence 与路径、portable report 汇总及条件复算的顺序迁入 `run_evidence_multi_account_joint::verify`；稳定 facade 入口改为委托，新增唯一 owner 与顺序门禁。
+2026-10-30 R19 联合账户 Evidence pack 编排迁入 `run_evidence_multi_account_joint::pack`，facade 保留稳定入口；新增拒绝覆盖、来源报告与子账户 Evidence、便携 export 复核、manifest 落盘到原子 rename 的全序门禁。
+2026-10-30 R19 多账户 Bar Evidence pack 主流程迁入 `run_evidence_multi_account::pack`，保持来源/便携 Evidence 双重验证和 manifest 最后原子发布；新增 unique-owner 与完整调用顺序门禁。
+2026-10-30 R19 多账户 Bar Evidence verify 主流程迁入 `run_evidence_multi_account::verify`，facade 保留稳定委托；唯一 owner 门禁固定 manifest、batch/member identity、输入清单、账户覆盖与按需复算顺序。
+2026-10-30 R19 多账户深度 Evidence verify 编排迁入 `run_evidence_multi_account_depth::verify`，facade 保留稳定委托；门禁固定批次、输入清单、子账户 Evidence、完整覆盖与可选复算顺序。
+2026-10-30 R19 Depth Evidence 路径 owner 扩展：账户 summary 对应 EvidenceBundle 定位和稳定账户目录键并入 `run_evidence_multi_account_depth::paths`，pack/verify 共用，唯一 owner 门禁同步覆盖。
+2026-10-30 R19 多账户深度 Evidence wire model 收敛：将固定文件名、schema version、摘要/账户/输入/批次 manifest DTO 与严格 serde 默认策略迁入 `run_evidence_multi_account_depth::model`；根 facade 仅向内部子模块重导出，pack/verify 数据结构和 JSON 兼容约束不变。新增唯一 model owner 静态门禁。
+2026-10-30 R19 多账户 Evidence wire model 收敛：将 Bar 与联合账户批次的 manifest DTO、账户与文件摘要记录、schema 常量及固定文件名迁入各自的 `model` owner；facade 仅供内部工作流导入。新增唯一 owner/serde 兼容门禁，保留 Bar legacy schema 和 `deny_unknown_fields`/默认输入字段行为。
+2026-10-30 R19 多市场 Depth Evidence assembly 拆分：来源产物身份、RunManifest 绑定、流式/内嵌事件回放、权益/成交 sidecar、多市场输入指纹、质量报告绑定及 EvidenceBundle 组装/持久化迁入 `run_evidence_multi_market_depth::assembly`；CLI facade 保留原委托名称。新增唯一 owner 与先校验后发布静态顺序门禁。
+2026-10-30 R19 多市场 Bar Evidence assembly 拆分：多市场产物与 RunManifest 身份、流式/内嵌事件重放、sidecar/输入指纹复核及规范化 EvidenceBundle 发布迁入 `run_evidence_multi_market_pack::assembly`；Depth 产物继续委托 Depth assembly，原 CLI 写入入口不变。新增 replay-before-publish 与唯一 owner 门禁。
+2026-10-30 R19 多市场 Bar Evidence 复算拆分：逐市场 BarFrame/质量清单 fingerprint 重算、parent build revision 绑定、包内输入重定位、隔离 app backtest 和 RunManifest 对拍由 `run_evidence_multi_market_recompute` 唯一拥有；Evidence facade 保持内部稳定重导出。
+2026-11-04 R19 qx-app 多市场 Bar sidecar verifier 拆分：权益曲线与 exact 权益指标、成交数组/流式 Filled identity、legacy 内嵌 EventLog 对拍迁入 `multi_market_report::sidecars`。公开函数与结果 DTO 由原 `multi_market_report` facade 稳定重导出，计算次序和拒绝条件保持不变；新增唯一 owner 与事件摘要门禁。
+2026-11-04 R19 qx-app 多市场输入 verifier 拆分：质量记录集合、BarFrame/DepthFrame 内容指纹、DatasetManifestV2 和 DatasetSnapshotV1 回放资格/覆盖核验迁入 `multi_market_report::inputs`；输入结果 DTO 与公共校验函数保留原 facade/lib 导出。
+2026-11-04 R19 qx-app 多市场身份计算拆分：Bar/Depth 规格与策略身份指纹、按 spec 市场顺序构建的输入集 fingerprint/component 映射迁入 `multi_market_report::identity`；公共 DTO 与 API 保持 facade/lib 原路径，内部策略集合指纹保留 crate 内重导出。
+2026-11-04 R19 多市场 Depth 报告权益核验拆分：完整权益曲线、exact equity index/time/raw 投影、收益/回撤与交易金额/费用核验迁入 `multi_market_depth_research_report::equity`；主报告继续按既有顺序消费 VerifiedEquity 并生成 bounded preview。
+2026-11-04 R19 多市场 Depth 报告质量边界拆分：质量记录提取、市场索引去重、spec 声明集合核验与 clean/issues 面板投影迁入 `multi_market_depth_research_report::quality`；报告流程保持原有读取顺序。

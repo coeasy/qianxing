@@ -72,6 +72,9 @@ pub struct SchedulerRuntimeConfig {
     pub jobs_path: String,
     #[serde(default = "default_scheduler_job_queue_path")]
     pub job_queue_path: String,
+    /// Maximum number of unacknowledged durable jobs shared by scheduler and Strategy workers.
+    #[serde(default = "default_scheduler_max_pending_jobs")]
+    pub max_pending_jobs: usize,
     #[serde(default = "default_scheduler_tick_interval_ms")]
     pub tick_interval_ms: u64,
 }
@@ -82,6 +85,7 @@ impl Default for SchedulerRuntimeConfig {
             state_path: default_scheduler_state_path(),
             jobs_path: default_scheduler_jobs_path(),
             job_queue_path: default_scheduler_job_queue_path(),
+            max_pending_jobs: default_scheduler_max_pending_jobs(),
             tick_interval_ms: default_scheduler_tick_interval_ms(),
         }
     }
@@ -112,6 +116,11 @@ pub struct StrategyRuntimeConfig {
     /// 多策略运行时中用于绑定 Strategy worker 的稳定 ID；旧版单策略配置可省略。
     #[serde(default)]
     pub id: Option<String>,
+    /// One exact, operator-authored migration for a deployment revision transition.
+    /// The manifest is excluded from strategy behavior identity after execution, but its digest
+    /// is retained in the durable cursor migration receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_state_migration: Option<StrategyCheckpointStateMigrationV1>,
     #[serde(default = "default_strategy_version")]
     pub version: String,
     #[serde(default = "default_strategy_max_orders")]
@@ -278,12 +287,21 @@ pub struct StrategyRuntimeConfig {
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
+    /// Additional project-local files required at strategy runtime, relative to the
+    /// trusted Python source root. Deployment snapshots these files with their paths
+    /// and SHA-256 digests; absolute paths and parent traversal are rejected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub python_resource_paths: Vec<String>,
     /// Optional ``create_strategy(spec)`` payload for a Python ``BaseStrategy`` class.
     /// When present, the Python worker uses the explicit class adapter; otherwise the
     /// existing module-level ``on_event(request)`` contract remains in effect.
     /// Omission preserves the serialized shape and fingerprint of existing configs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python_strategy_spec: Option<serde_json::Value>,
+    /// Strategy-declared host delivery requirements. Empty omission preserves the legacy
+    /// serialized config shape; the selected host catalog is checked before process startup.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_capabilities: Vec<qx_strategy::capabilities::StrategyCapability>,
     /// JSONL 保持兼容；framed_json 使用 QXSF，shared_memory_columnar 使用 QXCB 固定列。
     #[serde(default)]
     pub transport: StrategyTransport,
@@ -330,10 +348,24 @@ pub struct StrategyRuntimeConfig {
     pub c_abi_target_triple: Option<String>,
 }
 
+/// A declarative state replacement bound to one source cursor/checkpoint and one target revision.
+/// The adapter state is retained verbatim; only strategy-owned JSON state is replaced.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyCheckpointStateMigrationV1 {
+    pub schema_version: u32,
+    pub source_deployment_revision: u64,
+    pub target_deployment_revision: u64,
+    pub source_strategy_binding_sha256: String,
+    pub source_checkpoint_sha256: String,
+    pub target_strategy_state: serde_json::Value,
+}
+
 impl Default for StrategyRuntimeConfig {
     fn default() -> Self {
         Self {
             id: None,
+            checkpoint_state_migration: None,
             version: default_strategy_version(),
             max_orders: default_strategy_max_orders(),
             risk_rules: None,
@@ -382,7 +414,9 @@ impl Default for StrategyRuntimeConfig {
             ashare_actions_path: None,
             ashare_calendar_path: None,
             python_module: None,
+            python_resource_paths: Vec::new(),
             python_strategy_spec: None,
+            required_capabilities: Vec::new(),
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
             shared_memory_slot_bytes: default_strategy_shared_memory_slot_bytes(),

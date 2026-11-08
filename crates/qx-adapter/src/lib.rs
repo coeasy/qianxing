@@ -2,11 +2,13 @@
 //! （HTTP/TLS/WebSocket 客户端、对账工具）与对外契约 `pub use`，供应商协议各自住在 `binance`/
 //! `ccxt` 子模块。适配器不能直接改 Ledger：网络错误按“结果未知”处理，成交只能由用户流回报进入事实事件。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_core::{Order, OrderStatus};
 use qx_zhenlu::VenueOrderSnapshot;
 use ring::rand::{SecureRandom, SystemRandom};
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
-use rustls_pki_types::ServerName;
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -21,10 +23,11 @@ mod order_lifecycle;
 mod reconcile;
 mod venue_cache;
 pub use binance::{
-    run_binance_user_stream, run_binance_user_stream_with_config_loader, BinanceQuotePoll,
-    BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream,
-    BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamPoll, BinanceStreamRetryPolicy,
-    BinanceStreamRunReport, BinanceUserStreamRunConfig, BinanceUserStreamSession,
+    run_binance_user_stream, run_binance_user_stream_observing,
+    run_binance_user_stream_with_config_loader_observing, BinanceQuotePoll, BinanceSpotAuth,
+    BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream, BinanceSpotUserStream,
+    BinanceSpotVenue, BinanceStreamPoll, BinanceStreamRetryPolicy, BinanceStreamRunReport,
+    BinanceUserStreamRunConfig, BinanceUserStreamSession,
 };
 pub use ccxt::{
     ccxt_idle_window_ms, CcxtBarDataProvider, CcxtCallOutcome, CcxtProcessClient, CcxtProcessVenue,
@@ -241,6 +244,45 @@ impl TlsHttpTransport {
             timeout,
             config: Arc::new(config),
         }
+    }
+
+    /// Load a verifying mTLS client from PEM files. The CA file is the only server trust root;
+    /// client identity is always presented and certificate/hostname verification stays enabled.
+    pub fn from_mtls_pem(
+        timeout: Duration,
+        server_ca_path: impl AsRef<std::path::Path>,
+        client_certificate_chain_path: impl AsRef<std::path::Path>,
+        client_private_key_path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, String> {
+        let server_roots = CertificateDer::pem_file_iter(server_ca_path.as_ref())
+            .map_err(|error| format!("读取 mTLS 服务端 CA 失败: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("解析 mTLS 服务端 CA 失败: {error}"))?;
+        if server_roots.is_empty() {
+            return Err("mTLS 服务端 CA 不能为空".into());
+        }
+        let mut root_store = RootCertStore::empty();
+        for certificate in server_roots {
+            root_store
+                .add(certificate)
+                .map_err(|error| format!("加入 mTLS 服务端 CA 失败: {error}"))?;
+        }
+
+        let client_certificate_chain =
+            CertificateDer::pem_file_iter(client_certificate_chain_path.as_ref())
+                .map_err(|error| format!("读取 mTLS 客户端证书链失败: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("解析 mTLS 客户端证书链失败: {error}"))?;
+        if client_certificate_chain.is_empty() {
+            return Err("mTLS 客户端证书链不能为空".into());
+        }
+        let client_private_key = PrivateKeyDer::from_pem_file(client_private_key_path.as_ref())
+            .map_err(|error| format!("解析 mTLS 客户端私钥失败: {error}"))?;
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(client_certificate_chain, client_private_key)
+            .map_err(|error| format!("构造 mTLS HTTP 客户端失败: {error}"))?;
+        Ok(Self::with_config(timeout, config))
     }
 }
 

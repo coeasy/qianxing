@@ -48,6 +48,43 @@ impl ContractBarStrategy {
                 instrument, frame.instrument
             ));
         }
+        let local_data_level = config
+            .strategy
+            .python_strategy_spec
+            .as_ref()
+            .and_then(|spec| spec.get("data_level"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("bar");
+        let static_local_capabilities = if config.strategy.builtin_strategy.is_some() {
+            Some(qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_builtin_rust())
+        } else if config.strategy.python_module.is_some() {
+            Some(
+                qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_python(Some(
+                    local_data_level,
+                )),
+            )
+        } else if config.strategy.external_executable.is_some() {
+            Some(qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_external_process())
+        } else {
+            None
+        };
+        if let Some(kind) = config.strategy.builtin_strategy.as_deref() {
+            let kind = qx_strategy::BuiltinStrategyKind::parse(kind)?;
+            static_local_capabilities
+                .as_ref()
+                .ok_or_else(|| "本地内置 Strategy host capability catalog 不可用".to_string())?
+                .validate_required(kind.required_capabilities())?;
+        }
+        if let Some(capabilities) = static_local_capabilities.as_ref() {
+            capabilities.validate_required(&config.strategy.required_capabilities)?;
+        } else if config.strategy.c_abi_library.is_none()
+            && !config.strategy.required_capabilities.is_empty()
+        {
+            return Err(
+                "strategy.required_capabilities is set but no local execution host is configured"
+                    .into(),
+            );
+        }
         let client = if let Some(module) = config.strategy.python_module.as_deref() {
             let audit_host_worker_id = format!(
                 "bar-backtest:{}:{}",
@@ -73,11 +110,14 @@ impl ContractBarStrategy {
                     config.strategy.venue_id.as_deref(),
                     Some(&audit_path),
                     Some(&audit_host_worker_id),
+                    static_local_capabilities.as_ref(),
                 )?,
             ))
         } else if let Some(executable) = config.strategy.external_executable.as_deref() {
+            let host_capabilities =
+                qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_external_process();
             ContractStrategyClient::Process(Box::new(
-                StrategyProcessClient::start_process_with_ring_directory(
+                StrategyProcessClient::start_process_with_ring_directory_and_capabilities(
                     executable,
                     &config.strategy.external_args,
                     &config.strategy.external_env,
@@ -88,13 +128,24 @@ impl ContractBarStrategy {
                         capacity: config.strategy.shared_memory_capacity,
                         slot_bytes: config.strategy.shared_memory_slot_bytes,
                     },
-                    None,
-                    None,
+                    &host_capabilities,
+                    &config.strategy.required_capabilities,
                 )?,
             ))
         } else if let Some(library) = config.strategy.c_abi_library.as_deref() {
             let _ = library;
             let native = load_c_abi_strategy(&config.strategy)?;
+            if !config.strategy.required_capabilities.is_empty() {
+                let mut capabilities = qx_strategy::capabilities::StrategyHostCapabilitiesV1::c_abi(
+                    native.supports_order_status_updates(),
+                    native.supports_fill_updates(),
+                    native.supports_account_updates(),
+                    false,
+                    config.strategy.account_id.is_some() && config.strategy.venue_id.is_some(),
+                );
+                capabilities.profile = "local".into();
+                capabilities.validate_required(&config.strategy.required_capabilities)?;
+            }
             ContractStrategyClient::Native(Box::new(native))
         } else {
             return Err(
@@ -553,7 +604,7 @@ pub(crate) fn build_strategy_order_with_signal(
         now,
         current_qty,
         target_qty,
-        current_qty_exact: current_qty_exact,
+        current_qty_exact,
         target_qty_exact: contract_output.and_then(|output| output.target_qty_exact.as_deref()),
         signal_id: contract_output
             .map(|output| output.signal_id)

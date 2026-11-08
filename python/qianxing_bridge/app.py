@@ -185,6 +185,7 @@ class _PythonBacktestCallback:
             )
         self._warmup_seen: dict[str, tuple[int, Any]] = {}
         self._warmup_completed: set[str] = set()
+        self._bars_seen: dict[str, int] = {}
         self._bar_history: dict[str, deque[Mapping[str, Any]]] = {}
         self._last_context: dict[str, Any] | None = None
 
@@ -309,20 +310,42 @@ class _PythonBacktestCallback:
         if self._warmup_bars and kind != "Bar":
             raise ValueError("history_requirements.warmup_bars is supported only for Bar events")
         observed: int | None = None
-        if self._warmup_bars:
+        classic_bar = (
+            self._bar_warmup
+            and kind == "Bar"
+            and isinstance(self.strategy, BaseStrategy)
+            and type(self.strategy).on_event is BaseStrategy.on_event
+            and type(self.strategy).on_bar is BaseStrategy.on_bar
+        )
+        bar_count: int | None = None
+        if self._warmup_bars or classic_bar:
             instrument = payload.get("instrument") if isinstance(payload, Mapping) else None
             if instrument is None:
                 raise ValueError("Bar warmup event must identify its instrument")
             instrument_key = json.dumps(
                 instrument, separators=(",", ":"), ensure_ascii=False, sort_keys=True
             )
-            observed = self._warmup_seen.get(instrument_key, (0, instrument))[0] + 1
-            self._warmup_seen[instrument_key] = (observed, instrument)
-            if observed == self._warmup_bars and instrument_key not in self._warmup_completed:
-                self._notify_warmup_complete(context, instrument, observed)
-                self._warmup_completed.add(instrument_key)
-        handler = getattr(self.strategy, "on_event", self.strategy)
-        decision = handler(context, event)
+            if self._warmup_bars:
+                observed = self._warmup_seen.get(instrument_key, (0, instrument))[0] + 1
+                self._warmup_seen[instrument_key] = (observed, instrument)
+                if observed == self._warmup_bars and instrument_key not in self._warmup_completed:
+                    self._notify_warmup_complete(context, instrument, observed)
+                    self._warmup_completed.add(instrument_key)
+            if classic_bar:
+                bar_count = self._bars_seen.get(instrument_key, 0) + 1
+                self._bars_seen[instrument_key] = bar_count
+        if bar_count is not None:
+            # Same split as the persistent class host: prenext until the declared
+            # warmup, nextstart on the first ready Bar, next afterwards.
+            if bar_count < self._warmup_bars:
+                decision = self.strategy.prenext(context, payload)
+            elif bar_count == max(1, self._warmup_bars):
+                decision = self.strategy.nextstart(context, payload)
+            else:
+                decision = self.strategy.next(context, payload)
+        else:
+            handler = getattr(self.strategy, "on_event", self.strategy)
+            decision = handler(context, event)
         if decision is None:
             fallback = getattr(self.strategy, "empty_decision", None)
             if callable(fallback):

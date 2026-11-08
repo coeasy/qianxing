@@ -266,6 +266,32 @@ extern "C" const qx_strategy_vtable* qx_strategy_get_vtable(void) {
     return &VTABLE;
 }
 
+extern "C" int qx_strategy_required_capabilities_v1(char* output,
+                                                      size_t output_capacity,
+                                                      size_t* output_len,
+                                                      char* error_buffer,
+                                                      size_t error_buffer_len) {
+    constexpr char declaration[] =
+        "{\"schema_version\":1,\"required_capabilities\":["
+        "\"order_status_updates\",\"fill_updates\",\"durable_checkpoint\"]}";
+    constexpr size_t declaration_len = sizeof(declaration) - 1;
+    if (!output || !output_len) {
+        if (error_buffer && error_buffer_len > 0) {
+            std::snprintf(error_buffer, error_buffer_len, "invalid required capabilities output buffer");
+        }
+        return 1;
+    }
+    if (output_capacity < declaration_len) {
+        if (error_buffer && error_buffer_len > 0) {
+            std::snprintf(error_buffer, error_buffer_len, "required capabilities output buffer is too small");
+        }
+        return 2;
+    }
+    std::memcpy(output, declaration, declaration_len);
+    *output_len = declaration_len;
+    return 0;
+}
+
 extern "C" int qx_strategy_on_market_event_v2(
     qx_strategy_handle raw,
     const qx_strategy_context* context,

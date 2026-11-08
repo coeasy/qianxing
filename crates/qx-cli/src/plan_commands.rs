@@ -38,6 +38,9 @@ pub(crate) fn verify_foundation_specs() -> Result<String, String> {
 /// 这是九类「统一身份」文档对使用者开放的唯一读入口——`qx_spec::describe` 是同一份漏斗，
 /// 这里只负责取文件、印摘要（`--json` 时改印规范化正文）。告警一律走 stderr，不污染 stdout。
 pub(crate) fn plan_readout(args: &PlanArgs) -> Result<(), String> {
+    if args.template {
+        return plan_template(&args.kind, &args.file);
+    }
     let payload = std::fs::read_to_string(&args.file)
         .map_err(|error| format!("读取规格文件失败 {}: {error}", args.file.display()))?;
     let readout = describe(&args.kind, &payload)?;
@@ -52,6 +55,109 @@ pub(crate) fn plan_readout(args: &PlanArgs) -> Result<(), String> {
     for warning in &readout.warnings {
         eprintln!("[Plan · 警告] {warning}");
     }
+    Ok(())
+}
+
+/// 写出低等级、占位身份的可编辑规格模板。证据类对象必须由真实运行/沙盒事实生成，
+/// 因此不从这里造模板；它们应分别通过 `report --evidence` 或 `evidence pack-*` 生成。
+fn plan_template(kind: &str, path: &std::path::Path) -> Result<(), String> {
+    let kind = qx_spec::FoundationKind::parse(kind).ok_or_else(|| {
+        format!(
+            "未知规格类型 {kind}（可选：{}）",
+            qx_spec::FoundationKind::ALL
+                .map(|kind| kind.as_str())
+                .join(" / ")
+        )
+    })?;
+    let value = match kind {
+        qx_spec::FoundationKind::Experiment => serde_json::json!({
+            "schema_version": 1,
+            "experiment_id": "replace-me-experiment",
+            "strategy_ref": "replace-me-strategy",
+            "dataset_id": "replace-me-dataset@v1",
+            "seed": 1,
+            "initial_capital_raw": 1000000000i64,
+            "parameter_space": [{"name": "replace-me-parameter", "values": ["1", "2"]}],
+            "split_plan": {"train_bars": 100, "test_bars": 20, "walk_forward": false, "step_bars": 0},
+            "baselines": ["none"],
+            "cost_model_ref": "replace-me-cost-model",
+            "risk_rule_set": "replace-me-risk-rule-set",
+            "model_version": "none"
+        }),
+        qx_spec::FoundationKind::Capability => serde_json::json!({
+            "schema_version": 1,
+            "venue_id": "replace-me-venue",
+            "provider_id": "replace-me-provider",
+            "level": "L0",
+            "supported_products": ["spot"],
+            "order_types": ["limit"],
+            "data_tiers": ["bar"],
+            "reconcile": false,
+            "code_tested": false,
+            "paper_tested": false,
+            "sandbox_tested": false,
+            "production_approved": false,
+            "evidence": [],
+            "strategy_api_version": 1,
+            "account_snapshot_version": 1
+        }),
+        qx_spec::FoundationKind::SchemaRegistry => serde_json::json!({
+            "schema_version": 1,
+            "registry_version": 1,
+            "entries": [{
+                "schema_id": "replace-me.v1",
+                "version": 1,
+                "path": "schemas/replace-me-v1.json",
+                "producer": "replace-me-producer",
+                "consumers": ["replace-me-consumer"],
+                "compatibility": "backward",
+                "golden_fixtures": ["fixtures/replace-me-v1.json"]
+            }]
+        }),
+        qx_spec::FoundationKind::Evidence | qx_spec::FoundationKind::RunEvidence => {
+            return Err(format!(
+                "{} 必须由真实运行或验收事实生成；请使用 report --evidence 或 evidence pack-*",
+                kind.as_str()
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "{} 已有专用生成命令，不提供占位模板",
+                kind.as_str()
+            ));
+        }
+    };
+    let draft = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("生成 {} 模板失败: {error}", kind.as_str()))?;
+    let readout = qx_spec::describe(kind.as_str(), &draft)
+        .map_err(|error| format!("{} 模板未通过规格校验: {error}", kind.as_str()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("输出文件已存在，拒绝覆盖: {}", path.display())
+            } else {
+                format!("创建模板文件失败 {}: {error}", path.display())
+            }
+        })?;
+    if let Err(error) = (|| {
+        use std::io::Write;
+        file.write_all(readout.canonical_json.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()
+    })() {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("写入模板文件失败 {}: {error}", path.display()));
+    }
+    println!(
+        "[Plan · {}] 已写入模板 {}（占位字段以 replace-me 标记；请替换后运行 qx-cli plan {} <文件> 校验）",
+        readout.kind,
+        path.display(),
+        readout.kind
+    );
     Ok(())
 }
 
@@ -305,7 +411,51 @@ mod tests {
             kind: kind.to_string(),
             file,
             json: false,
+            template: false,
         }
+    }
+
+    #[test]
+    fn plan_templates_are_valid_safe_and_never_overwrite() {
+        for kind in ["experiment", "capability", "schema-registry"] {
+            let root = std::env::temp_dir().join(format!(
+                "qianxing-plan-template-{}-{}-{kind}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let path = root.join("template.json");
+            plan_template(kind, &path).unwrap();
+            let payload = std::fs::read_to_string(&path).unwrap();
+            let readout = describe(kind, &payload).unwrap();
+            assert_eq!(readout.kind, kind);
+            if kind == "capability" {
+                let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(value["level"], "L0");
+                assert_eq!(value["code_tested"], serde_json::Value::Bool(false));
+                assert_eq!(value["sandbox_tested"], serde_json::Value::Bool(false));
+                assert_eq!(value["production_approved"], serde_json::Value::Bool(false));
+            }
+            assert!(plan_template(kind, &path).is_err(), "不得覆盖 {kind} 模板");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), payload);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn plan_template_refuses_to_fabricate_evidence() {
+        let path = std::env::temp_dir().join(format!(
+            "qianxing-plan-evidence-template-{}.json",
+            std::process::id()
+        ));
+        for kind in ["evidence", "run-evidence"] {
+            let error = plan_template(kind, &path).unwrap_err();
+            assert!(error.contains("真实运行或验收事实"));
+        }
+        assert!(!path.exists());
     }
 
     /// 九类地基对象都必须能被 `plan` 读入：这是「统一身份」对使用者开放的唯一入口。

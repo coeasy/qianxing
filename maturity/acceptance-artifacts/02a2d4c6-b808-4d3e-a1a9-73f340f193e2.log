@@ -1,0 +1,9 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path("tools/check_architecture.py",run_name="gate_module"); [x[n]() for n in ("multi_account_evidence_paths_module_check","multi_account_evidence_inputs_module_check")]; sys.exit(1 if x["failures"] else subprocess.call(["cargo","check","-p","qx-cli","-j","1"],env={**os.environ,"CARGO_PROFILE_DEV_DEBUG":"0"}))
+exit_code=0
+
+[stdout]
+[PASS] 多账户 Bar Evidence 的便携路径、缺失输入 containment 与来源 summary 定位由 paths 唯一拥有
+[PASS] 多账户 Bar Evidence manifest 逐账户覆盖、缺失状态与 SHA-256 核验在 portable recompute 前唯一执行
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.65s

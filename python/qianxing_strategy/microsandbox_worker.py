@@ -262,6 +262,11 @@ class MicrosandboxPythonStrategyWorker:
                 command_env["QX_STRATEGY_VENUE_ID"] = self.venue_id
             if self.artifact_sha256:
                 command_env["QX_STRATEGY_ARTIFACT_SHA256"] = self.artifact_sha256
+            host_capabilities_json = os.environ.get("QX_STRATEGY_HOST_CAPABILITIES_JSON")
+            if host_capabilities_json:
+                command_env["QX_STRATEGY_HOST_CAPABILITIES_JSON"] = host_capabilities_json
+            if os.environ.get("QX_STRATEGY_REQUIRE_CHECKPOINT") == "true":
+                command_env["QX_STRATEGY_REQUIRE_CHECKPOINT"] = "true"
             env_args = ["-i", *(f"{key}={value}" for key, value in command_env.items())]
             env_args.extend(
                 [

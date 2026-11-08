@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -32,6 +33,8 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
       - name: Check tracked Markdown links and path casing
         run: python tools/check_markdown_links.py
+      - name: Validate strategy refactor work-package ledger
+        run: python tools/check_strategy_refactor_ledger.py
 
   rust-core:
     name: Rust core
@@ -50,6 +53,10 @@ jobs:
         run: |
           cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
           ! rg -n '\.(unwrap|expect)[[:space:]]*\(' crates/qx-app/build.rs crates/qx-cli/build.rs crates/qx-python/build.rs
+      - name: Build Python native extension for workspace parity tests
+        env:
+          QX_PYTHON: python3
+        run: cargo build -p qx-python
       # 显式钉住解释器：`e2e_and_python_contract` 的两条 worker 契约用例在缺 QX_PYTHON 时
       # 回落 PATH 上的 `python`，于是「Python 链在 CI 绿」可能只是碰巧有个能跑的解释器，
       # 而不是真的跑在 CI 声明的那一版上（V13 R26）。
@@ -57,6 +64,64 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo test --workspace
+      - name: Linux strategy host capability dispatch (R08)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R08-AC01
+          --input crates/qx-cli/src/workers/strategy_worker.rs
+          --input crates/qx-strategy/src/capabilities.rs
+          --notes "Linux built-in Strategy host accepts supported requirements and rejects unsupported or algorithm-missing capabilities before dispatch"
+          -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
+          builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch
+      - name: Linux legacy C ABI capability compatibility (R08)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R08-AC01
+          --input crates/qx-strategy/tests/legacy_c_abi_capability_load.rs
+          --input crates/qx-strategy/src/capabilities.rs
+          --notes "Linux legacy C ABI plugin without the optional capability export remains compatible with empty requirements and rejects unsupported requirements before create"
+          -- cargo test -p qx-strategy --test legacy_c_abi_capability_load
+      - name: Linux backtest metrics and report contract (R17)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R17-AC01
+          --input tools/accept_backtest_metrics_contract.py
+          --input crates/qx-core/src/performance.rs
+          --input crates/qx-app/src/artifact_store/backtest_summary.rs
+          --input crates/qx-cli/src/report_html.rs
+          --input crates/qx-cli/src/report_xlsx/rows.rs
+          --notes "Linux focused Rust metric and report projections preserve daily labels and exact large-value precision"
+          -- python3 tools/accept_backtest_metrics_contract.py
+      - name: Linux qx-cli behavior and ownership tests (R19)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R19-AC01
+          --input crates/qx-cli/src/cli.rs
+          --input crates/qx-cli/src/cli_command_manifest.json
+          --input crates/qx-cli/tests/cli_behavior_parity.rs
+          --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs
+          --notes "Linux qx-cli unit suite verifies CLI facade routing and compatibility"
+          -- cargo test -p qx-cli --bin qx-cli
+      - name: Linux qx-cli behavior parity (R19)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R19-AC01
+          --input crates/qx-cli/tests/cli_behavior_parity.rs
+          --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs
+          --notes "Linux CLI behavior-parity integration target preserves report and facade compatibility"
+          -- cargo test -p qx-cli --test cli_behavior_parity -- --test-threads=1
+      - name: Verify CLI tests leave runtime data isolated
+        run: python3 tools/check_cli_test_data_isolation.py
+      - name: Upload Linux Rust host-capability acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-capability-acceptance-linux
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+          if-no-files-found: error
+          retention-days: 30
       - name: Capability unverified register
         run: python3 tools/generate_unverified.py --check
       - name: Sandbox evidence gate tests
@@ -308,6 +373,146 @@ jobs:
         run: |
           python -m pip install --quiet jsonschema tomli tzdata
           python -m unittest discover -s python/tests -q
+      - name: POSIX strategy preflight descendant cleanup (R04)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R04-AC01
+          --input tools/accept_strategy_process_tree.py
+          --input python/qianxing/process_tree.py
+          --notes "Linux preflight cleanup after normal return and timeout, plus explicit verification that a new-session child escapes process-group ownership and is then reaped by the acceptance fixture"
+          -- python3 tools/accept_strategy_process_tree.py
+          --output maturity/evidence/strategy-preflight-process-tree-linux.json
+      - name: Linux project-run PID identity and stale-owner detection (R07)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R07-AC01
+          --input tools/accept_project_run_identity.py
+          --input python/qianxing/project_runs.py
+          --notes "Native Linux /proc identity is stable for a live PID, rejects a stale process-start identity, and reports the reaped owner as dead"
+          -- python3 tools/accept_project_run_identity.py
+          maturity/evidence/project-run-identity-linux.json
+      - name: Linux Python host capability negotiation (R08)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R08-AC01
+          --input python/qianxing_strategy/worker.py
+          --input python/tests/test_strategy_capabilities.py
+          --notes "Linux Python strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction"
+          -- python3 -m unittest discover -s python/tests -p test_strategy_capabilities.py
+      - name: macOS proc_pidinfo and ps fallback acceptance (R07)
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R07-AC01
+          --input tools/accept_project_run_identity.py
+          --input python/qianxing/project_runs.py
+          --notes "Native macOS proc_pidinfo verifies microsecond process-start precision, the real ps fallback reports one-second precision, and both paths reject stale process identities"
+          -- python3 tools/accept_project_run_identity.py
+          maturity/evidence/project-run-identity-macos.json
+      - name: macOS backtest metrics and report contract (R17)
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R17-AC01
+          --input tools/accept_backtest_metrics_contract.py
+          --input crates/qx-core/src/performance.rs
+          --input crates/qx-app/src/artifact_store/backtest_summary.rs
+          --input crates/qx-cli/src/report_html.rs
+          --input crates/qx-cli/src/report_xlsx/rows.rs
+          --notes "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
+          -- python3 tools/accept_backtest_metrics_contract.py
+      - name: macOS qx-cli behavior and ownership tests (R19)
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R19-AC01
+          --input crates/qx-cli/src/cli.rs
+          --input crates/qx-cli/src/cli_command_manifest.json
+          --input crates/qx-cli/tests/cli_behavior_parity.rs
+          --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs
+          --notes "macOS qx-cli unit suite verifies CLI facade routing and compatibility"
+          -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
+      - name: macOS qx-cli behavior parity (R19)
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R19-AC01
+          --input crates/qx-cli/tests/cli_behavior_parity.rs
+          --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs
+          --notes "macOS CLI behavior-parity integration target preserves report and facade compatibility"
+          -- cargo test -p qx-cli --test cli_behavior_parity -- --test-threads=1
+      - name: Clean Linux wheel and CLI acceptance (R01 + R20)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find dist -maxdepth 1 -type f -name 'qianxing-*.whl' -print -quit)"
+          test -n "$wheel"
+          cargo fetch --locked
+          python3 tools/record_strategy_acceptance.py \
+            --acceptance-id R01-AC01 \
+            --input tools/accept_clean_install.py \
+            --input python/tests/test_app_use_cases.py \
+            --notes "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution" \
+            -- python3 tools/accept_clean_install.py \
+            --python "$(command -v python)" \
+            --work-dir "${RUNNER_TEMP}/qx-clean-install-r01" \
+            --wheel "$wheel"
+          python3 tools/record_strategy_acceptance.py \
+            --acceptance-id R20-AC01 \
+            --input tools/accept_clean_install.py \
+            --input docs/installation.md \
+            --notes "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart" \
+            -- python3 tools/accept_clean_install.py \
+            --python "$(command -v python)" \
+            --work-dir "${RUNNER_TEMP}/qx-clean-install-r20" \
+            --wheel "$wheel"
+      - name: Upload Linux clean-install acceptance evidence
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-install-acceptance-linux-py312
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Linux process-tree acceptance evidence
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-tree-acceptance-linux-py312
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+            maturity/evidence/strategy-preflight-process-tree-linux.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Linux process-identity acceptance evidence
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-identity-acceptance-linux-py312
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+            maturity/evidence/project-run-identity-linux.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload macOS process-identity acceptance evidence
+        if: always() && matrix.os == 'macos-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-identity-acceptance-macos-py312
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+            maturity/evidence/project-run-identity-macos.json
+          if-no-files-found: error
+          retention-days: 30
 
   feature-matrix:
     name: qx-cli features (${{ matrix.features }})
@@ -320,6 +525,7 @@ jobs:
           - postgres
           - nats
           - postgres,nats
+          - sqlite,bench-prepared-evaluation
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -418,6 +624,48 @@ jobs:
         run: >-
           cargo test -p qx-storage --features sqlite,postgres,nats --
           --ignored --test-threads=1 --nocapture
+      - name: Live Unknown recovery across file, SQLite, and PostgreSQL process restarts
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R12-AC01
+          --input crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs
+          --input crates/qx-service/src/configured_backends.rs
+          --input crates/qx-storage/src/postgres.rs
+          --notes "Linux worker recovery after durable Unknown across file, SQLite, and PostgreSQL; cursor remains fixed until venue facts and fresh reconciliation resolve the command"
+          -- cargo test -p qx-cli --features sqlite,postgres --bin qx-cli
+          workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+          -- --nocapture
+      - name: PostgreSQL strategy cursor import and fencing
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R13-AC01
+          --input crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs
+          --input crates/qx-storage/src/postgres.rs
+          --notes "PostgreSQL strategy cursor imports a legacy file cursor, persists sequence advancement transactionally, reloads it, and rejects stale progress"
+          -- cargo test -p qx-cli --features sqlite,postgres --bin qx-cli
+          workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress
+          -- --ignored --exact --nocapture
+      - name: PostgreSQL immutable deployment blob contract
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R13-AC01
+          --input crates/qx-storage/src/postgres.rs
+          --input crates/qx-storage/migrations/postgres/0004_schema.sql
+          --input crates/qx-runtime/src/strategy_deployment_store.rs
+          --notes "PostgreSQL deployment blobs verify SHA-256 keys, persist and reload immutable BYTEA content, and reject a conflicting rewrite"
+          -- cargo test -p qx-storage --features postgres --lib
+          postgres::json_state_tests::postgres_deployment_blobs_are_immutable_and_content_addressable
+          -- --ignored --exact --nocapture
+      - name: PostgreSQL deployment blob runtime cache recovery
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R13-AC01
+          --input crates/qx-runtime/src/strategy_deployment_store.rs
+          --input crates/qx-storage/src/postgres.rs
+          --notes "PostgreSQL deployment blobs are hash-verified and rehydrated into an immutable runtime cache"
+          -- cargo test -p qx-runtime --features postgres
+          strategy_deployment_store::artifact_cache_tests::postgres_deployment_blob_rehydrates_into_verified_runtime_cache
+          -- --ignored --exact --nocapture
       # 上一条腿只跑 `--ignored`，而这 8 颗 NATS 用例没有 `#[ignore]`：默认腿 `cargo test --workspace`
       # 走默认特性（`qx-cli` 的 default 只有 sqlite），整段 `#[cfg(feature = "nats")]` 被 cfg 掉；
       # 特性矩阵那条腿是 `-p qx-cli`，cargo 不会为依赖 crate 构建它自己的测试目标。
@@ -427,6 +675,137 @@ jobs:
         run: >-
           cargo test -p qx-storage --features sqlite,postgres,nats --no-fail-fast
           --test nats_jetstream --test nats_wait_budget
+
+  strategy-storage-recovery:
+    name: Strategy durable storage and recovery (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: qianxing
+          POSTGRES_DB: qianxing_strategy_acceptance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qianxing_strategy_acceptance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QX_BENCH_POSTGRES_DSN: postgres://postgres:qianxing@127.0.0.1:5432/qianxing_strategy_acceptance
+      QX_TEST_POSTGRES_DSN: postgres://postgres:qianxing@127.0.0.1:5432/qianxing_strategy_acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: strategy-storage-recovery-${{ runner.os }}-${{ runner.arch }}
+      - name: Install PostgreSQL client and OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client openssl
+      - name: Build CLI with all durable backends and recovery hooks
+        run: cargo build -p qx-cli --no-default-features --features sqlite,postgres,bench-prepared-evaluation
+      - name: PostgreSQL Paper deployment lifecycle on Linux
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R13-AC01
+          --input tools/accept_strategy_deployment_lifecycle.py
+          --input tools/check_strategy_deployment_lifecycle_evidence.py
+          --input crates/qx-orchestrator/src/strategy_deployment.rs
+          --input crates/qx-storage/src/postgres.rs
+          --input crates/qx-runtime/src/strategy_deployment_store.rs
+          --notes "Linux PostgreSQL Paper lifecycle: deploy, pause/resume, rollback, failed replacement restoration, and stop through the authenticated console and real supervisor"
+          -- python3 tools/accept_strategy_deployment_lifecycle.py
+          --binary target/debug/qx-cli
+          --runtime-template deploy/qianxing.runtime.paper-strategy.example.json
+          --openssl /usr/bin/openssl
+          --storage-backend postgres
+          --evidence-out maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json
+      - name: Validate PostgreSQL deployment lifecycle evidence
+        run: >-
+          python3 tools/check_strategy_deployment_lifecycle_evidence.py
+          maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json
+          --storage-backend postgres
+      - name: PostgreSQL Paper supervisor restart with Python checkpoint on Linux
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R13-AC01
+          --input tools/accept_strategy_deployment_lifecycle.py
+          --input tools/check_strategy_deployment_lifecycle_evidence.py
+          --input crates/qx-orchestrator/src/lib.rs
+          --input crates/qx-runtime/src/supervision/shutdown.rs
+          --input python/tests/fixtures/runtime_checkpoint_process_strategy.py
+          --notes "Linux PostgreSQL Paper supervisor restart commits and restores a Python strategy checkpoint across supervisor and worker PID changes with clean stdin EOF shutdown"
+          -- python3 tools/accept_strategy_deployment_lifecycle.py
+          --binary target/debug/qx-cli
+          --runtime-template deploy/qianxing.runtime.paper-strategy.example.json
+          --openssl /usr/bin/openssl
+          --storage-backend postgres
+          --evidence-out maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json
+      - name: Validate Linux supervisor checkpoint restart evidence
+        run: >-
+          python3 tools/check_strategy_deployment_lifecycle_evidence.py
+          maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json
+          --storage-backend postgres
+      - name: Verify 4,096-entry JobQueue capacity on file, SQLite, and PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          for backend in file sqlite postgres; do
+            python3 tools/record_strategy_acceptance.py \
+              --acceptance-id R21-AC01 \
+              --input benchmarks/run_prepared_evaluation_capacity.py \
+              --input crates/qx-storage/src/postgres.rs \
+              --notes "Linux durable JobQueue capacity: ${backend}; 4096 pending limit, overflow rejection, owner batch and acknowledgement" \
+              -- python3 benchmarks/run_prepared_evaluation_capacity.py \
+              --binary target/debug/qx-cli \
+              --queue-only --queue-backend "$backend" --queue-capacity 4096 \
+              --out "maturity/evidence/job-queue-capacity-linux-${backend}.json"
+          done
+      - name: Verify 4,096-entry ControlCommandQueue capacity on file, SQLite, and PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          for backend in file sqlite postgres; do
+            python3 tools/record_strategy_acceptance.py \
+              --acceptance-id R21-AC01 \
+              --input benchmarks/run_prepared_evaluation_capacity.py \
+              --input crates/qx-storage/src/postgres.rs \
+              --input crates/qx-storage/src/control_queue.rs \
+              --notes "Linux ControlCommandQueue capacity: ${backend}; 4096 pending limit, overflow and oversized rejection, acknowledgement" \
+              -- python3 benchmarks/run_prepared_evaluation_capacity.py \
+              --binary target/debug/qx-cli \
+              --control-queue-only --queue-backend "$backend" --queue-capacity 4096 \
+              --out "maturity/evidence/control-command-queue-capacity-linux-${backend}.json"
+          done
+      - name: Verify six worker crash boundaries on file, SQLite, and PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          for backend in file sqlite postgres; do
+            python3 tools/record_strategy_acceptance.py \
+              --acceptance-id R21-AC01 \
+              --input benchmarks/run_strategy_worker_crash_recovery.py \
+              --input crates/qx-cli/src/workers/strategy_worker.rs \
+              --input crates/qx-storage/src/postgres.rs \
+              --notes "Linux Paper Strategy worker crash/restart: ${backend}; six persistence boundaries and idempotent recovery" \
+              -- python3 benchmarks/run_strategy_worker_crash_recovery.py \
+              --backend "$backend" \
+              --runtime deploy/qianxing.runtime.paper-strategy.example.json \
+              --binary target/debug/qx-cli \
+              --output "maturity/evidence/strategy-worker-crash-recovery-linux-${backend}.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strategy-storage-recovery-linux
+          path: |
+            maturity/evidence/*-linux-*.json
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+          if-no-files-found: error
+          retention-days: 30
 
   runtime-contracts:
     name: Runtime and Paper contracts

@@ -13,6 +13,8 @@ pub(crate) fn config() -> RuntimeConfig {
             transport: ApiTransport::Plaintext,
             tls: None,
             operators: BTreeMap::new(),
+            strategy_deployment_nodes: Vec::new(),
+            strategy_deployment_publisher: None,
             data_providers: Vec::new(),
             cors_allowed_origins: Vec::new(),
             max_concurrent_connections: None,
@@ -68,4 +70,21 @@ pub(crate) fn config() -> RuntimeConfig {
         strategies: Vec::new(),
         accounts: Vec::new(),
     }
+}
+
+pub(crate) fn configure_testnet_mtls(config: &mut RuntimeConfig) {
+    config.environment = "testnet".into();
+    config.api.transport = ApiTransport::Mtls;
+    config.api.tls = Some(TlsPaths {
+        certificate_chain: "server.pem".into(),
+        private_key: "server.key".into(),
+        client_ca: "clients.pem".into(),
+    });
+    config.api.operators.insert(
+        "ops".into(),
+        OperatorConfig {
+            permission: Permission::Trading,
+            certificate: "ops.pem".into(),
+        },
+    );
 }

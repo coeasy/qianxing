@@ -1,0 +1,13 @@
+LEG r6_full2 rc=101 scope=full red_rows=20 unique_red=20 ok_rows=469 roster_sha=ff15dbf2d579a772 log=.task-tmp\r6_full2.log
+  VERDICT test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 1.26s
+  VERDICT test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 1.25s
+  VERDICT test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 1.26s
+  VERDICT test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 1.26s
+  VERDICT test result: FAILED. 465 passed; 20 failed; 0 ignored; 0 measured; 0 filtered out; finished in 217.26s
+  BUILD error: test failed, to rerun pass `-p qx-cli --bin qx-cli`
+  TEXT thread 'tests::api_endpoint_table_routes::each_endpoint_table_lists_exactly_the_dispatch_routes' (4144) panicked at crates\qx-cli\src\..\tests\unit\api_endpoint_table_routes.rs:249:9:
+  TEXT thread 'tests::api_endpoint_table_routes::non_200_column_names_match_the_read_face_implementation' (28884) panicked at crates\qx-cli\src\..\tests\unit\api_endpoint_table_routes.rs:437:5:
+  TEXT thread 'tests::ashare_submit_guard::ccxt_worker_entry_refuses_the_ashare_section_before_touching_the_ccxt_config' (16668) panicked at crates\qx-cli\src\..\tests\unit\ashare_submit_guard.rs:166:5:
+  TEXT thread 'tests::deploy_template_coverage::every_deploy_template_loads_through_its_registered_reader' (27676) panicked at crates\qx-cli\src\..\tests\unit\deploy_template_coverage.rs:794:5:
+  TEXT thread 'tests::event_log_face_wiring::event_log_read_and_write_faces_are_declared_at_every_open_site' (3480) panicked at crates\qx-cli\src\..\tests\unit\event_log_face_wiring.rs:23:9:
+  TEXT thread 'tests::live_pending_order_reservation::live_balance_snapshot_does_not_reserve_orders_already_reflected_by_exchange' (5428) panicked at crates\qx-cli\src\..\tests\unit\live_pending_order_reserv

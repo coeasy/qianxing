@@ -1146,6 +1146,24 @@ mod test_cases {
         let report = BacktestEngine::new(config)
             .run(&bars, &mut BuyOnce { done: false })
             .unwrap();
+        let initial_deposit = report
+            .event_log
+            .events()
+            .first()
+            .expect("initial cash must be represented by a replayable ledger fact");
+        assert!(matches!(
+            initial_deposit.kind,
+            EventKind::LedgerApplied { .. }
+        ));
+        assert_eq!(initial_deposit.ts, bars[0].ts);
+        assert_eq!(
+            initial_deposit.prio,
+            qx_core::Priority::TIMER,
+            "same-timestamp interest requires initial cash to precede pre-decision account events"
+        );
+        let replay_facts =
+            ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
+        assert_eq!(replay_facts.ledger_entries, report.ledger.entries().len());
         assert!(report
             .ledger
             .entries()

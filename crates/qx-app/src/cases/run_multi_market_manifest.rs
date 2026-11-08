@@ -58,8 +58,10 @@ pub(super) fn take_runtime_market(
     })
 }
 
-pub(super) fn dataset_manifest_fingerprint(quality: &serde_json::Value) -> Result<&str, AppError> {
-    quality
+pub(super) fn dataset_manifest_fingerprint(
+    quality: &serde_json::Value,
+) -> Result<String, AppError> {
+    let manifest_fingerprint = quality
         .get("manifest_fingerprint")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
@@ -67,7 +69,16 @@ pub(super) fn dataset_manifest_fingerprint(quality: &serde_json::Value) -> Resul
                 AppErrorCategory::InternalInvariant,
                 "dataset quality verifier omitted manifest_fingerprint",
             )
-        })
+        })?;
+    let snapshot_sha256 = quality
+        .get("dataset_snapshot_sha256")
+        .and_then(serde_json::Value::as_str);
+    Ok(
+        crate::multi_market_report::dataset_quality_identity_fingerprint(
+            manifest_fingerprint,
+            snapshot_sha256,
+        ),
+    )
 }
 
 pub(super) struct MultiMarketManifestInput<'a> {
@@ -210,8 +221,9 @@ fn verify_dataset_quality_bytes(
             "多市场数据质量清单不是 UTF-8 {manifest_label}: {error}"
         ))
     })?;
-    let manifest = qx_data::DatasetManifestV2::from_json(payload).map_err(invalid)?;
-    let frame_sha256 = qx_data::sha256_hex_bytes(&frame_bytes);
+    let (manifest, snapshot) =
+        qx_data::parse_dataset_manifest_or_snapshot(payload).map_err(invalid)?;
+    let frame_sha256 = qx_data::sha256_hex_bytes(frame_bytes);
     let row_count = u64::try_from(frame.ts.len()).map_err(|_| invalid("BarFrame 行数超出 u64"))?;
     let first_ts = frame
         .ts
@@ -224,6 +236,11 @@ fn verify_dataset_quality_bytes(
         .copied()
         .ok_or_else(|| invalid("BarFrame 不能为空"))?;
     let actual_instrument = frame.instrument.to_string();
+    snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.validate_for_replay(&actual_instrument))
+        .transpose()
+        .map_err(invalid)?;
     let declared = &manifest.dataset;
     for (field, actual, expected) in [
         (
@@ -292,13 +309,20 @@ fn verify_dataset_quality_bytes(
         )));
     }
     let manifest_fingerprint = manifest.fingerprint().map_err(invalid)?;
+    let snapshot_sha256 = snapshot
+        .as_ref()
+        .map(qx_data::DatasetSnapshotV1::content_sha256)
+        .transpose()
+        .map_err(invalid)?;
     Ok(serde_json::json!({
         "manifest_path": manifest_label,
-        "manifest_sha256": qx_data::sha256_hex_bytes(&manifest_bytes),
+        "manifest_sha256": qx_data::sha256_hex_bytes(manifest_bytes),
         "manifest_fingerprint": manifest_fingerprint,
         "content_hash": manifest.content_hash,
         "quality_report": manifest.quality_report,
         "manifest": manifest,
+        "dataset_snapshot": snapshot,
+        "dataset_snapshot_sha256": snapshot_sha256,
     }))
 }
 
@@ -329,6 +353,7 @@ pub fn verify_multi_leg_report_quality_evidence_v1(
 }
 
 /// Verify multi-leg quality evidence when the storage adapter already resolved the source bytes.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_multi_leg_report_quality_evidence_bytes_v1(
     manifest_bytes: &[u8],
     manifest_label: &str,
@@ -366,10 +391,8 @@ pub fn verify_multi_leg_report_quality_evidence_bytes_v1(
             )));
         }
     }
-    verified["manifest_fingerprint"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| invalid("已复核的多腿质量清单缺少 manifest_fingerprint"))
+    crate::multi_leg_dataset_quality_identity(&verified)
+        .ok_or_else(|| invalid("已复核的多腿质量清单缺少 dataset quality identity"))
 }
 
 pub(super) fn invalid(message: impl Into<String>) -> AppError {

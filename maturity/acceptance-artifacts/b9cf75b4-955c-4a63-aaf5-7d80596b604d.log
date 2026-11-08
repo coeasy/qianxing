@@ -1,0 +1,7 @@
+$ cargo check -p qx-cli --offline
+exit_code=0
+
+[stdout]
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.84s

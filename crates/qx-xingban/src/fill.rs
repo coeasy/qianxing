@@ -99,17 +99,22 @@ pub(crate) fn limit_ok(side: Side, limit: Option<i128>, px: i128) -> bool {
 }
 
 fn raw_decimal(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy Bar values use supported scale 9")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 fn limit_ok_exact(side: Side, limit: Option<ExactDecimal>, px: ExactDecimal) -> bool {
     match limit {
         None => true,
-        Some(limit) => match (side, px.checked_cmp(limit)) {
-            (Side::Buy, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
-            | (Side::Sell, Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) => true,
-            _ => false,
-        },
+        Some(limit) => matches!(
+            (side, px.checked_cmp(limit)),
+            (
+                Side::Buy,
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ) | (
+                Side::Sell,
+                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+            )
+        ),
     }
 }
 
@@ -195,7 +200,7 @@ pub trait FillModel {
         };
         self.evaluate(&legacy, rng)
             .fill
-            .and_then(|(price, qty)| Some((raw_decimal(price), raw_decimal(qty))))
+            .map(|(price, qty)| (raw_decimal(price), raw_decimal(qty)))
             .map_or_else(
                 || ExactFillEvaluation::declined(ExecutionAttemptReason::ModelDeclined),
                 |(price, qty)| ExactFillEvaluation::filled(price, qty),
@@ -552,7 +557,7 @@ impl FillModel for VolumeSensitiveFillModel {
                 return ExactFillEvaluation::declined(ExecutionAttemptReason::InvalidModelOutput);
             }
         };
-        let denominator = ExactDecimal::from_parts(10_000, 0).expect("constant is valid");
+        let denominator = ExactDecimal::from_integer(10_000);
         let capacity = ctx
             .bar
             .volume_exact()

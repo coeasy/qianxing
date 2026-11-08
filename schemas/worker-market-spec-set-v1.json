@@ -15,7 +15,17 @@
       "additionalProperties": {
         "type": "object",
         "minProperties": 1,
-        "description": "One existing product market spec or normalized CCXT market spec. CCXT-shaped entries may include exact_rules with canonical decimal strings for contract_size, price_tick, quantity_step, minimum_quantity, and minimum_notional; runtime freezes these rules and compares them with refreshed venue metadata. Runtime loading verifies that the entry identity agrees with the InstrumentId key and validates its trading constraints."
+        "description": "One existing product market spec or normalized CCXT market spec. CCXT-shaped entries may include exact_rules with canonical decimal strings for contract_size, price_tick, quantity_step, minimum_quantity, and minimum_notional; runtime freezes these rules and compares them with refreshed venue metadata. Runtime loading verifies that the entry identity agrees with the InstrumentId key and validates its trading constraints.",
+        "properties": {
+          "dataset_instrument_role": {
+            "enum": ["index", "equity", "etf", "future", "crypto_spot", "fx", "other_tradable", "unknown"],
+            "description": "Required by non-Paper Execution workers and must match the supplier-signed role catalog below. Index/unknown and role/product conflicts are rejected before live order submission."
+          },
+          "dataset_instrument_role_catalog": {
+            "$ref": "dataset-instrument-role-catalog-v1.json",
+            "description": "Supplier-signed catalog proving the declared instrument role. Its signer key and supplier ID must be pinned in QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS."
+          }
+        }
       }
     }
   }

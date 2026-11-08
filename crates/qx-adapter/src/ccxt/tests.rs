@@ -143,6 +143,40 @@ fn ccxt_process_client_cancels_a_child_waiting_for_an_rpc_response() {
     );
 }
 
+#[test]
+fn ccxt_process_client_reports_abnormal_worker_exit_status_on_eof() {
+    use std::process::{Command, Stdio};
+
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let child = Command::new(python)
+        .args(["-u", "-c", "import sys; sys.stdin.readline(); sys.exit(7)"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Python is required by the workspace test environment");
+    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-exit-fixture")
+        .expect("piped child attaches to the bounded RPC bridge");
+
+    let error = client
+        .call(json!({"op": "crash"}))
+        .expect_err("an exited worker cannot produce an RPC response");
+    assert!(
+        error.contains("提交结果未知"),
+        "safety outcome lost: {error}"
+    );
+    assert!(
+        error.contains("exit_code=7"),
+        "exit status missing: {error}"
+    );
+}
+
 impl CcxtRpc for FakeRpc {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         self.calls.push(request.clone());

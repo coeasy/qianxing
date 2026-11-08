@@ -1,0 +1,22 @@
+{
+  "binary_sha256": "792b00572ece7c58db13ce15e61aba946a8718ca16a87e19a0d05cc197793002",
+  "reports": {
+    "ashare": {
+      "source_summary": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.summary.json",
+      "source_result_hash": "6e120606d81369b5",
+      "before_html_sha256": "60e3b3ea2d9445867686ba988f0c9d117dd081933e2109726cea4a106a65451b",
+      "after_html_sha256": "ffe6c0cf4cdff0b6da0316782035513e8b6b041416f58aa144e81d0564b1845f",
+      "javascript_blocks_checked": 3,
+      "render_exit_code": 0
+    },
+    "crypto": {
+      "source_summary": "D:\\workspace\\qval-1028b\\c1\\data\\qianxing\\runs\\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_72977fc0661ca3fefc928971101304c66f89159f0c67e1b066bb6e6d9473e2d3_3e87aa4e83179cb062a5cbb3-90a3367aed08652b.v7.summary.json",
+      "source_result_hash": "67c176977ad0f81d",
+      "before_html_sha256": "d8bcfd4c5b12bf9b6bed00a00f6a59b428ff1551fb14101d8fed0bb95769342c",
+      "after_html_sha256": "ad99a289d2e6e4b48c6e02d4f55b2133233018595c25e5815a75a3c3781608a5",
+      "javascript_blocks_checked": 3,
+      "render_exit_code": 0
+    }
+  },
+  "visual_browser_review": "blocked_by_browser_request_header_policy"
+}

@@ -11,6 +11,8 @@
 //! 内核观察类型对接。内核观察类型由本 crate 直接再导出，因此消费者（`qx-cli`、
 //! `qx-api`）从同一个 crate 拿到同一套名字，不再需要别名导入两套同名概念。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_core::{Fnv1a, InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -37,12 +39,16 @@ pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1: &str =
 pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2: &str =
     include_str!("../../../schemas/account-snapshot-v2.json");
 
-/// 当前账户快照 JSON Schema。v3 增加精确余额/持仓数值，v1/v2 仍可读取并保持原哈希。
-pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+/// Historical v3 account snapshot JSON Schema, retained for compatibility clients.
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3: &str =
     include_str!("../../../schemas/account-snapshot-v3.json");
 
-/// 新建快照使用 v3；读侧同时接受 v1、v2 与 v3。
-pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+/// Current account snapshot JSON Schema. v4 adds an explanation for unavailable equity.
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+    include_str!("../../../schemas/account-snapshot-v4.json");
+
+/// New snapshots use v4; readers continue to accept v1 through v4.
+pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 4;
 pub const ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION: u32 = 1;
 const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;
 
@@ -113,6 +119,9 @@ pub struct AccountSnapshot {
     /// `Some(0)` 是"算过且为零"。此前它是不可区分的 `i128`，于是账户持有一条没有标记价的仓位时，
     /// 读模型退回纯现金——把"算不出"印成一个看起来完全合法的权益。
     pub equity_raw: Option<i128>,
+    /// v4 explains why `equity_raw` is unavailable. Older snapshot versions omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equity_diagnostic: Option<EquityDiagnostic>,
     /// 这七个钱字段是"读过才算得出"的量：`None` 表示这一层没有算它，`Some(0)` 表示算过且结果为零。
     /// 它们此前是不可区分的 `i128`，于是全仓没有写入点的 `margin_raw`/`fees_raw` 等会以"0"的身份被
     /// `GET /account/balances` 长期发布，读侧把"没算"当成"没有费用/没有保证金"。
@@ -197,6 +206,7 @@ impl AccountSnapshot {
             cash_raw: BTreeMap::new(),
             cash_exact: BTreeMap::new(),
             equity_raw: None,
+            equity_diagnostic: None,
             available_raw: None,
             margin_raw: None,
             frozen_raw: None,
@@ -241,6 +251,19 @@ impl AccountSnapshot {
                     "v1/v2 账户快照不能声明精确持仓金额".into(),
                 ));
             }
+        }
+        if self.header.schema_version < 4 && self.equity_diagnostic.is_some() {
+            return Err(ProtocolError::Invalid(
+                "v1/v2/v3 account snapshots cannot declare equity_diagnostic".into(),
+            ));
+        }
+        if let Some(diagnostic) = &self.equity_diagnostic {
+            if self.equity_raw.is_some() {
+                return Err(ProtocolError::Invalid(
+                    "computed equity cannot carry an unavailable-equity diagnostic".into(),
+                ));
+            }
+            diagnostic.validate()?;
         }
         if self.header.schema_version < 3 && !self.cash_exact.is_empty() {
             return Err(ProtocolError::Invalid(
@@ -344,6 +367,9 @@ impl AccountSnapshot {
             }
         }
         Self::write_scalar_money(&mut h, self.scalar_money_raw());
+        if self.header.schema_version >= 4 {
+            Self::write_equity_diagnostic_hash(&mut h, self.equity_diagnostic.as_ref());
+        }
         if !self.fees_by_currency_raw.is_empty() {
             h.write_u64(1);
             for (currency, amount) in &self.fees_by_currency_raw {
@@ -498,6 +524,7 @@ impl AccountSnapshot {
             } else {
                 Some(ScalarState {
                     equity_raw: target.equity_raw,
+                    equity_diagnostic: target.equity_diagnostic.clone(),
                     available_raw: target.available_raw,
                     margin_raw: target.margin_raw,
                     frozen_raw: target.frozen_raw,
@@ -515,6 +542,9 @@ impl AccountSnapshot {
     fn scalar_hash(&self) -> u64 {
         let mut h = Fnv1a::new();
         Self::write_scalar_money(&mut h, self.scalar_money_raw());
+        if self.header.schema_version >= 4 {
+            Self::write_equity_diagnostic_hash(&mut h, self.equity_diagnostic.as_ref());
+        }
         if !self.fees_by_currency_raw.is_empty() {
             h.write_u64(1);
             for (currency, amount) in &self.fees_by_currency_raw {
@@ -524,6 +554,24 @@ impl AccountSnapshot {
         }
         self.reconcile.write_scalars(&mut h);
         h.finish()
+    }
+
+    fn write_equity_diagnostic_hash(hasher: &mut Fnv1a, diagnostic: Option<&EquityDiagnostic>) {
+        let Some(diagnostic) = diagnostic else {
+            hasher.write_u64(0);
+            return;
+        };
+        hasher.write_u64(1);
+        hasher.write_u64(match diagnostic.reason {
+            EquityUnavailableReason::MissingMarkPrices => 1,
+            EquityUnavailableReason::ExchangeBalanceIncludesSpotPositions => 2,
+            EquityUnavailableReason::UnsupportedPortfolioValuation => 3,
+            EquityUnavailableReason::ArithmeticOverflow => 4,
+        });
+        hasher.write_u64(diagnostic.missing_mark_instruments.len() as u64);
+        for instrument in &diagnostic.missing_mark_instruments {
+            hasher.write_text(instrument);
+        }
     }
 
     fn write_optional_exact_decimal(hasher: &mut Fnv1a, value: Option<qx_core::ExactDecimal>) {
@@ -572,9 +620,17 @@ impl AccountSnapshot {
         };
         // 汇总钱字段按顺序对应模板占位，未计算值编码为 null。
         let scalars = self.scalar_json_values();
+        let equity_diagnostic = if self.header.schema_version >= 4 {
+            format!(
+                ",\"equity_diagnostic\":{}",
+                equity_diagnostic_json(self.equity_diagnostic.as_ref())
+            )
+        } else {
+            String::new()
+        };
         let reconcile = self.reconcile.json_values();
         Ok(format!(
-            "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}}{},\"equity_raw\":{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{}{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
+            "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}}{},\"equity_raw\":{}{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{}{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
             self.header.schema_version,
             self.header.snapshot_id,
             json_string(&self.header.account_id),
@@ -587,6 +643,7 @@ impl AccountSnapshot {
             cash,
             cash_exact,
             scalars[0],
+            equity_diagnostic,
             scalars[1],
             scalars[2],
             scalars[3],
@@ -626,6 +683,16 @@ impl AccountSnapshot {
                 "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）",
                 MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION, ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
             )));
+        }
+        if top_schema >= 4 && !object.contains_key("equity_diagnostic") {
+            return Err(ProtocolError::Invalid(
+                "v4 account snapshot requires equity_diagnostic".into(),
+            ));
+        }
+        if top_schema < 4 && object.contains_key("equity_diagnostic") {
+            return Err(ProtocolError::Invalid(
+                "v1/v2/v3 account snapshots cannot declare equity_diagnostic".into(),
+            ));
         }
         let header = object
             .get_mut("header")
@@ -679,11 +746,40 @@ impl AccountSnapshot {
     /// 供 Rust/Python/其他 serde 实现使用的无损 JSON 往返格式。
     pub fn to_wire_json(&self) -> Result<String, ProtocolError> {
         self.validate()?;
-        serde_json::to_string(self).map_err(|error| ProtocolError::Serialization(error.to_string()))
+        let mut value = serde_json::to_value(self)
+            .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
+        if self.header.schema_version >= 4 {
+            value
+                .as_object_mut()
+                .ok_or_else(|| ProtocolError::Serialization("快照必须是 JSON object".into()))?
+                .insert(
+                    "equity_diagnostic".into(),
+                    serde_json::to_value(&self.equity_diagnostic)
+                        .map_err(|error| ProtocolError::Serialization(error.to_string()))?,
+                );
+        }
+        serde_json::to_string(&value)
+            .map_err(|error| ProtocolError::Serialization(error.to_string()))
     }
 
     pub fn from_wire_json(input: &str) -> Result<Self, ProtocolError> {
-        let snapshot: Self = serde_json::from_str(input)
+        let value: serde_json::Value = serde_json::from_str(input)
+            .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
+        let version = value
+            .get("header")
+            .and_then(|header| header.get("schema_version"))
+            .and_then(serde_json::Value::as_u64);
+        if version.is_some_and(|version| version >= 4) && value.get("equity_diagnostic").is_none() {
+            return Err(ProtocolError::Invalid(
+                "v4 account snapshot requires equity_diagnostic".into(),
+            ));
+        }
+        if version.is_some_and(|version| version < 4) && value.get("equity_diagnostic").is_some() {
+            return Err(ProtocolError::Invalid(
+                "v1/v2/v3 account snapshots cannot declare equity_diagnostic".into(),
+            ));
+        }
+        let snapshot: Self = serde_json::from_value(value)
             .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
         // wire 入口与稳定 JSON 入口共用同一道版本闸门（V12 R2）：闸门放在读侧而不是
         // `validate()` 里，所以"自洽的跨版本文档"在这里得到的理由是版本不受支持。
@@ -740,9 +836,34 @@ fn json_string(value: &str) -> String {
     out
 }
 
+fn equity_diagnostic_json(diagnostic: Option<&EquityDiagnostic>) -> String {
+    let Some(diagnostic) = diagnostic else {
+        return "null".into();
+    };
+    let instruments = if diagnostic.missing_mark_instruments.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ",\"missing_mark_instruments\":[{}]",
+            diagnostic
+                .missing_mark_instruments
+                .iter()
+                .map(|instrument| json_string(instrument))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    format!(
+        "{{\"reason\":{}{instruments}}}",
+        json_string(diagnostic.reason.as_str())
+    )
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct ScalarState {
     equity_raw: Option<i128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    equity_diagnostic: Option<EquityDiagnostic>,
     available_raw: Option<i128>,
     margin_raw: Option<i128>,
     frozen_raw: Option<i128>,
@@ -799,6 +920,7 @@ impl SnapshotDiff {
         apply_map(&mut next.transfers, &self.transfers);
         if let Some(s) = &self.replacement {
             next.equity_raw = s.equity_raw;
+            next.equity_diagnostic = s.equity_diagnostic.clone();
             next.available_raw = s.available_raw;
             next.margin_raw = s.margin_raw;
             next.frozen_raw = s.frozen_raw;

@@ -134,6 +134,24 @@ pub fn persist_run_evidence_bundle(
     has_strategy_diagnostics: bool,
     facts: RunEvidenceAssembly,
 ) -> Result<PathBuf, String> {
+    let (path, payload) = prepare_run_evidence_bundle(
+        summary_path,
+        has_report_analysis,
+        has_strategy_diagnostics,
+        facts,
+    )?;
+    super::write_backtest_artifact(&path, &payload, "EvidenceBundle")?;
+    Ok(path)
+}
+
+/// Prepare a verified run EvidenceBundle without publishing it, so callers can include it in a
+/// larger artifact transaction.
+pub fn prepare_run_evidence_bundle(
+    summary_path: &Path,
+    has_report_analysis: bool,
+    has_strategy_diagnostics: bool,
+    facts: RunEvidenceAssembly,
+) -> Result<(PathBuf, String), String> {
     let bundle = EvidenceBundle::run(assemble_run_evidence_payload(facts)?);
     let payload = crate::artifact_store::serialize_verified_evidence_bundle(
         &bundle,
@@ -173,8 +191,7 @@ pub fn persist_run_evidence_bundle(
             )
             .ok_or_else(|| format!("回测摘要文件名无效: {}", summary_path.display()))?,
     );
-    super::write_backtest_artifact(&path, &payload, "EvidenceBundle")?;
-    Ok(path)
+    Ok((path, payload))
 }
 
 /// Map verified run facts into the stable qx-spec run-generation shape.

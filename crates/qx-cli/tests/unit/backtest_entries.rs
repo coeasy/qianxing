@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
+fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let mut base = read_runtime_config(&template).unwrap();
     let python_strategy = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -15,21 +15,25 @@ fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
     run_strategy_backtest(&runtime, &frame, None).expect("跨语言策略经 qx-app 执行");
 
     let summaries = list_backtest_summary_paths(&root.join("runs")).unwrap();
-    assert_eq!(summaries.len(), 1, "应只发布一份 v7 摘要");
+    assert_eq!(summaries.len(), 1, "应只发布一份 v8 摘要");
     assert!(
         summaries[0]
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".v7.summary.json")),
+            .is_some_and(|name| name.ends_with(".v8.summary.json")),
         "summary filenames must carry the schema generation"
     );
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summaries[0]).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], 7);
+    assert_eq!(summary["schema_version"], 8);
     assert_eq!(summary["strategy_id"], "strategy-builtin");
     assert_eq!(summary["sample_unit"], "bar");
     assert_eq!(summary["bars"].as_u64(), Some(70));
     assert_eq!(summary["result_hash"], summary["replay"]["log_digest"]);
+    assert!(
+        summary["metrics"]["max_drawdown_raw"].as_str().is_some(),
+        "v8 publishes the fixed-point max drawdown amount without narrowing i128"
+    );
     assert!(Path::new(summary["run_record"].as_str().unwrap()).is_file());
     let manifests = std::fs::read_dir(root.join("runs"))
         .unwrap()
@@ -37,7 +41,7 @@ fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".run.json"))
         .count();
-    assert_eq!(manifests, 1, "RunManifest 仍与 v7 摘要一同发布");
+    assert_eq!(manifests, 1, "RunManifest 仍与 v8 摘要一同发布");
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -49,9 +53,12 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
     std::fs::create_dir_all(&runs).unwrap();
     for name in [
         "same-run.summary.json",
+        "same-run.v5.summary.json",
         "same-run.v6.summary.json",
         "same-run.v7.summary.json",
+        "same-run.v8.summary.json",
         "distinct-run.v6.summary.json",
+        "future-run.v9.summary.json",
     ] {
         std::fs::write(runs.join(name), "{}").unwrap();
     }
@@ -65,7 +72,8 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
         names,
         std::collections::BTreeSet::from([
             "distinct-run.v6.summary.json".to_owned(),
-            "same-run.v7.summary.json".to_owned(),
+            "future-run.v9.summary.json".to_owned(),
+            "same-run.v8.summary.json".to_owned(),
         ])
     );
     let _ = std::fs::remove_dir_all(root);

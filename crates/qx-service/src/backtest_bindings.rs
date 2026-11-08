@@ -539,8 +539,12 @@ mod tests {
             "../../../deploy/qianxing.bar-frame.pairs-reference.example.json"
         ))
         .expect("reference BarFrame is valid");
-        let primary_bars: Vec<qx_guanxing::Bar> = (&primary).into();
-        let reference_bars: Vec<qx_guanxing::Bar> = (&reference).into();
+        let primary_bars = primary
+            .bars()
+            .expect("primary BarFrame exact values are valid");
+        let reference_bars = reference
+            .bars()
+            .expect("reference BarFrame exact values are valid");
 
         let bindings =
             multi_builtin_backtest_bindings_from_runtime(MultiBuiltinBacktestBindingInput {

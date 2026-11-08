@@ -2,8 +2,9 @@
 
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_core::{
-    AccountBalance, DecimalRounding, ExactDecimal, InstrumentId, MarginMode, Order, PositionSide,
-    Price, TradingInstrumentSpec, TradingProduct, VenueFamily, SCALE,
+    AccountBalance, DecimalRounding, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId,
+    MarginMode, Money, Order, PositionSide, Price, Quantity, TradingInstrumentSpec, TradingProduct,
+    VenueFamily, SCALE,
 };
 use qx_risk::{
     ExactOrderRiskFacts, ExactOrderRiskPosition, MaxNotionalRule, MaxQtyRule, NoShortRule,
@@ -17,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 /// The slowest reconciler (Binance) polls every 30s; allow one delayed cycle.
-pub const LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = 60_000;
+pub const LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = qx_runtime::LIVE_RECONCILE_MAX_AGE_MS;
 
 /// Fail closed when live order admission has no recent exchange balance fact.
 pub fn require_fresh_live_balance_snapshot(
@@ -54,6 +55,44 @@ pub fn require_fresh_live_balance_snapshot(
         return Err(format!(
             "FAIL_CLOSED: worker {worker_id} 的账户余额快照已过期 {age_ms}ms（上限 {}ms），需先完成交易所对账",
             LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse another live order while this account has a local submission/cancellation whose venue
+/// outcome is not yet known. A fresh balance snapshot does not establish order acknowledgement.
+pub fn require_no_unresolved_live_order_operations(
+    worker_id: &str,
+    account_id: Option<&str>,
+    venue_id: Option<&str>,
+    pipeline: &LiveEventPipeline,
+    except_client_order_id: Option<u64>,
+) -> Result<(), String> {
+    if qx_core::VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper) {
+        return Ok(());
+    }
+    let account_id = account_id.ok_or_else(|| format!("worker {worker_id} 缺少 account_id"))?;
+    let venue_id = venue_id.ok_or_else(|| format!("worker {worker_id} 缺少 venue_id"))?;
+    if let Some(order) = pipeline.orders().into_iter().find(|order| {
+        order.account_id == account_id
+            && Some(order.client_id) != except_client_order_id
+            && order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(venue_id)
+            && matches!(
+                order.status,
+                qx_core::OrderStatus::PendingSubmit
+                    | qx_core::OrderStatus::Submitted
+                    | qx_core::OrderStatus::CancelPending
+                    | qx_core::OrderStatus::Unknown
+            )
+    }) {
+        return Err(format!(
+            "FAIL_CLOSED: worker {worker_id} 账户存在尚未确认的订单操作 client_order_id={} status={:?}，需先完成交易所对账",
+            order.client_id, order.status
         ));
     }
     Ok(())
@@ -144,6 +183,13 @@ pub fn execute_submit_order_with_worker_risk_and_market_reference<V: qx_zhenlu::
     pipeline
         .refresh()
         .map_err(|error| format!("刷新账户风控 EventLog 失败: {error:?}"))?;
+    require_no_unresolved_live_order_operations(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        pipeline,
+        None,
+    )?;
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1036,18 +1082,28 @@ pub fn worker_risk_context(
     else {
         return Ok(None);
     };
-    let reference_price = order
-        .limit
-        .or_else(|| pipeline.marks().get(&order.instrument).copied());
     let account_id = worker
         .account_id
         .as_deref()
         .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
     let is_paper =
         VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper);
-    if is_paper && order.exact_amounts.is_some() {
-        return Err("FAIL_CLOSED: 精确小数订单尚未接入 Paper 撮合与精确购买力预留".into());
-    }
+    let submitted_exact_amounts = order.exact_amounts;
+    // PaperVenue and the execution gateway preserve exact order/fill amounts. The
+    // account risk snapshot still uses the legacy 1e9 position and buying-power
+    // projections, so only admit exact orders when every amount can be represented
+    // losslessly in that risk domain. The original exact order remains untouched for
+    // matching and Ledger projection.
+    let projected_order;
+    let order = if is_paper {
+        projected_order = paper_order_for_legacy_risk(order)?;
+        &projected_order
+    } else {
+        order
+    };
+    let reference_price = order
+        .limit
+        .or_else(|| pipeline.marks().get(&order.instrument).copied());
     // 记账币种只有一个真相源：这本账户日志打开时用的币种，成交的现金腿就落在它上面。
     // market spec 的 settlement_currency 说的是标的用什么币结算，不是账簿口径；拿它兜底
     // 会从一本空账簿算出 0 可用保证金，账户明明有钱却被按保证金不足拒单。
@@ -1274,7 +1330,65 @@ pub fn worker_risk_context(
     let position =
         OrderRiskPosition::new_with_multiplier(one_way_qty, gross_notional, spec.contract_size)
             .with_hedge_legs(long_qty, short_qty);
-    let exact = if !is_paper {
+    let exact = if is_paper && submitted_exact_amounts.is_some() {
+        if spec.product != TradingProduct::Spot {
+            return Err(
+                "FAIL_CLOSED: Paper exact non-spot order 尚未接入精确保证金风险事实".into(),
+            );
+        }
+        let ledger = pipeline.ledger();
+        let exact_cash = ledger.cash_for_exact(account_id, &funding_currency);
+        let raw_cash = ledger.cash_for(account_id, &funding_currency);
+        let reserved_raw = raw_cash
+            .checked_sub(available_margin_raw)
+            .ok_or_else(|| "Paper 精确现金与可用购买力投影不一致".to_string())?;
+        let reserved = ExactDecimal::from_parts(reserved_raw, 9)
+            .map_err(|error| format!("Paper 精确在途预留转换失败: {error}"))?;
+        let available = exact_cash
+            .checked_sub(reserved)
+            .ok_or_else(|| "Paper 精确可用购买力计算溢出".to_string())?;
+        let free_raw = available
+            .to_raw(9)
+            .map_err(|error| format!("Paper 精确可用购买力无法投影: {error}"))?;
+        let balance = AccountBalance {
+            asset: funding_currency.clone(),
+            free: Money::from_raw(free_raw),
+            locked: Money::from_raw(0),
+            borrowed: Money::from_raw(0),
+            net_cash_balance: None,
+            exact_amounts: Some(ExactAccountBalanceAmounts {
+                free: available,
+                locked: ExactDecimal::ZERO,
+                borrowed: ExactDecimal::ZERO,
+                net_cash_balance: None,
+            }),
+        };
+        let exact_position =
+            ledger.position_for_side_exact(account_id, &order.instrument, PositionSide::Net);
+        let exact_long =
+            ledger.position_for_side_exact(account_id, &order.instrument, PositionSide::Long);
+        let exact_short =
+            ledger.position_for_side_exact(account_id, &order.instrument, PositionSide::Short);
+        let exact_reference_price = submitted_exact_amounts
+            .and_then(|amounts| amounts.market_reference_price.or(amounts.limit_price))
+            .or_else(|| {
+                reference_price.and_then(|price| ExactDecimal::from_parts(price.raw(), 9).ok())
+            });
+        exact_live_order_risk_facts(
+            &spec,
+            &balance,
+            ExactDecimal::ZERO,
+            available_margin_raw,
+            &position,
+            exact_position.quantity,
+            exact_long.quantity,
+            exact_short.quantity,
+            exact_reference_price,
+            pending_gross_exact,
+            worker.max_order_notional_raw,
+            worker.max_position_notional_raw,
+        )?
+    } else if !is_paper {
         observed_balance
             .map(|balance| {
                 let ledger = pipeline.ledger();
@@ -1325,6 +1439,93 @@ pub fn worker_risk_context(
         },
         position,
     )))
+}
+
+fn paper_order_for_legacy_risk(order: &Order) -> Result<Order, String> {
+    let Some(amounts) = order.exact_amounts else {
+        return Ok(order.clone());
+    };
+    if amounts.quote_budget.is_some() {
+        return Err("FAIL_CLOSED: Paper exact quote-budget order 尚未接入精确购买力预留".into());
+    }
+    let project = |value: ExactDecimal, field: &str| {
+        value.to_raw(9).map_err(|_| {
+            format!("FAIL_CLOSED: Paper exact order {field} 无法无损映射到 1e-9 风控精度")
+        })
+    };
+    let qty = project(amounts.quantity, "quantity")?;
+    let filled = project(amounts.filled, "filled")?;
+    let limit = amounts
+        .limit_price
+        .map(|value| project(value, "limit_price").map(Price::from_raw))
+        .transpose()?;
+    if amounts.quote_filled != ExactDecimal::ZERO {
+        return Err("FAIL_CLOSED: Paper exact order quote_filled 不受当前风控投影支持".into());
+    }
+    if amounts.market_reference_price.is_some() {
+        // Market reference is advisory for the exact venue contract. The projected
+        // risk path uses the frozen EventLog mark, so never silently substitute it.
+        return Err("FAIL_CLOSED: Paper exact market_reference_price 尚未接入风控投影".into());
+    }
+    let mut projected = order.clone();
+    projected.qty = Quantity::from_raw(qty);
+    projected.limit = limit;
+    projected.filled = Quantity::from_raw(filled);
+    projected.exact_amounts = None;
+    Ok(projected)
+}
+
+#[cfg(test)]
+mod paper_exact_risk_projection_tests {
+    use super::paper_order_for_legacy_risk;
+    use qx_core::{
+        ExactDecimal, ExactOrderAmounts, InstrumentId, Order, OrderStatus, Price, Quantity, Side,
+    };
+
+    fn exact_order(quantity: &str) -> Order {
+        Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Sell,
+            qty: Quantity::from_raw(0),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::from_raw(0),
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse(quantity).unwrap(),
+                limit_price: Some(ExactDecimal::parse("3").unwrap()),
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn paper_exact_order_projects_only_for_risk_and_preserves_original() {
+        let original = exact_order("225");
+        let projected = paper_order_for_legacy_risk(&original).unwrap();
+        assert_eq!(projected.qty, Quantity::from_raw(225_000_000_000));
+        assert_eq!(projected.limit, Some(Price::from_raw(3_000_000_000)));
+        assert!(projected.exact_amounts.is_none());
+        assert_eq!(
+            original.exact_amounts.unwrap().quantity,
+            ExactDecimal::parse("225").unwrap()
+        );
+    }
+
+    #[test]
+    fn paper_exact_order_rejects_unprojectable_precision_and_quote_budget() {
+        assert!(paper_order_for_legacy_risk(&exact_order("0.0000000001")).is_err());
+        let mut quote_budget = exact_order("1");
+        quote_budget.exact_amounts.as_mut().unwrap().quote_budget =
+            Some(ExactDecimal::parse("100").unwrap());
+        assert!(paper_order_for_legacy_risk(&quote_budget).is_err());
+    }
 }
 
 fn exact_to_raw_floor(value: ExactDecimal) -> Result<i128, String> {
@@ -1409,6 +1610,7 @@ fn exact_spot_sell_available_inventory(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Risk facts must keep each independently sourced limit visible.
 fn exact_live_order_risk_facts(
     spec: &TradingInstrumentSpec,
     balance: &AccountBalance,

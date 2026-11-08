@@ -205,6 +205,8 @@ from .app import (
     run_multi_account_depth_backtest,
     validate_dataset,
     validate_strategy_execution_preflight_v1,
+    validate_strategy_project_v1,
+    plan_strategy_runtime_v1,
     read_depth_run_report_v1,
     read_provider_depth_run_report_v1,
     read_provider_run_report_v1,
@@ -221,6 +223,10 @@ from .app import (
     verify_run,
     verify_depth_run,
 )
+
+# Guided research belongs to the experiments sub-namespace; importing its public types here
+# keeps the sub-layer source explicit without widening the stable top-level __all__.
+from .experiments import GuidedResearchHandle, GuidedResearchResult, GuidedResearchSpec
 
 __all__ = [
     "AppError",
@@ -396,6 +402,8 @@ __all__ = [
     "run_multi_account_depth_backtest",
     "validate_dataset",
     "validate_strategy_execution_preflight_v1",
+    "validate_strategy_project_v1",
+    "plan_strategy_runtime_v1",
     "read_run_report_v1",
     "read_depth_run_report_v1",
     "read_provider_run_report_v1",

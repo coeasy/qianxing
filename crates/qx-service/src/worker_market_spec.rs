@@ -1,10 +1,12 @@
 //! Frozen market specification loading shared by service worker hosts.
 
-use qx_core::{InstrumentId, TradingInstrumentSpec};
+use qx_core::{InstrumentId, TradingInstrumentSpec, VenueFamily};
 use qx_runtime::{LiveEventPipeline, RuntimeConfig, WorkerConfig};
 use qx_zhenlu::VenueEvent;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const WORKER_MARKET_SPEC_SET_KIND: &str = "qianxing_market_spec_set";
 const WORKER_MARKET_SPEC_SET_VERSION: u32 = 1;
@@ -92,15 +94,133 @@ pub fn load_worker_market_spec_for_instrument(
                 worker.id
             )
         })?;
-    qx_app::market_spec_from_value(instrument, &market)
-        .map(Some)
+    let spec = qx_app::market_spec_from_value(instrument, &market).map_err(|error| {
+        format!(
+            "读取 worker market spec 失败 {}: {}",
+            resolved_spec_path.display(),
+            error.message()
+        )
+    })?;
+    validate_live_instrument_role(worker, instrument, &market, &spec)?;
+    Ok(Some(spec))
+}
+
+fn live_execution_requires_role(worker: &WorkerConfig) -> bool {
+    worker.role == qx_runtime::WorkerRole::Execution
+        && worker
+            .venue_id
+            .as_deref()
+            .is_some_and(|venue| VenueFamily::parse(venue) != VenueFamily::Paper)
+}
+
+fn validate_live_instrument_role(
+    worker: &WorkerConfig,
+    instrument: &InstrumentId,
+    market: &Value,
+    spec: &TradingInstrumentSpec,
+) -> Result<(), String> {
+    if !live_execution_requires_role(worker) {
+        return Ok(());
+    }
+    let role_value = market
+        .get("dataset_instrument_role")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "FAIL_CLOSED: live execution worker {} 的 market spec 缺少 dataset_instrument_role ({instrument})",
+                worker.id
+            )
+        })?;
+    let role: qx_data::DatasetInstrumentRole = serde_json::from_value(Value::String(
+        role_value.to_string(),
+    ))
+    .map_err(|_| {
+        format!(
+            "FAIL_CLOSED: live execution worker {} 的 dataset_instrument_role 无效: {role_value} ({instrument})",
+            worker.id
+        )
+    })?;
+    if !role.is_tradable() {
+        return Err(format!(
+            "FAIL_CLOSED: live execution worker {} 拒绝非交易标的角色 {:?} ({instrument})",
+            worker.id, role
+        ));
+    }
+    if !role.is_compatible_with_product(spec.product) {
+        return Err(format!(
+            "FAIL_CLOSED: live execution worker {} 的标的角色 {:?} 与产品 {:?} 冲突 ({instrument})",
+            worker.id, role, spec.product
+        ));
+    }
+    let catalog_value = market
+        .get("dataset_instrument_role_catalog")
+        .ok_or_else(|| {
+            format!(
+                "FAIL_CLOSED: live execution worker {} 的 market spec 缺少签名角色目录 ({instrument})",
+                worker.id
+            )
+        })?;
+    let catalog: qx_data::DatasetInstrumentRoleCatalogV1 =
+        serde_json::from_value(catalog_value.clone()).map_err(|error| {
+            format!(
+                "FAIL_CLOSED: live execution worker {} 的签名角色目录无效: {error} ({instrument})",
+                worker.id
+            )
+        })?;
+    let trusted_keys = trusted_dataset_role_keys().map_err(|error| {
+        format!(
+            "FAIL_CLOSED: live execution worker {} 无法加载角色目录信任根: {error}",
+            worker.id
+        )
+    })?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock before UNIX epoch: {error}"))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| "current timestamp exceeds u64".to_owned())?;
+    catalog
+        .validate_for_instrument(
+            &instrument.to_string(),
+            role,
+            &trusted_keys,
+            now_ms,
+        )
         .map_err(|error| {
             format!(
-                "读取 worker market spec 失败 {}: {}",
-                resolved_spec_path.display(),
-                error.message()
+                "FAIL_CLOSED: live execution worker {} 角色目录验签/标的校验失败: {error} ({instrument})",
+                worker.id
             )
+        })?;
+    Ok(())
+}
+
+fn trusted_dataset_role_keys() -> Result<BTreeMap<String, qx_data::DatasetRoleTrustedKeyV1>, String>
+{
+    const ENV_NAME: &str = "QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS";
+    let payload = std::env::var(ENV_NAME)
+        .map_err(|_| format!("required environment variable {ENV_NAME} is unset"))?;
+    let keys: BTreeMap<String, qx_data::DatasetRoleTrustedKeyV1> = serde_json::from_str(&payload)
+        .map_err(|error| {
+        format!("{ENV_NAME} must map key_id to supplier_id/public_key_hex records: {error}")
+    })?;
+    if keys.is_empty()
+        || keys.iter().any(|(key_id, trusted)| {
+            key_id.len() != 64
+                || !key_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || trusted.supplier_id.trim().is_empty()
+                || trusted.public_key_hex.len() != 64
+                || !trusted
+                    .public_key_hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
         })
+    {
+        return Err(format!(
+            "{ENV_NAME} must contain SHA-256 key ids mapped to supplier_id and 32-byte public_key_hex records"
+        ));
+    }
+    Ok(keys)
 }
 
 /// Check whether a worker's configured market-spec document binds this instrument.
@@ -165,7 +285,7 @@ fn selected_market_payload<'a>(
             .get("exchange_id")
             .and_then(Value::as_str)
             .is_none_or(|exchange| exchange.eq_ignore_ascii_case(instrument.venue.as_str()));
-        return Ok((symbol == instrument.symbol && exchange_matches).then_some(document));
+        return Ok((symbol == instrument.symbol() && exchange_matches).then_some(document));
     }
     if worker.symbols.len() != 1 {
         return Err(format!(
@@ -259,12 +379,15 @@ fn validate_market_set_entry(
                 worker.id
             ));
         }
+        let spec = qx_app::market_spec_from_value(instrument, market)
+            .map_err(|error| error.message().to_string())?;
+        validate_live_instrument_role(worker, instrument, market, &spec)?;
         return Ok(());
     }
     let symbol_matches = market
         .get("symbol")
         .and_then(Value::as_str)
-        .is_some_and(|symbol| symbol == instrument.symbol);
+        .is_some_and(|symbol| symbol == instrument.symbol());
     let exchange_matches = market
         .get("exchange_id")
         .and_then(Value::as_str)
@@ -275,6 +398,9 @@ fn validate_market_set_entry(
             worker.id
         ));
     }
+    let spec = qx_app::market_spec_from_value(instrument, market)
+        .map_err(|error| error.message().to_string())?;
+    validate_live_instrument_role(worker, instrument, market, &spec)?;
     Ok(())
 }
 
@@ -313,6 +439,12 @@ pub fn worker_market_spec_failures(
 ) -> Vec<String> {
     let mut failures = Vec::new();
     let Some(spec_path) = worker.instrument_spec_path.as_deref() else {
+        if live_execution_requires_role(worker) {
+            failures.push(format!(
+                "worker {} live execution requires instrument_spec_path with dataset_instrument_role evidence",
+                worker.id
+            ));
+        }
         return failures;
     };
     let resolved = qx_runtime::resolve_runtime_relative_path(runtime_path, spec_path);
@@ -336,6 +468,22 @@ pub fn worker_market_spec_failures(
         Err(error) => {
             failures.push(format!(
                 "worker {} instrument_spec_path 集合预检失败: {error}",
+                worker.id
+            ));
+            return failures;
+        }
+    }
+    if live_execution_requires_role(worker) && worker.symbols.is_empty() {
+        // Shared market-spec sets validate every keyed role above. A single-market spec
+        // without an explicit symbol list cannot prove which live instruments it covers.
+        let document = std::fs::read_to_string(&resolved)
+            .ok()
+            .and_then(|payload| serde_json::from_str::<Value>(&payload).ok());
+        if document.as_ref().is_some_and(|value| {
+            value.get("kind").and_then(Value::as_str) != Some(WORKER_MARKET_SPEC_SET_KIND)
+        }) {
+            failures.push(format!(
+                "worker {} live execution must list symbols when using a single-market spec so role evidence can be bound",
                 worker.id
             ));
             return failures;
@@ -377,10 +525,45 @@ mod tests {
     }
 
     fn product_spec(instrument: &InstrumentId, qty_step: i128) -> Value {
+        const SEED: [u8; 32] = [0x5a; 32];
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after the Unix epoch")
+            .as_millis() as u64;
+        let role = qx_data::DatasetInstrumentRole::Future;
+        let public_key_hex = qx_data::DatasetInstrumentRoleCatalogV1::ed25519_public_key_hex(&SEED)
+            .expect("test role signer key is valid");
+        let mut roles = BTreeMap::new();
+        roles.insert(instrument.to_string(), role);
+        let catalog =
+            qx_data::DatasetInstrumentRoleCatalogV1::new_unsigned_dataset_role_catalog_v1(
+                format!("qx-service-test-{}", instrument),
+                "qx-service-test-supplier".into(),
+                "fixture-v1".into(),
+                now_ms,
+                now_ms.saturating_sub(1_000).max(1),
+                now_ms.saturating_add(86_400_000),
+                roles,
+            )
+            .sign_with_ed25519_seed(&SEED)
+            .expect("test role catalog signs");
+        let trusted = BTreeMap::from([(
+            catalog.key_id.clone(),
+            qx_data::DatasetRoleTrustedKeyV1 {
+                supplier_id: "qx-service-test-supplier".into(),
+                public_key_hex,
+            },
+        )]);
+        std::env::set_var(
+            "QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS",
+            serde_json::to_string(&trusted).expect("serialize test trust root"),
+        );
         serde_json::json!({
             "instrument": instrument,
             "product": "perpetual",
-            "base_currency": instrument.symbol.split('/').next().unwrap(),
+            "dataset_instrument_role": "future",
+            "dataset_instrument_role_catalog": catalog,
+            "base_currency": instrument.symbol().split('/').next().unwrap(),
             "quote_currency": "USDT",
             "settlement_currency": "USDT",
             "contract_size": 1_000_000,

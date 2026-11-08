@@ -8,6 +8,11 @@ use crate::{
     AppError, AppErrorCategory, CallerCapability, DepthBacktestOutcome, DepthBacktestSpec,
     RunContext,
 };
+use qx_data::{
+    DatasetManifest, DatasetManifestV2, DatasetQualityReport, DatasetSnapshotContextV1,
+    DatasetSnapshotV1, DatasetSourceLineage, DatasetTier, DatasetTimestampSemantics,
+    DATASET_MANIFEST_V2_SCHEMA_VERSION, DEPTHFRAME_DATASET_VERSION,
+};
 use qx_provider::{DataKind, DataRequest, ProviderErrorClass, ProviderRegistry, RegistryError};
 use qx_xingban::{DepthFrame, OrderBookSnapshot};
 use serde::{Deserialize, Serialize};
@@ -23,6 +28,8 @@ pub struct ProviderDepthBacktestSpec {
     pub schema_version: u32,
     pub data_request: DataRequest,
     pub backtest: DepthBacktestSpec,
+    pub timezone: String,
+    pub snapshot_context: DatasetSnapshotContextV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +42,10 @@ pub struct ProviderDepthBacktestOutcome {
     pub retry_chain: Vec<String>,
     pub source_hash: String,
     pub depth_path: String,
+    pub manifest: DatasetManifestV2,
+    pub dataset_snapshot: DatasetSnapshotV1,
+    pub manifest_path: String,
+    pub snapshot_path: String,
 }
 
 impl ProviderDepthBacktestSpec {
@@ -68,6 +79,18 @@ impl ProviderDepthBacktestSpec {
             || expected_tier.is_none()
             || self.data_request.requirements.required_data_tier != expected_tier
             || instruments.len() != 1
+            || self.timezone.trim().is_empty()
+            || self.snapshot_context.schema_version
+                != qx_data::DATASET_SNAPSHOT_CONTEXT_SCHEMA_VERSION
+            || self.snapshot_context.captured_at_ms == 0
+            || self.snapshot_context.frequency_ms == 0
+            || self.snapshot_context.price_precision > 18
+            || self.snapshot_context.quantity_precision > 18
+            || self.snapshot_context.price_unit.trim().is_empty()
+            || self.snapshot_context.quantity_unit.trim().is_empty()
+            || self.snapshot_context.calendar_id.trim().is_empty()
+            || self.snapshot_context.calendar_version.trim().is_empty()
+            || self.snapshot_context.timestamp_semantics != DatasetTimestampSemantics::EventTime
             || self
                 .backtest
                 .market_spec
@@ -76,7 +99,7 @@ impl ProviderDepthBacktestSpec {
         {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "Provider depth backtest requires a declared l1/l2 Quote tier matching its one instrument and market_spec",
+                "Provider depth backtest requires a declared l1/l2 Quote tier, matching instrument/market_spec, timezone, and a complete EventTime snapshot context",
             ));
         }
         Ok(())
@@ -239,8 +262,100 @@ pub fn run_provider_depth_backtest(
             )
         })?;
         let depth_path = PathBuf::from(&spec.backtest.depth_path);
+        let timestamps = frame
+            .snapshots
+            .iter()
+            .map(|item| item.ts)
+            .collect::<Vec<_>>();
+        let (Some(start_timestamp), Some(end_timestamp)) =
+            (timestamps.first().copied(), timestamps.last().copied())
+        else {
+            return Err(AppError::new(
+                AppErrorCategory::DataUnavailable,
+                "Provider returned no depth snapshots",
+            ));
+        };
+        if start_timestamp >= end_timestamp {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "Provider depth snapshot requires at least two distinct event times",
+            ));
+        }
+        let missing_intervals = timestamps
+            .windows(2)
+            .try_fold(0_u64, |total, pair| {
+                total.checked_add(
+                    (pair[1] - pair[0]).div_ceil(spec.snapshot_context.frequency_ms) - 1,
+                )
+            })
+            .ok_or_else(|| {
+                AppError::new(AppErrorCategory::InvalidInput, "depth gap count overflow")
+            })?;
+        let tier = if spec.backtest.tier == "l1" {
+            DatasetTier::L1
+        } else {
+            DatasetTier::L2
+        };
+        let fingerprint = format!("{:016x}", frame.input_hash());
+        let manifest = DatasetManifestV2 {
+            manifest_version: DATASET_MANIFEST_V2_SCHEMA_VERSION,
+            dataset: DatasetManifest {
+                dataset_id: format!("depth-bars:{}", frame.instrument),
+                version: DEPTHFRAME_DATASET_VERSION.to_owned(),
+                source: frame.source.clone(),
+                fingerprint,
+                schema_version: frame.schema_version,
+                start_timestamp,
+                end_timestamp,
+            },
+            instrument: frame.instrument.to_string(),
+            timezone: spec.timezone.clone(),
+            tier,
+            provider_version: DEPTHFRAME_DATASET_VERSION.to_owned(),
+            content_hash: qx_data::sha256_hex_bytes(&frame_json),
+            quality_report: DatasetQualityReport {
+                row_count: frame.snapshots.len() as u64,
+                duplicate_rows: 0,
+                out_of_order_rows: 0,
+                missing_intervals,
+                interval_ms: Some(spec.snapshot_context.frequency_ms),
+                timezone: spec.timezone.clone(),
+                corporate_action_coverage: false,
+                usable_tiers: vec![tier.as_str().to_owned()],
+            },
+            source_lineage: DatasetSourceLineage {
+                primary_source: result.provider_id.clone(),
+                backup_sources: Vec::new(),
+            },
+        };
+        manifest
+            .validate()
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+        crate::cases::publish_dataset_snapshot::validate_snapshot_data(
+            &frame_json,
+            &manifest,
+            &spec.snapshot_context,
+            &depth_path.to_string_lossy(),
+        )?;
+        let dataset_snapshot = DatasetSnapshotV1::from_manifest_and_context(
+            manifest.clone(),
+            spec.snapshot_context.clone(),
+        )
+        .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+        let manifest_path = PathBuf::from(format!("{}.manifest.json", depth_path.display()));
+        let manifest_json = manifest
+            .to_json()
+            .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
+        let snapshot_path = PathBuf::from(format!("{}.snapshot.json", manifest_path.display()));
+        let snapshot_json = serde_json::to_string(&dataset_snapshot).map_err(|error| {
+            AppError::new(AppErrorCategory::InternalInvariant, error.to_string())
+        })?;
         freeze(&depth_path, &frame_json)?;
-        let outcome = run_depth_backtest(&spec.backtest, context)?;
+        freeze(&manifest_path, manifest_json.as_bytes())?;
+        freeze(&snapshot_path, snapshot_json.as_bytes())?;
+        let mut backtest = spec.backtest.clone();
+        backtest.quality_manifest_path = Some(snapshot_path.to_string_lossy().into_owned());
+        let outcome = run_depth_backtest(&backtest, context)?;
         Ok(ProviderDepthBacktestOutcome {
             outcome,
             provider_id: result.provider_id,
@@ -249,6 +364,10 @@ pub fn run_provider_depth_backtest(
             retry_chain: result.retry_chain,
             source_hash: format!("{:016x}", result.source_hash),
             depth_path: depth_path.to_string_lossy().into_owned(),
+            manifest,
+            dataset_snapshot,
+            manifest_path: manifest_path.to_string_lossy().into_owned(),
+            snapshot_path: snapshot_path.to_string_lossy().into_owned(),
         })
     })
     .map_err(|error| attach(error, &correlation_id))
@@ -313,6 +432,24 @@ mod tests {
                 &format!("{}.0000000002", 101 + ts),
                 "0.0000000002",
             )],
+        }
+    }
+
+    fn test_snapshot_context() -> DatasetSnapshotContextV1 {
+        DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 1,
+            timestamp_semantics: DatasetTimestampSemantics::EventTime,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
         }
     }
 
@@ -448,6 +585,8 @@ mod tests {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
             data_request,
             backtest,
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
         let expected_query_digest = format!("{:016x}", spec.data_request.query.digest());
         let mut mismatched = spec.clone();
@@ -507,6 +646,8 @@ mod tests {
                 "provider-exact",
                 Some("provider-test".into()),
             ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
 
         let error = run_provider_depth_backtest(
@@ -543,6 +684,8 @@ mod tests {
                 "invalid",
                 None,
             ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
         let error = run_provider_depth_backtest(
             &registry,
@@ -566,6 +709,8 @@ mod tests {
                 "future",
                 None,
             ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
         let error = run_provider_depth_backtest(
             &registry,

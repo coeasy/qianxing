@@ -253,7 +253,7 @@ fn builtin_entry_resolves_bare_relative_runtime_config_before_snapshotting() {
     let (code, stdout, stderr) = run_from(&working_directory, &args);
     assert_eq!(code, 0, "bare relative runtime config must work: {stderr}");
     let summary = summary(&stdout);
-    assert_eq!(summary["schema_version"], 7);
+    assert_eq!(summary["schema_version"], 8);
     assert_eq!(summary["instrument"], "000001.SZSE");
     assert_eq!(summary["fills"], 1);
     assert_eq!(summary["rejected_orders"], 0);

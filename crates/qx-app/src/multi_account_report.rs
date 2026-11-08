@@ -180,6 +180,7 @@ pub fn read_multi_account_report_v1_with_reader(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_children(
     batch_id: String,
     settlement_currency: String,
@@ -308,7 +309,7 @@ fn read_children(
         &members,
         &declared_summary,
     )
-    .map_err(|message| report_conflict(message))?;
+    .map_err(report_conflict)?;
     Ok(MultiAccountResearchReportV1 {
         schema_version: MULTI_ACCOUNT_RESEARCH_REPORT_SCHEMA_VERSION_V1,
         run_id: batch_id.clone(),

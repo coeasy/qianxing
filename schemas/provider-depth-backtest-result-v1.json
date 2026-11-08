@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/provider-depth-backtest-result-v1.json",
   "title": "Qianxing ProviderDepthBacktestOutcome v1",
-  "description": "Provider provenance and frozen depth input path wrapped around the shared depth backtest outcome.",
+  "description": "Provider provenance, frozen depth input, DatasetManifestV2, and DatasetSnapshotV1 wrapped around the shared depth backtest outcome.",
   "type": "object",
   "required": [
     "outcome",
@@ -11,7 +11,11 @@
     "request_id",
     "retry_chain",
     "source_hash",
-    "depth_path"
+    "depth_path",
+    "manifest",
+    "dataset_snapshot",
+    "manifest_path",
+    "snapshot_path"
   ],
   "properties": {
     "outcome": {
@@ -41,6 +45,20 @@
       "pattern": "^[0-9a-f]{16}$"
     },
     "depth_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest": {
+      "$ref": "dataset-manifest-v2.json"
+    },
+    "dataset_snapshot": {
+      "$ref": "dataset-snapshot-v1.json"
+    },
+    "manifest_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshot_path": {
       "type": "string",
       "minLength": 1
     }

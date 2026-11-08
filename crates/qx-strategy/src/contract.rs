@@ -23,7 +23,8 @@ pub const STRATEGY_CONTRACT_INPUT_V7_SCHEMA_VERSION: u32 = 7;
 pub const STRATEGY_CONTRACT_INPUT_V8_SCHEMA_VERSION: u32 = 8;
 /// Input-only v9 carries exact cash and available-margin account facts for process strategies.
 pub const STRATEGY_CONTRACT_INPUT_V9_SCHEMA_VERSION: u32 = 9;
-/// JSON wire version for committed account and position snapshots.
+/// Input-only v10 binds external-process checkpoint restoration to the exact checkpoint digest.
+pub const STRATEGY_CONTRACT_INPUT_V10_SCHEMA_VERSION: u32 = 10;
 pub const STRATEGY_ACCOUNT_UPDATE_SCHEMA_VERSION: u32 = 1;
 pub const STRATEGY_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 
@@ -36,6 +37,26 @@ pub struct StrategyCheckpointV1 {
     pub strategy_version: String,
     pub adapter_state: serde_json::Value,
     pub strategy_state: serde_json::Value,
+}
+
+/// External-process proof that the checkpoint supplied with an input was restored.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyCheckpointRestoreAckV1 {
+    pub schema_version: u32,
+    pub checkpoint_sha256: String,
+}
+
+pub const STRATEGY_CHECKPOINT_RESTORE_ACK_SCHEMA_VERSION: u32 = 1;
+
+/// Digest the canonical compact JSON form of a checkpoint (recursively sorted object keys).
+/// serde_json's default map representation sorts keys, making this stable across processes.
+pub fn strategy_checkpoint_sha256(checkpoint: &StrategyCheckpointV1) -> Result<String, String> {
+    let value = serde_json::to_value(checkpoint)
+        .map_err(|error| format!("Strategy checkpoint 规范化失败: {error}"))?;
+    let bytes = serde_json::to_vec(&value)
+        .map_err(|error| format!("Strategy checkpoint 规范编码失败: {error}"))?;
+    Ok(crate::sha256_hex(&bytes))
 }
 
 impl StrategyCheckpointV1 {
@@ -569,6 +590,9 @@ pub fn encode_strategy_columnar_input(input: &StrategyContractInput) -> Result<V
     metadata.bars = None;
     let mut metadata_value = serde_json::to_value(&metadata)
         .map_err(|error| format!("策略列式输入元数据编码失败: {error}"))?;
+    if let Some(checkpoint_digest) = external_process_checkpoint_digest(input)? {
+        apply_external_process_checkpoint_digest(&mut metadata_value, &checkpoint_digest);
+    }
     metadata_value["__qx_bars_source"] = serde_json::Value::String(bars.source.clone());
     if let Some(exact_ohlcv) = &bars.exact_ohlcv {
         metadata_value["__qx_bars_exact_ohlcv"] = serde_json::to_value(exact_ohlcv)
@@ -1114,7 +1138,12 @@ impl StrategyContractInput {
 
     pub fn to_json(&self) -> Result<String, String> {
         self.validate()?;
-        serde_json::to_string(self).map_err(|error| format!("策略输入契约序列化失败: {error}"))
+        let mut value = serde_json::to_value(self)
+            .map_err(|error| format!("策略输入契约序列化失败: {error}"))?;
+        if let Some(checkpoint_digest) = external_process_checkpoint_digest(self)? {
+            apply_external_process_checkpoint_digest(&mut value, &checkpoint_digest);
+        }
+        serde_json::to_string(&value).map_err(|error| format!("策略输入契约序列化失败: {error}"))
     }
 
     pub fn from_json(input: &str) -> Result<Self, String> {
@@ -1123,6 +1152,26 @@ impl StrategyContractInput {
         value.validate()?;
         Ok(value)
     }
+}
+
+fn external_process_checkpoint_digest(
+    input: &StrategyContractInput,
+) -> Result<Option<String>, String> {
+    let Some(checkpoint) = input.strategy_checkpoint.as_ref().filter(|checkpoint| {
+        checkpoint
+            .adapter_state
+            .get("state_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("external-process")
+    }) else {
+        return Ok(None);
+    };
+    strategy_checkpoint_sha256(checkpoint).map(Some)
+}
+
+fn apply_external_process_checkpoint_digest(value: &mut serde_json::Value, digest: &str) {
+    value["schema_version"] = serde_json::json!(STRATEGY_CONTRACT_INPUT_V10_SCHEMA_VERSION);
+    value["strategy_checkpoint_sha256"] = serde_json::Value::String(digest.to_owned());
 }
 
 impl StrategyContractOutput {
@@ -1358,6 +1407,32 @@ impl StrategyContractOutput {
                 Ok::<_, String>(checkpoint)
             })
             .transpose()?;
+        if let Some(input_checkpoint) = request.strategy_checkpoint.as_ref().filter(|checkpoint| {
+            checkpoint
+                .adapter_state
+                .get("state_mode")
+                .and_then(serde_json::Value::as_str)
+                == Some("external-process")
+        }) {
+            let ack: StrategyCheckpointRestoreAckV1 = response
+                .get("checkpoint_restore_ack")
+                .cloned()
+                .ok_or_else(|| "Strategy process 响应缺少 checkpoint_restore_ack".to_string())
+                .and_then(|value| {
+                    serde_json::from_value(value)
+                        .map_err(|error| format!("Strategy process restore ack 无效: {error}"))
+                })?;
+            if ack.schema_version != STRATEGY_CHECKPOINT_RESTORE_ACK_SCHEMA_VERSION {
+                return Err(format!(
+                    "Strategy process restore ack schema_version={} 不受支持",
+                    ack.schema_version
+                ));
+            }
+            let expected = strategy_checkpoint_sha256(input_checkpoint)?;
+            if !ack.checkpoint_sha256.eq_ignore_ascii_case(&expected) {
+                return Err("Strategy process restore ack 与输入 checkpoint 摘要不匹配".into());
+            }
+        }
         Ok((output, checkpoint))
     }
 }
@@ -1387,10 +1462,10 @@ mod exact_raw_json_tests {
 #[cfg(test)]
 mod account_update_version_tests {
     use super::{
-        StrategyAccountUpdateV1, StrategyCheckpointV1, StrategyContractInput,
-        StrategyContractMarketOrderBookV1, StrategyContractOrderBookLevelV1,
-        StrategyContractOutput, STRATEGY_CHECKPOINT_SCHEMA_VERSION,
-        STRATEGY_CONTRACT_SCHEMA_VERSION,
+        strategy_checkpoint_sha256, StrategyAccountUpdateV1, StrategyCheckpointV1,
+        StrategyContractInput, StrategyContractMarketOrderBookV1, StrategyContractOrderBookLevelV1,
+        StrategyContractOutput, STRATEGY_CHECKPOINT_RESTORE_ACK_SCHEMA_VERSION,
+        STRATEGY_CHECKPOINT_SCHEMA_VERSION, STRATEGY_CONTRACT_SCHEMA_VERSION,
     };
     use std::collections::BTreeMap;
 
@@ -1464,7 +1539,11 @@ mod account_update_version_tests {
                 "expires_at": 1,
                 "intents": []
             },
-            "strategy_checkpoint": checkpoint
+            "strategy_checkpoint": checkpoint.clone(),
+            "checkpoint_restore_ack": {
+                "schema_version": STRATEGY_CHECKPOINT_RESTORE_ACK_SCHEMA_VERSION,
+                "checkpoint_sha256": strategy_checkpoint_sha256(&checkpoint).unwrap()
+            }
         });
 
         let (output, restored) = StrategyContractOutput::from_python_response_with_checkpoint(

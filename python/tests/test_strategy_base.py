@@ -774,6 +774,53 @@ class BaseStrategyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "warmup completed"):
             callback._qx_on_stop()
 
+        class ClassicBars(BaseStrategy):
+            """Backtrader-style hooks; on_event/on_bar stay on BaseStrategy defaults."""
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int]] = []
+
+            def history_requirements(self):
+                return {"warmup_bars": 2}
+
+            def _intent(self, context, bar):
+                return self.decision(
+                    context,
+                    "Bar",
+                    bar,
+                    intents=[{"intent_id": 1, "instrument": bar["instrument"]}],
+                )
+
+            def prenext(self, context, bar):
+                self.calls.append(("prenext", bar["ts"]))
+                return self._intent(context, bar)
+
+            def nextstart(self, context, bar):
+                self.calls.append(("nextstart", bar["ts"]))
+                return self._intent(context, bar)
+
+            def next(self, context, bar):
+                self.calls.append(("next", bar["ts"]))
+                return self._intent(context, bar)
+
+        classic = ClassicBars()
+        classic_callback = _PythonBacktestCallback(classic)
+        classic_callback._qx_on_start(json.dumps(self.context))
+        classic_decisions = [
+            json.loads(classic_callback._qx_on_event(
+                json.dumps(self.context), json.dumps(event(ts, "BTCUSDT.BINANCE"))
+            ))
+            for ts in (100, 101, 102, 103)
+        ]
+        self.assertEqual(
+            classic.calls,
+            [("prenext", 100), ("nextstart", 101), ("next", 102), ("next", 103)],
+        )
+        self.assertEqual(
+            [len(decision["intents"]) for decision in classic_decisions],
+            [0, 1, 1, 1],
+        )
+
     def test_manifest_warmup_is_bound_and_conflicts_fail_closed(self) -> None:
         class Declared(BaseStrategy):
             def history_requirements(self):

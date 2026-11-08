@@ -1,6 +1,7 @@
 //! 策略实例配置的 fail-closed 校验。
 
 use super::*;
+use std::path::Path;
 mod sizing;
 
 impl RuntimeConfig {
@@ -12,6 +13,36 @@ impl RuntimeConfig {
     ) -> Result<(), String> {
         if strategy.version.trim().is_empty() || strategy.max_orders == 0 {
             return Err(format!("{label} version 不能为空且 max_orders 必须大于 0"));
+        }
+        if let Some(migration) = &strategy.checkpoint_state_migration {
+            let valid_sha256 = |value: &str| {
+                value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            };
+            let encoded = serde_json::to_vec(migration)
+                .map_err(|error| format!("{label} checkpoint migration 编码失败: {error}"))?;
+            if migration.schema_version != 1
+                || migration.source_deployment_revision == 0
+                || migration.target_deployment_revision <= migration.source_deployment_revision
+                || !valid_sha256(&migration.source_strategy_binding_sha256)
+                || !valid_sha256(&migration.source_checkpoint_sha256)
+                || !migration.target_strategy_state.is_object()
+                || encoded.len() > 64 * 1024
+                || (strategy.python_module.is_none()
+                    && strategy.external_executable.is_none()
+                    && strategy.c_abi_library.is_none())
+            {
+                return Err(format!(
+                    "{label} checkpoint state migration must bind a valid source identity, later target revision, durable-checkpoint host and <=64 KiB object state"
+                ));
+            }
+        }
+        let unique_required_capabilities = strategy
+            .required_capabilities
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique_required_capabilities.len() != strategy.required_capabilities.len() {
+            return Err(format!("{label} required_capabilities 不能包含重复项"));
         }
         if strategy
             .max_bar_volume_participation_bps
@@ -144,6 +175,34 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} python_module 不能为空字符串"));
         }
+        if !strategy.python_resource_paths.is_empty() && strategy.python_module.is_none() {
+            return Err(format!(
+                "{label} python_resource_paths 必须与 python_module 一起配置"
+            ));
+        }
+        if strategy.python_resource_paths.len() > qx_spec::MAX_STRATEGY_DEPENDENCY_TREE_FILES {
+            return Err(format!(
+                "{label} python_resource_paths 超过 {} 个文件的部署上限",
+                qx_spec::MAX_STRATEGY_DEPENDENCY_TREE_FILES
+            ));
+        }
+        let mut python_resource_paths = std::collections::BTreeSet::new();
+        for resource_path in &strategy.python_resource_paths {
+            let path = Path::new(resource_path);
+            if resource_path.trim().is_empty()
+                || resource_path.contains('\\')
+                || resource_path.contains(':')
+                || path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+                || !python_resource_paths.insert(resource_path)
+            {
+                return Err(format!(
+                    "{label} python_resource_paths 必须是唯一、安全的相对路径"
+                ));
+            }
+        }
         if let Some(spec) = strategy.python_strategy_spec.as_ref() {
             if strategy.python_module.is_none() {
                 return Err(format!(
@@ -211,14 +270,16 @@ impl RuntimeConfig {
             {
                 return Err(format!("{label} builtin fast/slow window 必须大于 0"));
             }
-            if let (Some(fast), Some(slow)) =
-                (strategy.builtin_fast_window, strategy.builtin_slow_window)
-            {
-                if fast >= slow {
-                    return Err(format!(
-                        "{label} builtin_fast_window 必须小于 builtin_slow_window"
-                    ));
-                }
+            let fast = strategy
+                .builtin_fast_window
+                .unwrap_or(qx_strategy::BuiltinStrategyConfig::DEFAULT_FAST_WINDOW);
+            let slow = strategy
+                .builtin_slow_window
+                .unwrap_or(qx_strategy::BuiltinStrategyConfig::DEFAULT_SLOW_WINDOW);
+            if fast >= slow {
+                return Err(format!(
+                    "{label} builtin_fast_window 必须小于 builtin_slow_window: fast_window={fast} slow_window={slow}"
+                ));
             }
         }
         if uses(qx_strategy::builtin_signal::BuiltinSignalKnob::Period)
@@ -462,8 +523,7 @@ impl RuntimeConfig {
             .and_then(InstrumentId::parse)
             .ok_or_else(|| format!("{label} instrument 不是合法 InstrumentId"))?;
         let has_matching_worker = self.workers.iter().any(|worker| {
-            worker.enabled
-                && worker.role == WorkerRole::Strategy
+            worker.role == WorkerRole::Strategy
                 && worker.account_id.as_deref() == Some(account_id)
                 && worker.venue_id.as_deref() == Some(venue_id)
                 && (worker.symbols.is_empty()
@@ -474,7 +534,7 @@ impl RuntimeConfig {
         });
         if !has_matching_worker {
             return Err(format!(
-                "{label} 绑定 {}@{} / {} 没有匹配的启用 strategy worker",
+                "{label} 绑定 {}@{} / {} 没有匹配的 Strategy worker",
                 account_id, venue_id, instrument
             ));
         }

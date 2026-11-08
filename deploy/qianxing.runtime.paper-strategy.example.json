@@ -71,6 +71,7 @@
     "state_path": "scheduler.json",
     "jobs_path": "qianxing.scheduler.paper-order-smoke.json",
     "job_queue_path": "job-queue",
+    "max_pending_jobs": 4096,
     "tick_interval_ms": 1000
   },
   "strategy": {

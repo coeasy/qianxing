@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>牵星回测报告 — strategy-ashare @ 000001.SZSE</title>
+<style>
+:root { color-scheme: light; --ink:#17243a; --muted:#607087; --line:#dce4ee; --blue:#225ccd; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:#f3f6fb; color:var(--ink); font:14px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+main { width:100%; max-width:1240px; min-width:0; margin:0 auto; padding:28px 24px 56px; }
+main > *, section, article, details, figure { min-width:0; max-width:100%; }
+header { padding:24px; border:1px solid var(--line); border-radius:14px; background:#fff; border-top:4px solid var(--blue); }
+h1 { margin:0 0 8px; font-size:26px; letter-spacing:.02em; }
+h2 { margin:0 0 14px; font-size:18px; }
+h3 { font-size:15px; }
+p { margin:8px 0 14px; }
+a { color:var(--blue); text-underline-offset:3px; }
+code, pre { font-family:ui-monospace,Consolas,monospace; font-size:12px; overflow-wrap:anywhere; word-break:break-word; }
+code { background:#f1f5fa; padding:2px 4px; border-radius:4px; }
+pre { margin:0; white-space:pre-wrap; max-height:460px; overflow:auto; padding:14px; background:#f6f8fc; }
+.sub, .foot, .fills-note, .chart-note, figcaption { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.report-nav { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+.report-nav a { padding:6px 12px; border:1px solid var(--line); background:white; border-radius:7px; text-decoration:none; }
+.disclaimer, .fidelity-note { padding:12px 16px; background:#fff8e7; border-left:4px solid #dca628; color:#71541a; border-radius:5px; font-size:13px; }
+.cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+.card { min-width:0; padding:15px; display:flex; flex-direction:column; gap:6px; background:white; border:1px solid var(--line); border-radius:10px; }
+.card .k { font-size:12px; color:var(--muted); }
+.card .v { font-size:21px; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.up { color:#b6323d; } .down { color:#12734d; } .neutral { color:var(--ink); }
+.cred, .prov, .fills, .event-trace, .interactive-research, .strategy-diagnostics, .report-detail { margin:20px 0; padding:20px; background:white; border:1px solid var(--line); border-radius:12px; }
+.fidelity { margin:20px 0; }
+.fidelity-grid, .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.fidelity article { min-width:0; background:white; border:1px solid var(--line); border-radius:10px; padding:16px; }
+table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; font-variant-numeric:tabular-nums; }
+th, td { text-align:left; padding:9px 10px; vertical-align:top; border-bottom:1px solid #e8edf4; overflow-wrap:anywhere; word-break:break-word; }
+th { color:var(--muted); font-weight:600; background:#f6f8fc; }
+tbody tr:nth-child(even) { background:#fafbfd; }
+.prov th, .fidelity th, .detail-grid th { width:32%; }
+.cred .cstat { width:90px; font-weight:600; }
+.cred .cstat.ok { color:#225ccd; background:#edf3ff; }
+.cred .cstat.warn { color:#8a620c; background:#fff7df; }
+.cred .cstat.absent { color:var(--muted); background:#f3f5f8; }
+.fill-scroll, .table-wrap, .diagnostic-scroll { width:100%; max-width:100%; max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:7px; margin-top:12px; overscroll-behavior:contain; }
+.fill-scroll table, .table-wrap table, .diagnostic-scroll table { table-layout:auto; min-width:760px; }
+#fill-table { min-width:1800px; }
+#event-table { min-width:1100px; }
+.fill-scroll thead th, .table-wrap thead th { position:sticky; top:0; z-index:1; white-space:nowrap; }
+.fill-scroll td, .table-wrap td { min-width:90px; max-width:360px; }
+input[type=search] { width:min(100%,360px); padding:8px 10px; margin:8px; border:1px solid #b8c7db; border-radius:6px; font:inherit; }
+input:focus, button:focus, a:focus { outline:2px solid #86aaf3; outline-offset:2px; }
+button { padding:8px 12px; border:1px solid #b8c7db; border-radius:6px; background:#edf3ff; color:#194ba8; cursor:pointer; }
+summary { cursor:pointer; font-weight:600; padding:6px 0; overflow-wrap:anywhere; }
+details[open] > summary { margin-bottom:12px; }
+.diagnostic-status { display:flex; flex-wrap:wrap; gap:8px 20px; }
+.chart-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; margin:12px 0; }
+.chart-controls label { display:flex; align-items:center; gap:6px; }
+.research-chart-wrap { height:340px; width:100%; min-width:0; position:relative; }
+#research-chart { display:block; width:100%; height:340px; touch-action:pan-y; }
+#research-chart-tip { position:absolute; z-index:3; max-width:min(250px,100%); padding:10px; border-radius:7px; background:#17243a; color:white; white-space:pre-line; overflow-wrap:anywhere; font:12px/1.6 ui-monospace,Consolas,monospace; pointer-events:none; box-shadow:0 8px 20px #17243a33; }
+.charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:18px 0; }
+.charts figure:first-child { grid-column:1/-1; }
+figure { margin:0; padding:16px; background:white; border:1px solid var(--line); border-radius:10px; }
+figure svg { width:100%; height:auto; display:block; }
+footer { margin-top:24px; font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+@media(max-width:760px) {
+  main { padding:14px 12px 32px; } header { padding:18px; } h1 { font-size:22px; }
+  .cards { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .card { padding:12px; } .card .v { font-size:18px; }
+  .fidelity-grid, .detail-grid, .charts { grid-template-columns:minmax(0,1fr); }
+  .cred, .prov, .fills, .event-trace, .interactive-research, .strategy-diagnostics, .report-detail { padding:14px; }
+  th, td { padding:7px; } .cred .cstat { width:64px; }
+}
+@media print {
+  @page { size:A4 landscape; margin:12mm; }
+  body { background:white; } main { max-width:none; padding:0; }
+  .report-nav, button, input, .chart-controls { display:none !important; }
+  .fill-scroll, .table-wrap, .diagnostic-scroll, pre { max-height:none; overflow:visible; }
+  .fill-scroll table, .table-wrap table, #fill-table, #event-table { min-width:0; table-layout:fixed; font-size:8px; }
+  .fill-scroll td, .table-wrap td { min-width:0; max-width:none; }
+  .fill-scroll thead th, .table-wrap thead th { position:static; white-space:normal; }
+  .card, figure { break-inside:avoid; } tr { break-inside:avoid; }
+}
+</style>
+</head>
+<body>
+<main>
+<header><h1>牵星回测报告</h1><p class="sub">策略 <b>strategy-ashare</b> · 标的 <b>000001.SZSE</b> · 结果哈希 <code>6e120606d81369b5</code> · 构建 <code>0.3.0</code></p></header>
+<p class="disclaimer">本报告由本地回测引擎产出，<b>未连接真实交易所、未发送任何订单</b>；结果基于历史数据，不构成投资建议。</p>
+<nav class="report-nav" aria-label="报告导航"><a href="#report-overview">运行概览</a><a href="#report-configuration">策略与账户</a><a href="#report-charts">图表</a><a href="#report-fills">成交</a><a href="#report-equity">权益明细</a><a href="#report-provenance">数据追溯</a><a href="#report-source">摘要下载</a></nav><section class="report-detail" id="report-overview"><h2>回测范围与运行信息</h2><div class="detail-grid"><table><tbody><tr><th>策略</th><td>strategy-ashare</td></tr><tr><th>交易标的</th><td>000001.SZSE</td></tr><tr><th>输入记录数</th><td>6</td></tr><tr><th>采样单位</th><td>bar</td></tr><tr><th>撮合内核</th><td>qx-xingban::BacktestEngine(bar)</td></tr><tr><th>结算币种</th><td>CNY</td></tr></tbody></table><table><tbody><tr><th>开始时间（Unix ms）</th><td><span data-timestamp="1717378200000">1717378200000</span><br><code>1717378200000</code></td></tr><tr><th>结束时间（Unix ms）</th><td><span data-timestamp="1717466400000">1717466400000</span><br><code>1717466400000</code></td></tr><tr><th>结果身份</th><td>6e120606d81369b5</td></tr><tr><th>回放事件数</th><td>13</td></tr><tr><th>回放账本条目</th><td>4</td></tr><tr><th>输入指纹</th><td>5e59cfcf3adca434</td></tr></tbody></table></div><p class="foot">可读时间统一显示为 Asia/Shanghai，保留原始毫秒时间戳。示例数据或短样本不能用于推断策略盈利能力；未提供的事实显示为缺失。</p></section><section class="cards"><div class="card"><span class="k">收益率</span><span class="v up">+0.01%</span></div><div class="card"><span class="k">最大回撤</span><span class="v neutral">0.00%</span></div><div class="card"><span class="k">期末权益</span><span class="v neutral">100019.8955 CNY</span></div><div class="card"><span class="k">期初本金</span><span class="v neutral">100000 CNY</span></div><div class="card"><span class="k">手续费</span><span class="v neutral">5.1045 CNY</span></div><div class="card"><span class="k">换手</span><span class="v neutral">1045 CNY</span></div><div class="card"><span class="k">成交笔数</span><span class="v neutral">1</span></div><div class="card"><span class="k">拒单数</span><span class="v neutral">0</span></div></section>
+<section class="cards" aria-label="风险调整收益比率"><div class="card"><span class="k">夏普(每周期)</span><span class="v up">0.45</span></div><div class="card"><span class="k">索提诺</span><span class="v neutral">—</span></div><div class="card"><span class="k">卡玛</span><span class="v neutral">—</span></div><div class="card"><span class="k">盈利周期占比</span><span class="v up">0.20</span></div><div class="card"><span class="k">收益因子</span><span class="v neutral">—</span></div></section>
+<section class="report-detail" id="report-configuration"><h2>策略参数与精确账户数据</h2><div class="detail-grid"><article><h3>已记录的策略配置</h3><table><tbody><tr><th>declared_unused</th><td>builtin_period,builtin_threshold_bps</td></tr><tr><th>fast_window</th><td>2</td></tr><tr><th>kind</th><td>ema_cross</td></tr><tr><th>knobs</th><td>fast_window,slow_window</td></tr><tr><th>period</th><td>14</td></tr><tr><th>quantity_raw</th><td>100000000000</td></tr><tr><th>slow_window</th><td>3</td></tr><tr><th>source</th><td>config</td></tr><tr><th>threshold_bps</th><td>0</td></tr></tbody></table></article><article><h3>引擎记录的精确值</h3><table><tbody><tr><th>初始权益</th><td>100000</td></tr><tr><th>期末权益</th><td>100019.8955</td></tr><tr><th>权益变化金额</th><td>19.8955</td></tr><tr><th>收益（bps）</th><td>1</td></tr><tr><th>最大回撤金额</th><td>0</td></tr><tr><th>成交额</th><td>1045</td></tr><tr><th>结算币种</th><td>CNY</td></tr><tr><th>手续费 / CNY</th><td>5.1045</td></tr></tbody></table></article></div><p class="foot">精确值直接取自已验证摘要；缺失时不在页面重新估算。declared_unused 表示该信号未使用的配置项。raw 表示内核兼容投影，不等同于高精度源值。</p></section><section class="interactive-research"><h2>联动研究图</h2><p class="chart-note">基于权益 CSV 的最多 2000 个等距样本点，鼠标悬停查看时点、权益、持仓与成交订单；曲线可单独开关。权益和回撤相对起点显示，持仓按本次样本最大绝对持仓归一化。原始明细保留在下方表格。</p><div class="chart-controls"><label><input type="checkbox" data-series="equity" checked> 权益变化</label><label><input type="checkbox" data-series="drawdown" checked> 区间回撤</label><label><input type="checkbox" data-series="position" checked> 持仓变化</label><span id="research-chart-count" aria-live="polite"></span></div><div class="research-chart-wrap"><canvas id="research-chart" role="img" aria-label="联动权益、回撤、持仓和成交的研究图"></canvas><div id="research-chart-tip" hidden></div></div></section><script>const researchData={"fills":[{"order_id":"1","ts":1717466400000}],"points":[{"equity_raw":"100000000000000","position_raw":"0","ts":1717378200000},{"equity_raw":"100000000000000","position_raw":"0","ts":1717380000000},{"equity_raw":"100000000000000","position_raw":"0","ts":1717381800000},{"equity_raw":"100000000000000","position_raw":"0","ts":1717383600000},{"equity_raw":"100000000000000","position_raw":"0","ts":1717464600000},{"equity_raw":"100019895500000","position_raw":"100000000000","ts":1717466400000}]};(function(){const canvas=document.getElementById('research-chart'),ctx=canvas.getContext('2d'),tip=document.getElementById('research-chart-tip'),count=document.getElementById('research-chart-count'),toggles=[...document.querySelectorAll('[data-series]')],points=researchData.points,fills=researchData.fills;count.textContent='显示 '+points.length+' 个样本点 · 成交标记 '+fills.length+' / 全部成交 '+1;function nearestPoint(ts){let lo=0,hi=points.length;while(lo<hi){const mid=(lo+hi)>>1;if(Number(points[mid].ts)<ts)lo=mid+1;else hi=mid;}if(lo===0)return 0;if(lo>=points.length)return points.length-1;return Math.abs(Number(points[lo-1].ts)-ts)<=Math.abs(Number(points[lo].ts)-ts)?lo-1:lo;}const fillIndexes=fills.map(fill=>{const index=nearestPoint(Number(fill.ts));return{fill,index};}),fillsByPoint=new Map();for(const item of fillIndexes){const ids=fillsByPoint.get(item.index)||[];ids.push(item.fill.order_id);fillsByPoint.set(item.index,ids);}function seriesValues(){if(!points.length)return{equity:[],drawdown:[],position:[]};const initial=BigInt(points[0].equity_raw);let peak=initial,maxPosition=0n;const drawdown=[];for(const point of points){const value=BigInt(point.equity_raw);if(value>peak)peak=value;drawdown.push(Number((value-peak)*1000000n/peak)/10000);if(point.position_raw!==null){const position=BigInt(point.position_raw),abs=position<0n?-position:position;if(abs>maxPosition)maxPosition=abs;}}return{equity:points.map(point=>Number((BigInt(point.equity_raw)-initial)*1000000n/initial)/10000),drawdown,position:points.map(point=>point.position_raw===null||maxPosition===0n?null:Number(BigInt(point.position_raw)*1000000n/maxPosition)/10000)};}function draw(){const rect=canvas.getBoundingClientRect(),scale=window.devicePixelRatio||1,w=Math.max(1,rect.width),h=340;canvas.width=Math.floor(w*scale);canvas.height=Math.floor(h*scale);ctx.setTransform(scale,0,0,scale,0,0);ctx.clearRect(0,0,w,h);if(points.length<2){ctx.fillStyle='#667085';ctx.fillText('权益样本不足，无法绘制联动曲线',16,28);return;}const values=seriesValues(),enabled=toggles.filter(item=>item.checked).map(item=>item.dataset.series),all=enabled.flatMap(key=>values[key].filter(value=>value!==null));if(!all.length){ctx.fillStyle='#667085';ctx.fillText('请选择至少一条曲线',16,28);return;}const lo=Math.min(...all,0),hi=Math.max(...all,0),pad={l:58,r:16,t:14,b:34},plotW=Math.max(1,w-pad.l-pad.r),plotH=h-pad.t-pad.b,x=i=>pad.l+i/Math.max(1,points.length-1)*plotW,y=value=>pad.t+(hi-value)/Math.max(.0001,hi-lo)*plotH;ctx.strokeStyle='#e5e7eb';ctx.fillStyle='#667085';ctx.font='11px system-ui';for(let tick=0;tick<5;tick++){const v=hi-(hi-lo)*tick/4,yy=y(v);ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();ctx.fillText(v.toFixed(2)+'%',4,yy+4);}const colors={equity:'#2563eb',drawdown:'#dc2626',position:'#7c3aed'};for(const key of enabled){ctx.beginPath();let started=false;for(let i=0;i<points.length;i++){const value=values[key][i];if(value===null)continue;if(!started){ctx.moveTo(x(i),y(value));started=true;}else ctx.lineTo(x(i),y(value));}ctx.strokeStyle=colors[key];ctx.lineWidth=1.7;ctx.stroke();}ctx.fillStyle='#d97706';for(const item of fillIndexes){const nearest=item.index;if(values.equity[nearest]!==undefined){ctx.beginPath();ctx.arc(x(nearest),y(values.equity[nearest]),2.7,0,Math.PI*2);ctx.fill();}}canvas._chart={x, y, values, enabled, pad, plotW, plotH};}canvas.addEventListener('mousemove',event=>{if(!points.length||!canvas._chart)return;const rect=canvas.getBoundingClientRect(),chart=canvas._chart,localX=event.clientX-rect.left,index=Math.max(0,Math.min(points.length-1,Math.round((localX-chart.pad.l)/chart.plotW*(points.length-1)))),point=points[index],when=new Date(Number(point.ts)).toLocaleString(),linked=fillsByPoint.get(index)||[];tip.textContent='时间：'+when+'\n权益 raw：'+point.equity_raw+'\n持仓 raw：'+(point.position_raw??'未提供')+'\n权益变化：'+chart.values.equity[index].toFixed(3)+'%\n区间回撤：'+chart.values.drawdown[index].toFixed(3)+'%\n成交订单：'+(linked.length?linked.join(', '):'无');tip.hidden=false;tip.style.left=Math.max(0,Math.min(Math.max(0,rect.width-250),localX+12))+'px';tip.style.top='20px';});canvas.addEventListener('mouseleave',()=>tip.hidden=true);for(const toggle of toggles)toggle.addEventListener('change',draw);window.addEventListener('resize',draw);if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>requestAnimationFrame(draw)).observe(canvas.parentElement);draw();})();</script><section class="charts" id="report-charts">
+<figure><figcaption>权益曲线（含最大回撤区间）</figcaption><svg viewBox="0 0 720 240" role="img" aria-label="权益曲线"><rect x="0" y="0" width="720" height="240" fill="#ffffff"/><line x1="52" y1="24" x2="668" y2="24" stroke="#e6e6e6"/><text x="46" y="28" text-anchor="end" fill="#5f6368" font-size="11">100019.89</text><line x1="52" y1="120" x2="668" y2="120" stroke="#e6e6e6"/><text x="46" y="124" text-anchor="end" fill="#5f6368" font-size="11">100009.94</text><line x1="52" y1="216" x2="668" y2="216" stroke="#e6e6e6"/><text x="46" y="220" text-anchor="end" fill="#5f6368" font-size="11">100000.00</text><polyline points="52,216 175,216 298,216 422,216 545,216 668,24" fill="none" stroke="#c0392b" stroke-width="1.6"/><circle cx="52" cy="216" r="2.6" fill="#c0392b"/><circle cx="668" cy="24" r="2.6" fill="#c0392b"/></svg></figure>
+<figure><figcaption>成交价格点（方向未包含在成交产物中，故以中性点显示）</figcaption><svg viewBox="0 0 720 240" role="img" aria-label="成交点"><rect x="0" y="0" width="720" height="240" fill="#ffffff"/><line x1="52" y1="216" x2="668" y2="216" stroke="#9aa0a6"/><text x="46" y="28" text-anchor="end" fill="#5f6368" font-size="11">10.45</text><text x="46" y="220" text-anchor="end" fill="#5f6368" font-size="11">10.45</text><circle cx="360" cy="120" r="4" fill="#5f6368"/></svg></figure>
+<figure><figcaption>月度收益（%）</figcaption><svg viewBox="0 0 620 68" role="img" aria-label="月度收益"><rect x="0" y="0" width="620" height="68" fill="#ffffff"/><text x="66" y="14" text-anchor="middle" fill="#5f6368" font-size="11">1</text><text x="114" y="14" text-anchor="middle" fill="#5f6368" font-size="11">2</text><text x="162" y="14" text-anchor="middle" fill="#5f6368" font-size="11">3</text><text x="210" y="14" text-anchor="middle" fill="#5f6368" font-size="11">4</text><text x="258" y="14" text-anchor="middle" fill="#5f6368" font-size="11">5</text><text x="306" y="14" text-anchor="middle" fill="#5f6368" font-size="11">6</text><text x="354" y="14" text-anchor="middle" fill="#5f6368" font-size="11">7</text><text x="402" y="14" text-anchor="middle" fill="#5f6368" font-size="11">8</text><text x="450" y="14" text-anchor="middle" fill="#5f6368" font-size="11">9</text><text x="498" y="14" text-anchor="middle" fill="#5f6368" font-size="11">10</text><text x="546" y="14" text-anchor="middle" fill="#5f6368" font-size="11">11</text><text x="594" y="14" text-anchor="middle" fill="#5f6368" font-size="11">12</text><text x="38" y="46" text-anchor="end" fill="#5f6368" font-size="11">2024</text><rect x="44" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="92" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="140" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="188" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="236" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="284" y="20" width="44" height="44" fill="#c0392b" fill-opacity="0.90"/><text x="306" y="46" text-anchor="middle" fill="#202124" font-size="10">0.0</text><rect x="332" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="380" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="428" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="476" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="524" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/><rect x="572" y="20" width="44" height="44" fill="#e6e6e6" fill-opacity="1"/></svg></figure>
+</section>
+<section class="report-detail"><h2>月度收益明细</h2><p class="foot">与月度图使用同一份引擎报告序列；不重新定义收益或年化口径。</p><table><thead><tr><th>年月</th><th>收益 bps</th><th>收益 %</th></tr></thead><tbody><tr><td>2024-06</td><td>2</td><td>+0.02%</td></tr></tbody></table></section><section class="report-detail" id="report-equity"><h2>权益与持仓逐点明细</h2><p class="foot">展示末尾 6 / 6 个已验证 CSV 记录。金额展示为 raw 的 1e-9 投影，完整精度与原始记录以引擎产物为准。</p><div class="table-wrap"><table><thead><tr><th>记录序号</th><th>时间（Asia/Shanghai）</th><th>时间戳 ms</th><th>权益投影</th><th>权益 raw</th><th>持仓 raw</th></tr></thead><tbody><tr><td>0</td><td data-timestamp="1717378200000">1717378200000</td><td>1717378200000</td><td>100000.00</td><td><code>100000000000000</code></td><td><code>0</code></td></tr><tr><td>1</td><td data-timestamp="1717380000000">1717380000000</td><td>1717380000000</td><td>100000.00</td><td><code>100000000000000</code></td><td><code>0</code></td></tr><tr><td>2</td><td data-timestamp="1717381800000">1717381800000</td><td>1717381800000</td><td>100000.00</td><td><code>100000000000000</code></td><td><code>0</code></td></tr><tr><td>3</td><td data-timestamp="1717383600000">1717383600000</td><td>1717383600000</td><td>100000.00</td><td><code>100000000000000</code></td><td><code>0</code></td></tr><tr><td>4</td><td data-timestamp="1717464600000">1717464600000</td><td>1717464600000</td><td>100000.00</td><td><code>100000000000000</code></td><td><code>0</code></td></tr><tr><td>5</td><td data-timestamp="1717466400000">1717466400000</td><td>1717466400000</td><td>100019.89</td><td><code>100019895500000</code></td><td><code>100000000000</code></td></tr></tbody></table></div></section><section class="fills" id="report-fills"><h2>成交明细</h2><p class="fills-note">成交事实只展示来源文件明确提供的字段。成交产物不含买卖方向，不按数量正负推断买卖方向或风险决定。存在校验通过的事件流时，可按订单 ID 跳转到订单提交/撮合事件。精确数量、价格和手续费只在来源产物明确提供时显示；raw 字段保留作兼容投影。</p><label class="fill-search">筛选时间/订单/账户/策略/腿 <input id="fill-filter" type="search" placeholder="输入订单号、账户、策略 ID 或腿名"></label><span id="fill-count" aria-live="polite"></span><div class="fill-scroll"><table id="fill-table"><thead><tr><th>时间戳</th><th>订单 ID</th><th>组合腿</th><th>事件链</th><th>账户</th><th>策略 ID</th><th>信号 ID</th><th>意图 ID</th><th>Venue</th><th>Venue 订单 ID</th><th>数量 raw</th><th>数量 exact</th><th>价格 raw</th><th>价格 exact</th><th>费用 raw</th><th>精确手续费 JSON</th></tr></thead><tbody><tr data-search="1 1717466400000 ashare-paper strategy-ashare 6 1   absent   "><td>1717466400000</td><td>1</td><td>absent</td><td>absent</td><td>ashare-paper</td><td>strategy-ashare</td><td>6</td><td>1</td><td>absent</td><td>absent</td><td>100000000000</td><td>absent</td><td>10450000000</td><td>absent</td><td>5104500000</td><td>absent</td></tr></tbody></table></div><p class="fills-note">当前展示最近 1 / 1 笔成交；完整成交记录保留在 fills CSV 中。</p><p id="fill-empty" hidden>没有匹配的成交。</p><script>const fillRows=[...document.querySelectorAll('#fill-table tbody tr')],fillFilter=document.getElementById('fill-filter'),fillCount=document.getElementById('fill-count'),fillEmpty=document.getElementById('fill-empty');function filterFills(){const query=fillFilter.value.trim().toLocaleLowerCase();let visible=0;for(const row of fillRows){row.hidden=!row.dataset.search.toLocaleLowerCase().includes(query);if(!row.hidden)visible++;}fillCount.textContent='显示 '+visible+' / 1 笔（当前已加载）';fillEmpty.hidden=visible!==0;}fillFilter.addEventListener('input',filterFills);filterFills();</script></section><section><h2>逐单执行记录</h2><p>执行评估 1 次</p><table><thead><tr><th>原因</th><th>次数</th></tr></thead><tbody><tr><td>filled</td><td>1</td></tr></tbody></table><details><summary>查看逐笔委托记录</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>订单</th><th>标的</th><th>方向</th><th>请求量(raw)</th><th>成交量(raw)</th><th>剩余量(raw)</th><th>成交价(raw)</th><th>盘口显示量(raw)</th><th>队列前量(raw)</th><th>队列后量(raw)</th><th>估算成交量(raw)</th><th>盘口减少量(raw)</th><th>用于前队列(raw)</th><th>原因</th></tr></thead><tbody><tr><td>1717466400000</td><td>1</td><td>000001.SZSE</td><td>Buy</td><td>100000000000</td><td>100000000000</td><td>0</td><td>10450000000</td><td>null</td><td>null</td><td>null</td><td>null</td><td>null</td><td>null</td><td>filled</td></tr></tbody></table></div></details></section><section class="prov" id="report-provenance"><h2>产物身份</h2><table><tbody><tr><th>输入种类</th><td><code>barframe</code></td></tr><tr><th>输入路径</th><td><code>D:\workspace\qval-1028b\a1\qianxing.ashare.bar-frame.example.json</code></td></tr><tr><th>数据集</th><td><code>strategy-bars:000001.SZSE @ barframe-json-v1</code></td></tr><tr><th>输入指纹</th><td><code>5e59cfcf3adca434</code></td></tr><tr><th>本金来源</th><td><code>builtin-default</code></td></tr><tr><th>撮合内核</th><td><code>qx-xingban::BacktestEngine(bar)</code></td></tr><tr><th>风控规则</th><td><code>conservative-default-v1+implicit-no-short（runtime-config）</code></td></tr><tr><th>成本口径</th><td><code>ashare-rules:D:\workspace\qval-1028b\a1\qianxing.ashare.rules.json</code></td></tr><tr><th>重放日志摘要</th><td><code>6e120606d81369b5</code></td></tr><tr><th>重放事件数</th><td><code>13</code></td></tr><tr><th>重放账簿条目</th><td><code>4</code></td></tr><tr><th>输入事件哈希</th><td><code>982df19cca407443</code></td></tr><tr><th>摘要版本</th><td><code>7</code></td></tr><tr><th>运行清单</th><td><code>D:\workspace\qval-1028b\a1\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json</code></td></tr><tr><th>运行记录</th><td><code>D:\workspace\qval-1028b\a1\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.record.json</code></td></tr></tbody></table></section>
+<section class="cred"><h2>结果可信度</h2><table><tbody><tr><th>输入身份</th><td class="cstat ok">可信</td><td class="cdet">数据集 strategy-bars:000001.SZSE@barframe-json-v1 · 指纹 5e59cfcf3adca434</td></tr><tr><th>重放校验</th><td class="cstat ok">可信</td><td class="cdet">事件 13 · 账簿 4/4 · 日志摘要已落盘</td></tr><tr><th>撮合档位</th><td class="cstat ok">可信</td><td class="cdet">qx-xingban::BacktestEngine(bar)</td></tr><tr><th>成本模型</th><td class="cstat ok">可信</td><td class="cdet">ashare-rules:D:\workspace\qval-1028b\a1\qianxing.ashare.rules.json</td></tr><tr><th>风控规则</th><td class="cstat ok">可信</td><td class="cdet">规则集 conservative-default-v1+implicit-no-short（runtime-config）</td></tr><tr><th>数据质量</th><td class="cstat warn">待核</td><td class="cdet">数据集 strategy-bars:000001.SZSE 已登记，但摘要未嵌入连续性/缺失值质量报告；回测时可传入 `--dataset-manifest` 指向 `data-validate` 产物</td></tr><tr><th>未计算字段</th><td class="cstat warn">待核</td><td class="cdet">以下指标未计算：sortino, calmar, profit_factor（按仓库纪律报 absent 而非 0）</td></tr></tbody></table></section><section class="fidelity"><h2>数据与模型口径</h2><div class="fidelity-grid"><article><h3>可核验的输入与重放记录</h3><table><tbody><tr><th>数据集</th><td>strategy-bars:000001.SZSE</td></tr><tr><th>数据集版本</th><td>barframe-json-v1</td></tr><tr><th>输入指纹</th><td>5e59cfcf3adca434</td></tr><tr><th>输入 Bar 数</th><td>6</td></tr><tr><th>重放事件数</th><td>13</td></tr><tr><th>重放日志摘要</th><td>6e120606d81369b5</td></tr></tbody></table></article><article><h3>模型选择与估计假设</h3><table><tbody><tr><th>撮合内核</th><td>qx-xingban::BacktestEngine(bar)</td></tr><tr><th>成交模型</th><td>next_bar_open@v1（来源：builtin-default；参数：；假设：假设下一根bar开盘可全部成交；不建模排队与容量）</td></tr><tr><th>盘口执行模型</th><td>absent</td></tr><tr><th>执行成本来源</th><td>ashare-rules:D:\workspace\qval-1028b\a1\qianxing.ashare.rules.json</td></tr><tr><th>模型描述子</th><td>NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]；AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]；ZeroLatency@v1[delay_ns=0]；NoMargin@v1；AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]</td></tr><tr><th>显式假设</th><td>data_tier=Bar；benchmark=flat-cash；metrics=scale-aware-exact-with-raw-compatibility-projections；virtual_trading=funding:0 interest:0 delivery:0 liquidation:false</td></tr></tbody></table></article></div><p class="fidelity-note">回测计算结果来自上述数据与模型，属于历史模拟结果；
+                 成交数值不是实盘成交观测。</p><article><h3>回测计算结果（非实盘观测）</h3><table><tbody><tr><th>收益率（bps）</th><td>1</td></tr><tr><th>最大回撤（bps）</th><td>0</td></tr><tr><th>手续费（定点原值）</th><td>5104500000</td></tr><tr><th>期末权益（定点原值）</th><td>100019895500000</td></tr><tr><th>模拟成交数</th><td>1</td></tr><tr><th>拒单数</th><td>0</td></tr></tbody></table></article></section><section class="report-detail" id="report-source"><h2>完整摘要与下载</h2><button id="download-summary" type="button">下载已验证摘要 JSON</button><details><summary>展开全部摘要字段</summary><pre>{
+  &quot;account&quot;: {
+    &quot;initial_cash_raw&quot;: &quot;100000000000000&quot;,
+    &quot;source&quot;: &quot;builtin-default&quot;
+  },
+  &quot;artifact_locations&quot;: {
+    &quot;equity&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.equity.csv&quot;,
+    &quot;fills&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.fills.csv&quot;,
+    &quot;run_manifest&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json&quot;,
+    &quot;summary&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.summary.json&quot;
+  },
+  &quot;assumptions&quot;: [
+    &quot;data_tier=Bar&quot;,
+    &quot;benchmark=flat-cash&quot;,
+    &quot;metrics=scale-aware-exact-with-raw-compatibility-projections&quot;,
+    &quot;virtual_trading=funding:0 interest:0 delivery:0 liquidation:false&quot;
+  ],
+  &quot;bars&quot;: 6,
+  &quot;clock_end&quot;: 1717466400000,
+  &quot;clock_start&quot;: 1717378200000,
+  &quot;execution_attempt_count&quot;: 1,
+  &quot;execution_attempts&quot;: [
+    {
+      &quot;displayed_qty_raw&quot;: null,
+      &quot;displayed_reduction_raw&quot;: null,
+      &quot;estimated_volume_raw&quot;: null,
+      &quot;filled_qty_raw&quot;: 100000000000,
+      &quot;instrument&quot;: &quot;000001.SZSE&quot;,
+      &quot;order_id&quot;: 1,
+      &quot;price_exact&quot;: {
+        &quot;coefficient&quot;: &quot;1045&quot;,
+        &quot;scale&quot;: 2
+      },
+      &quot;price_raw&quot;: 10450000000,
+      &quot;queue_ahead_after_raw&quot;: null,
+      &quot;queue_ahead_before_raw&quot;: null,
+      &quot;queue_consumed_raw&quot;: null,
+      &quot;reason&quot;: &quot;filled&quot;,
+      &quot;remaining_qty_raw&quot;: 0,
+      &quot;requested_qty_raw&quot;: 100000000000,
+      &quot;side&quot;: &quot;Buy&quot;,
+      &quot;ts&quot;: 1717466400000
+    }
+  ],
+  &quot;execution_costs&quot;: {
+    &quot;source&quot;: &quot;ashare-rules:D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.rules.json&quot;
+  },
+  &quot;fill_model&quot;: {
+    &quot;assumption&quot;: &quot;假设下一根bar开盘可全部成交；不建模排队与容量&quot;,
+    &quot;data_tier&quot;: &quot;Bar&quot;,
+    &quot;descriptor_schema_version&quot;: 1,
+    &quot;name&quot;: &quot;next_bar_open&quot;,
+    &quot;parameters&quot;: &quot;&quot;,
+    &quot;source&quot;: &quot;builtin-default&quot;,
+    &quot;version&quot;: &quot;v1&quot;
+  },
+  &quot;fills&quot;: 1,
+  &quot;input&quot;: {
+    &quot;dataset_id&quot;: &quot;strategy-bars:000001.SZSE&quot;,
+    &quot;dataset_version&quot;: &quot;barframe-json-v1&quot;,
+    &quot;fingerprint&quot;: &quot;5e59cfcf3adca434&quot;,
+    &quot;kind&quot;: &quot;barframe&quot;,
+    &quot;path&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.bar-frame.example.json&quot;
+  },
+  &quot;input_data_hash&quot;: &quot;982df19cca407443&quot;,
+  &quot;instrument&quot;: &quot;000001.SZSE&quot;,
+  &quot;market_spec&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.spot.spec.json&quot;,
+  &quot;matching_kernel&quot;: &quot;qx-xingban::BacktestEngine(bar)&quot;,
+  &quot;metrics&quot;: {
+    &quot;calmar&quot;: null,
+    &quot;fees_raw&quot;: 5104500000,
+    &quot;final_equity_raw&quot;: 100019895500000,
+    &quot;max_drawdown_bps&quot;: 0,
+    &quot;profit_factor&quot;: null,
+    &quot;return_bps&quot;: 1,
+    &quot;sharpe&quot;: 0.4472135954999579,
+    &quot;sortino&quot;: null,
+    &quot;turnover_raw&quot;: 1045000000000,
+    &quot;win_rate&quot;: 0.2
+  },
+  &quot;metrics_exact&quot;: {
+    &quot;equity&quot;: {
+      &quot;final&quot;: &quot;100019.8955&quot;,
+      &quot;initial&quot;: &quot;100000&quot;,
+      &quot;max_drawdown&quot;: &quot;0&quot;,
+      &quot;max_drawdown_bps&quot;: &quot;0&quot;,
+      &quot;return&quot;: &quot;19.8955&quot;,
+      &quot;return_bps&quot;: &quot;1&quot;
+    },
+    &quot;fees_by_currency&quot;: {
+      &quot;CNY&quot;: &quot;5.1045&quot;
+    },
+    &quot;turnover&quot;: {
+      &quot;amount&quot;: &quot;1045&quot;,
+      &quot;currency&quot;: &quot;CNY&quot;
+    }
+  },
+  &quot;model_descriptors&quot;: [
+    &quot;NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]&quot;,
+    &quot;AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]&quot;,
+    &quot;ZeroLatency@v1[delay_ns=0]&quot;,
+    &quot;NoMargin@v1&quot;,
+    &quot;AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]&quot;
+  ],
+  &quot;rejected_orders&quot;: 0,
+  &quot;rejection_reasons&quot;: [],
+  &quot;replay&quot;: {
+    &quot;events&quot;: 13,
+    &quot;ledger_entries&quot;: 4,
+    &quot;log_digest&quot;: &quot;6e120606d81369b5&quot;,
+    &quot;run_ledger_entries&quot;: 4
+  },
+  &quot;result_hash&quot;: &quot;6e120606d81369b5&quot;,
+  &quot;risk_rules&quot;: {
+    &quot;rule_set_version&quot;: &quot;conservative-default-v1+implicit-no-short&quot;,
+    &quot;source&quot;: &quot;runtime-config&quot;
+  },
+  &quot;run_manifest&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json&quot;,
+  &quot;run_record&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.record.json&quot;,
+  &quot;runtime_config&quot;: &quot;D:\\workspace\\qval-1028b\\a1\\qianxing.runtime.json&quot;,
+  &quot;sample_unit&quot;: &quot;bar&quot;,
+  &quot;schema_version&quot;: 7,
+  &quot;signal&quot;: {
+    &quot;declared_unused&quot;: &quot;builtin_period,builtin_threshold_bps&quot;,
+    &quot;fast_window&quot;: 2,
+    &quot;kind&quot;: &quot;ema_cross&quot;,
+    &quot;knobs&quot;: &quot;fast_window,slow_window&quot;,
+    &quot;period&quot;: 14,
+    &quot;quantity_raw&quot;: &quot;100000000000&quot;,
+    &quot;slow_window&quot;: 3,
+    &quot;source&quot;: &quot;config&quot;,
+    &quot;threshold_bps&quot;: &quot;0&quot;
+  },
+  &quot;strategy_id&quot;: &quot;strategy-ashare&quot;
+}</pre></details><script type="application/json" id="verified-summary">{"account":{"initial_cash_raw":"100000000000000","source":"builtin-default"},"artifact_locations":{"equity":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.equity.csv","fills":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.fills.csv","run_manifest":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json","summary":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.summary.json"},"assumptions":["data_tier=Bar","benchmark=flat-cash","metrics=scale-aware-exact-with-raw-compatibility-projections","virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"],"bars":6,"clock_end":1717466400000,"clock_start":1717378200000,"execution_attempt_count":1,"execution_attempts":[{"displayed_qty_raw":null,"displayed_reduction_raw":null,"estimated_volume_raw":null,"filled_qty_raw":100000000000,"instrument":"000001.SZSE","order_id":1,"price_exact":{"coefficient":"1045","scale":2},"price_raw":10450000000,"queue_ahead_after_raw":null,"queue_ahead_before_raw":null,"queue_consumed_raw":null,"reason":"filled","remaining_qty_raw":0,"requested_qty_raw":100000000000,"side":"Buy","ts":1717466400000}],"execution_costs":{"source":"ashare-rules:D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.rules.json"},"fill_model":{"assumption":"假设下一根bar开盘可全部成交；不建模排队与容量","data_tier":"Bar","descriptor_schema_version":1,"name":"next_bar_open","parameters":"","source":"builtin-default","version":"v1"},"fills":1,"input":{"dataset_id":"strategy-bars:000001.SZSE","dataset_version":"barframe-json-v1","fingerprint":"5e59cfcf3adca434","kind":"barframe","path":"D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.bar-frame.example.json"},"input_data_hash":"982df19cca407443","instrument":"000001.SZSE","market_spec":"D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.spot.spec.json","matching_kernel":"qx-xingban::BacktestEngine(bar)","metrics":{"calmar":null,"fees_raw":5104500000,"final_equity_raw":100019895500000,"max_drawdown_bps":0,"profit_factor":null,"return_bps":1,"sharpe":0.4472135954999579,"sortino":null,"turnover_raw":1045000000000,"win_rate":0.2},"metrics_exact":{"equity":{"final":"100019.8955","initial":"100000","max_drawdown":"0","max_drawdown_bps":"0","return":"19.8955","return_bps":"1"},"fees_by_currency":{"CNY":"5.1045"},"turnover":{"amount":"1045","currency":"CNY"}},"model_descriptors":["NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]","AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]","ZeroLatency@v1[delay_ns=0]","NoMargin@v1","AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]"],"rejected_orders":0,"rejection_reasons":[],"replay":{"events":13,"ledger_entries":4,"log_digest":"6e120606d81369b5","run_ledger_entries":4},"result_hash":"6e120606d81369b5","risk_rules":{"rule_set_version":"conservative-default-v1+implicit-no-short","source":"runtime-config"},"run_manifest":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json","run_record":"D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.record.json","runtime_config":"D:\\workspace\\qval-1028b\\a1\\qianxing.runtime.json","sample_unit":"bar","schema_version":7,"signal":{"declared_unused":"builtin_period,builtin_threshold_bps","fast_window":2,"kind":"ema_cross","knobs":"fast_window,slow_window","period":14,"quantity_raw":"100000000000","slow_window":3,"source":"config","threshold_bps":"0"},"strategy_id":"strategy-ashare"}</script></section><script>(function(){const formatter=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});for(const node of document.querySelectorAll('[data-timestamp]')){const ms=Number(node.dataset.timestamp);if(Number.isFinite(ms)&&Number.isFinite(new Date(ms).getTime()))node.textContent=formatter.format(new Date(ms));}document.getElementById('download-summary').addEventListener('click',()=>{const text=document.getElementById('verified-summary').textContent,url=URL.createObjectURL(new Blob([text],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='verified-backtest-summary.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});})();</script><footer>牵星 Qianxing · 分级校准，量天定位 · 本页所有数值均取自同名 <code>*.summary.json</code>，曲线与成交点取自 <code>*.equity.csv</code> / <code>*.fills.csv</code>。</footer>
+</main>
+</body>
+</html>

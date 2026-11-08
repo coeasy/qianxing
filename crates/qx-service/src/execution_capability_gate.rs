@@ -161,6 +161,9 @@ pub fn require_account_query_execution_capability(
         AccountQueryPurpose::BalanceProbe => (vec!["balance.read".to_owned()], Vec::new()),
         AccountQueryPurpose::Reconcile => {
             let mut required = vec!["balance.read".to_owned(), "orders.read".to_owned()];
+            if matches!(connector, ExecutionConnectorProfile::BinanceSpot) {
+                required.push("trades.read".to_owned());
+            }
             if is_derivative {
                 required.push("positions.read".to_owned());
             }
@@ -519,6 +522,7 @@ pub fn require_submit_command_execution_capability(
 /// Check all locally active orders before a recovery connector is started. If a spread-recovery
 /// group exists but no corresponding active order can be found, fail closed rather than opening
 /// an un-gated private venue session.
+#[allow(clippy::too_many_arguments)] // Capability checks consume independent runtime and account evidence.
 pub fn require_active_orders_execution_capability<'a>(
     orders: impl IntoIterator<Item = &'a Order>,
     worker: &WorkerConfig,
@@ -719,7 +723,8 @@ mod tests {
     fn test_order() -> Order {
         Order {
             client_id: 41,
-            instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+            instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                .expect("valid instrument fixture"),
             side: Side::Buy,
             qty: Quantity::from_i64(2),
             limit: Some(Price::from_i64(100)),
@@ -826,7 +831,10 @@ mod tests {
         )
         .expect("declared testnet account-read scope");
         assert!(decision.allowed);
-        assert_eq!(decision.allowed_operations, ["balance.read", "orders.read"]);
+        assert_eq!(
+            decision.allowed_operations,
+            ["balance.read", "orders.read", "trades.read"]
+        );
 
         let mainnet_worker = reconciler_worker("binance");
         let error = require_account_query_execution_capability(

@@ -59,7 +59,7 @@ pub(crate) struct OrderAdmissionResult {
 }
 
 fn raw_decimal(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy scale is supported")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 fn exact_to_raw(value: ExactDecimal, rounding: DecimalRounding) -> Result<i128, qx_core::QxError> {

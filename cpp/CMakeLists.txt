@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(qianxing_strategy_sdk VERSION 0.3.0 LANGUAGES CXX)
 
+if(MSVC)
+    # Project sources and comments are UTF-8; do not let the active Windows
+    # code page reinterpret them during compilation.
+    add_compile_options(/utf-8)
+endif()
+
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

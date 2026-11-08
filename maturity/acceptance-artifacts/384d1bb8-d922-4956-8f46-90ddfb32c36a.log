@@ -1,0 +1,62 @@
+$ cargo test -p qx-strategy capabilities::tests::strategy_host_profiles_accept_only_their_delivered_capabilities --offline
+exit_code=0
+
+[stdout]
+
+running 1 test
+test capabilities::tests::strategy_host_profiles_accept_only_their_delivered_capabilities ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.55s
+     Running unittests src\lib.rs (target\debug\deps\qx_strategy-40658961515104f8.exe)
+     Running tests\account_update_golden.rs (target\debug\deps\account_update_golden-13587f194428d4e0.exe)
+     Running tests\builtin_signal_knobs.rs (target\debug\deps\builtin_signal_knobs-f450c5b1ad5be001.exe)
+     Running tests\cpp_plugin_host.rs (target\debug\deps\cpp_plugin_host-04f01596e9635387.exe)
+     Running tests\execution_update_golden.rs (target\debug\deps\execution_update_golden-372aa51695c44acc.exe)
+     Running tests\market_event_golden.rs (target\debug\deps\market_event_golden-b232845bd2728ed5.exe)
+     Running tests\stop_context_golden.rs (target\debug\deps\stop_context_golden-d032f5c2452e8a80.exe)
+     Running tests\strategy_error_golden.rs (target\debug\deps\strategy_error_golden-269c3179dfd64285.exe)
+     Running tests\strategy_lifecycle_matrix_golden.rs (target\debug\deps\strategy_lifecycle_matrix_golden-7bd1d284ec814482.exe)

@@ -2,6 +2,10 @@
 //! 其中依赖 `qx_runtime::LiveEventPipeline` 的两条（原因见 `paper_accounting.rs`
 //! 头注）；hedge 恢复用例不跨 crate，仍留在单元测试里。用例函数与断言未改动。
 
+#[path = "common/temp_root.rs"]
+mod temp_root;
+use temp_root::test_temp_root;
+
 use qx_control::{CommandKind, ControlCommand, Permission};
 use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, Price, Quantity, Side,
@@ -20,7 +24,6 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 只断言回报形状 / 恢复事实的用例显式零费：费用不是这里的期望，但生产 Paper
 /// 路径的成本口径必须由调用方给出（见 `PaperVenue::new`）。
@@ -30,14 +33,7 @@ fn zero_fee() -> Box<dyn qx_core::FeeModel + Send> {
 
 #[test]
 fn accepted_events_replay_by_correlation_even_when_local_sequence_changes() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("execution");
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
     pipeline
         .register_order(
@@ -121,14 +117,7 @@ fn submit_side_effect_then_process_exit_recovers_as_ambiguous_and_never_resubmit
         }
     }
 
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-submit-crash-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("submit-crash");
     let order = Order {
         client_id: 301,
         instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
@@ -208,14 +197,7 @@ fn submit_side_effect_then_process_exit_recovers_as_ambiguous_and_never_resubmit
 
 #[test]
 fn risk_preflight_rejects_before_event_log_or_venue_side_effect() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-execution-risk-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("execution-risk");
     let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
     let order = Order {
         client_id: 2,

@@ -8,6 +8,62 @@
 
 use super::*;
 
+/// Why a current account snapshot could not publish an equity value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquityUnavailableReason {
+    MissingMarkPrices,
+    ExchangeBalanceIncludesSpotPositions,
+    UnsupportedPortfolioValuation,
+    ArithmeticOverflow,
+}
+
+impl EquityUnavailableReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingMarkPrices => "missing_mark_prices",
+            Self::ExchangeBalanceIncludesSpotPositions => {
+                "exchange_balance_includes_spot_positions"
+            }
+            Self::UnsupportedPortfolioValuation => "unsupported_portfolio_valuation",
+            Self::ArithmeticOverflow => "arithmetic_overflow",
+        }
+    }
+}
+
+/// Actionable explanation for a null equity projection. The instrument list is populated only
+/// for `missing_mark_prices` and uses the canonical instrument string representation.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct EquityDiagnostic {
+    pub reason: EquityUnavailableReason,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_mark_instruments: Vec<String>,
+}
+
+impl EquityDiagnostic {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        let mut previous: Option<&str> = None;
+        for instrument in &self.missing_mark_instruments {
+            if InstrumentId::parse(instrument).is_none()
+                || previous.is_some_and(|previous| previous >= instrument.as_str())
+            {
+                return Err(ProtocolError::Invalid(
+                    "equity diagnostic instruments must be canonical, unique, and sorted".into(),
+                ));
+            }
+            previous = Some(instrument);
+        }
+        let expects_missing_marks =
+            matches!(self.reason, EquityUnavailableReason::MissingMarkPrices);
+        if expects_missing_marks == self.missing_mark_instruments.is_empty() {
+            return Err(ProtocolError::Invalid(
+                "equity diagnostic reason and missing mark instruments disagree".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct SnapshotHeader {
     pub schema_version: u32,
@@ -45,7 +101,7 @@ pub struct PositionSnapshot {
 impl Default for PositionSnapshot {
     fn default() -> Self {
         Self {
-            instrument: InstrumentId::new("UNKNOWN", qx_core::VenueId::new("UNKNOWN")),
+            instrument: InstrumentId::unknown(),
             settlement_currency: None,
             quantity_raw: 0,
             today_quantity_raw: 0,

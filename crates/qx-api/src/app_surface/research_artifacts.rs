@@ -295,7 +295,7 @@ fn build_with_preverified_core(
     let account_strategy_diagnostics = request
         .get("account_strategy_diagnostics")
         .filter(|value| !value.is_null());
-    if let Some(view) = provider_reports::build(&request, &outcome_value, paths)? {
+    if let Some(view) = provider_reports::build(&request, outcome_value, paths)? {
         return Ok(view);
     }
     let is_multi_account = outcome_value.get("batch_id").is_some()
@@ -321,7 +321,7 @@ fn build_with_preverified_core(
             "account_strategy_diagnostics 仅适用于多账户研究报告",
         ));
     }
-    if joint_account_reports::is_joint_account_outcome(&outcome_value) {
+    if joint_account_reports::is_joint_account_outcome(outcome_value) {
         if strategy_diagnostics.is_some()
             || market_strategy_diagnostics.is_some()
             || account_strategy_diagnostics.is_some()
@@ -338,7 +338,7 @@ fn build_with_preverified_core(
             ));
         }
         return joint_account_reports::build(
-            &outcome_value,
+            outcome_value,
             paths,
             &joint_account_options.unwrap_or_default(),
         );
@@ -772,11 +772,8 @@ fn depth_fill_view(
         .collect::<Result<Vec<_>, _>>()?;
     let mut rows = Vec::with_capacity(MAX_FILL_ROWS.min(total as usize));
     let mut seen = 0_u64;
-    loop {
-        let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
-        else {
-            break;
-        };
+    while let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
+    {
         if line.trim().is_empty() {
             continue;
         }
@@ -1664,11 +1661,8 @@ fn validated_fill_view(
         .ok_or_else(|| malformed_csv("CSV 产物为空"))?;
     let mut rows = Vec::with_capacity(MAX_FILL_ROWS.min(total as usize));
     let mut seen = 0_u64;
-    loop {
-        let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
-        else {
-            break;
-        };
+    while let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
+    {
         if line.trim().is_empty() {
             continue;
         }
@@ -1734,11 +1728,8 @@ fn csv_shape(
         return Err(malformed_csv("CSV 表头为空或存在空字段"));
     }
     let mut total = 0u64;
-    loop {
-        let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
-        else {
-            break;
-        };
+    while let Some(line) = read_artifact_line(artifact.reader.as_mut(), reference, &mut bytes_seen)?
+    {
         if !line.trim().is_empty() {
             total += 1;
             if total > MAX_ARTIFACT_ROWS {

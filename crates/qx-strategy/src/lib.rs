@@ -1,5 +1,7 @@
 //! 牵星统一策略 SDK：Rust/C ABI/Python 策略共享同一不可变输入与 `StrategyDecision` 契约，执行权仍归 Rust Risk/OMS。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_core::{
     ExactDecimal, ExactOhlcv, ExactOrderAmounts, Fill, InstrumentId, OrderPolicy, Price, Quantity,
     Side,
@@ -9,6 +11,7 @@ use std::collections::{BTreeMap, VecDeque};
 pub mod builtin;
 pub mod builtin_signal;
 pub mod c_api;
+pub mod capabilities;
 pub mod contract;
 mod decision;
 pub mod diagnostics;
@@ -31,7 +34,9 @@ pub use c_api::{
     QX_STRATEGY_WARMUP_COMPLETE_SCHEMA_VERSION_V1,
 };
 pub use contract::{
-    STRATEGY_ACCOUNT_UPDATE_SCHEMA_VERSION, STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+    strategy_checkpoint_sha256, StrategyCheckpointRestoreAckV1,
+    STRATEGY_ACCOUNT_UPDATE_SCHEMA_VERSION, STRATEGY_CHECKPOINT_RESTORE_ACK_SCHEMA_VERSION,
+    STRATEGY_CHECKPOINT_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V10_SCHEMA_VERSION,
     STRATEGY_CONTRACT_INPUT_V2_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V3_SCHEMA_VERSION,
     STRATEGY_CONTRACT_INPUT_V4_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V5_SCHEMA_VERSION,
     STRATEGY_CONTRACT_INPUT_V6_SCHEMA_VERSION, STRATEGY_CONTRACT_INPUT_V7_SCHEMA_VERSION,
@@ -217,11 +222,11 @@ impl StrategyContext {
             return Err("StrategyContext 身份、时间或风险字段非法".into());
         }
         for instrument in self.positions.keys() {
-            InstrumentId::parse(instrument)
+            strategy_position_key_is_valid(instrument)
                 .ok_or_else(|| format!("StrategyContext instrument 非法: {instrument}"))?;
         }
         for (instrument, exact) in &self.positions_exact {
-            InstrumentId::parse(instrument)
+            strategy_position_key_is_valid(instrument)
                 .ok_or_else(|| format!("StrategyContext exact instrument 非法: {instrument}"))?;
             let projected = project_exact_to_raw(*exact)?;
             if self.positions.get(instrument).copied().unwrap_or_default() != projected {
@@ -246,6 +251,18 @@ impl StrategyContext {
         }
         Ok(())
     }
+}
+
+fn strategy_position_key_is_valid(key: &str) -> bool {
+    let instrument = if let Some((account_id, instrument)) = key.split_once('|') {
+        if account_id.trim().is_empty() || instrument.contains('|') {
+            return false;
+        }
+        instrument
+    } else {
+        key
+    };
+    InstrumentId::parse(instrument).is_some()
 }
 
 fn project_exact_to_raw(value: ExactDecimal) -> Result<i128, String> {
@@ -432,9 +449,8 @@ impl OrderBookLevel {
     }
 
     pub fn price_decimal(&self) -> ExactDecimal {
-        self.price_exact.unwrap_or_else(|| {
-            ExactDecimal::from_parts(self.price_raw, 9).expect("legacy price scale is supported")
-        })
+        self.price_exact
+            .unwrap_or_else(|| ExactDecimal::from_legacy_raw(self.price_raw))
     }
 
     fn legacy_projection(value: ExactDecimal) -> Result<i128, String> {
@@ -1187,6 +1203,19 @@ mod tests {
     use super::*;
     use qx_core::{ExactFillAmounts, Order, OrderStatus, OrderTrace};
 
+    #[test]
+    fn strategy_position_keys_validate_bare_and_account_qualified_instruments() {
+        assert!(strategy_position_key_is_valid("BTCUSDT.BINANCE"));
+        assert!(strategy_position_key_is_valid("main|BTCUSDT.BINANCE"));
+        assert!(!strategy_position_key_is_valid("|BTCUSDT.BINANCE"));
+        assert!(!strategy_position_key_is_valid(
+            "main|../../etc/passwd.BINANCE"
+        ));
+        assert!(!strategy_position_key_is_valid(
+            "main|BTCUSDT|OTHER.BINANCE"
+        ));
+    }
+
     fn update_fixture() -> (StrategyContext, Order, Fill) {
         let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
         let context = StrategyContext {
@@ -1396,7 +1425,7 @@ mod tests {
         let (context, order, fill) = update_fixture();
         let update =
             StrategyFillUpdateV2::from_fill(&order, &fill, &context.strategy_id, 9).unwrap();
-        let expected = serde_json::to_value(&update.legacy_projection()).unwrap();
+        let expected = serde_json::to_value(update.legacy_projection()).unwrap();
         let mut strategy = LegacyReceiver(None);
         assert!(strategy
             .on_strategy_fill_update_v2(&context, &update)

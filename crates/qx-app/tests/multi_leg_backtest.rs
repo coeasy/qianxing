@@ -13,6 +13,8 @@ use qx_strategy::{
 };
 use serde_json::Value;
 
+#[path = "multi_leg_backtest/lifecycle_failures.rs"]
+mod lifecycle_failures;
 #[path = "multi_leg_backtest/shared_execution.rs"]
 mod shared_execution;
 #[path = "multi_leg_backtest/sizing_rejection.rs"]
@@ -536,6 +538,22 @@ fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
     let first = run_multi_leg_backtest(&spec, &context("pair-run")).expect("shared multi-leg run");
     let second = run_multi_leg_backtest(&spec, &context("pair-run")).expect("idempotent rerun");
     assert_eq!(first, second);
+    let manifest_path = root.join("out/pair-run.multi-leg.run.json");
+    let manifest_before = std::fs::read(&manifest_path).expect("multi-leg manifest");
+    let artifact_before = std::fs::read(&first.attribution_artifact).expect("multi-leg artifact");
+    std::fs::remove_file(&first.attribution_artifact)
+        .expect("simulate an interrupted publication after manifest commit");
+    let recovered =
+        run_multi_leg_backtest(&spec, &context("pair-run")).expect("recover missing artifact");
+    assert_eq!(recovered, first);
+    assert_eq!(
+        std::fs::read(&manifest_path).expect("recovered manifest remains byte-identical"),
+        manifest_before
+    );
+    assert_eq!(
+        std::fs::read(&first.attribution_artifact).expect("missing artifact is republished"),
+        artifact_before
+    );
     assert_eq!(first.account_id.as_deref(), Some("acct.pair-test"));
     assert_ne!(first.primary_result_hash, first.reference_result_hash);
     assert!(first.primary_fills > 0 && first.reference_fills > 0);

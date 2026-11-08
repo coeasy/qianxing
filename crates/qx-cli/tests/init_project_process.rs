@@ -88,6 +88,7 @@ fn init_creates_self_contained_project_assets_and_builtin_strategy() {
         config["strategy"]["bars_snapshot_path"],
         "qianxing.bar-frame.example.json"
     );
+    assert_eq!(config["storage"]["event_log_segment_events"], 1_024);
     for asset in [
         "qianxing.scheduler.jobs.example.json",
         "qianxing.scheduler.paper-order-smoke.json",
@@ -137,6 +138,10 @@ fn init_profiles_rewrite_deploy_paths_and_validate_references() {
             !runtime_text.contains("deploy/"),
             "profile={profile} leaked repository-relative deploy paths"
         );
+        let config: serde_json::Value = serde_json::from_str(&runtime_text).unwrap();
+        if config["storage"]["backend"] == "files" {
+            assert_eq!(config["storage"]["event_log_segment_events"], 1_024);
+        }
         doctor_config_check_passes(&runtime);
     }
 }
@@ -158,6 +163,9 @@ fn release_profiles_generate_the_expected_offline_and_sandbox_configs() {
             serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
         assert_eq!(config["environment"], environment, "profile={profile}");
         if profile == "crypto-sandbox-acceptance" {
+            assert_eq!(config["workers"][2]["enabled"], false);
+            let readme = std::fs::read_to_string(root.join("README.qianxing.md")).unwrap();
+            assert!(readme.contains("签名标的角色目录"));
             let exchange: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
             )

@@ -157,7 +157,7 @@ fn loads_and_runs_cpp_strategy_through_the_rust_c_abi_host() {
     assert_eq!(decision.confidence, 500);
     assert_eq!(decision.intents.len(), 1);
     let intent = &decision.intents[0];
-    assert_eq!(intent.instrument.symbol, "BTCUSDT");
+    assert_eq!(intent.instrument.symbol(), "BTCUSDT");
     assert_eq!(intent.instrument.venue.as_str(), "BINANCE");
     assert_eq!(intent.side, Side::Buy);
     assert_eq!(intent.qty.raw(), 1_000_000_000);

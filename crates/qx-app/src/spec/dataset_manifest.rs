@@ -3,6 +3,61 @@ use serde::{Deserialize, Serialize};
 
 pub const DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION: u32 = 1;
 pub const DEPTH_DATASET_MANIFEST_VALIDATION_SCHEMA_VERSION: u32 = 1;
+pub const DATASET_SNAPSHOT_PUBLICATION_SCHEMA_VERSION: u32 = 1;
+
+/// Inputs for binding owner-supplied capture semantics to a content-verified manifest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetSnapshotPublicationSpec {
+    pub schema_version: u32,
+    pub data_path: String,
+    pub manifest_path: String,
+    pub context_path: String,
+    pub output_path: String,
+}
+
+impl DatasetSnapshotPublicationSpec {
+    pub fn new(
+        data_path: impl Into<String>,
+        manifest_path: impl Into<String>,
+        context_path: impl Into<String>,
+        output_path: impl Into<String>,
+    ) -> Self {
+        Self {
+            schema_version: DATASET_SNAPSHOT_PUBLICATION_SCHEMA_VERSION,
+            data_path: data_path.into(),
+            manifest_path: manifest_path.into(),
+            context_path: context_path.into(),
+            output_path: output_path.into(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.schema_version != DATASET_SNAPSHOT_PUBLICATION_SCHEMA_VERSION {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!(
+                    "DatasetSnapshotPublicationSpec schema_version={} 本版本只认 {}",
+                    self.schema_version, DATASET_SNAPSHOT_PUBLICATION_SCHEMA_VERSION
+                ),
+            ));
+        }
+        for (field, value) in [
+            ("data_path", &self.data_path),
+            ("manifest_path", &self.manifest_path),
+            ("context_path", &self.context_path),
+            ("output_path", &self.output_path),
+        ] {
+            if value.trim().is_empty() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("DatasetSnapshotPublicationSpec.{field} 不能为空"),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Input for strict L1/L2 depth-frame quality diagnosis and manifest publication.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -709,10 +709,27 @@ impl BarMatchingEngine {
                             ..Fill::default()
                         }
                     } else {
+                        let (Some(qty_raw), Some(price_raw)) =
+                            (qty.to_raw(9).ok(), price.to_raw(9).ok())
+                        else {
+                            self.record_attempt(
+                                &o,
+                                ts,
+                                0,
+                                price.to_raw(9).ok(),
+                                ExecutionAttemptReason::InvalidModelOutput,
+                            );
+                            self.pending.push(PendingOrder {
+                                order: o,
+                                eligible_ts,
+                                funding_reservation_raw,
+                            });
+                            continue;
+                        };
                         Fill {
                             order_id: o.client_id,
-                            qty: Quantity::from_raw(qty.to_raw(9).expect("legacy fill scale")),
-                            price: Price::from_raw(price.to_raw(9).expect("legacy price scale")),
+                            qty: Quantity::from_raw(qty_raw),
+                            price: Price::from_raw(price_raw),
                             fee: Money::from_raw(fee_raw),
                             ts,
                             account_id: o.account_id.clone(),
@@ -938,7 +955,7 @@ impl BarMatchingEngine {
 /// Compute a fixed-point volume allowance without multiplying the full raw volume by bps.
 /// The quotient/remainder form cannot overflow for a validated 0..=10,000 bps input.
 fn raw_decimal(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy Bar values use supported scale 9")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 fn floor_to_legacy_decimal(value: ExactDecimal) -> Option<ExactDecimal> {

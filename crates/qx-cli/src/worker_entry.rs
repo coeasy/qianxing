@@ -20,7 +20,7 @@ use crate::{
     account_worker_settlement_currency, binance_event_log_name, catch_panic,
     ccxt_error_is_optional_derivatives_capability, load_binance_worker_auth, new_binance_venue,
     pending_spread_recovery_groups_for_account, python_interpreter, read_runtime_config,
-    recover_spread_groups_for_venue, recovery_order_validator, required_account_event_log,
+    recover_spread_groups_for_venue_until, recovery_order_validator, required_account_event_log,
     runtime_timestamp_ms, spread_recovery_poll_delay, validate_configured_market_specs,
     PipelineMetricsReporter, PipelineStorage, SpreadRecoveryContext,
 };
@@ -91,7 +91,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
                 .unwrap_or(0);
             let validator =
                 recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
+            let (_, diagnostics, stopped) = recover_spread_groups_for_venue_until(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
                     account_id: worker.account_id.as_deref(),
@@ -104,9 +104,13 @@ pub(crate) fn run_binance_spread_recovery_worker(
                     source_seq: &mut source_seq,
                 },
                 venue,
+                || context.should_stop(),
             )?;
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
+            }
+            if stopped {
+                return Ok(1);
             }
             metrics.absorb(&pipeline);
             // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
@@ -238,7 +242,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
                 .unwrap_or(0);
             let validator =
                 recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
+            let (_, diagnostics, stopped) = recover_spread_groups_for_venue_until(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
                     account_id: worker.account_id.as_deref(),
@@ -251,9 +255,13 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
                     source_seq: &mut source_seq,
                 },
                 venue,
+                || context.should_stop(),
             )?;
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
+            }
+            if stopped {
+                return Ok(1);
             }
             metrics.absorb(&pipeline);
             let pending_after = pending_spread_recovery_groups_for_account(
@@ -348,6 +356,19 @@ pub(crate) fn run_ccxt_market_spec(
     };
     if let Some(object) = market.as_object_mut() {
         object.insert("leverage_tiers".into(), tiers);
+        let role = match object
+            .get("market_type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+        {
+            "spot" | "margin" => "crypto_spot",
+            "swap" | "perpetual" | "future" | "futures" => "future",
+            _ => "unknown",
+        };
+        object.insert(
+            "dataset_instrument_role".into(),
+            serde_json::Value::String(role.into()),
+        );
     }
     std::fs::write(
         output_path,

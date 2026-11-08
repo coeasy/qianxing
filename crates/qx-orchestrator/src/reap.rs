@@ -1,13 +1,42 @@
 //! 托管子进程的收尾回收：先 kill，再在预算内轮询；到期仍在世的要点名报出去。
 
 use std::process::{Child, ChildStdin};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 pub(crate) struct ManagedChild {
     pub(crate) id: String,
     pub(crate) child: Child,
     pub(crate) stop_channel: Option<ChildStdin>,
+    pub(crate) log_drainers: Vec<JoinHandle<()>>,
+}
+
+impl ManagedChild {
+    pub(crate) fn finish_log_drainers(&mut self) -> Result<(), String> {
+        const LOG_DRAIN_REAP_BUDGET: Duration = Duration::from_millis(500);
+        let deadline = Instant::now() + LOG_DRAIN_REAP_BUDGET;
+        while self
+            .log_drainers
+            .iter()
+            .any(|drainer| !drainer.is_finished())
+        {
+            if Instant::now() >= deadline {
+                self.log_drainers.clear();
+                return Err(format!(
+                    "worker {} log pipes did not close within {} ms; detached drainers remain bounded by rotation",
+                    self.id,
+                    LOG_DRAIN_REAP_BUDGET.as_millis()
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        for drainer in self.log_drainers.drain(..) {
+            if drainer.join().is_err() {
+                eprintln!("[监督器 · 日志] worker={} 日志转存线程异常退出", self.id);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 一轮回收的判定结果。
@@ -67,7 +96,12 @@ pub(crate) fn stop_managed_children(
             alive.push(status.is_none());
         }
         match reap_round(&alive, started.elapsed(), budget) {
-            ReapDecision::Done => return Ok(()),
+            ReapDecision::Done => {
+                for managed in children.iter_mut() {
+                    managed.finish_log_drainers()?;
+                }
+                return Ok(());
+            }
             ReapDecision::KeepWaiting { sleep } => thread::sleep(sleep),
             ReapDecision::TimedOut => {
                 let stragglers = children
@@ -201,6 +235,7 @@ mod tests {
             id: tag.into(),
             child,
             stop_channel: None,
+            log_drainers: Vec::new(),
         }
     }
 }

@@ -394,6 +394,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
             issuer_capital_at_end: None,
             return_bps: report.return_bps,
             max_drawdown_bps: report.max_drawdown_bps,
+            max_drawdown_raw: report.max_drawdown_raw,
             fees_raw: report.fees_raw,
             turnover_raw: report.turnover_raw,
             final_equity_raw: report.final_equity(),

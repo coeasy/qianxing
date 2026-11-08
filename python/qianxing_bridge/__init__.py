@@ -388,7 +388,7 @@ class BarFrame:
 def load_account_snapshot(payload: str) -> dict[str, Any]:
     """解析 Qianxing account wire JSON，并执行最小 schema 级校验。
 
-    必填集合与 v1/v2/v3 account snapshot schema 的 ``required`` 是同一份口径（含
+    必填集合与 v1/v2/v3/v4 account snapshot schema 的 ``required`` 是同一份口径（含
     ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。必填说的是**键必须在**，不是值必须算得出——八个汇总钱字段在协议上全是 ``Option``，未算那一格写侧印 ``null``。
     """
 
@@ -408,7 +408,7 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
     missing = sorted(required.difference(value))
     if missing:
         raise ValueError(f"missing snapshot fields: {missing}")
-    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] not in (1, 2, 3):
+    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] not in (1, 2, 3, 4):
         raise ValueError("unsupported account snapshot schema")
     header_version = value["header"].get("schema_version", value["schema_version"])
     if header_version != value["schema_version"]:
@@ -423,6 +423,36 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
         or any(position.get("exact_amounts") is not None for position in value["positions"].values())
     ):
         raise ValueError("v1/v2 account snapshot cannot declare exact balances or positions")
+    if value["schema_version"] < 4 and "equity_diagnostic" in value:
+        raise ValueError("v1/v2/v3 account snapshot cannot declare equity_diagnostic")
+    if value["schema_version"] == 4:
+        if "equity_diagnostic" not in value:
+            raise ValueError("v4 account snapshot requires equity_diagnostic")
+        diagnostic = value["equity_diagnostic"]
+        if diagnostic is not None:
+            if not isinstance(diagnostic, dict) or set(diagnostic).difference(
+                {"reason", "missing_mark_instruments"}
+            ):
+                raise ValueError("equity_diagnostic must be a supported object or null")
+            reasons = {
+                "missing_mark_prices",
+                "exchange_balance_includes_spot_positions",
+                "unsupported_portfolio_valuation",
+                "arithmetic_overflow",
+            }
+            reason = diagnostic.get("reason")
+            missing_marks = diagnostic.get("missing_mark_instruments", [])
+            if not isinstance(reason, str) or reason not in reasons or not isinstance(missing_marks, list) or any(
+                not isinstance(instrument, str) or not instrument
+                for instrument in missing_marks
+            ):
+                raise ValueError("equity_diagnostic reason or instruments are invalid")
+            if missing_marks != sorted(set(missing_marks)):
+                raise ValueError("equity_diagnostic instruments must be sorted and unique")
+            if (reason == "missing_mark_prices") != bool(missing_marks):
+                raise ValueError("equity_diagnostic reason and instruments disagree")
+            if value["equity_raw"] is not None:
+                raise ValueError("computed equity cannot carry equity_diagnostic")
     cash_exact = value.get("cash_exact", {})
     if not isinstance(cash_exact, dict):
         raise ValueError("cash_exact must be an object")

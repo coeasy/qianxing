@@ -60,7 +60,7 @@ fn require(label: &str, command: &str, retry: &str, outcome: Result<(), String>)
 /// 预算是为了让收尾陈述能在符号链接目录环上终止：`is_dir()` 跟随符号链接，一个指回祖先的
 /// 链接就能让这里永不返回——五步产品全部跑完之后卡在「共 N 份文件」这一行上。同一份预算
 /// 也给一次误指向大目录树的首跑兜底。
-/// 文档口径是 10 份（`init`）+ 6 份（首跑回测与数据集清单）= 16 份。读不动的目录只少计一份，不让一次
+/// 文档口径是 11 份（`init`，含 Grafana 面板）+ 6 份（首跑回测与数据集清单）= 17 份。读不动的目录只少计一份，不让一次
 /// 已经成功的首跑改口——这格计数是收尾陈述，不是判据，所以截断如实印出来而不是报错。
 pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     let mut stack = vec![dir.to_path_buf()];

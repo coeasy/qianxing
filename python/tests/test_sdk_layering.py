@@ -447,13 +447,20 @@ class TopLevelStabilityTest(unittest.TestCase):
             "PortfolioBacktestConfig": "crates/qx-app/src/spec/portfolio.rs",
             "ProtectiveExitSpec": "crates/qx-app/src/spec/protective_exit.rs",
         }
+        # InstrumentId keeps `symbol` private in Rust so callers cannot bypass its
+        # validated constructor, while its custom Serde implementation intentionally
+        # preserves `symbol` on the stable JSON wire shape.
+        serde_wire_fields = {"InstrumentId": {"symbol"}}
         for name, relative_path in struct_sources.items():
             source = (root / relative_path).read_text(encoding="utf-8")
             match = re.search(re.escape(f"pub struct {name} {{") + r"([\s\S]*?)\n\}", source)
             self.assertIsNotNone(match, f"Rust {name} definition must remain discoverable")
             rust_fields = set(re.findall(r"^\s*pub ([a-z_]\w*):", match.group(1), re.MULTILINE))
             with self.subTest(nested_spec=name):
-                self.assertEqual(set(schema["$defs"][name]["properties"]), rust_fields)
+                self.assertEqual(
+                    set(schema["$defs"][name]["properties"]),
+                    rust_fields | serde_wire_fields.get(name, set()),
+                )
         self.assertNotIn("additionalProperties", schema["$defs"]["TradingInstrumentSpec"])
         self.assertNotIn("additionalProperties", schema["$defs"]["AshareRuleConfig"])
 

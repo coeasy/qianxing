@@ -5,6 +5,8 @@
 //! 前视偏差必须在**数据层封禁**，而不是靠策略自觉。
 //! 每个 `DataView` 都提供 `as_of(ts)`，策略只能访问该时刻及之前的数据。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_core::{ExactDecimal, ExactOhlcv, InstrumentId, Price, Quantity};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -91,7 +93,7 @@ impl Bar {
 }
 
 fn exact_raw(value: i128) -> ExactDecimal {
-    ExactDecimal::from_parts(value, 9).expect("legacy Bar raw values use supported scale 9")
+    ExactDecimal::from_legacy_raw(value)
 }
 
 /// L1 最优报价。没有深度时不得声称具备队列位置或完整盘口能力。
@@ -542,9 +544,7 @@ impl QualityGate {
         for (i, b) in bars.iter().enumerate() {
             if b.exact_ohlcv.is_some_and(|exact| {
                 exact.validate().is_err()
-                    || exact.raw_projection().map_or(true, |raw| {
-                        raw != [b.open, b.high, b.low, b.close, b.volume]
-                    })
+                    || exact.raw_projection() != Ok([b.open, b.high, b.low, b.close, b.volume])
             }) {
                 issues.push(QualityIssue::InvalidExactOhlcv { at: i });
             }
@@ -554,9 +554,9 @@ impl QualityGate {
             let (high, low, close, volume_is_zero) = match b.exact_ohlcv {
                 Some(exact) => (exact.high, exact.low, exact.close, exact.volume.is_zero()),
                 None => (
-                    ExactDecimal::from_parts(b.high, 9).expect("raw Bar scale is supported"),
-                    ExactDecimal::from_parts(b.low, 9).expect("raw Bar scale is supported"),
-                    ExactDecimal::from_parts(b.close, 9).expect("raw Bar scale is supported"),
+                    ExactDecimal::from_legacy_raw(b.high),
+                    ExactDecimal::from_legacy_raw(b.low),
+                    ExactDecimal::from_legacy_raw(b.close),
                     b.volume == 0,
                 ),
             };

@@ -288,7 +288,7 @@ pub fn read_multi_leg_report_read_model_v1_with_page_and_readers(
         )
     })?;
     let artifact_version = artifact.get("schema_version").and_then(Value::as_u64);
-    if !matches!(artifact_version, Some(3 | 4 | 5 | 6)) {
+    if !matches!(artifact_version, Some(3..=6)) {
         return Err(multi_leg_report_error(
             AppErrorCategory::Conflict,
             "多腿回测产物 schema_version 不受支持",
@@ -399,7 +399,7 @@ pub fn read_multi_leg_report_read_model_v1_with_page_and_readers(
         if frame.instrument.to_string() != instrument
             || market.get("content_hash").and_then(Value::as_str) != Some(fingerprint.as_str())
             || market.get("row_count").and_then(Value::as_u64) != Some(frame.ts.len() as u64)
-            || (matches!(artifact_version, Some(4 | 5 | 6))
+            || (matches!(artifact_version, Some(4..=6))
                 && (market.get("start_ts_ms").and_then(Value::as_u64) != frame.ts.first().copied()
                     || market.get("end_ts_ms").and_then(Value::as_u64) != frame.ts.last().copied()))
         {
@@ -490,7 +490,7 @@ pub fn read_multi_leg_report_read_model_v1_with_page_and_readers(
             "多腿数据指纹与已复核输入不一致",
         ));
     }
-    if matches!(artifact_version, Some(4 | 5 | 6)) {
+    if matches!(artifact_version, Some(4..=6)) {
         let manifest_path = artifact
             .get("run_manifest_path")
             .and_then(Value::as_str)
@@ -1197,7 +1197,7 @@ pub fn verify_multi_leg_research_report_facts_v1(
         .map_err(|error| format!("多腿 spec 验证失败: {error}"))?;
     if !matches!(
         input.artifact.get("schema_version").and_then(Value::as_u64),
-        Some(3 | 4 | 5 | 6)
+        Some(3..=6)
     ) {
         return Err("多腿回测产物 schema_version 不受支持".into());
     }
@@ -1250,7 +1250,7 @@ pub fn verify_multi_leg_research_report_facts_v1(
         .ok_or_else(|| "多腿共享 EventLog 为空或超过行数上限".to_string())?;
     if matches!(
         input.artifact.get("schema_version").and_then(Value::as_u64),
-        Some(4 | 5 | 6)
+        Some(4..=6)
     ) {
         if input
             .artifact
@@ -1299,7 +1299,7 @@ pub fn verify_multi_leg_research_report_facts_v1(
     }
     if matches!(
         input.artifact.get("schema_version").and_then(Value::as_u64),
-        Some(4 | 5 | 6)
+        Some(4..=6)
     ) && input.artifact.get("event_hash").and_then(Value::as_str) != Some(replay.digest.as_str())
     {
         return Err("多腿 RunManifest event_hash 与 EventLog 重放摘要不一致".into());

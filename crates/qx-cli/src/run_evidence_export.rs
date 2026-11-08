@@ -101,6 +101,9 @@ pub(crate) fn declared_config_for_strategy_run(
     let mut effective = config.clone();
     effective.strategy = (*strategy).clone();
     effective.strategies.clear();
+    qx_service::backtest_bindings::strategy_batch::normalize_builtin_strategy_version(
+        &mut effective.strategy,
+    )?;
     Ok(effective)
 }
 

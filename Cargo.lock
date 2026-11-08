@@ -1540,7 +1540,9 @@ dependencies = [
  "qx-guanxing",
  "qx-protocol",
  "qx-provider",
+ "qx-runtime",
  "qx-scheduler",
+ "qx-spec",
  "qx-storage",
  "qx-strategy",
  "qx-xingban",
@@ -1600,6 +1602,7 @@ dependencies = [
  "qx-zhenlu",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "zip",
 ]
 
@@ -1686,10 +1689,13 @@ dependencies = [
 name = "qx-orchestrator"
 version = "0.3.0"
 dependencies = [
+ "qx-control",
  "qx-core",
  "qx-process-io",
  "qx-runtime",
+ "qx-spec",
  "qx-strategy",
+ "serde_json",
 ]
 
 [[package]]
@@ -1738,10 +1744,13 @@ dependencies = [
  "qx-data",
  "qx-datastruct",
  "qx-provider",
+ "qx-runtime",
+ "qx-spec",
  "qx-strategy",
  "qx-xingban",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1763,6 +1772,7 @@ dependencies = [
  "qx-execution",
  "qx-factor",
  "qx-guanxing",
+ "qx-spec",
  "qx-storage",
  "qx-strategy",
  "qx-zhenlu",
@@ -1810,6 +1820,7 @@ dependencies = [
  "qx-risk",
  "qx-runtime",
  "qx-scheduler",
+ "qx-spec",
  "qx-storage",
  "qx-strategy",
  "qx-xingban",
@@ -1844,7 +1855,9 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

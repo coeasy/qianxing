@@ -8,7 +8,8 @@ use qx_strategy::BuiltinStrategyConfig;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 7;
+pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8;
+pub const BACKTEST_METRICS_DEFINITION_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct PersistedBacktestArtifacts {
@@ -192,6 +193,37 @@ mod signal_params_tests {
 }
 
 #[cfg(test)]
+mod metrics_definition_tests {
+    use super::{backtest_metrics_definition_json, BACKTEST_METRICS_DEFINITION_VERSION};
+
+    #[test]
+    fn metrics_definition_is_versioned_and_discloses_period_and_fee_semantics() {
+        let definition = backtest_metrics_definition_json();
+
+        assert_eq!(
+            definition["schema_version"],
+            BACKTEST_METRICS_DEFINITION_VERSION
+        );
+        assert_eq!(
+            definition["risk_ratio_period_basis"],
+            "per_sample_no_annualization"
+        );
+        assert_eq!(
+            definition["benchmark_period_basis"],
+            "exact_timestamp_aligned_observations_no_annualization"
+        );
+        assert_eq!(
+            definition["fees_exact_basis"],
+            "ledger_fee_entries_grouped_by_currency"
+        );
+        assert_eq!(
+            definition["fees_raw_basis"],
+            "compatibility_projection_only"
+        );
+    }
+}
+
+#[cfg(test)]
 mod fills_csv_v2_tests {
     use super::{serialize_backtest_fills_csv, serialize_multi_leg_backtest_fills_csv};
     use qx_core::{ExactDecimal, ExactFillAmounts, ExactFillFee, Fill};
@@ -277,6 +309,8 @@ pub struct BacktestArtifacts<'a> {
     pub issuer_capital_at_end: Option<&'a qx_xingban::AshareIssuerCapitalSnapshot>,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
+    /// Maximum peak-to-trough equity loss in the same fixed-point raw unit as the account values.
+    pub max_drawdown_raw: i128,
     pub fees_raw: i128,
     pub turnover_raw: i128,
     pub final_equity_raw: i128,
@@ -342,6 +376,16 @@ fn ratio_to_json(value: Option<f64>) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null),
         _ => serde_json::Value::Null,
     }
+}
+
+pub fn backtest_metrics_definition_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": BACKTEST_METRICS_DEFINITION_VERSION,
+        "risk_ratio_period_basis": "per_sample_no_annualization",
+        "benchmark_period_basis": "exact_timestamp_aligned_observations_no_annualization",
+        "fees_exact_basis": "ledger_fee_entries_grouped_by_currency",
+        "fees_raw_basis": "compatibility_projection_only",
+    })
 }
 
 fn rejection_count(rejections: &[(String, usize)]) -> usize {
@@ -524,6 +568,7 @@ pub fn persist_backtest_artifacts_with_summary(
         "metrics": {
             "return_bps": input.return_bps,
             "max_drawdown_bps": input.max_drawdown_bps,
+            "max_drawdown_raw": input.max_drawdown_raw.to_string(),
             "fees_raw": input.fees_raw,
             "turnover_raw": input.turnover_raw,
             "final_equity_raw": input.final_equity_raw,
@@ -535,6 +580,7 @@ pub fn persist_backtest_artifacts_with_summary(
             "win_rate": ratio_to_json(ratios.win_rate),
             "profit_factor": ratio_to_json(ratios.profit_factor),
         },
+        "metrics_definition": backtest_metrics_definition_json(),
         "assumptions": input.assumptions,
         "model_descriptors": input.model_descriptors,
         "matching_kernel": input.matching_kernel,

@@ -22,6 +22,29 @@ fn pnl_snapshot(config: &RuntimeConfig) -> AccountSnapshot {
     .expect("paper 拓扑必须投影出 main 账户快照")
 }
 
+fn advance_paper_mark(data_dir: &std::path::Path) {
+    let mut pipeline = qx_runtime::LiveEventPipeline::open(data_dir, paper_account_log(), "USDT")
+        .expect("reopen seeded paper log");
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("instrument fixture");
+    let ts = runtime_timestamp_ms().saturating_add(60_000);
+    pipeline
+        .ingest(qx_runtime::RuntimeEventEnvelope::market_quote(
+            instrument,
+            qx_guanxing::QuoteTick::new(
+                ts,
+                Price::from_i64(109),
+                Quantity::from_i64(1_000),
+                Price::from_i64(110),
+                Quantity::from_i64(1_000),
+                ts,
+            ),
+            ts,
+            ts,
+            "api-pnl-fields:advanced-mark",
+        ))
+        .expect("append a later mark after the paper fill");
+}
+
 /// 只开仓未平仓：累计已实现盈亏是"算出来的零"（`Some(0)`）而不是"没算过"（`None`）；
 /// 未实现盈亏与持仓行同一条现货尺子。线格式与稳定 JSON 都要把它们印成数，而不是继续印 null。
 #[test]
@@ -31,6 +54,7 @@ fn realized_and_unrealized_pnl_are_projected_from_the_ledger() {
     std::fs::create_dir_all(&data_dir).unwrap();
     let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
+    advance_paper_mark(&data_dir);
 
     let snapshot = pnl_snapshot(&config);
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
@@ -39,6 +63,17 @@ fn realized_and_unrealized_pnl_are_projected_from_the_ledger() {
         .get(&instrument)
         .expect("paper 成交必须投影出一行持仓");
     assert_ne!(row.quantity_raw, 0, "夹具必须真的留下一笔持仓");
+    assert!(
+        row.unrealized_pnl_raw.is_some_and(|pnl| pnl > 0),
+        "冻结规格应将上移后的标记价投影为正的行 PnL"
+    );
+    let exact_row_pnl = row
+        .exact_amounts
+        .as_ref()
+        .and_then(|amounts| amounts.unrealized_pnl)
+        .expect("行 PnL 必须保留精确十进制值");
+    assert!(exact_row_pnl.is_positive());
+    assert_eq!(row.settlement_currency.as_deref(), Some("USDT"));
     assert_eq!(
         snapshot.realized_pnl_raw,
         Some(0),
@@ -51,8 +86,9 @@ fn realized_and_unrealized_pnl_are_projected_from_the_ledger() {
         Some(expected),
         "未实现盈亏必须由 Ledger 按持仓与标记价算出，而不是缺席"
     );
-    // 逐字段读解析后的 JSON：持仓行里也有同名列（那里仍是 null，交易所没报），整串
-    // `contains` 会被它命中而误判。
+    assert_eq!(row.unrealized_pnl_raw, Some(expected));
+    // 逐字段读解析后的 JSON：账户标量和持仓行都应有各自的数值，避免整串 contains
+    // 因另一个同名字段而误判。
     let wire: serde_json::Value = serde_json::from_str(&snapshot.to_wire_json().unwrap()).unwrap();
     let stable: serde_json::Value = serde_json::from_str(&snapshot.to_json().unwrap()).unwrap();
     for name in ["realized_pnl_raw", "unrealized_pnl_raw"] {

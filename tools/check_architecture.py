@@ -369,7 +369,15 @@ def cli_flag_honesty_check() -> None:
     `cli_args.rs` 声明的每个长旗标字段都必须在 `cli.rs` 被点名（新声明却没人读的旗标同样红）。
     """
     args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
-    cli_text = (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8")
+    cli_text = "\n".join(
+        [
+            (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8"),
+            *(
+                path.read_text(encoding="utf-8")
+                for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+            ),
+        ]
+    )
     discards = sorted(
         {
             matched.group("name")
@@ -633,24 +641,60 @@ def build_script_parity_check() -> None:
 
 
 # README 承诺 `./tools/build_python_wheel.ps1` 与 `bash tools/build_python_wheel.sh` 是构建安装包的
-# 入口。V12 §17 清点时两条都不通：脚本默认解释器（Windows 的 `python` / POSIX 的 `python3`）往往没有
-# pip，而两条脚本都是先跑完 cargo 构建、在最后一步 `pip wheel` 才炸；`.ps1` 里以中文结尾的注释行还会
-# 被 Windows PowerShell 5.1 按 ANSI 码页读，行尾字节吞掉换行、把下一行代码并进注释 —— 探测因此从不执行。
+# 入口。`.ps1` 需保持 ASCII-only，避免 Windows PowerShell 5.1 按 ANSI 码页读无 BOM 文件时吞掉换行；
+# 两条入口在任何 Cargo 构建之前检查 maturin，并使用 maturin 的直接 wheel builder。
 def wheel_builder_check() -> None:
-    """两个构建入口先探测工具，并且 wheel 不扫描/收录工作树临时产物。"""
+    """两个构建入口先探测 maturin，并且 wheel 不收录工作树临时产物。"""
     ps1 = ROOT / "tools" / "build_python_wheel.ps1"
     sh = ROOT / "tools" / "build_python_wheel.sh"
     for path in (ps1, sh):
         text = path.read_bytes().decode("utf-8")
-        probe = text.find("-m pip --version")
-        maturin = text.find("-m maturin --version")
-        build = text.find("-m pip wheel")
         check(
-            0 <= probe < maturin < build,
-            f"{path.name} 在 PEP 517 wheel 构建前先检查 pip 和 maturin",
-            f"pip/maturin/wheel 位置 {probe}/{maturin}/{build}：缺任一构建器会晚到 wheel 阶段才失败",
+            "cargo build --release --locked -p qx-cli" in text,
+            f"{path.name} 使用锁定依赖构建 wheel 内的 qx-cli",
+            "release renderer build must include --locked so the wheel cannot resolve outside Cargo.lock",
+        )
+        pip = text.find("-m pip --version")
+        maturin = text.find("-m maturin --version")
+        build = text.find("-m maturin build --release --locked")
+        check(
+            0 <= pip < maturin < build,
+            f"{path.name} 先检查 pip 与 maturin，再进入锁定的 wheel 构建",
+            f"pip/maturin/build 位置 {pip}/{maturin}/{build}：依赖缺失必须在 Cargo 构建前失败",
+        )
+        check(
+            "SOURCE_DATE_EPOCH" in text and "git" in text and "--format=%ct" in text,
+            f"{path.name} 使用来源提交时间稳定 wheel 与 SBOM 时间元数据",
+            "builder must set SOURCE_DATE_EPOCH from the checked-out source commit",
+        )
+        # 方案 D3 选项 A：wheel 自带宿主平台 qx-cli，干净 venv 只装 wheel 也能出报告。
+        # 装载必须发生在 maturin build 之前，否则 wheel 里的 qianxing/_bin 是空的（audit 也会红）。
+        staged = text.find("qianxing/_bin")
+        check(
+            0 <= staged < build,
+            f"{path.name} 在打 wheel 前把 qx-cli 装进 qianxing/_bin",
+            f"qianxing/_bin 位置 {staged}，maturin build 位置 {build}：装载晚于打包或缺失时 wheel 没有报告渲染器",
         )
     pyproject = (ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "python-wheels.yml").read_text(encoding="utf-8")
+    maturin_requirement = re.search(r'requires\s*=\s*\["maturin==([^" ]+)"\]', pyproject)
+    workflow_maturin = re.search(r"pip install maturin==([^\s]+)", workflow)
+    builder_maturin_mismatches = [
+        path.name
+        for path in (ps1, sh)
+        if not maturin_requirement
+        or f"maturin {maturin_requirement.group(1)}" not in path.read_text(encoding="utf-8")
+    ]
+    check(
+        bool(maturin_requirement)
+        and bool(workflow_maturin)
+        and maturin_requirement.group(1) == workflow_maturin.group(1)
+        and not builder_maturin_mismatches,
+        "PEP 517、GitHub release workflow 和本地 wheel 构建器固定同一 maturin 版本",
+        f"pyproject={maturin_requirement.group(1) if maturin_requirement else None}，"
+        f"workflow={workflow_maturin.group(1) if workflow_maturin else None}，"
+        f"本地构建器未声明该版本={builder_maturin_mismatches}",
+    )
     excluded_worktree_artifacts = (
         '"**/.tmp/**"',
         '"**/.codex-tmp-build/**"',
@@ -659,6 +703,8 @@ def wheel_builder_check() -> None:
         '"**/.uv-cache/**"',
         '"build/**"',
         '"runs/**"',
+        '"target/**"',
+        '"**/*.pdb"',
     )
     missing_excludes = [pattern for pattern in excluded_worktree_artifacts if pattern not in pyproject]
     check(
@@ -833,7 +879,7 @@ CLI_CHAIN_SYMBOLS = {
         r"^(?:pub(?:\(crate\))? )?fn dispatch_scheduled_jobs\(",
     ),
     "build_strategy_contract_input": (
-        "strategy_binding.rs",
+        "strategy_binding/contract_input.rs",
         r"^(?:pub(?:\(crate\))? )?fn build_strategy_contract_input\(",
     ),
     "run_init_with_profile": (
@@ -1241,6 +1287,8 @@ def cli_backtest_module_check() -> None:
     check(
         "persist_multi_leg_composition_artifacts(" in multi_artifacts
         and "pub composition_summary_json: serde_json::Value" in multi_artifacts
+        and "const MULTI_BUILTIN_COMPOSITION_SCHEMA_VERSION: u32 = 7" in composition_writer
+        and "json!(MULTI_BUILTIN_COMPOSITION_SCHEMA_VERSION)" in composition_writer
         and "let persisted_summary: serde_json::Value = serde_json::from_str(&summary_payload)" in composition_writer
         and "Ok((summary_path, persisted_summary))" in composition_writer
         and "artifact_set.evidence_bundle" in multi_cli
@@ -1621,6 +1669,9 @@ NAAIVE_TRUNCATION = '.split("' + CFG_TEST_MARKER + '")[0]'
 PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     # 对外契约：README / deploy 文档 / 跨语言 SDK 把这些名字当成公布的能力。
     "qx-plugin::sign_ed25519": "README 公布 Ed25519 签名能力；validate() 的 ed25519 分支是消费侧",
+    "qx-data::ed25519_public_key_hex": "R15 外部数据供应方签名 DatasetInstrumentRoleCatalogV1 时导出与种子匹配的公钥；运行时以 operator trust root 核验",
+    "qx-data::sign_with_ed25519_seed": "R15 外部数据供应方离线签发版本化 instrument-role catalog 的公开签名 API；qx-service 只验签不持有供应方私钥",
+    "qx-data::new_unsigned_dataset_role_catalog_v1": "R15 外部数据供应方构造待签名的版本化角色目录；输出由签名 API 封装并由运行时按 operator trust root 核验",
     "qx-sdk::start_depth_experiment": "qx-sdk 第三方公开 RunHandle 入口；消费者 API 不要求仓内生产调用者",
     "qx-sdk::start_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
@@ -1648,6 +1699,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-adapter::restore_order": "CcxtProcessVenue 的外部集成恢复便捷入口；生产 worker 使用带持久费用状态的完整恢复入口",
     "qx-adapter::restore_order_with_fee_baseline": "CcxtProcessVenue 的外部集成恢复便捷入口；生产 worker 使用带成交去重状态的完整恢复入口",
+    "qx-adapter::fetch_and_reconcile": "Binance 适配器的单调用快照核对便捷 API，由适配器用例覆盖；服务宿主为先写可重放状态事实而显式拆分快照读取与差异核对",
     "qx-zhenlu::record_accepted": "SpreadOrderGroup 公布给外部执行协调器的内存状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约以保证重放幂等",
     "qx-zhenlu::record_cancelled": "SpreadOrderGroup 公布给外部执行协调器的内存状态转换 API；仓内持久化 host 改用权威 OMS/EventLog 快照归约以保证重放幂等",
     "qx-zhenlu::record_compensation_fill": "SpreadOrderGroup 兼容 1e9 精度的公开补偿进度 API；新集成应优先使用 record_compensation_fill_exact，仓内持久化 host 使用订单快照",
@@ -1658,6 +1710,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-service::project_api_account_snapshot": "兼容服务 API：将 portfolio_id 固定为 default 的公开快照投影入口",
     # 断链：能力已实现、生产侧尚未接线；删除等于把缺口藏起来（任务号见理由）。
     "qx-factor::materialize": "任务 #119：因子物化链与 finkit 绑定未接 CLI 生产装配",
+    "qx-data::validate_for_market_spec": "R15 对外执行准入 API；等待 Provider/策略项目/下单链路接入，调用方目前可显式校验交易角色与产品绑定",
     "qx-factor::materialize_incremental": "任务 #119",
     "qx-factor::validate_finkit_artifact": "任务 #119：binding.artifact_digest 与工件摘要的一致性目前只在用例里比过",
     "qx-factor::compile_execution_plan": "任务 #119：计划编译只被 data_binding 用例调用",
@@ -2713,24 +2766,42 @@ def dead_type_surface_check() -> None:
 
 
 def ashare_pit_check() -> None:
-    """A 股公司行为的 PIT 闸门只有一处：`as_of` 过滤发生在 JSON 加载点。
-
-    收口轮删除了零调用者的第二道闸门（`is_visible_at` /
-    `corporate_actions_visible_at`）：规则快照里并不携带 `as_of` 供运行期复查，
-    留着只会让人误以为回测侧还有第二次过滤。这里同时钉住"结果可区分"的测试存在。
-    """
-    removed = re.compile(
-        r"(?<![A-Za-z0-9_])(?:is_visible_at|corporate_actions_visible_at)(?![A-Za-z0-9_])"
+    """静态 as_of 闸门和逐 Bar 公告可见性使用同一事件谓词，并由运行行为覆盖。"""
+    event_file = (CRATES / "qx-xingban/src/ashare.rs").read_text(encoding="utf-8")
+    schedule_file = (CRATES / "qx-xingban/src/ashare/trading.rs").read_text(encoding="utf-8")
+    rule_tests = (CRATES / "qx-xingban/src/ashare/tests.rs").read_text(encoding="utf-8")
+    previous_close_file = (
+        CRATES / "qx-xingban/src/ashare/trading/previous_close.rs"
+    ).read_text(encoding="utf-8")
+    virtual_event_tests = (
+        CRATES / "qx-xingban/src/backtest/tests/ashare_virtual_events.rs"
+    ).read_text(encoding="utf-8")
+    runtime_cases = (
+        "corporate_action_published_after_trigger_is_not_applied_retroactively",
+        "suspension_published_after_its_bar_does_not_retroactively_halt_it",
+        "ex_rights_adjustment_ignores_actions_published_after_the_first_bar",
+        "indexed_ex_rights_adjustment_uses_publication_visibility",
+        "capital_snapshots_exclude_publications_after_the_run_as_of_time",
     )
-    revived = {
-        path.relative_to(ROOT).as_posix(): len(removed.findall(_read_text(path)))
-        for path in sorted(_glob_paths(CRATES, "*/**/*.rs", False))
-        if removed.findall(_read_text(path))
-    }
+    runtime_check = (
+        len(re.findall(r"(?m)^    pub\(crate\) fn is_visible_at\(", event_file)) == 1
+        and "filter(move |event| event.is_visible_at(ts))" in schedule_file
+        and "event.is_visible_at(ts)" in schedule_file
+        and "event.is_visible_at(anchor_ts)" in previous_close_file
+        and "event.is_visible_at(*first_bar_ts)" in previous_close_file
+        and "event.is_visible_at(until)" in event_file
+        and runtime_cases[0] in virtual_event_tests
+        and runtime_cases[1] in rule_tests
+        and all(case in previous_close_file for case in runtime_cases[2:4])
+        and runtime_cases[4] in rule_tests
+    )
     check(
-        not revived,
-        "第二道 A 股 PIT 闸门（is_visible_at/corporate_actions_visible_at）已彻底移除",
-        f"重新出现 {revived or '无'}",
+        runtime_check,
+        "A 股单一公告可见性谓词同时约束 JSON as_of、逐 Bar 公司行为/停牌、除权参考价与股本快照",
+        f"运行时公告可见时间消费点或回归用例缺失："
+        f"{[runtime_cases[0]] if runtime_cases[0] not in virtual_event_tests else []}"
+        f"{[case for case in (runtime_cases[1], runtime_cases[4]) if case not in rule_tests]}"
+        f"{[case for case in runtime_cases[2:4] if case not in previous_close_file]}",
     )
     text = (ROOT / ASHARE_RULES_FILE).read_text(encoding="utf-8")
     definitions = len(re.findall(r"^    fn visible_at\(", text, re.MULTILINE))
@@ -3391,7 +3462,7 @@ def ashare_submit_guard_check() -> None:
 
 # V11 Q64：`strategy.builtin_*` 四个信号参数在四条 Bar 回测链上的读点、生效与可见性。
 BUILTIN_SIGNAL_READER_FILE = "crates/qx-cli/src/strategy_binding.rs"
-BUILTIN_SIGNAL_STRATEGY_CHAIN_FILE = "crates/qx-cli/src/strategy_host.rs"
+BUILTIN_SIGNAL_STRATEGY_CHAIN_FILE = "crates/qx-cli/src/strategy_host/builtin.rs"
 BUILTIN_SIGNAL_TEST_FILE = "crates/qx-cli/tests/builtin_signal_from_config.rs"
 # 交易链路（paper/live）不经过回测链，用进程内用例钉同一个读点。
 BUILTIN_SIGNAL_WORKER_TEST_FILE = "crates/qx-cli/tests/unit/strategy_worker_entries.rs"
@@ -3435,6 +3506,8 @@ def builtin_signal_check() -> None:
         "strategy.builtin_* 四项的覆盖赋值全仓只有 qx-runtime 一处（新增赋值点即第二份口径）",
         f"赋值点 {assigns or '无'}",
     )
+
+
     runtime_signal = (ROOT / "crates/qx-runtime/src/runtime_config/builtin_signal.rs").read_text(encoding="utf-8")
     check(
         (ROOT / "crates/qx-runtime/src/runtime_config/builtin_signal.rs").read_text(encoding="utf-8").count(
@@ -3460,10 +3533,15 @@ def builtin_signal_check() -> None:
     service_builtin_snapshot = (
         ROOT / "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs"
     ).read_text(encoding="utf-8")
+    service_strategy_batch = (
+        ROOT / "crates/qx-service/src/backtest_bindings/strategy_batch.rs"
+    ).read_text(encoding="utf-8")
     check(
         "let config = super::read_runtime_config(&source_config_path)?;" in builtin_app
         and "prepare_builtin_backtest_snapshot(" in builtin_app
         and "config.strategy.builtin_strategy = Some(kind.name().to_string());" in service_builtin_snapshot
+        and 'config.strategy.version = format!("builtin-{}-v1", kind.name());' in service_builtin_snapshot
+        and 'strategy.version = format!("builtin-{}-v1", kind.name());' in service_strategy_batch
         and "crate::run_strategy_backtest_with_quality_manifest(" in builtin_app
         and "config.strategy.builtin_fast_window =" not in service_builtin_snapshot
         and "config.strategy.builtin_slow_window =" not in service_builtin_snapshot
@@ -3478,8 +3556,8 @@ def builtin_signal_check() -> None:
                 "builtin_threshold_bps",
             )
         ),
-        "backtest builtin 保留 runtime 信号参数并委托共享 strategy 回测读点",
-        "builtin adapter 覆写了信号参数或未委托共享 strategy 回测链",
+        "两个 Bar 入口都把内置策略身份版本绑定到所选 kind，同时共享信号参数与回测读点",
+        "built-in kind 的 canonical version 未在 builtin 快照与 strategy batch 两条路径保持一致",
     )
     service_backtest_bindings = (
         ROOT / "crates/qx-service/src/backtest_bindings.rs"
@@ -3690,6 +3768,13 @@ def builtin_signal_check() -> None:
         "命令行子进程用例逐条咬住 Q64 口径（四条链 + 两类非法组合）",
         f"{BUILTIN_SIGNAL_TEST_FILE} 不再覆盖 Q64",
     )
+    check(
+        'field(&strategy_chain, "[Strategy · Backtest]", "result_hash")' in _code_body(
+            BUILTIN_SIGNAL_TEST_FILE, "fn both_bar_chains_read_the_same_declared_signal()"
+        ),
+        "同配置跨 Bar 入口还必须有相同业务结果哈希",
+        "两条链用例只比较成交和收益，没有捕获策略版本污染的事件哈希分叉",
+    )
     worker_case = (ROOT / BUILTIN_SIGNAL_WORKER_TEST_FILE).read_text(encoding="utf-8")
     check(
         "fn builtin_worker_reads_the_declared_signal_parameters(" in worker_case
@@ -3710,6 +3795,32 @@ BUILTIN_KIND_FILES = {
 }
 BUILTIN_KNOB_TEST_FILE = "crates/qx-strategy/tests/builtin_signal_knobs.rs"
 BUILTIN_KNOB_CLI_TEST_FILE = "crates/qx-cli/tests/unit/backtest_signal_provenance.rs"
+
+
+def operating_system_shutdown_signal_check() -> None:
+    """The worker shutdown ladder is exercised through real OS control signals."""
+    source = _text_or_empty(ROOT / "crates/qx-runtime/src/supervision/tests.rs")
+    test_body = _code_body(
+        "crates/qx-runtime/src/supervision/tests.rs",
+        "fn operating_system_shutdown_signal_reaches_worker_ladder()",
+    )
+    child_body = _code_body(
+        "crates/qx-runtime/src/supervision/tests.rs",
+        "fn real_shutdown_signal_child()",
+    )
+    check(
+        "#[cfg(unix)]\nfn send_shutdown_signal" in source
+        and "libc::SIGTERM" in source
+        and "#[cfg(windows)]\nfn send_shutdown_signal" in source
+        and "CTRL_BREAK_EVENT" in source
+        and "CREATE_NEW_PROCESS_GROUP" in test_body
+        and "send_shutdown_signal(child.id())" in test_body
+        and "wait_for_worker_finish(" in child_body
+        and "shutdown_signalled" in child_body
+        and "WorkerLadder::StoppedWithinBudget" in child_body,
+        "子进程实收 POSIX SIGTERM / Windows CTRL_BREAK 并走完 worker 停机阶梯",
+        "停机 token 只有注入式验收，或真实 OS 信号没有贯通到有界 worker join",
+    )
 
 
 def builtin_knob_list_check() -> None:
@@ -3863,12 +3974,58 @@ REPLAY_ENGINE_FILES = (
     "crates/qx-xingban/src/backtest.rs",
     "crates/qx-xingban/src/orderbook_backtest.rs",
 )
+REPLAY_FINALIZATION_FILE = "crates/qx-xingban/src/report_validation.rs"
+REPLAY_FINALIZATION_TEST_NAMES = (
+    "report_exit_rejects_an_event_log_with_duplicate_sequence_numbers",
+    "report_exit_rejects_a_ledger_entry_without_a_fact_event",
+    "report_exit_returns_a_report_when_replay_matches",
+)
 REPLAY_BAR_CASE_FILE = "crates/qx-xingban/src/backtest/tests.rs"
 REPLAY_ARTIFACT_FILE = "crates/qx-app/src/artifact_store/backtest_summary.rs"
 REPLAY_CLI_TEST_FILE = "crates/qx-cli/tests/unit/backtest_replay_gate.rs"
 # 报告出口必须把重放失败向上抛。写成 `.ok()` 吞掉等于闸门还在、返回值永远为真，
 # 光数调用次数看不出来，所以把传播形状本身钉成一条字符串。
-ENGINE_REPLAY_GATE_NEEDLE = "ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;"
+ENGINE_REPLAY_GATE_NEEDLE = "validate_before_return("
+
+
+def shared_memory_worker_timeout_check() -> None:
+    """Shared-memory input backpressure times out, diagnoses, and stops a wedged child."""
+    tests = _text_or_empty(ROOT / "crates/qx-orchestrator/src/strategy_worker/tests.rs")
+    request = _code_body(
+        "crates/qx-orchestrator/src/strategy_worker.rs", "pub fn request("
+    )
+    test_body = _code_body(
+        "crates/qx-orchestrator/src/strategy_worker/tests.rs",
+        "fn shared_memory_full_input_times_out_and_kills_the_non_consuming_worker()",
+    )
+    check(
+        "Err(SharedRingError::Full)" in request
+        and "worker 输入写入超时 timeout_ms=" in request
+        and "self.kill_child();" in request
+        and "shared_memory_full_input_times_out_and_kills_the_non_consuming_worker" in tests
+        and "worker 已停止消费" in test_body
+        and "stalled worker was not killed" in test_body,
+        "共享内存输入 ring 满载按 timeout_ms 报时并杀停滞 worker，且有真实子进程用例",
+        "SharedMemory worker wedge 未被限时诊断并回收，或只有静态实现没有行为证据",
+    )
+
+
+def single_builtin_window_override_validation_check() -> None:
+    """Validate a lone fast/slow override against the canonical missing-side default."""
+    validation = _text_or_empty(ROOT / "crates/qx-runtime/src/runtime_config/strategy_validation.rs")
+    config = _text_or_empty(ROOT / "crates/qx-strategy/src/builtin/config.rs")
+    tests = _text_or_empty(ROOT / "crates/qx-runtime/src/runtime_config/strategy_tests.rs")
+    check(
+        "DEFAULT_FAST_WINDOW: usize = 5" in config
+        and "DEFAULT_SLOW_WINDOW: usize = 20" in config
+        and ".builtin_fast_window" in validation
+        and ".unwrap_or(qx_strategy::BuiltinStrategyConfig::DEFAULT_FAST_WINDOW)" in validation
+        and ".builtin_slow_window" in validation
+        and ".unwrap_or(qx_strategy::BuiltinStrategyConfig::DEFAULT_SLOW_WINDOW)" in validation
+        and "a_single_builtin_window_override_is_checked_against_the_default_pair" in tests,
+        "单侧 builtin 窗口覆写用策略核默认值完成有效窗口对校验，且有接受/拒绝用例",
+        "单侧 fast/slow 覆写仍绕过运行时配置校验或默认窗口出现第二份定义",
+    )
 
 
 def function_body(text: str, name: str) -> str:
@@ -3934,14 +4091,25 @@ def replay_kernel_check() -> None:
         "被证伪的恒等口径（rebuild_from / replay_hash）不得在任何 crate 复活",
         f"命中 {tautology} 处"
     )
+    finalization = (ROOT / REPLAY_FINALIZATION_FILE).read_text(encoding="utf-8")
+    finalization_production = production_text(finalization)
+    finalization_tests = finalization.split("#[cfg(test)]", 1)[-1]
+    check(
+        finalization_production.count("ReplayVerifier::verify(") == 1
+        and "ReplayVerifier::verify(event_log.events(), ledger)?;" in finalization_production
+        and all(f"fn {name}(" in finalization_tests for name in REPLAY_FINALIZATION_TEST_NAMES),
+        "报告统一出口传播 EventLog 重放失败，且有坏日志、账簿不一致和成功路径运行用例",
+        f"{REPLAY_FINALIZATION_FILE} 缺少唯一校验、`?` 传播或负向报告出口用例",
+    )
     for path in REPLAY_ENGINE_FILES:
         production = production_text((ROOT / path).read_text(encoding="utf-8"))
         check(
-            production.count("ReplayVerifier::verify(") == 1
-            and ENGINE_REPLAY_GATE_NEEDLE in production,
-            f"{path.split('/')[-1]} 的报告出口先过重放校验才返回，失败向上抛而不是就地吞掉",
-            f"生产侧调用 {production.count('ReplayVerifier::verify(')} 处（期望 1），"
-            f"且需原样出现 {ENGINE_REPLAY_GATE_NEEDLE}",
+            production.count("ReplayVerifier::verify(") == 0
+            and production.count(ENGINE_REPLAY_GATE_NEEDLE) == 1
+            and re.search(r"validate_before_return\([\s\S]*?\)\?;", production) is not None,
+            f"{path.split('/')[-1]} 的报告出口调用共享重放校验并用 `?` 传播失败",
+            f"ReplayVerifier 内联调用 {production.count('ReplayVerifier::verify(')} 处，"
+            f"共享报告出口 {production.count(ENGINE_REPLAY_GATE_NEEDLE)} 处",
         )
     artifact = (ROOT / REPLAY_ARTIFACT_FILE).read_text(encoding="utf-8")
     gate_at = artifact.find("ReplayVerifier::verify(")
@@ -3953,11 +4121,12 @@ def replay_kernel_check() -> None:
     )
     check(
         '"schema_version": BACKTEST_SUMMARY_SCHEMA_VERSION' in artifact
-        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 7" in artifact
+        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8" in artifact
+        and '"max_drawdown_raw": input.max_drawdown_raw.to_string()' in artifact
         and '"log_digest"' in artifact
         and '"ledger_entries"' in artifact
         and '"run_ledger_entries"' in artifact,
-        "摘要把重放做过的三件事写成人各自可核对的字段",
+        "v8 摘要写入重放证据和无损原始最大回撤金额",
         "replay 结论块缺键或 schema 版本回退",
     )
     depth = production_text((ROOT / REPLAY_ENGINE_FILES[1]).read_text(encoding="utf-8"))
@@ -3982,6 +4151,20 @@ def replay_kernel_check() -> None:
         "落盘侧三条用例钉住「该写的写了、两种坏事实源都拒落盘」",
         f"{REPLAY_CLI_TEST_FILE} 不再覆盖 Q62",
     )
+    queue_case_path = "crates/qx-xingban/src/orderbook_backtest/tests/queue_position.rs"
+    queue_cases = _text_or_empty(ROOT / queue_case_path)
+    queue_case_name = "fifo_queue_resets_missing_level_and_rebases_before_estimating_again"
+    check(
+        f"fn {queue_case_name}(" in queue_cases
+        and "for ts in [4, 5]" in queue_cases
+        and "displayed_reduction_raw, Some(0)" in queue_cases
+        and "estimated_volume_raw, Some(0)" in queue_cases
+        and "ExecutionAttemptReason::QueueBaselineUnavailable" in queue_cases
+        and "ExecutionAttemptReason::PartiallyFilled" in queue_cases
+        and "ExecutionAttemptReason::Filled" in queue_cases,
+        "L2 FIFO 队列回归覆盖深度不变、档位消失/重现后的重建与后续有效估算成交",
+        f"{queue_case_path} 缺少档位边界行为判据 {queue_case_name}",
+    )
     bar_cases = (ROOT / REPLAY_BAR_CASE_FILE).read_text(encoding="utf-8")
     check(
         bar_cases.count("fn assert_replay_matches(") == 1
@@ -3996,7 +4179,7 @@ def replay_kernel_check() -> None:
 # V11 Q66 / Q1b 第一批：产物声明的输入身份必须能被重算，且只有一处读、一处写。
 INPUT_PROV_ARTIFACT_FILE = "crates/qx-cli/src/backtests/artifacts.rs"
 INPUT_PROV_SINGLE_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
-INPUT_PROV_REPORT_FILE = "crates/qx-cli/src/report_command.rs"
+INPUT_PROV_REPORT_FILE = "crates/qx-cli/src/report_command/workflow.rs"
 INPUT_PROV_TEST_FILE = "crates/qx-cli/tests/unit/backtest_input_provenance.rs"
 # 这三条链各自解一遍帧就等于"声明的输入"与"重算的输入"各有自己的答案。
 INPUT_PROV_CHAIN_FILES = (
@@ -4310,14 +4493,20 @@ def backtest_assembly_check() -> None:
     service_batch_source = production_text(
         (ROOT / "crates/qx-service/src/backtest_bindings/strategy_batch.rs").read_text(encoding="utf-8")
     )
+    dataset_bundle_cli_source = production_text(
+        (ROOT / "crates/qx-cli/src/dataset_commands.rs").read_text(encoding="utf-8")
+    )
     bundle_manifest_reads = service_batch_source.count("std::fs::read_to_string(&bundle_path)")
+    bundle_snapshot_required = 'bundle.snapshots.get("bars").ok_or_else' in service_batch_source
     check(
         "strategy_batch_backtest_bindings(" in strategy_batch_source
         and "&config," in strategy_batch_source
         and "&manifest," in strategy_batch_source
-        and "bars.len()," in strategy_batch_source
+        and "&frame," in strategy_batch_source
+        and "bars_content_sha256" in strategy_batch_source
         and bundle_manifest_reads == 1
         and re.search(r"verify_dataset_bundle_bars\(\s*&bundle,", service_batch_source)
+        and 'bundle.snapshots.get("bars").ok_or_else' in service_batch_source
         and re.search(
             r"verify_dataset_bundle_component_bindings\(\s*&bundle,\s*&strategy_config\.strategy,\s*&strategy_id,",
             service_batch_source,
@@ -4326,9 +4515,71 @@ def backtest_assembly_check() -> None:
             r"qx_app::dataset_bundle::verify_dataset_bundle_components\(\s*bundle,",
             service_batch_source,
         )
-        and "verify_dataset_bundle_component_bindings(" not in strategy_batch_source,
-        "策略批回测在 service 只读取一份 DatasetBundle，再用同一快照校验 bars 与组件",
-        f"CLI service 委托={'有' if 'strategy_batch_backtest_bindings(' in strategy_batch_source else '无'} / bundle manifest 读取 {bundle_manifest_reads} 次 / 两项都校验同一 bundle={'有' if '&bundle' in service_batch_source else '无'}",
+        and "verify_dataset_bundle_component_bindings(" not in strategy_batch_source
+        and 'bundle.component("bars").is_some()' in dataset_bundle_cli_source
+        and "必须绑定 DatasetSnapshotV1" in dataset_bundle_cli_source,
+        "策略 Bar 回测与 DatasetBundle 持久化均要求 bars snapshot 并校验同一输入",
+        f"CLI service 委托={'有' if 'strategy_batch_backtest_bindings(' in strategy_batch_source else '无'} / BarFrame 与原始内容 SHA 传递={'有' if '&frame,' in strategy_batch_source and 'bars_content_sha256' in strategy_batch_source else '无'} / 执行 snapshot 必需={'有' if bundle_snapshot_required else '无'} / bundle manifest 读取 {bundle_manifest_reads} 次",
+    )
+    dataset_snapshot_source = production_text(
+        (ROOT / "crates/qx-data/src/dataset_snapshot.rs").read_text(encoding="utf-8")
+    )
+    multi_market_bar_source = production_text(
+        (ROOT / "crates/qx-app/src/cases/run_multi_market_manifest.rs").read_text(encoding="utf-8")
+    )
+    multi_market_depth_source = production_text(
+        (ROOT / "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs").read_text(encoding="utf-8")
+    )
+    multi_market_report_source = production_text(
+        (ROOT / "crates/qx-app/src/multi_market_report.rs").read_text(encoding="utf-8")
+    )
+    multi_market_report_inputs_source = production_text(
+        (ROOT / "crates/qx-app/src/multi_market_report/inputs.rs").read_text(encoding="utf-8")
+    )
+    replay_snapshot_consumers = sum(
+        source.count("snapshot.validate_for_replay(instrument)")
+        for source in (multi_market_report_source, multi_market_report_inputs_source)
+    )
+    check(
+        "pub fn validate_for_replay(&self, instrument: &str)" in dataset_snapshot_source
+        and "self.manifest.instrument != instrument" in dataset_snapshot_source
+        and "DatasetInstrumentRole::Unknown" in dataset_snapshot_source
+        and "duplicate_rows > 0" in dataset_snapshot_source
+        and "out_of_order_rows > 0" in dataset_snapshot_source
+        and "snapshot.validate_for_replay(&actual_instrument)" in multi_market_bar_source
+        and "snapshot.validate_for_replay(&frame.instrument.to_string())" in multi_market_depth_source
+        and replay_snapshot_consumers == 2,
+        "多市场 Bar/Depth 回放在创建及报告复核时校验提供的 snapshot 角色、标的和序列质量",
+        f"回放校验 API={'有' if 'pub fn validate_for_replay' in dataset_snapshot_source else '无'} / 报告消费者 {replay_snapshot_consumers}/2",
+    )
+    history_acquisition = (ROOT / "tools/acquire_binance_history.py").read_text(encoding="utf-8")
+    history_evidence = ROOT / "maturity/evidence/binance-spot-btcusdt-2017-2026-09.json"
+    history_schema = ROOT / "schemas/binance-history-acquisition-evidence-v1.json"
+    history_doc = (ROOT / "docs/binance-history-source-acceptance.md").read_text(encoding="utf-8")
+    history_registry = json.loads((ROOT / "maturity/schema-registry.json").read_text(encoding="utf-8"))
+    history_evidence_record = json.loads(history_evidence.read_text(encoding="utf-8"))
+    check(
+        "verify_checksum(checksum_bytes, archive_bytes, archive_name)" in history_acquisition
+        and "if year >= 2025:" in history_acquisition
+        and "open_time // 1000" in history_acquisition
+        and "if output.exists():" in history_acquisition
+        and "--expected-acquisition" in history_acquisition
+        and 'expected.get("snapshot_captured_at_ms")' in history_acquisition
+        and 'evidence["frame_sha256"] != expected.get("frame_sha256")' in history_acquisition
+        and history_evidence_record.get("archive_checksums_verified") is True
+        and history_evidence_record.get("dataset", {}).get("missing_intervals") == 0
+        and len(history_evidence_record.get("snapshot_file_sha256", "")) == 64
+        and history_evidence_record.get("license", {}).get("commercial_or_live_use_authorized") is False
+        and "CC BY-NC-SA 4.0" in history_doc
+        and "commercial/live use requires a separate written data license" in history_doc
+        and any(
+            entry.get("schema_id") == "binance-history-acquisition-evidence-v1"
+            and entry.get("path") == "schemas/binance-history-acquisition-evidence-v1.json"
+            for entry in history_registry.get("entries", [])
+        )
+        and history_schema.is_file(),
+        "R15 历史来源验收固定月度 SHA-256、时间单位迁移、连续覆盖及许可边界并登记证据",
+        "Binance 历史采集缺少来源哈希/复核保护、证据许可边界、注册 schema 或验收记录",
     )
     # 配置面三件套：schema 声明、`config validate` 覆盖、行为用例。少了任一件就是
     # "配置写着生效、没人校验"或"改了模型产物看不出来"，与 Q0c 同一判据。
@@ -4612,7 +4863,7 @@ EVENT_EVIDENCE_FILE = "crates/qx-cli/src/readiness.rs"
 EVENT_EVIDENCE_TEST_FILE = "crates/qx-cli/tests/unit/event_backtest_evidence.rs"
 # 研究快照的三个生产读点：worker 侧 Python/builtin 契约、native 合约读侧、API 就绪判定。
 EVENT_EVIDENCE_READERS = (
-    "crates/qx-cli/src/strategy_binding.rs",
+    "crates/qx-cli/src/strategy_binding/contract_input.rs",
     "crates/qx-cli/src/strategy_contract.rs",
     EVENT_EVIDENCE_FILE,
 )
@@ -5414,7 +5665,7 @@ FACTOR_LIB_FILE = "crates/qx-factor/src/lib.rs"
 # 真的把快照 JSON 解析进生产路径的三处装配。
 FACTOR_SNAPSHOT_PARSE_FILES = (
     "crates/qx-cli/src/readiness.rs",
-    "crates/qx-cli/src/strategy_binding.rs",
+    "crates/qx-cli/src/strategy_binding/contract_input.rs",
     "crates/qx-cli/src/strategy_contract.rs",
 )
 # 读侧的全部生产读者（含只带 context 进来的运行时闸门）。
@@ -5596,9 +5847,20 @@ def scheduler_retry_honesty_check() -> None:
         "deploy/README.md 的 Scheduler 段落缺「不会自动重跑」或「结果码不进 `JobRun`」口径",
     )
     worker = production_text((ROOT / STRATEGY_WORKER_FILE).read_text(encoding="utf-8"))
+    strategy_outcome = production_text(
+        (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs").read_text(encoding="utf-8")
+    )
+    prepared_finalize = production_text(
+        (ROOT / "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs").read_text(
+            encoding="utf-8"
+        )
+    )
     scheduler_owner = production_text((ROOT / "crates/qx-cli/src/scheduler.rs").read_text(encoding="utf-8"))
     check(
-        "".join(worker.split()).count(SCHEDULER_FINISH_CALL) == 2
+        worker.count("prepared_finalize::finalize_strategy_run(")
+        + strategy_outcome.count("prepared_finalize::finalize_strategy_run(")
+        == 3
+        and prepared_finalize.count("lifecycle::complete_strategy_job_run(") == 1
         and "".join(scheduler_owner.split()).count(
             "finish_run_with_code(run_id,true,None,finished_ts)"
         ) == 1,
@@ -6048,7 +6310,7 @@ def api_lock_fail_closed_check() -> None:
 # 版本号有三处说法（Rust 常量 / 对外公布的契约文本 / Python 桥），必须同号，否则
 # "只接受契约声明的 const"这句话本身就是假话。公布的那份文本自 V12 审计第三遍起只有
 # `schemas/account-snapshot-v1.json` 一份——crate 里过去另手写了一份，两份的字段约束不一致。
-SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v3.json"
+SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v4.json"
 SNAPSHOT_CONTRACT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 # 两道版本闸门各守一个读入口（`from_json` 的稳定 JSON 与 `from_wire_json` 的 wire JSON）；
 # `validate()` 只做"这一份文档自洽吗"，不放闸门 —— 自洽的跨版本文档必须拿到"版本不受支持"
@@ -6230,29 +6492,45 @@ def ccxt_pipe_write_budget_check() -> None:
 
 
 def postgres_connect_budget_check() -> None:
-    """PostgreSQL 建池的握手必须有时间预算：否则一台接受 TCP 却不完成握手的库
-    （或挂起的 DNS）会让同步启动路径按存储后端逐个无限阻塞（V13 R2 第三十三遍 #263）。"""
+    """PostgreSQL 建连总 deadline 必须取消卡住的协议握手。"""
     raw = (ROOT / "crates/qx-storage/src/postgres.rs").read_text(encoding="utf-8")
     adoption = (ROOT / "crates/qx-storage/src/postgres/schema_adoption.rs").read_text(
         encoding="utf-8"
     )
+    connection = (ROOT / "crates/qx-storage/src/postgres/connection.rs").read_text(
+        encoding="utf-8"
+    )
     code = without_line_comments(raw)
     adoption_code = without_line_comments(adoption)
+    connection_code = without_line_comments(connection)
     check(
-        code.count(".connect_timeout(") + adoption_code.count(".connect_timeout(") == 2
-        and code.count("Client::connect(") + adoption_code.count("Client::connect(") == 0,
-        "PostgreSQL 建池走带 connect_timeout 的 Config::connect，握手不再无界阻塞",
-        f"connect_timeout 调用 {code.count('.connect_timeout(') + adoption_code.count('.connect_timeout(')}（期望 2：建池与显式认领均设界）、"
-        f"无界 Client::connect( 残留 {code.count('Client::connect(') + adoption_code.count('Client::connect(')}（期望 0）",
+        code.count("Client::connect(dsn, CONNECT_TIMEOUT)")
+        + adoption_code.count("Client::connect(dsn, CONNECT_TIMEOUT)")
+        == 2
+        and ".connect_timeout(timeout)" in connection_code
+        and "tokio::time::timeout(timeout, config.connect(connector))" in connection_code
+        and "PostgreSQL 建连总时限已到" in connection_code,
+        "PostgreSQL 建池和显式认领共用包住 socket/TLS/认证握手的取消式总 deadline",
+        "预期两个 bounded connect 调用、connect_timeout 与 tokio::time::timeout 包住同一个 Config.connect，并有明确超时错误",
     )
-    # 预算常量必须是正秒数：把它改成 0 或删掉，等于没设界。
+    # 总预算必须是正秒数：把它改成 0 或删掉，等于没设界。
     positive = re.search(
         r"const\s+CONNECT_TIMEOUT[^;]*?Duration::from_secs\(\s*([1-9]\d*)\s*\)\s*;", raw
     )
     check(
         positive is not None,
-        "握手预算常量是一个正的 Duration::from_secs(N)，不是 0/未定义",
+        "建连总预算常量是一个正的 Duration::from_secs(N)，不是 0/未定义",
         "未找到正的 CONNECT_TIMEOUT = ... Duration::from_secs(N)",
+    )
+    check(
+        "connect_deadline_cancels_a_stalled_postgres_startup_handshake" in connection
+        and "connect_deadline_cancels_a_stalled_tls_handshake" in connection
+        and "read_exact(&mut startup)" in connection
+        and "read_exact(&mut request)" in connection
+        and connection.count("Ok(0) => break true") >= 2
+        and connection.count("server.join().expect(\"join PostgreSQL stub\")") >= 2,
+        "本地 TCP 停滞 startup/TLS 握手回归验证 deadline 返回后连接 socket 已关闭",
+        "缺少接收启动包后停滞并确认客户端取消关闭 socket 的行为回归",
     )
 
 
@@ -6265,7 +6543,7 @@ def snapshot_contract_version_check() -> None:
         and all(protocol.count(needle) == 1 for needle in SNAPSHOT_VERSION_GATES)
         and protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK) == 0
         and protocol.count("self.header.schema_version == 0") == 1,
-        "当前版本与 legacy 下界各有单一声明，两个读入口只接受 v1..v2，validate 只做自洽体检",
+        "当前版本与 legacy 下界各有单一声明，两个读入口只接受 v1..v4，validate 只做自洽体检",
         f"常量 {len(SNAPSHOT_RUST_VERSION.findall(protocol))} 处、"
         f"范围闸门在位 {[protocol.count(needle) for needle in SNAPSHOT_VERSION_GATES]}（期望全为 1）、"
         f"validate 里的等值判断 {protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK)}（期望 0）",
@@ -6289,7 +6567,7 @@ def snapshot_contract_version_check() -> None:
         len(declared) == 1
         and repository == declared
         and bridge == list(range(1, declared[0] + 1)),
-        "Rust 当前版本、v3 公布契约与 Python 支持范围一致，Python 同时保留 v1/v2 读取",
+        "Rust 当前版本、v4 公布契约与 Python 支持范围一致，Python 同时保留 v1-v3 读取",
         f"Rust {declared} / 契约 {repository} / Python 支持 {bridge}",
     )
     # 公布的那份契约只能有仓库这一份文本：V12 审计第三遍发现 crate 里另手写了一份，
@@ -6297,7 +6575,7 @@ def snapshot_contract_version_check() -> None:
     # 而 deploy/README.md 宣称"同一份 schema"。手抄第二份的形态必须写不出来。
     code_only = without_line_comments(protocol)
     served_from_file = code_only.count(
-        'include_str!("../../../schemas/account-snapshot-v3.json")'
+        'include_str!("../../../schemas/account-snapshot-v4.json")'
     )
     check(
         served_from_file == 1 and not SNAPSHOT_SCHEMA_CONST.findall(code_only),
@@ -6471,9 +6749,11 @@ POSITION_CCXT_CASES = (
     "unreported_position_money_stays_unreported_and_zero_stays_zero",
 )
 POSITION_ROW_CASES = (
-    "ledger_fallback_position_row_leaves_uncomputed_money_absent",
+    "ledger_fallback_position_row_leaves_uncomputed_margin_absent",
     "venue_reported_row_keeps_reported_zero_and_unreported_absent",
 )
+POSITION_ROW_PNL_CASE_FILE = "crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs"
+POSITION_ROW_PNL_CASE = "realized_and_unrealized_pnl_are_projected_from_the_ledger"
 
 
 def position_money_honesty_check() -> None:
@@ -6568,9 +6848,20 @@ def position_money_honesty_check() -> None:
         f"凭空造数的位置 {fabricated_rows}",
     )
     check(
-        reader.count("unrealized_pnl_raw: None,") == 1 and reader.count("margin_raw: None,") == 1,
-        "读模型用 Ledger 自拼的那一行持仓承认自己算不出这两个钱字段",
-        "回退行又开始替交易所报数",
+        production_text(reader).count("unrealized_pnl_raw: None,") == 1
+        and production_text(reader).count("margin_raw: None,") == 1,
+        "读模型构造回退行时仍将未算 PnL 与保证金初始化为缺席，再由有证据的算点补值",
+        "回退行构造默认值不再是缺席",
+    )
+    position_pnl = reader[reader.find("fn project_position_unrealized_pnl(") :]
+    position_pnl = position_pnl[: position_pnl.find("/// The legacy account wire scalars")]
+    check(
+        "unrealized_pnl_exact(quantity, average_price, mark_price)" in position_pnl
+        and "settlement_currency" in position_pnl
+        and "to_raw_truncated(9)" in position_pnl
+        and "if position.unrealized_pnl_raw.is_some()" in position_pnl,
+        "持仓行只在交易所未报且规格/价格齐全、结算币种匹配时按冻结规格计算，精确值保留并投影兼容 raw",
+        "持仓行 PnL 算点丢失了来源优先级、冻结规格、币种检查或精确侧车",
     )
     check(
         position_fn.count('Some(value @ ("long" | "short"))') == 1
@@ -6584,7 +6875,7 @@ def position_money_honesty_check() -> None:
         "CCXT 持仓方向只认 long/short（大小写归一），缺失与连接器占位的 unknown 一律 fail-closed",
         "方向闸门又允许默认多头，或占位值被当成可接受输入",
     )
-    skip_at = position_fn.find("if contracts == 0 {")
+    skip_at = position_fn.find("if contracts == 0 && contracts_exact.is_zero() {")
     gate_at = position_fn.find("let side = match")
     check(
         0 <= skip_at < gate_at,
@@ -6621,21 +6912,24 @@ def position_money_honesty_check() -> None:
     )
     ccxt_cases = (ROOT / POSITION_CCXT_CASE_FILE).read_text(encoding="utf-8")
     reader_cases = (ROOT / SNAPSHOT_CLI_CASE_FILE).read_text(encoding="utf-8")
+    pnl_reader_cases = (ROOT / POSITION_ROW_PNL_CASE_FILE).read_text(encoding="utf-8")
     protocol_cases = case_source(SNAPSHOT_CORE_CASE_FILE)
     core_cases = (ROOT / POSITION_CORE_FILE).read_text(encoding="utf-8")
     runtime_cases = (ROOT / POSITION_RUNTIME_FILE).read_text(encoding="utf-8")
     check(
         all(f"fn {name}(" in ccxt_cases for name in POSITION_CCXT_CASES)
         and all(f"fn {name}(" in reader_cases for name in POSITION_ROW_CASES)
+        and f"fn {POSITION_ROW_PNL_CASE}(" in pnl_reader_cases
         and "fn unreported_position_money_is_not_hashed_as_zero(" in core_cases
         and "fn absent_venue_money_stays_absent_through_the_wire_folding(" in protocol_cases
         and "fn uncomputed_position_money_is_not_the_same_state_as_computed_zero("
         in protocol_cases
         and "fn default_position_row_reports_no_money(" in protocol_cases
         and "ETH/USDT:USDT.OKX" in runtime_cases,
-        "Q68 的八处行为用例在位（方向 fail-closed/平仓位跳过/钱字段未报/摘要区分/折算区分/行两态/默认行不报钱/落盘回读）",
+        "Q68 的持仓方向、未报/零/规格计算、摘要/折算/落盘与逐行投影行为用例均在位",
         f"缺 ccxt 用例 {[n for n in POSITION_CCXT_CASES if f'fn {n}(' not in ccxt_cases]}、"
-        f"缺读模型用例 {[n for n in POSITION_ROW_CASES if f'fn {n}(' not in reader_cases]}、"
+        f"缺读模型未报/计算用例 {[n for n in POSITION_ROW_CASES if f'fn {n}(' not in reader_cases]} / "
+        f"{POSITION_ROW_PNL_CASE if f'fn {POSITION_ROW_PNL_CASE}(' not in pnl_reader_cases else ''}、"
         f"缺内核摘要用例={'unreported_position_money_is_not_hashed_as_zero' not in core_cases}、"
         f"缺折算/行用例={[n for n in ('absent_venue_money_stays_absent_through_the_wire_folding', 'uncomputed_position_money_is_not_the_same_state_as_computed_zero', 'default_position_row_reports_no_money') if f'fn {n}(' not in protocol_cases]}、"
         f"缺落盘回读夹具={'ETH/USDT:USDT.OKX' not in runtime_cases}",
@@ -6653,7 +6947,7 @@ BINANCE_RECONCILE_FILE = "crates/qx-service/src/binance_reconcile_host.rs"
 BINANCE_RECONCILE_CLI_FILE = "crates/qx-cli/src/venue_runtime/binance_reconcile.rs"
 RECONCILE_REPORT_WRITER_FILE = "crates/qx-service/src/reconcile_report.rs"
 BINANCE_RECONCILE_HOST_FILE = "crates/qx-service/src/binance_reconcile_host.rs"
-RECONCILE_REPORT_FILE = "crates/qx-api/src/lib.rs"
+RECONCILE_REPORT_FILE = "crates/qx-runtime/src/reconcile.rs"
 RECONCILE_ROUND_CASE_FILE = "crates/qx-cli/tests/unit/ccxt_reconcile_round.rs"
 RECONCILE_DISCOVERY_CASE_FILE = "crates/qx-cli/tests/unit/worker_observability.rs"
 RECONCILE_COVERAGE_FIELDS = (
@@ -6699,11 +6993,12 @@ def reconcile_round_honesty_check() -> None:
     check(
         "pub fn run_binance_reconcile_worker<F>(" in binance_host
         and "run_polling_worker(&context, once, || {" in binance_host
-        and "fetch_and_reconcile()" in binance_host
+        and "fetch_remote_snapshot()" in binance_host
+        and "reconcile_remote(&remote_orders)" in binance_host
         and "qx_service::binance_reconcile_host::run_binance_reconcile_worker(" in binance_cli
         and "fetch_and_reconcile()" not in binance_cli
         and "run_polling_worker(" not in binance_cli,
-        "Binance 对账轮询、事实归约与健康状态由 qx-service 宿主拥有，CLI 仅装配凭据/连接器",
+        "Binance 快照读取、对账事实归约与健康状态由 qx-service 宿主拥有，CLI 仅装配凭据/连接器",
         "Binance 对账循环仍在 CLI，或服务入口未接通",
     )
     report_at = worker.find("persist_reconcile_report(ReconcileReportInput")
@@ -6882,24 +7177,33 @@ LEASE_EVENT_PIPELINE_FILE = "crates/qx-service/src/messaging_host.rs"
 LEASE_CASE_FILE = "crates/qx-cli/tests/unit/lease_clock_domain.rs"
 # 每个文件里"租约域调用必须带 lease_ 前缀参数"的紧化写法与它的毫秒旧写法。
 LEASE_CALL_SITES = (
-    ("crates/qx-cli/src/workers/strategy_worker.rs", ".available(lease_now)", ".available(now)"),
+    (
+        "crates/qx-cli/src/workers/strategy_worker.rs",
+        ".available_for_owner(lease_now,context.id(),MAX_JOBS_PER_POLL)",
+        ".available_for_owner(now,context.id(),MAX_JOBS_PER_POLL)",
+    ),
     (
         "crates/qx-cli/src/workers/strategy_worker.rs",
         ".claim(queued.run.run_id,&strategy_lease_owner,lease_now,strategy_job_lease_seconds)",
         ".claim(queued.run.run_id,context.id(),now,30)",
     ),
     (
-        "crates/qx-cli/src/workers/strategy_worker.rs",
-        ".ack_at(queued.run.run_id,&strategy_lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
+        "crates/qx-cli/src/workers/strategy_worker/job_recovery.rs",
+        ".ack_at(queued.run.run_id,lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
         ".ack_at(queued.run.run_id,context.id(),lease.fencing_token,now)",
     ),
     (
-        "crates/qx-cli/src/workers/strategy_worker.rs",
+        "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs",
+        ".ack_at(queued.run.run_id,lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
+        ".ack_at(queued.run.run_id,context.id(),lease.fencing_token,now)",
+    ),
+    (
+        "crates/qx-cli/src/workers/strategy_worker/commands.rs",
         ".claim_command(command.command_id,context.id(),lease_now,30)",
         ".claim_command(command.command_id,context.id(),now,30)",
     ),
     (
-        "crates/qx-cli/src/workers/strategy_worker.rs",
+        "crates/qx-cli/src/workers/strategy_worker/commands.rs",
         ".available_commands(lease_now)",
         ".available_commands(now)",
     ),
@@ -6920,8 +7224,8 @@ LEASE_CALL_SITES = (
     ),
     (
         "crates/qx-cli/src/venue_runtime/paper_submit.rs",
-        '.claim_command(command.command_id,"paper-execution",lease_now,30)',
-        '.claim_command(command.command_id,"paper-execution",now,30)',
+        ".claim_command(command.command_id,&owner,lease_now,30)",
+        ".claim_command(command.command_id,&owner,now,30)",
     ),
 )
 LEASE_ACK_PACKED = ".ack_command_at(command.command_id,{owner},lease.fencing_token,{now})"
@@ -6931,7 +7235,7 @@ LEASE_ACK_OWNERS = (
     ("crates/qx-service/src/paper_execution_host.rs", "context.id()", 2),
 )
 LEASE_ENQUEUE_SITES = (
-    ("crates/qx-cli/src/workers/strategy_worker.rs", 1),
+    ("crates/qx-cli/src/workers/strategy_worker/commands.rs", 1),
     ("crates/qx-service/src/spread_recovery_host.rs", 2),
     ("crates/qx-service/src/api_host.rs", 1),
     ("crates/qx-service/src/binance_execution_host.rs", 1),
@@ -7004,15 +7308,37 @@ def lease_clock_domain_check() -> None:
         if ok not in tight(path) or bad in tight(path)
     ]
     strategy_lease_code = tight(LEASE_WORKERS_FILE)
+    strategy_recovery_code = tight(
+        "crates/qx-cli/src/workers/strategy_worker/job_recovery.rs"
+    )
+    strategy_finalize_code = tight(
+        "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs"
+    )
+    strategy_submission_code = tight(
+        "crates/qx-cli/src/workers/strategy_worker/strategy_submission.rs"
+    )
+    strategy_outcome_code = tight(
+        "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs"
+    )
+    strategy_lifecycle_code = tight(
+        "crates/qx-cli/src/workers/strategy_worker/lifecycle.rs"
+    )
+    strategy_lease_surface = (
+        strategy_lease_code
+        + strategy_recovery_code
+        + strategy_finalize_code
+        + strategy_submission_code
+        + strategy_outcome_code
+        + strategy_lifecycle_code
+    )
     strategy_lease_requirements = (
-        "letstrategy_lease_owner=strategy_job_lease_owner(&registered_id);",
+        "letstrategy_lease_owner=strategy_job_lease_owner(&worker.id);",
         "letmutlease=matchqueue.claim(queued.run.run_id,&strategy_lease_owner,lease_now,strategy_job_lease_seconds)",
         "letfinalize_now=lease_clock(runtime_timestamp_ms());",
         "letevaluation_lease_now=lease_clock(runtime_timestamp_ms());",
-        "letcommit_lease_now=lease_clock(runtime_timestamp_ms());",
-        "letfailure_lease_now=lease_clock(runtime_timestamp_ms());",
-        "queue.claim(queued.run.run_id,&strategy_lease_owner,commit_lease_now,strategy_job_lease_seconds)",
-        "queue.ack_at(queued.run.run_id,&strategy_lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
+        "letfailure_lease_now=crate::lease_clock(crate::runtime_timestamp_ms());",
+        "queue.claim(queued.run.run_id,lease_owner,commit_lease_now,lease_seconds)",
+        "queue.ack_at(queued.run.run_id,lease_owner,lease.fencing_token,lease_clock(runtime_timestamp_ms()))",
         "ifstrategy_config.python_module.is_some(){Some(SandboxExecutionPolicy::from_env()?)}else{None}",
         "execution_policy.as_ref().is_some_and(SandboxExecutionPolicy::sandbox_enabled)",
         "strategy_config.python_timeout_ms.saturating_add(999)/1000",
@@ -7020,9 +7346,22 @@ def lease_clock_domain_check() -> None:
         ".saturating_add(60)",
         ".max(30)",
     )
-    if not all(term in strategy_lease_code for term in strategy_lease_requirements):
+    if not all(term in strategy_lease_surface for term in strategy_lease_requirements):
         bad_units.append(f"{LEASE_WORKERS_FILE}: 策略租约 owner、fresh-time claim/ack 或请求/E2B 启动预算断链")
-    if strategy_lease_code.count("queue.claim(queued.run.run_id,&strategy_lease_owner,") < 5:
+    strategy_execution_submit_claims = sum(
+        strategy_lease_surface.count(term)
+        for term in (
+            "queue.claim(queued.run.run_id,lease_owner,lease_clock(runtime_timestamp_ms()),lease_seconds)",
+            "queue.claim(queued.run.run_id,lease_owner,evaluation_lease_now,lease_seconds)",
+            "queue.claim(queued.run.run_id,lease_owner,commit_lease_now,lease_seconds)",
+            "queue.claim(queued.run.run_id,lease_owner,finalize_now,lease_seconds)",
+        )
+    )
+    if (
+        strategy_lease_surface.count("queue.claim(queued.run.run_id,&strategy_lease_owner,")
+        + strategy_execution_submit_claims
+        < 5
+    ):
         bad_units.append(f"{LEASE_WORKERS_FILE}: 策略 run 开始/恢复/执行/提交/失败各阶段没有逐段刷新 owner lease")
     scheduler_stale_lease_code = tight(LEASE_SCHEDULER_FILE)
     stale_lease_requirements = (
@@ -7045,7 +7384,7 @@ def lease_clock_domain_check() -> None:
         "QX_PYTHON_STRATEGY_SANDBOX_REQUIRED" in strategy_policy_code
         and "ifsandbox_required&&provider==StrategySandboxProvider::Local" in strategy_policy_code
         and "SandboxExecutionPolicy::from_env()?" in tight(
-            "crates/qx-cli/src/strategy_host.rs"
+            "crates/qx-cli/src/strategy_host/python_client.rs"
         )
         and strategy_worker_start >= 0
         and worker_host_start > strategy_worker_start,
@@ -7462,8 +7801,8 @@ def api_route_contract_check() -> None:
 
 
 # V11 S10 / T3：对外发布的那一份账户快照 JSON Schema，以及"契约说的"与三方实现是否同宽。
-SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v3.json"
-SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v3"
+SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v4.json"
+SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v4"
 SNAPSHOT_SCHEMA_CASE_FILE = "crates/qx-protocol/tests/snapshot_schema_contract.rs"
 SNAPSHOT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 SNAPSHOT_SCHEMA_CASES = (
@@ -7500,7 +7839,7 @@ CALENDAR_PYTHON_CASES = (
 def account_snapshot_schema_check() -> None:
     """账户快照的对外契约只有一份文本，且它承诺的每一格两侧都做得到（V11 S10 / T3）。
 
-    `schemas/account-snapshot-v3.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
+    `schemas/account-snapshot-v4.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
     文件多 `title` 与顶层 `additionalProperties`，双方又都漏掉写侧真实印出的八个钱字段，比对时
     没有谁是权威；读侧 `from_json` 只核对协议字符串与两处版本号是否自相矛盾，一份按别的版本
     自洽封存的文档会被当成 v1 收下，而对面 Python 的 `load_account_snapshot` 对同一份产物直接
@@ -7531,7 +7870,7 @@ def account_snapshot_schema_check() -> None:
     check(
         re.search(
             r"pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =\s*"
-            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v3\.json"\)',
+            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v4\.json"\)',
             protocol,
         )
         is not None
@@ -7547,12 +7886,34 @@ def account_snapshot_schema_check() -> None:
         f"required 越界 {sorted(set(schema['required']) - set(properties))}"
         f" / 缺钱字段 {[name for name in SNAPSHOT_SCALARS if name not in properties]}",
     )
+    diagnostic = properties.get("equity_diagnostic", {})
+    diagnostic_reasons = {
+        reason
+        for branch in diagnostic.get("oneOf", [])
+        for reason in branch.get("properties", {}).get("reason", {}).get("enum", [])
+    }
+    check(
+        supported == 4
+        and "equity_diagnostic" in schema["required"]
+        and diagnostic_reasons
+        == {
+            "missing_mark_prices",
+            "exchange_balance_includes_spot_positions",
+            "unsupported_portfolio_valuation",
+            "arithmetic_overflow",
+        }
+        and "equity_diagnostic" in protocol
+        and "equity_diagnostic" in (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
+        and "account_missing_mark_instruments" in (ROOT / "crates/qx-service/src/api_read_model.rs").read_text(encoding="utf-8"),
+        "v4 requires a typed null-equity diagnostic across Rust, service, schema, and Python",
+        f"version={supported} / required={schema['required']} / reasons={sorted(diagnostic_reasons)}",
+    )
     check(
         set(emitted) <= set(properties)
-        and (set(properties) - set(emitted)) <= {"fees_by_currency_raw", "cash_exact"}
+        and (set(properties) - set(emitted)) <= {"fees_by_currency_raw", "cash_exact", "equity_diagnostic"}
         and "fees_by_currency_raw" not in schema["required"]
         and "cash_exact" not in schema["required"],
-        "v3 契约覆盖写侧字段；空手续费 map 与精确余额 map 可省略",
+        "v4 契约覆盖写侧字段；空手续费/精确余额 map 与 v1-v3 兼容诊断字段可省略",
         f"只在契约 {sorted(set(properties) - set(emitted))}"
         f" / 只在产物 {sorted(set(emitted) - set(properties))}",
     )
@@ -7591,7 +7952,7 @@ def account_snapshot_schema_check() -> None:
         f" / 协议名同源 {named}",
     )
     served = re.search(
-        r'\("GET", "/schema/account-snapshot-v3"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
+        r'\("GET", "/schema/account-snapshot-v4"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
         r"ACCOUNT_SNAPSHOT_JSON_SCHEMA\s*\)",
         endpoint,
     )
@@ -7601,7 +7962,7 @@ def account_snapshot_schema_check() -> None:
     listed = whitelist.group(1).strip() if whitelist else ""
     check(
         served is not None and SNAPSHOT_SCHEMA_ROUTE in listed,
-        "GET /schema/account-snapshot-v3 发出的就是这份常量，且客户端取契约不必带操作者凭据",
+        "GET /schema/account-snapshot-v4 发出的就是这份常量，且客户端取契约不必带操作者凭据",
         f"发出常量={served is not None} / 鉴权白名单 {listed}",
     )
     bridge = (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
@@ -7610,15 +7971,22 @@ def account_snapshot_schema_check() -> None:
     python_required = (
         sorted(re.findall(r'"([^"]+)"', required_block.group(1))) if required_block else []
     )
+    python_v4_diagnostic_required = re.search(
+        r'if value\["schema_version"\] == 4:.*?if "equity_diagnostic" not in value:',
+        bridge,
+        re.S,
+    ) is not None
     check(
         python_versions is not None
         and supported is not None
         and [int(item.strip()) for item in python_versions.group(1).split(",") if item.strip()]
         == list(range(1, supported + 1))
-        and python_required == sorted(schema["required"]),
-        "对面 Python 的快照读侧与契约同宽：支持声明过的 v1/v2 并要求同一组必填键",
+        and python_required == sorted(set(schema["required"]) - {"equity_diagnostic"})
+        and python_v4_diagnostic_required,
+        "对面 Python 的快照读侧与契约同宽：支持 v1-v4，v4 单独要求诊断键",
         f"Python 版本 {python_versions.group(1) if python_versions else None} vs 1..={supported}"
-        f" / 必填差 {sorted(set(python_required) ^ set(schema['required']))}",
+        f" / 必填差 {sorted(set(python_required) ^ (set(schema['required']) - {'equity_diagnostic'}))}"
+        f" / v4 条件必填={python_v4_diagnostic_required}",
     )
     cases = (ROOT / SNAPSHOT_SCHEMA_CASE_FILE).read_text(encoding="utf-8")
     missing_cases = [name for name in SNAPSHOT_SCHEMA_CASES if f"fn {name}()" not in cases]
@@ -7759,6 +8127,10 @@ def c_abi_header_check() -> None:
     rust = (ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8")
     strategy_core = (ROOT / "crates/qx-strategy/src/lib.rs").read_text(encoding="utf-8")
     strategy_contract = (ROOT / "crates/qx-strategy/src/contract.rs").read_text(encoding="utf-8")
+    cpp_sample = (ROOT / "cpp/examples/momentum_strategy.cpp").read_text(encoding="utf-8")
+    required_capability_schema = json.loads(
+        (ROOT / "schemas/c-strategy-required-capabilities-v1.json").read_text(encoding="utf-8")
+    )
 
     def to_camel(name: str) -> str:
         # 只有 `vtable` 一段的惯用大小写不是首字母大写（Rust 侧写作 VTable）。
@@ -7990,6 +8362,27 @@ def c_abi_header_check() -> None:
         "C ABI v2 双侧版本相等，数组容量与插件返回字符串长度均在解引用前受上限约束",
         f"ABI 版本 头 {header_abi_version and header_abi_version.group(1)} / Rust {rust_abi_version and rust_abi_version.group(1)}；"
         "并核对 len≤capacity、intent 数量上限、四个返回字符串长度字段和字符串字节上限",
+    )
+    declaration_loader = rust.split("let required_capabilities_declaration =", 1)[-1].split(
+        "let mut inner = CAbiStrategy::from_vtable", 1
+    )[0]
+    declaration_schema_fields = set(required_capability_schema.get("properties", {}))
+    check(
+        "qx_strategy_required_capabilities_v1" in header
+        and 'b"qx_strategy_required_capabilities_v1\\0"' in rust
+        and "read_declared_required_capabilities" in declaration_loader
+        and "MAX_REQUIRED_CAPABILITIES_BYTES" in rust
+        and "declaration.validate_required_capabilities_against_host(&host_capabilities)?" in declaration_loader
+        and "StrategyRequiredCapabilitiesV1" in rust
+        and {"schema_version", "required_capabilities"} <= declaration_schema_fields
+        and "qx_strategy_required_capabilities_v1" in cpp_sample
+        and "order_status_updates" in cpp_sample
+        and "fill_updates" in cpp_sample
+        and "durable_checkpoint" in cpp_sample
+        and rust.index("declaration.validate_required_capabilities_against_host(&host_capabilities)?")
+        < rust.index("let mut inner = CAbiStrategy::from_vtable"),
+        "optional C ABI strategy requirements use a bounded versioned declaration and fail before plugin construction",
+        "C ABI required-capabilities symbol/schema/sample or pre-constructor validation is incomplete",
     )
     check(
         "#define QX_STRATEGY_EXPORT __declspec(dllexport)" in header
@@ -8250,8 +8643,9 @@ def backtest_account_base_check() -> None:
         summary.count(SUMMARY_ACCOUNT_BLOCK) == 1
         and summary.count("input.account_base.cash.raw()") == 1
         and '"schema_version": BACKTEST_SUMMARY_SCHEMA_VERSION' in summary
-        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 7" in summary,
-        "摘要以 v7 保留 account 块并扩展风险比率/RunRecord/A 股分析及逐单执行记录，期初本金仍取自真正记账的那一份（V11 Q72）",
+        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8" in summary
+        and '"max_drawdown_raw": input.max_drawdown_raw.to_string()' in summary,
+        "摘要以 v8 保留 account 块并扩展风险比率/RunRecord/A 股分析/逐单执行记录和原始最大回撤金额，期初本金仍取自真正记账的那一份",
         f"来源格 {summary.count(SUMMARY_ACCOUNT_BLOCK)} / 本金格 {summary.count('input.account_base.cash.raw()')}",
     )
     # 4. 配置面：省略时序列化字节不变，已 bless 的 config_fingerprint 才不会集体失真。
@@ -8419,8 +8813,8 @@ def account_principal_single_source_check() -> None:
 # === V12 R1：读模型对"摘要里到底有没有这一格"的单一读法 ===
 REPORT_READOUT_MODULE = "crates/qx-cli/src/report_readout.rs"
 REPORT_READOUT_COMMANDS = (
-    "crates/qx-cli/src/config_commands.rs",
-    "crates/qx-cli/src/report_command.rs",
+    "crates/qx-cli/src/config_commands/status.rs",
+    "crates/qx-cli/src/report_command/workflow.rs",
 )
 REPORT_READOUT_UNIT_CASES = "crates/qx-cli/tests/unit/report_readout.rs"
 REPORT_READOUT_CLI_CASES = "crates/qx-cli/tests/report_readout_honesty.rs"
@@ -8430,7 +8824,7 @@ READOUT_LINE_BUILDERS = ("report_readout_lines", "latest_backtest_readout_lines"
 READOUT_ABSENT_DECL = 'pub(crate) const READOUT_ABSENT: &str = "absent";'
 # 摘要格子的读法：只此一份。命令侧再出现 `summary.get(...)`/`summary.pointer(...)` 就是第二份真值。
 READOUT_DIRECT_ACCESS = re.compile(r"summary\s*\.\s*(?:get|pointer)\s*\(")
-READOUT_BLOCK_SINCE = re.compile(r'\("(\w+)",\s*(\d+)\)')
+READOUT_BLOCK_SINCE = re.compile(r'\("([\w.]+)",\s*(\d+)\)')
 WRITER_SCHEMA_VERSION = re.compile(r'"schema_version":\s*(\d+)')
 READOUT_UNIT_TESTS = (
     "absent_keys_print_absent_while_declared_zero_still_prints_zero",
@@ -8872,7 +9266,7 @@ def backtest_track_check() -> None:
     ③ 记录由脚本生成，且脚本**真的**做了两件事——同目录重跑与两个独立目录比对。只写一份
        "看起来通过"的记录不算：`compare_reruns` / `compare_independent` / `one_leg` 三个函数
        都得在盘（少一个，"确定性"这句话就没人验）；
-    ④ 记录里的 `result_hash` 是 16 位十六进制，四类产物摘要齐全；
+    ④ 记录里的 `result_hash` 是 16 位十六进制，五类产物摘要齐全，运行 EvidenceBundle 已离线验证；
     ⑤ **回测轨不得越界替实盘作保**：记录里不出现任何 venue 名称（binance/okx/ccxt/testnet），
        且 `capabilities.yaml` 里那两档仍全为 false——回测轨的存在没有把实盘轨的禁令松开；
     ⑥ 行为用例在盘（`crates/qx-cli/tests/backtest_acceptance_determinism.rs` 的两条）。
@@ -8928,7 +9322,7 @@ def backtest_track_check() -> None:
     )
     ashare_result_hash = re.search(r"^result_hash:\s*(\S+)\s*$", ashare_record, re.M)
     ashare_artifact_kinds = re.findall(
-        r"^  (equity|fills|run_manifest|summary):\s*([0-9a-f]{64})\s*$",
+        r"^  (equity|evidence|fills|run_manifest|summary):\s*([0-9a-f]{64})\s*$",
         ashare_record,
         re.M,
     )
@@ -8946,7 +9340,7 @@ def backtest_track_check() -> None:
         and ashare_result_hash is not None
         and re.fullmatch(r"[0-9a-f]{16}", ashare_result_hash.group(1)) is not None
         and sorted(kind for kind, _ in ashare_artifact_kinds)
-        == ["equity", "fills", "run_manifest", "summary"]
+        == ["equity", "evidence", "fills", "run_manifest", "summary"]
         and all(
             marker in script
             for marker in (
@@ -8956,16 +9350,16 @@ def backtest_track_check() -> None:
                 '"ashare-b"',
             )
         ),
-        "A 股示例回测记录来自重复运行验收，含凭据/网络/订单/replay 声明及四份产物摘要",
+        "A 股示例回测记录来自重复运行验收，含凭据/网络/订单/replay 声明及EvidenceBundle 五份产物摘要",
         f"缺 {ASHARE_EXAMPLE_BACKTEST_ACCEPTANCE_RECORD} 或记录/验收脚本事实不完整",
     )
     result_hash = re.search(r"^result_hash:\s*(\S+)\s*$", record, re.M)
-    artifact_kinds = re.findall(r"^  (equity|fills|run_manifest|summary):\s*([0-9a-f]{64})\s*$", record, re.M)
+    artifact_kinds = re.findall(r"^  (equity|evidence|fills|run_manifest|summary):\s*([0-9a-f]{64})\s*$", record, re.M)
     check(
         result_hash is not None
         and re.fullmatch(r"[0-9a-f]{16}", result_hash.group(1)) is not None
-        and sorted(kind for kind, _ in artifact_kinds) == ["equity", "fills", "run_manifest", "summary"],
-        "回测轨记录里的 result_hash 是 16 位十六进制，且四类产物摘要齐全",
+        and sorted(kind for kind, _ in artifact_kinds) == ["equity", "evidence", "fills", "run_manifest", "summary"],
+        "回测轨记录里的 result_hash 是 16 位十六进制，且五类产物摘要齐全（含 EvidenceBundle）",
         f"result_hash={result_hash.group(1) if result_hash else None}，产物 {sorted(k for k, _ in artifact_kinds)}",
     )
     # 先剥掉整行 `#` 注释再找 venue 名：记录头部的说明文字本来就要提"实盘轨的证据在哪"，
@@ -9011,12 +9405,15 @@ BACKTEST_RECORD_FACTS = (
     "network_accessed: false",
     "orders_sent: false",
     "replay_verdict: verified",
+    "evidence_bundle_verified: true",
 )
 # 脚本里必须存在的两件事：同目录重跑、两个独立目录比对。
 BACKTEST_SCRIPT_MARKERS = (
     "def compare_reruns(",
     "def compare_independent(",
     "def one_leg(",
+    '"report", str(summary_path), "--evidence"',
+    '"evidence", "verify-run"',
 )
 
 
@@ -9110,6 +9507,9 @@ def ccxt_backtest_snapshot_ownership_check() -> None:
     service_builtin = _text_or_empty(
         ROOT / "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs"
     )
+    service_strategy_batch = _text_or_empty(
+        ROOT / "crates/qx-service/src/backtest_bindings/strategy_batch.rs"
+    )
     check(
         app.count("pub fn persist_ccxt_backtest_snapshot(") == 1
         and "manifest_from_bar_frame(" in app
@@ -9134,6 +9534,7 @@ def ccxt_backtest_snapshot_ownership_check() -> None:
         and "resolve_strategy_runtime_paths(" in service_builtin
         and "config.strategies.clear()" in service_builtin
         and "config.strategy.version = format!(\"builtin-{}-v1\", kind.name())" in service_builtin
+        and 'strategy.version = format!("builtin-{}-v1", kind.name());' in service_strategy_batch
         and "canonicalize()" in service_builtin
         and "qx_app::artifact_store::write_backtest_artifact(" in service_builtin
         and "read_bar_frame_for_backtest(" not in service_builtin,
@@ -10012,12 +10413,17 @@ def concept_registry_check() -> None:
     projections = [
         path.relative_to(ROOT).as_posix()
         for path in sources
+        if "pub fn bars(&self) -> Result<Vec<Bar>, FrameError>" in _read_text(path)
+    ]
+    infallible_projections = [
+        path.relative_to(ROOT).as_posix()
+        for path in sources
         if "impl From<&BarFrame> for Vec<Bar>" in _read_text(path)
     ]
     check(
-        projections == ["crates/qx-datastruct/src/lib.rs"],
-        "数据集列式 BarFrame 到引擎 Bar 只有一次投影定义",
-        f"投影实现于 {projections}",
+        projections == ["crates/qx-datastruct/src/lib.rs"] and not infallible_projections,
+        "数据集列式 BarFrame 到引擎 Bar 只有一次可失败投影定义",
+        f"可失败投影实现于 {projections} / 无错误投影实现于 {infallible_projections}",
     )
     # 被删掉的第二份持仓投影与其归约入口不得复活：它们既无风控预检也无 fail-closed 门禁。
     revived = {}
@@ -10077,6 +10483,7 @@ VENUE_FAMILY_CONSUMERS = (
     "crates/qx-service/src/ccxt_reconcile_host.rs",
     "crates/qx-service/src/ccxt_user_stream_host.rs",
     "crates/qx-service/src/exchange_gateway.rs",
+    "crates/qx-service/src/worker_market_spec.rs",
 )
 # 收拢之前这些写法各有 1–5 份抄本；现在它们是"另起第二份"的指纹，值 = 允许出现的那一处。
 # 指纹都带 `venue` 接收者：`environment` 等同名写法读的是另一个字段（如 scheduler 的
@@ -10431,6 +10838,9 @@ CONFIG_STRUCTS = (
     "OperatorConfig",
     "ApiRuntimeConfig",
     "ApiDataProviderRuntimeConfig",
+    "StrategyDeploymentNodeRuntimeConfig",
+    "StrategyDeploymentPublisherRuntimeConfig",
+    "StrategyCheckpointStateMigrationV1",
     # `api.console` 段（同源 BFF 控制台）与 API 面同属部署配置，同样 `deny_unknown_fields`。
     "ConsoleRuntimeConfig",
     "StorageRuntimeConfig",
@@ -10598,13 +11008,29 @@ def runtime_config_fail_closed_check() -> None:
         and "load_worker_market_spec_for_instrument(" in market_spec_validator
         and "pub fn load_worker_market_spec_for_instrument(" in service_market_spec
         and "qx_app::market_spec_from_value(instrument, &market)" in service_market_spec
+        and "fn live_execution_requires_role(" in service_market_spec
+        and "dataset_instrument_role" in service_market_spec
+        and "role.is_tradable()" in service_market_spec
+        and "role.is_compatible_with_product(spec.product)" in service_market_spec
+        and "DatasetInstrumentRoleCatalogV1" in service_market_spec
+        and "validate_for_instrument(" in service_market_spec
+        and "QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS" in service_market_spec
+        and "DatasetRoleTrustedKeyV1" in service_market_spec
+        and "pub struct DatasetInstrumentRoleCatalogV1" in (ROOT / "crates/qx-data/src/dataset_role_catalog.rs").read_text(encoding="utf-8")
+        and "UnparsedPublicKey::new(&ED25519, public_key)" in (ROOT / "crates/qx-data/src/dataset_role_catalog.rs").read_text(encoding="utf-8")
+        and '"dataset_instrument_role_catalog"' in (ROOT / "schemas/worker-market-spec-set-v1.json").read_text(encoding="utf-8")
+        and any(
+            entry.get("schema_id") == "dataset-instrument-role-catalog-v1"
+            and entry.get("path") == "schemas/dataset-instrument-role-catalog-v1.json"
+            for entry in json.loads((ROOT / "maturity/schema-registry.json").read_text(encoding="utf-8")).get("entries", [])
+        )
         and "load_worker_market_spec_for_instrument, validate_configured_market_specs," in cli_main
         and "pub(crate) fn load_worker_market_spec_for_instrument(" not in worker_runtime
         and "worker.symbols" in market_spec_validator
         and "runtime_reference_preflight_parses_market_specs_for_declared_worker_symbols"
         in market_spec_preflight,
-        "runtime-check 对已声明标的预检冻结 market spec 内容，而不只检查路径存在",
-        "worker market spec 尚未通过唯一加载器按 symbols 解析，或缺少有效/非法规格行为用例",
+        "runtime-check 与实时下单入口验签可信角色目录并拒绝缺失/不可交易/产品冲突角色",
+        "worker market spec 缺少可信角色目录验签，或角色拒绝未接入统一加载器与运行入口",
     )
     check(
         "validate_worker_market_specs(path, &worker)?;" in binance_start
@@ -10965,7 +11391,10 @@ def outbox_page_and_parked_check() -> None:
             text.count("pub fn available(&self, now: u64, limit: usize)") == 1
             for text in backends.values()
         )
-        and all(backends[rel].count(needle) == 1 for rel, needle in OUTBOX_PAGE_NEEDLES),
+        and all(
+            _fn_body(backends[rel], "pub fn available(").count(needle) == 1
+            for rel, needle in OUTBOX_PAGE_NEEDLES
+        ),
         "投递页数从 trait 一路绑到三本后端：每家的读各自带一份上界（V11 R7-d）",
         "少了任何一家，那一本后端的 pump 仍然每轮全库读 payload，而 relay 侧的 limit 参数照样"
         "传得出去、用例照样绿——只有点名到各家读的那一颗咬得住「预算落在哪一层」",
@@ -12468,6 +12897,49 @@ def multi_leg_honesty_check() -> None:
         "多腿归因及组合产物完整写侧由 qx-app artifact_store 持有，CLI 只调用并输出路径",
         f"应用序列化={artifact_store.count('serde_json::to_string_pretty(attribution)')} 处、CLI 重复产物适配={(CRATES / 'qx-cli/src/backtests/multi_artifacts.rs').exists()}",
     )
+    lifecycle_failures = (
+        CRATES / "qx-app/tests/multi_leg_backtest/lifecycle_failures.rs"
+    ).read_text(encoding="utf-8")
+    lifecycle_host = (
+        CRATES / "qx-app/src/cases/run_multi_leg_backtest.rs"
+    ).read_text(encoding="utf-8")
+    check(
+        "strategy_lifecycle_failures_stop_cleanly_without_publishing_partial_artifacts" in lifecycle_failures
+        and all(f"FailurePoint::{point}" in lifecycle_failures for point in ("Init", "Start", "Event", "Stop"))
+        and "calls.stops.load(Ordering::SeqCst), 1" in lifecycle_failures
+        and "on_init failure" in lifecycle_failures
+        and "on_stop 也失败" in lifecycle_failures
+        and "!output.exists()" in lifecycle_failures,
+        "多腿策略 on_init/on_start/on_event/on_stop 故障矩阵验证 stop 清理及半成品不发布",
+        "缺少生产多腿策略生命周期失败注入判据或断言未覆盖错误退出后的清理/产物边界",
+    )
+    check(
+        "if let Err(init_error) = strategy_adapter.initialize()" in lifecycle_host
+        and "strategy_adapter.strategy.on_stop().err()" in lifecycle_host
+        and "on_stop 也失败" in lifecycle_host,
+        "多腿策略 on_init 失败仍调用 on_stop，且同时保留初始化与清理诊断",
+        "策略初始化错误路径没有执行 on_stop 清理或丢失双重错误诊断",
+    )
+    check(
+        "cancellation_waits_for_callback_then_stops_without_publishing_artifacts" in lifecycle_failures
+        and "handle.cancel()" in lifecycle_failures
+        and "qx_app::RunStatus::Cancelled" in lifecycle_failures
+        and "qx_app::RunEventKind::CancellationRequested" in lifecycle_failures
+        and "qx_app::RunEventKind::Cancelled" in lifecycle_failures,
+        "多腿策略协作取消须等待在途 callback、运行 on_stop、发布取消事件且不产出部分报告",
+        "缺少策略回调期间请求取消的端到端行为用例或取消终态/事件/产物断言",
+    )
+    publication_recovery = (
+        CRATES / "qx-app/tests/multi_leg_backtest.rs"
+    ).read_text(encoding="utf-8")
+    check(
+        "simulate an interrupted publication after manifest commit" in publication_recovery
+        and "recover missing artifact" in publication_recovery
+        and "recovered manifest remains byte-identical" in publication_recovery
+        and "missing artifact is republished" in publication_recovery,
+        "多腿 RunManifest 已提交而归因报告缺失时，重跑须恢复报告且保持身份字节一致",
+        "缺少多腿两阶段发布中断恢复的端到端行为判据",
+    )
 
 
 # V11 Q54：产品规格（market spec）的读法必须只有一处。回测链曾经只认 CCXT 归一化形状，
@@ -12762,6 +13234,9 @@ def market_spec_source_check() -> None:
         return cases[start:] if end < 0 else cases[start:end]
 
     helper = case_slice("fn published_spec_source(")
+    identity_case = case_slice(
+        "fn changed_market_spec_in_the_same_runtime_gets_a_distinct_run_artifact("
+    )
     strategy_case = case_slice("fn each_market_spec_shape_publishes_its_own_source_label(")
     depth_case = case_slice("fn the_depth_chain_publishes_the_shape_it_actually_read(")
     check(
@@ -12785,6 +13260,33 @@ def market_spec_source_check() -> None:
         ),
         "两条写来源的链各有经过真实入口、逐档核对产物标签的行为用例（V11 Q63 证据）",
         f"{MARKET_SPEC_TEST_FILE} 不再覆盖来源标签",
+    )
+    check(
+        '"market_spec": input.market_spec' in (
+            CRATES / "qx-app/src/strategy_backtest_identity.rs"
+        ).read_text(encoding="utf-8")
+        and 'market["valid_to"]' in identity_case
+        and '"run_id"]' in identity_case
+        and '"model_fingerprint"]' in identity_case
+        and 'summaries[0]["result_hash"]' in identity_case,
+        "无效期内不变的市场规则仍绑定 run_id，且不冒充执行模型指纹",
+        "市场规格内容身份未通过不影响结果的真实回测样例锁定",
+    )
+    product_shape_samples = []
+    for manifest_path in (ROOT / "deploy/data/qianxing-product-shaped-backtest").rglob(
+        "*.run.json"
+    ):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            manifest.get("instrument_spec_version") == "product-market-spec-v1"
+            and manifest.get("result_hash")
+            and manifest.get("input_components", {}).get("bars")
+        ):
+            product_shape_samples.append(manifest_path)
+    check(
+        product_shape_samples,
+        "跟踪的产品形状市场规格样例经真实策略回测入口写入运行清单",
+        "deploy/data/qianxing-product-shaped-backtest 缺少带真实输入身份和结果哈希的 product-market-spec-v1 运行清单",
     )
 
 
@@ -13095,9 +13597,23 @@ def deploy_template_coverage_check() -> None:
         "覆盖用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）",
         f"挂载={('mod deploy_template_coverage;' in mounted)}，在册用例 {len(fns)}/3",
     )
-    refused = re.findall(
-        r'"([\w.\-]+\.json)",\s*Reader::\w+,[\s\S]{0,400}?Expected::Refuses', body
+    entry_matches = list(
+        re.finditer(r'"([\w.\-]+\.json)",\s*Reader::\w+', body)
     )
+    refused = [
+        match.group(1)
+        for index, match in enumerate(entry_matches)
+        if re.search(
+            r"Expected::Refuses",
+            body[
+                match.start() : (
+                    entry_matches[index + 1].start()
+                    if index + 1 < len(entry_matches)
+                    else len(body)
+                )
+            ],
+        )
+    ]
     ok_count = expected.count("Ok")
     check(
         len(refused) + ok_count == len(entries),
@@ -13137,10 +13653,10 @@ SUBMIT_TERMINAL_ENTRIES = {
 ACCEPTED_BIND = "let accepted = accepted_result"
 TERMINAL_WRITEBACK = ".transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))"
 SUBMIT_ACCEPT_CALL = "plane.submit_as("
-# Accepted 之后、动作值之前仍在册的队列管线退出点。它们与动作失败不同：入队或领取失败时命令
-# 可能已被常驻 worker 领走，把它写成 Failed 会覆盖别人的裁决，所以收口口径要单独定（#273 残口）。
+# Accepted 之后、动作值之前仍在册的入队退出点。写队列失败时保留 Accepted，由 Paper Execution
+# worker 在存储恢复后从控制面待办重建队列；租约冲突则移交真实 owner，不能伪造 Failed（#273）。
 QUEUE_ESCAPES_AFTER_ACCEPTED = {
-    "Paper": ("enqueue_command", "claim_command"),
+    "Paper": ("enqueue_command",),
     "Shared": (),
 }
 # 队列确认只按「领到过租约」计，不按裁决计：裁决为 Failed 时同样要 ack，否则条目要等租约过期才出队。
@@ -13158,6 +13674,9 @@ TERMINAL_STATE_CASE_FILE = "crates/qx-cli/tests/unit/paper_submit_terminal_state
 TERMINAL_STATE_CASE_FNS = (
     "paper_submit_order_without_market_quote_terminates_and_acks_the_queue",
     "paper_submit_order_with_market_quote_still_reaches_executed",
+    "paper_one_shot_defers_to_a_resident_worker_lease_without_changing_control_state",
+    "paper_submit_enqueue_failure_preserves_accepted_command_for_worker_recovery",
+    "paper_worker_requeues_an_accepted_command_missing_from_the_queue",
     "paper_execution_worker_terminates_a_quote_less_command_and_keeps_running",
 )
 SUBMIT_ENTRY_FILES = {
@@ -13283,18 +13802,55 @@ def submit_terminal_state_check() -> None:
             escape_gap.append(f"{label} 在册退出点 {name} 已经没有 `?`，登记该删")
     check(
         not escape_gap,
-        "Accepted 之后的 `?` 退出只允许在册的那几处队列管线调用（新增或修好都要当场改登记）",
+        "Accepted 之后的 `?` 退出只允许在册的队列入队调用（新增或修好都要当场改登记）",
         "; ".join(escape_gap),
     )
+    paper_submit = _code_body(
+        SUBMIT_TERMINAL_ENTRIES["Paper"][0], SUBMIT_TERMINAL_ENTRIES["Paper"][1]
+    )
+    check(
+        "paper-submit-once-{}-{now}" in paper_submit
+        and "std::process::id()" in paper_submit
+        and _squeezed("claim_command(command.command_id, &owner")
+        in _collapsed_code(paper_submit)
+        and "&owner" in _collapsed_code(paper_submit).split(_squeezed(QUEUE_ACK_CALL), 1)[-1],
+        "Paper one-shot 使用独立进程租约 owner，claim 与 ack 复用同一身份",
+        "核对 owner 含进程 ID/提交时间且不会冒充常驻 worker",
+    )
+    check(
+        "StorageError::LeaseHeld" in paper_submit
+        and "正在持有租约的 worker" in paper_submit
+        and "paper_one_shot_defers_to_a_resident_worker_lease_without_changing_control_state" in _text_or_empty(
+            ROOT / TERMINAL_STATE_CASE_FILE
+        ),
+        "常驻 worker 已持有 Paper 命令时 one-shot 明确移交并保留 Accepted/租约",
+        "核对 LeaseHeld 分支与真实 CLI 回归",
+    )
+    lease_handoff = regions.get("Paper", "")
+    claim_start = lease_handoff.find("let lease = match queue.claim_command(")
+    action_start = lease_handoff.find("let action =", claim_start + 1)
+    claim_disposition = (
+        lease_handoff[claim_start:action_start]
+        if claim_start >= 0 and action_start > claim_start
+        else ""
+    )
+    early_regions = dict(regions)
+    if claim_disposition:
+        early_regions["Paper"] = lease_handoff[:claim_start] + lease_handoff[action_start:]
     early = {
         label: len(RETURN_RE.findall(region))
-        for label, region in sorted(regions.items())
+        for label, region in sorted(early_regions.items())
         if RETURN_RE.search(region)
     }
     check(
-        not early,
-        "Accepted 之后到终态回写之间不得用 `return` 绕过回写",
-        f"这些入口里有提前返回: {early}",
+        not early
+        and "Err(qx_storage::StorageError::LeaseHeld" in claim_disposition
+        and "return Ok(())" in claim_disposition
+        and "return Err(" in claim_disposition
+        and "正在持有租约的 worker" in paper_submit
+        and "plane.execute" not in claim_disposition,
+        "Accepted 后只允许在 LeaseHeld 时移交给现有 owner，其余分支都必须写终态",
+        f"其它提前返回: {early}；claim disposition 是否完整: {bool(claim_disposition)}",
     )
     check(
         set(ack_paths) == {"Paper"}
@@ -13362,7 +13918,7 @@ def submit_terminal_state_check() -> None:
     missing = [name for name in TERMINAL_STATE_CASE_FNS if f"fn {name}()" not in case_text]
     check(
         "mod paper_submit_terminal_state;" in mounted and not missing,
-        "缺行情终态用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）",
+        "Paper 提交终态、租约移交和队列恢复用例均在位且模块已挂载（半挂载会静默失效）",
         f"挂载={('mod paper_submit_terminal_state;' in mounted)}，缺的用例: {missing}",
     )
 
@@ -13939,6 +14495,8 @@ def storage_schema_bootstrap_check() -> None:
     )
     sqlite_v2 = _text_or_empty(ROOT / "crates/qx-storage/migrations/sqlite/0002_schema.sql")
     postgres_v2 = _text_or_empty(ROOT / "crates/qx-storage/migrations/postgres/0002_schema.sql")
+    sqlite_v4 = _text_or_empty(ROOT / "crates/qx-storage/migrations/sqlite/0004_schema.sql")
+    postgres_v4 = _text_or_empty(ROOT / "crates/qx-storage/migrations/postgres/0004_schema.sql")
     migration_runtime = _text_or_empty(
         ROOT / "crates/qx-storage/tests/outbox_backend_semantics/schema_migrations.rs"
     )
@@ -13946,12 +14504,12 @@ def storage_schema_bootstrap_check() -> None:
         ROOT / "crates/qx-storage/src/postgres/schema_migrations.rs"
     )
     check(
-        "CURRENT_SCHEMA_VERSION: u32 = 2" in shared
+        "CURRENT_SCHEMA_VERSION: u32 = 4" in shared
         and '.parse::<u32>().expect("numeric schema version")' not in shared
         and "CREATE TABLE IF NOT EXISTS qx_schema_migrations" in shared
         and "pub(crate) fn validate_schema_versions(versions: &[String])" in shared
         and "pub(crate) fn pending_schema_versions(" in shared
-        and 'const MIGRATION_VERSIONS: [&str; 2] = ["1", "2"]' in shared
+        and 'const MIGRATION_VERSIONS: [&str; 4] = ["1", "2", "3", "4"]' in shared
         and "has_existing_schema_tables" in shared
         and "需先执行显式迁移" in shared
         and "不支持的存储 schema 版本" in shared
@@ -13966,7 +14524,7 @@ def storage_schema_bootstrap_check() -> None:
         and sqlite.count("INSERT INTO qx_schema_migrations(version, applied_ts)") == 3
         and postgres.count("INSERT INTO qx_schema_migrations(version, applied_ts)")
         + postgres_adoption.count("INSERT INTO qx_schema_migrations(version, applied_ts)")
-        == 3
+        == 4
         and "migration_plan_upgrades_v1_and_rejects_unknown_or_unversioned_data" in shared
         and "v1_schema_is_upgraded_transactionally_to_v2" in sqlite
         and "mod schema_migrations;" in _text_or_empty(
@@ -13982,10 +14540,17 @@ def storage_schema_bootstrap_check() -> None:
         in postgres_migration_runtime
         and 'include_str!("../migrations/sqlite/0001_schema.sql")' in shared
         and 'include_str!("../migrations/postgres/0001_schema.sql")' in shared
+        and 'include_str!("../migrations/sqlite/0004_schema.sql")' in shared
+        and 'include_str!("../migrations/postgres/0004_schema.sql")' in shared
         and "CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx" in sqlite_v2
         and "CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx" in postgres_v2
+        and "Reserved to keep the cross-backend schema migration sequence aligned" in sqlite_v4
+        and "CREATE TABLE IF NOT EXISTS qx_deployment_blobs" in postgres_v4
+        and "sha256 ~ '^[0-9a-f]{64}$'" in postgres_v4
+        and "octet_length(content) BETWEEN 1 AND 268435456" in postgres_v4
         and "for version in pending" in sqlite
         and "for version in pending" in postgres
+        and all(f'"{version}" =>' in sqlite and f'"{version}" =>' in postgres for version in ("3", "4"))
         and "transaction_with_behavior(TransactionBehavior::Immediate)" in sqlite
         and "transaction.commit().map_err(map_sqlite)?;" in sqlite
         and "let mut transaction = client.transaction().map_err(pg_error)?;" in postgres
@@ -14494,7 +15059,11 @@ def resource_lifecycle_and_lock_reentrancy_check() -> None:
         "监督器不在取用失败处就地 kill+wait：回收只有 stop_managed_children 那一处（按预算轮询 try_wait）",
         "第二份收尾实现回来了，而且带着一句可以停到天荒地老的无条件 wait",
     )
-    strategy_host = production_text((ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8"))
+    strategy_host = production_text(
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/process_client.rs").read_text(encoding="utf-8")
+    )
     ring_arguments = production_text(
         (ROOT / "crates/qx-orchestrator/src/strategy_worker.rs").read_text(encoding="utf-8")
     )
@@ -14530,6 +15099,33 @@ def resource_lifecycle_and_lock_reentrancy_check() -> None:
         "stop_strategy_process 回收，CLI 不得直接 wait。CLI 只能创建并持有一个"
         "StrategySharedRings，不得复制路径/清理逻辑。策略宿主若重新依赖 `use super::*;`，它会隐式绑定 CLI 根模块的"
         "全局导入。启动参数模块只应依赖传输类型、环容量和路径，不应继承整份宿主导入",
+    )
+
+
+def process_log_rotation_check() -> None:
+    """Supervised worker output is drained continuously into a bounded rotating sink."""
+    log_file = (ROOT / "crates/qx-orchestrator/src/process_logs.rs").read_text(encoding="utf-8")
+    logs = production_text(log_file)
+    supervisor = production_text((ROOT / "crates/qx-orchestrator/src/lib.rs").read_text(encoding="utf-8"))
+    deployment = production_text((ROOT / "crates/qx-orchestrator/src/strategy_deployment.rs").read_text(encoding="utf-8"))
+    reaper = production_text((ROOT / "crates/qx-orchestrator/src/reap.rs").read_text(encoding="utf-8"))
+    check(
+        "MAX_PROCESS_LOG_BYTES: u64 = 8 * 1024 * 1024" in logs
+        and "fs::rename(&path, &rotated)?" in logs
+        and "fs::remove_file(&rotated)" in logs
+        and "io::copy(&mut reader, &mut discard)" in logs
+        and "stdout(Stdio::piped())" in supervisor
+        and "stderr(Stdio::piped())" in supervisor
+        and supervisor.count("process_logs::pump(") == 2
+        and "stdout(Stdio::piped())" in deployment
+        and "stderr(Stdio::piped())" in deployment
+        and deployment.count("crate::process_logs::pump(") == 2
+        and "LOG_DRAIN_REAP_BUDGET: Duration = Duration::from_millis(500)" in reaper
+        and ".is_finished()" in reaper
+        and "output_rotation_keeps_only_the_latest_two_bounded_chunks" in log_file
+        and "pipe_pump_rotates_at_the_worker_log_limit" in log_file,
+        "受管 worker stdout/stderr 持续排空并限制为 8 MiB 当前文件 + 8 MiB 轮转副本",
+        "管道堵塞、无界日志写入或失控的日志收尾都可能让普通 worker 输出耗尽磁盘或卡住监督器",
     )
 
 
@@ -14702,7 +15298,7 @@ def baseline_freeze_check() -> None:
     )
 
 
-RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "python-wheels.yml"
 
 
 def release_supply_chain_check() -> None:
@@ -14736,6 +15332,80 @@ def release_supply_chain_check() -> None:
         not missing,
         "发布工作流覆盖 binary/wheel/SDK/SHA256/SBOM/provenance/Release 七件",
         f"缺 {missing}",
+    )
+    ci_workflow = ROOT / ".github" / "workflows" / "ci.yml"
+    ci_text = ci_workflow.read_text(encoding="utf-8") if ci_workflow.is_file() else ""
+    quality_job_start = re.search(r"(?m)^  quality-gates:\s*$", text)
+    quality_job_tail = text[quality_job_start.start() :] if quality_job_start else ""
+    quality_job_end = re.search(r"(?m)^  [a-z][a-z0-9_-]*:\s*$", quality_job_tail[1:])
+    quality_job = (
+        quality_job_tail[: quality_job_end.start() + 1]
+        if quality_job_end
+        else quality_job_tail
+    )
+    ci_reusable = re.search(r"(?m)^  workflow_call:\s*$", ci_text) is not None
+    release_producer_jobs = (
+        "binary",
+        "wheel",
+        "publish-python",
+        "cpp-sdk",
+        "web-console",
+        "sbom",
+        "release",
+    )
+    release_job_sections = {}
+    for job_name in release_producer_jobs:
+        job_start = re.search(rf"(?m)^  {re.escape(job_name)}:\s*$", text)
+        tail = text[job_start.start() :] if job_start else ""
+        next_job = re.search(r"(?m)^  [a-z][a-z0-9_-]*:\s*$", tail[1:])
+        release_job_sections[job_name] = (
+            tail[: next_job.start() + 1] if next_job else tail
+        )
+    rust_artifact_jobs = ("binary", "wheel", "sbom")
+    floating_rust_toolchain_jobs = [
+        name
+        for name in rust_artifact_jobs
+        if "uses: dtolnay/rust-toolchain@1.98.1" not in release_job_sections[name]
+    ]
+    check(
+        not floating_rust_toolchain_jobs,
+        "正式 Rust binary、Python wheel 与 SBOM 使用固定 Rust 1.98.1 构建工具链",
+        f"工具链未固定的发布 job={floating_rust_toolchain_jobs}",
+    )
+    wheel_job = release_job_sections["wheel"]
+    check(
+        "Verify wheel is byte-reproducible on this runner" in wheel_job
+        and "build_python_wheel.ps1" in wheel_job
+        and "bash tools/build_python_wheel.sh" in wheel_job
+        and "cmp -s" in wheel_job,
+        "每个 PyPI 平台构建重复 wheel 并逐字节比较后才上传",
+        "release wheel matrix must fail closed when a second native build differs",
+    )
+    ungated_jobs = [
+        name
+        for name, section in release_job_sections.items()
+        if "quality-gates" not in section
+    ]
+    check(
+        ci_workflow.is_file()
+        and ci_reusable
+        and "uses: ./.github/workflows/ci.yml" in quality_job
+        and not ungated_jobs,
+        "正式 tag 发布复用完整 CI，所有发布产出及 Release 均依赖门禁成功",
+        f"CI 可复用={ci_reusable}，"
+        f"quality job={bool(quality_job)}，未接门禁的 job={ungated_jobs}",
+    )
+    publish_job = release_job_sections["publish-python"]
+    pyproject = ROOT / "python" / "pyproject.toml"
+    pyproject_text = pyproject.read_text(encoding="utf-8") if pyproject.is_file() else ""
+    check(
+        "pypa/gh-action-pypi-publish@release/v1" in publish_job
+        and "id-token: write" in publish_job
+        and "PYPI_PUBLISH_ENABLED" not in text
+        and re.search(r"(?m)^\s*environment:", publish_job) is None
+        and re.search(r'(?m)^name = "qianxing"\s*$', pyproject_text) is not None,
+        "PyPI Trusted Publishing 与待发布配置一致：GitHub coeasy/qianxing、python-wheels.yml、环境 Any，且项目名为 qianxing",
+        "发布 job 缺 OIDC、仍受手工变量开关限制、带入不匹配的环境约束，或 PyPI 项目名不一致",
     )
     web_package = ROOT / "tools/package_web_console.py"
     web_package_test = ROOT / "python/tests/test_web_console_package.py"
@@ -14787,6 +15457,46 @@ def release_supply_chain_check() -> None:
         "tag 发布工作流打包 Web 控制台、为归档生成 provenance 并上传 web-console artifact",
         f"web-console job 片段不完整：{web_job[:240]!r}",
     )
+    cpp_job_start = re.search(r"(?m)^  cpp-sdk:\s*$", text)
+    cpp_job = ""
+    if cpp_job_start is not None:
+        cpp_job_tail = text[cpp_job_start.start() :]
+        next_job = re.search(r"(?m)^  [a-z][a-z0-9_-]*:\s*$", cpp_job_tail[1:])
+        cpp_job = cpp_job_tail[: next_job.start() + 1] if next_job is not None else cpp_job_tail
+    cpp_package = ROOT / "tools" / "package_cpp_sdk.py"
+    cpp_package_tests = ROOT / "python" / "tests" / "test_cpp_sdk_package.py"
+    cpp_package_source = cpp_package.read_text(encoding="utf-8") if cpp_package.is_file() else ""
+    cpp_package_test_source = (
+        cpp_package_tests.read_text(encoding="utf-8") if cpp_package_tests.is_file() else ""
+    )
+    cpp_package_cases = (
+        "test_archive_is_reproducible_and_normalizes_metadata",
+        "test_archive_refuses_output_inside_source_tree",
+        "test_archive_refuses_symlinks",
+    )
+    check(
+        cpp_package.is_file()
+        and all(
+            token in cpp_package_source
+            for token in (
+                "gzip.GzipFile",
+                "mtime=0",
+                "tarfile.GNU_FORMAT",
+                "info.uid = 0",
+                "info.gid = 0",
+                "followlinks=False",
+                "SDK archive refuses symlink",
+            )
+        )
+        and cpp_package_tests.is_file()
+        and all(token in cpp_package_test_source for token in cpp_package_cases)
+        and "tools/package_cpp_sdk.py" in cpp_job
+        and "tar -czf" not in cpp_job,
+        "C++ SDK 发布归档固定顺序/时间/所有者并拒绝链接，且由发布工作流与行为测试共用",
+        f"脚本存在={cpp_package.is_file()}，测试存在={cpp_package_tests.is_file()}，"
+        f"缺用例={[case for case in cpp_package_cases if case not in cpp_package_test_source]}，"
+        f"发布 job 使用打包器={'tools/package_cpp_sdk.py' in cpp_job}",
+    )
     release_start = re.search(r"(?m)^  release:\s*$", text)
     release_job = text[release_start.start() :] if release_start is not None else ""
     release_needs = re.search(r"(?m)^\s+needs:\s*\[([^\]]+)\]", release_job)
@@ -14814,6 +15524,14 @@ def release_supply_chain_check() -> None:
         not missing_identity,
         "发布身份文件登记了 baseline.artifact_identity 的全部字段",
         f"缺 {missing_identity}",
+    )
+    check(
+        '"maturity" / "schema-registry.json"' in release_job
+        and 'registry.get("registry_version")' in release_job
+        and '"schema_registry_version": registry_version' in release_job
+        and '"schema_registry_version": "1"' not in release_job,
+        "GitHub Release 身份从当前 SchemaRegistry 实例读取 registry_version",
+        "发布身份不得硬编码 SchemaRegistry 版本，且必须读取仓库 maturity/schema-registry.json",
     )
 
 
@@ -15393,17 +16111,19 @@ def adaptive_search_cost_neighborhood_capacity_check() -> None:
 
 def research_diagnostics_and_retry_check() -> None:
     experiment = ROOT / "crates/qx-app/src/cases/run_experiment.rs"
+    experiment_recovery = ROOT / "crates/qx-app/src/cases/run_experiment/recovery.rs"
     experiment_tests = ROOT / "crates/qx-app/tests/strategy_selection.rs"
     diagnostics = ROOT / "crates/qx-strategy/src/diagnostics.rs"
     strategy = ROOT / "crates/qx-strategy/src/lib.rs"
     research_console = ROOT / "web/console/app.js"
     experiment_source = experiment.read_text(encoding="utf-8") if experiment.is_file() else ""
+    experiment_recovery_source = experiment_recovery.read_text(encoding="utf-8") if experiment_recovery.is_file() else ""
     test_source = experiment_tests.read_text(encoding="utf-8") if experiment_tests.is_file() else ""
     diagnostic_source = diagnostics.read_text(encoding="utf-8") if diagnostics.is_file() else ""
     strategy_source = strategy.read_text(encoding="utf-8") if strategy.is_file() else ""
     research_console_source = research_console.read_text(encoding="utf-8") if research_console.is_file() else ""
     check(
-        "has_retryable_search_failures(&previous)" in experiment_source
+        "has_retryable_search_failures(&previous)" in experiment_recovery_source
         and "search-trial-0001.checkpoint.json" in test_source
         and "search-trial-0002.checkpoint.json" in test_source
         and "failed_search_candidate_and_cost_scenario_are_retried_on_resume" in test_source
@@ -15608,12 +16328,16 @@ def foundation_specs_check() -> None:
         "RunRecord 的写侧/读侧/反向验证链有断点，或旧 CLI re-export 孤儿重现",
     )
     run_evidence = (ROOT / "crates/qx-cli/src/run_evidence.rs").read_text(encoding="utf-8")
-    multi_market_evidence = (ROOT / "crates/qx-cli/src/run_evidence_multi_market_pack.rs").read_text(encoding="utf-8")
-    multi_depth_evidence = (ROOT / "crates/qx-cli/src/run_evidence_multi_market_depth.rs").read_text(encoding="utf-8")
+    multi_market_evidence = (
+        ROOT / "crates/qx-cli/src/run_evidence_multi_market_pack/assembly.rs"
+    ).read_text(encoding="utf-8")
+    multi_depth_evidence = (
+        ROOT / "crates/qx-cli/src/run_evidence_multi_market_depth/assembly.rs"
+    ).read_text(encoding="utf-8")
     check(
         app_evidence.count("EvidenceBundle::from_json(&payload)?") == 1
         and "pub fn serialize_verified_evidence_bundle" in app_evidence
-        and "persist_run_evidence_bundle(" in run_evidence
+        and "prepare_run_evidence_bundle(" in run_evidence
         and "serialize_verified_evidence_bundle" not in production_text(run_evidence)
         and all(
             "serialize_verified_evidence_bundle" in producer
@@ -15636,8 +16360,8 @@ def foundation_specs_check() -> None:
                 "run_evidence_fidelity_classification",
             )
         )
-        and "persist_run_evidence_bundle(" in cli_run_evidence
-        and "run_evidence_fidelity_classification(" in (ROOT / "crates/qx-cli/src/report_command.rs").read_text(encoding="utf-8")
+        and "prepare_run_evidence_bundle(" in cli_run_evidence
+        and "run_evidence_fidelity_classification(" in (ROOT / "crates/qx-cli/src/report_command/workflow.rs").read_text(encoding="utf-8")
         and "fn fidelity_classification(" not in cli_credibility,
         "EvidenceBundle 假设、未验证项与可信度投影由 qx-app 单源构造，report 与 EvidenceBundle 共用分类",
         "EvidenceBundle 应用读面重复在 CLI，或 report 与 bundle 的可信度字段口径分叉",
@@ -15650,7 +16374,7 @@ def foundation_specs_check() -> None:
         and "RunEvidenceRun {" in app_evidence_assembly
         and "RunEvidenceDataset {" in app_evidence_assembly
         and "RunEvidenceRecompute {" in app_evidence_assembly
-        and "persist_run_evidence_bundle(" in cli_run_evidence
+        and "prepare_run_evidence_bundle(" in cli_run_evidence
         and "prepare_run_evidence_assembly(" in cli_run_evidence
         and "let mut recompute_inputs" not in cli_run_evidence
         and "RunEvidenceAssembly {" not in cli_run_evidence
@@ -15776,9 +16500,18 @@ def foundation_specs_check() -> None:
     check(
         "pub(crate) fn plan_readout(" in plan_commands
         and "describe(&args.kind, &payload)" in plan_commands
+        and "fn plan_template(" in plan_commands
+        and ".create_new(true)" in plan_commands
+        and '"level": "L0"' in plan_commands
+        and '"sandbox_tested": false' in plan_commands
+        and '"production_approved": false' in plan_commands
+        and "FoundationKind::SchemaRegistry" in plan_commands
+        and "plan_templates_are_valid_safe_and_never_overwrite" in plan_commands
+        and "plan_template_refuses_to_fabricate_evidence" in plan_commands
+        and "plan_template_flag_parses_and_cannot_be_combined_with_json" in (ROOT / "crates/qx-cli/src/cli_args.rs").read_text(encoding="utf-8")
         and "plan <kind> <file>" in help_text,
-        "九类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
-        "地基对象只有进程内读入者、缺使用者可达的 CLI 入口",
+        "九类地基对象有统一严格读口，三类可生成安全占位模板且证据对象拒绝伪造",
+        "地基对象读入/模板生成/防覆盖/证据拒绝判据有断点",
     )
 
 
@@ -15796,8 +16529,9 @@ STRATEGY_INPUT_V6_SCHEMA = ROOT / "schemas" / "strategy-api-input-v6.json"
 STRATEGY_INPUT_V7_SCHEMA = ROOT / "schemas" / "strategy-api-input-v7.json"
 STRATEGY_INPUT_V8_SCHEMA = ROOT / "schemas" / "strategy-api-input-v8.json"
 STRATEGY_INPUT_V9_SCHEMA = ROOT / "schemas" / "strategy-api-input-v9.json"
+STRATEGY_INPUT_V10_SCHEMA = ROOT / "schemas" / "strategy-api-input-v10.json"
 STRATEGY_INPUT_SCHEMA_IDS = {
-    f"strategy-api-input-v{version}" for version in range(1, 10)
+    f"strategy-api-input-v{version}" for version in range(1, 11)
 }
 STRATEGY_INPUT_TEST = ROOT / "crates" / "qx-runtime" / "tests" / "strategy_contract_input_schema.rs"
 TARGETS_FILE = ROOT / "maturity" / "targets.yaml"
@@ -16013,6 +16747,8 @@ def strategy_input_schema_check() -> None:
     elif declared != int(strategy_api.group(1)):
         issues.append(f"schema_version.const={declared} 与 STRATEGY_API_VERSION={strategy_api.group(1)} 不一致")
     contract = (ROOT / "crates/qx-strategy/src/contract.rs").read_text(encoding="utf-8")
+    python_process = (ROOT / "python/qianxing_strategy/worker.py").read_text(encoding="utf-8")
+    cpp_process = (ROOT / "cpp/examples/jsonl_strategy.cpp").read_text(encoding="utf-8")
     if "STRATEGY_CONTRACT_SCHEMA_VERSION: u32 = STRATEGY_API_VERSION" not in contract:
         issues.append("contract.rs 的版本常量不再以 STRATEGY_API_VERSION 为单一来源")
     try:
@@ -16055,6 +16791,11 @@ def strategy_input_schema_check() -> None:
     except (OSError, ValueError) as error:
         input_v9 = {}
         issues.append(f"Strategy 输入 v9 Schema 缺失或无效: {error}")
+    try:
+        input_v10 = json.loads(STRATEGY_INPUT_V10_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        input_v10 = {}
+        issues.append(f"Strategy 输入 v10 Schema 缺失或无效: {error}")
     input_v2_version = re.search(
         r"STRATEGY_CONTRACT_INPUT_V2_SCHEMA_VERSION: u32 = (\d+);", contract
     )
@@ -16199,6 +16940,24 @@ def strategy_input_schema_check() -> None:
         )
     ):
         issues.append("Strategy 输入 v9 Schema 未严格声明精确现金/保证金，或错误要求 L2 盘口")
+    input_v10_version = re.search(
+        r"STRATEGY_CONTRACT_INPUT_V10_SCHEMA_VERSION: u32 = (\d+);", contract
+    )
+    v10_properties = input_v10.get("properties", {})
+    if (
+        input_v10.get("additionalProperties") is not False
+        or input_v10.get("$id") is None
+        or not input_v10_version
+        or v10_properties.get("schema_version", {}).get("const") != int(input_v10_version.group(1))
+        or v10_properties.get("strategy_checkpoint_sha256", {}).get("pattern") != "^[A-Fa-f0-9]{64}$"
+        or not {"strategy_checkpoint", "strategy_checkpoint_sha256"} <= set(input_v10.get("required", []))
+        or input_v10.get("allOf", [{}])[0].get("then", {}).get("properties", {}).get("strategy_checkpoint", {}).get("properties", {}).get("adapter_state", {}).get("properties", {}).get("state_mode", {}).get("const") != "external-process"
+        or "apply_external_process_checkpoint_digest" not in contract
+        or "encode_strategy_columnar_input" not in contract
+        or 'response["checkpoint_restore_ack"]' not in python_process
+        or 'response["checkpoint_restore_ack"]' not in cpp_process
+    ):
+        issues.append("Strategy 输入 v10 Schema 未严格绑定 external-process checkpoint 摘要或版本常量")
     check(not issues, "策略输入方向有严格 Schema，且版本与策略 API 单一来源一致", "；".join(issues))
     check(
         STRATEGY_INPUT_TEST.is_file(),
@@ -16278,7 +17037,8 @@ def strategy_input_schema_check() -> None:
         ("JSON schema v7", set(v7_properties), rust_v7),
         ("JSON schema v8", set(input_v8.get("properties", {})), rust_v1_v8["JSON schema v8"]),
         ("JSON schema v9", set(v9_properties), rust_input),
-        ("Python SDK", python_input, rust_input),
+        ("JSON schema v10", set(v10_properties), rust_input | {"strategy_checkpoint_sha256"}),
+        ("Python SDK", python_input - {"strategy_checkpoint_sha256"}, rust_input),
     ):
         check(
             group == expected,
@@ -16552,7 +17312,10 @@ def runtime_path_resolution_ownership_check() -> None:
             for name in account_currency_definitions
         )
         and reconcile_definitions == {
-            "load": ["crates/qx-service/src/api_read_model.rs"],
+            "load": [
+                "crates/qx-runtime/src/reconcile.rs",
+                "crates/qx-service/src/api_read_model.rs",
+            ],
             "apply": ["crates/qx-service/src/api_read_model.rs"],
             "query_models": ["crates/qx-service/src/api_read_model.rs"],
             "account_snapshot": ["crates/qx-service/src/api_read_model.rs"],
@@ -16591,6 +17354,7 @@ def runtime_path_resolution_ownership_check() -> None:
         and '"qx-service/postgres"' in _read_text(ROOT / "crates/qx-cli/Cargo.toml")
         and "qx_service::api_read_model" not in cli_api_text
         and "load_api_query_models(" in service_read_model_text
+        and "qx_runtime::load_reconcile_reports(root)" in service_read_model_text
         and "qx_service::api_read_model::load_reconcile_reports" not in cli_api_text
         and "apply_reconcile_reports(&mut snapshot, log_name, reports)" in service_read_model_text
         and "qx_service::api_read_model::apply_reconcile_reports" not in cli_api_text
@@ -16711,6 +17475,7 @@ INCREMENTAL_APPEND_FN = "append_event_log_in_transaction"
 # P1-2：共享 EventLog 的游标增量刷新（读侧 `read_since` + 归约侧 `refresh_latest`）。
 SQLITE_READ_SINCE_CASE = "sqlite_event_log_read_since_returns_only_the_verified_tail"
 PIPELINE_CURSOR_CASE = "sqlite_pipeline_refresh_takes_the_cursor_incremental_path"
+SEGMENTED_PIPELINE_CURSOR_CASE = "segmented_pipeline_refresh_takes_the_verified_cursor_incremental_path"
 # P1-6：估值单点（`ValuationContext` / `ValuationResult`）。
 VALUATION_MODULE = "crates/qx-core/src/valuation.rs"
 EQUITY_RULER_DEFS = "crates/qx-core/src/ledger/query.rs"
@@ -16880,20 +17645,45 @@ def pipeline_cursor_refresh_check() -> None:
         "SQLite 读侧 read_since 按 seq 只取尾部，且不重读整条历史",
         "read_since 不在盘" if read_since is None else "签名不符 / 没按 seq 过滤 / 仍调 load_event_log",
     )
+    segmented_storage = case_source("crates/qx-storage/src/segmented_event_log.rs")
+    segmented_read_since = _rust_fn_body(segmented_storage, "read_since")
+    check(
+        segmented_read_since is not None
+        and "expected_event_digest: u64" in segmented_storage
+        and "expected_next_seq: u64" in segmented_storage
+        and "acquire_storage_lock(" in segmented_read_since
+        and "read_segment_event_at(" in segmented_read_since
+        and "read_segment_range(" in segmented_read_since
+        and "EventLog::extend_event_digest(expected_event_digest, &tail)" in segmented_read_since
+        and "manifest.digest" in segmented_read_since
+        and "manifest.next_seq" in segmented_read_since,
+        "分段文件尾读持锁校验前缀并以 rolling digest/next_seq 核验新尾部",
+        "分段 read_since 缺少持锁、前缀尾事件或增量摘要/序号校验",
+    )
     check(
         re.search(
+            r"Self::Segmented\(store, _\) => store\.read_since\(\s*name,\s*expected_prefix,\s*"
+            r"expected_event_digest,\s*expected_next_seq,\s*\)",
+            pipeline,
+        )
+        is not None
+        and re.search(
             r"Self::Sqlite\(store\) => store\s*\.read_since\(name, after_seq, expected_prefix\)",
             pipeline,
         )
         is not None
         and re.search(r"_ => Ok\(None\)", pipeline) is not None,
-        "RuntimeEventStore::read_since 委派 SQLite，其余后端显式回落 Ok(None)",
-        "pipeline.rs 没把 read_since 委派给 SQLite，或缺少非 SQLite 后端的显式回落",
+        "RuntimeEventStore::read_since 委派分段摘要尾读与 SQLite 行读，其余后端显式回落",
+        "pipeline.rs 缺少分段/SQLite 增量委派或其余后端显式回落",
     )
     refresh = _rust_fn_body(pipeline, "refresh_latest")
     check(
         refresh is not None
-        and "read_since(&self.log_name, after_seq, prefix)" in refresh
+        and re.search(
+            r"\.read_since\(\s*&self\.log_name,\s*after_seq,\s*prefix,\s*"
+            r"self\.log\.event_digest\(\),\s*self\.log\.next_seq\(\),\s*\)",
+            refresh,
+        )
         and re.search(r"Some\(tail\) if tail\.is_empty\(\) => Ok\(\(\)\)", refresh) is not None
         and "self.apply_tail(&tail)" in refresh
         and "self.rebuild_from_store(false)" in refresh,
@@ -16920,9 +17710,10 @@ def pipeline_cursor_refresh_check() -> None:
     )
     check(
         SQLITE_READ_SINCE_CASE in case_source(SQLITE_EVENT_LOG_TEST)
-        and PIPELINE_CURSOR_CASE in pipeline,
-        "游标增量：读侧前缀校验与归约侧增量路径各有一条行为用例在盘",
-        f"缺 {SQLITE_EVENT_LOG_TEST}::{SQLITE_READ_SINCE_CASE} 或 {PIPELINE_FILE}::{PIPELINE_CURSOR_CASE}",
+        and PIPELINE_CURSOR_CASE in pipeline
+        and SEGMENTED_PIPELINE_CURSOR_CASE in pipeline,
+        "SQLite 与分段后端的读侧前缀校验、归约增量路径均有行为用例",
+        f"缺 {SQLITE_EVENT_LOG_TEST}::{SQLITE_READ_SINCE_CASE} 或 {PIPELINE_FILE} 中 SQLite/分段游标行为用例",
     )
     identity = case_source("crates/qx-runtime/src/pipeline/event_identity.rs")
     commit = case_source("crates/qx-runtime/src/pipeline/commit.rs")
@@ -17094,9 +17885,11 @@ def valuation_single_source_check() -> None:
         "OrderBook 仍按候选杠杆重算当前仓位，或缺少已开仓杠杆/旧仓位拒绝行为用例",
     )
     event_source = case_source("crates/qx-core/src/event.rs")
-    event_digest = _rust_fn_body(event_source, "digest") or ""
+    event_digest = _rust_fn_body(event_source, "digest_with_q68_position_money_presence") or ""
+    event_digest_entry = _rust_fn_body(event_source, "digest") or ""
     check(
         "if let Some(leverage) = entry.leverage" in event_digest
+        and "self.digest_with_q68_position_money_presence(h, true)" in event_digest_entry
         and "ledger_event_digest_includes_persisted_opening_leverage" in event_source,
         "EventLog 摘要纳入新开仓杠杆事实，同时保留旧缺字段事件的摘要兼容性",
         "账簿事件摘要未绑定杠杆事实，或缺少摘要差异行为用例",
@@ -17198,17 +17991,22 @@ def spread_recovery_service_ownership_check() -> None:
     """Spread recovery decisions, cadence, risk guard and Paper hedge replay belong to qx-service."""
     service = case_source("crates/qx-service/src/spread_recovery_host.rs")
     cli = case_source("crates/qx-cli/src/spread.rs")
-    recovery_body = _rust_fn_body(service, "recover_spread_groups_for_venue") or ""
+    recovery_wrapper = _rust_fn_body(service, "recover_spread_groups_for_venue") or ""
+    recovery_body = _rust_fn_body(service, "recover_spread_groups_for_venue_until") or ""
     paper_wrapper = _rust_fn_body(service, "recover_paper_spread_groups_for_account") or ""
     paper_body = _rust_fn_body(service, "recover_paper_spread_groups_inner") or ""
     check(
-        bool(recovery_body)
+        bool(recovery_wrapper)
+        and bool(recovery_body)
         and bool(paper_wrapper)
         and bool(paper_body)
         and "pub fn pending_spread_recovery_groups" in service
         and "pub fn spread_recovery_poll_delay" in service
         and "pub struct RecoveryGuard" in service
         and "pub fn recovery_order_validator" in service
+        and "recover_spread_groups_for_venue_until(context, venue, || false)" in recovery_wrapper
+        and "if should_stop()" in recovery_body
+        and "venue_recovery_checks_shutdown_between_durable_groups" in service
         and "pub fn persist_strategy_spread_group" in service
         and "pub fn open_spread_group_store" in service
         and "pub fn sync_spread_group_after_order" in service
@@ -17334,7 +18132,7 @@ def live_balance_order_reservation_check() -> None:
         and "runtime_config_path" in helper
         and "pub fn require_fresh_live_balance_snapshot(" in service_risk
         and "VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper)" in service_risk
-        and "LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = 60_000" in service_risk
+        and "LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = qx_runtime::LIVE_RECONCILE_MAX_AGE_MS" in service_risk
         and ".checked_sub(snapshot.ts)" in service_risk
         and "require_fresh_live_balance_snapshot(" in case_source("crates/qx-service/src/spread_recovery_host.rs")
         and "spec.quote_currency.trim().to_ascii_uppercase()" in service_risk
@@ -17894,7 +18692,7 @@ def artifact_migration_check() -> None:
             continue
         text = _artifact_code_only(reader)
         gate = row.get("version_const", "")
-        if schema_id in {"account-snapshot-v1", "account-snapshot-v2", "account-snapshot-v3"}:
+        if schema_id in {"account-snapshot-v1", "account-snapshot-v2", "account-snapshot-v3", "account-snapshot-v4"}:
             gate_ok = (
                 ARTIFACT_MIGRATION_CONST.format(gate=gate) in text
                 and "const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;" in text
@@ -17993,15 +18791,15 @@ def artifact_migration_check() -> None:
     refusal_test_path = ROOT / "crates/qx-cli/tests/unit/blessed_artifacts.rs"
     refusal_test_text = refusal_test_path.read_text(encoding="utf-8") if refusal_test_path.is_file() else ""
     check(
-        summary_value("current_version") == "7"
+        summary_value("current_version") == "8"
         and summary_value("writer_const") == "BACKTEST_SUMMARY_SCHEMA_VERSION"
-        and f"pub const {summary_value('writer_const')}: u32 = 7;" in writer_text
-        and "!(5..=7).contains(&schema)" in reader_text
-        and summary_value("report_accepts") == "5,6,7"
+        and f"pub const {summary_value('writer_const')}: u32 = 8;" in writer_text
+        and "!(5..=8).contains(&schema)" in reader_text
+        and summary_value("report_accepts") == "5,6,7,8"
         and summary_value("acceptance_case") in summary_test_text
         and summary_value("refusal_case") in refusal_test_text,
         "回测 summary 世代矩阵与当前 writer、report reader 及真实兼容/拒绝用例一致",
-        "summary schema 矩阵缺项或与 v7 writer / v5-v7 reader / 常驻用例漂移",
+        "summary schema 矩阵缺项或与 v8 writer / v5-v8 reader / 常驻用例漂移",
     )
     expected_summary_versions = {
         "v1": "refuse",
@@ -18010,8 +18808,9 @@ def artifact_migration_check() -> None:
         "v4": "refuse",
         "v5": "read",
         "v6": "read",
-        "v7": "read_write",
-        "v8": "refuse",
+        "v7": "read",
+        "v8": "read_write",
+        "v9": "refuse",
         "future": "refuse",
     }
     expected_summary_features = {
@@ -18021,6 +18820,7 @@ def artifact_migration_check() -> None:
         "run_record": "5",
         "ashare_analysis": "6",
         "execution_attempts": "7",
+        "max_drawdown_raw": "8",
     }
     check(
         {key: row.get("report") for key, row in summary_versions.items()}
@@ -18029,7 +18829,7 @@ def artifact_migration_check() -> None:
             key: row.get("introduced_in") for key, row in summary_features.items()
         }
         == expected_summary_features,
-        "回测 summary v1-v8 可读性和 v2-v7 能力字段引入世代完整登记",
+        "回测 summary v1-v9 可读性和 v2-v8 能力字段引入世代完整登记",
         f"版本矩阵={summary_versions} / 字段矩阵={summary_features}",
     )
 
@@ -18039,7 +18839,7 @@ def artifact_migration_check() -> None:
 RUN_EVIDENCE_MODULE = ROOT / "crates" / "qx-spec" / "src" / "run_evidence.rs"
 RUN_EVIDENCE_SCHEMA = ROOT / "schemas" / "evidence-bundle-v3.json"
 RUN_EVIDENCE_BUILDER = ROOT / "crates" / "qx-cli" / "src" / "run_evidence.rs"
-RUN_EVIDENCE_REPORT = ROOT / "crates" / "qx-cli" / "src" / "report_command.rs"
+RUN_EVIDENCE_REPORT = ROOT / "crates" / "qx-cli" / "src" / "report_command" / "workflow.rs"
 RUN_EVIDENCE_CLI_ARGS = ROOT / "crates" / "qx-cli" / "src" / "report_args.rs"
 RUN_EVIDENCE_HELP = ROOT / "crates" / "qx-cli" / "src" / "cli_help.rs"
 RUN_EVIDENCE_CASES_DIR = ROOT / "crates" / "qx-cli" / "tests" / "unit"
@@ -18210,11 +19010,11 @@ def run_evidence_check() -> None:
         path.relative_to(ROOT).as_posix()
         for path in sorted((CRATES / "qx-cli" / "src").rglob("*.rs"))
         if "tests" not in path.relative_to(ROOT).as_posix().split("/")
-        and "write_run_evidence(" in _read_text(path)
+        and "prepare_run_evidence(" in _read_text(path)
         and path != RUN_EVIDENCE_BUILDER
     ]
     check(
-        "pub(crate) fn write_run_evidence(" in builder
+        "pub(crate) fn prepare_run_evidence(" in builder
         and not builder_is_test
         and bool(callers),
         "T1-1 运行证据包构建器是生产代码且有非测试调用者",
@@ -18223,7 +19023,7 @@ def run_evidence_check() -> None:
 
     # ⑦ 入口可达且顺序正确。
     verify_at = report.find("recompute_declared_backtest_input(&summary)?")
-    evidence_at = report.find("write_run_evidence(")
+    evidence_at = report.find("prepare_run_evidence(")
     check(
         "evidence: bool" in cli_args
         and "--evidence" in help_text
@@ -18491,6 +19291,15 @@ REPORT_READABILITY_MODULES = (
     "crates/qx-cli/src/report_command.rs",
     "crates/qx-cli/src/report_credibility.rs",
 )
+REPORT_READABILITY_SUPPORT_MODULES = (
+    "crates/qx-cli/src/report_html/details.rs",
+    "crates/qx-cli/src/report_html/event_trace.rs",
+    "crates/qx-cli/src/report_html/fills.rs",
+    "crates/qx-cli/src/report_html/strategy_bias.rs",
+    "crates/qx-cli/src/report_html/report.css",
+    "crates/qx-cli/src/report_multi_market/render.rs",
+)
+
 # 报告模板里不得出现的外链 token（注释行不计）；固定内联脚本单独做能力限制检查。
 REPORT_EXTERNAL_TOKENS = ("xmlns", "http", "<img", "<link ", "<iframe")
 # 这份产物能被当研究件、不被当投资建议的底线声明。
@@ -18505,6 +19314,788 @@ def _code_lines(relative: str) -> str:
     )
 
 
+def app_report_read_model_ownership_check() -> None:
+    """Keep stable report DTO ownership separate from artifact reading and replay workflows."""
+    artifact_views_path = "crates/qx-app/src/report_read/artifact_views.rs"
+    model_path = "crates/qx-app/src/report_read/model.rs"
+    reader_path = "crates/qx-app/src/report_read.rs"
+    single_event_reader_path = "crates/qx-app/src/report_read/single_event.rs"
+    event_reader_path = "crates/qx-app/src/report_read/multi_market_events.rs"
+    standard_reader_path = "crates/qx-app/src/report_read/standard.rs"
+    artifact_views = (ROOT / artifact_views_path).read_text(encoding="utf-8")
+    model = (ROOT / model_path).read_text(encoding="utf-8")
+    reader = (ROOT / reader_path).read_text(encoding="utf-8")
+    single_event_reader = (ROOT / single_event_reader_path).read_text(encoding="utf-8")
+    event_reader = (ROOT / event_reader_path).read_text(encoding="utf-8")
+    standard_reader = (ROOT / standard_reader_path).read_text(encoding="utf-8")
+    app_root = (ROOT / "crates/qx-app/src/lib.rs").read_text(encoding="utf-8")
+    types = (
+        "EventFillIdentityV1",
+        "EventReportPageV1",
+        "VerifiedMultiMarketEventReportV1",
+        "MultiMarketEventReportReadRequestV1",
+        "MultiMarketDepthEventReportReadRequestV1",
+        "MultiMarketEventReportPageRequestV1",
+        "MultiMarketEventReportPageV1",
+        "MultiMarketEventReportReadModelV1",
+        "MultiMarketDepthEventReportReadModelV1",
+        "EventFillCountV1",
+        "ResearchReportRowsV1",
+        "ResearchRunReportV1",
+        "ProviderBacktestReportV1",
+        "ProviderDepthBacktestReportV1",
+    )
+    definitions: dict[str, list[str]] = {name: [] for name in types}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in types:
+            if re.search(rf"pub struct\s+{re.escape(name)}\b", source):
+                definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: owners for name, owners in definitions.items() if owners != [model_path]}
+    check(
+        not misplaced,
+        "版本化报告 DTO 仅由 qx-app report_read/model.rs 定义",
+        f"缺失或多重定义：{misplaced}",
+    )
+    check(
+        "mod artifact_views;" in reader
+        and "mod model;" in reader
+        and "mod single_event;" in reader
+        and "mod standard;" in reader
+        and "mod multi_market_events;" in reader
+        and "pub use model::{" in reader
+        and "pub use single_event::read_event_report_v1_with_reader;" in reader
+        and "pub use standard::{" in reader
+        and "pub use multi_market_events::{" in reader
+        and all(name in reader for name in types)
+        and all(name in app_root for name in types),
+        "report_read 与 qx-app 根路径继续兼容导出报告 DTO 与事件 reader",
+        "报告 DTO/事件 reader 未经原 report_read 门面或 qx-app 根门面重导出",
+    )
+    check(
+        "crate::artifact_store" not in model
+        and "crate::cases" not in model
+        and "ArtifactReader" not in model
+        and "std::io" not in model
+        and "pub fn read_" not in model
+        and "pub fn read_run_report_v1" in standard_reader
+        and "pub fn read_multi_market_event_report_v1_with_reader" in event_reader,
+        "报告 DTO 模型无存储/用例依赖，标准与多市场读取分别归 reader 用例",
+        "DTO 模型混入 reader/use-case 依赖，或读取逻辑未归入聚焦 reader owner",
+    )
+    event_readers = (
+        "read_multi_market_event_report_v1_with_reader",
+        "read_multi_market_event_report_page_v1_with_reader",
+        "read_multi_market_event_report_read_model_v1_with_reader",
+        "read_multi_market_event_report_page_v1",
+        "read_multi_market_depth_event_report_page_v1",
+        "read_multi_market_depth_event_report_page_v1_with_reader",
+        "read_multi_market_depth_event_report_read_model_v1_with_reader",
+        "read_multi_market_legacy_event_report_v1",
+    )
+    event_definitions: dict[str, list[str]] = {name: [] for name in event_readers}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in event_readers:
+            if re.search(rf"pub fn\s+{re.escape(name)}\s*\(", source):
+                event_definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_event_readers = {
+        name: owners
+        for name, owners in event_definitions.items()
+        if owners != [event_reader_path]
+    }
+    check(
+        not misplaced_event_readers
+        and all(f"pub fn {name}(" in event_reader for name in event_readers)
+        and all(name in reader and name in app_root for name in event_readers),
+        "多市场 EventLog reader 唯一归属子模块且保留两层兼容导出",
+        f"缺失/重复实现或兼容导出：{misplaced_event_readers}",
+    )
+    standard_readers = (
+        "read_run_report_v1",
+        "read_run_report_v1_with_reader",
+        "read_depth_run_report_v1",
+        "read_depth_run_report_v1_with_reader",
+        "read_provider_backtest_report_v1",
+        "read_provider_backtest_report_v1_with_reader",
+        "read_provider_depth_backtest_report_v1",
+        "read_provider_depth_backtest_report_v1_with_readers",
+    )
+    standard_definitions: dict[str, list[str]] = {name: [] for name in standard_readers}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in standard_readers:
+            if re.search(rf"pub fn\s+{re.escape(name)}\s*\(", source):
+                standard_definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_standard_readers = {
+        name: owners
+        for name, owners in standard_definitions.items()
+        if owners != [standard_reader_path]
+    }
+    check(
+        not misplaced_standard_readers
+        and all(f"pub fn {name}(" in standard_reader for name in standard_readers)
+        and all(name in reader and name in app_root for name in standard_readers),
+        "Bar/Depth 与 Provider 报告 reader 唯一归属 standard 子模块且兼容导出不变",
+        f"缺失/重复实现或兼容导出：{misplaced_standard_readers}",
+    )
+    single_event_readers = ("read_event_report_v1_with_reader",)
+    single_event_definitions: dict[str, list[str]] = {
+        name: [] for name in single_event_readers
+    }
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in single_event_readers:
+            if re.search(rf"pub fn\s+{re.escape(name)}\s*\(", source):
+                single_event_definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_single_event_readers = {
+        name: owners
+        for name, owners in single_event_definitions.items()
+        if owners != [single_event_reader_path]
+    }
+    check(
+        not misplaced_single_event_readers
+        and all(f"pub fn {name}(" in single_event_reader for name in single_event_readers)
+        and all(name in reader and name in app_root for name in single_event_readers),
+        "单市场 EventLog reader 唯一归属 single_event 子模块且兼容导出不变",
+        f"缺失/重复实现或兼容导出：{misplaced_single_event_readers}",
+    )
+    artifact_helpers = (
+        "read_report",
+        "read_json_bounded",
+        "read_json_text_by_id",
+        "read_csv_view",
+        "read_csv_view_by_id",
+        "read_csv_view_with_opener",
+        "open_bounded",
+        "open_bounded_by_id",
+        "csv_record",
+        "csv_shape",
+        "csv_object",
+        "equity_object",
+        "empty_rows",
+        "malformed_csv",
+        "malformed_event_log",
+    )
+    artifact_definitions: dict[str, list[str]] = {name: [] for name in artifact_helpers}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in artifact_helpers:
+            if re.search(
+                rf"(?:pub\(super\)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                artifact_definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_artifact_helpers = {
+        name: owners
+        for name, owners in artifact_definitions.items()
+        if owners != [artifact_views_path]
+    }
+    artifact_helpers_owned = all(
+        re.search(rf"pub\(super\) fn {re.escape(name)}(?:<[^>\n]+>)?\s*\(", artifact_views)
+        for name in artifact_helpers
+    )
+    check(
+        not misplaced_artifact_helpers
+        and artifact_helpers_owned
+        and "use super::artifact_views::{read_json_bounded, read_report};" in standard_reader
+        and "use super::artifact_views::{malformed_event_log, read_json_bounded};" in single_event_reader
+        and "use super::artifact_views::malformed_event_log;" in event_reader,
+        "核心 report/CSV 组装与 bounded ArtifactReader primitives 唯一归属 artifact_views",
+        f"helper owner 重复或 reader 未显式依赖共享模块：{misplaced_artifact_helpers}",
+    )
+
+    experiment_path = "crates/qx-app/src/cases/run_experiment.rs"
+    persistence_path = "crates/qx-app/src/cases/run_experiment/persistence.rs"
+    recovery_path = "crates/qx-app/src/cases/run_experiment/recovery.rs"
+    assembly_path = "crates/qx-app/src/cases/run_experiment/report_assembly.rs"
+    experiment = (ROOT / experiment_path).read_text(encoding="utf-8")
+    persistence = (ROOT / persistence_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    assembly = (ROOT / assembly_path).read_text(encoding="utf-8")
+    persistence_functions = (
+        "persist_experiment_result",
+        "build_experiment_run_manifest",
+        "verify_experiment_candidate_outcomes",
+        "verify_persisted_experiment_result",
+    )
+    persistence_definitions: dict[str, list[str]] = {
+        name: [] for name in persistence_functions
+    }
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in persistence_functions:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub\((?:super|crate)\))\s+)?fn\s+{re.escape(name)}\s*\(",
+                source,
+            ):
+                persistence_definitions[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_persistence = {
+        name: owners
+        for name, owners in persistence_definitions.items()
+        if owners != [persistence_path]
+    }
+    check(
+        not misplaced_persistence
+        and "mod persistence;" in experiment
+        and "pub(crate) use persistence::build_experiment_run_manifest;" in experiment
+        and all(f"pub(super) fn {name}(" in persistence for name in persistence_functions if name != "build_experiment_run_manifest")
+        and "pub(crate) fn build_experiment_run_manifest(" in persistence
+        and "persistence::persist_experiment_result(" in assembly
+        and "persistence::verify_experiment_candidate_outcomes(" in assembly
+        and "persistence::verify_experiment_candidate_outcomes(" in recovery
+        and "persistence::verify_persisted_experiment_result(" in recovery
+        and "recovery::resume_existing_experiment(" in experiment,
+        "实验 RunManifest/结果发布与复核职责唯一归属 run_experiment/persistence 且兼容导出保留",
+        f"重复或缺失的 persistence owner / 兼容门面：{misplaced_persistence}",
+    )
+
+
+
+
+def app_experiment_identity_ownership_check() -> None:
+    """Keep canonical experiment identity and stable result hashing in one owner."""
+    facade_path = "crates/qx-app/src/cases/run_experiment.rs"
+    identity_path = "crates/qx-app/src/cases/run_experiment/identity.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    identity = (ROOT / identity_path).read_text(encoding="utf-8")
+    symbols = (
+        "build_experiment_canonical_run_spec",
+        "normalize_experiment_identity_values",
+        "canonicalize_integer",
+        "quote_unsafe_integer_tokens",
+        "validate_experiment_run_identity",
+        "validate_experiment_artifact_envelope",
+        "experiment_result_hash",
+        "experiment_result_hash_from_value",
+        "experiment_result_hash_from_json",
+        "ExperimentJsonValue",
+        "ExperimentJsonParser",
+        "is_experiment_location_key",
+        "experiment_identity_invalid",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:fn|struct|enum)\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [identity_path]}
+    check(
+        not misplaced
+        and "mod identity;" in facade
+        and "pub(crate) use identity::{" in facade
+        and all(name in facade for name in (
+            "experiment_result_hash_from_json",
+            "experiment_result_hash_from_value",
+            "normalize_experiment_identity_values",
+            "quote_unsafe_integer_tokens",
+            "build_experiment_canonical_run_spec",
+            "experiment_result_hash,",
+            "validate_experiment_artifact_envelope",
+            "validate_experiment_run_identity",
+        ))
+        and "super::super::run_experiment::{" in (ROOT / "crates/qx-app/src/cases/run_depth_experiment/identity.rs").read_text(encoding="utf-8"),
+        "canonical identity/结果哈希唯一归属 experiment identity 子模块且兼容导出保留",
+        f"identity owner 重复、缺失或 facade 导出丢失：{misplaced}",
+    )
+
+
+def app_experiment_search_ownership_check() -> None:
+    """Keep continuous proposals and seeded random state in focused search modules."""
+    facade_path = "crates/qx-app/src/cases/experiment_search.rs"
+    continuous_path = "crates/qx-app/src/cases/experiment_search/continuous.rs"
+    rng_path = "crates/qx-app/src/cases/experiment_search/rng.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    continuous = (ROOT / continuous_path).read_text(encoding="utf-8")
+    rng = (ROOT / rng_path).read_text(encoding="utf-8")
+    continuous_symbols = (
+        "ContinuousSearchState",
+        "continuous_good_trials",
+        "continuous_random_label",
+        "continuous_adaptive_label",
+        "sample_uniform",
+        "candidate_from_flat_index",
+        "sample_from_good",
+        "continuous_density",
+        "bandwidth",
+        "gaussian_kernel",
+        "gaussian",
+        "propose_tpe",
+        "propose_pareto_tpe",
+    )
+    rng_symbols = ("SplitMix64",)
+    owners: dict[str, list[str]] = {
+        name: [] for name in (*continuous_symbols, *rng_symbols)
+    }
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in continuous_symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:struct|fn)\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+        for name in rng_symbols:
+            if re.search(rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?struct\s+{re.escape(name)}\b",source):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {
+        name: found
+        for name, found in owners.items()
+        if found != [rng_path if name in rng_symbols else continuous_path]
+    }
+    check(
+        not misplaced
+        and "mod continuous;" in facade
+        and "mod rng;" in facade
+        and "pub(in crate::cases) use continuous::ContinuousSearchState;" in facade
+        and "use continuous::{propose_pareto_tpe, propose_tpe};" in facade
+        and "use rng::SplitMix64;" in facade
+        and "pub(super) struct SplitMix64(u64);" in rng
+        and "pub(super) fn new(seed: u64) -> Self" in rng,
+        "连续搜索 proposal 与 SplitMix64 唯一归属聚焦模块且原 SearchState 门面可用",
+        f"search/RNG owner 重复或 facade 接线丢失：{misplaced}",
+    )
+
+
+
+
+
+def app_multi_market_experiment_spec_ownership_check() -> None:
+    """Separate the versioned multi-market experiment contract from its implementation."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    spec_path = "crates/qx-app/src/cases/run_multi_market_experiment/spec.rs"
+    types_path = "crates/qx-app/src/cases/run_multi_market_experiment/types.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    spec = (ROOT / spec_path).read_text(encoding="utf-8")
+    types = (ROOT / types_path).read_text(encoding="utf-8")
+    impl_owners: dict[str, list[str]] = {
+        name: [] for name in ("RunMultiMarketExperimentSpec", "RunMultiMarketExperimentResult")
+    }
+    dto_owners: dict[str, list[str]] = {name: [] for name in impl_owners}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in impl_owners:
+            if re.search(rf"(?m)^impl\s+{name}\b", source):
+                impl_owners[name].append(path.relative_to(ROOT).as_posix())
+            if re.search(rf"(?m)^\s*pub struct\s+{name}\b", source):
+                dto_owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced_impls = {name: found for name, found in impl_owners.items() if found != [spec_path]}
+    misplaced_dtos = {name: found for name, found in dto_owners.items() if found != [types_path]}
+    check(
+        not misplaced_impls
+        and not misplaced_dtos
+        and "mod spec;" in facade
+        and "mod types;" in facade
+        and "pub use types::*;" in facade
+        and all(f"impl {name} {{" in spec for name in impl_owners)
+        and all(f"pub struct {name} {{" in types for name in dto_owners)
+        and "pub fn validate(&self) -> Result<usize, AppError>" in spec,
+        "多市场实验输入/结果 DTO 留在 types，JSON contract 与规格校验唯一归属 spec 子模块",
+        f"spec impl owner 或 DTO owner 漂移：impls={misplaced_impls}, dtos={misplaced_dtos}",
+    )
+
+
+
+def app_experiment_result_assembly_ownership_check() -> None:
+    """Keep report projection and final RunExperimentResult assembly out of orchestration."""
+    facade_path = "crates/qx-app/src/cases/run_experiment.rs"
+    assembly_path = "crates/qx-app/src/cases/run_experiment/report_assembly.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    assembly = (ROOT / assembly_path).read_text(encoding="utf-8")
+    symbols = ("ExperimentResultAssemblyInput", "assemble_and_persist")
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            pattern = (
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?struct\s+{re.escape(name)}\b"
+                if name == "ExperimentResultAssemblyInput"
+                else rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\("
+            )
+            if re.search(pattern, source):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [assembly_path]}
+    check(
+        not misplaced
+        and "mod report_assembly;" in facade
+        and "use report_assembly::{assemble_and_persist, ExperimentResultAssemblyInput};" in facade
+        and "assemble_and_persist(ExperimentResultAssemblyInput {" in facade
+        and "let successful: Vec<_> = candidates" not in facade
+        and "let search_report = spec.search.as_ref().map" not in facade
+        and "let successful: Vec<_> = candidates" in assembly
+        and "let search_report = spec.search.as_ref().map" in assembly
+        and "persistence::persist_experiment_result(" in assembly
+        and "persistence::verify_persisted_experiment_result(" in assembly,
+        "RunExperiment 报告 projection/结果 DTO 装配唯一归属 report_assembly 并委托 persistence owner",
+        f"result assembly owner 重复或 facade/delegation 漂移：{misplaced}",
+    )
+
+
+def app_experiment_cost_sensitivity_ownership_check() -> None:
+    """Keep stress scenario execution, checkpointing, and split scoring in one owner."""
+    facade_path = "crates/qx-app/src/cases/run_experiment.rs"
+    sensitivity_path = "crates/qx-app/src/cases/run_experiment/cost_sensitivity.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    sensitivity = (ROOT / sensitivity_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False)
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub\(in crate::cases\)|pub\(super\))\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                _read_text(path),
+            )
+        ]
+        for name in ("execute_cost_sensitivity", "cost_sensitivity_fold_delta", "cost_robustness_passed")
+    }
+    check(
+        all(found == [sensitivity_path] for found in owners.values())
+        and "mod cost_sensitivity;" in facade
+        and "cost_sensitivity::execute_cost_sensitivity(" in facade
+        and "cost_sensitivity::CostSensitivityRequest {" in facade
+        and "assemble_and_persist(ExperimentResultAssemblyInput {" in facade
+        and facade.index("cost_sensitivity::execute_cost_sensitivity(")
+        < facade.index("assemble_and_persist(ExperimentResultAssemblyInput {")
+        and "if cancellation.is_some_and(CancellationToken::is_cancelled)" in sensitivity
+        and "load_cost_scenario_checkpoint(" in sensitivity
+        and "write_cost_scenario_checkpoint(" in sensitivity
+        and "cost_sensitivity_fold_delta(" in sensitivity
+        and "neighborhood_parameter_sets(" in sensitivity
+        and "let Some(cost_sensitivity) = cost_sensitivity else" in facade
+        and "let mut cost_sensitivity = Vec::with_capacity(spec.cost_sensitivity.len())" not in facade,
+        "RunExperiment 成本敏感性情景执行、checkpoint 与训练/OOS 稳健性评分唯一归属 cost_sensitivity",
+        f"cost sensitivity owner/delegation drift: {owners}",
+    )
+
+
+def app_experiment_neighborhood_ownership_check() -> None:
+    """Keep neighbor enumeration and drawdown assessment separate from search DTOs."""
+    facade_path = "crates/qx-app/src/cases/experiment_search.rs"
+    neighborhood_path = "crates/qx-app/src/cases/experiment_search/neighborhood.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    neighborhood = (ROOT / neighborhood_path).read_text(encoding="utf-8")
+    functions = (
+        "neighborhood_parameter_sets",
+        "neighborhood_report",
+        "neighborhood_report_with_budget",
+        "neighborhood_report_with_radius_and_budget",
+        "continuous_neighborhood_report",
+        "continuous_neighborhood_report_with_budget",
+        "continuous_neighborhood_report_with_radius_and_budget",
+        "neighborhood_drawdown_facts",
+        "best_neighborhood_center",
+        "is_neighborhood_candidate",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in functions}
+    dto_owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in functions:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+        if re.search(r"(?m)^\s*pub struct ExperimentNeighborhoodReport\b", source):
+            dto_owners.append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [neighborhood_path]}
+    check(
+        not misplaced
+        and dto_owners == [facade_path]
+        and "mod neighborhood;" in facade
+        and "pub(in crate::cases) use neighborhood::{" in facade
+        and "continuous_neighborhood_report_with_radius_and_budget" in facade
+        and "neighborhood_parameter_sets" in facade
+        and "neighborhood_report_with_radius_and_budget" in facade
+        and all(f"fn {name}(" in neighborhood for name in functions)
+        and "#[cfg(test)]\nuse neighborhood::{" in facade,
+        "实验邻域候选枚举/coverage/drawdown 评价唯一归属 neighborhood，版本化报告 DTO 与兼容导出保留",
+        f"neighborhood owner、DTO owner 或 facade 接线漂移：functions={misplaced}, dto={dto_owners}",
+    )
+
+
+def app_multi_market_experiment_search_ownership_check() -> None:
+    """Keep multi-market experiment candidate proposal coordination focused."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    search_path = "crates/qx-app/src/cases/run_multi_market_experiment/search.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    search = (ROOT / search_path).read_text(encoding="utf-8")
+    symbols = ("CandidatePlan", "MultiMarketSearchGenerator")
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?struct\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [search_path]}
+    check(
+        not misplaced
+        and "mod search;" in facade
+        and "use search::{CandidatePlan, MultiMarketSearchGenerator};" in facade
+        and "pub(super) struct CandidatePlan" in search
+        and "pub(super) struct MultiMarketSearchGenerator" in search
+        and all(f"pub(super) fn {name}(" in search for name in ("new", "next", "observe")),
+        "多市场实验候选计划与离散/连续 proposal 协调器唯一归属 search 子模块",
+        f"search owner 重复或 facade 兼容调用丢失：{misplaced}",
+    )
+
+    mapping_path = "crates/qx-app/src/cases/run_multi_market_experiment/result_mapping.rs"
+    mapping = (ROOT / mapping_path).read_text(encoding="utf-8")
+    mapping_functions = ("rank_candidates", "to_experiment_fold_report", "failed_candidate")
+    function_owners: dict[str, list[str]] = {name: [] for name in mapping_functions}
+    for path in _glob_paths(CRATES, "qx-app/src/**/*.rs", False):
+        source = _read_text(path)
+        for name in mapping_functions:
+            if re.search(rf"(?m)^\s*(?:pub\(super\)\s+)?fn\s+{re.escape(name)}\s*\(",source):
+                function_owners[name].append(path.relative_to(ROOT).as_posix())
+    expected_mapper_owners = {
+        "rank_candidates": [mapping_path],
+        "to_experiment_fold_report": [mapping_path],
+        "failed_candidate": [
+            mapping_path,
+            "crates/qx-app/src/cases/run_multi_market_depth_experiment.rs",
+        ],
+    }
+    misplaced_mappers = {
+        name: found
+        for name, found in function_owners.items()
+        if sorted(found) != sorted(expected_mapper_owners[name])
+    }
+    check(
+        not misplaced_mappers
+        and "mod result_mapping;" in facade
+        and "use result_mapping::{failed_candidate, rank_candidates, to_experiment_fold_report};" in facade
+        and all(f"pub(super) fn {name}(" in mapping for name in mapping_functions),
+        "多市场实验排序与折级 DTO 投影唯一归属 result_mapping，Depth 失败候选 owner 独立",
+        f"result mapper owner 重复或 facade 调用丢失：{misplaced_mappers}",
+    )
+
+
+def app_multi_market_experiment_recovery_module_check() -> None:
+    """Keep existing-result identity checks, verification, and legacy upgrades in recovery."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    recovery_path = "crates/qx-app/src/cases/run_multi_market_experiment/recovery.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    functions = ("resume_existing_experiment", "existing_result")
+    owners: dict[str, list[str]] = {name: [] for name in functions}
+    for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False):
+        source = _read_text(path)
+        for name in functions:
+            if re.search(rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{name}\s*\(", source):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == {name: [recovery_path] for name in functions}
+        and "mod recovery;" in facade
+        and "recovery::resume_existing_experiment(" in facade
+        and "verify_spec_artifact(" in recovery
+        and "artifacts::verify_persisted_result(&result)?" in recovery
+        and "artifacts::verify_persisted_result(&upgraded)?" in recovery
+        and "artifacts::persist_result(" in recovery
+        and recovery.index("verify_spec_artifact(")
+        < recovery.index("if envelope_fields.iter().all(")
+        < recovery.index("artifacts::verify_persisted_result(&result)?")
+        < recovery.index("artifacts::write_input_spec(")
+        and "match std::fs::read_to_string(&artifact_path)" not in facade
+        and "fn existing_result(" not in facade,
+        "多市场 Bar 实验既有报告身份、完整 envelope 复核与 legacy 升级唯一归属 recovery owner",
+        f"multi-market experiment recovery owner/validation-before-upgrade drift: {owners}",
+    )
+
+
+def app_multi_market_experiment_fold_execution_check() -> None:
+    """Keep walk-forward fold training, candidate selection, and OOS execution together."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    fold_path = "crates/qx-app/src/cases/run_multi_market_experiment/fold_execution.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    fold = (ROOT / fold_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+execute_folds(?:<[^>\n]+>)?\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [fold_path]
+        and "mod fold_execution;" in facade
+        and "fold_execution::execute_folds(" in facade
+        and "let Some(fold_execution) = fold_execution else" in facade
+        and "candidate_plans: &candidate_plans" in facade
+        and "initial_fold_searches: fold_searches" in facade
+        and "pub(super) struct FoldExecutionResult" in fold
+        and "run_training_candidate(" in fold
+        and "search.observe(&plan, Some(&candidate))" in fold
+        and "fold_training.sort_by(" in fold
+        and "build_candidate_spec(" in fold
+        and "run_inner_with_window(" in fold
+        and "cancellation.is_some_and(CancellationToken::is_cancelled)" in fold
+        and fold.index("run_training_candidate(")
+        < fold.index("fold_training.sort_by(")
+        < fold.index("build_candidate_spec(")
+        < fold.index("run_inner_with_window(")
+        < fold.index("summarize_folds(fold_reports)")
+        and "for (fold_index, fold) in folds.iter().enumerate()" not in facade
+        and "summarize_folds(fold_reports)" not in facade,
+        "多市场实验 walk-forward 折训练、训练集候选选择、OOS 执行与取消传播唯一归属 fold_execution",
+        f"multi-market fold execution owner/order/cancellation drift: {owners}",
+    )
+
+
+def app_multi_market_experiment_candidate_execution_check() -> None:
+    """Keep initial proposal generation, training execution, and search feedback together."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    candidate_path = "crates/qx-app/src/cases/run_multi_market_experiment/candidate_execution.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    candidate = (ROOT / candidate_path).read_text(encoding="utf-8")
+    owner = "execute_initial_candidates"
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(
+            rf"(?m)^\s*pub\(super\)\s+fn\s+{owner}(?:<[^>\n]+>)?\s*\(",
+            _read_text(path),
+        )
+    ]
+    check(
+        owners == [candidate_path]
+        and "mod candidate_execution;" in facade
+        and "candidate_execution::execute_initial_candidates(" in facade
+        and "candidate_execution::InitialCandidateRequest {" in facade
+        and "let Some(initial_candidates) = initial_candidates else" in facade
+        and "candidate_execution::InitialCandidateResult {" in facade
+        and "MultiMarketSearchGenerator::new(" in candidate
+        and "search.next(ordinal, target_kind)" in candidate
+        and "run_training_candidate(" in candidate
+        and "search.observe(&plan, Some(&candidate))" in candidate
+        and "MultiMarketExperimentFoldSearchReport {" in candidate
+        and "cancellation.is_some_and(CancellationToken::is_cancelled)" in candidate
+        and candidate.index("search.next(ordinal, target_kind)")
+        < candidate.index("run_training_candidate(")
+        < candidate.index("search.observe(&plan, Some(&candidate))")
+        < candidate.index("MultiMarketExperimentFoldSearchReport {")
+        and "let mut first_search" not in facade
+        and "for ordinal in 1..=total" not in facade,
+        "多市场实验首轮 proposal、训练执行、adaptive trial 反馈和首折搜索报告唯一归属 candidate_execution",
+        f"multi-market initial candidate execution owner/order/cancellation drift: {owners}",
+    )
+
+
+def app_multi_market_experiment_preparation_check() -> None:
+    """Keep candidate grid, union timeline, and fold budget preflight together."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    preparation_path = "crates/qx-app/src/cases/run_multi_market_experiment/preparation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    preparation = (ROOT / preparation_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+prepare_experiment\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [preparation_path]
+        and "mod preparation;" in facade
+        and "preparation::prepare_experiment(spec, total, callback_parameter_search)?" in facade
+        and "preparation::ExperimentPreparation {" in facade
+        and "expand_grid(&active_parameter_space)" in preparation
+        and "load_multi_market_timeline(&spec.base)" in preparation
+        and "experiment_folds(plan, timeline.len())?" in preparation
+        and "folds.len().checked_mul(total.saturating_add(1))" in _collapsed_code(preparation, tight=True)
+        and "<=MAX_MULTI_MARKET_EXPERIMENT_EXECUTIONS" in _collapsed_code(preparation, tight=True)
+        and "first_training_window" in preparation
+        and "frame.instrument.to_string() != market.instrument" in preparation
+        and "timeline.extend(frame.ts.iter().copied())" in preparation
+        and preparation.index("expand_grid(&active_parameter_space)")
+        < preparation.index("load_multi_market_timeline(&spec.base)")
+        < preparation.index("experiment_folds(plan, timeline.len())?")
+        < preparation.index("checked_mul(total.saturating_add(1))")
+        < preparation.index("first_training_window = match")
+        and "fn load_multi_market_timeline(" not in facade
+        and "fn window_for_range(" not in facade,
+        "多市场实验候选网格、联合时间轴、折数预算 preflight 与首训练窗唯一归属 preparation owner",
+        f"multi-market experiment preparation owner/preflight order drift: {owners}",
+    )
+
+
+def app_multi_market_experiment_candidate_binding_check() -> None:
+    """Keep candidate spec compilation and injected strategy identity binding in their owners."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    candidate_path = "crates/qx-app/src/cases/run_multi_market_experiment/candidate_spec.rs"
+    binding_path = "crates/qx-app/src/cases/run_multi_market_experiment/factory_binding.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    candidate = (ROOT / candidate_path).read_text(encoding="utf-8")
+    binding = (ROOT / binding_path).read_text(encoding="utf-8")
+    candidate_owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(r"(?m)^pub\(super\)\s+fn\s+build_candidate_spec\s*\(", _read_text(path))
+    ]
+    binding_owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(r"(?m)^pub\(super\)\s+fn\s+bind_injected_strategy\s*\(", _read_text(path))
+    ]
+    check(
+        candidate_owners == [candidate_path]
+        and binding_owners == [binding_path]
+        and "mod candidate_spec;" in facade
+        and "mod factory_binding;" in facade
+        and "use candidate_spec::build_candidate_spec;" in facade
+        and "bind_injected_strategy(" in facade
+        and "factory.as_deref_mut()" in facade
+        and "apply_parameters(&mut target.strategy, &plan.parameters).err()" in candidate
+        and "callback_parameter_search" in candidate
+        and "factory(candidate, parameters).map_err(invalid)?" in binding
+        and "BuiltinStrategySpec::new(" in binding
+        and "validate_injected(&binding_spec, vec![(identity.clone(), strategy)])" in binding
+        and "fn build_candidate_spec(" not in facade
+        and "validate_injected(" not in facade,
+        "多市场实验 candidate spec 与自定义策略身份绑定分别唯一归属 candidate_spec/factory_binding",
+        f"multi-market candidate/binding owner drift: candidate={candidate_owners}, binding={binding_owners}",
+    )
+
+
+def app_multi_market_experiment_report_assembly_check() -> None:
+    """Keep final result DTO assembly, cancellation, and artifact publication ordered."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_experiment.rs"
+    assembly_path = "crates/qx-app/src/cases/run_multi_market_experiment/report_assembly.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    assembly = (ROOT / assembly_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_experiment/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+assemble_multi_market_experiment_result\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [assembly_path]
+        and "mod report_assembly;" in facade
+        and "report_assembly::assemble_multi_market_experiment_result(" in facade
+        and "report_assembly::MultiMarketExperimentAssembly {" in facade
+        and "let result = RunMultiMarketExperimentResult {" in assembly
+        and "succeeded_candidates = ranking.len()" in assembly
+        and "failed_candidates: total - succeeded_candidates" in assembly
+        and "cancellation.is_some_and(CancellationToken::is_cancelled)" in assembly
+        and "artifacts::write_input_spec(" in assembly
+        and "artifacts::persist_result(" in assembly
+        and "artifacts::verify_persisted_result(&persisted)?" in assembly
+        and assembly.index("cancellation.is_some_and(CancellationToken::is_cancelled)")
+        < assembly.index("std::fs::create_dir_all(root)")
+        < assembly.index("artifacts::write_input_spec(")
+        < assembly.index("artifacts::persist_result(")
+        < assembly.index("artifacts::verify_persisted_result(&persisted)?")
+        and "RunMultiMarketExperimentResult {" not in facade
+        and "artifacts::write_input_spec(" not in facade
+        and "artifacts::persist_result(" not in facade,
+        "多市场实验最终 DTO 组装、取消门与报告发布顺序唯一归属 report_assembly",
+        f"multi-market report assembly owner/cancellation-before-write order drift: {owners}",
+    )
+
+
 def report_readability_check() -> None:
     """结果可读性层（易用性 P3 / 竞品对比 §6 P3）：`report --html` 产物的形状门禁。
 
@@ -18515,7 +20106,7 @@ def report_readability_check() -> None:
     「未连接真实交易所」声明必须还在（这是这份产物不被当成投资建议的底线）。
     """
     root = (CRATES / "qx-cli/src/main.rs").read_text(encoding="utf-8")
-    missing = [rel for rel in REPORT_READABILITY_MODULES if not (ROOT / rel).is_file()]
+    missing = [rel for rel in (*REPORT_READABILITY_MODULES, *REPORT_READABILITY_SUPPORT_MODULES) if not (ROOT / rel).is_file()]
     check(not missing, "结果可读性模块在盘", f"缺失 {missing or '无'}")
     unmounted = [
         Path(rel).stem
@@ -18528,6 +20119,8 @@ def report_readability_check() -> None:
     xlsx = (ROOT / "crates/qx-cli/src/report_xlsx.rs").read_text(encoding="utf-8")
     check(
         not unmounted
+        and "mod details;" in html
+        and 'include_str!("report_html/report.css")' in html
         and "use super::*;" not in production_text(credibility)
         and "use super::*;" not in production_text(html)
         and "crate::ashare_analysis_html_section(summary)" in html
@@ -18541,20 +20134,31 @@ def report_readability_check() -> None:
     )
     leaks = [
         f"{rel}:{token}"
-        for rel in REPORT_READABILITY_MODULES
+        for rel in (*REPORT_READABILITY_MODULES, *REPORT_READABILITY_SUPPORT_MODULES)
         for token in REPORT_EXTERNAL_TOKENS
         if token in _code_lines(rel)
     ]
     check(not leaks, "报告模板无外部资源引用（出现外链 token 即红）", "；".join(leaks) or "无")
-    script_count = html.count("<script>")
+    report_sources = (
+        html
+        + "\n"
+        + (ROOT / "crates/qx-cli/src/report_html/fills.rs").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / REPORT_READABILITY_SUPPORT_MODULES[0]).read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "crates/qx-cli/src/report_html/event_trace.rs").read_text(encoding="utf-8")
+    )
+    script_count = report_sources.count("<script>")
+    opening_scripts = len(re.findall(r"<script(?:\s[^>]*)?>", report_sources))
     local_script = (
         script_count >= 2
-        and html.count("</script>") == script_count
-        and "<script src=" not in html
+        and report_sources.count("</script>") == opening_scripts
+        and "<script src=" not in report_sources
         and "researchData=" in html
-        and "fillRows=" in html
+        and "fillRows=" in report_sources
+        and "eventRows=" in report_sources
         and not any(
-            token in html
+            token in report_sources
             for token in (
                 "fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon(",
                 "WebTransport", "import("
@@ -18565,7 +20169,7 @@ def report_readability_check() -> None:
         local_script,
         "HTML 研究图、成交与事件筛选仅使用本地内联脚本和嵌入数据",
         f"内联脚本数量={script_count} / chart+fill hooks="
-        f"{('researchData=' in html)}/{('fillRows=' in html)} / "
+        f"{('researchData=' in html)}/{('fillRows=' in report_sources)}/{('eventRows=' in report_sources)} / "
         f"外部执行或网络 API={'存在' if not local_script else '无'}",
     )
     check(
@@ -18584,6 +20188,723 @@ def report_readability_check() -> None:
         callers == ["crates/qx-cli/src/report_command.rs"],
         "报告落盘的调用点唯一（report 出口）",
         f"调用于 {callers}",
+    )
+
+
+
+
+def xlsx_strategy_diagnostics_module_check() -> None:
+    """Keep bounded strategy diagnostics and lossless JSON evidence in their XLSX owner."""
+    facade_path = "crates/qx-cli/src/report_xlsx.rs"
+    diagnostics_path = "crates/qx-cli/src/report_xlsx/strategy_diagnostics.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_xlsx/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:pub\(super\)\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("strategy_diagnostics_sheets", "split_utf16_chunks")
+    }
+    check(
+        all(found == [diagnostics_path] for found in owners.values())
+        and "mod strategy_diagnostics;" in facade
+        and "use strategy_diagnostics::strategy_diagnostics_sheets;" in facade
+        and "#[cfg(test)]\nuse strategy_diagnostics::split_utf16_chunks;" in facade
+        and "sheets.extend(strategy_diagnostics_sheets(" in facade
+        and "MAX_CELL_UTF16_UNITS: usize = 30_000" in diagnostics
+        and '("StrategyDiagnostics", summary_rows)' in diagnostics
+        and '("DiagnosticEvidence", evidence_rows)' in diagnostics
+        and "serde_json::to_string(record)" in diagnostics
+        and "character.len_utf16()" in diagnostics
+        and "chunks.concat()" in facade,
+        "XLSX 策略诊断摘要表与无损 JSON 证据分片唯一归属 strategy_diagnostics 并保留 UTF-16 安全边界",
+        f"xlsx strategy diagnostics owner/chunking drift: {owners}",
+    )
+
+
+def report_xlsx_rows_module_check() -> None:
+    """Keep worksheet row projection separate from workbook publication."""
+    facade_path = "crates/qx-cli/src/report_xlsx.rs"
+    rows_path = "crates/qx-cli/src/report_xlsx/rows.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    rows = (ROOT / rows_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_xlsx/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:pub\(super\)\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("overview_rows", "equity_rows", "fill_rows", "benchmark_rows")
+    }
+    check(
+        all(found == [rows_path] for found in owners.values())
+        and "mod rows;" in facade
+        and "use rows::{benchmark_rows, equity_rows, fill_rows, overview_rows};" in facade
+        and '("Overview", overview_rows(summary, benchmark))' in facade
+        and '("Equity", equity_rows(&equity))' in facade
+        and '("Fills", fill_rows(&fills))' in facade
+        and 'sheets.push(("Benchmark", benchmark_rows(benchmark)?))' in facade
+        and "pub(super) fn overview_rows(" in rows
+        and "pub(super) fn fill_rows(" in rows,
+        "XLSX 核心工作表行投影唯一归属 report_xlsx/rows，facade 只选择 sheets 并发布工作簿",
+        f"XLSX row projection owner/facade drift: {owners}",
+    )
+
+
+def report_xlsx_multi_account_module_check() -> None:
+    facade_path = "crates/qx-cli/src/report_xlsx.rs"
+    module_path = "crates/qx-cli/src/report_xlsx/multi_account.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_xlsx/**/*.rs", False)
+        if re.search(r"(?m)^pub\(crate\) fn write_multi_account_report_xlsx\s*\(", path.read_text(encoding="utf-8"))
+    ]
+    check(
+        "mod multi_account;" in facade
+        and "pub(crate) use multi_account::write_multi_account_report_xlsx;" in facade
+        and "pub(crate) fn write_multi_account_report_xlsx(" not in facade
+        and owners == [module_path]
+        and "accounts.len() < 2 || accounts.len() > 32" in module
+        and '"Equity"' in module
+        and '"Fills"' in module
+        and '"Events"' in module
+        and "is_depth_report" in module
+        and "strategy_diagnostics_sheets" in module
+        and "write_workbook(output, &sheets)?" in module,
+        "Multi-account Bar/Depth XLSX worksheet projection and workbook publication归 multi_account owner",
+        "Multi-account XLSX owner or stable re-export drift",
+    )
+
+
+def cli_worker_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/worker_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = (
+        "dispatch_scheduler_worker", "dispatch_strategy_worker", "dispatch_paper_worker",
+        "dispatch_binance_worker", "dispatch_ccxt_worker", "dispatch_outbox_relay",
+        "dispatch_outbox_relay_postgres", "dispatch_outbox_relay_worker",
+        "dispatch_event_consumer_worker", "dispatch_consumer_dlq_replay",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod worker_command;" in facade
+        and all(f"worker_command::{name}(" in facade for name in commands)
+        and all(paths == [module_path] for paths in owners.values())
+        and "run_scheduler_worker(&path, &worker_id, once, false)" in module
+        and "run_strategy_worker(&path, &worker_id, once, false)" in module
+        and "run_paper_execution_worker(&path, &worker_id, once)" in module
+        and "run_binance_worker(&path, &worker_id, once)" in module
+        and "run_ccxt_worker(&path, &worker_id, &config, once)" in module
+        and "#[cfg(not(feature = \"nats\"))]" in module
+        and "#[cfg(not(all(feature = \"nats\", feature = \"postgres\")))]" in module
+        and "需要使用 --features nats" in module
+        and "需要使用 --features 'nats postgres'" in module,
+        "Worker and event relay command adapters have one worker_command owner with feature-gated fallbacks",
+        f"Worker command owner/cfg fallback drift: {owners}",
+    )
+
+
+def cli_execution_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/execution_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_binance_public_probe": "BinancePublicProbe",
+        "dispatch_binance_private_probe": "BinancePrivateProbe",
+        "dispatch_binance_submit_order": "BinanceSubmitOrder",
+        "dispatch_paper_submit_order": "PaperSubmitOrder",
+        "dispatch_ccxt_submit_order": "CcxtSubmitOrder",
+        "dispatch_paper_e2e": "PaperE2e",
+        "dispatch_paper_check": "PaperCheck",
+        "dispatch_reconcile": "Reconcile",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod execution_command;" in facade
+        and all(f"Command::{variant}" in facade and f"execution_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and '"testnet" => true' in module
+        and '"mainnet" => false' in module
+        and "network 必须是 testnet 或 mainnet" in module
+        and "quantity_raw.unwrap_or(1_000_000_000_000)" in module
+        and "--quote-qty-raw 必须与 --quote-price-raw 同时使用" in module
+        and "worker_id.as_deref()" in module
+        and "reconcile 需要本地与远端两个来源" in module
+        and "std::process::exit(2)" in module,
+        "Venue probes, order submission, Paper execution, and reconciliation have one CLI adapter owner",
+        f"Execution command owner/routing/validation drift: {owners}",
+    )
+
+
+def cli_runtime_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/runtime_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_doctor": "Doctor",
+        "dispatch_run": "Run",
+        "dispatch_status": "Status",
+        "dispatch_live_check": "LiveCheck",
+        "dispatch_runtime_check": "RuntimeCheck",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod runtime_command;" in facade
+        and all(f"Command::{variant}" in facade and f"runtime_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and "run_doctor_capabilities(" in module
+        and "capability_id.as_deref()" in module
+        and "let path = path.unwrap_or_else(default_runtime_path)" in module
+        and all(f'run_arguments("{name}", arguments)' in module for name in (
+            "backtest", "paper", "paper-check", "doctor", "live-check", "runtime-check", "report"))
+        and "run_unified_command(&arguments)" in module
+        and "run_status(&path, json)" in module
+        and "run_live_check(&path, json)" in module
+        and "run_runtime_check(&path, json)" in module
+        and "std::process::exit(2)" in module,
+        "Doctor, unified run, status, live-check, and runtime-check CLI routes have one adapter owner",
+        f"Runtime command owner/routing/validation drift: {owners}",
+    )
+
+
+def cli_dataset_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/dataset_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_ingest": "DatasetIngest",
+        "dispatch_bundle": "DatasetBundle",
+        "dispatch_validate": "DataValidate",
+        "dispatch_validate_depth": "DataValidateDepth",
+        "dispatch_snapshot": "DataSnapshot",
+        "dispatch_plan": "Plan",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod dataset_command;" in facade
+        and all(f"Command::{variant}" in facade and f"dataset_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and "run_dataset_ingest(" in module
+        and "snapshot_context.as_deref()" in module
+        and "timezone.as_deref()" in module
+        and "run_dataset_bundle(&bundle, &data_dir, bars.as_deref(), snapshot.as_deref())" in module
+        and "validate_dataset(&args)" in module
+        and "validate_depth_dataset(&args)" in module
+        and "publish_dataset_snapshot(&args)" in module
+        and "plan_readout(&args)" in module
+        and "规格读入失败" in module,
+        "Dataset ingest/bundle/validation/snapshot and plan readout routes have one CLI adapter owner",
+        f"Dataset command owner/routing drift: {owners}",
+    )
+
+
+def cli_market_data_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/market_data_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_market_spec": "CcxtMarketSpec",
+        "dispatch_fetch_ohlcv": "CcxtFetchOhlcv",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod market_data_command;" in facade
+        and all(f"Command::{variant}" in facade and f"market_data_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and "run_ccxt_market_spec(&config, &instrument, &output)" in module
+        and "run_ccxt_fetch_ohlcv(" in module
+        and "&timeframe" in module
+        and "start_ms" in module and "end_ms" in module
+        and "std::process::exit(2)" in module,
+        "CCXT market-spec and OHLCV acquisition routes have one CLI adapter owner",
+        f"Market data command owner/routing drift: {owners}",
+    )
+
+
+def cli_project_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/project_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_init": "Init",
+        "dispatch_quickstart": "Quickstart",
+        "dispatch_guide": "Guide",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod project_command;" in facade
+        and all(f"Command::{variant}" in facade and f"project_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and 'strategy.as_deref() == Some("")' in module
+        and 'profile.as_deref() == Some("")' in module
+        and 'PathBuf::from("qianxing.runtime.json")' in module
+        and "run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())" in module
+        and "quickstart::run(project, html, force)" in module
+        and "guide::run(args)" in module
+        and "std::process::exit(2)" in module,
+        "Init, Quickstart, and Guide CLI routes have one project command adapter owner",
+        f"Project command owner/routing/validation drift: {owners}",
+    )
+
+
+def cli_host_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/host_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_serve": "Serve",
+        "dispatch_console": "Console",
+        "dispatch_supervise": "Supervise",
+        "dispatch_recovery_child": "RecoveryChild",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod host_command;" in facade
+        and all(f"Command::{variant}" in facade and f"host_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and "run_runtime_api(&path)" in module
+        and 'usage_errors::exit_on_failure(serve_console(&args), "控制台启动失败")' in module
+        and "run_process_supervisor(&path, allow_unmanaged_roles)" in module
+        and "SuperviseFailure::Usage(_) => std::process::exit(2)" in module
+        and "Some(code) if code != 0 => code" in module
+        and "_ => 128" in module
+        and '"recovery-child".to_string()' in module
+        and "std::process::exit(2)" in module,
+        "Serve, Console, Supervise, and recovery-child routes have one host/supervision adapter owner with exit-code mapping preserved",
+        f"Host command owner/routing/exit-code drift: {owners}",
+    )
+
+
+def cli_selfcheck_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/selfcheck_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    commands = {
+        "dispatch_ecosystem": "Ecosystem",
+        "dispatch_paper": "Paper",
+        "dispatch_all": "All",
+        "dispatch_verify": "Verify",
+    }
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in commands
+    }
+    check(
+        "mod selfcheck_command;" in facade
+        and all(f"Command::{variant}" in facade and f"selfcheck_command::{name}(" in facade
+                for name, variant in commands.items())
+        and all(paths == [module_path] for paths in owners.values())
+        and "let Some(command) = cli.command else" in facade
+        and "print_banner();\n        selfcheck_command::dispatch_default();" in facade
+        and "selfcheck::Scope::Full, false" in module
+        and 'run_ecosystem_smoke(json), "生态自检"' in module
+        and "run_paper_smoke(true), \"Paper 冒烟\"" in module
+        and "selfcheck::Scope::Full, json" in module
+        and "selfcheck::Scope::KernelOnly, json" in module
+        and "std::process::exit(2)" in module,
+        "Default, ecosystem, Paper, full and kernel self-check routes share one CLI adapter and preserve output failures",
+        f"Self-check command owner/routing drift: {owners}",
+    )
+
+
+def cli_report_command_route_check() -> None:
+    facade = _text_or_empty(ROOT / "crates/qx-cli/src/cli.rs")
+    report_command = _text_or_empty(ROOT / "crates/qx-cli/src/report_command.rs")
+    check(
+        "Command::Report(arguments) => dispatch_report(arguments)" in facade
+        and "pub(crate) fn dispatch_report(args: super::report_args::ReportArgs)" in report_command
+        and "run_report_with_benchmark(" in report_command
+        and "ReportOptions {" in report_command,
+        "Top-level Report route is owned by the existing report_command entrypoint and its workflow projection",
+        "Report command is missing, bypasses its compatibility owner, or no longer reaches report workflow",
+    )
+
+
+def cli_top_level_route_cardinality_check() -> None:
+    args_text = _text_or_empty(ROOT / CLI_ARGS_FILE)
+    facade = _text_or_empty(ROOT / "crates/qx-cli/src/cli.rs")
+    command_body = _block_body(args_text, "pub(crate) enum Command {")
+    variants = re.findall(r"(?m)^    ([A-Z][A-Za-z0-9_]*)\b", command_body)
+    routed = re.findall(r"(?m)^\s*Command::([A-Za-z0-9_]+)", facade)
+    counts = {variant: routed.count(variant) for variant in variants}
+    unknown = sorted(set(routed) - set(variants))
+    check(
+        bool(variants)
+        and len(variants) == len(set(variants))
+        and not unknown
+        and all(count == 1 for count in counts.values())
+        and len(routed) == len(variants),
+        "Every top-level Clap Command variant has exactly one facade match arm and no stale/unknown route remains",
+        f"Top-level route coverage drift: {len(variants)} variants, {len(routed)} match references, missing/multiple={sorted(k for k,v in counts.items() if v != 1)}, unknown={unknown}",
+    )
+
+
+def cli_backtest_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/backtest_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    variants = ("Builtin", "MultiBuiltin", "CcxtBuiltin", "Book")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+        if re.search(r"(?m)^\s*Some\(BacktestCommand::(?:Builtin|MultiBuiltin|CcxtBuiltin|Book)", path.read_text(encoding="utf-8"))
+    ]
+    check(
+        "mod backtest_command;" in facade
+        and "} => backtest_command::dispatch(runtime, frame, spec, action)," in facade
+        and "Command::BuiltinStrategies => backtest_command::dispatch_builtin_strategies()" in facade
+        and "backtest_command::dispatch_fast_manifest(manifest)" in facade
+        and "} => match action" not in facade
+        and "pub(super) fn dispatch_builtin_strategies()" in module
+        and "print_builtin_strategies();" in module
+        and "pub(super) fn dispatch_fast_manifest(manifest: PathBuf)" in module
+        and "run_fast_backtest_manifest(&manifest)" in module
+        and all(f"BacktestCommand::{variant}" in module for variant in variants)
+        and "run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())" in module
+        and "dispatch_builtin_backtest(" in module
+        and "run_multi_builtin_backtest(" in module
+        and "run_ccxt_builtin_backtest(" in module
+        and "run_depth_backtest_with_quality_manifest(" in module
+        and owners == [module_path],
+        "Backtest command family routing has one backtest_command owner behind the top-level facade",
+        f"Backtest command dispatch/variant owner drift: {owners}",
+    )
+
+
+def cli_config_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/config_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    check(
+        "mod config_command;" in facade
+        and "Command::Config { action } => config_command::dispatch(action)," in facade
+        and "Command::Config { action } => {" not in facade
+        and "pub(super) fn dispatch(action: Option<ConfigCommand>)" in module
+        and all(f"ConfigCommand::{variant}" in module for variant in ("Validate", "Explain", "Fingerprint", "Lock"))
+        and "validate_runtime_references(&path, &config)" in module
+        and "[WARN]" in module
+        and "[PASS] config validate 通过" in module
+        and "配置引用校验失败" in module
+        and "配置命令失败" in module,
+        "Config CLI subcommand routing and reference validation have one config_command owner",
+        "Config CLI route/validation/error output contract drift",
+    )
+
+
+def cli_strategy_command_module_check() -> None:
+    facade_path = "crates/qx-cli/src/cli.rs"
+    module_path = "crates/qx-cli/src/cli/strategy_command.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    variants = ("List", "Init", "Backtest", "DiagnoseDepth", "DiagnoseMultiBar", "DiagnoseMultiAccount", "DiagnoseBar")
+    owner_paths = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/cli/**/*.rs", False)
+        if re.search(r"(?m)^\s*Some\(StrategyCommand::(?:List|Init|Backtest|DiagnoseDepth|DiagnoseMultiBar|DiagnoseMultiAccount|DiagnoseBar)", path.read_text(encoding="utf-8"))
+    ]
+    check(
+        "mod strategy_command;" in facade
+        and "Command::Strategy { action } => strategy_command::dispatch(action)," in facade
+        and "Command::Strategy { action } => match action" not in facade
+        and all(f"StrategyCommand::{variant}" in module for variant in variants)
+        and "pub(super) fn dispatch(action: Option<StrategyCommand>)" in module
+        and owner_paths == [module_path],
+        "Strategy CLI variant handling has one strategy_command owner behind the top-level command facade",
+        f"Strategy CLI dispatch/variant owner drift: {owner_paths}",
+    )
+
+
+def report_benchmark_csv_module_check() -> None:
+    facade_path = "crates/qx-cli/src/report_benchmark.rs"
+    csv_path = "crates/qx-cli/src/report_benchmark/csv.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    csv = (ROOT / csv_path).read_text(encoding="utf-8")
+    functions = ("benchmark_csv_text", "write_benchmark_csv", "write_benchmark_runs_csv", "publish_benchmark_csv")
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/report_benchmark/**/*.rs", False)
+               if re.search(rf"(?m)^(?:pub\(crate\) )?fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in functions
+    }
+    check(
+        "mod csv;" in facade
+        and "pub(crate) use csv::{write_benchmark_csv, write_benchmark_runs_csv};" in facade
+        and "fn benchmark_csv_text(" not in facade
+        and all(paths == [csv_path] for paths in owners.values())
+        and "qx_app::artifact_store::sink::publish(" in csv
+        and "PublishMode::Overwrite" in csv
+        and 'String::from("run_id,")' in csv
+        and "csv_text(run_id)" in csv,
+        "Benchmark CSV encoding and sink publication have one owner behind stable exports",
+        "Benchmark CSV owner/export/run identity or artifact sink contract drift",
+    )
+
+
+def config_commands_doctor_module_check() -> None:
+    facade_path = "crates/qx-cli/src/config_commands.rs"
+    doctor_path = "crates/qx-cli/src/config_commands/doctor.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    doctor = (ROOT / doctor_path).read_text(encoding="utf-8")
+    functions = (
+        "collect_doctor_report",
+        "collect_doctor_report_for_config",
+        "run_doctor",
+        "run_doctor_capabilities",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/config_commands/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(crate\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in functions
+    }
+    check(
+        "mod doctor;" in facade
+        and "pub(crate) use doctor::{" in facade
+        and all(name in facade for name in functions)
+        and all(paths == [doctor_path] for paths in owners.values())
+        and "RuntimeSupervisor::new(config.clone())" in doctor
+        and '"readiness_layers"' in doctor
+        and '"capabilities"' in doctor
+        and "pub(crate) fn collect_doctor_report_for_config" in doctor,
+        "Runtime doctor report and capability queries have one owner with stable crate exports",
+        "Config doctor ownership/re-export or diagnostic contract drift",
+    )
+
+
+def config_commands_status_module_check() -> None:
+    facade_path = "crates/qx-cli/src/config_commands.rs"
+    module_path = "crates/qx-cli/src/config_commands/status.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    functions = ("resolve_backtest_summary_path", "run_status")
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/config_commands/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(crate\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in functions
+    }
+    check(
+        "mod status;" in facade
+        and "pub(crate) use status::{resolve_backtest_summary_path, run_status};" in facade
+        and all(paths == [module_path] for paths in owners.values())
+        and '"network_accessed": false' in module
+        and '"orders_sent": false' in module
+        and '"latest_backtest": latest_summary' in module
+        and "latest_backtest_readout_lines(&summary)" in module,
+        "Read-only runtime status and latest summary resolution have one status owner and stable exports",
+        "Runtime status owner/export or read-only projection contract drift",
+    )
+
+
+def config_commands_configuration_module_check() -> None:
+    facade_path = "crates/qx-cli/src/config_commands.rs"
+    module_path = "crates/qx-cli/src/config_commands/configuration.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    functions = ("run_config_explain", "run_config_fingerprint", "run_config_lock")
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/config_commands/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(crate\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in functions
+    }
+    check(
+        "mod configuration;" in facade
+        and "pub(crate) use configuration::{run_config_explain, run_config_fingerprint, run_config_lock};" in facade
+        and all(paths == [module_path] for paths in owners.values())
+        and "未读取密钥内容" in module
+        and "config_fingerprint = Some(fingerprint.clone())" in module
+        and "if output.exists() && !force" in module,
+        "Runtime config explain/fingerprint/lock commands have one owner and stable exports",
+        "Config command ownership/export or lock safety contract drift",
+    )
+
+
+def report_xlsx_multi_market_depth_module_check() -> None:
+    facade_path = "crates/qx-cli/src/report_xlsx.rs"
+    module_path = "crates/qx-cli/src/report_xlsx/multi_market_depth.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    functions = (
+        "write_multi_market_depth_xlsx",
+        "write_multi_market_depth_comparison_xlsx",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/report_xlsx/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(crate\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in functions
+    }
+    check(
+        "mod multi_market_depth;" in facade
+        and "pub(crate) use multi_market_depth::{" in facade
+        and all(f"{name}" in facade for name in functions)
+        and all(f"pub(crate) fn {name}(" not in facade for name in functions)
+        and all(paths == [module_path] for paths in owners.values())
+        and '"DataQuality"' in module
+        and '"Ranking"' in module
+        and '"Benchmark"' in module
+        and "strategy_diagnostics_sheets" in module
+        and "write_workbook(output, &sheets)?" in module,
+        "Multi-market depth and comparison XLSX projections have one owner behind stable exports",
+        "Multi-market depth XLSX owner or stable export drift",
+    )
+
+
+def report_strategy_bias_module_check() -> None:
+    """Keep bounded strategy correctness diagnostics in a dedicated report section owner."""
+    facade_path = "crates/qx-cli/src/report_html.rs"
+    diagnostics_path = "crates/qx-cli/src/report_html/strategy_bias.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_html/**/*.rs", False)
+        if re.search(r"(?m)^\s*(?:pub\(super\)\s+)?fn\s+strategy_bias_panel\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [diagnostics_path]
+        and "mod strategy_bias;" in facade
+        and "use strategy_bias::strategy_bias_panel;" in facade
+        and "html.push_str(&strategy_bias_panel(summary));" in facade
+        and "fn diagnostic_fields(" not in facade
+        and "fn strategy_bias_panel(" not in facade
+        and "pub(super) fn strategy_bias_panel(" in diagnostics
+        and ".take(100)" in diagnostics
+        and diagnostics.count(".take(25)") >= 2
+        and "escape_html(&kind)" in diagnostics
+        and "escape_html(&when)" in diagnostics
+        and "escape_html(&subject)" in diagnostics
+        and "escape_html(&detail)" in diagnostics,
+        "HTML 策略正确性诊断面板独立归属 strategy_bias，保留有界采样与动态字段转义",
+        f"strategy bias diagnostics owner/bounds/escaping drift: {owners}",
+    )
+
+
+def report_event_trace_module_check() -> None:
+    """Keep EventLog verification and bounded trace rendering in a reusable report owner."""
+    facade_path = "crates/qx-cli/src/report_html.rs"
+    event_path = "crates/qx-cli/src/report_html/event_trace.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    event_trace = (ROOT / event_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_html/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("read_event_trace", "event_trace_section", "event_kind_identity")
+    }
+    check(
+        all(found == [event_path] for found in owners.values())
+        and "mod event_trace;" in facade
+        and "pub(crate) use event_trace::{event_kind_identity, read_event_trace};" in facade
+        and "use event_trace::{event_trace_section, MAX_INLINE_TRACE_EVENTS};" in facade
+        and "pub(crate) fn read_event_trace(" not in facade
+        and "fn event_trace_section(" not in facade
+        and "pub(crate) fn event_kind_identity(" not in facade
+        and "pub(super) const MAX_INLINE_TRACE_EVENTS" in event_trace
+        and "log.append_checked(event)" in event_trace
+        and "log.validate()" in event_trace
+        and "log.digest() != expected_digest" in event_trace
+        and "log.len() as u64 != expected_count" in event_trace
+        and "events.len().min(MAX_INLINE_TRACE_EVENTS)" in event_trace
+        and "event_kind_identity(&event.kind)" in event_trace,
+        "HTML EventLog 摘要核验、订单关联类型映射与有界事件表唯一归属 report_html/event_trace",
+        f"event trace owner/verification/render bounds drift: {owners}",
+    )
+
+
+def report_html_fill_reader_module_check() -> None:
+    """Keep fills CSV identity parsing and bounded tail selection under one owner."""
+    facade_path = "crates/qx-cli/src/report_html.rs"
+    reader_path = "crates/qx-cli/src/report_html/fills.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    reader = (ROOT / reader_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_html/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("fills_table", "read_fills_csv", "read_fills_csv_tail", "read_fills_csv_window", "parse_csv_record")
+    }
+    type_owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_html/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(crate\)\s+struct\s+FillPoint\b", _read_text(path))
+    ]
+    check(
+        all(found == [reader_path] for found in owners.values())
+        and type_owners == [reader_path]
+        and "mod fills;" in facade
+        and "use fills::fills_table;" in facade
+        and "pub(crate) use fills::{read_fills_csv, read_fills_csv_tail, FillPoint};" in facade
+        and "escape_html(fill.exact_fees_json.as_deref().unwrap_or(READOUT_ABSENT))" in reader
+        and "rows.pop_front();" in reader
+        and "rows.push_back(FillPoint" in reader
+        and "VecDeque::with_capacity(limit.unwrap_or_default().min(4_096))" in reader
+        and "ExactDecimal::parse(value)" in reader,
+        "HTML/XLSX 成交 CSV 契约解析、身份投影与有界尾窗唯一归属 report_html/fills",
+        f"report fill reader owner/bounds/precision drift: {owners}; FillPoint owners={type_owners}",
     )
 
 
@@ -18807,7 +21128,7 @@ ENVIRONMENT_REIMPLEMENTATION = {
 PRODUCTION_PREDICATE_CONSUMERS = (
     "crates/qx-cli/src/live_check.rs",
     "crates/qx-cli/src/readiness.rs",
-    "crates/qx-cli/src/strategy_binding.rs",
+    "crates/qx-cli/src/strategy_binding/contract_input.rs",
     "crates/qx-cli/src/strategy_contract.rs",
     "crates/qx-runtime/src/runtime_config/strategy_validation.rs",
     "crates/qx-runtime/src/runtime_config/topology_validation.rs",
@@ -19028,7 +21349,7 @@ def ci_feature_matrix_check() -> None:
         f"job 可定位={bool(job)}",
     )
     declared = _cli_feature_names()
-    entries = re.findall(r"^\s*-\s*([A-Za-z0-9_,]+)\s*$", job, re.MULTILINE)
+    entries = re.findall(r"^\s*-\s*([-A-Za-z0-9_,]+)\s*$", job, re.MULTILINE)
     covered = {token for entry in entries for token in entry.split(",")}
     check(
         bool(declared) and set(declared) <= covered,
@@ -19046,6 +21367,50 @@ def ci_feature_matrix_check() -> None:
         _without_yaml_comments(_yaml_job_block(ci_text, "service-backends")),
     )
     steps = re.split(r"- name:", backends)
+    check(
+        all(
+            fragment in backends
+            for fragment in (
+                "runs-on: ubuntu-latest",
+                "postgres:",
+                "image: postgres:16-alpine",
+                "POSTGRES_USER: postgres",
+                "POSTGRES_PASSWORD: qianxing",
+                "POSTGRES_DB: qianxing_contract",
+                "5432:5432",
+                "pg_isready -U postgres -d qianxing_contract",
+            )
+        ),
+        "service-backends 在 Linux runner 启动健康检查就绪的 PostgreSQL 16 服务",
+        "缺少 Ubuntu runner、PostgreSQL 服务配置、端口或健康检查",
+    )
+    check(
+        all(
+            fragment in backends
+            for fragment in (
+                "QX_TEST_POSTGRES_DSN: postgres://postgres:qianxing@127.0.0.1:5432/qianxing_contract",
+                "QX_TEST_NATS_URL: nats://127.0.0.1:4222",
+                "docker run --detach --rm --name qx-nats -p 4222:4222 nats:2.10-alpine -js",
+                "jetstream",
+            )
+        ),
+        "service-backends 注入 PostgreSQL/NATS 连接地址并启动 JetStream 服务",
+        "缺少 PostgreSQL DSN、NATS URL 或 JetStream 启动步骤",
+    )
+    ignored_storage_steps = [
+        step
+        for step in steps
+        if "Ignored storage contracts (PostgreSQL + NATS JetStream)" in step and "--ignored" in step
+    ]
+    check(
+        len(ignored_storage_steps) == 1
+        and all(
+            fragment in ignored_storage_steps[0]
+            for fragment in ("--features sqlite,postgres,nats", "--test-threads=1")
+        ),
+        "service-backends 真实运行 SQLite/PostgreSQL/NATS ignored 存储合同",
+        f"匹配 ignored storage 步骤={len(ignored_storage_steps)}",
+    )
     nats_steps = [step for step in steps if NATS_LIVE_TARGETS[0] in step]
     check(
         len(nats_steps) == 1
@@ -19107,10 +21472,92 @@ def ci_feature_matrix_check() -> None:
     )
 
 
+def job_queue_backend_trait_check() -> None:
+    """Configured production queue dispatch must consume the shared storage contract."""
+    full_source = (ROOT / "crates/qx-service/src/configured_backends.rs").read_text(
+        encoding="utf-8"
+    )
+    source = production_text(full_source)
+    trait_impl = re.search(
+        r"impl JobQueueBackend for ConfiguredJobQueue\s*\{(.*?)\n\}\n\npub fn runtime_path",
+        full_source,
+        re.DOTALL,
+    )
+    required_methods = (
+        "enqueue_job",
+        "available_jobs",
+        "available_jobs_for_owner",
+        "claim_job",
+        "ack_job_at",
+        "recover_expired_leases",
+    )
+    variants = ("Files", "Sqlite", "Postgres")
+    missing_dispatches = []
+    if trait_impl is None:
+        missing_dispatches.extend(required_methods)
+    else:
+        body = trait_impl.group(1)
+        for method in required_methods:
+            for variant in variants:
+                if re.search(
+                    rf"Self::{variant}\(queue\).*?JobQueueBackend::{method}\(queue,",
+                    body,
+                    re.DOTALL,
+                ) is None:
+                    # SQLite/PostgreSQL may be cfg-gated, but their dispatch arms must remain.
+                    missing_dispatches.append(f"{variant}.{method}")
+    check(
+        trait_impl is not None and not missing_dispatches,
+        "ConfiguredJobQueue implements the shared queue trait and delegates all backend operations through it",
+        f"missing dispatches={missing_dispatches}",
+    )
+    wrappers = {
+        "enqueue": "enqueue_job",
+        "available": "available_jobs",
+        "available_for_owner": "available_jobs_for_owner",
+        "claim": "claim_job",
+        "ack_at": "ack_job_at",
+    }
+    missing_wrappers = []
+    for wrapper, method in wrappers.items():
+        body = _fn_body(source, f"pub fn {wrapper}(")
+        if not body or f"JobQueueBackend::{method}(self," not in body:
+            missing_wrappers.append(wrapper)
+    check(
+        not missing_wrappers,
+        "ConfiguredJobQueue production convenience methods flow through the trait implementation",
+        f"wrappers bypassing the trait={missing_wrappers}",
+    )
+    check(
+        "configured_file_queue_dispatches_the_production_trait_contract" in full_source,
+        "production trait dispatch has a behavioral file-queue regression test",
+        "missing configured queue trait contract test",
+    )
+
+
 PROMETHEUS_BUILDER_FILE = "crates/qx-api/src/lib.rs"
 PROMETHEUS_TEST_FILE = "crates/qx-api/tests/prometheus_exposition.rs"
 PROMETHEUS_LINE_CASE = "metrics_body_is_line_separated_prometheus_exposition"
 OPS_ALERT_FILE = OUTBOX_ALERT_FILE
+
+
+def cli_test_data_isolation_check() -> None:
+    """The Rust core CI job rejects test artifacts written into repository data trees."""
+    script = _text_or_empty(ROOT / "tools/check_cli_test_data_isolation.py")
+    ci = _text_or_empty(ROOT / ".github/workflows/ci.yml")
+    rust_core = _yaml_job_block(ci, "rust-core")
+    guard_at = rust_core.find("- name: Verify CLI tests leave runtime data isolated")
+    check(
+        'DATA_PATHS = ("deploy/data", "crates/qx-cli/data")' in script
+        and 'git_data_paths(root, "diff", "--name-only", "HEAD")' in script
+        and '"--ignored"' in script
+        and guard_at > rust_core.find("- name: Workspace tests")
+        and guard_at > rust_core.find("- name: Linux qx-cli behavior parity (R19)")
+        and "python3 tools/check_cli_test_data_isolation.py"
+        in rust_core,
+        "Rust core CI 在 workspace 与 CLI 子进程测试后检查 deploy/data 和 crates/qx-cli/data 无副产物",
+        "测试数据隔离检查缺失、未覆盖 ignored 输出，或没有排在 CLI 测试之后",
+    )
 
 
 def ops_read_surface_check() -> None:
@@ -19902,10 +22349,13 @@ def kernel_timeline_check() -> None:
 # 后端不存在的端点、或它绕过控制面直连下单端点，都必须在这里当场变红。
 WEB_CONSOLE_DIR = "web/console"
 WEB_CONSOLE_FILES = ("index.html", "app.js", "styles.css", "research-comparison.js")
-# 控制台**唯一**允许的写面：控制面受理入口。它不直接下单——下单要走这条命令，由控制面
-# 受理后交给执行者，所以"页面直连某个下单端点"这类形状必须被禁掉（下面那份名单）。
-WEB_CONSOLE_WRITE_PATH = "/control/commands"
-WEB_CONSOLE_WRITE_CALL = "postJson(API_PATHS.controlCommands"
+# 控制命令与部署管理都只能走各自受认证的 API 入口。控制命令不直接下单；页面不能直连
+# 任何订单端点或旁路控制面执行订单。
+WEB_CONSOLE_WRITE_CALLS = (
+    "postJson(API_PATHS.controlCommands",
+    "postJson(API_PATHS.strategyDeploymentRevisions",
+    "postJson(API_PATHS.strategyDeploymentOperations",
+)
 WEB_CONSOLE_FORBIDDEN_WRITE_TOKENS = (
     "/order/submit",
     "binance-submit-order",
@@ -19919,10 +22369,10 @@ WEB_CONSOLE_STATUS_VOCAB = ("Accepted", "Executed", "Failed")
 
 
 def web_console_check() -> None:
-    """控制台与 qx-api 路由表逐一接线，写面只有控制面受理这一条（V13 R23 · M1'/M2'/M3'）。
+    """控制台与 qx-api 路由表逐一接线，控制与部署写面走受认证入口。
 
     M1'/M2' 时这条判据守的是"它不许长出写操作"；M3' 把它推进到控制面之后，守的东西变成
-    **写面唯一**：读面板照旧只读，唯一的写操作是 `POST /control/commands`，而它不直接下单。
+    控制命令和策略部署有各自的写入口，部署操作使用修订创建/操作受理 API；页面不直接下单。
     另外钉住三阶段在盘与身份边界如实交代——页面不能自声明 operator，那是 mTLS 边界的事。
     """
     console = ROOT / WEB_CONSOLE_DIR
@@ -20024,13 +22474,13 @@ def web_console_check() -> None:
     )
     posts = code.count('method: "POST"')
     intruders = [token for token in WEB_CONSOLE_FORBIDDEN_WRITE_TOKENS if token in code]
+    missing_write_calls = [call for call in WEB_CONSOLE_WRITE_CALLS if call not in code]
     check(
         posts == 1
-        and WEB_CONSOLE_WRITE_CALL in code
-        and f'"{WEB_CONSOLE_WRITE_PATH}"' in code
+        and not missing_write_calls
         and not intruders,
-        "控制台的写面只有一条：POST /control/commands（下单只能走这条命令，页面不得直连任何下单端点）",
-        f"POST 调用 {posts} 处 / 受理入口 {WEB_CONSOLE_WRITE_CALL in code} / 越界写面 {intruders}",
+        "控制台控制命令和策略部署均走指定 API，页面不得直连任何下单端点",
+        f"POST 传输实现 {posts} 处 / 缺少写入口 {missing_write_calls} / 越界写面 {intruders}",
     )
     check(
         all(phase in app + html for phase in WEB_CONSOLE_PHASES)
@@ -20056,6 +22506,12 @@ def web_console_check() -> None:
         and "renderLocalOnlyRejected" in code,
         "命令提交前再次检查本机回环边界，拒绝路径向用户说明静态包不是生产控制台",
         "控制命令入口绕过了 local-only 边界",
+    )
+    deployment_guards = code.count("if (!isLoopbackControlTarget(state.base))")
+    check(
+        deployment_guards == 2,
+        "部署修订创建与操作提交前都复核静态控制台回环边界",
+        f"部署写入口的回环防线数量错误：{deployment_guards}",
     )
     check(
         "function bffEntryBase()" in code
@@ -20258,6 +22714,8 @@ def snapshot_to_json_layers() -> tuple[list[str], list[str]]:
     assert obj.startswith("{") and obj.endswith("}"), f"写侧字面量不是一个平衡对象：{shape[:80]}"
     body = obj[1:-1]
     top = _json_keys_one_level(body)
+    if '"equity_diagnostic"' in source:
+        top.insert(top.index("equity_raw") + 1, "equity_diagnostic")
     header_at = body.find('"header"')
     assert header_at >= 0, "写侧字面量里没有 header 那一层：快照的身份被挪出层了"
     open_brace = body.index("{", header_at)
@@ -20378,14 +22836,14 @@ def web_console_field_wiring_check() -> None:
         f"名册 {rosters.get('balances')} / 后端 {json_object_keys_of(CONSOLE_BALANCES_MARKER)}",
     )
     schema = json.loads(
-        (ROOT / "schemas/account-snapshot-v3.json").read_text(encoding="utf-8")
+        (ROOT / "schemas/account-snapshot-v4.json").read_text(encoding="utf-8")
     )
     check(
         set(top) <= set(schema["properties"])
         and set(schema["properties"]) - set(top) <= {"fees_by_currency_raw", "cash_exact"}
         and "fees_by_currency_raw" not in schema["required"]
         and "cash_exact" not in schema["required"],
-        "快照写侧的顶层键均由当前 v3 schema 声明，精确余额与费用 map 都可省略",
+        "快照写侧的顶层键均由当前 v4 schema 声明，精确余额与费用 map 都可省略",
         f"写侧 {sorted(top)} / schema {sorted(schema['properties'])}",
     )
 
@@ -20643,7 +23101,10 @@ def native_trust_check() -> None:
     if not path.is_file():
         return
     trust = production_text(_read_text(path))
-    host = (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+    host = (
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/c_abi.rs").read_text(encoding="utf-8")
+    )
     check(
         f"fn {NATIVE_TRUST_GATE}(" in trust
         and "fn target_triple_matches(" in trust
@@ -20860,8 +23321,11 @@ def console_front_check() -> None:
         "配置段加了却不校验：绑到外部接口的控制台照样起得来",
     )
     cli = (ROOT / "crates/qx-cli/src/cli.rs").read_text(encoding="utf-8")
+    host_command = (ROOT / "crates/qx-cli/src/cli/host_command.rs").read_text(encoding="utf-8")
     check(
-        "Command::Console(args)" in cli and "serve_console(&args)" in cli,
+        "Command::Console(args)" in cli
+        and "host_command::dispatch_console(args)" in cli
+        and "serve_console(&args)" in host_command,
         "`qx-cli console` 有派发臂且指向 `serve_console`（命令表里的入口不是装饰）",
         "命令表列了 console 却没有派发分支",
     )
@@ -21359,7 +23823,10 @@ def read_face_scope_check() -> None:
 
     ledger_struct = production_text((ROOT / "crates/qx-core/src/ledger/mod.rs").read_text(encoding="utf-8"))
     ledger_body = _fn_body(ledger_struct, "pub struct LedgerEntry {")
-    report_body = _fn_body(dispatch, "pub struct ReconcileReportSnapshot {")
+    report_contract = production_text(
+        (ROOT / "crates/qx-runtime/src/reconcile.rs").read_text(encoding="utf-8")
+    )
+    report_body = _fn_body(report_contract, "pub struct ReconcileReportSnapshot {")
     ledger_params = _const_literals(READ_SCOPE_LEDGER_PARAMS, scope)
     report_params = _const_literals(READ_SCOPE_REPORT_PARAMS, scope)
     check(
@@ -21755,7 +24222,7 @@ def qx_app_check() -> None:
         "crates/qx-app/src/cases/validate_dataset.rs",
         "crates/qx-app/src/cases/run_backtest.rs",
         "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
-        "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+        "crates/qx-app/src/cases/run_multi_market_backtest/market_preparation.rs",
         "crates/qx-app/src/ashare_screen.rs",
         "crates/qx-app/src/artifact_store/multi_builtin_artifacts.rs",
         "crates/qx-app/src/backtest_input_identity.rs",
@@ -22192,6 +24659,9 @@ def _client_code_only(path: str, language: str) -> str:
     if language == "cpp":
         text = re.sub(r"/\*[\s\S]*?\*/", "", text)
         return re.sub(r"//[^\n]*", "", text)
+    if language == "python":
+        trading_path = ROOT / "python/qianxing/client_trading.py"
+        text += "\n" + production_text(trading_path.read_text(encoding="utf-8"))
     return re.sub(r"#[^\n]*", "", text)
 
 
@@ -22301,7 +24771,10 @@ def cli_migrated_backtest_parity_check() -> None:
         "WP-2.2 单策略产物风险版本取自 qx-app 实际执行的 RiskGate 返回值，且风控门在 cases/risk_gate.rs 单点构造",
         "回测 outcome 未携带实际执行策略版本，或 CLI 仍另行推导风控审计标签，或风控门构造分叉到各链",
     )
-    strategy_host = (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+    strategy_host = (
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+    )
     check(
         "pub fn build_strategy_context(" in app_engine
         and "context.validate().map_err" in app_engine
@@ -22815,9 +25288,11 @@ def cli_backtest_command_behavior_coverage_check() -> None:
         ROOT / "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs"
     ).read_text(encoding="utf-8")
     builtin_parity = (ROOT / "crates/qx-cli/tests/app_three_entrypoints/legacy_builtin_parity.rs").read_text(encoding="utf-8")
+    strategy_batch = (ROOT / "crates/qx-service/src/backtest_bindings/strategy_batch.rs").read_text(encoding="utf-8")
     check(
         "prepare_builtin_backtest_snapshot(" in builtin_adapter
         and 'config.strategy.version = format!("builtin-{}-v1", kind.name())' in builtin_snapshot
+        and 'strategy.version = format!("builtin-{}-v1", kind.name());' in strategy_batch
         and "legacy_builtin_strategies_match_qx_app_default_engine_results" in builtin_parity
         and "configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding" in builtin_parity
         and 'summary["fill_model"]["name"]' in builtin_parity,
@@ -23104,6 +25579,8 @@ def client_route_wiring_check() -> None:
             continue
         block = _balanced_brace_block(code, code.index("{", match.start()))
         outside = code.replace(block, "", 1)
+        if language == "python":
+            outside += "\n" + _client_code_only(PYTHON_REMOTE_MODULE, language)
         if language == "cpp":
             for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", block):
                 definition = re.search(
@@ -23135,7 +25612,8 @@ def client_route_wiring_check() -> None:
     #    写上去只是给判据凑一个不可达的分支。
     stray: list[str] = []
     for language, (path, _declaration) in CLIENT_ROUTE_TABLES.items():
-        literals = set(re.findall(r'"(/app/[^"]*)"', _client_code_only(path, language)))
+        source_path = PYTHON_REMOTE_MODULE if language == "python" else path
+        literals = set(re.findall(r'"(/app/[^"]*)"', _client_code_only(source_path, language)))
         for extra in sorted(literals - set(tables[language])):
             stray.append(f"{language}:{extra}")
     check(
@@ -23323,6 +25801,7 @@ LANGUAGE_CONTRACT_FILE = "maturity/language_api_contract.yaml"
 LANGUAGE_CONTRACT_KIND = "language-api-contract"
 LANGUAGE_CONTRACT_LANGUAGES = ("rust", "python_native", "python_remote", "cpp_remote", "http")
 PYTHON_APP_MODULE = "python/qianxing/app.py"
+PYTHON_REMOTE_MODULE = "python/qianxing/client_remote.py"
 PYTHON_REMOTE_CLASSES = ("AppClient", "TradeWorkflowClient")
 CPP_APP_HEADER = "cpp/include/qianxing_app.hpp"
 
@@ -23395,7 +25874,16 @@ def _python_native_functions() -> list[str]:
 
 def _python_class_lines(class_name: str) -> list[str]:
     """某个类的类体行（从 `class X(` 之后到下一个顶层语句之前）。"""
-    text = _text_or_empty(ROOT / PYTHON_APP_MODULE)
+    source_path = (
+        PYTHON_REMOTE_MODULE
+        if class_name in {"AppClient", "RemoteRunHandle"}
+        else "python/qianxing/client_trading.py"
+        if class_name in {"TradeWorkflowClient", "PaperClient", "LiveClient", "TradeCommand"}
+        else "python/qianxing/client_local.py"
+        if class_name in {"RunHandle", "RunEvent", "AsyncRunHandle", "AsyncCoreClient"}
+        else PYTHON_APP_MODULE
+    )
+    text = _text_or_empty(ROOT / source_path)
     marker = f"class {class_name}("
     if marker not in text:
         return []
@@ -23817,13 +26305,13 @@ def binance_user_stream_runner_ownership_check() -> None:
     )
     check(
         "pub fn run_binance_user_stream_worker<" in service
-        and "run_binance_user_stream_with_config_loader(" in service
+        and "run_binance_user_stream_with_config_loader_observing(" in service
         and "ingest_venue_events_with_spec(" in service
         and "qx_service::binance_user_stream_host::run_binance_user_stream_worker(" in cli
-        and "run_binance_user_stream_with_config_loader(" not in cli
+        and "run_binance_user_stream_with_config_loader_observing(" not in cli
         and "ingest_venue_events(" not in cli,
         "Binance UserStream 生命周期、回报归约与规格门由 qx-service 唯一拥有，CLI 只装配连接器",
-        f"service lifecycle={ 'run_binance_user_stream_with_config_loader(' in service }；"
+        f"service lifecycle={ 'run_binance_user_stream_with_config_loader_observing(' in service }；"
         f"CLI delegate={ 'qx_service::binance_user_stream_host::run_binance_user_stream_worker(' in cli }",
     )
 
@@ -23848,6 +26336,50 @@ def binance_execution_runner_ownership_check() -> None:
         "Binance 执行队列、租约、终态回写及恢复循环由 qx-service 唯一拥有",
         f"service queue={ 'available_commands(lease_now)' in service }；"
         f"CLI delegates={ 'qx_service::binance_execution_host::run_binance_execution_worker(' in cli }",
+    )
+
+
+def binance_spot_symbol_validation_check() -> None:
+    """The Binance Spot boundary only forwards exchange-shaped symbols."""
+    adapter = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    validator_start = adapter.find("fn validate_binance_instrument(")
+    validator_tail = adapter[validator_start:] if validator_start >= 0 else ""
+    validator = validator_tail.split("fn parse_client_order_id(", 1)[0]
+    tests = _text_or_empty(ROOT / "crates/qx-adapter/src/binance/tests.rs")
+    case = "binance_spot_symbol_validation_rejects_path_and_request_syntax"
+    check(
+        re.search(r"instrument\s*\.symbol\(\)\s*\.bytes\(\)", validator) is not None
+        and "byte.is_ascii_alphanumeric()" in validator
+        and f"fn {case}(" in tests
+        and '"../../etc/passwd"' in tests
+        and '"/etc/passwd"' in tests
+        and '"BTC/USDT"' in tests
+        and '"BTCUSDT?limit=1"' in tests
+        and '"BTCUSDT\\r\\nX-Injected: yes"' in tests,
+        "Binance Spot 请求边界拒绝路径片段、分隔符、查询注入与控制字符标的",
+        f"validator tokens={bool(validator)}；behavior case present={case in tests}",
+    )
+
+
+def instrument_id_symbol_validation_check() -> None:
+    """Rust parsing and Serde share the guarded instrument symbol grammar."""
+    identity = _text_or_empty(ROOT / "crates/qx-core/src/identity.rs")
+    case = "instrument_symbol_validation_accepts_market_forms_and_rejects_path_syntax"
+    serde_case = "instrument_id_deserialization_uses_the_shared_symbol_guard"
+    check(
+        "pub fn is_valid_symbol(symbol: &str) -> bool" in identity
+        and "if !Self::is_valid_symbol(sym)" in identity
+        and "symbol: String," in identity
+        and "pub symbol: String" not in identity
+        and "pub fn new(symbol: impl Into<String>, venue: VenueId) -> Option<Self>" in identity
+        and "impl<'de> Deserialize<'de> for InstrumentId" in identity
+        and "if !InstrumentId::is_valid_symbol(&raw.symbol)" in identity
+        and f"fn {case}()" in identity
+        and f"fn {serde_case}()" in identity
+        and "InstrumentId::new(\"../../etc/passwd\", VenueId::new(\"BINANCE\")).is_none()" in identity
+        and '"../../etc/passwd"' in identity,
+        "InstrumentId symbol 封装且 new/parse/反序列化共用受限语法并覆盖路径输入",
+        f"parser and serde guard present={('is_valid_symbol' in identity)}；behavior cases={case}, {serde_case}",
     )
 
 
@@ -25348,6 +27880,7 @@ def capability_crosswalk_check() -> None:
     account_operations = {
         "balance.read",
         "orders.read",
+        "trades.read",
         "positions.read",
         "cashflows.read",
         "funding.read",
@@ -25432,7 +27965,8 @@ def capability_crosswalk_check() -> None:
             [
                 "require_account_query_execution_capability(",
                 "let mut venue = create_venue(&worker)?;",
-                ".fetch_and_reconcile()",
+                ".fetch_remote_snapshot()",
+                ".reconcile_remote(&remote_orders)",
                 ".fetch_account_balances(runtime_timestamp_ms())",
             ],
         )
@@ -25997,6 +28531,13 @@ PY_LAYER_SUB_NAMESPACE_ONLY = {
         "ProviderRegistry",
         "ProviderResponse",
     ),
+    "experiments": (
+        "GuidedResearchHandle",
+        "GuidedResearchResult",
+        "GuidedResearchSpec",
+        "research",
+        "start_research",
+    ),
 }
 # 远端面与服务端执行面：只有 `client` / `paper` / `live` 能出现。
 PY_LAYER_REMOTE_NAMES = ("AppClient", "RemoteRunHandle", "PaperClient", "LiveClient", "TradeWorkflowClient")
@@ -26199,7 +28740,7 @@ def qx_sdk_facade_check() -> None:
     # ⑦ §6.1「async run」的实物：以规格名册为契约，不能用固定条数掩盖漏项。
     async_entries: set[str] = set()
     malformed_async_entries: list[str] = []
-    for path in sorted((ROOT / "crates/qx-app/src/cases").glob("*.rs")):
+    for path in sorted((ROOT / "crates/qx-app/src/cases").rglob("*.rs")):
         source = _read_text(path)
         for match in SDK_FACADE_ASYNC_ENTRY_PATTERN.finditer(source):
             impls = list(
@@ -26411,6 +28952,12 @@ def python_sdk_layering_check() -> None:
 
     # ⑤ 顶层稳定名单 == `qianxing/app.py` 的公开类/函数集合，**双向**。
     app_public = set(re.findall(r"^(?:class|def) ([A-Za-z]\w*)", app_text, re.MULTILINE))
+    remote_text = _text_or_empty(ROOT / PYTHON_REMOTE_MODULE)
+    app_public.update(re.findall(r"^class ([A-Za-z]\w*)", remote_text, re.MULTILINE))
+    trading_text = _text_or_empty(ROOT / "python/qianxing/client_trading.py")
+    app_public.update(re.findall(r"^class ([A-Za-z]\w*)", trading_text, re.MULTILINE))
+    local_text = _text_or_empty(ROOT / "python/qianxing/client_local.py")
+    app_public.update(re.findall(r"^class ([A-Za-z]\w*)", local_text, re.MULTILINE))
     top_set = set(top_all)
     check(
         app_public and top_set == app_public,
@@ -26665,6 +29212,7 @@ def stdout_json_error_propagation_check() -> None:
     json_output = _text_or_empty(ROOT / "crates/qx-cli/src/ecosystem_smoke/json_output.rs")
     selfcheck = _text_or_empty(ROOT / "crates/qx-cli/src/selfcheck.rs")
     cli = _text_or_empty(ROOT / "crates/qx-cli/src/cli.rs")
+    selfcheck_command = _text_or_empty(ROOT / "crates/qx-cli/src/cli/selfcheck_command.rs")
     export = _text_or_empty(ROOT / "crates/qx-cli/src/run_evidence_export.rs")
     verify = _text_or_empty(ROOT / "crates/qx-cli/src/run_evidence_verify.rs")
     no_stdout_expect = all(
@@ -26687,10 +29235,13 @@ def stdout_json_error_propagation_check() -> None:
         and "pub(crate) fn run(scope: Scope, as_json: bool) -> Result<(), String>" in selfcheck
         and "}))?;" in export
         and "}))?;" in verify
-        and "fn dispatch_output_result(result: Result<(), String>, command: &str)" in cli
-        and '"生态自检"' in cli
-        and '"全量自检"' in cli
-        and '"内核自检"' in cli,
+        and "fn dispatch_output_result(result: Result<(), String>, command: &str)" in selfcheck_command
+        and '"生态自检"' in selfcheck_command
+        and '"全量自检"' in selfcheck_command
+        and '"内核自检"' in selfcheck_command
+        and "Command::Ecosystem(args) => selfcheck_command::dispatch_ecosystem(args.json)" in cli
+        and "Command::All(args) => selfcheck_command::dispatch_all(args.json)" in cli
+        and "Command::Verify(args) => selfcheck_command::dispatch_verify(args.json)" in cli,
         "JSON stdout I/O failures propagate as CLI errors instead of panicking",
         f"JSON writers are fallible={'Result<(), String>' in json_output}; stdout expect removed={no_stdout_expect}; selfcheck consumers={selfcheck.count('print_json_report(&report)?;')}/2",
     )
@@ -26834,10 +29385,12 @@ ARTIFACT_PUBLISH_CALLERS = (
     "crates/qx-api/src/app_runs/persistence.rs",
     "crates/qx-cli/src/report_html.rs",
     "crates/qx-cli/src/report_xlsx/openxml.rs",
-    "crates/qx-cli/src/report_comparison.rs",
-    "crates/qx-cli/src/report_benchmark.rs",
+    "crates/qx-cli/src/report_publish.rs",
+    "crates/qx-cli/src/report_benchmark/csv.rs",
     "crates/qx-cli/src/report_comparison_benchmark.rs",
-    "crates/qx-cli/src/report_multi_market_depth.rs",
+    "crates/qx-cli/src/report_multi_market_depth/diagnostics.rs",
+    "crates/qx-cli/src/report_multi_market_depth/publication.rs",
+    "crates/qx-cli/src/report_multi_market/publication.rs",
     "crates/qx-cli/src/run_evidence_experiment_recompute/portable_bundle.rs",
 )
 # 「自造临时文件 + 发布」的指纹：hard_link 发布、或 with_extension 造临时名后 rename/write。
@@ -26853,12 +29406,14 @@ SELF_ROLLED_PUBLISH = (
 ARTIFACT_PUBLISH_EXEMPT = {
     "crates/qx-service/src/ccxt_live_bars.rs": "实时 BarFrame 快照：行情运行期断点，每轮整份覆写，不是一次运行的产物",
     "crates/qx-cli/src/strategy_live_state.rs": "实时策略 digest 断点：运行期状态，非产物",
-    "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs": "策略 EventLog 消费游标：运行期可恢复状态，非研究/回测产物",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs": "策略执行 cursor/checkpoint：有 fencing 的运行期恢复状态，非研究/回测产物",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs": "Strategy PreparedEvaluation durable journal：命令恢复用运行期事务状态，非研究/回测产物",
     "crates/qx-service/src/worker_metrics.rs": "worker Prometheus .prom 边车文件：运维指标出口，非产物（WP-3.14）",
     "crates/qx-data/src/catalog.rs": "数据集目录登记：数据层存储，sink 在 qx-app、qx-data 位于其下游",
     "crates/qx-data/src/registry.rs": "数据集注册表：数据层存储，同上",
     "crates/qx-data/src/storage.rs": "Bar 存储落盘：数据层存储，同上",
     "crates/qx-zhenlu/src/lib.rs": "多腿组合单状态：FileLock 保护的活单运行期状态，非产物",
+    "crates/qx-orchestrator/src/strategy_deployment.rs": "按部署 revision 原子物化的运行期 worker 配置：由 supervisor 自身消费，非研究或回测产物",
 }
 
 
@@ -26891,10 +29446,18 @@ def artifact_publish_single_exit_check() -> None:
         if text is None:
             continue
         joined = "\n".join(text)
+        delegated_bundle_sink = (
+            rel in {
+                "crates/qx-cli/src/report_multi_market_depth/publication.rs",
+                "crates/qx-cli/src/report_multi_market/publication.rs",
+            }
+            and "ReportOutputBundle" in joined
+            and "qx_app::artifact_store::sink::publish_bundle" in "\n".join(production.get("crates/qx-cli/src/report_publish.rs", []))
+        )
         check(
-            "sink::" in joined,
+            "sink::" in joined or delegated_bundle_sink,
             f"{rel} 的产物落盘走 sink 出口",
-            f"{rel} 未引用 sink",
+            f"{rel} 未引用 sink，且没有使用已绑定 sink 的 ReportOutputBundle",
         )
         rolled = [pattern.pattern for pattern in SELF_ROLLED_PUBLISH if pattern.search(joined)]
         check(
@@ -26932,6 +29495,527 @@ def artifact_publish_single_exit_check() -> None:
         )
 
 
+def strategy_project_execution_boundary_check() -> None:
+    """Keep static project inspection import-free and dynamic code execution bounded."""
+    project_path = ROOT / "python/qianxing/strategy_project.py"
+    process_path = ROOT / "python/qianxing/process_tree.py"
+    docs_path = ROOT / "docs/strategy-project-runs.md"
+    source = project_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {
+        node.name: ast.get_source_segment(source, node) or ""
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    static_doctor = functions.get("static_project_doctor", "")
+    dynamic_doctor = functions.get("dynamic_project_doctor", "")
+    server_plan = functions.get("server_project_plan", "")
+    process_tree = process_path.read_text(encoding="utf-8")
+    docs = docs_path.read_text(encoding="utf-8")
+    native_plan = (ROOT / "crates/qx-python/src/lib.rs").read_text(encoding="utf-8")
+    check(
+        bool(static_doctor)
+        and "load_strategy_file" not in static_doctor
+        and "local_project_preflight" not in static_doctor
+        and "ast.parse" in static_doctor,
+        "静态 project doctor 只解析策略语法，不导入用户策略",
+        "static_project_doctor execution boundary changed",
+    )
+    check(
+        "run_process_tree" in dynamic_doctor
+        and "subprocess.run(" not in dynamic_doctor
+        and "timeout_seconds < 1" in dynamic_doctor,
+        "动态 doctor 必须走有超时的进程树执行器",
+        "dynamic_project_doctor no longer delegates to bounded process-tree cleanup",
+    )
+    check(
+        "start_new_session=os.name != \"nt\"" in process_tree
+        and "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in process_tree
+        and "taskkill" in process_tree
+        and "os.killpg" in process_tree,
+        "动态预检超时/返回会清理 POSIX 进程组和 Windows Job Object 子进程",
+        "platform process-tree cleanup primitives are missing",
+    )
+    check(
+        "plan_strategy_runtime_v1" in server_plan
+        and "load_strategy_file" not in server_plan
+        and "project plan --profile local" in docs
+        and "project doctor --dynamic" in docs
+        and "project run" in docs,
+        "项目计划明确区分无导入 server plan 与会执行用户代码的 local plan/run/动态 doctor",
+        "server plan import boundary or execution-entry-point documentation is missing",
+    )
+    check(
+        '"host_capabilities": binding.get("host_capabilities")' in server_plan
+        and '"capability_negotiation": capability_negotiation' in server_plan
+        and 'configured strategy requirements are unsupported by the selected host' in server_plan
+        and '"host_capabilities": host_capabilities' in native_plan
+        and '"configured_requirement_status": configured_requirement_status' in native_plan
+        and '"status": "not_imported"' in native_plan
+        and '"status": "deferred_to_verified_library_load"' in native_plan
+        and "load_strategy_file" not in server_plan,
+        "server static plan reports Rust-owned host catalog/config requirement results and leaves user-source requirements explicitly unevaluated",
+        "server project plan hides host requirement status or imports user source to infer it",
+    )
+    check(
+        all(command in docs for command in (
+            "inspect-strategy", "diagnose-strategy", "run-strategy", "search-strategy", "remote-research"
+        )),
+        "文档列出所有直接/远端策略代码执行命令",
+        "strategy code execution entry points are undocumented",
+    )
+
+
+def strategy_project_import_isolation_check() -> None:
+    """Keep project-local strategy imports and dependency snapshots request-scoped."""
+    project_path = ROOT / "python/qianxing/strategy_project.py"
+    source = project_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {
+        node.name: ast.get_source_segment(source, node) or ""
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    loader = functions.get("load_strategy_file", "")
+    bundle = functions.get("_strategy_bundle_files", "")
+    check(
+        "_STRATEGY_IMPORT_LOCK" in loader
+        and "original_path = list(sys.path)" in loader
+        and "sys.path[:] = original_path" in loader,
+        "策略本地导入有锁保护且精确恢复 sys.path",
+        "strategy import is not serialized with exact sys.path restoration",
+    )
+    check(
+        "__qianxing_project_modules__" in loader
+        and "_module_is_under_strategy_root" in loader
+        and "sys.modules.pop(name, None)" in loader,
+        "策略导入完成后保留本地模块引用并清理进程级模块缓存",
+        "project-local modules are not captured and removed from sys.modules",
+    )
+    check(
+        "__qianxing_project_modules__" in bundle
+        and "sys.modules.values()" not in bundle,
+        "策略依赖快照只从当前策略的导入清单收集，不扫描全局模块表",
+        "strategy dependency snapshot still depends on process-global sys.modules",
+    )
+
+
+def managed_run_import_inventory_check() -> None:
+    """Bind imports observed during a managed run, including zip and removed modules."""
+    path = ROOT / "python/qianxing/project_runs.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {
+        node.name: ast.get_source_segment(source, node) or ""
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    loader = functions.get("_loaded_runtime_import_files", "")
+    verifier = functions.get("_verify_runtime_import_files", "")
+    run_project = functions.get("run_project", "")
+    check(
+        "sys.addaudithook(_record_runtime_import_event)" in source
+        and "_RUNTIME_IMPORT_CAPTURE.set(" in run_project
+        and "_RUNTIME_IMPORT_CAPTURE.reset(import_token)" in run_project
+        and "_RUNTIME_IMPORT_MAX_OBSERVATIONS = 50_000" in source,
+        "受管运行使用有界、上下文隔离的 Python import audit 捕获并在终态恢复上下文",
+        "managed runtime import audit capture lifecycle or bound is missing",
+    )
+    check(
+        "_RUNTIME_IMPORT_CAPTURE.get()" in loader
+        and '"imports": import_records' in loader
+        and '"imports_overflow"' in loader
+        and "_import_container_path(origin)" in loader
+        and 'coverage = "attempt"' in loader
+        and '"unresolved"' in loader
+        and '"opaque"' in loader,
+        "运行导入清单记录来源不透明、归档导入器及 sys.modules 清理前观察到的模块",
+        "runtime import inventory omits non-file origins, archive containers, or removed modules",
+    )
+    check(
+        "_runtime_import_files_sha256(files, import_records)" in loader
+        and 'snapshot.get("schema_version") not in {1, 2}' in verifier
+        and 'return "unresolved_imports"' in verifier
+        and 'return "imports_overflow"' in verifier,
+        "运行 import observations 进入清单摘要，旧 v1 可读且不完整的 v2 不会通过复核",
+        "runtime import observation digest or incomplete-inventory verification changed",
+    )
+
+
+def strategy_deployment_reconciliation_projection_check() -> None:
+    """Keep account/venue reconciliation visible without implying trade authorization."""
+    service_path = ROOT / "crates/qx-service/src/strategy_deployments.rs"
+    api_path = ROOT / "crates/qx-api/src/strategy_deployments.rs"
+    store_path = ROOT / "crates/qx-runtime/src/strategy_deployment_store.rs"
+    schema_path = ROOT / "schemas/strategy-deployment-status-v1.json"
+    console_path = ROOT / "web/console/app.js"
+    service = service_path.read_text(encoding="utf-8")
+    api = api_path.read_text(encoding="utf-8")
+    store = store_path.read_text(encoding="utf-8")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    console = console_path.read_text(encoding="utf-8")
+    check(
+        "load_reconcile_reports(root)?" in service
+        and "require_fresh_clean_reconciliation(" in service
+        and "StrategyDeploymentReconciliationV1" in service,
+        "部署状态按策略的精确 account/venue 投影对账报告和 freshness",
+        "strategy deployment status is not bound to durable reconciliation reports",
+    )
+    check(
+        all(f'"{state}"' in service for state in (
+            "not_configured", "missing", "invalid", "future", "stale", "discrepant", "clean"
+        ))
+        and "trading_enabled: None" in service,
+        "对账状态逐类 fail-closed，clean 不得被投影成交易授权",
+        "reconciliation states are incomplete or imply trading authorization",
+    )
+    check(
+        "reconciliation" in schema.get("properties", {})
+        and "StrategyDeploymentReconciliationV1" in api
+        and "账户对账" in console,
+        "API schema 与控制台展示部署对账 freshness",
+        "deployment reconciliation is missing from schema or packaged console source",
+    )
+    check(
+        "MAX_RECENT_OPERATIONS_PER_WORKER: usize = 20" in store
+        and "pub fn recent_operations(" in store
+        and "operations.truncate(limit)" in store
+        and schema.get("properties", {}).get("operation_history", {}).get("maxItems") == 20
+        and "operation_history.slice(0, 5)" in console,
+        "部署状态操作历史在存储、schema 与控制台分别有界",
+        "deployment operation history is missing its per-worker or UI bound",
+    )
+
+
+def strategy_deployment_node_aggregation_check() -> None:
+    """Keep node identity, freshness, and worker ownership separate in deployment aggregation."""
+    api_path = ROOT / "crates/qx-api/src/strategy_deployments.rs"
+    api_lib_path = ROOT / "crates/qx-api/src/lib.rs"
+    service_path = ROOT / "crates/qx-service/src/api_host.rs"
+    store_path = ROOT / "crates/qx-service/src/strategy_deployment_node_store.rs"
+    publisher_path = ROOT / "crates/qx-service/src/strategy_deployment_publisher.rs"
+    http_host_path = ROOT / "crates/qx-service/src/http_host.rs"
+    adapter_path = ROOT / "crates/qx-adapter/src/lib.rs"
+    config_path = ROOT / "crates/qx-runtime/src/runtime_config/schema.rs"
+    validation_path = ROOT / "crates/qx-runtime/src/runtime_config/topology_validation.rs"
+    schema_path = ROOT / "schemas/strategy-deployment-node-status-v1.json"
+    snapshot_schema_path = ROOT / "schemas/strategy-deployment-node-snapshot-v1.json"
+    api = api_path.read_text(encoding="utf-8")
+    api_lib = api_lib_path.read_text(encoding="utf-8")
+    service = service_path.read_text(encoding="utf-8")
+    store = store_path.read_text(encoding="utf-8")
+    publisher = publisher_path.read_text(encoding="utf-8")
+    http_host = http_host_path.read_text(encoding="utf-8")
+    adapter = adapter_path.read_text(encoding="utf-8")
+    runtime_config = config_path.read_text(encoding="utf-8")
+    validation = validation_path.read_text(encoding="utf-8")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    snapshot_schema = json.loads(snapshot_schema_path.read_text(encoding="utf-8"))
+    aggregator = api[api.index("pub fn aggregate_strategy_deployment_nodes("):]
+    check(
+        "registered_nodes.len() > 1024 || received_snapshots.len() > 1024" in aggregator
+        and "RegisteredStrategyDeploymentNodeV1" in api
+        and "ReceivedStrategyDeploymentNodeSnapshotV1" in api
+        and "!valid_deployment_node_identity(&node.node_id)" in aggregator
+        and "!authenticated_operators.insert(node.authenticated_operator_id.as_str())" in aggregator
+        and "registration.authenticated_operator_id != snapshot.authenticated_operator_id" in aggregator
+        and "unregistered node" in aggregator
+        and "received" in aggregator
+        and ".insert(snapshot.node_id.as_str(), snapshot)" in aggregator
+        and ".is_some()" in aggregator
+        and "snapshot.snapshot.generated_at_ms > snapshot.received_at_ms" in aggregator
+        and "StrategyDeploymentNodeFreshnessV1::Stale" in aggregator
+        and "snapshot.snapshot.deployments.clone()" in aggregator,
+        "节点部署投影要求显式注册与传输身份匹配，并按节点保留 worker 归属和 freshness",
+        "deployment node registration, authenticated identity, freshness, or per-node ownership boundary is missing",
+    )
+    check(
+        '("GET", "/strategies/deployment-nodes")' in api_lib
+        and '("POST", "/strategies/deployment-nodes")' in api_lib
+        and "with_strategy_deployment_nodes_provider" in api
+        and "with_strategy_deployment_node_snapshot_acceptor" in api
+        and schema.get("maxItems") == 1024
+        and schema.get("items", {}).get("$ref") == "#/$defs/node_status"
+        and schema.get("$defs", {}).get("node_status", {}).get("properties", {}).get("deployments", {}).get("maxItems") == 1024
+        and schema.get("$defs", {}).get("node_status", {}).get("properties", {}).get("freshness", {}).get("enum")
+        == ["unobserved", "fresh", "stale"],
+        "部署节点聚合只读 API 与 schema 有界且逐节点表达 freshness",
+        "deployment node read endpoint or bounded freshness schema is missing",
+    )
+    check(
+        "pub strategy_deployment_nodes: Vec<StrategyDeploymentNodeRuntimeConfig>" in runtime_config
+        and "strategy deployment node aggregation requires mTLS API transport" in validation
+        and "operator.permission == Permission::ReadOnly" in validation
+        and "authenticated_operator_id, snapshot, received_at_ms" in service
+        and "store.accept(" in service
+        and "transact_json_at::<StrategyDeploymentNodeSnapshotStateV1" in store
+        and "stale_snapshot:" in store
+        and "MAX_SNAPSHOT_STATE_BYTES" in store
+        and "strategy_deployment_publisher: Option<StrategyDeploymentPublisherRuntimeConfig>" in runtime_config
+        and "pub fn from_mtls_pem(" in adapter
+        and "with_client_auth_cert(client_certificate_chain, client_private_key)" in adapter
+        and "pub fn spawn_strategy_deployment_publisher(" in publisher
+        and "read_strategy_deployments(config, timestamp_ms)" in publisher
+        and 'method: "POST".into()' in publisher
+        and 'const PUBLISH_PATH: &str = "/strategies/deployment-nodes"' in publisher
+        and "MAX_PUBLISH_BODY_BYTES" in publisher
+        and "spawn_strategy_deployment_publisher(" in http_host
+        and "stop_api_projection_bridge(&publisher_stop, &mut publisher_thread)" in http_host
+        and snapshot_schema.get("properties", {}).get("deployments", {}).get("maxItems") == 1024,
+        "运行时显式注册 mTLS ReadOnly 节点，接收端单调持久化且节点以校验服务端证书的 mTLS 自动发布快照",
+        "runtime registration, bounded receipt, verified mTLS publisher lifecycle, or snapshot ingress schema is incomplete",
+    )
+
+
+def strategy_checkpoint_migration_check() -> None:
+    """Checkpoint identity changes require one exact, revision-bound state migration."""
+    runtime_schema = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_schema.rs").read_text(encoding="utf-8")
+    runtime_validation = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_validation.rs").read_text(encoding="utf-8")
+    checkpoint = (ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/checkpoint.rs").read_text(encoding="utf-8")
+    cursor = (ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs").read_text(encoding="utf-8")
+    worker = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    check(
+        "pub struct StrategyCheckpointStateMigrationV1" in runtime_schema
+        and "source_deployment_revision: u64" in runtime_schema
+        and "target_deployment_revision: u64" in runtime_schema
+        and "source_strategy_binding_sha256: String" in runtime_schema
+        and "source_checkpoint_sha256: String" in runtime_schema
+        and "target_strategy_state: serde_json::Value" in runtime_schema
+        and "encoded.len() > 64 * 1024" in runtime_validation
+        and "migration.target_deployment_revision <= migration.source_deployment_revision" in runtime_validation
+        and "source_strategy_binding_sha256" in checkpoint
+        and "source_checkpoint_sha256" in checkpoint
+        and "migration.target_deployment_revision != target_revision" in checkpoint
+        and "converted.strategy_state = migration.target_strategy_state.clone()" in checkpoint
+        and "converted.strategy_id = target_id.to_string()" in checkpoint
+        and "converted.strategy_version = strategy.version.clone()" in checkpoint
+        and "validate_checkpoint_adapter_for_target(strategy, &converted.adapter_state)" in checkpoint
+        and "CURSOR_DEPLOYMENT_STATE_CONVERTED" in checkpoint
+        and "converter_sha256" in cursor
+        and "source_checkpoint_sha256" in cursor
+        and "target_checkpoint_sha256" in cursor
+        and '.remove("checkpoint_state_migration")' in checkpoint,
+        "跨修订 checkpoint 迁移必须精确绑定源身份/摘要/修订，转换产物和转换器摘要一并耐久记录",
+        "checkpoint state migration is not exact-source authorized, bounded, identity-rebound, or durably receipted",
+    )
+    check(
+        worker.index("execution_updates::bind_cursor_to_deployment_revision(")
+        < worker.index("execution_updates::validate_checkpoint_binding_for_mode("),
+        "策略 worker 先提交获准的修订状态迁移，再校验目标 checkpoint 身份",
+        "checkpoint identity validation runs before the revision-bound migration gate",
+    )
+    supervisor = (ROOT / "crates/qx-orchestrator/src/strategy_deployment.rs").read_text(encoding="utf-8")
+    rollback = supervisor[supervisor.index("StrategyDeploymentActionV1::Deploy | StrategyDeploymentActionV1::Rollback") :]
+    rollback = rollback[: rollback.index("StrategyDeploymentActionV1::Stop")]
+    check(
+        '"rollback requires a currently deployed source revision"' in rollback
+        and "revision.revision <= active_revision" in rollback
+        and rollback.index("revision.revision <= active_revision") < rollback.index("StrategyLifecycleAction::Pause")
+        and rollback.index("revision.revision <= active_revision") < rollback.index("drain_one(")
+        and "create a new revision from the selected prior configuration" in rollback,
+        "rollback targeting a non-monotonic revision is rejected before pausing or draining the active worker",
+        "rollback revision fencing does not reject an old target before worker lifecycle changes",
+    )
+
+
+def strategy_long_only_sma_warmup_check() -> None:
+    """Keep host warmup distinct from the strategy's evaluation-time gate."""
+    long_only_sma = (ROOT / "python/qianxing_strategy/long_only_sma.py").read_text(encoding="utf-8")
+    warmup = long_only_sma[long_only_sma.index("    def history_requirements(") :]
+    check(
+        'return {"warmup_bars": self.slow + 1}' in warmup
+        and "len(rows) == self.slow + 1" in long_only_sma
+        and "bar[\"ts\"] >= self.start_ts" in long_only_sma,
+        "long-only SMA declares its complete crossover warmup separately from its evaluation/start-time gates",
+        "long-only SMA signal evaluation window is not declared as host warmup",
+    )
+
+
+def strategy_deployment_dependency_tree_check() -> None:
+    """Bind file and trusted import-name Python sources to immutable revisions."""
+    spec = (ROOT / "crates/qx-spec/src/strategy_deployment.rs").read_text(encoding="utf-8")
+    service = (ROOT / "crates/qx-service/src/strategy_deployments.rs").read_text(encoding="utf-8")
+    api_host = (ROOT / "crates/qx-service/src/api_host.rs").read_text(encoding="utf-8")
+    store = (ROOT / "crates/qx-runtime/src/strategy_deployment_store.rs").read_text(encoding="utf-8")
+    supervisor = (ROOT / "crates/qx-orchestrator/src/strategy_deployment.rs").read_text(encoding="utf-8")
+    strategy_host = (
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+    )
+    python_runner = (ROOT / "python/qianxing_strategy/worker.py").read_text(encoding="utf-8")
+    runtime_schema = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_schema.rs").read_text(encoding="utf-8")
+    runtime_validation = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_validation.rs").read_text(encoding="utf-8")
+    schema = json.loads(
+        (ROOT / "schemas/strategy-deployment-revision-v1.json").read_text(encoding="utf-8")
+    )
+    check(
+        "pub struct StrategyDependencyTreeV1" in spec
+        and "pub struct StrategyDependencyTreeFileV1" in spec
+        and "pub dependency_tree: Option<StrategyDependencyTreeV1>" in spec
+        and "dependency tree files must be sorted and unique by path" in spec
+        and "computed_sha256" in spec
+        and schema.get("properties", {}).get("dependency_tree", {}).get("required")
+        == ["schema_version", "kind", "entry_path", "tree_sha256", "files"],
+        "部署 revision 持有严格校验、内容寻址的 Python 依赖树 manifest 与 schema",
+        "deployment revision dependency-tree manifest is missing or weakly validated",
+    )
+    check(
+        "snapshot_python_dependency_tree" in service
+        and "collect_python_sources" in service
+        and "resolve_trusted_python_module" in service
+        and "Python module resolves outside the trusted source root" in service
+        and "declared_resources: &[String]" in service
+        and "python_resource_paths" in runtime_schema
+        and "python_resource_paths" in runtime_validation
+        and "MAX_STRATEGY_DEPENDENCY_TREE_FILES" in service
+        and "MAX_STRATEGY_DEPENDENCY_TREE_BYTES" in spec
+        and "revision.dependency_tree = Some" in service
+        and "&mut revision" in api_host,
+        "部署写侧按受信根解析模块名、复制有界 Python 源树及显式资源并保存 manifest",
+        "deployment writer does not snapshot and persist Python source dependencies",
+    )
+    check(
+        "new file-backed Python deployment revisions require a dependency tree manifest" in store
+        and "python_resource_paths require a Python strategy module" in store
+        and "deployment dependency tree contains unmanifested dependency files" in store
+        and "deployment dependency digest mismatch" in store
+        and "return Ok(tree_root.join(&tree.entry_path))" in store
+        and "verify_revision_bundle(&revision)?" in supervisor,
+        "注册表与 supervisor 每次按 manifest 校验完整源树后才装载入口文件",
+        "deployment restore does not verify and load the manifested Python dependency tree",
+    )
+    check(
+        "frozen_python_dependency_root(module)" in strategy_host
+        and '"QX_STRATEGY_DEPENDENCY_ROOT"' in strategy_host
+        and 'os.environ.get("QX_STRATEGY_DEPENDENCY_ROOT"' in python_runner
+        and "path.is_relative_to(root)" in python_runner,
+        "冻结树根加入 Python 搜索路径且入口必须位于该根内",
+        "Python deployment does not preserve imports relative to the frozen tree root",
+    )
+
+
+def python_strategy_diagnostics_boundary_check() -> None:
+    """Keep callback diagnostic construction out of the CLI dispatcher."""
+    cli_path = ROOT / "python/qianxing/cli.py"
+    diagnostics_path = ROOT / "python/qianxing/strategy_diagnostics.py"
+    experiment_path = ROOT / "python/qianxing/experiment_diagnostics.py"
+    summary_path = ROOT / "python/qianxing/experiment_summary.py"
+    strategy_path = ROOT / "python/qianxing/experiment_strategy.py"
+    cli_source = cli_path.read_text(encoding="utf-8")
+    diagnostics_source = diagnostics_path.read_text(encoding="utf-8")
+    experiment_source = experiment_path.read_text(encoding="utf-8")
+    summary_source = summary_path.read_text(encoding="utf-8")
+    strategy_source = strategy_path.read_text(encoding="utf-8")
+    diagnostics_tree = ast.parse(diagnostics_source)
+    definitions = {
+        node.name
+        for node in diagnostics_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    experiment_tree = ast.parse(experiment_source)
+    experiment_definitions = {
+        node.name
+        for node in experiment_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    summary_tree = ast.parse(summary_source)
+    summary_definitions = {
+        node.name
+        for node in summary_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    strategy_tree = ast.parse(strategy_source)
+    strategy_definitions = {
+        node.name
+        for node in strategy_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    cli_tree = ast.parse(cli_source)
+    cli_definitions = {
+        node.name
+        for node in cli_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    expected = {
+        "_referenced_input_paths",
+        "_strategy_diagnostic_request",
+        "_multi_market_diagnostic_request",
+    }
+    check(
+        expected <= definitions
+        and not (expected & cli_definitions)
+        and "from .strategy_diagnostics import (" in cli_source,
+        "策略诊断输入逻辑由独立模块拥有且 CLI 保留兼容导入名",
+        "strategy diagnostic request builders are still implemented in the CLI",
+    )
+    check(
+        "from .app import" in diagnostics_source
+        and "from .cli import" not in diagnostics_source
+        and "import qianxing.cli" not in diagnostics_source,
+        "策略诊断模块只依赖 application use cases，不形成 CLI 反向依赖",
+        "strategy diagnostics module violates the app-to-CLI dependency direction",
+    )
+    check(
+        {"_experiment_candidate_rows", "_candidate_diagnostic_spec", "diagnose_experiment_candidates"}
+        <= experiment_definitions
+        and "def _diagnose_experiment_candidates(" in cli_source
+        and "from .experiment_diagnostics import (" in cli_source
+        and "candidate_rows_builder=_experiment_candidate_rows" in cli_source
+        and "candidate_spec_builder=_candidate_diagnostic_spec" in cli_source,
+        "实验候选诊断主体下沉，CLI 兼容入口显式注入原回调扩展点",
+        "experiment candidate diagnostics are not separated behind compatibility adapters",
+    )
+    check(
+        "from .strategy_diagnostics import (" in experiment_source
+        and "from .cli import" not in experiment_source
+        and "import qianxing.cli" not in experiment_source,
+        "实验诊断只依赖策略诊断服务，不形成 CLI 反向依赖",
+        "experiment diagnostics module violates the CLI dependency direction",
+    )
+    check(
+        "summarize_experiment" in summary_definitions
+        and "def _experiment_summary(" in cli_source
+        and "return _summarize_experiment(result)" in cli_source
+        and "from .experiment_summary import summarize_experiment as _summarize_experiment" in cli_source,
+        "实验摘要投影下沉且 CLI 保留兼容门面",
+        "experiment summary projection is still implemented in the CLI",
+    )
+    check(
+        "from .cli import" not in summary_source
+        and "import qianxing.cli" not in summary_source,
+        "实验摘要模块不反向依赖 CLI",
+        "experiment summary module violates the CLI dependency direction",
+    )
+    check(
+        "build_multi_market_experiment_factory" in strategy_definitions
+        and "def _multi_market_experiment_factory(" in cli_source
+        and "return _build_multi_market_experiment_factory(experiment_spec, factory, strategy_id)" in cli_source
+        and "from .experiment_strategy import build_multi_market_experiment_factory as _build_multi_market_experiment_factory" in cli_source,
+        "多市场实验策略适配器下沉且 CLI 保留兼容门面",
+        "multi-market experiment strategy adapter is still implemented in the CLI",
+    )
+    check(
+        "from .cli import" not in strategy_source
+        and "import qianxing.cli" not in strategy_source,
+        "实验策略适配模块不反向依赖 CLI",
+        "experiment strategy module violates the CLI dependency direction",
+    )
+    execution_source = (ROOT / "python/qianxing/strategy_execution.py").read_text(encoding="utf-8")
+    check(
+        "def _strategy_identity(" in cli_source
+        and "return _resolve_strategy_identity(" in cli_source
+        and "def _bind_manifest_warmup_factory(" in cli_source
+        and "return _bind_warmup_factory(factory, warmup_bars)" in cli_source
+        and "def _bind_manifest_config_factory(" in cli_source
+        and "return _bind_execution_manifest_config_factory(" in cli_source
+        and "_strategy_identity as _resolve_strategy_identity" in cli_source
+        and "def _strategy_identity(" in execution_source
+        and "def _bind_manifest_config_factory(" in execution_source,
+        "CLI 策略身份与 manifest factory 绑定委托给策略执行服务并保留兼容入口",
+        "CLI duplicates strategy identity or manifest factory binding owned by strategy execution",
+    )
+
+
 def _main_check_functions() -> tuple[tuple[str, object], ...]:
     """Return the ordered structural check calls from main without duplicating their roster."""
     source = _read_text(Path(__file__).resolve())
@@ -26946,6 +30030,3322 @@ def _main_check_functions() -> tuple[tuple[str, object], ...]:
         and statement.value.func.id.endswith("_check")
     ]
     return tuple((name, globals()[name]) for name in names)
+
+
+def strategy_worker_admission_module_check() -> None:
+    """Keep live readiness and command outcome admission outside the worker loop."""
+    worker_path = ROOT / "crates/qx-cli/src/workers/strategy_worker.rs"
+    admission_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/admission.rs"
+    worker_source = worker_path.read_text(encoding="utf-8")
+    admission_source = admission_path.read_text(encoding="utf-8")
+    moved_functions = (
+        "native_strategy_supports_execution_updates",
+        "require_live_intent_reconciliation",
+        "require_live_strategy_commands_resolved",
+        "require_live_venue_order_observation",
+        "live_command_outcome_is_retryable",
+        "require_live_strategy_command_status",
+        "runtime_python_warmup_complete",
+    )
+    check(
+        "mod admission;" in worker_source
+        and "use self::admission::{" in worker_source
+        and all(f"pub(super) fn {name}(" in admission_source for name in moved_functions)
+        and "pub(super) enum VenueOrderObservation" in admission_source
+        and all(f"fn {name}(" not in worker_source for name in moved_functions),
+        "Strategy worker live admission 判据归独立模块，主 worker 仅消费判据",
+        "Strategy worker live admission logic remains embedded in the worker module",
+    )
+
+
+
+
+def strategy_worker_result_lifecycle_module_check() -> None:
+    """Keep worker result projection and terminal failure mapping in lifecycle owner."""
+    worker_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    lifecycle_path = "crates/qx-cli/src/workers/strategy_worker/lifecycle.rs"
+    recovery_path = "crates/qx-cli/src/workers/strategy_worker/job_recovery.rs"
+    outcome_path = "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs"
+    worker = (ROOT / worker_path).read_text(encoding="utf-8")
+    lifecycle = (ROOT / lifecycle_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    outcome = (ROOT / outcome_path).read_text(encoding="utf-8")
+    symbols = ("classify_job_failure", "execution_result", "complete_strategy_job_run", "complete_recovered_strategy_job_run", "fail_strategy_job_run")
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [lifecycle_path]}
+    check(
+        not misplaced
+        and "pub(super) enum StrategyJobFailureDisposition" in lifecycle
+        and all(f"pub(super) fn {name}(" in lifecycle for name in symbols)
+        and "lifecycle::execution_result(" in outcome
+        and "lifecycle::handle_strategy_outcome_failure(" in outcome
+        and "pub(super) fn handle_strategy_outcome_failure(" in lifecycle
+        and "queue\n                .claim(run_id, lease_owner, failure_lease_now, lease_seconds)" in lifecycle
+        and "fail_strategy_job_run(state_store, state_path, job_id, run_id, failure_lease_now)?;" in lifecycle
+        and "StrategyOutcomeFailure::Retry(error)" in outcome
+        and "lifecycle::classify_job_failure(" not in worker
+        and worker.count("lifecycle::complete_strategy_job_run(") == 0
+        and "lifecycle::complete_strategy_job_run(" in (ROOT / "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs").read_text(encoding="utf-8")
+        and "lifecycle::complete_recovered_strategy_job_run(" in recovery
+        and "lifecycle::fail_strategy_job_run(" not in worker
+        and "let result = if live_checkpoint_bootstrap" not in worker
+        and "if class_effects_may_be_durable && live_command_outcome_is_retryable(&error)" not in worker
+        and "complete_strategy_job_run(state_store, state_path, run_id, finished_ts)" in lifecycle,
+        "Strategy worker execution result、failure disposition 与 JobRun terminal mapping 唯一归属 lifecycle",
+        f"lifecycle owner 重复或 worker facade 委托漂移：{misplaced}",
+    )
+def strategy_worker_control_command_module_check() -> None:
+    """Keep pause/resume queue leases and StrategyRuntime transitions in a control-command owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    commands_path = "crates/qx-cli/src/workers/strategy_worker/commands.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    commands = (ROOT / commands_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+process_strategy_control_commands(?:<[^>\n]+>)?\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [commands_path]
+        and "mod commands;" in facade
+        and "use self::commands::process_strategy_control_commands;" in facade
+        and "process_strategy_control_commands(" in facade
+        and "pub(super) fn process_strategy_control_commands(" in commands
+        and "available_commands(lease_now)" in commands
+        and "claim_command(" in commands
+        and ".ack_command_at(" in commands
+        and ".transact(" in commands
+        and "lifecycle::apply_transition(strategy, &command.kind)?;" in commands
+        and "for command in control.pending()" not in facade,
+        "Strategy pause/resume 命令的入队、lease、终态回写/确认与运行态切换唯一归属 commands 子模块",
+        f"Strategy worker control-command owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_live_input_module_check() -> None:
+    """Keep live input collection, cursor acknowledgement, and job enqueue in one owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    module_path = "crates/qx-cli/src/workers/strategy_worker/live_input.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+collect_and_enqueue_live_input\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [module_path]
+        and "mod live_input;" in facade
+        and "live_input::collect_and_enqueue_live_input(" in facade
+        and "live_strategy_input_digest(" in module
+        and "execution_updates::collect_pending(" in module
+        and "execution_updates::advance_cursor(" in module
+        and "execution_updates::save_cursor(" in module
+        and "execution_updates::attach_ranges_to_job(" in module
+        and "let has_strategy_checkpoint =" in module
+        and "|| has_strategy_checkpoint)" in module
+        and "live_strategy_job(" in module
+        and ".enqueue(job, run, lease_clock(now))" in module
+        and "save_live_strategy_digest(live_digest_path, data_fingerprint)?" in module
+        and "live_strategy_input_digest(" not in facade
+        and "execution_updates::collect_pending(" not in facade
+        and "execution_updates::attach_ranges_to_job(" not in facade
+        and "save_live_strategy_digest(" not in facade,
+        "Strategy live input 的采集、空范围 cursor 确认、job 装配与 digest 持久化唯一归属 live_input 子模块",
+        f"Strategy live-input owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_job_recovery_module_check() -> None:
+    """Keep scheduler-final and cursor-committed queue recovery in one owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    recovery_path = "crates/qx-cli/src/workers/strategy_worker/job_recovery.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+recover_completed_strategy_job\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [recovery_path]
+        and "mod job_recovery;" in facade
+        and "job_recovery::recover_completed_strategy_job(" in facade
+        and "strategy_run_is_final(state_store, state_path, queued.run.run_id)?" in recovery
+        and "execution_updates::is_committed_run(execution_cursor, queued.run.run_id)" in recovery
+        and ".claim(" in recovery
+        and ".ack_at(" in recovery
+        and "lifecycle::complete_recovered_strategy_job_run(" in recovery
+        and "clear_prepared_evaluation_for_run(" in recovery
+        and "strategy_run_is_final(" not in facade
+        and "complete_recovered_strategy_job_run(" not in facade,
+        "Strategy queued job 的 Scheduler 终态确认与 cursor committed recovery 唯一归属 job_recovery 子模块",
+        f"Strategy job-recovery owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_prepared_recovery_module_check() -> None:
+    """Keep PreparedEvaluation identity validation and lease fencing in its recovery owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    recovery_path = "crates/qx-cli/src/workers/strategy_worker/prepared_recovery.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+load_fenced_prepared_evaluation\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [recovery_path]
+        and "mod prepared_recovery;" in facade
+        and "prepared_recovery::load_fenced_prepared_evaluation(" in facade
+        and "execution_updates::load_prepared_evaluation(prepared_evaluation_path)?" in recovery
+        and "execution_updates::ranges_from_job(&queued.job)?" in recovery
+        and "execution_updates::execution_updates_for_ranges(" in recovery
+        and "let worker_matches = prepared.worker_id == worker_id;" in recovery
+        and "if !worker_matches" in recovery
+        and "let input_matches = prepared.input_sha256 == job_digest;" in recovery
+        and "let facts_match = prepared.facts_sha256 == facts_digest;" in recovery
+        and "let config_matches = prepared.config_sha256 == config_digest;" in recovery
+        and "|| !input_matches" in recovery
+        and "|| !facts_match" in recovery
+        and "|| !config_matches" in recovery
+        and ".claim(" in recovery
+        and "prepared.lease_fencing_token = lease.fencing_token;" in recovery
+        and "execution_updates::save_prepared_evaluation(prepared_evaluation_path, &prepared)?;" in recovery
+        and "let recovery_strategy_id" not in facade
+        and "let recovery_fact_bytes" not in facade
+        and "prepared.input_sha256 != job_digest" not in facade,
+        "PreparedEvaluation recovery 的输入身份/事实校验、lease fencing 与升级持久化唯一归属 prepared_recovery 子模块",
+        f"PreparedEvaluation recovery owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_prepared_command_replay_module_check() -> None:
+    """Keep durable command replay and live-intent lease refresh in one owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    replay_path = "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    replay = (ROOT / replay_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+replay_prepared_commands\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [replay_path]
+        and "mod prepared_command_replay;" in facade
+        and "prepared_command_replay::replay_prepared_commands(" in facade
+        and "for command in &prepared.commands" in replay
+        and "persist_strategy_submit(" in replay
+        and ".claim(" in replay
+        and "require_live_intent_reconciliation(" in replay
+        and "prepared.completed_command_ids.insert(command.command_id);" in replay
+        and ".insert(command.command_id, local_result);" in replay
+        and "execution_updates::unknown_command_result(&error)" in replay
+        and replay.count("execution_updates::save_prepared_evaluation(") >= 2
+        and "for command in &prepared.commands" not in facade,
+        "PreparedEvaluation command replay 的逐命令 live fencing、幂等结果与 journal 持久化唯一归属 prepared_command_replay 子模块",
+        f"PreparedEvaluation command-replay owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_prepared_finalize_module_check() -> None:
+    """Keep PreparedEvaluation checkpoint/cursor commit and queue closure ordered together."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    finalize_path = "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    finalize = (ROOT / finalize_path).read_text(encoding="utf-8")
+    outcome = (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs").read_text(encoding="utf-8")
+    finalize_tight = _collapsed_code(finalize, tight=True)
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+finalize_strategy_run\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [finalize_path]
+        and "mod prepared_finalize;" in facade
+        and facade.count("prepared_finalize::finalize_strategy_run(") == 2
+        and outcome.count("prepared_finalize::finalize_strategy_run(") == 1
+        and "refresh_lease_before_commit: true" in outcome
+        and facade.count("refresh_lease_before_commit: false") == 2
+        and "letcommit_lease_now=lease_clock(runtime_timestamp_ms());" in finalize_tight
+        and "queue.claim(queued.run.run_id,lease_owner,commit_lease_now,lease_seconds)" in finalize_tight
+        and finalize_tight.index("ifrefresh_lease_before_commit") < finalize_tight.index("execution_updates::commit_strategy_checkpoint(")
+        and "execution_updates::commit_strategy_checkpoint(" in finalize
+        and "execution_updates::advance_cursor(" in finalize
+        and "execution_updates::save_cursor(" in finalize
+        and "execution_updates::mark_run_committed(" in finalize
+        and "lifecycle::complete_strategy_job_run(" in finalize
+        and ".ack_at(" in finalize
+        and "clear_prepared_evaluation_for_run(" in finalize
+        and "PreparedJournalCleanup::RunJournalBefore" in facade
+        and "PreparedJournalCleanup::RunJournalAfter" in facade
+        and "PreparedJournalCleanup::CurrentJournalBefore" in outcome
+        and "matches!(journal_cleanup,PreparedJournalCleanup::RunJournalBefore)" in finalize_tight
+        and "matches!(journal_cleanup,PreparedJournalCleanup::CurrentJournalBefore)" in finalize_tight
+        and "matches!(journal_cleanup,PreparedJournalCleanup::RunJournalAfter)" in finalize_tight
+        and "{ack_failure_context}失败: {error:?}" in finalize
+        and "*processed += 1;" in finalize,
+        "PreparedEvaluation 的 checkpoint/cursor commit、JobRun terminal、queue ack 与 journal 清理顺序唯一归属 prepared_finalize 子模块",
+        f"PreparedEvaluation finalize owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_execution_preparation_module_check() -> None:
+    """Keep stale-job gating and execution input assembly in one explicit preparation phase."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    preparation_path = "crates/qx-cli/src/workers/strategy_worker/execution_preparation.rs"
+    outcome_path = "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    preparation = (ROOT / preparation_path).read_text(encoding="utf-8")
+    outcome = (ROOT / outcome_path).read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+prepare_strategy_execution(?:<[^>]+>)?\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [preparation_path]
+        and "mod execution_preparation;" in facade
+        and "strategy_outcome::execute_strategy_job_outcome(" in facade
+        and "execution_preparation::prepare_strategy_execution(" in outcome
+        and "实时 Strategy Job 缺少 manifest_digest，拒绝执行" in preparation
+        and "live_strategy_job_is_stale_with_config(" in preparation
+        and '"stale-market-digest"' in preparation
+        and "execution_updates::ranges_from_job(" in preparation
+        and "execution_updates::execution_updates_for_ranges(" in preparation
+        and "execution_updates::strategy_checkpoint(execution_cursor)" in preparation
+        and "Strategy instrument 非法或未配置" in preparation
+        and "execution_updates::execution_updates_for_ranges(" not in facade
+        and "execution_updates::ranges_from_job(&queued.job)?" not in facade,
+        "Strategy job 的初始 stale gate、EventLog execution facts 与 checkpoint/instrument 装配唯一归属 execution_preparation 子模块",
+        f"Strategy execution-preparation owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_strategy_evaluation_module_check() -> None:
+    """Keep strategy adapter dispatch and checkpoint/warmup host evidence in one phase."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    evaluation_path = "crates/qx-cli/src/workers/strategy_worker/strategy_evaluation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    evaluation = (ROOT / evaluation_path).read_text(encoding="utf-8")
+    outcome = (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs").read_text(encoding="utf-8")
+    owners: list[str] = []
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        if re.search(
+            r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+evaluate_strategy_for_job\s*\(",
+            _read_text(path),
+        ):
+            owners.append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == [evaluation_path]
+        and "mod strategy_evaluation;" in facade
+        and "strategy_outcome::execute_strategy_job_outcome(" in facade
+        and "strategy_evaluation::evaluate_strategy_for_job(" in outcome
+        and "evaluate_strategy_contract(" in evaluation
+        and "live_checkpoint_bootstrap && strategy_checkpoint.is_none()" in evaluation
+        and "host_lifecycle.initialized = true;" in evaluation
+        and "host_lifecycle.checkpoint_restore_acknowledged = checkpoint_restore_required.then_some(true);" in evaluation
+        and "admission::runtime_strategy_warmup_evidence(" in evaluation
+        and "admission::require_live_checkpoint_restore_ack(" in evaluation
+        and "admission::runtime_python_warmup_complete(" in evaluation
+        and "evaluate_strategy_contract(" not in facade
+        and "require_live_checkpoint_restore_ack(" not in facade
+        and "runtime_strategy_warmup_evidence(" not in facade,
+        "Strategy adapter dispatch、restore acknowledgement、warmup evidence 与 live readiness 唯一归属 strategy_evaluation 子模块",
+        f"Strategy evaluation owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_order_intents_module_check() -> None:
+    """Keep contract intent projection, target orders and quota-reserved commands together."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    intents_path = "crates/qx-cli/src/workers/strategy_worker/order_intents.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    intents = (ROOT / intents_path).read_text(encoding="utf-8")
+    outcome = (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs").read_text(encoding="utf-8")
+    owners: dict[str, list[str]] = {name: [] for name in ("project_strategy_orders", "reserve_strategy_commands")}
+    for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False):
+        source = _read_text(path)
+        for name in owners:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{name}\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    check(
+        owners == {name: [intents_path] for name in owners}
+        and "mod order_intents;" in facade
+        and "strategy_outcome::execute_strategy_job_outcome(" in facade
+        and "order_intents::project_strategy_orders(" in outcome
+        and "order_intents::reserve_strategy_commands(" in outcome
+        and "if readiness_checkpoint_only" in intents
+        and "return Ok(Vec::new());" in intents
+        and "build_strategy_contract_intent_order(" in intents
+        and "target_qty_exact" in intents
+        and "strategy_current_qty_exact_for(" in intents
+        and "spread_group_id(" in intents
+        and intents.index(".reserve_order()") < intents.index("strategy_submit_command(")
+        and "build_strategy_contract_intent_order(" not in facade
+        and "strategy.reserve_order()" not in facade
+        and "strategy_submit_command(" not in facade,
+        "readiness gating、contract intent/target-quantity Order 投影与 quota-before-command 组装唯一归属 order_intents 子模块",
+        f"Strategy order-intents owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def strategy_worker_submission_module_check() -> None:
+    """Keep ordinary outcomes write-ahead durable before dispatch and journal every result."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    submission_path = "crates/qx-cli/src/workers/strategy_worker/strategy_submission.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    submission = (ROOT / submission_path).read_text(encoding="utf-8")
+    outcome = (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs").read_text(encoding="utf-8")
+    execution = (ROOT / "crates/qx-execution/src/lib.rs").read_text(encoding="utf-8")
+    admission = (ROOT / "crates/qx-cli/src/workers/strategy_worker/admission.rs").read_text(encoding="utf-8")
+    check(
+        "mod strategy_submission;" in facade
+        and "strategy_outcome::execute_strategy_job_outcome(" in facade
+        and "strategy_submission::persist_and_submit_strategy_outcome(" in outcome
+        and "fn persist_and_submit_strategy_outcome(" in submission
+        and submission.index("save_prepared_evaluation(prepared_evaluation_path, prepared)?")
+        < submission.index("persist_strategy_spread_group(root, group_id, worker_id, orders)?")
+        < submission.index("persist_strategy_submit(control_store, command_queue, &command, now)")
+        and submission.index("queue\n                .claim(")
+        < submission.index("live_strategy_job_is_stale_with_config(")
+        < submission.index("persist_strategy_submit(control_store, command_queue, &command, now)")
+        and "unknown_command_result(&error)" in submission
+        and "save_prepared_evaluation(prepared_evaluation_path, prepared)?;" in submission
+        and "prepared.completed_command_ids.insert(command.command_id);" in submission
+        and "require_live_strategy_commands_resolved(" in submission
+        and "persist_and_submit_strategy_outcome(" not in facade.replace(
+            "strategy_submission::persist_and_submit_strategy_outcome(", "", 1
+        ),
+        "Strategy 普通 outcome 的 PreparedEvaluation write-ahead、逐命令 lease/stale gate、提交及 journal 回写唯一归属 strategy_submission 子模块",
+        f"Strategy submission owner 顺序或 facade 委托漂移：{submission_path}",
+    )
+    ambiguous_submit_gate = execution.find("if matches!(\n                existing.status,")
+    venue_submit = execution.find("let facts = match self.venue.submit_order(registered, self.now)")
+    check(
+        ambiguous_submit_gate >= 0
+        and venue_submit > ambiguous_submit_gate
+        and all(
+            f"qx_core::OrderStatus::{status}" in execution[ambiguous_submit_gate:venue_submit]
+            for status in ("PendingSubmit", "Submitted", "CancelPending", "Unknown")
+        )
+        and "ExecutionEvent::ReconcileRequired" in execution[ambiguous_submit_gate:venue_submit]
+        and "必须先对账，禁止自动补单" in execution[ambiguous_submit_gate:venue_submit]
+        and "self.mark_reconcile(order.client_id, \"submit-error\")?" in execution
+        and "VenueOrderObservation::Submitted | VenueOrderObservation::Unresolved" in admission
+        and "LIVE_VENUE_ORDER_OUTCOME_UNRESOLVED" in admission
+        and "require_fresh_clean_reconciliation_after(" in admission,
+        "未知提交恢复会在再次调用 Venue 前将未决订单 fail-closed，并要求终态/对账事实",
+        "ExecutionGateway ambiguous-submit gate 或 Strategy venue-outcome admission 缺失/顺序漂移",
+    )
+
+
+def strategy_worker_outcome_module_check() -> None:
+    """Keep the complete ordinary Strategy job outcome lifecycle in one owner."""
+    facade_path = "crates/qx-cli/src/workers/strategy_worker.rs"
+    outcome_path = "crates/qx-cli/src/workers/strategy_worker/strategy_outcome.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    outcome = (ROOT / outcome_path).read_text(encoding="utf-8")
+    owner = "execute_strategy_job_outcome"
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/workers/strategy_worker/**/*.rs", False)
+        if re.search(rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{owner}\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [outcome_path]
+        and "mod strategy_outcome;" in facade
+        and "strategy_outcome::execute_strategy_job_outcome(" in facade
+        and "execution_preparation::prepare_strategy_execution(" in outcome
+        and "strategy_evaluation::evaluate_strategy_for_job(" in outcome
+        and "order_intents::project_strategy_orders(" in outcome
+        and "order_intents::reserve_strategy_commands(" in outcome
+        and "strategy_submission::persist_and_submit_strategy_outcome(" in outcome
+        and "prepared_finalize::finalize_strategy_run(" in outcome
+        and "lifecycle::handle_strategy_outcome_failure(" in outcome
+        and "execution_updates::is_committed_run(" in outcome
+        and outcome.index("project_strategy_orders(")
+        < outcome.index("queue\n            .claim(")
+        < outcome.index("market-changed-during-evaluation")
+        < outcome.index("reserve_strategy_commands(")
+        < outcome.index("persist_and_submit_strategy_outcome(")
+        < outcome.index("finalize_strategy_run(")
+        and "prepare_strategy_execution(" not in facade
+        and "evaluate_strategy_for_job(" not in facade
+        and "project_strategy_orders(" not in facade
+        and "reserve_strategy_commands(" not in facade
+        and "handle_strategy_outcome_failure(" not in facade,
+        "普通 Strategy Job 的准备、评估、意图提交、finalize 与失败分流唯一归属 strategy_outcome 子模块，facade 只消费重试 disposition",
+        f"Strategy ordinary outcome owner 或 lease/stale/side-effect 顺序漂移：{owners}",
+    )
+
+
+def multi_market_backtest_report_persistence_module_check() -> None:
+    """Keep verified multi-market report publication and idempotent repair in one owner."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    persistence_path = "crates/qx-app/src/cases/run_multi_market_backtest/report_persistence.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    persistence = (ROOT / persistence_path).read_text(encoding="utf-8")
+    facade_tight = _collapsed_code(facade, tight=True)
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_backtest/**/*.rs", False)
+        if re.search(r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+persist_multi_market_report\s*\(", _read_text(path))
+    ]
+    validation_boundary = persistence.index("let manifest_exists =")
+    first_artifact_write = persistence.index("write_text(", validation_boundary)
+    check(
+        owners == [persistence_path]
+        and "mod report_persistence;" in facade
+        and "report_persistence::persist_multi_market_report(" in facade
+        and "report.verify()" in facade_tight
+        and "report.verify()" not in persistence
+        and "build_run_manifest(MultiMarketManifestInput" in persistence
+        and "existing_identical(&equity_path" in persistence
+        and "existing_identical(&equity_exact_path" in persistence
+        and "existing_identical(&fills_path" in persistence
+        and persistence.index("let manifest_exists =")
+        < persistence.index("let equity_exists = existing_identical(")
+        < persistence.index("match std::fs::read_to_string(&output_path)")
+        < first_artifact_write
+        and "ensure_event_trace_jsonl(" in persistence
+        and "write_text(&outcome.artifact_path, &artifact_json)?;" in persistence
+        and "create_dir_all(&spec.output_dir)" not in facade
+        and "build_run_manifest(" not in facade
+        and "existing_identical(" not in facade,
+        "已验证多市场 report 的 canonical manifest、幂等产物修复、冲突判定与写入顺序唯一归属 report_persistence 子模块",
+        f"multi-market report persistence owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def multi_market_backtest_preparation_module_check() -> None:
+    """Keep per-market source validation, strategy construction, and identity assembly together."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    preparation_path = "crates/qx-app/src/cases/run_multi_market_backtest/market_preparation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    preparation = (ROOT / preparation_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_backtest/**/*.rs", False)
+        if re.search(r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+prepare_multi_market_markets\s*\(", _read_text(path))
+    ]
+    call_start = facade.index("market_preparation::prepare_multi_market_markets(")
+    call_end = facade.index("let input_identity =", call_start)
+    handoff = facade[call_start:call_end]
+    check(
+        owners == [preparation_path]
+        and "mod market_preparation;" in facade
+        and "market_preparation::prepare_multi_market_markets(" in facade
+        and "for market in &spec.markets" in preparation
+        and "BarFrame::from_json(&payload)" in preparation
+        and "qx_data::fingerprint_bar_frame(&frame)" in preparation
+        and "verify_dataset_quality(" in preparation
+        and "build_strategy_slot(" in preparation
+        and "dataset_manifest_fingerprint" in preparation
+        and "multi_market_strategy_set_fingerprint(" in preparation
+        and "if !injected.is_empty()" in preparation
+        and "let mut prepared = Vec::with_capacity(spec.markets.len());" in preparation
+        and "let mut prepared = Vec::with_capacity(spec.markets.len());" not in handoff
+        and "build_strategy_slot(" not in handoff
+        and "verify_dataset_quality(" not in handoff
+        and "multi_market_strategy_set_fingerprint(" not in handoff,
+        "多市场 BarFrame/manifest 验证、策略槽构造及 spec/data identity assembly 唯一归属 market_preparation 子模块",
+        f"multi-market preparation owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def multi_market_backtest_engine_execution_module_check() -> None:
+    """Keep shared-account engine assembly and execution-window gating in the engine owner."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    engine_path = "crates/qx-app/src/cases/run_multi_market_backtest/engine_execution.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    engine = (ROOT / engine_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_backtest/**/*.rs", False)
+        if re.search(r"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+run_multi_market_bar_engine\s*\(", _read_text(path))
+    ]
+    handoff = facade[
+        facade.index("engine_execution::run_multi_market_bar_engine(") : facade.index(
+            "report_persistence::persist_multi_market_report("
+        )
+    ]
+    check(
+        owners == [engine_path]
+        and "mod engine_execution;" in facade
+        and "engine_execution::run_multi_market_bar_engine(" in facade
+        and "prepared: &mut [PreparedMarket]" in engine
+        and ".map(take_runtime_market)" in engine
+        and "PortfolioBarEngine::new(" in engine
+        and "run_bar_strategy_with_lifecycle(" in engine
+        and "engine.run_with_cancel(strategy, || token.is_cancelled())" in engine
+        and "engine.run(strategy).map(Some)" in engine
+        and "struct TradeStartGate" in engine
+        and "Ok(if ts < self.start { Vec::new() } else { orders })" in engine
+        and "if self.last_callback_ts < self.start" in engine
+        and "cancellation," in handoff
+        and "PortfolioBarEngine::new(" not in facade
+        and "TradeStartGate" not in facade
+        and "run_with_cancel(" not in facade,
+        "多市场共享账户 PortfolioBarEngine、取消传播及 trade-start 决策/订单 gate 唯一归属 engine_execution 子模块",
+        f"multi-market engine execution owner 重复或 facade 委托漂移：{owners}",
+    )
+
+
+def multi_account_report_detail_reader_module_check() -> None:
+    """Keep account fill projections, diagnostics bindings, and evidence snapshots in details owner."""
+    facade_path = "crates/qx-cli/src/report_multi_account.rs"
+    details_path = "crates/qx-cli/src/report_multi_account/details.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    details = (ROOT / details_path).read_text(encoding="utf-8")
+    symbols = (
+        "evidence_summary_stem",
+        "account_diagnostic_snapshot_path",
+        "write_account_diagnostic_snapshot",
+        "read_depth_account_fills",
+        "read_account_fills",
+        "MultiAccountDiagnostics",
+        "read_multi_account_diagnostics",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-cli/src/report_multi_account/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:fn|struct)\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [details_path]}
+    check(
+        not misplaced
+        and "mod details;" in facade
+        and "use details::{" in facade
+        and all(f"pub(super) fn {name}(" in details for name in symbols if name != "MultiAccountDiagnostics")
+        and "pub(super) struct MultiAccountDiagnostics {" in details
+        and "pub(super) path:" in details
+        and "pub(super) sha256:" in details
+        and "pub(super) reports:" in details
+        and "const MAX_MULTI_ACCOUNT_DIAGNOSTICS_BYTES:" in details
+        and "const MAX_MULTI_ACCOUNT_DIAGNOSTICS_BYTES:" not in facade,
+        "多账户成交行映射、诊断契约读取与 Evidence 快照由 details 子模块唯一拥有，Bar/Depth facade 复用",
+        f"多账户 details owner 或 facade 委托漂移：{misplaced}",
+    )
+
+
+def multi_account_report_render_module_check() -> None:
+    """Keep bounded account report projections and HTML generation in render owner."""
+    facade_path = "crates/qx-cli/src/report_multi_account.rs"
+    render_path = "crates/qx-cli/src/report_multi_account/render.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    render = (ROOT / render_path).read_text(encoding="utf-8")
+    symbols = (
+        "batch_row_budget",
+        "downsample_equity",
+        "render_html",
+        "bounded_html_report",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-cli/src/report_multi_account/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [render_path]}
+    check(
+        not misplaced
+        and "mod render;" in facade
+        and "use render::{batch_row_budget, downsample_equity, render_html};" in facade
+        and "#[cfg(test)]\nuse render::{bounded_html_report, MAX_HTML_DETAIL_ROWS_PER_ACCOUNT};" in facade
+        and "pub(super) const MAX_HTML_DETAIL_ROWS_PER_ACCOUNT:" in render
+        and all(f"pub(super) fn {name}(" in render for name in symbols)
+        and all(f"fn {name}(" not in facade for name in symbols),
+        "多账户报告行预算、权益降采样、有界 HTML 投影与渲染唯一归属 render 子模块并经 facade 调用",
+        f"多账户 render owner 重复或 facade 委托漂移：{misplaced}",
+    )
+
+
+def multi_account_report_execution_modules_check() -> None:
+    """Keep verified Bar and Depth report workflows outside the CLI facade."""
+    facade_path = "crates/qx-cli/src/report_multi_account.rs"
+    bar_path = "crates/qx-cli/src/report_multi_account/bar.rs"
+    depth_path = "crates/qx-cli/src/report_multi_account/depth.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    bar = (ROOT / bar_path).read_text(encoding="utf-8")
+    depth = (ROOT / depth_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_multi_account/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("run_bar_report", "run_depth_report")
+    }
+    check(
+        owners["run_bar_report"] == [bar_path]
+        and owners["run_depth_report"] == [depth_path]
+        and "mod bar;" in facade
+        and "mod depth;" in facade
+        and "bar::run_bar_report(" in facade
+        and "depth::run_depth_report(" in facade
+        and "fn maybe_run_depth_report(" not in facade
+        and "let result: qx_app::MultiAccountBacktestResult =" not in facade
+        and "value.get(\"result_kind\").and_then(Value::as_str) == Some(\"multi_account_depth\")" in facade
+        and "read_multi_account_report_v1(" in bar
+        and "read_multi_account_report_v1(" in depth
+        and "write_account_diagnostic_snapshot(" in bar
+        and "write_account_diagnostic_snapshot(" in depth
+        and "batch_row_budget(" in bar
+        and "ReportOutputBundle" in bar
+        and "ReportOutputBundle" in depth
+        and "validate_depth_report_output_target(" in depth,
+        "多账户 Bar/Depth 报告校验、产物投影与发布分别归 bar/depth workflow，facade 保留输入分派",
+        f"multi-account report workflow owner/order drift: {owners}",
+    )
+
+
+def multi_account_report_output_path_single_owner_check() -> None:
+    """Keep overwrite protection shared by multi-account Bar and Depth reports."""
+    path = ROOT / "crates/qx-cli/src/report_multi_account.rs"
+    source = path.read_text(encoding="utf-8")
+    shared = source.split("fn validate_account_report_output_target", 1)[1].split(
+        "\nfn validate_depth_report_output_target(", 1
+    )[0]
+    depth = source.split("fn validate_depth_report_output_target(", 1)[1].split(
+        "\nfn validate_report_output_target(", 1
+    )[0]
+    bar = source.split("fn validate_report_output_target(", 1)[1].split(
+        "\nfn evidence_summary_stem(", 1
+    )[0]
+    check(
+        source.count("fn validate_account_report_output_target") == 1
+        and "for run in runs" in shared
+        and "same_output_target(target, Path::new(artifact))" in shared
+        and "evidence_summary_stem(summary_path)?" in shared
+        and "account_diagnostic_snapshot_path(summary_path, account_id)?" in shared
+        and '"多账户深度结果输入"' in depth
+        and "        true,\n        \"多账户深度结果输入\"," in depth
+        and '"多账户结果输入"' in bar
+        and "strategy_diagnostics.is_some()," in bar
+        and "for outcome in result.runs.iter().filter_map" not in depth
+        and "for outcome in result.runs.iter().filter_map" not in bar,
+        "多账户 Bar/Depth 输出覆盖保护由单一共享实现执行，快照覆盖策略差异仅保留在适配器参数",
+        "Bar 与 Depth 报告重新复制了输出路径/Evidence 覆盖判断或快照保护策略漂移",
+    )
+
+
+def multi_account_depth_evidence_paths_module_check() -> None:
+    """Keep portable package path validation and projection in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    paths_path = "crates/qx-cli/src/run_evidence_multi_account_depth/paths.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    paths = (ROOT / paths_path).read_text(encoding="utf-8")
+    symbols = (
+        "locate_account_bundle",
+        "account_directory_id",
+        "checked_missing_package_file",
+        "checked_package_file",
+        "validate_portable_relative",
+        "portable_quality_manifest_path",
+        "portable_artifact_path",
+        "verify_portable_run_paths",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [paths_path] for name in symbols)
+        and "mod paths;" in facade
+        and "use self::paths::{" in facade
+        and all(f"pub(super) fn {name}(" in paths for name in symbols)
+        and "canonical_parent.starts_with(root)" in paths
+        and "canonical.starts_with(root)" in paths
+        and "Component::ParentDir" in paths
+        and '".strategy-diagnostics.evidence.json"' in paths
+        and "sha256_hex(account_id.as_bytes())" in paths
+        and "fn locate_account_bundle(" not in facade
+        and "fn account_directory_id(" not in facade
+        and "fn verify_portable_run_paths(" not in facade,
+        "多账户深度证据包的受限路径解析、便携路径投影与账户产物路径一致性由 paths 子模块唯一拥有",
+        f"multi-account depth evidence path owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_paths_module_check() -> None:
+    """Keep multi-account Bar evidence path containment and portable projection in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/paths.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "checked_missing_package_file",
+        "verify_portable_run_paths",
+        "portable_artifact_path",
+        "validate_portable_relative",
+        "locate_account_bundle",
+        "account_directory_id",
+        "checked_package_file",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod paths;" in facade
+        and "use self::paths::{" in facade
+        and all(f"pub(super) fn {name}(" in module for name in symbols)
+        and "canonical_parent.starts_with(root)" in module
+        and "canonical.starts_with(root)" in module
+        and "std::fs::symlink_metadata(&resolved)" in module
+        and "Component::ParentDir" in module
+        and "fn verify_portable_run_paths(" not in facade
+        and "fn checked_package_file(" not in facade,
+        "多账户 Bar Evidence 的便携路径、缺失输入 containment 与来源 summary 定位由 paths 唯一拥有",
+        f"multi-account evidence path owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_inputs_module_check() -> None:
+    """Keep manifest input coverage, missing-state and digest verification together."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/verify_inputs.rs"
+    verify_path = "crates/qx-cli/src/run_evidence_multi_account/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    verify = (ROOT / verify_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+verify_packaged_inputs\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [module_path]
+        and "mod verify_inputs;" in facade
+        and "use self::verify_inputs::verify_packaged_inputs;" in facade
+        and "manifest.schema_version == LEGACY_SCHEMA_VERSION" in module
+        and "manifest.inputs.len() != spec.runs.len()" in module
+        and "if !seen.insert(input.account_id.as_str())" in module
+        and "seen.len() != members.len()" in module
+        and "checked_missing_package_file(root, &relative)?" in module
+        and 'verify_digest(&path, digest, "账户 BarFrame 输入")?' in module
+        and "verify_packaged_inputs(&root, &manifest, &spec, &result)?" in verify
+        and verify.index("verify_packaged_inputs(&root, &manifest, &spec, &result)?")
+        < verify.index("recompute::recompute_multi_account_run(&root, &manifest, &spec, &result)?"),
+        "多账户 Bar Evidence manifest 逐账户覆盖、缺失状态与 SHA-256 核验在 portable recompute 前唯一执行",
+        f"multi-account evidence input owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_validation_module_check() -> None:
+    """Keep account/result/evidence identity checks in one validation owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/validation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "validate_successful_outcomes",
+        "verify_member_evidence",
+        "verify_bundle_summary_account",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod validation;" in facade
+        and "use self::validation::{" in facade
+        and all(f"pub(super) fn {name}(" in module for name in symbols)
+        and "outcome.result_hash" in module
+        and "outcome.data_fingerprint" in module
+        and 'evidence.dataset.kind != "barframe"' in module
+        and "path.starts_with(&root)" in module
+        and 'value.get("account_id")' in module
+        and "fn verify_bundle_summary_account(" not in facade,
+        "多账户 Bar Evidence 的批次结果与来源 Evidence 身份核验由 validation 子模块唯一拥有",
+        f"multi-account evidence validation owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_recompute_module_check() -> None:
+    """Keep isolated Bar batch replay and result identity comparison in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/recompute.rs"
+    verify_path = "crates/qx-cli/src/run_evidence_multi_account/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    verify = (ROOT / verify_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+recompute_multi_account_run\s*\(", _read_text(path))
+    ]
+    verifier = verify.find("verify_packaged_inputs(&root, &manifest, &spec, &result)?")
+    replay = verify.find("recompute::recompute_multi_account_run(&root, &manifest, &spec, &result)?")
+    check(
+        owners == [module_path]
+        and "mod recompute;" in facade
+        and "fn recompute_multi_account_run(" not in facade
+        and "recompute::recompute_multi_account_run(" in verify
+        and verifier >= 0
+        and replay > verifier
+        and "expected_manifest.code_commit" in module
+        and "std::env::temp_dir()" in module
+        and "work.starts_with(&temp_root)" in module
+        and "run_multi_account_backtest(&spec, &context)" in module
+        and "actual.summary != expected.summary" in module
+        and "actual.runs.len() != expected.runs.len()" in module,
+        "多账户 Bar Evidence 的隔离复算、父级 revision 约束与批次结果对拍归 recompute 唯一拥有，且输入清单核验先于复算",
+        f"multi-account evidence recompute owner/order drift: owners={owners}, verifier={verifier}, replay={replay}",
+    )
+
+
+def multi_account_evidence_verify_module_check() -> None:
+    """Keep batch manifest, member Evidence, and optional replay verification in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+verify_multi_account_run\s*\(", _read_text(path))
+    ]
+    manifest = module.find("let manifest: MultiAccountEvidenceManifest")
+    batch_identity = module.find("validate_batch_identity(&result, &spec)?")
+    member_identity = module.find("validate_successful_outcomes(&result, &spec)?")
+    inputs = module.find("verify_packaged_inputs(&root, &manifest, &spec, &result)?")
+    member_bundle = module.find("verify_run_bundle_quiet(&portable_bundle, false)")
+    coverage = module.find("seen.len() != expected.len()")
+    replay = module.find("recompute::recompute_multi_account_run(&root, &manifest, &spec, &result)?")
+    check(
+        owners == [module_path]
+        and "mod verify;" in facade
+        and "verify::verify_multi_account_run(bundle_dir, recompute)" in facade
+        and "pub(crate) fn verify_multi_account_run(" in facade
+        and "pub(super) fn verify_multi_account_run(" not in facade
+        and manifest >= 0 < batch_identity < member_identity < inputs < member_bundle < coverage < replay
+        and "manifest.kind != \"qianxing-multi-account-run-evidence\"" in module
+        and "Evidence manifest 未覆盖全部成功账户" in module,
+        "多账户 Bar Evidence verify 由独立 owner 执行 manifest、账户及输入核验，并在全部覆盖后按需复算",
+        f"multi-account Bar verify owner/order drift: owners={owners}, steps={(manifest, batch_identity, member_identity, inputs, member_bundle, coverage, replay)}",
+    )
+
+
+def multi_account_evidence_io_module_check() -> None:
+    """Keep multi-account Evidence file writes, digest reads, and staging cleanup in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/io.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = ("read_run_bundle", "reserve_staging_directory", "write_new", "verify_digest")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    calls = ("read_run_bundle", "reserve_staging_directory", "write_new", "verify_digest")
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod io;" in facade
+        and "use self::io::{" in facade
+        and all(f"{name}" in facade for name in calls)
+        and "pub(super) struct StagingDirectory" in module
+        and "remove_dir_all(&self.0)" in module
+        and "create_new(true)" in module
+        and "sha256_file_hex(path)?" in module
+        and all(f"fn {name}(" not in facade for name in symbols),
+        "多账户 Bar Evidence 的 bundle IO、原子新建、摘要核验与 staging 清理由 io 子模块唯一拥有",
+        f"multi-account evidence IO owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_pack_module_check() -> None:
+    """Keep Bar batch packaging and portable publication order in one pack owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/pack.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+pack_multi_account_run\s*\(", _read_text(path))
+    ]
+    overwrite = module.find("if output_dir.exists()")
+    batch_identity = module.find("validate_batch_identity(&result, &spec)?")
+    outcomes = module.find("validate_successful_outcomes(&result, &spec)?")
+    staging = module.find("reserve_staging_directory(parent, output_dir)?")
+    source_verify = module.find("verify_run_bundle_quiet(&source_bundle, false)")
+    source_identity = module.find("verify_member_evidence(run, outcome, member, evidence)?")
+    summary = module.find("verify_bundle_summary_account(&source_bundle, &bundle, &run.account_id)?")
+    export = module.find("export_run_bundle_quiet(&source_bundle, &portable_dir)")
+    portable_verify = module.find("verify_run_bundle_quiet(&portable_bundle, false)")
+    portable_identity = module.rfind("verify_member_evidence(run, outcome, member, portable_evidence)?")
+    path_binding = module.find("verify_portable_run_paths(")
+    manifest_write = module.find("write_new(\n        &staging.0.join(MANIFEST_NAME)")
+    publish = module.find("std::fs::rename(&staging.0, output_dir)")
+    check(
+        owners == [module_path]
+        and "mod pack;" in facade
+        and "pack::pack_multi_account_run(result_path, spec_path, output_dir)" in facade
+        and overwrite >= 0 < batch_identity < outcomes < staging < source_verify < source_identity < summary < export < portable_verify < portable_identity < path_binding < manifest_write < publish
+        and "pub(super) fn pack_multi_account_run(" not in facade
+        and "filter(|run| run.outcome.is_none())" in module
+        and "manifest" in module
+        and "packaged_run.artifacts.event_trace =" in module
+        and "pub(super) fn pack_multi_account_run(" in module,
+        "多账户 Bar Evidence pack 由唯一 owner 编排来源/便携 Evidence 验真、路径绑定与 manifest 原子提交",
+        f"multi-account Bar pack owner/order drift: owners={owners}, steps={(overwrite, batch_identity, outcomes, staging, source_verify, source_identity, summary, export, portable_verify, portable_identity, path_binding, manifest_write, publish)}",
+    )
+
+
+def strategy_contract_input_module_check() -> None:
+    """Keep strategy contract input assembly and its market/event fingerprints together."""
+    facade_path = "crates/qx-cli/src/strategy_binding.rs"
+    module_path = "crates/qx-cli/src/strategy_binding/contract_input.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "build_strategy_contract_input",
+        "build_strategy_contract_input_with_updates",
+        "build_strategy_contract_input_with_execution_updates",
+        "build_strategy_contract_input_with_market_ticks",
+        "build_strategy_contract_input_with_market_events",
+        "combine_market_data_fingerprint",
+        "load_strategy_market_bars",
+        "combine_strategy_market_fingerprint",
+        "populate_strategy_execution_positions",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/strategy_binding/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:(?:pub\(crate\)|pub\(super\))\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod contract_input;" in facade
+        and "pub(crate) use contract_input::{" in facade
+        and all(f"{name}" in facade for name in symbols[:1] + symbols[2:5])
+        and all(f"fn {name}(" not in facade for name in symbols)
+        and "populate_strategy_execution_positions(" in module
+        and "strategy_execution_account_for_instrument(" in module
+        and "input.schema_version = input.schema_version_for_features();" in module
+        and "combine_market_data_fingerprint(&mut input)?;" in module
+        and "input.validate()?;" in module
+        and "pub(crate) fn evaluate_strategy_contract(" in facade,
+        "StrategyContractInput 的账户/市场事实、事件指纹与 schema 校验由 contract_input 唯一装配，保留稳定构造入口和 evaluator 边界",
+        f"Strategy contract input owner drift: {owners}",
+    )
+
+
+def multi_account_evidence_model_check() -> None:
+    """Keep Bar Evidence wire DTOs and fixed package filenames in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account/model.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    structs = ("FileDigest", "AccountEvidence", "AccountInputEvidence", "MultiAccountEvidenceManifest")
+    constants = ("SCHEMA_VERSION", "LEGACY_SCHEMA_VERSION", "MANIFEST_NAME", "RESULT_NAME", "SPEC_NAME")
+    symbols = structs + constants
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account/**/*.rs", False)
+            if re.search(rf"(?m)^pub\(super\) (?:struct|const) {re.escape(name)}\b", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod model;" in facade
+        and "use self::model::*;" in facade
+        and all(f"pub(super) struct {name}" in module for name in structs)
+        and all(f"pub(super) const {name}" in module for name in constants)
+        and module.count("#[serde(deny_unknown_fields)]") == len(structs)
+        and module.count("#[serde(default)]") == 1
+        and "struct MultiAccountEvidenceManifest" not in facade
+        and "const MANIFEST_NAME" not in facade,
+        "多账户 Bar Evidence wire DTO 与 schema 文件名由 model 子模块唯一拥有",
+        f"Bar evidence model owner drift: {owners}",
+    )
+
+
+def multi_account_joint_evidence_portable_paths_module_check() -> None:
+    """Keep joint evidence relocation and ArtifactReader path remapping in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/portable_paths.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "account_directory_id",
+        "validate_portable_relative",
+        "checked_package_file",
+        "checked_package_dir",
+        "bind_portable_market_paths",
+        "verify_portable_market_paths",
+        "market_component",
+        "parent_artifact_sources",
+        "build_path_map_reader",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod portable_paths;" in facade
+        and "use self::portable_paths::{" in facade
+        and all(f"pub(super) fn {name}(" in module for name in symbols)
+        and "reader.map_reference(&account.outcome.artifact_path, summary_path.clone())?" in module
+        and '"instrument_equity_contributions"' in module
+        and "fn resolve(&self, reference: &str)" in module
+        and "便携报告引用了未登记的来源绝对路径" in module
+        and "checked_package_file(&self.root, reference)" in module
+        and "canonicalize()" in module
+        and "Component::ParentDir" in module
+        and "path.starts_with(root)" in module
+        and "pub(super) fn checked_package_dir(" in module
+        and "fn validate_portable_relative(" not in facade
+        and "fn checked_package_file(" not in facade
+        and "fn checked_package_dir(" not in facade
+        and "fn build_path_map_reader(" not in facade,
+        "联合账户证据包的市场路径重定位、父子工件绑定与 ArtifactReader 映射由 portable_paths 唯一拥有",
+        f"multi-account joint portable path owner drift: {owners}",
+    )
+
+
+def multi_market_pnl_contributions_module_check() -> None:
+    """Keep bounded PnL attribution verification separate from market input/sidecar readers."""
+    facade_path = "crates/qx-app/src/multi_market_report.rs"
+    module_path = "crates/qx-app/src/multi_market_report/pnl_contributions.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "verify_multi_market_pnl_contributions_v1",
+        "verify_multi_market_pnl_contributions_with_exact_v1",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod pnl_contributions;" in facade
+        and "pub use pnl_contributions::{" in facade
+        and "rows.len() > MAX_MULTI_MARKET_PNL_SAMPLES" in module
+        and "sidecar_instruments != expected_instruments" in module
+        and "equity_index != index as u64" in module
+        and "let mark = final_market_marks" in module
+        and ".get(&instrument_id)" in module
+        and ".valuate_exact(&ExactValuationContext::new(valuation))" in module
+        and "pub fn verify_multi_market_pnl_contributions_v1(" not in facade
+        and "pub fn verify_multi_market_pnl_contributions_with_exact_v1(" not in facade,
+        "多市场 PnL attribution verifier 独立归属 pnl_contributions，保留有界采样、exact 时间轴、市场集合与期末 Ledger 重估",
+        f"multi-market PnL contribution owner/contract drift: {owners}",
+    )
+
+
+def multi_market_report_sidecars_module_check() -> None:
+    """Keep replay-backed Bar equity and fills sidecar validation under one app owner."""
+    facade_path = "crates/qx-app/src/multi_market_report.rs"
+    module_path = "crates/qx-app/src/multi_market_report/sidecars.rs"
+    lib_path = "crates/qx-app/src/lib.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    lib = (ROOT / lib_path).read_text(encoding="utf-8")
+    symbols = (
+        "verify_multi_market_bar_sidecars_v1",
+        "verify_multi_market_bar_sidecars_with_exact_v1",
+        "verify_multi_market_bar_sidecars_from_event_report_v1",
+        "verify_multi_market_bar_sidecars_from_event_report_with_exact_v1",
+        "verify_multi_market_event_fill_sidecar_v1",
+        "verify_multi_market_legacy_event_fill_sidecar_v1",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    equity = module.find("verify_multi_market_bar_equity_metrics_v1(")
+    fills = module.find("verify_multi_market_event_fill_sidecar_v1(", equity + 1)
+    event_identity = module.find("update_fill_sequence_digest(&mut digest, &event_fill_identity(&fill))")
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod sidecars;" in facade
+        and "pub use sidecars::{" in facade
+        and "pub struct VerifiedMultiMarketBarSidecarsV1" in module
+        and "VerifiedMultiMarketBarSidecarsV1" in facade
+        and all(name in lib for name in symbols)
+        and "equity_drawdown_bps(" in module
+        and "fn equity_drawdown_bps(" not in facade
+        and 0 <= equity < fills < event_identity
+        and "digest.finish_hex() != expected_fill_sequence_sha256" in module
+        and "fills != &Value::Array(event_fills)" in module
+        and "pub fn verify_multi_market_bar_sidecars_v1(" not in facade,
+        "qx-app 多市场 Bar 权益/成交 sidecar 与 replay fill identity 由 sidecars 唯一拥有并稳定重导出",
+        f"multi-market report sidecars owner/order drift: owners={owners}, steps={(equity, fills, event_identity)}",
+    )
+
+
+def multi_market_report_inputs_module_check() -> None:
+    """Keep canonical Bar/Depth input and quality-manifest verification in one app owner."""
+    facade_path = "crates/qx-app/src/multi_market_report.rs"
+    module_path = "crates/qx-app/src/multi_market_report/inputs.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    lib = (ROOT / "crates/qx-app/src/lib.rs").read_text(encoding="utf-8")
+    functions = (
+        "validate_multi_market_quality_manifest_set_v1",
+        "verify_multi_market_bar_input_v1",
+        "verify_multi_market_depth_input_v1",
+    )
+    types = ("VerifiedMultiMarketBarInputV1", "VerifiedMultiMarketDepthInputV1")
+    function_owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in functions
+    }
+    type_owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub struct {re.escape(name)}\b", _read_text(path))
+        ]
+        for name in types
+    }
+    check(
+        all(function_owners[name] == [module_path] for name in functions)
+        and all(type_owners[name] == [module_path] for name in types)
+        and "mod inputs;" in facade
+        and "pub use inputs::{" in facade
+        and all(name in facade and name in lib for name in functions + types)
+        and "snapshot.validate_for_replay(instrument)" in module
+        and module.count("snapshot.validate_for_replay(instrument)") == 2
+        and "validate_multi_market_quality_manifest_set_v1" in module
+        and "dataset_snapshot_sha256" in module
+        and all(f"pub fn {name}(" not in facade for name in functions)
+        and all(f"pub struct {name}" not in facade for name in types),
+        "qx-app 多市场 Bar/Depth 输入与质量快照复核归 inputs owner，稳定重导出保留且两个回放 snapshot gate 均在位",
+        f"multi-market report inputs owner drift: functions={function_owners}, types={type_owners}",
+    )
+
+
+def multi_market_report_identity_module_check() -> None:
+    """Keep path-independent multi-market fingerprints and ordered input identity in one owner."""
+    facade_path = "crates/qx-app/src/multi_market_report.rs"
+    module_path = "crates/qx-app/src/multi_market_report/identity.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    lib = (ROOT / "crates/qx-app/src/lib.rs").read_text(encoding="utf-8")
+    functions = (
+        "multi_market_spec_fingerprint_v1",
+        "multi_market_strategy_set_fingerprint",
+        "multi_market_input_set_identity_v1",
+        "multi_market_depth_input_set_identity_v1",
+        "multi_market_depth_spec_fingerprint_v1",
+    )
+    types = (
+        "MultiMarketInputIdentityV1",
+        "MultiMarketInputSetIdentityV1",
+        "MultiMarketDepthInputIdentityV1",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub(?:\(crate\))? fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in functions
+    }
+    type_owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub struct {re.escape(name)}\b", _read_text(path))
+        ]
+        for name in types
+    }
+    check(
+        all(owners[name] == [module_path] for name in functions)
+        and all(type_owners[name] == [module_path] for name in types)
+        and "mod identity;" in facade
+        and "pub use identity::{" in facade
+        and "pub(crate) use identity::multi_market_strategy_set_fingerprint;" in facade
+        and all(name in facade and name in lib for name in functions if name != "multi_market_strategy_set_fingerprint")
+        and all(name in facade and name in lib for name in types)
+        and "identity_spec.output_dir.clear()" in module
+        and "identity_spec.markets" in module
+        and "identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id))" in module
+        and "if !input_by_instrument.is_empty()" in module
+        and "seen_strategy_ids.insert(identity.strategy_id.as_str())" in module
+        and all(f"pub fn {name}(" not in facade for name in functions if name != "multi_market_strategy_set_fingerprint")
+        and all(f"pub struct {name}" not in facade for name in types),
+        "多市场规格/策略指纹与 Bar/Depth 输入集顺序身份由 identity 唯一拥有，兼容重导出保持稳定",
+        f"multi-market report identity owner drift: functions={owners}, types={type_owners}",
+    )
+
+
+def multi_market_depth_report_equity_module_check() -> None:
+    """Keep full-curve exact equity and trade metric verification in one depth report owner."""
+    facade_path = "crates/qx-app/src/multi_market_depth_research_report.rs"
+    module_path = "crates/qx-app/src/multi_market_depth_research_report/equity.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    functions = (
+        "verify_equity",
+        "verify_exact_equity_metrics",
+        "verify_exact_trade_metrics",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_depth_research_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in functions
+    }
+    check(
+        all(owners[name] == [module_path] for name in functions)
+        and re.search(r"(?m)^pub\(super\) struct VerifiedEquity\b", module) is not None
+        and "mod equity;" in facade
+        and "use self::equity::{" in facade
+        and all(name in facade for name in functions)
+        and "exact_value" in module
+        and "max_drawdown_exact" in module
+        and "normalized_reported_fees != fees_by_currency" in module
+        and "ledger_fees != fees_by_currency" in module
+        and "fn raw_i128(" in module
+        and "fn raw_i128(" not in facade
+        and all(f"fn {name}(" not in facade for name in functions),
+        "Depth report full-curve exact equity, return/drawdown and trade-sidecar facts归 qx-app equity owner",
+        f"multi-market depth report equity owner drift: {owners}",
+    )
+
+
+def multi_market_depth_report_quality_module_check() -> None:
+    """Keep depth report quality-record assembly and matching in one owner."""
+    facade_path = "crates/qx-app/src/multi_market_depth_research_report.rs"
+    module_path = "crates/qx-app/src/multi_market_depth_research_report/quality.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "verify_quality_record_set",
+        "quality_records_by_market",
+        "depth_dataset_quality_panel",
+        "index_market_data",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/multi_market_depth_research_report/**/*.rs", False)
+            if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod quality;" in facade
+        and "use self::quality::{" in facade
+        and "expected != actual" in module
+        and "重复标的" in module
+        and '"status": if report_is_clean { "clean" } else { "issues" }' in module
+        and "quality_records_by_market(&model.artifact, market_data)?" in facade
+        and all(f"fn {name}(" not in facade for name in symbols),
+        "Depth report quality record set, market mapping, duplicate rejection, and quality panel归 quality owner",
+        f"multi-market depth report quality owner drift: {owners}",
+    )
+
+
+def single_market_experiment_bundle_io_module_check() -> None:
+    """Keep source deduplication and bounded portable ArtifactReader I/O in one module."""
+    facade_path = "crates/qx-cli/src/run_evidence_experiment_recompute/single_market_bundle.rs"
+    module_path = "crates/qx-cli/src/run_evidence_experiment_recompute/single_market_bundle/bundle_io.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    definitions = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_experiment_recompute/**/*.rs", False)
+            if re.search(pattern, _read_text(path))
+        ]
+        for name, pattern in {
+            "resolve_source": r"(?m)^\s*pub\(super\)\s+fn\s+resolve_source\s*\(",
+            "BundleWriter": r"(?m)^\s*pub\(super\)\s+struct\s+BundleWriter\b",
+            "BundleArtifactReader": r"(?m)^\s*pub\(super\)\s+struct\s+BundleArtifactReader\b",
+        }.items()
+    }
+    check(
+        all(paths == [module_path] for paths in definitions.values())
+        and '#[path = "single_market_bundle/bundle_io.rs"]' in facade
+        and "use self::bundle_io::{resolve_source, BundleArtifactReader, BundleWriter};" in facade
+        and "reference_targets.get(&digest)" in module
+        and "source_targets.get(&source)" in module
+        and "self.resolve_relative(reference)" in module
+        and "!resolved.starts_with(&self.root) || !resolved.is_file()" in module
+        and "if !self.declared_paths.contains(reference)" in module
+        and "self.paths_by_digest.get(artifact_id.as_str())" in module
+        and "struct BundleWriter" not in facade
+        and "struct BundleArtifactReader" not in facade,
+        "单市场实验包 source locator 去重、portable ArtifactReader containment 与 ArtifactId 读取归 bundle_io 唯一拥有",
+        f"single-market bundle IO owner drift: {definitions}",
+    )
+
+
+def multi_account_joint_evidence_validation_check() -> None:
+    """Keep joint batch and child Evidence identity checks under one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/validation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "validate_joint_spec_identity",
+        "stable_joint_spec_fingerprint",
+        "verify_child_bundle_identity",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod validation;" in facade
+        and "use self::validation::{" in facade
+        and "validate_joint_spec_identity" in facade
+        and "verify_child_bundle_identity" in facade
+        and "outcome.accounts_total != spec.accounts.len()" in module
+        and "stable_joint_spec_fingerprint(spec)?" in module
+        and 'evidence.dataset.kind != "multi-market-barframe"' in module
+        and all(f"fn {name}(" not in facade for name in symbols),
+        "联合账户 joint spec 与子账户 Evidence 身份校验由 validation 子模块唯一拥有",
+        f"multi-account joint validation owner drift: {owners}",
+    )
+
+
+def multi_account_joint_evidence_io_check() -> None:
+    """Keep joint evidence file operations and staging lifecycle in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/io.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = ("read_run_bundle", "verify_digest", "write_new", "reserve_staging_directory")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod io;" in facade
+        and "use self::io::{" in facade
+        and "pub(super) struct StagingDirectory" in module
+        and "remove_dir_all(&self.0)" in module
+        and "create_new(true)" in module
+        and "file.sync_all()" in module
+        and "static STAGING_SEQUENCE" in module
+        and "fn write_new(" not in facade
+        and "fn reserve_staging_directory(" not in facade,
+        "联合账户 Evidence bundle IO、同步写入与 staging 生命周期由 io 子模块唯一拥有",
+        f"joint evidence IO owner drift: {owners}",
+    )
+
+
+def multi_account_joint_evidence_recompute_check() -> None:
+    """Keep joint evidence replay, manifest binding, and report comparison in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/recompute.rs"
+    verify_path = "crates/qx-cli/src/run_evidence_multi_account_joint/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    verify = (ROOT / verify_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+recompute_joint_run\s*\(", _read_text(path))
+    ]
+    report_check = verify.find("read_multi_account_joint_report_v1_with_reader_and_options(")
+    recompute_check = verify.find("if recompute {")
+    check(
+        owners == [module_path]
+        and "mod recompute;" in facade
+        and "recompute::recompute_joint_run(" in verify
+        and "fn recompute_joint_run(" not in facade
+        and report_check >= 0
+        and recompute_check > report_check
+        and "expected_manifest.code_commit" in module
+        and "market_component(" in module
+        and "run_multi_account_joint_backtest(&spec, &context)" in module
+        and "same_joint_result(&actual, expected)" in module
+        and "actual_report.summary.final_equity_raw" in module
+        and "drop(staging);" in module,
+        "联合账户 Evidence 的 code revision 绑定、市场输入复算和结果/报告对拍归 recompute owner，facade 先复核便携报告",
+        f"joint recompute owner/order drift: owners={owners}, report={report_check}, recompute={recompute_check}",
+    )
+
+
+def multi_account_joint_evidence_verify_check() -> None:
+    """Keep joint Evidence manifest, child, report, and replay verification order in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+verify_multi_account_joint_run\s*\(", _read_text(path))
+    ]
+    manifest = module.find("let manifest: JointEvidenceManifest")
+    batch_identity = module.find("validate_joint_spec_identity(&outcome, &portable_spec)?")
+    child_identity = module.find("verify_child_bundle_identity(member, run)?")
+    report = module.find("read_multi_account_joint_report_v1_with_reader_and_options(")
+    replay = module.find("recompute::recompute_joint_run(&root, &manifest, &portable_spec, &outcome)?")
+    check(
+        owners == [module_path]
+        and "mod verify;" in facade
+        and "verify::verify_multi_account_joint_run(bundle_dir, recompute)" in facade
+        and "pub(crate) fn verify_multi_account_joint_run(" in facade
+        and "fn verify_multi_account_joint_run(" not in facade.split("pub(crate) fn verify_multi_account_joint_run(", 1)[0]
+        and manifest >= 0 < batch_identity < child_identity < report < replay
+        and "manifest.accounts.len() != outcome.accounts_total" in module
+        and "seen.len() != expected_accounts.len()" in module,
+        "联合账户 Evidence verify 流程由 verify owner 唯一编排，并先核批次/子账户身份，再核报告，最后按需复算",
+        f"joint evidence verify owner/order drift: owners={owners}, steps={(manifest, batch_identity, child_identity, report, replay)}",
+    )
+
+
+def multi_account_joint_evidence_pack_check() -> None:
+    """Keep joint package source and portable verification before atomic publication."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/pack.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+pack_multi_account_joint_run\s*\(", _read_text(path))
+    ]
+    overwrite = module.find("if output_dir.exists()")
+    identity = module.find("validate_joint_spec_identity(&result, &spec)?")
+    source_report = module.find("read_multi_account_joint_report_v1(&result")
+    staging = module.find("reserve_staging_directory(output_parent, output_dir)?")
+    source_verify = module.find("verify_run_bundle_quiet(&source_evidence, false)")
+    export = module.find("export_run_bundle_quiet(&source_evidence, &package_account_dir)")
+    portable_verify = module.find("verify_run_bundle_quiet(&portable_evidence_path, false)")
+    bind_paths = module.find("bind_portable_market_paths(&mut portable_spec, account, &evidence_dir, portable_run)?")
+    manifest_write = module.find("write_new(\n        &staging.0.join(MANIFEST_NAME)")
+    publish = module.find("std::fs::rename(&staging.0, output_dir)")
+    check(
+        owners == [module_path]
+        and "mod pack;" in facade
+        and "pack::pack_multi_account_joint_run(result_path, spec_path, output_dir)" in facade
+        and overwrite >= 0 < identity < source_report < staging < source_verify < export < portable_verify < bind_paths < manifest_write < publish
+        and "parent_artifact_sources(&result)?" in module
+        and "pub(super) fn pack_multi_account_joint_run(" not in facade
+        and "drop(staging)" not in module,
+        "联合账户 Evidence pack 先验来源身份/报告及子 Evidence，再校验便携导出后原子提交，归 pack owner 唯一编排",
+        f"joint evidence pack owner/order drift: owners={owners}, steps={(overwrite, identity, source_report, staging, source_verify, export, portable_verify, bind_paths, manifest_write, publish)}",
+    )
+
+
+def report_verified_summary_module_check() -> None:
+    """Keep reconstructed Bar/Depth outcomes behind the shared readback owner."""
+    facade_path = "crates/qx-cli/src/report_command.rs"
+    module_path = "crates/qx-cli/src/report_command/verified_summary.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "require_current_summary_schema",
+        "read_verified_depth_summary",
+        "read_verified_bar_summary",
+        "required_summary_text",
+        "required_summary_u64",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_command/**/*.rs", False)
+            if re.search(
+                rf"(?m)^\s*pub\((?:super|crate)\)\s+fn\s+{re.escape(name)}\s*\(",
+                _read_text(path),
+            )
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod verified_summary;" in facade
+        and "pub(crate) use self::verified_summary::require_current_summary_schema;" in facade
+        and "use self::verified_summary::{read_verified_bar_summary, read_verified_depth_summary};" in facade
+        and "read_depth_run_report_v1_with_reader" in module
+        and "read_run_report_v1_with_reader" in module
+        and "report.summary != *summary" in module
+        and "fn read_verified_depth_summary(" not in facade
+        and "fn read_verified_bar_summary(" not in facade,
+        "report summary schema gate、Bar/Depth artifact identity、Outcome 重建及共享 qx-app report readback 由 verified_summary 子模块唯一拥有",
+        f"verified summary report owner drift: {owners}",
+    )
+
+
+def report_command_workflow_module_check() -> None:
+    """Keep report routing and single-run report publication behind a workflow owner."""
+    facade_path = "crates/qx-cli/src/report_command.rs"
+    workflow_path = "crates/qx-cli/src/report_command/workflow.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    workflow = (ROOT / workflow_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_command/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(crate\)\s+fn\s+run_report_with_benchmark\s*\(", _read_text(path))
+    ]
+    route = (
+        "crate::report_multi_market::maybe_run(",
+        "crate::report_multi_market_depth::maybe_run(",
+        "crate::report_multi_account::maybe_run(",
+        "crate::report_comparison_command::run_comparison_report(",
+        "let summary_path = resolve_backtest_summary_path(path)?;",
+    )
+    route_positions = [workflow.find(token) for token in route]
+    check(
+        owners == [workflow_path]
+        and "mod workflow;" in facade
+        and "pub(crate) use self::workflow::run_report_with_benchmark;" in facade
+        and "fn run_report_with_benchmark(" not in facade
+        and all(position >= 0 for position in route_positions)
+        and route_positions == sorted(route_positions)
+        and "output_bundle.commit()?;" in workflow
+        and workflow.index("output_bundle.commit()?;") > workflow.index("let evidence_path = if evidence {")
+        and "require_current_summary_schema(&summary)?;" in workflow,
+        "report command 的报告族分派、单次摘要复核与原子发布由 workflow 子模块唯一编排",
+        f"report workflow owner/order drift: owners={owners}, route={route_positions}",
+    )
+
+
+def report_strategy_diagnostics_module_check() -> None:
+    """Keep bounded diagnostics identity validation shared by report consumers."""
+    facade_path = "crates/qx-cli/src/report_command.rs"
+    module_path = "crates/qx-cli/src/report_command/diagnostics.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "read_bound_strategy_diagnostics",
+        "validate_strategy_diagnostics_identity",
+        "write_app_backtest_diagnostic_html",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_command/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:(?:pub\(super\)|pub\(crate\))\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod diagnostics;" in facade
+        and "pub(crate) use diagnostics::{" in facade
+        and "validate_strategy_diagnostics_identity, write_app_backtest_diagnostic_html," in facade
+        and "MAX_STRATEGY_DIAGNOSTICS_BYTES: u64 = 20 * 1024 * 1024" in module
+        and "validate_strategy_diagnostics_identity(" in module
+        and "strategy_bias_diagnostics" in module
+        and "fn validate_strategy_diagnostics_identity(" not in facade,
+        "策略诊断 bounded 读取、Run summary 身份绑定与 HTML 展示由 diagnostics 子模块唯一拥有并供报告复用",
+        f"strategy diagnostics report owner drift: {owners}",
+    )
+
+
+def python_strategy_provider_module_check() -> None:
+    """Keep provider selection and provider-specific environment outside the host lifecycle."""
+    facade_path = "crates/qx-cli/src/strategy_host.rs"
+    provider_path = "crates/qx-cli/src/strategy_host/providers.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    lifecycle = (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+    provider = (ROOT / provider_path).read_text(encoding="utf-8")
+    owner_symbols = (
+        "configure",
+        "strategy_session_ttl",
+        "inherit_provider_sdk_environment",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/strategy_host/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:pub\(super\)\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in owner_symbols
+    }
+    check(
+        all(owners[name] == [provider_path] for name in owner_symbols)
+        and "mod providers;" in facade
+        and "super::providers::configure(" in lifecycle
+        and "let worker_module = match execution_mode" not in lifecycle
+        and all(f'"{mode}" =>' in provider for mode in ("local", "e2b", "llm-sandbox", "microsandbox", "opensandbox"))
+        and "host_provider_env.insert(\"E2B_API_KEY\"" in provider
+        and not re.search(r'(?m)^\s*env\.insert\("E2B_API_KEY"', provider)
+        and "host_provider_env.insert(\"QX_LLMSANDBOX_DOCKER_HOST\"" in provider
+        and "host_provider_env.insert(\"MICROSANDBOX_API_KEY\"" in provider
+        and "host_provider_env.insert(\"OPEN_SANDBOX_API_KEY\"" in provider
+        and "_ => unreachable!(\"execution mode was validated above\")" in provider,
+        "Python strategy provider selection/配置由 providers 子模块唯一拥有，凭证仍与普通 worker 环境隔离，host facade 保留启动顺序",
+        f"Python strategy provider owner drift: {owners}",
+    )
+
+
+def builtin_strategy_host_module_check() -> None:
+    """Keep built-in contract execution as one host adapter with compatibility export."""
+    facade_path = "crates/qx-cli/src/strategy_host.rs"
+    module_path = "crates/qx-cli/src/strategy_host/builtin.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/strategy_host/**/*.rs", False)
+        if re.search(r"(?m)^\s*(?:pub\(crate\)\s+)?fn\s+invoke_builtin_strategy\s*\(", _read_text(path))
+    ]
+    check(
+        owners == [module_path]
+        and "mod builtin;" in facade
+        and "pub(crate) use builtin::invoke_builtin_strategy;" in facade
+        and "native_strategy_context(&config.strategy, &input)" in module
+        and "BuiltinStrategy::new(builtin_config)" in module
+        and "strategy.on_init(&context)?" in module
+        and "load_strategy_contract_bars(root, &reference_config, &reference, now)?" in module
+        and "events.sort_by_key" in module
+        and "native_decision_to_contract_output(&decision, &input)" in module
+        and "fn invoke_builtin_strategy(" not in facade,
+        "内置 Rust 策略的配置装配、双腿数据读取、确定事件投递与共享 contract 输出由 builtin 子模块唯一拥有，保留稳定入口",
+        f"builtin strategy host owner drift: {owners}",
+    )
+
+
+def c_abi_strategy_host_module_check() -> None:
+    """Keep verified plugin loading and ordered C ABI callbacks in their adapter owner."""
+    facade_path = "crates/qx-cli/src/strategy_host.rs"
+    module_path = "crates/qx-cli/src/strategy_host/c_abi.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "load_c_abi_strategy",
+        "invoke_c_abi_strategy",
+        "invoke_c_abi_strategy_with_execution_updates",
+        "notify_c_abi_strategy_error",
+        "sort_execution_callbacks",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/strategy_host/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:(?:pub\(super\)|pub\(crate\))\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod c_abi;" in facade
+        and "pub(crate) use c_abi::{" in facade
+        and "load_c_abi_strategy" in facade
+        and "invoke_c_abi_strategy_with_execution_updates" in facade
+        and "native_trust::admit_in_process_c_abi(strategy)?" in module
+        and "load_verified_with_required_capabilities" in module
+        and "has_partial_state_checkpoint_exports()" in module
+        and "StrategyCallback::" not in module
+        and "sort_execution_callbacks(&mut callbacks);" in module
+        and "update.validate_for(context)?;" in module
+        and "fn invoke_c_abi_strategy_with_updates(" not in facade,
+        "C ABI trusted loader、checkpoint/callback 校验、错误映射与执行回调排序由 c_abi adapter 唯一拥有，保留调用门面",
+        f"C ABI strategy host owner drift: {owners}",
+    )
+
+
+def python_strategy_host_client_module_check() -> None:
+    """Keep Python worker lifecycle and protocol ownership behind its facade."""
+    facade_path = "crates/qx-cli/src/strategy_host.rs"
+    module_path = "crates/qx-cli/src/strategy_host/python_client.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "start_with_transport_config_and_ring_directory",
+        "request",
+        "python_module_search_path",
+        "invoke_python_strategy",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/strategy_host/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:(?:pub\(crate\)|pub\(super\))\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod python_client;" in facade
+        and "pub(crate) use python_client::{" in facade
+        and "PythonStrategyClient" in facade
+        and "StrategyProcessClient" in facade
+        and "fn start_with_transport_config_and_ring_directory(" not in facade
+        and "fn request(" not in facade
+        and "client.expects_strategy_checkpoint = runtime_delivery" in module
+        and "QX_STRATEGY_DEPENDENCY_ROOT" in module,
+        "Python Strategy worker lifecycle、capability acknowledgment、checkpoint protocol 与 frozen dependency path 由 python_client 唯一拥有并保持 facade 入口",
+        f"Python strategy host client owner drift: {owners}",
+    )
+
+
+def python_strategy_host_process_client_module_check() -> None:
+    """Keep generic process spawn and capability acknowledgement in one adapter owner."""
+    facade_path = "crates/qx-cli/src/strategy_host.rs"
+    module_path = "crates/qx-cli/src/strategy_host/process_client.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "start_process_with_ring_directory_and_capabilities",
+        "start_process_with_ring_directory_and_host_provider_env",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/strategy_host/**/*.rs", False)
+            if re.search(rf"(?m)^\s*(?:(?:pub\(crate\)|pub\(super\))\s+)?fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod process_client;" in facade
+        and "QX_STRATEGY_REQUIRED_CAPABILITIES_JSON" in module
+        and "wait_for_ack_file(&path, 64 * 1024)" in module
+        and "validate_acknowledgment(" in module
+        and "StrategyWorkerProcess::spawn(spawn_config)" in module
+        and "spawn_with_host_provider_env(" in module
+        and "fn start_process_with_ring_directory_and_host_provider_env(" not in facade,
+        "共享 Strategy process spawn、host provider environment 与 capability acknowledgment 由 process_client 唯一拥有",
+        f"Python strategy host process client owner drift: {owners}",
+    )
+
+
+def multi_account_joint_evidence_model_check() -> None:
+    """Keep joint-account Evidence wire DTOs and fixed package filenames in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_joint.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_joint/model.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    structs = ("FileDigest", "JointAccountEvidence", "JointEvidenceManifest")
+    constants = ("MANIFEST_NAME", "RESULT_NAME", "SPEC_NAME", "SCHEMA_VERSION")
+    symbols = structs + constants
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_joint/**/*.rs", False)
+            if re.search(rf"(?m)^pub\(super\) (?:struct|const) {re.escape(name)}\b", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod model;" in facade
+        and "use self::model::*;" in facade
+        and all(f"pub(super) struct {name}" in module for name in structs)
+        and all(f"pub(super) const {name}" in module for name in constants)
+        and module.count("#[serde(deny_unknown_fields)]") == len(structs)
+        and "use std::collections::BTreeMap;" in module
+        and "struct JointEvidenceManifest" not in facade
+        and "const MANIFEST_NAME" not in facade,
+        "联合账户 Evidence wire DTO 与 schema 文件名由 model 子模块唯一拥有",
+        f"joint evidence model owner drift: {owners}",
+    )
+
+
+def multi_account_depth_evidence_input_check() -> None:
+    """Keep account input manifest coverage, existence, and digest validation centralized."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/verify_inputs.rs"
+    verify_path = "crates/qx-cli/src/run_evidence_multi_account_depth/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    verify = (ROOT / verify_path).read_text(encoding="utf-8")
+    check(
+        module.count("pub(super) fn verify_packaged_inputs(") == 1
+        and "mod verify_inputs;" in facade
+        and "use self::verify_inputs::verify_packaged_inputs;" in facade
+        and "manifest.inputs.len() != spec.runs.len()" in module
+        and "verify_digest(&path, digest, \"账户 DepthFrame 输入\")?" in module
+        and "checked_missing_package_file(root, &relative)?" in module
+        and "seen.len() != members.len()" in module
+        and "verify_packaged_inputs(&root, &manifest, &spec, &result)?" in verify
+        and "fn verify_packaged_inputs(" not in facade,
+        "多账户深度证据包逐账户输入覆盖、既存/缺失态和 SHA-256 校验由 verify_inputs 子模块统一执行",
+    )
+
+
+def multi_account_depth_evidence_validation_check() -> None:
+    """Keep batch, member, and source Evidence identity validation under one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/validation.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "validate_depth_batch_identity",
+        "stable_depth_spec_fingerprint",
+        "validate_successful_outcomes",
+        "verify_member_evidence",
+        "verify_bundle_summary_account",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+            if re.search(
+                rf"(?m)^\s*pub\((?:crate|super)\)\s+fn\s+{re.escape(name)}\s*\(",
+                _read_text(path),
+            )
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod validation;" in facade
+        and "pub(super) use self::validation::{" in facade
+        and all(f"{name}" in facade for name in symbols)
+        and "result.summary.accounts_succeeded != succeeded" in module
+        and "stable_depth_spec_fingerprint(spec)?" in module
+        and 'evidence.dataset.kind != "depth-frame"' in module
+        and "path.starts_with(&root)" in module
+        and all(f"fn {name}(" not in facade for name in symbols),
+        "多账户深度 batch/member/source Evidence 身份核验由 validation 子模块唯一拥有",
+        f"multi-account depth validation owner drift: {owners}",
+    )
+
+
+def multi_account_depth_evidence_io_check() -> None:
+    """Keep depth Evidence file IO and staging lifetime in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/io.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = ("read_run_bundle", "reserve_staging_directory", "write_new", "verify_digest")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and "mod io;" in facade
+        and "use self::io::{" in facade
+        and "pub(super) struct StagingDirectory" in module
+        and "remove_dir_all(&self.0)" in module
+        and "create_new(true)" in module
+        and "STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)" in module
+        and "fn verify_digest(" not in facade
+        and "fn reserve_staging_directory(" not in facade,
+        "多账户深度 Evidence bundle IO、create-new、摘要校验和 staging 回收由 io 子模块唯一拥有",
+        f"depth evidence IO owner drift: {owners}",
+    )
+
+
+def multi_account_depth_evidence_pack_check() -> None:
+    """Keep batch package source validation and atomic publication in the pack owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/pack.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+pack_multi_account_depth_run\s*\(", _read_text(path))
+    ]
+    overwrite = module.find("if output_dir.exists()")
+    identity = module.find("validate_depth_batch_identity(&result, &spec)?")
+    staging = module.find("reserve_staging_directory(parent, output_dir)?")
+    source_verify = module.find("verify_run_bundle_quiet(&source_bundle, false)")
+    export = module.find("export_run_bundle_quiet(&source_bundle, &portable_dir)")
+    portable_verify = module.find("verify_run_bundle_quiet(&portable_bundle, false)")
+    publish = module.find("std::fs::rename(&staging.0, output_dir)")
+    wrapper = facade.split("pub(crate) fn pack_multi_account_depth_run(", 1)[1].split(
+        "pub(crate) fn verify_multi_account_depth_run(", 1
+    )[0]
+    check(
+        owners == [module_path]
+        and "mod pack;" in facade
+        and "pack::pack_multi_account_depth_run(" in facade
+        and "pub(crate) fn pack_multi_account_depth_run(" in facade
+        and overwrite >= 0 < identity < staging < source_verify < export < portable_verify < publish
+        and "validate_successful_outcomes(&result, &spec)?" in module
+        and "verify_portable_run_paths(" in module
+        and "quality_manifest_sha256" in module
+        and "pack::pack_multi_account_depth_run(result_path, spec_path, output_dir)" in wrapper
+        and "validate_depth_batch_identity" not in wrapper,
+        "多账户深度 Evidence pack 单一拥有来源 Evidence 复核、portable export 二次复核及 staging 原子发布顺序",
+        f"multi-account depth pack owner/order drift: owners={owners}, steps={(overwrite, identity, staging, source_verify, export, portable_verify, publish)}",
+    )
+
+
+def multi_account_depth_evidence_recompute_check() -> None:
+    """Keep independently replayed batch execution and its isolated staging lifecycle together."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/recompute.rs"
+    verify_path = "crates/qx-cli/src/run_evidence_multi_account_depth/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    verify = (ROOT / verify_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+recompute_multi_account_depth_run\s*\(", _read_text(path))
+    ]
+    verification = verify.find("verify_packaged_inputs(&root, &manifest, &spec, &result)?")
+    recomputation = verify.find("if recompute {")
+    check(
+        owners == [module_path]
+        and "mod recompute;" in facade
+        and "recompute::recompute_multi_account_depth_run(" in verify
+        and "fn recompute_multi_account_depth_run(" not in facade
+        and verification >= 0
+        and recomputation > verification
+        and "expected_manifest.code_commit" in module
+        and "reserve_recompute_directory(package_root)?" in module
+        and "qx_app::run_multi_account_depth_backtest(&spec, &context)" in module
+        and "verify_multi_account_depth_backtest_result(&actual)" in module
+        and "actual.summary != expected.summary" in module
+        and "drop(staging);" in module,
+        "多账户深度 Evidence 独立复算和隔离 staging 生命周期归 recompute owner，facade 保持输入/Evidence 验证先于复算",
+        f"recompute owner/order drift: owners={owners}, verify={verification}, recompute={recomputation}",
+    )
+
+
+def multi_account_depth_evidence_verify_check() -> None:
+    """Keep depth package manifest, inputs, members and optional replay in one verify owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/verify.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+        if re.search(r"(?m)^\s*pub\(super\)\s+fn\s+verify_multi_account_depth_run\s*\(", _read_text(path))
+    ]
+    manifest = module.find("let manifest: MultiAccountEvidenceManifest")
+    identity = module.find("validate_depth_batch_identity(&result, &spec)?")
+    outcomes = module.find("validate_successful_outcomes(&result, &spec)?")
+    inputs = module.find("verify_packaged_inputs(&root, &manifest, &spec, &result)?")
+    member = module.find("verify_run_bundle_quiet(&portable_bundle, false)")
+    coverage = module.find("seen.len() != expected.len()")
+    replay = module.find("recompute::recompute_multi_account_depth_run(&root, &manifest, &spec, &result)?")
+    check(
+        owners == [module_path]
+        and "mod verify;" in facade
+        and "verify::verify_multi_account_depth_run(bundle_dir, recompute)" in facade
+        and "pub(crate) fn verify_multi_account_depth_run(" in facade
+        and "pub(super) fn verify_multi_account_depth_run(" not in facade
+        and manifest >= 0 < identity < outcomes < inputs < member < coverage < replay
+        and 'manifest.kind != "qianxing-multi-account-depth-run-evidence"' in module
+        and "Evidence manifest 未覆盖全部成功账户" in module,
+        "多账户 Depth Evidence verify 唯一编排 manifest、输入与账户 Evidence 核验，完整覆盖后才按需复算",
+        f"depth evidence verify owner/order drift: owners={owners}, steps={(manifest, identity, outcomes, inputs, member, coverage, replay)}",
+    )
+
+
+def multi_account_depth_evidence_model_check() -> None:
+    """Keep depth Evidence wire DTOs and filenames in one model owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_account_depth.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_account_depth/model.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = (
+        "FileDigest",
+        "AccountEvidence",
+        "AccountInputEvidence",
+        "MultiAccountEvidenceManifest",
+        "SCHEMA_VERSION",
+        "MANIFEST_NAME",
+        "RESULT_NAME",
+        "SPEC_NAME",
+    )
+    definitions = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_account_depth/**/*.rs", False)
+            if re.search(rf"(?m)^pub\(super\) (?:struct|const) {re.escape(name)}\b", _read_text(path))
+        ]
+        for name in symbols
+    }
+    check(
+        all(definitions[name] == [module_path] for name in symbols)
+        and "mod model;" in facade
+        and "use self::model::*;" in facade
+        and all("pub(super) " + ("struct " if name in symbols[:4] else "const ") + name in module for name in symbols)
+        and module.count("#[serde(deny_unknown_fields)]") == 4
+        and module.count("#[serde(default)]") == 4
+        and "struct MultiAccountEvidenceManifest" not in facade
+        and "const MANIFEST_NAME" not in facade,
+        "多账户深度 Evidence wire DTO 与固定文件名由 model 子模块唯一拥有，facade 仅供内部稳定重导出",
+        f"depth evidence model owner drift: {definitions}",
+    )
+
+
+def multi_market_depth_evidence_assembly_module_check() -> None:
+    """Keep multi-market depth Evidence source verification and bundle publication in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_market_depth.rs"
+    assembly_path = "crates/qx-cli/src/run_evidence_multi_market_depth/assembly.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    assembly = (ROOT / assembly_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_market_depth/**/*.rs", False)
+        if re.search(r"(?m)^pub\(super\) fn write_multi_market_depth_run_evidence\s*\(", _read_text(path))
+    ]
+    validation = assembly.find("verify_canonical_run_spec_for_manifest(&manifest, &artifact)?")
+    replay = assembly.find("ReplayVerifier::replay_owned(events)")
+    bundle = assembly.find("serialize_verified_evidence_bundle(&bundle")
+    publish = assembly.find('write_backtest_artifact(&output, &json, "EvidenceBundle")?')
+    check(
+        owners == [assembly_path]
+        and "mod assembly;" in facade
+        and "assembly::write_multi_market_depth_run_evidence(path, diagnostics)" in facade
+        and "pub(crate) fn write_multi_market_depth_run_evidence(" in facade
+        and "pub(super) fn write_multi_market_depth_run_evidence(" not in facade
+        and 0 <= validation < replay < bundle < publish
+        and "read_multi_market_event_report_v1_with_reader(" in assembly
+        and "verify_multi_market_event_fill_sidecar_v1(" in assembly
+        and "fn absolute_artifact_path(" in assembly
+        and "fn absolute_artifact_path(" not in facade,
+        "多市场 Depth Evidence 源工件校验、事件重放与 EvidenceBundle 发布由 assembly 唯一拥有，CLI facade 保持委托",
+        f"multi-market depth evidence assembly drift: owners={owners}, steps={(validation, replay, bundle, publish)}",
+    )
+
+
+def multi_market_bar_evidence_assembly_module_check() -> None:
+    """Keep multi-market Bar replay verification and EvidenceBundle publication in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_market_pack.rs"
+    assembly_path = "crates/qx-cli/src/run_evidence_multi_market_pack/assembly.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    assembly = (ROOT / assembly_path).read_text(encoding="utf-8")
+    owners = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_market_pack/**/*.rs", False)
+        if re.search(r"(?m)^pub\(super\) fn write_multi_market_run_evidence\s*\(", _read_text(path))
+    ]
+    replay_gate = assembly.find('.get("replay_verified")')
+    serializer = assembly.find("serialize_verified_evidence_bundle(&bundle")
+    publish = assembly.find('write_backtest_artifact(&output_path, &payload, "EvidenceBundle")?')
+    depth_dispatch = assembly.find("super::super::write_multi_market_depth_run_evidence(")
+    check(
+        owners == [assembly_path]
+        and '#[path = "run_evidence_multi_market_pack/assembly.rs"]' in facade
+        and "assembly::write_multi_market_run_evidence(artifact_path, strategy_diagnostics)" in facade
+        and "pub(crate) fn write_multi_market_run_evidence(" in facade
+        and "pub(super) fn write_multi_market_run_evidence(" not in facade
+        and 0 <= replay_gate < serializer < publish
+        and "if artifact.pointer(\"/spec/markets/0/depth_path\").is_some()" in assembly
+        and depth_dispatch >= 0
+        and "fn resolve_artifact_path(" in assembly
+        and "serialize_verified_evidence_bundle" not in facade,
+        "多市场 Bar Evidence replay gate、统一规范化写入与深度路由归 assembly，CLI facade 保留稳定委托",
+        f"multi-market Bar evidence assembly drift: owners={owners}, steps={(replay_gate, serializer, publish, depth_dispatch)}",
+    )
+
+
+def multi_market_bar_evidence_recompute_module_check() -> None:
+    """Keep multi-market Bar identity reconstruction and isolated replay in one owner."""
+    facade_path = "crates/qx-cli/src/run_evidence_multi_market.rs"
+    module_path = "crates/qx-cli/src/run_evidence_multi_market_recompute.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    symbols = ("recompute_multi_market_barframe_identity", "rerun_multi_market_barframe")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/run_evidence_multi_market*.rs", False)
+            if re.search(rf"(?m)^pub\(crate\) fn {re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in symbols
+    }
+    replay = module.find("qx_app::run_multi_market_backtest(&spec, &context)")
+    manifest_compare = module.find("if actual != *expected")
+    cleanup = module.find("std::fs::remove_dir_all(&work)")
+    check(
+        all(owners[name] == [module_path] for name in symbols)
+        and '#[path = "run_evidence_multi_market_recompute.rs"]' in facade
+        and "pub(crate) use run_evidence_multi_market_recompute::{" in facade
+        and all(name in facade for name in symbols)
+        and all(f"pub(crate) fn {name}(" not in facade for name in symbols)
+        and "dataset.components" in module
+        and "component.content_fingerprint" in module
+        and "crate::build_identity::BUILD_REVISION" in module
+        and 0 <= replay < manifest_compare < cleanup,
+        "多市场 Bar 输入身份复核与隔离复算唯一归 recompute owner，facade 稳定重导出，结果对拍后清理 staging",
+        f"multi-market Bar recompute owner drift: owners={owners}, steps={(replay, manifest_compare, cleanup)}",
+    )
+
+
+def multi_market_bar_report_diagnostics_module_check() -> None:
+    """Keep multi-market Bar strategy diagnostics and comparison rendering in one owner."""
+    facade_path = "crates/qx-cli/src/report_multi_market.rs"
+    diagnostics_path = "crates/qx-cli/src/report_multi_market/diagnostics.rs"
+    publication_path = "crates/qx-cli/src/report_multi_market/publication.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    publication = (ROOT / publication_path).read_text(encoding="utf-8")
+    symbols = (
+        "bind_market_bar_comparison_diagnostics",
+        "read_market_bar_comparison_diagnostics",
+        "parse_market_bar_comparison_diagnostics",
+        "comparison_diagnostics_for_xlsx",
+        "render_comparison_diagnostics",
+        "generate_builtin_bar_diagnostics",
+        "read_market_bar_diagnostics",
+        "bind_market_bar_diagnostics_value",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [diagnostics_path]}
+    bounds = (
+        "MAX_MARKET_DIAGNOSTICS_BYTES",
+        "MAX_MARKET_DIAGNOSTICS",
+        "MAX_MARKET_COMPARISON_RUNS_WITH_DIAGNOSTICS",
+        "MAX_MARKET_DIAGNOSTIC_BARS_PER_STRATEGY",
+        "MAX_MARKET_DIAGNOSTIC_STRATEGY_BAR_EVENTS",
+        "MAX_MARKET_DIAGNOSTIC_LOOKAHEAD_WORK",
+        "MAX_MARKET_DIAGNOSTIC_STARTUP_WORK",
+    )
+    check(
+        not misplaced
+        and "mod diagnostics;" in facade
+        and "pub(crate) use diagnostics::generate_builtin_bar_diagnostics;" in facade
+        and all(name in facade or name in publication for name in (
+            "bind_market_bar_comparison_diagnostics",
+            "bind_market_bar_diagnostics_value",
+            "comparison_diagnostics_for_xlsx",
+            "render_comparison_diagnostics",
+            "read_market_bar_diagnostics",
+        ))
+        and "use super::{build_report, read_artifact, resolve_path};" in diagnostics
+        and all(f"const {name}:" in diagnostics for name in bounds)
+        and all(f"const {name}:" not in facade for name in bounds),
+        "多市场 Bar 诊断生成、身份绑定和对照呈现归 diagnostics owner，原报告 facade 保持委托",
+        f"多市场 Bar diagnostics owner 或界限归属漂移：{misplaced}",
+    )
+
+
+def multi_market_bar_report_render_module_check() -> None:
+    """Keep multi-market HTML rendering and payload bounds in the render owner."""
+    facade_path = "crates/qx-cli/src/report_multi_market.rs"
+    render_path = "crates/qx-cli/src/report_multi_market/render.rs"
+    publication_path = "crates/qx-cli/src/report_multi_market/publication.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    render = (ROOT / render_path).read_text(encoding="utf-8")
+    publication = (ROOT / publication_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("render_html", "bound_html_series")
+    }
+    check(
+        all(found == [render_path] for found in owners.values())
+        and "mod render;" in facade
+        and ("use render::render_html;" in facade or "use super::render::render_html;" in publication)
+        and "fn bound_html_series(" not in facade
+        and "fn render_html(" not in facade
+        and "let mut html_report = report.clone();" in render
+        and "serde_json::to_string(&html_report)" in render
+        and ".replace('<'," in render
+        and "u003c" in render
+        and "if equity.len() > 2_000" in render
+        and ".take(1_999)" in render
+        and "fills.split_off(fills.len() - 2_000)" in render
+        and "events.split_off(events.len() - 2_000)" in render
+        and "use super::render::bound_html_series;" in facade,
+        "多市场 Bar HTML 单次/对照渲染及 bounded payload 投影唯一归属 render owner",
+        f"multi-market HTML render owner/bounds drift: {owners}",
+    )
+
+
+def multi_market_bar_report_projection_module_check() -> None:
+    """Keep artifact identity verification and report projection in one module."""
+    facade_path = "crates/qx-cli/src/report_multi_market.rs"
+    projection_path = "crates/qx-cli/src/report_multi_market/projection.rs"
+    diagnostics_path = "crates/qx-cli/src/report_multi_market/diagnostics.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    projection = (ROOT / projection_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+fn\s+{re.escape(name)}\s*\(", _read_text(path))
+        ]
+        for name in ("market_ids", "build_report", "resolve_path")
+    }
+    check(
+        all(found == [projection_path] for found in owners.values())
+        and "mod projection;" in facade
+        and "use projection::{build_report, market_ids, resolve_path};" in facade
+        and "use super::{build_report, read_artifact, resolve_path};" in diagnostics
+        and "fn build_report(" not in facade
+        and "fn resolve_path(" not in facade
+        and "fn market_ids(" not in facade
+        and "artifact[\"replay_verified\"] != true" in projection
+        and "validate_multi_market_quality_manifest_set_v1" in projection
+        and "verify_canonical_run_spec_for_manifest" in projection
+        and "read_multi_market_event_report_v1_with_reader" in projection
+        and "read_multi_market_legacy_event_report_v1" in projection
+        and "Some((page_offset, MAX_MULTI_MARKET_EVENT_PAGE))" in projection
+        and "build_report(path, &artifact)?" in facade,
+        "多市场 Bar artifact 身份/质量/事件复核与 JSON report projection 唯一归属 projection owner",
+        f"multi-market projection owner/verification drift: {owners}",
+    )
+
+
+def multi_market_depth_report_diagnostics_module_check() -> None:
+    """Keep depth strategy diagnostics and identity binding in a dedicated report owner."""
+    facade_path = "crates/qx-cli/src/report_multi_market_depth.rs"
+    diagnostics_path = "crates/qx-cli/src/report_multi_market_depth/diagnostics.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    symbols = (
+        "generate_builtin_depth_diagnostics",
+        "bind_market_depth_diagnostics",
+        "bind_market_depth_diagnostics_value",
+        "bind_depth_comparison_diagnostics",
+        "parse_depth_comparison_diagnostics",
+        "verify_strategy_diagnostics_for_evidence",
+    )
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market_depth/**/*.rs", False)
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}\s*\(",
+                _read_text(path),
+            )
+        ]
+        for name in symbols
+    }
+    expected_exports = (
+        "pub(crate) use diagnostics::{",
+        "generate_builtin_depth_diagnostics",
+        "verify_strategy_diagnostics_for_evidence",
+    )
+    check(
+        all(found == [diagnostics_path] for found in owners.values())
+        and "mod diagnostics;" in facade
+        and all(value in facade for value in expected_exports)
+        and "use diagnostics::{bind_depth_comparison_diagnostics, bind_market_depth_diagnostics};" in facade
+        and "const MAX_MARKET_DIAGNOSTICS_BYTES" in diagnostics
+        and "const MAX_MARKET_DIAGNOSTICS:" in diagnostics
+        and "const MAX_DEPTH_COMPARISON_RUNS_WITH_DIAGNOSTICS" in diagnostics
+        and all(f"{name}" not in facade for name in (
+            "const MAX_MARKET_DIAGNOSTICS_BYTES",
+            "const MAX_DEPTH_COMPARISON_RUNS_WITH_DIAGNOSTICS",
+            "fn generate_builtin_depth_diagnostics(",
+            "fn bind_market_depth_diagnostics(",
+            "fn bind_depth_comparison_diagnostics(",
+        ))
+        and "read_artifact(artifact_path)?" in diagnostics
+        and "let report = build_report(artifact_path, &artifact, false)?;" in diagnostics
+        and diagnostics.index("let report = build_report(artifact_path, &artifact, false)?;")
+        < diagnostics.index("diagnose_startup_windows(")
+        and "same_output_target(output_path, source)" in diagnostics
+        and "MAX_MARKET_DIAGNOSTICS_BYTES" in diagnostics
+        and "MAX_DEPTH_COMPARISON_RUNS_WITH_DIAGNOSTICS" in diagnostics,
+        "多市场深度策略诊断生成、身份绑定、证据校验与预算唯一归属 diagnostics owner",
+        f"multi-market depth diagnostics owner/binding drift: {owners}",
+    )
+
+
+def app_command_use_cases_module_check() -> None:
+    facade_path = "crates/qx-cli/src/app_commands.rs"
+    module_path = "crates/qx-cli/src/app_commands/use_cases.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+    handlers = (
+        "compare", "risk_parity", "algo_execution", "experiment",
+        "multi_leg_experiment", "multi_market_experiment", "depth_experiment",
+        "depth_backtest", "multi_leg_backtest", "multi_account_backtest",
+        "multi_account_depth_backtest", "multi_account_joint_backtest",
+        "multi_market_backtest", "multi_market_depth_backtest", "verify_depth",
+        "validate", "backtest", "provider_backtest", "provider_depth_backtest", "verify",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/app_commands/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in handlers
+    }
+    check(
+        "mod use_cases;" in facade
+        and all(f"use_cases::{name}(" in facade for name in handlers)
+        and all(paths == [module_path] for paths in owners.values())
+        and "read_document(spec_path)?" in module
+        and "with_code_commit" not in module
+        and "context(&spec.run_id)" in module,
+        "qx-cli app use-case adapters have one use_cases owner behind the stable dispatch facade",
+        f"app command use-case owner/dispatch drift: {owners}",
+    )
+
+
+def app_command_report_readers_module_check() -> None:
+    facade_path = "crates/qx-cli/src/app_commands.rs"
+    readers_path = "crates/qx-cli/src/app_commands/report_readers.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    readers = (ROOT / readers_path).read_text(encoding="utf-8")
+    handlers = (
+        "read_bar_report",
+        "read_depth_report",
+        "read_provider_bar_report",
+        "read_provider_depth_report",
+        "read_multi_account_report",
+        "read_multi_account_joint_report",
+        "read_multi_leg_report",
+        "read_multi_leg_research_report",
+        "read_multi_leg_event_page",
+        "read_multi_market_event_page",
+        "read_multi_market_depth_event_page",
+        "read_multi_market_research_report",
+        "read_multi_market_depth_research_report",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/app_commands/**/*.rs", False)
+               if re.search(rf"(?m)^pub\(super\) fn {re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in handlers
+    }
+    check(
+        "mod report_readers;" in facade
+        and all(f"report_readers::{name}(" in facade for name in handlers)
+        and all(paths == [readers_path] for paths in owners.values())
+        and "read_document(request_path)?" in readers
+        and "serde_json::to_string(&report)" in readers
+        and "AppErrorCategory::InvalidInput" in readers
+        and "AppErrorCategory::InternalInvariant" in readers,
+        "Versioned report and event page CLI adapters have one report_readers owner",
+        f"report reader owner/dispatch drift: {owners}",
+    )
+
+
+def multi_market_bar_report_publication_module_check() -> None:
+    facade_path = "crates/qx-cli/src/report_multi_market.rs"
+    publication_path = "crates/qx-cli/src/report_multi_market/publication.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    publication = (ROOT / publication_path).read_text(encoding="utf-8")
+    owner_paths = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market/**/*.rs", False)
+        if re.search(r"\bfn\s+publish_report\s*\(", path.read_text(encoding="utf-8"))
+    ]
+    check(
+        "mod publication;" in facade
+        and "publication::publish_report(" in facade
+        and "ReportOutputBundle" not in facade
+        and "write_multi_market_depth_xlsx" not in facade
+        and owner_paths == [publication_path]
+        and publication.index("write_multi_market_run_evidence") < publication.index("output_bundle.commit()?")
+        and publication.index("output_bundle.commit()?") > publication.index("write_multi_market_depth_xlsx"),
+        "Multi-market Bar report HTML/XLSX/CSV and Evidence staging归 publication owner",
+        "report layout or publication ordering moved out of the owner",
+    )
+
+
+def multi_market_depth_report_publication_module_check() -> None:
+    facade_path = "crates/qx-cli/src/report_multi_market_depth.rs"
+    publication_path = "crates/qx-cli/src/report_multi_market_depth/publication.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    publication = (ROOT / publication_path).read_text(encoding="utf-8")
+    owned_helpers = (
+        "benchmark_runs_from_report",
+        "publish_report",
+    )
+    owners = {
+        name: [path.relative_to(ROOT).as_posix()
+               for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market_depth/**/*.rs", False)
+               if re.search(rf"\bfn\s+{re.escape(name)}\s*\(", path.read_text(encoding="utf-8"))]
+        for name in owned_helpers
+    }
+    check(
+        "mod publication;" in facade
+        and "publication::publish_report(" in facade
+        and "ReportOutputBundle" not in facade
+        and "write_multi_market_depth_xlsx" not in facade
+        and "write_benchmark_runs_csv" not in facade
+        and all(paths == [publication_path] for paths in owners.values())
+        and publication.index("let mut output_bundle") < publication.index("write_multi_market_depth_run_evidence")
+        and publication.index("write_multi_market_depth_run_evidence") < publication.index("output_bundle.commit()?")
+        and "same_output_target" in publication
+        and "pub(super) struct PublishedArtifacts" in publication,
+        "Multi-market depth report staged publication, benchmark export, and commit ordering归 publication owner",
+    )
+
+
+def multi_market_depth_report_projection_module_check() -> None:
+    """Keep selected-artifact binding and depth application report projection together."""
+    facade_path = "crates/qx-cli/src/report_multi_market_depth.rs"
+    projection_path = "crates/qx-cli/src/report_multi_market_depth/projection.rs"
+    diagnostics_path = "crates/qx-cli/src/report_multi_market_depth/diagnostics.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    projection = (ROOT / projection_path).read_text(encoding="utf-8")
+    diagnostics = (ROOT / diagnostics_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market_depth/**/*.rs", False)
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:fn|struct)\s+{re.escape(name)}\s*\{{?\s*\(",
+                _read_text(path),
+            )
+        ]
+        for name in ("market_instruments", "build_report", "SelectedDepthArtifactReader")
+    }
+    # Struct declarations have no call parenthesis, so count their owner separately.
+    owners["SelectedDepthArtifactReader"] = [
+        path.relative_to(ROOT).as_posix()
+        for path in _glob_paths(CRATES, "qx-cli/src/report_multi_market_depth/**/*.rs", False)
+        if re.search(r"(?m)^\s*struct\s+SelectedDepthArtifactReader\b", _read_text(path))
+    ]
+    check(
+        owners["market_instruments"] == [projection_path]
+        and owners["build_report"] == [projection_path]
+        and owners["SelectedDepthArtifactReader"] == [projection_path]
+        and "mod projection;" in facade
+        and "use projection::{build_report, market_instruments};" in facade
+        and "use super::{build_report, read_artifact, same_output_target};" in diagnostics
+        and "fn market_instruments(" not in facade
+        and "fn build_report(" not in facade
+        and "MultiMarketDepthResearchReportReadRequestV1" in projection
+        and "read_multi_market_depth_research_report_v1_with_readers(" in projection
+        and "selected_artifact_reader" in projection
+        and "if reference == self.selected_reference" in projection
+        and "self.selected_path.to_string_lossy()" in projection
+        and "qx_app::artifact_store::FileArtifactReader" in projection
+        and "let include_verified_benchmark_equity = benchmark_bars.is_some();" in facade
+        and "include_verified_benchmark_equity," in facade,
+        "多市场深度报告使用 CLI 选中产物 reader 绑定应用层复核并唯一归属 projection owner",
+        f"multi-market depth projection/selected-artifact binding drift: {owners}",
+    )
+
+
+def run_experiment_recovery_module_check() -> None:
+    """Keep resumable report identity, retry classification, and search checkpoints in recovery."""
+    facade_path = "crates/qx-app/src/cases/run_experiment.rs"
+    recovery_path = "crates/qx-app/src/cases/run_experiment/recovery.rs"
+    candidate_path = "crates/qx-app/src/cases/run_experiment/candidate_execution.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    recovery = (ROOT / recovery_path).read_text(encoding="utf-8")
+    candidate = (ROOT / candidate_path).read_text(encoding="utf-8")
+    symbols = (
+        "SearchCandidateCheckpoint",
+        "load_search_candidate_checkpoint",
+        "write_search_candidate_checkpoint",
+        "existing_result",
+        "has_retryable_search_failures",
+        "resume_existing_experiment",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/cases/run_experiment/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:fn|struct)\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [recovery_path]}
+    check(
+        not misplaced
+        and "mod recovery;" in facade
+        and "mod candidate_execution;" in facade
+        and "use super::recovery::{load_search_candidate_checkpoint, write_search_candidate_checkpoint};" in candidate
+        and "existing_result(" not in facade
+        and "has_retryable_search_failures(" not in facade
+        and "load_search_candidate_checkpoint(" in candidate
+        and "write_search_candidate_checkpoint(" in candidate
+        and "recovery::resume_existing_experiment(" in facade
+        and "pub(super) fn resume_existing_experiment(" in recovery
+        and "match std::fs::read_to_string(&report_index_path)" not in facade
+        and "persistence::verify_persisted_experiment_result(" not in facade
+        and "let checkpoint = SearchCandidateCheckpoint {" not in facade
+        and "fn has_retryable_search_failures(" not in facade,
+        "搜索候选 checkpoint 恢复/发布、既有报告身份确认和 retryable 结果分类唯一归属 recovery 子模块",
+        f"run-experiment recovery owner 重复或 facade 接线漂移：{misplaced}",
+    )
+
+
+def run_experiment_candidate_execution_module_check() -> None:
+    """Keep proposal generation, resumable runs, and feedback together outside orchestration."""
+    facade_path = "crates/qx-app/src/cases/run_experiment.rs"
+    candidate_path = "crates/qx-app/src/cases/run_experiment/candidate_execution.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    candidate = (ROOT / candidate_path).read_text(encoding="utf-8")
+    owners = {
+        name: [
+            path.relative_to(ROOT).as_posix()
+            for path in _glob_paths(CRATES, "qx-app/src/cases/run_experiment/**/*.rs", False)
+            if re.search(rf"(?m)^\s*pub\(super\)\s+(?:fn|struct)\s+{re.escape(name)}\b", _read_text(path))
+        ]
+        for name in ("execute_candidates", "CandidateExecutionRequest", "CandidateExecutionResult")
+    }
+    check(
+        all(found == [candidate_path] for found in owners.values())
+        and "mod candidate_execution;" in facade
+        and "candidate_execution::execute_candidates(" in facade
+        and "candidate_execution::CandidateExecutionRequest {" in facade
+        and "candidate_execution::CandidateExecutionResult {" in facade
+        and "for index in 0..total" not in facade
+        and "let mut search_trace" not in facade
+        and "let mut candidates" not in facade
+        and "let mut search_state" in candidate
+        and "let mut continuous_search_state" in candidate
+        and "if cancellation.is_some_and(CancellationToken::is_cancelled)" in candidate
+        and "load_search_candidate_checkpoint(" in candidate
+        and "write_search_candidate_checkpoint(" in candidate
+        and candidate.index("load_search_candidate_checkpoint(") < candidate.index("run_backtest_inner_with_experiment_strategy(")
+        and candidate.index("write_search_candidate_checkpoint(") < candidate.index("search_trace.push(")
+        and "observed_training_scores.push((candidate_index, score))" in candidate
+        and "combinations," in candidate[candidate.index("CandidateExecutionResult {") :]
+        and facade.index("candidate_execution::execute_candidates(")
+        < facade.index("cost_sensitivity::execute_cost_sensitivity("),
+        "RunExperiment proposal、候选执行/checkpoint 与 adaptive feedback 唯一归属 candidate_execution",
+        f"candidate execution owner/order drift: {owners}",
+    )
+
+
+def experiment_fold_search_checkpoint_module_check() -> None:
+    """Keep checkpoint persistence, identity checks, and artifact hashing out of fold search."""
+    facade_path = "crates/qx-app/src/cases/experiment_fold_search.rs"
+    checkpoint_path = "crates/qx-app/src/cases/experiment_fold_search/checkpoint.rs"
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    checkpoint = (ROOT / checkpoint_path).read_text(encoding="utf-8")
+    symbols = (
+        "CostScenarioCheckpoint",
+        "FoldCandidateCheckpoint",
+        "load_cost_scenario_checkpoint",
+        "write_cost_scenario_checkpoint",
+        "load_fold_candidate_checkpoint",
+        "write_fold_candidate_checkpoint",
+        "artifact_fingerprint",
+    )
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/cases/experiment_fold_search/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?(?:fn|struct)\s+{re.escape(name)}\b",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [checkpoint_path]}
+    check(
+        not misplaced
+        and "mod checkpoint;" in facade
+        and "pub(super) use checkpoint::{" in facade
+        and all(name in facade for name in (
+            "artifact_fingerprint",
+            "load_cost_scenario_checkpoint",
+            "write_cost_scenario_checkpoint",
+        ))
+        and "load_fold_candidate_checkpoint(" in facade
+        and "write_fold_candidate_checkpoint(" in facade
+        and "pub(super) fn load_fold_candidate_checkpoint(" in checkpoint
+        and "pub(super) fn write_fold_candidate_checkpoint(" in checkpoint
+        and "let cached = match std::fs::read_to_string(&checkpoint_path)" not in facade
+        and "struct FoldCandidateCheckpoint" not in facade,
+        "折内搜索与成本情景 checkpoint 的身份校验、产物复核和持久化唯一归属 checkpoint 子模块",
+        f"fold-search checkpoint owner 重复或 facade 接线漂移：{misplaced}",
+    )
+
+
+def multi_market_depth_experiment_artifact_modules_check() -> None:
+    """Keep depth experiment identity, persistence, and candidate verification in focused owners."""
+    facade_path = "crates/qx-app/src/cases/run_multi_market_depth_experiment.rs"
+    module_root = "crates/qx-app/src/cases/run_multi_market_depth_experiment/"
+    owner_paths = {
+        "build_multi_market_depth_experiment_identity": module_root + "identity.rs",
+        "build_multi_market_depth_experiment_manifest": module_root + "identity.rs",
+        "persist_multi_market_depth_experiment_result": module_root + "persistence.rs",
+        "publish_multi_market_depth_experiment_artifact": module_root + "persistence.rs",
+        "verify_persisted_multi_market_depth_experiment_result": module_root + "persistence.rs",
+        "verify_multi_market_depth_experiment_candidates": module_root + "candidate_verification.rs",
+        "existing_result": module_root + "candidate_verification.rs",
+    }
+    facade = (ROOT / facade_path).read_text(encoding="utf-8")
+    owners: dict[str, list[str]] = {name: [] for name in owner_paths}
+    for path in _glob_paths(CRATES, "qx-app/src/cases/run_multi_market_depth_experiment/**/*.rs", False):
+        source = _read_text(path)
+        for name in owner_paths:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    misplaced = {name: found for name, found in owners.items() if found != [owner_paths[name]]}
+    check(
+        not misplaced
+        and all(f"mod {module};" in facade for module in ("identity", "persistence", "candidate_verification"))
+        and "build_multi_market_depth_experiment_identity" in facade
+        and "persist_multi_market_depth_experiment_result" in facade
+        and "verify_persisted_multi_market_depth_experiment_result" in facade
+        and "verify_multi_market_depth_experiment_candidates" in facade
+        and "existing_result" in facade
+        and all((ROOT / path).is_file() for path in set(owner_paths.values())),
+        "多市场盘口实验 CanonicalRunSpec、标准产物持久化与候选核验各有唯一 owner，运行 facade 保持委托",
+        f"多市场盘口实验 identity/persistence/verification owner 漂移：{misplaced}",
+    )
+
+
+def depth_experiment_identity_persistence_module_check() -> None:
+    """Keep depth experiment identity and durable-result ownership in focused modules."""
+    root_path = "crates/qx-app/src/cases/run_depth_experiment.rs"
+    identity_path = "crates/qx-app/src/cases/run_depth_experiment/identity.rs"
+    persistence_path = "crates/qx-app/src/cases/run_depth_experiment/persistence.rs"
+    facade = (ROOT / root_path).read_text(encoding="utf-8")
+    identity = (ROOT / identity_path).read_text(encoding="utf-8")
+    persistence = (ROOT / persistence_path).read_text(encoding="utf-8")
+    identity_symbols = ("build_depth_experiment_canonical_run_spec",)
+    persistence_symbols = (
+        "verify_depth_experiment_candidate_outcomes",
+        "persist_depth_experiment_result",
+        "publish_depth_experiment_artifact",
+        "validate_depth_experiment_result",
+        "existing_result",
+        "verify_persisted_depth_experiment_result",
+    )
+    symbols = identity_symbols + persistence_symbols
+    owners: dict[str, list[str]] = {name: [] for name in symbols}
+    for path in _glob_paths(CRATES, "qx-app/src/cases/run_depth_experiment/**/*.rs", False):
+        source = _read_text(path)
+        for name in symbols:
+            if re.search(
+                rf"(?m)^\s*(?:(?:pub(?:\([^)]*\))?)\s+)?fn\s+{re.escape(name)}(?:<[^>\n]+>)?\s*\(",
+                source,
+            ):
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    expected = {
+        **{name: [identity_path] for name in identity_symbols},
+        **{name: [persistence_path] for name in persistence_symbols},
+    }
+    misplaced = {name: found for name, found in owners.items() if found != expected[name]}
+    check(
+        not misplaced
+        and "mod identity;" in facade
+        and "mod persistence;" in facade
+        and "use identity::build_depth_experiment_canonical_run_spec;" in facade
+        and "existing_result" in facade
+        and "persist_depth_experiment_result" in facade
+        and "validate_depth_experiment_result" in facade
+        and "verify_depth_experiment_candidate_outcomes" in facade
+        and all(f"pub(super) fn {name}(" in identity for name in identity_symbols)
+        and all(f"pub(super) fn {name}(" in persistence for name in persistence_symbols),
+        "Depth experiment CanonicalRunSpec identity 与持久化/复核映射分别唯一归属子模块，facade 保持调用路径",
+        f"Depth experiment identity/persistence owner 重复或 facade 委托漂移：{misplaced}",
+    )
+
+
+def strategy_cursor_state_module_check() -> None:
+    """Keep cursor serialization, migration and durable fencing in its own module."""
+    parent_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+    cursor_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs"
+    parent = parent_path.read_text(encoding="utf-8")
+    cursor = cursor_path.read_text(encoding="utf-8")
+    check(
+        "mod cursor_state;" in parent
+        and "pub(super) use cursor_state::{" in parent
+        and "CursorState" in parent
+        and "pub(in crate::workers::strategy_worker) fn load_cursor(" in cursor
+        and "pub(in crate::workers::strategy_worker) fn save_cursor(" in cursor
+        and "fn validate_cursor_write_against_durable_state(" in cursor
+        and "pub(in crate::workers::strategy_worker) struct CursorState" in cursor
+        and "fn save_cursor(" not in parent
+        and "struct CursorState" not in parent,
+        "策略执行 cursor/checkpoint 状态迁移、fencing 与落盘归独立模块",
+        "Strategy execution cursor persistence remains embedded or duplicated in range assembly",
+    )
+
+
+def strategy_checkpoint_module_check() -> None:
+    """Keep checkpoint binding and deployment revision transitions out of the facade."""
+    parent_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+    checkpoint_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/checkpoint.rs"
+    parent = parent_path.read_text(encoding="utf-8")
+    checkpoint = checkpoint_path.read_text(encoding="utf-8")
+    transitions = (
+        "advance_cursor",
+        "bind_cursor_to_deployment_revision",
+        "commit_strategy_checkpoint",
+        "is_committed_run",
+        "mark_run_committed",
+        "strategy_checkpoint",
+        "validate_checkpoint_binding_for_mode",
+    )
+    check(
+        "mod checkpoint;" in parent
+        and "pub(super) use checkpoint::{" in parent
+        and all(f"pub(in crate::workers::strategy_worker) fn {name}(" in checkpoint for name in transitions)
+        and all(f"fn {name}(" not in parent for name in transitions),
+        "Strategy checkpoint SHA 身份绑定、lease fencing 与 revision 迁移归独立模块",
+        "Strategy execution facade still embeds checkpoint ownership transitions",
+    )
+
+
+def strategy_execution_facts_module_check() -> None:
+    """Keep bounded EventLog range assembly out of cursor/checkpoint state transitions."""
+    parent_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+    facts_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/execution_facts.rs"
+    parent = parent_path.read_text(encoding="utf-8")
+    facts = facts_path.read_text(encoding="utf-8")
+    check(
+        "mod execution_facts;" in parent
+        and "pub(super) use execution_facts::{collect_pending, execution_updates_for_ranges};" in parent
+        and "pub(in crate::workers::strategy_worker) fn collect_pending(" in facts
+        and "pub(in crate::workers::strategy_worker) fn execution_updates_for_ranges(" in facts
+        and "fn replay_account_updates(" in facts
+        and "fn market_ticks_for_range(" in facts
+        and "fn market_order_books_for_range(" in facts
+        and "fn collect_pending(" not in parent
+        and "fn execution_updates_for_ranges(" not in parent,
+        "Strategy EventLog bounded range assembly and account/market fact DTOs归独立模块",
+        "Strategy cursor state module still owns bounded EventLog fact assembly",
+    )
+
+
+def strategy_execution_replay_module_check() -> None:
+    """Keep EventLog order/fill projection out of cursor persistence and range assembly."""
+    parent_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+    facts_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/execution_facts.rs"
+    replay_path = ROOT / "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs"
+    parent = parent_path.read_text(encoding="utf-8")
+    facts = facts_path.read_text(encoding="utf-8")
+    replay = replay_path.read_text(encoding="utf-8")
+    check(
+        "mod replay;" in parent
+        and "replay::replay_execution_updates(" in facts
+        and "replay::sort_updates(" in facts
+        and "replay::sort_fill_updates(" in facts
+        and "pub(super) fn replay_execution_updates(" in replay
+        and "fn append_update(" in replay
+        and "fn order_strategy_id(" in replay
+        and "fn replay_execution_updates(" not in parent
+        and "fn append_update(" not in parent,
+        "Strategy EventLog 订单/成交 DTO 投影归独立 replay 模块，facts 模块只装配范围",
+        "Strategy cursor persistence module still owns or duplicates EventLog order/fill projection",
+    )
+
+
+def python_runtime_host_capability_forwarding_check() -> None:
+    """Require Rust-owned Runtime class capabilities across isolated provider guests."""
+    strategy_host = (
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/process_client.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/c_abi.rs").read_text(encoding="utf-8")
+    )
+    strategy_worker = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    python_worker = (ROOT / "python/qianxing_strategy/worker.py").read_text(encoding="utf-8")
+    capabilities = (ROOT / "crates/qx-strategy/src/capabilities.rs").read_text(encoding="utf-8")
+    capability_ack_schema = (ROOT / "schemas/strategy-host-capability-ack-v1.json").read_text(encoding="utf-8")
+    strategy_config = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_schema.rs").read_text(encoding="utf-8")
+    strategy_validation = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_validation.rs").read_text(encoding="utf-8")
+    local_strategy_contract = (ROOT / "crates/qx-cli/src/strategy_contract.rs").read_text(encoding="utf-8")
+    c_abi = (ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8")
+    builtin_config = (ROOT / "crates/qx-strategy/src/builtin/config.rs").read_text(encoding="utf-8")
+    multi_builtin_case = (ROOT / "crates/qx-app/src/cases/run_multi_builtin_backtest.rs").read_text(encoding="utf-8")
+    process_worker = (ROOT / "crates/qx-orchestrator/src/strategy_worker.rs").read_text(encoding="utf-8")
+    cpp_external = (ROOT / "cpp/examples/jsonl_strategy.cpp").read_text(encoding="utf-8")
+    c_abi_after_validation = c_abi.split(
+        "host_capabilities.validate_required(required)?;", 1
+    )[1]
+    module_function_capabilities = capabilities.split(
+        "pub fn runtime_python_module_function(", 1
+    )[1].split("/// Delivery capabilities", 1)[0]
+    c_abi_capabilities = capabilities.split("pub fn c_abi(", 1)[1].split(
+        "/// Delivery capabilities", 1
+    )[0]
+    runtime_external_capabilities = capabilities.split(
+        "pub fn runtime_external_process(", 1
+    )[1].split("/// File/backtest external-process", 1)[0]
+    provider_sources = {
+        name: (ROOT / f"python/qianxing_strategy/{name}").read_text(encoding="utf-8")
+        for name in (
+            "e2b_worker.py",
+            "opensandbox_worker.py",
+            "llm_sandbox_worker.py",
+            "microsandbox_worker.py",
+        )
+    }
+    check(
+        'if runtime_delivery {' in strategy_host
+        and '"QX_STRATEGY_HOST_CAPABILITIES_JSON".into()' in strategy_host
+        and "runtime_python_module_function(" in strategy_host
+        and 'if strategy_config.python_module.is_some() {' in strategy_worker
+        and "StrategyHostCapabilitiesV1::runtime_python_module_function(" in strategy_worker
+        and "StrategyHostCapabilitiesV1::c_abi(" in strategy_worker
+        and "StrategyHostCapabilitiesV1::builtin_rust()" in strategy_worker
+        and "StrategyHostCapabilitiesV1::runtime_external_process(" in strategy_worker
+        and "kind.required_capabilities()" in strategy_worker
+        and "kind.required_capabilities()" in local_strategy_contract
+        and "required_capabilities(self)" in builtin_config
+        and "MultiInstrument" in builtin_config
+        and "local_multi_builtin_rust" in capabilities
+        and "validate_multi_builtin_capabilities(kind)?" in multi_builtin_case
+        and "MultiInstrument" in capabilities.split("pub fn local_python(", 1)[1]
+        and "multi_instrument" in (ROOT / "schemas/strategy-host-capabilities-v1.json").read_text(encoding="utf-8")
+        and "multi_instrument" in (ROOT / "schemas/python-strategy-manifest-v1.json").read_text(encoding="utf-8")
+        and "validate_required(&strategy_config.required_capabilities)?" in strategy_worker
+        and "validate_required(&config.strategy.required_capabilities)?" in local_strategy_contract
+        and "local_external_process()" in local_strategy_contract
+        and "local_python(Some(" in local_strategy_contract
+        and "pub required_capabilities: Vec<qx_strategy::capabilities::StrategyCapability>" in strategy_config
+        and 'skip_serializing_if = "Vec::is_empty"' in strategy_config
+        and "required_capabilities 不能包含重复项" in strategy_validation
+        and "load_verified_with_required_capabilities(" in strategy_host
+        and "CAbiStrategy::from_vtable(vtable, config_json)?" in c_abi_after_validation
+        and "start_process_with_ring_directory_and_capabilities(" in strategy_worker
+        and "start_process_with_ring_directory_and_capabilities(" in strategy_host
+        and "static_local_capabilities.as_ref()" in (ROOT / "crates/qx-cli/src/strategy_contract.rs").read_text(encoding="utf-8")
+        and "QX_STRATEGY_HOST_CAPABILITIES_JSON" in strategy_host
+        and "explicit_host_capabilities" in strategy_host
+        and "QX_STRATEGY_REQUIRED_CAPABILITIES_JSON" in strategy_host
+        and "QX_STRATEGY_CAPABILITY_ACK_FILE" in strategy_host
+        and "wait_for_ack_file(&path, 64 * 1024)" in strategy_host
+        and "validate_acknowledgment(" in strategy_host
+        and "pub fn validate_acknowledgment(" in capabilities
+        and "pub struct StrategyHostCapabilityAckV1" in capabilities
+        and all(field in capability_ack_schema for field in (
+            '"strategy_contract_schema_version"', '"required_capabilities"', '"ready"',
+            '"$ref": "strategy-host-capabilities-v1.json#/$defs/capability-list"',
+        ))
+        and "strategy capability acknowledgment timed out" in process_worker
+        and "exceeds {max_bytes} bytes" in process_worker
+        and "acknowledge_capabilities();" in cpp_external
+        and cpp_external.index("acknowledge_capabilities();") < cpp_external.index("while (read_frame(sequence, payload))")
+        and cpp_external.index("acknowledge_capabilities();") < cpp_external.index("while (std::getline(std::cin, line))")
+        and '"required_capabilities", required' in cpp_external
+        and '"ready", true' in cpp_external
+        and "host_id: \"runtime_python_module_function\"" in module_function_capabilities
+        and all(capability in module_function_capabilities for capability in (
+            "Bar", "BarHistory", "Tick", "Orderbook", "FillUpdates",
+            "OrderStatusUpdates", "DurableCheckpoint", "scoped_account_updates",
+        ))
+        and "Timer" not in module_function_capabilities
+        and all(capability in c_abi_capabilities for capability in (
+            "order_status_updates", "fill_updates", "account_updates",
+            "durable_checkpoint", "scoped_account_updates", 'host_id: "c_abi"',
+        ))
+        and 'host_id: "builtin_rust_strategy_runtime"' in capabilities
+        and "MultiInstrument" not in capabilities.split("pub fn builtin_rust(", 1)[1].split("pub fn local_builtin_rust(", 1)[0]
+        and 'host_id: "runtime_external_process"' in runtime_external_capabilities
+        and all(capability in runtime_external_capabilities for capability in (
+            "Bar", "BarHistory", "Tick", "Orderbook", "FillUpdates",
+            "OrderStatusUpdates", "DurableCheckpoint", "scoped_account_updates",
+        ))
+        and '"runtime_python_module_function"' in python_worker
+        and "expected_host_id" in python_worker
+        and 'elif profile == "local"' in python_worker
+        and 'expected_host_id = f"local_python_{level}"' in python_worker
+        and all('QX_STRATEGY_HOST_CAPABILITIES_JSON' in source for source in provider_sources.values())
+        and all('QX_STRATEGY_REQUIRE_CHECKPOINT' in source for source in provider_sources.values())
+        and all('host_capabilities_json' in provider_sources[name] for name in (
+            "e2b_worker.py", "opensandbox_worker.py", "llm_sandbox_worker.py"
+        )),
+        "Rust Runtime class and module-function capability catalogs reach strategy observations and isolated workers",
+        "Runtime Python capabilities are omitted from lifecycle observations or isolated guest workers",
+    )
+
+
+
+
+def python_runtime_module_checkpoint_contract_check() -> None:
+    """Require durable state and warmup contracts for persistent Runtime module handlers."""
+    strategy_host = (
+        (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+        + (ROOT / "crates/qx-cli/src/strategy_host/python_client.rs").read_text(encoding="utf-8")
+    )
+    strategy_worker = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    python_worker = (ROOT / "python/qianxing_strategy/worker.py").read_text(encoding="utf-8")
+    check(
+        '"QX_STRATEGY_REQUIRE_CHECKPOINT"' in strategy_host
+        and "client.expects_strategy_checkpoint = runtime_delivery" in strategy_host
+        and "python_client.as_mut()" in strategy_worker
+        and "QX_STRATEGY_REQUIRE_CHECKPOINT" in python_worker
+        and "warmup_completed_instruments" in python_worker
+        and 'adapter_state["warmup_completed"]' in python_worker,
+        "Runtime module-function strategies require pre-ready checkpoint and per-instrument warmup evidence",
+        "Runtime module-function strategy can reach Ready or live admission without its durable lifecycle contract",
+    )
+
+
+def live_strategy_warmup_evidence_check() -> None:
+    """Prevent custom live hosts from being treated as warm before checkpoint evidence."""
+    source = (ROOT / "crates/qx-cli/src/workers/strategy_worker/admission.rs").read_text(encoding="utf-8")
+    check(
+        'strategy.external_executable.is_some()' in source
+        and 'strategy.c_abi_library.is_some()' in source
+        and 'strategy.python_strategy_spec.is_some()' in source
+        and source.count('.get("warmup_completed")') >= 4
+        and 'LIVE_READINESS_WARMUP_EVIDENCE_INVALID' in source
+        and 'return Ok(false);' in source
+        and 'return Ok(true);' in source,
+        "live warmup admission requires per-host durable evidence; only the built-in host is N/A",
+        "a custom Strategy host can bypass live warmup admission without checkpoint evidence",
+    )
+
+
+
+def strategy_lifecycle_observation_v2_check() -> None:
+    """Keep typed host construction/init/warmup evidence wired from worker to API."""
+    runtime_source = (ROOT / "crates/qx-runtime/src/strategy_observation.rs").read_text(encoding="utf-8")
+    worker_source = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    service_source = (ROOT / "crates/qx-service/src/strategy_deployments.rs").read_text(encoding="utf-8")
+    supervisor_source = (ROOT / "crates/qx-orchestrator/src/strategy_deployment.rs").read_text(encoding="utf-8")
+    observation_v3 = json.loads((ROOT / "schemas/strategy-worker-observation-v3.json").read_text(encoding="utf-8"))
+    status_schema = json.loads((ROOT / "schemas/strategy-deployment-status-v1.json").read_text(encoding="utf-8"))
+    registry = json.loads((ROOT / "maturity/schema-registry.json").read_text(encoding="utf-8"))
+    entries = registry.get("entries", [])
+    check(
+        "pub struct StrategyHostLifecycleEvidenceV2" in runtime_source
+        and "pub struct StrategyWorkerObservationV3" in runtime_source
+        and "record_host_lifecycle(host_lifecycle.clone())" in worker_source
+        and "schema_version: 3" in service_source
+        and '"strategy_initialization_not_observed"' in service_source
+        and "observation.schema_version == 3" in supervisor_source
+        and "lifecycle.constructed" in supervisor_source
+        and observation_v3.get("properties", {}).get("host_lifecycle") is not None
+        and any("strategy-worker-observation-v3.json" in str(item) for item in status_schema.get("properties", {}).get("observation", {}).get("anyOf", []))
+        and any(item.get("schema_id") == "strategy-worker-observation-v3" for item in entries),
+        "typed host lifecycle evidence flows through v3 observation, supervisor wait and deployment status",
+        "strategy host lifecycle evidence is not versioned or is disconnected from deployment observation",
+    )
+
+
+def external_process_checkpoint_restore_ack_check() -> None:
+    """Require restored external-process checkpoints to be acknowledged by digest."""
+    contract_source = (ROOT / "crates/qx-strategy/src/contract.rs").read_text(encoding="utf-8")
+    binding_source = (ROOT / "crates/qx-cli/src/strategy_binding.rs").read_text(encoding="utf-8")
+    worker_source = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    evaluation_source = (ROOT / "crates/qx-cli/src/workers/strategy_worker/strategy_evaluation.rs").read_text(encoding="utf-8")
+    admission_source = (ROOT / "crates/qx-cli/src/workers/strategy_worker/admission.rs").read_text(encoding="utf-8")
+    service_source = (ROOT / "crates/qx-service/src/strategy_deployments.rs").read_text(encoding="utf-8")
+    ack_schema = json.loads(
+        (ROOT / "schemas/strategy-process-checkpoint-restore-ack-v1.json").read_text(encoding="utf-8")
+    )
+    registry = json.loads((ROOT / "maturity/schema-registry.json").read_text(encoding="utf-8"))
+    check(
+        "pub struct StrategyCheckpointRestoreAckV1" in contract_source
+        and "pub fn strategy_checkpoint_sha256(" in contract_source
+        and '"checkpoint_restore_ack"' in contract_source
+        and 'ack.checkpoint_sha256.eq_ignore_ascii_case(&expected)' in contract_source
+        and '== Some("external-process")' in contract_source
+        and '"state_mode": "bootstrap"' in binding_source
+        and "checkpoint_restore_required.then_some(true)" in evaluation_source
+        and "require_live_checkpoint_restore_ack(" in evaluation_source
+        and '"LIVE_READINESS_CHECKPOINT_RESTORE_ACK_MISSING"' in admission_source
+        and '"host_checkpoint_restore_not_acknowledged"' in service_source
+        and ack_schema.get("properties", {}).get("checkpoint_sha256", {}).get("pattern")
+        == "^[A-Fa-f0-9]{64}$"
+        and any(
+            item.get("schema_id") == "strategy-process-checkpoint-restore-ack-v1"
+            for item in registry.get("entries", [])
+        ),
+        "外部进程 checkpoint restore ack 绑定输入摘要并纳入版本化 schema",
+        "external Strategy process can accept or commit a restored checkpoint without a digest-bound ack",
+    )
+
+
+def binance_unknown_outcome_recovery_check() -> None:
+    """Apply only replayable venue status facts whose cumulative fills match locally."""
+    event_source = (ROOT / "crates/qx-core/src/event.rs").read_text(encoding="utf-8")
+    order_source = (ROOT / "crates/qx-core/src/order.rs").read_text(encoding="utf-8")
+    fill_identity_source = function_body(order_source, "exact_identity_suffix")
+    pipeline_source = (ROOT / "crates/qx-runtime/src/pipeline.rs").read_text(encoding="utf-8")
+    commit_source = (ROOT / "crates/qx-runtime/src/pipeline/commit.rs").read_text(encoding="utf-8")
+    reconcile_source = (ROOT / "crates/qx-service/src/binance_reconcile_host.rs").read_text(encoding="utf-8")
+    adapter_source = (ROOT / "crates/qx-adapter/src/binance.rs").read_text(encoding="utf-8")
+    query_gate_source = (ROOT / "crates/qx-service/src/execution_capability_gate.rs").read_text(encoding="utf-8")
+    strategy_updates = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in (
+            "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs",
+            "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs",
+        )
+    )
+    live_admission = (ROOT / "crates/qx-cli/src/workers/strategy_worker/admission.rs").read_text(encoding="utf-8")
+    api_projection = (ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8")
+    runtime_venue_order_reader = function_body(pipeline_source, "venue_order_id")
+    check(
+        "OrderStatusReconciled" in event_source
+        and "pub fn reconciliation_path(" in order_source
+        and "fee.source_trade_ids" in fill_identity_source
+        and "filled_exact == Some(amounts.filled)" in pipeline_source
+        and "RuntimeExternalEvent::OrderStatusReconciled" in commit_source
+        and "fetch_remote_snapshot()" in reconcile_source
+        and "fetch_missing_order_fills(" in reconcile_source
+        and "append_reconciled_order_statuses(" in reconcile_source
+        and "reconcile_remote(&remote_orders)" in reconcile_source
+        and '"/api/v3/myTrades"' in adapter_source
+        and "recorded_trade_ids.contains(&trade_id)" in adapter_source
+        and "recorded_total != local_filled" in adapter_source
+        and "missing_total != expected_missing" in adapter_source
+        and "trades.read" in query_gate_source
+        and "venue_order_id(remote.client_order_id)" in reconcile_source
+        and "filled_exact == Some(amounts.filled)" in reconcile_source
+        and "EventKind::OrderStatusReconciled" in strategy_updates
+        and "EventKind::OrderStatusReconciled" in live_admission
+        and "EventKind::OrderStatusReconciled" in runtime_venue_order_reader
+        and "venue_order_id.clone()" in runtime_venue_order_reader
+        and 'EventKind::OrderStatusReconciled' in api_projection,
+        "Binance 对账只在成交量相符时写入可重放的权威订单状态并解除未知提交",
+        "Binance reconciliation does not safely connect remote status snapshots to EventLog recovery",
+    )
+
+
+def prepared_evaluation_integrity_check() -> None:
+    """Bind the prepared command outbox and checkpoint to a versioned payload digest."""
+    source = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in (
+            "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs",
+            "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs",
+        )
+    )
+    worker_source = (ROOT / "crates/qx-cli/src/workers/strategy_worker.rs").read_text(encoding="utf-8")
+    schema_path = ROOT / "schemas/strategy-prepared-evaluation-v3.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    registry = json.loads((ROOT / "maturity/schema-registry.json").read_text(encoding="utf-8"))
+    check(
+        "mod prepared_evaluation;" in source
+        and "pub(super) use prepared_evaluation::{" in source
+        and "PREPARED_EVALUATION_SCHEMA_VERSION: u32 = 3" in source
+        and "LEGACY_PREPARED_EVALUATION_SCHEMA_V1" in source
+        and "LEGACY_PREPARED_EVALUATION_SCHEMA_V2" in source
+        and "prepared_evaluation_payload_sha256" in source
+        and "payload_sha256 != expected_sha256" in source
+        and "MAX_PREPARED_EVALUATION_BYTES: usize = 8 * 1024 * 1024" in source
+        and "read_bounded_prepared_evaluation" in source
+        and "file.take(MAX_PREPARED_EVALUATION_BYTES as u64 + 1)" in source
+        and "impl Write for PreparedEvaluationDigestWriter" in source
+        and "impl Write for PreparedEvaluationBufferWriter" in source
+        and "serde_json::to_writer(&mut writer, &payload)" in source
+        and "serde_json::to_writer(&mut writer, &persisted)" in source
+        and "execution_updates::save_prepared_evaluation" in worker_source
+        and schema.get("$id") == "https://qianxing.local/schemas/strategy-prepared-evaluation-v3.json"
+        and schema.get("properties", {}).get("payload_sha256", {}).get("$ref") == "#/$defs/sha256"
+        and any(
+            item.get("schema_id") == "strategy-prepared-evaluation-v3"
+            and item.get("path") == "schemas/strategy-prepared-evaluation-v3.json"
+            for item in registry.get("entries", [])
+        ),
+        "PreparedEvaluation v3 对决策/outbox/checkpoint 做 SHA-256 封印并登记 schema",
+        "prepared strategy recovery journal can accept valid-JSON mutation or lacks a registered v3 contract",
+    )
+
+
+def live_deployment_rollback_reconciliation_check() -> None:
+    """Require authoritative fresh account/venue reconciliation before live rollback stops a worker."""
+    runtime_source = (ROOT / "crates/qx-runtime/src/reconcile.rs").read_text(encoding="utf-8")
+    runtime_lib = (ROOT / "crates/qx-runtime/src/lib.rs").read_text(encoding="utf-8")
+    api_source = (ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8")
+    service_source = (ROOT / "crates/qx-service/src/reconcile_report.rs").read_text(encoding="utf-8")
+    service_reader = (ROOT / "crates/qx-service/src/api_read_model.rs").read_text(encoding="utf-8")
+    supervisor = (ROOT / "crates/qx-orchestrator/src/strategy_deployment.rs").read_text(encoding="utf-8")
+    action_start = supervisor.find("if operation.action == StrategyDeploymentActionV1::Rollback")
+    pause_action = supervisor.find("StrategyLifecycleAction::Pause", max(action_start, 0))
+    rollback_reconcile = supervisor.find(
+        "require_live_rollback_reconciliation(", max(action_start, 0)
+    )
+    rollback_resume = supervisor.find(
+        "StrategyLifecycleAction::Resume", max(rollback_reconcile, 0)
+    )
+    rollback_guard = supervisor.find(
+        "require_live_rollback_reconciliation(", max(action_start, 0)
+    )
+    drain = supervisor.find("drain_one(&mut children[index]", rollback_guard)
+    lifecycle_resume = supervisor.find("if action == StrategyLifecycleAction::Resume")
+    lifecycle_resume_gate = supervisor.find(
+        "require_live_rollback_reconciliation(", lifecycle_resume
+    )
+    lifecycle_resume_submit = supervisor.find(
+        "let command_id = lifecycle_port.submit(", lifecycle_resume_gate
+    )
+    check(
+        "pub struct ReconcileReportSnapshot" in runtime_source
+        and "pub fn load_reconcile_reports(root: &Path)" in runtime_source
+        and "pub fn require_fresh_clean_reconciliation(" in runtime_source
+        and "LIVE_RECONCILE_MAX_AGE_MS: u64 = 60_000" in runtime_source
+        and "load_reconcile_reports, require_fresh_clean_reconciliation, ReconcileReportSnapshot" in runtime_lib
+        and "pub use qx_runtime::ReconcileReportSnapshot;" in api_source
+        and "qx_runtime::require_fresh_clean_reconciliation(" in service_source
+        and "qx_runtime::load_reconcile_reports(root)" in service_reader
+        and action_start >= 0
+        and action_start < pause_action < rollback_reconcile < rollback_resume < drain
+        and rollback_guard > action_start
+        and drain > rollback_guard
+        and lifecycle_resume >= 0
+        and lifecycle_resume < lifecycle_resume_gate < lifecycle_resume_submit
+        and "strategy.live_enabled" in supervisor
+        and "qx_runtime::load_reconcile_reports(data_root)?" in supervisor
+        and "rollback_starts_paused" in supervisor
+        and "expected_phase: StrategyWorkerPhase" in supervisor
+        and "observation.phase == expected_phase" in supervisor,
+        "Live Strategy 回滚在停止当前 worker 前通过共享报告校验新鲜、干净的同账户/venue 对账",
+        "live deployment rollback can switch process/revision without current account/venue reconciliation evidence",
+    )
+
+
+def python_remote_client_module_check() -> None:
+    """Keep HTTP client implementations separate while app.py owns stable model exports."""
+    app_source = (ROOT / "python/qianxing/app.py").read_text(encoding="utf-8")
+    remote_source = (ROOT / PYTHON_REMOTE_MODULE).read_text(encoding="utf-8")
+    trading_source = (ROOT / "python/qianxing/client_trading.py").read_text(encoding="utf-8")
+    transport_source = (ROOT / "python/qianxing/client_transport.py").read_text(encoding="utf-8")
+    local_source = (ROOT / "python/qianxing/client_local.py").read_text(encoding="utf-8")
+    client_package = (ROOT / "python/qianxing/client/__init__.py").read_text(encoding="utf-8")
+    check(
+        "class AppClient(" not in app_source
+        and "class RemoteRunHandle(" not in app_source
+        and "class AppClient(" in remote_source
+        and "class RemoteRunHandle(" in remote_source
+        and "def __getattr__(name: str)" in app_source
+        and "from .client_remote import AppClient, RemoteRunHandle" in app_source
+        and "from qianxing.app import AppClient, RemoteRunHandle" in client_package,
+        "远端 HTTP 客户端实现独立于 app.py 且保持原 SDK 导入路径",
+        "remote client implementations are not separated behind the app compatibility export",
+    )
+    check(
+        "class TradeCommand" not in app_source
+        and "class TradeWorkflowClient" not in app_source
+        and "class PaperClient" not in app_source
+        and "class LiveClient" not in app_source
+        and all(
+            f"class {name}" in trading_source
+            for name in ("TradeCommand", "TradeWorkflowClient", "PaperClient", "LiveClient")
+        )
+        and "from .client_trading import" in app_source,
+        "Paper/Live HTTP 客户端归独立模块所有且 app.py 保留兼容导出",
+        "Paper/Live HTTP client implementations remain embedded in app.py",
+    )
+    check(
+        "class AsyncCoreClient" not in app_source
+        and "class RunHandle" not in app_source
+        and "class RunEvent" not in app_source
+        and "class AsyncRunHandle" not in app_source
+        and "class AsyncCoreClient" in local_source
+        and all(f"class {name}" in local_source for name in ("RunHandle", "RunEvent", "AsyncRunHandle"))
+        and "from .client_local import AsyncCoreClient" in app_source
+        and "from .cli import" not in local_source,
+        "本地异步客户端归独立模块所有、显式复用 application use cases 并保持兼容导出",
+        "AsyncCoreClient remains embedded in app.py or imports the CLI",
+    )
+    check(
+        "class _HttpJsonClient" not in app_source
+        and "class _HttpJsonClient" in transport_source
+        and "from .client_transport import _HttpJsonClient" in remote_source
+        and "from .client_transport import _HttpJsonClient" in trading_source
+        and "from .cli import" not in transport_source
+        and "APP_ROUTE_TEMPLATES" not in transport_source,
+        "共享 JSON HTTP transport 独立于业务路由并复用稳定错误/编码契约",
+        "shared JSON HTTP transport contains routing logic or imports the CLI",
+    )
+    check(
+        "from .app import (" in remote_source
+        and "from .cli import" not in remote_source
+        and "import qianxing.cli" not in remote_source
+        and "APP_ROUTE_TEMPLATES" in remote_source,
+        "远端客户端只依赖 application 契约并消费单一 API 路由声明",
+        "remote client module has an invalid dependency or route ownership",
+    )
+    diagnostics_source = (ROOT / "python/qianxing/sdk_diagnostics.py").read_text(encoding="utf-8")
+    check(
+        app_source.count("def doctor(") == 1
+        and diagnostics_source.count("def doctor(") == 1
+        and "def doctor() -> dict[str, Any]:" in app_source
+        and "return _sdk_doctor()" in app_source
+        and "from .sdk_diagnostics import (" in app_source
+        and "from .app import" not in diagnostics_source,
+        "SDK doctor 诊断实现独立于 app.py，稳定入口保持薄委托",
+        "SDK doctor implementation remains coupled to app.py or imports back into it",
+    )
 
 
 def _shard_options() -> tuple[int, int, Path] | None:
@@ -27071,6 +33471,101 @@ def main() -> int:
     merge_duplicate_block_check()
     removed_crates_check()
     python_interpreter_check()
+    strategy_project_execution_boundary_check()
+    strategy_project_import_isolation_check()
+    managed_run_import_inventory_check()
+    strategy_deployment_reconciliation_projection_check()
+    strategy_deployment_node_aggregation_check()
+    strategy_checkpoint_migration_check()
+    strategy_long_only_sma_warmup_check()
+    strategy_deployment_dependency_tree_check()
+    python_strategy_diagnostics_boundary_check()
+    strategy_worker_admission_module_check()
+    strategy_worker_result_lifecycle_module_check()
+    strategy_worker_control_command_module_check()
+    strategy_worker_live_input_module_check()
+    strategy_worker_job_recovery_module_check()
+    strategy_worker_prepared_recovery_module_check()
+    strategy_worker_prepared_command_replay_module_check()
+    strategy_worker_prepared_finalize_module_check()
+    strategy_worker_execution_preparation_module_check()
+    strategy_worker_strategy_evaluation_module_check()
+    strategy_worker_order_intents_module_check()
+    strategy_worker_submission_module_check()
+    strategy_worker_outcome_module_check()
+    multi_market_backtest_report_persistence_module_check()
+    multi_market_backtest_preparation_module_check()
+    multi_market_backtest_engine_execution_module_check()
+    depth_experiment_identity_persistence_module_check()
+    multi_market_depth_experiment_artifact_modules_check()
+    strategy_execution_replay_module_check()
+    strategy_execution_facts_module_check()
+    strategy_checkpoint_module_check()
+    strategy_cursor_state_module_check()
+    python_runtime_host_capability_forwarding_check()
+    live_strategy_warmup_evidence_check()
+    python_runtime_module_checkpoint_contract_check()
+    strategy_lifecycle_observation_v2_check()
+    external_process_checkpoint_restore_ack_check()
+    binance_unknown_outcome_recovery_check()
+    prepared_evaluation_integrity_check()
+    live_deployment_rollback_reconciliation_check()
+    python_remote_client_module_check()
+    multi_account_report_detail_reader_module_check()
+    multi_account_report_render_module_check()
+    multi_account_report_execution_modules_check()
+    multi_account_report_output_path_single_owner_check()
+    multi_account_depth_evidence_paths_module_check()
+    multi_account_evidence_paths_module_check()
+    multi_account_evidence_inputs_module_check()
+    multi_account_evidence_validation_module_check()
+    multi_account_evidence_recompute_module_check()
+    multi_account_evidence_io_module_check()
+    multi_account_evidence_pack_module_check()
+    multi_account_evidence_verify_module_check()
+    multi_account_evidence_model_check()
+    strategy_contract_input_module_check()
+    multi_account_joint_evidence_portable_paths_module_check()
+    multi_account_joint_evidence_validation_check()
+    multi_account_joint_evidence_io_check()
+    multi_account_joint_evidence_verify_check()
+    multi_account_joint_evidence_pack_check()
+    multi_market_pnl_contributions_module_check()
+    multi_market_report_sidecars_module_check()
+    multi_market_report_inputs_module_check()
+    multi_market_report_identity_module_check()
+    multi_market_depth_report_equity_module_check()
+    multi_market_depth_report_quality_module_check()
+    single_market_experiment_bundle_io_module_check()
+    multi_account_joint_evidence_recompute_check()
+    multi_account_joint_evidence_model_check()
+    multi_account_depth_evidence_input_check()
+    multi_account_depth_evidence_validation_check()
+    multi_account_depth_evidence_io_check()
+    multi_account_depth_evidence_pack_check()
+    multi_account_depth_evidence_recompute_check()
+    multi_account_depth_evidence_verify_check()
+    multi_account_depth_evidence_model_check()
+    multi_market_depth_evidence_assembly_module_check()
+    multi_market_bar_evidence_assembly_module_check()
+    multi_market_bar_evidence_recompute_module_check()
+    report_verified_summary_module_check()
+    report_command_workflow_module_check()
+    report_strategy_diagnostics_module_check()
+    python_strategy_provider_module_check()
+    builtin_strategy_host_module_check()
+    c_abi_strategy_host_module_check()
+    python_strategy_host_client_module_check()
+    python_strategy_host_process_client_module_check()
+    multi_market_bar_report_diagnostics_module_check()
+    multi_market_bar_report_render_module_check()
+    multi_market_bar_report_projection_module_check()
+    multi_market_depth_report_diagnostics_module_check()
+    multi_market_depth_report_projection_module_check()
+    multi_market_depth_report_publication_module_check()
+    multi_market_bar_report_publication_module_check()
+    app_command_report_readers_module_check()
+    app_command_use_cases_module_check()
     worker_diagnostics_check()
     cli_dispatch_check()
     cli_help_surface_check()
@@ -27101,6 +33596,7 @@ def main() -> int:
     live_path_fail_closed_check()
     untrusted_input_boundaries_check()
     resource_lifecycle_and_lock_reentrancy_check()
+    process_log_rotation_check()
     launcher_pregate_check()
     schema_defense_consistency_check()
     api_accept_loop_exit_check()
@@ -27121,6 +33617,8 @@ def main() -> int:
     ashare_submit_guard_check()
     builtin_signal_check()
     builtin_knob_list_check()
+    shared_memory_worker_timeout_check()
+    single_builtin_window_override_validation_check()
     replay_kernel_check()
     input_provenance_check()
     ledger_kernel_split_check()
@@ -27242,12 +33740,55 @@ def main() -> int:
     panic_boundary_check()
     stdout_json_error_propagation_check()
     runtime_invariant_error_propagation_check()
+    app_report_read_model_ownership_check()
+    app_experiment_identity_ownership_check()
+    app_experiment_result_assembly_ownership_check()
+    app_experiment_cost_sensitivity_ownership_check()
+    run_experiment_recovery_module_check()
+    run_experiment_candidate_execution_module_check()
+    app_experiment_search_ownership_check()
+    experiment_fold_search_checkpoint_module_check()
+    app_experiment_neighborhood_ownership_check()
+    app_multi_market_experiment_search_ownership_check()
+    app_multi_market_experiment_recovery_module_check()
+    app_multi_market_experiment_fold_execution_check()
+    app_multi_market_experiment_candidate_execution_check()
+    app_multi_market_experiment_preparation_check()
+    app_multi_market_experiment_candidate_binding_check()
+    app_multi_market_experiment_report_assembly_check()
+    app_multi_market_experiment_spec_ownership_check()
     report_readability_check()
+    xlsx_strategy_diagnostics_module_check()
+    report_xlsx_rows_module_check()
+    report_xlsx_multi_account_module_check()
+    report_xlsx_multi_market_depth_module_check()
+    config_commands_doctor_module_check()
+    config_commands_configuration_module_check()
+    config_commands_status_module_check()
+    report_benchmark_csv_module_check()
+    cli_strategy_command_module_check()
+    cli_config_command_module_check()
+    cli_backtest_command_module_check()
+    cli_worker_command_module_check()
+    cli_execution_command_module_check()
+    cli_runtime_command_module_check()
+    cli_dataset_command_module_check()
+    cli_market_data_command_module_check()
+    cli_project_command_module_check()
+    cli_host_command_module_check()
+    cli_selfcheck_command_module_check()
+    cli_report_command_route_check()
+    cli_top_level_route_cardinality_check()
+    report_strategy_bias_module_check()
+    report_event_trace_module_check()
+    report_html_fill_reader_module_check()
     silent_suppression_check()
     process_diagnostics_check()
     bare_money_default_check()
     environment_production_single_source_check()
     ci_feature_matrix_check()
+    job_queue_backend_trait_check()
+    cli_test_data_isolation_check()
     ops_read_surface_check()
     api_read_model_liveness_check()
     surface_allowlist_hygiene_check()
@@ -27278,10 +33819,13 @@ def main() -> int:
     ring_layout_cross_language_check()
     language_api_contract_check()
     bounded_wait_default_check()
+    operating_system_shutdown_signal_check()
     worker_loop_cancellation_check()
     venue_market_runner_ownership_check()
     binance_user_stream_runner_ownership_check()
     binance_execution_runner_ownership_check()
+    binance_spot_symbol_validation_check()
+    instrument_id_symbol_validation_check()
     ccxt_user_stream_runner_ownership_check()
     ccxt_execution_runner_ownership_check()
     ccxt_reconcile_runner_ownership_check()

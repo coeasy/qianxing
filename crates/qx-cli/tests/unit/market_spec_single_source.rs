@@ -155,6 +155,11 @@ fn the_backtest_chain_reads_the_generated_frozen_spec() {
         summary["fills"].as_i64().unwrap_or_default() > 0,
         "换了 spec 也要真的成交: {summary}"
     );
+    assert_eq!(
+        published_spec_source(&summary),
+        PRODUCT_MARKET_SPEC_VERSION,
+        "受版本控制的产品规格夹具必须沿真实回测入口写入产品型来源标签"
+    );
     // 一档取自那份文件声明的 price_tick，不是任何兜底值。
     let descriptors = summary["model_descriptors"].as_array().unwrap();
     assert!(
@@ -177,8 +182,12 @@ fn changed_market_spec_in_the_same_runtime_gets_a_distinct_run_artifact() {
     run_strategy_backtest(&runtime, &frame, Some(&spec)).expect("first frozen spec run");
     let first = read_first_backtest_summary(&root);
     let first_manifest = first["run_manifest"].as_str().unwrap().to_string();
+    let first_manifest_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&first_manifest).expect("read first RunManifest"))
+            .unwrap();
 
-    market["price_tick"] = serde_json::Value::from(2_000_000_i64);
+    // 规则生效区间晚于本次所有 Bar：改变市场规则身份，但不改变本轮执行结果。
+    market["valid_to"] = serde_json::Value::from(9_999_999_i64);
     std::fs::write(&spec, serde_json::to_vec_pretty(&market).unwrap()).unwrap();
     run_strategy_backtest(&runtime, &frame, Some(&spec))
         .expect("an edited market spec must create a second immutable run");
@@ -195,20 +204,41 @@ fn changed_market_spec_in_the_same_runtime_gets_a_distinct_run_artifact() {
         })
         .collect::<Vec<_>>();
     assert_eq!(summaries.len(), 2, "both runs must remain reportable");
-    let manifests = summaries
+    let summaries = summaries
         .iter()
         .map(|path| {
             let summary: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-            summary["run_manifest"].as_str().unwrap().to_string()
+            summary
         })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        manifests.len(),
-        2,
-        "each specification needs its own manifest"
+        .collect::<Vec<_>>();
+    let mut manifests = summaries
+        .iter()
+        .map(|summary| {
+            let path = summary["run_manifest"].as_str().unwrap();
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            (path.to_string(), manifest)
+        })
+        .collect::<Vec<_>>();
+    manifests.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_ne!(
+        manifests[0].1["run_id"], manifests[1].1["run_id"],
+        "market rule contents must be bound into run_id even when execution is unchanged"
     );
-    assert!(manifests.contains(&first_manifest));
+    assert_eq!(
+        manifests[0].1["model_fingerprint"], manifests[1].1["model_fingerprint"],
+        "market rule changes must not be misrepresented as execution-model changes"
+    );
+    assert_eq!(
+        summaries[0]["result_hash"], summaries[1]["result_hash"],
+        "a not-yet-effective rule change must not alter this run's result"
+    );
+    assert!(manifests.iter().any(|(path, _)| path == &first_manifest));
+    assert_eq!(
+        first_manifest_json["instrument_spec_version"],
+        PRODUCT_MARKET_SPEC_VERSION
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -269,8 +299,9 @@ fn published_spec_source(summary: &serde_json::Value) -> String {
 /// 规格来源必须按**实际判定的形状**写进产物，而不是按"有没有传路径"。
 ///
 /// 三种可达输入各得一个标签：产品规格形状、CCXT 归一化形状、根本没给 spec。旧口径只有后
-/// 两种的区分度，于是前两种在同一帧同一配置下顶着一个 `ccxt-market-spec-v1`，而规格内容
-/// 不进 `model_fingerprint`，这一行是唯一交代"按哪种形状读的"地方（V11 Q63）。
+/// 两种的区分度，于是前两种在同一帧同一配置下顶着一个 `ccxt-market-spec-v1`；此行
+/// 交代"按哪种形状读的"，完整规格内容则由 run_id 绑定。`model_fingerprint` 只表示撮合/风险
+/// 执行模型，不能同时充当市场规格指纹（V11 Q63）。
 ///
 /// 反向验证：把 `single_strategy.rs` 写进产物的那一行换回 `instrument_spec_version:
 /// CCXT_MARKET_SPEC_VERSION`，本用例死在第一档的期望上（门禁日志的 MQ63a）。

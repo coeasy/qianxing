@@ -1,8 +1,16 @@
 # 安装与构建指南
 
+## R20 clean-install acceptance — Windows
+
+2026-10-29 recorded acceptance `R20-AC01` run `b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7` on Windows 11 AMD64 with CPython 3.12.13. The mixed Python/Rust project metadata produced `qianxing-0.3.0-cp310-abi3-win_amd64.whl`; it installed in a fresh venv with no source-tree imports. `qx-cli` installed from the same source revision in an isolated root. SDK doctor reported native extension `matched`, app use cases `complete`, CLI `matched`, and schema catalog SHA-256 `c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa`. The CLI quickstart exited 0 and created the documented 16 project files; all 13 Python example modules compiled and the momentum strategy callback contract ran. The captured command log is `maturity/acceptance-artifacts/b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7.log`.
+
+This closes the Windows leg only. Linux still needs a clean wheel/CLI install and schema/capability acceptance before R20 can be accepted as a platform matrix.
+
 ## 安装
 
-本仓库不发布到 PyPI / crates.io，三条路径都从源码装。每条路径写的是**行为**与它的核对者，
+Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布；Rust CLI 暂未发布到 crates.io，提供平台二进制与源码安装路径。
+只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页按安装方式分两支给可复制命令；本页讲的是每条路径的
+前置、构建器契约与踩过的坑。每条路径写的是**行为**与它的核对者，
 不是某一轮的计时读数：能当场重跑的行为直接写行为，跑不了的整跑读数一律写明"本轮没有重跑"，
 并把当轮数字留在归档里。所谓"日志"是执行那一轮时在本机 `logs/` 目录留下的命令输出，`/logs/` 在
 `.gitignore` 里，**不随仓库分发** —— 每一条判据本身都在
@@ -10,11 +18,13 @@
 
 ### A. 只装 CLI —— 最短路径，不需要 Python
 
-前置只有一样：Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`）。在仓库根目录：
+前置只有一样：Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`）。稳定安装优先下载 GitHub Release 对应平台的 `qx-cli` 二进制；从源码仓库固定 tag 安装可在仓库外执行：
 
 ```bash
-cargo install --path crates/qx-cli --locked      # 完全离线的机器再加 --offline
+cargo install --git https://github.com/coeasy/qianxing --tag v0.3.0 --locked qx-cli
 ```
+
+在仓库根目录开发时可用 `cargo install --path crates/qx-cli --locked`；完全离线且依赖缓存齐全时再加 `--offline`。当前没有 `cargo install qianxing` 的 crates.io 发布包。
 
 得到 `qx-cli`（Windows 上是 `qx-cli.exe`），落在 `~/.cargo/bin`；把该目录加进 PATH 之后，**在任意目录**
 都能开一个自包含项目并跑通回测，不依赖仓库里的任何相对路径（`init` 会把 `storage.data_dir`
@@ -105,18 +115,24 @@ uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
 uv pip install --offline dist/qianxing-0.3.0-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
-# 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
+# PyPI 安装（v0.3.0 发布工作流完成后）
+python -m pip install "qianxing==0.3.0"
+# PyPI 可选 extras 示例
+python -m pip install "qianxing[a-share]"
+# 本地 wheel 已进入缓存时，也可离线安装可选 extras
 uv pip install --offline "qianxing[ccxt]"     # CCXT 行情/交易 worker
 uv pip install --offline "qianxing[a-share]"  # A 股数据源（Windows 连 tzdata 一起带）
 ```
 
-PyO3 已启用 `abi3-py310`，wheel 以 `cp310-abi3` 标签构建。发布工作流每个平台/架构只需构建一份 wheel，可供 CPython 3.10 及更新版本安装；Windows、macOS、Linux 仍各自需要匹配的原生平台 wheel。CI 在 Python 3.10–3.13 上验证安装和回测。配置 `PYPI_PUBLISH_ENABLED=true` 与 PyPI Trusted Publisher 后会自动发布；未配置时只构建并附加到 GitHub Release，不上传 PyPI。
+PyO3 已启用 `abi3-py310`，wheel 以 `cp310-abi3` 标签构建。发布工作流每个平台/架构只需构建一份 wheel，可供 CPython 3.10 及更新版本安装；Windows、macOS、Linux 仍各自需要匹配的原生平台 wheel。CI 在 Python 3.10–3.13 上验证安装和回测。版本 tag 的完整门禁通过后，`python-wheels.yml` 使用 PyPI Trusted Publisher 自动上传构建产物；无需配置长期 PyPI token 或额外仓库变量。
 
 #276 之后 wheel 的强制依赖清单是空的：`ccxt` 与 Windows 的 `tzdata` 都改成可选 extras（`[ccxt]` / `[ccxt-pro]` / `[tz]` / `[a-share*]`），`pip install <wheel>` 在任何索引状态下都能装成，`--no-deps` 不再是必需项。`ccxt` 只在真的跑 CCXT worker 时才 import，`Asia/Shanghai` 只在真的取 A 股时区时才解析（#253 把顶层求值挪到用时），缺谁都在调用点抛带 extras 名字的可执行提示。
 
+同一批构建脚本在 `pip wheel` **之前**多跑一步：`cargo build --release -p qx-cli`，把宿主平台的 `qx-cli`（Windows `qx-cli.exe`）复制进 `python/qianxing/_bin/`，于是 wheel 自带报告渲染器，干净 venv 只装 wheel 也能 `qianxing project report`。这条先后顺序由 `tools/check_architecture.py` 的 wheel 构建器判据核对（装载晚于打包 = 包内 `_bin` 是空的，当场红），包内载荷本身由 `tools/check_python_wheel.py` 逐个点名：`qianxing/_bin/` 下只允许出现与 wheel 平台匹配的那一个渲染器文件，平台不符即拒绝。`_bin/` 是构建副产物，与 `_qianxing_native*` 同口径写在 `.gitignore` 里，不进版本库。渲染器的选择链与"不做静默回落"见 [SDK 项目运行](strategy-project-runs.md) 的报告一节。
+
 正式 Python SDK 的入口为 `import qianxing`。SDK 已开放 Bar、L1 Tick、L2 OrderBook（含双边做市回测）、多腿回测、参数实验、产物复核、可取消 RunHandle，以及经服务端授权的 Paper/Live 命令工作流；匹配、风控、OMS、账簿、事件与回放由共享 Rust 用例执行。实盘交易所认证、TWAP/VWAP 父单运行生命周期和各市场/venue 能力仍按 maturity 登记面验收，不因 SDK 路由存在而视为通过。
 
-安装 wheel 后也可用 `qianxing doctor`、`qianxing validate-dataset <spec.json>`、`qianxing backtest <spec.json>` 和 `qianxing verify <outcome.json>` 调用同一组研究用例。
+安装 wheel 后也可用 `qianxing doctor`、`qianxing validate-dataset <spec.json>`、`qianxing backtest <spec.json>` 和 `qianxing verify <outcome.json>` 调用同一组研究用例。装完就能起步的产品命令是 `qianxing project init <目录> --demo` → `qianxing project run <目录>` → `qianxing project report <目录> <run id>`，取数走 `qianxing data sources|doctor|fetch|install`，不写 JSON 的单文件回测走 `qianxing run -f <策略.py> --bars <行情>`；逐条口径与实测读数见[首跑指南](first-run.md)。
 
 ```python
 from qianxing import BacktestSpec, BuiltinStrategySpec, run_backtest, verify_run

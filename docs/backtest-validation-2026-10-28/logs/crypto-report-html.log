@@ -1,0 +1,15 @@
+牵星 Qianxing — 分级校准，量天定位
+
+[Report] html=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28\crypto-backtest.html
+[Report] equity_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28\crypto-backtest.equity.svg
+[Report] fills_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28\crypto-backtest.fills.svg
+[Report] monthly_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28\crypto-backtest.monthly.svg
+[Report] summary=D:\workspace\qval-1028a\c1\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_fc44dc303656d0f6a296fb5ccb23892100855950bdf56d7a29ff93f0dab51ae3_3e87aa4e83179cb062a5cbb3-abba47e015d05a23.v7.summary.json
+[Report]  schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+[Report]  strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1
+[Report]  return_bps=1 max_drawdown_bps=0 fees_raw=43250000 turnover_raw=86500000000 final_equity_raw=100018956750000
+[Report]  input_data_hash=e5c20c038f1bb74c result_hash=67c176977ad0f81d replay_log_digest=67c176977ad0f81d
+[Report]  input_verified=D:\workspace\qval-1028a\c1\qianxing.bar-frame.example.json input_kind=barframe input_id=strategy-bars:BTCUSDT.BINANCE input_fingerprint=613fdc1dc0b779e7
+[Report]  account_initial_cash_raw=100000000000000 account_source=builtin-default
+[Report]  replay_events=77 replay_ledger_entries=4/4
+[Report]  risk_rule_set_version=conservative-default-v1+implicit-no-short

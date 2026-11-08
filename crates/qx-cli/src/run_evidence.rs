@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 ///
 /// 调用点必须在 `recompute_declared_backtest_input` 通过之后：那一步已经重算过每一份产物的
 /// SHA-256，`artifact_digests_verified=true` 才是**真的**而不是一句声明。
-pub(crate) fn write_run_evidence(
+pub(crate) fn prepare_run_evidence(
     summary_path: &Path,
     summary: &serde_json::Value,
     report_analysis: Option<&serde_json::Value>,
     strategy_diagnostics: Option<(&Path, &serde_json::Value)>,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<u8>), String> {
     let dataset_kind =
         qx_app::artifact_store::run_evidence_summary_str(summary, &["input", "kind"])?;
     let components = if dataset_kind == "multi-barframe" {
@@ -52,10 +52,21 @@ pub(crate) fn write_run_evidence(
                 operator: &operator,
             },
         )?;
-    qx_app::artifact_store::persist_run_evidence_bundle(
+    let (path, payload) = qx_app::artifact_store::prepare_run_evidence_bundle(
         summary_path,
         has_report_analysis,
         has_strategy_diagnostics,
         assembly,
-    )
+    )?;
+    if path.exists() {
+        let existing = std::fs::read(&path)
+            .map_err(|error| format!("读取已有 EvidenceBundle 失败 {}: {error}", path.display()))?;
+        if existing != payload.as_bytes() {
+            return Err(format!(
+                "EvidenceBundle 幂等冲突，拒绝覆盖已有内容: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok((path, payload.into_bytes()))
 }

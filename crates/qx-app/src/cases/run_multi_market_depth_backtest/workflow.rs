@@ -143,9 +143,8 @@ pub(super) fn run_inner_with_strategies(
             .transpose()?;
         let quality_manifest_fingerprint = dataset_quality
             .as_ref()
-            .and_then(|quality| quality.get("manifest_fingerprint"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
+            .map(super::super::run_multi_market_manifest::dataset_manifest_fingerprint)
+            .transpose()?;
 
         let external = injected.remove(&request.strategy.strategy_id);
         let (strategy_id, strategy_version, strategy) = match external {
@@ -595,7 +594,13 @@ fn verify_depth_dataset_quality(
             path.display()
         ))
     })?;
-    let manifest = qx_data::DatasetManifestV2::from_json(payload).map_err(invalid)?;
+    let (manifest, snapshot) =
+        qx_data::parse_dataset_manifest_or_snapshot(payload).map_err(invalid)?;
+    snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.validate_for_replay(&frame.instrument.to_string()))
+        .transpose()
+        .map_err(invalid)?;
     let frame_bytes = std::fs::read(frame_path)
         .map_err(|error| AppError::from_io("读取多市场 DepthFrame 内容摘要", &error))?;
     let frame_sha256 = qx_data::sha256_hex_bytes(&frame_bytes);
@@ -677,6 +682,11 @@ fn verify_depth_dataset_quality(
         )));
     }
     let manifest_fingerprint = manifest.fingerprint().map_err(invalid)?;
+    let snapshot_sha256 = snapshot
+        .as_ref()
+        .map(qx_data::DatasetSnapshotV1::content_sha256)
+        .transpose()
+        .map_err(invalid)?;
     Ok(serde_json::json!({
         "manifest_path": path.to_string_lossy(),
         "manifest_sha256": qx_data::sha256_hex_bytes(&manifest_bytes),
@@ -684,6 +694,8 @@ fn verify_depth_dataset_quality(
         "content_hash": manifest.content_hash,
         "quality_report": manifest.quality_report,
         "manifest": manifest,
+        "dataset_snapshot": snapshot,
+        "dataset_snapshot_sha256": snapshot_sha256,
     }))
 }
 

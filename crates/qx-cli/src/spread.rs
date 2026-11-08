@@ -4,7 +4,7 @@ pub(crate) use qx_service::spread_recovery_host::{
     command_is_final, dedicated_spread_recovery_configured,
     pending_spread_recovery_groups_for_account, persist_strategy_spread_group,
     persist_strategy_submit, recover_paper_spread_groups_for_account,
-    recover_spread_groups_for_venue, recovery_order_validator, spread_recovery_poll_delay,
+    recover_spread_groups_for_venue_until, recovery_order_validator, spread_recovery_poll_delay,
     SpreadRecoveryContext,
 };
 #[cfg(test)]

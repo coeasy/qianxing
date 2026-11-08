@@ -3,7 +3,10 @@
   "schema_version": 1,
   "markets": {
     "BTC/USDT:USDT.BINANCE": {
-      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "BINANCE"},
+      "instrument": {
+        "symbol": "BTC/USDT:USDT",
+        "venue": "BINANCE"
+      },
       "product": "perpetual",
       "base_currency": "BTC",
       "quote_currency": "USDT",
@@ -20,15 +23,34 @@
       "valid_from": 0,
       "valid_to": null,
       "exact_rules": {
-        "contract_size": {"coefficient": "1", "scale": 0},
-        "price_tick": {"coefficient": "1", "scale": 1},
-        "quantity_step": {"coefficient": "1", "scale": 3},
-        "minimum_quantity": {"coefficient": "1", "scale": 3},
-        "minimum_notional": {"coefficient": "5", "scale": 0}
-      }
+        "contract_size": {
+          "coefficient": "1",
+          "scale": 0
+        },
+        "price_tick": {
+          "coefficient": "1",
+          "scale": 1
+        },
+        "quantity_step": {
+          "coefficient": "1",
+          "scale": 3
+        },
+        "minimum_quantity": {
+          "coefficient": "1",
+          "scale": 3
+        },
+        "minimum_notional": {
+          "coefficient": "5",
+          "scale": 0
+        }
+      },
+      "dataset_instrument_role": "future"
     },
     "BTC/USDT:USDT.OKX": {
-      "instrument": {"symbol": "BTC/USDT:USDT", "venue": "OKX"},
+      "instrument": {
+        "symbol": "BTC/USDT:USDT",
+        "venue": "OKX"
+      },
       "product": "perpetual",
       "base_currency": "BTC",
       "quote_currency": "USDT",
@@ -45,12 +67,28 @@
       "valid_from": 0,
       "valid_to": null,
       "exact_rules": {
-        "contract_size": {"coefficient": "1", "scale": 3},
-        "price_tick": {"coefficient": "1", "scale": 1},
-        "quantity_step": {"coefficient": "1", "scale": 0},
-        "minimum_quantity": {"coefficient": "1", "scale": 0},
-        "minimum_notional": {"coefficient": "0", "scale": 0}
-      }
+        "contract_size": {
+          "coefficient": "1",
+          "scale": 3
+        },
+        "price_tick": {
+          "coefficient": "1",
+          "scale": 1
+        },
+        "quantity_step": {
+          "coefficient": "1",
+          "scale": 0
+        },
+        "minimum_quantity": {
+          "coefficient": "1",
+          "scale": 0
+        },
+        "minimum_notional": {
+          "coefficient": "0",
+          "scale": 0
+        }
+      },
+      "dataset_instrument_role": "future"
     }
   }
 }

@@ -1,0 +1,8 @@
+$ python tools/accept_console_bff.py --binary target/debug/qx-cli.exe --runtime-template deploy/qianxing.runtime.console.example.json --evidence-out maturity/evidence/console-bff-acceptance-2026-11-04.json
+exit_code=0
+
+[stdout]
+{"schema_version": 1, "kind": "qianxing_console_bff_acceptance", "run_id": "aef1e68c3adb4a9e945751adf87857c8", "environment": "isolated_windows_local_loopback", "operator_id": "console-operator", "effects": "local revision/operation records only; no worker supervisor or venue process is started", "outcome": "passed", "login_http_status": 200, "session_cookie_issued": true, "csrf_cookie_issued": true, "authorized_deployment_read_http_status": 200, "csrf_rejection_http_status": 403, "revision_create_http_status": 201, "revision_created_by": "console-operator", "operation_create_http_status": 202, "operation_state_after_acceptance": "accepted", "operation_read_http_status": 200, "deployment_projection_http_status": 200, "desired_revision": 1, "trading_enabled": null, "readiness_http_status": 503, "readiness_ready": false, "readiness_layer_statuses": {"L": "not_assessed", "O": "blocked", "P": "not_assessed", "R": "pass"}}
+Evidence: maturity/evidence/console-bff-acceptance-2026-11-04.json
+
+[stderr]

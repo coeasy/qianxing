@@ -412,9 +412,10 @@ fn verify_all_failed_result(result: &MultiAccountBacktestResult) -> Result<(), S
         }
         previous_id = Some(&run.account_id);
         if run.outcome.is_some()
-            || run.error_json.as_deref().map_or(true, |payload| {
-                serde_json::from_str::<Value>(payload).is_err()
-            })
+            || run
+                .error_json
+                .as_deref()
+                .is_none_or(|payload| serde_json::from_str::<Value>(payload).is_err())
         {
             return Err("无父 RunManifest 的多账户结果只能包含结构化失败账户".into());
         }
@@ -763,11 +764,9 @@ pub(crate) fn normalize_cross_language_values(
         }
         Value::Object(fields) => {
             for (name, child) in fields.iter_mut() {
-                if name.ends_with("_raw") || name == "seed" {
-                    if child.is_number() {
-                        *child = Value::String(child.to_string());
-                        continue;
-                    }
+                if (name.ends_with("_raw") || name == "seed") && child.is_number() {
+                    *child = Value::String(child.to_string());
+                    continue;
                 }
                 normalize_cross_language_values(child, &format!("{path}.{name}"))?;
             }

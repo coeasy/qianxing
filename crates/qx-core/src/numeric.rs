@@ -97,6 +97,32 @@ impl ExactDecimal {
         Self::normalized(coefficient, u32::from(scale))
     }
 
+    /// Construct a canonical integer without a fractional scale.
+    pub const fn from_integer(coefficient: i128) -> Self {
+        if coefficient == 0 {
+            Self::ZERO
+        } else {
+            Self {
+                coefficient,
+                scale: 0,
+            }
+        }
+    }
+
+    /// Construct the legacy fixed-point representation whose raw integer is scaled by 1e9.
+    /// The fixed scale is below [`Self::MAX_SCALE`], so conversion cannot fail.
+    pub fn from_legacy_raw(mut coefficient: i128) -> Self {
+        if coefficient == 0 {
+            return Self::ZERO;
+        }
+        let mut scale = 9;
+        while scale > 0 && coefficient % 10 == 0 {
+            coefficient /= 10;
+            scale -= 1;
+        }
+        Self { coefficient, scale }
+    }
+
     fn normalized(mut coefficient: i128, mut scale: u32) -> Result<Self, &'static str> {
         while scale > 0 && coefficient % 10 == 0 {
             coefficient /= 10;
@@ -1303,5 +1329,23 @@ mod tests {
         assert!(value.checked_abs().is_none());
         assert_eq!(value.abs().raw(), i128::MAX);
         assert!(format!("{}", value).starts_with('-'));
+    }
+
+    #[test]
+    fn legacy_raw_constructor_matches_the_checked_scale_nine_constructor() {
+        for raw in [
+            i128::MIN,
+            -10_000_000_000,
+            -1,
+            0,
+            1,
+            10_000_000_000,
+            i128::MAX,
+        ] {
+            let legacy = ExactDecimal::from_legacy_raw(raw);
+            assert!(ExactDecimal::from_parts(raw, 9).is_ok_and(|checked| checked == legacy));
+        }
+        assert_eq!(ExactDecimal::from_integer(0), ExactDecimal::ZERO);
+        assert_eq!(ExactDecimal::from_integer(12).coefficient(), 12);
     }
 }

@@ -6,7 +6,7 @@ use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::venue_market_host::configured_binance_ws_endpoint;
 use crate::worker_market_spec::worker_report_spec;
 use qx_adapter::{
-    run_binance_user_stream_with_config_loader, BinanceSpotAuth, BinanceSpotVenue,
+    run_binance_user_stream_with_config_loader_observing, BinanceSpotAuth, BinanceSpotVenue,
     BinanceStreamRetryPolicy, BinanceUserStreamRunConfig,
 };
 use qx_core::VenueFamily;
@@ -71,6 +71,7 @@ where
     let sleep_context = context.clone();
     let sleep_metrics = Arc::clone(&metrics);
     let event_context = context.clone();
+    let reconnect_metrics = Arc::clone(&metrics);
     let mut source_seq = 0_u64;
     let mut should_stop = move || stop_context.should_stop();
     let mut sleep = move |delay: Duration| {
@@ -144,6 +145,9 @@ where
                 GatewayBusinessHealthStatus::Healthy,
                 received_ts,
             );
+            if let Some(timestamp_ms) = venue.last_event_timestamp_ms() {
+                metrics.observe_gateway_venue_last_event("BINANCE", timestamp_ms);
+            }
             metrics.observe(&pipeline);
             metrics.publish_if_due(true, received_ts);
         }
@@ -159,12 +163,19 @@ where
     if let Ok(mut metrics) = metrics.lock() {
         metrics.publish_if_due(true, runtime_timestamp_ms());
     }
-    let report = run_binance_user_stream_with_config_loader(
+    let report = run_binance_user_stream_with_config_loader_observing(
         || load_auth(&worker),
         run_config,
         &mut should_stop,
         &mut sleep,
         &mut on_event,
+        move |reconnects| {
+            let now = runtime_timestamp_ms();
+            if let Ok(mut metrics) = reconnect_metrics.lock() {
+                metrics.observe_gateway_venue_reconnects("BINANCE", reconnects.into());
+                metrics.publish_if_due(true, now);
+            }
+        },
     );
     drop(on_event);
     if let Ok(metrics) = metrics.lock() {

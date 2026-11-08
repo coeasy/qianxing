@@ -3,7 +3,7 @@
 use qx_api::ApiQueryModels;
 use qx_api::ReconcileReportSnapshot;
 use qx_core::{EventKind, ExactDecimal, InstrumentId, LedgerEntry, LedgerEntryKind, PositionSide};
-use qx_protocol::AccountSnapshot;
+use qx_protocol::{AccountSnapshot, EquityDiagnostic, EquityUnavailableReason};
 use qx_runtime::{
     account_event_log_name, owns_account_event_log, settlement_currency_for_log,
     worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
@@ -223,31 +223,7 @@ pub fn load_api_query_models(
 
 /// Load and validate the latest persisted reconciliation report per worker.
 pub fn load_reconcile_reports(root: &Path) -> Result<Vec<ReconcileReportSnapshot>, String> {
-    let mut reconcile_reports = Vec::new();
-    let report_root = root.join("reconcile");
-    if report_root.exists() {
-        for entry in std::fs::read_dir(&report_root)
-            .map_err(|error| format!("读取 API 对账报告目录失败: {error}"))?
-        {
-            let path = entry
-                .map_err(|error| format!("读取 API 对账报告目录项失败: {error}"))?
-                .path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            let report: ReconcileReportSnapshot = serde_json::from_str(
-                &std::fs::read_to_string(&path)
-                    .map_err(|error| format!("读取对账报告失败 {}: {error}", path.display()))?,
-            )
-            .map_err(|error| format!("对账报告 JSON 无效 {}: {error}", path.display()))?;
-            report
-                .validate()
-                .map_err(|error| format!("对账报告校验失败 {}: {error}", path.display()))?;
-            reconcile_reports.push(report);
-        }
-        reconcile_reports.sort_by(|left, right| left.worker_id.cmp(&right.worker_id));
-    }
-    Ok(reconcile_reports)
+    qx_runtime::load_reconcile_reports(root)
 }
 
 /// Project the reports belonging to one canonical account EventLog into its snapshot.
@@ -368,6 +344,35 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
     } else {
         None
     };
+    snapshot.equity_diagnostic = if snapshot.equity_raw.is_some() {
+        None
+    } else if !single_quote_spot {
+        Some(EquityDiagnostic {
+            reason: EquityUnavailableReason::UnsupportedPortfolioValuation,
+            missing_mark_instruments: Vec::new(),
+        })
+    } else if account_balances.is_some()
+        && account_has_open_positions(pipeline, account_id, venue_id, &runtime_snapshot)
+    {
+        Some(EquityDiagnostic {
+            reason: EquityUnavailableReason::ExchangeBalanceIncludesSpotPositions,
+            missing_mark_instruments: Vec::new(),
+        })
+    } else {
+        let missing_mark_instruments =
+            account_missing_mark_instruments(pipeline, account_id, venue_id, &runtime_snapshot);
+        Some(if missing_mark_instruments.is_empty() {
+            EquityDiagnostic {
+                reason: EquityUnavailableReason::ArithmeticOverflow,
+                missing_mark_instruments,
+            }
+        } else {
+            EquityDiagnostic {
+                reason: EquityUnavailableReason::MissingMarkPrices,
+                missing_mark_instruments,
+            }
+        })
+    };
     snapshot.available_raw = Some(if let Some(balances) = account_balances {
         balances
             .iter()
@@ -478,14 +483,14 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
                 .position_for_side_exact(account_id, &instrument, PositionSide::Net);
         let exact_quantity = if exact_position.quantity.is_zero() && position.quantity.raw() != 0 {
             ExactDecimal::from_parts(position.quantity.raw(), 9)
-                .expect("legacy quantity scale is supported")
+                .map_err(|error| format!("Legacy position quantity is invalid: {error}"))?
         } else {
             exact_position.quantity
         };
         let exact_average_entry =
             if exact_position.average_entry.is_zero() && position.average_entry.raw() != 0 {
                 ExactDecimal::from_parts(position.average_entry.raw(), 9)
-                    .expect("legacy price scale is supported")
+                    .map_err(|error| format!("Legacy average entry is invalid: {error}"))?
             } else {
                 exact_position.average_entry
             };
@@ -540,11 +545,101 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
                 .map(|price| price.raw())
                 .unwrap_or(0);
         }
+        if let Some(spec) = market_specs.get(&instrument) {
+            project_position_unrealized_pnl(&mut wire, spec)?;
+        }
         snapshot.positions.insert(instrument, wire);
     }
     apply_reconcile_reports(&mut snapshot, log_name, reports);
     snapshot.reconcile.recovery_state = "eventlog-replayed".into();
     Ok(snapshot)
+}
+
+/// Fill position PnL only when the venue omitted it and the read model has a frozen market
+/// specification plus complete quantity, entry, and mark prices. The exact value stays on the
+/// scale-aware sidecar; the legacy raw field is a truncated 1e-9 projection.
+fn project_position_unrealized_pnl(
+    position: &mut qx_protocol::PositionSnapshot,
+    spec: &qx_core::TradingInstrumentSpec,
+) -> Result<(), String> {
+    if position.unrealized_pnl_raw.is_some()
+        || position
+            .exact_amounts
+            .as_ref()
+            .is_some_and(|amounts| amounts.unrealized_pnl.is_some())
+    {
+        return Ok(());
+    }
+    if spec.instrument != position.instrument {
+        return Err(format!(
+            "持仓 {} 的估值规格标的身份不匹配: {}",
+            position.instrument, spec.instrument
+        ));
+    }
+    spec.validate()
+        .map_err(|error| format!("持仓 {} 的估值规格非法: {error}", position.instrument))?;
+    if position
+        .settlement_currency
+        .as_deref()
+        .is_some_and(|currency| {
+            !currency.trim().is_empty()
+                && !currency.eq_ignore_ascii_case(spec.settlement_currency.trim())
+        })
+    {
+        return Err(format!(
+            "持仓 {} 的结算币种与冻结规格不匹配",
+            position.instrument
+        ));
+    }
+
+    let exact_amounts = position.exact_amounts.as_ref();
+    let quantity = exact_amounts
+        .map(|amounts| amounts.quantity)
+        .or_else(|| ExactDecimal::from_parts(position.quantity_raw, 9).ok());
+    let average_price = exact_amounts
+        .and_then(|amounts| amounts.average_price)
+        .or_else(|| ExactDecimal::from_parts(position.average_price_raw, 9).ok());
+    let mark_price = exact_amounts
+        .and_then(|amounts| amounts.mark_price)
+        .or_else(|| ExactDecimal::from_parts(position.mark_price_raw, 9).ok());
+    let (Some(quantity), Some(average_price), Some(mark_price)) =
+        (quantity, average_price, mark_price)
+    else {
+        return Ok(());
+    };
+    if quantity.is_zero() || !average_price.is_positive() || !mark_price.is_positive() {
+        return Ok(());
+    }
+
+    let pnl = spec
+        .unrealized_pnl_exact(quantity, average_price, mark_price)
+        .map_err(|error| format!("持仓 {} 未实现盈亏计算失败: {error}", position.instrument))?;
+    position.unrealized_pnl_raw = Some(pnl.to_raw_truncated(9).map_err(|error| {
+        format!(
+            "持仓 {} 未实现盈亏兼容折算失败: {error}",
+            position.instrument
+        )
+    })?);
+    if position
+        .settlement_currency
+        .as_deref()
+        .is_none_or(|currency| currency.trim().is_empty())
+    {
+        position.settlement_currency = Some(spec.settlement_currency.trim().to_ascii_uppercase());
+    }
+    let amounts = position
+        .exact_amounts
+        .get_or_insert(qx_core::ExactAccountPositionAmounts {
+            quantity,
+            average_price: Some(average_price),
+            mark_price: Some(mark_price),
+            liquidation_price: None,
+            unrealized_pnl: None,
+            initial_margin: None,
+            maintenance_margin: None,
+        });
+    amounts.unrealized_pnl = Some(pnl);
+    Ok(())
 }
 
 /// The legacy account wire scalars do not carry a currency or product specification. Keep the
@@ -584,7 +679,7 @@ fn account_is_single_quote_spot(
                     .settlement_currency
                     .eq_ignore_ascii_case(reporting_currency);
         }
-        let Some((_, quote)) = instrument.symbol.split_once('/') else {
+        let Some((_, quote)) = instrument.symbol().split_once('/') else {
             return false;
         };
         !quote.contains(':') && quote.eq_ignore_ascii_case(reporting_currency)
@@ -633,24 +728,157 @@ fn account_has_open_positions(
         })
 }
 
+fn account_missing_mark_instruments(
+    pipeline: &LiveEventPipeline,
+    account_id: &str,
+    venue_id: &str,
+    snapshot: &qx_runtime::LivePipelineSnapshot,
+) -> Vec<String> {
+    let mut instruments = BTreeSet::new();
+    instruments.extend(
+        snapshot
+            .account_positions
+            .iter()
+            .filter(|((account, venue), _)| account == account_id && venue == venue_id)
+            .flat_map(|(_, positions)| {
+                positions
+                    .iter()
+                    .filter(|position| {
+                        position
+                            .exact_amounts
+                            .map_or(!position.quantity.is_zero(), |amounts| {
+                                !amounts.quantity.is_zero()
+                            })
+                    })
+                    .map(|position| position.instrument.clone())
+            }),
+    );
+    instruments.extend(
+        pipeline
+            .ledger()
+            .entries()
+            .iter()
+            .filter(|entry| entry.account_id == account_id)
+            .filter_map(|entry| entry.instrument.clone())
+            .filter(|instrument| {
+                [PositionSide::Net, PositionSide::Long, PositionSide::Short]
+                    .into_iter()
+                    .any(|side| {
+                        !pipeline
+                            .ledger()
+                            .position_for_side_exact(account_id, instrument, side)
+                            .quantity
+                            .is_zero()
+                    })
+            }),
+    );
+    let mut missing = instruments
+        .into_iter()
+        .filter(|instrument| !pipeline.marks().contains_key(instrument))
+        .map(|instrument| instrument.to_string())
+        .collect::<Vec<_>>();
+    missing.sort_unstable();
+    missing
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         apply_reconcile_reports, default_account_event_log,
         load_api_account_snapshots_with_market_specs, load_api_query_models,
-        load_reconcile_reports, query_api_models,
+        load_reconcile_reports, project_position_unrealized_pnl, query_api_models,
     };
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
     use qx_core::{
-        AccountBalance, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId, Money, Price,
-        Quantity, VenueId,
+        AccountBalance, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId, Money, Order,
+        OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, VenueId,
     };
     use qx_guanxing::QuoteTick;
     use qx_protocol::AccountSnapshot;
     use qx_runtime::{RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result() {
+        let instrument = InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture");
+        let mut position = qx_protocol::PositionSnapshot {
+            instrument: instrument.clone(),
+            settlement_currency: None,
+            quantity_raw: Quantity::from_i64(2).raw(),
+            today_quantity_raw: Quantity::from_i64(2).raw(),
+            average_price_raw: Price::from_i64(100).raw(),
+            mark_price_raw: Price::from_i64(110).raw(),
+            unrealized_pnl_raw: None,
+            margin_raw: None,
+            exact_amounts: Some(qx_core::ExactAccountPositionAmounts {
+                quantity: ExactDecimal::parse("2").expect("quantity"),
+                average_price: Some(ExactDecimal::parse("100").expect("entry price")),
+                mark_price: Some(ExactDecimal::parse("110").expect("mark price")),
+                liquidation_price: None,
+                unrealized_pnl: None,
+                initial_margin: None,
+                maintenance_margin: None,
+            }),
+        };
+        let spec = TradingInstrumentSpec::spot_default(&instrument, "usdt");
+
+        project_position_unrealized_pnl(&mut position, &spec)
+            .expect("frozen spec can value the position");
+
+        assert_eq!(position.unrealized_pnl_raw, Some(20 * qx_core::SCALE));
+        assert_eq!(position.settlement_currency.as_deref(), Some("USDT"));
+        assert_eq!(
+            position
+                .exact_amounts
+                .and_then(|amounts| amounts.unrealized_pnl),
+            Some(ExactDecimal::parse("20").expect("exact PnL"))
+        );
+    }
+
+    #[test]
+    fn position_unrealized_pnl_preserves_exchange_value_and_missing_inputs() {
+        let instrument = InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture");
+        let spec = TradingInstrumentSpec::spot_default(&instrument, "USDT");
+        let mut reported = qx_protocol::PositionSnapshot {
+            instrument: instrument.clone(),
+            settlement_currency: Some("USDT".into()),
+            quantity_raw: Quantity::from_i64(2).raw(),
+            today_quantity_raw: Quantity::from_i64(2).raw(),
+            average_price_raw: Price::from_i64(100).raw(),
+            mark_price_raw: Price::from_i64(110).raw(),
+            unrealized_pnl_raw: Some(7 * qx_core::SCALE),
+            margin_raw: None,
+            exact_amounts: None,
+        };
+        project_position_unrealized_pnl(&mut reported, &spec)
+            .expect("exchange-reported PnL remains authoritative");
+        assert_eq!(reported.unrealized_pnl_raw, Some(7 * qx_core::SCALE));
+
+        let mut mismatched_currency = reported.clone();
+        mismatched_currency.unrealized_pnl_raw = None;
+        mismatched_currency.settlement_currency = Some("BTC".into());
+        assert!(project_position_unrealized_pnl(&mut mismatched_currency, &spec).is_err());
+
+        let mut missing_mark = qx_protocol::PositionSnapshot {
+            instrument,
+            settlement_currency: None,
+            quantity_raw: Quantity::from_i64(2).raw(),
+            today_quantity_raw: Quantity::from_i64(2).raw(),
+            average_price_raw: Price::from_i64(100).raw(),
+            mark_price_raw: 0,
+            unrealized_pnl_raw: None,
+            margin_raw: None,
+            exact_amounts: None,
+        };
+        project_position_unrealized_pnl(&mut missing_mark, &spec)
+            .expect("missing mark leaves PnL unknown");
+        assert_eq!(missing_mark.unrealized_pnl_raw, None);
+        assert_eq!(missing_mark.exact_amounts, None);
+    }
 
     fn temp_root(label: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -784,7 +1012,8 @@ mod tests {
             .unwrap();
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     10,
                     Price::from_i64(99),
@@ -842,6 +1071,87 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn account_snapshot_names_every_open_position_missing_a_mark() {
+        let root = temp_root("missing-equity-mark-diagnostic");
+        let mut config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("valid paper runtime fixture");
+        config.storage.data_dir = root.to_string_lossy().into_owned();
+        let log_name = "paper-main-paper-events";
+        let mut pipeline = PipelineStorage::from_config(&config)
+            .unwrap()
+            .open(log_name, "USDT")
+            .unwrap();
+        let instrument = InstrumentId::parse("ETH/USDT.BINANCE").expect("spot instrument");
+        pipeline
+            .register_order(
+                Order {
+                    client_id: 9001,
+                    instrument: instrument.clone(),
+                    side: Side::Buy,
+                    qty: Quantity::from_i64(1),
+                    limit: None,
+                    status: OrderStatus::PendingSubmit,
+                    filled: Quantity::ZERO,
+                    account_id: "main".into(),
+                    trace: None,
+                    policy: None,
+                    exact_amounts: None,
+                },
+                1,
+            )
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 9001,
+                    venue_order_id: Some("paper-9001".into()),
+                },
+                2,
+                2,
+                1,
+                "missing-mark-diagnostic-accepted",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill {
+                    fill: qx_core::Fill {
+                        order_id: 9001,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ts: 10,
+                        ..qx_core::Fill::default()
+                    },
+                },
+                10,
+                10,
+                2,
+                "missing-mark-diagnostic-fill",
+            ))
+            .unwrap();
+        drop(pipeline);
+
+        let snapshot = load_api_account_snapshots_with_market_specs(&config, &BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .find(|snapshot| snapshot.header.account_id == "main")
+            .expect("replayed account snapshot");
+        assert_eq!(snapshot.equity_raw, None);
+        let diagnostic = snapshot.equity_diagnostic.expect("equity diagnostic");
+        assert_eq!(
+            diagnostic.reason,
+            qx_protocol::EquityUnavailableReason::MissingMarkPrices
+        );
+        assert_eq!(
+            diagnostic.missing_mark_instruments,
+            vec![instrument.to_string()]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(feature = "sqlite")]
     #[test]
     fn service_api_readers_use_the_configured_sqlite_event_log() {
@@ -861,7 +1171,8 @@ mod tests {
             .unwrap();
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     10,
                     Price::from_i64(99),

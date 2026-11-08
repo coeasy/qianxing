@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R17",
+  "acceptance_id": "R17-AC01",
+  "reviewed_at": "2026-11-04",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_id": "c0c8ecbf-56d1-43ed-8b02-a622a381f704",
+  "reviewed_command": "cargo test -p qx-cli --test app_three_entrypoints cli_and_python_read_the_same_replay_verified_multi_market --offline -- --test-threads=1",
+  "reviewed_artifacts": [
+    "maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log",
+    "maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.source-tree.json",
+    "crates/qx-cli/tests/app_three_entrypoints/multi_market_report.rs",
+    "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+    "docs/backtest-report-layout.md",
+    "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.log",
+    "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.source-tree.json",
+    ".github/workflows/ci.yml"
+  ],
+  "findings": [
+    "Both Bar and depth event-page integration tests call assert_report_projection_parity, which exercises JSON, HTML, XLSX, and benchmark CSV projections from the same report analysis.",
+    "The shared parity helper checks exact timestamp-aligned period facts in JSON, HTML, XLSX Benchmark worksheet, and CSV; CSV rows retain run identity and period fields.",
+    "The fixture verifies Bar same-timestamp equity collapse and depth analysis from the replay-verified complete curve, independent of bounded presentation preview.",
+    "The separate report_cli_projects_one_verified_benchmark_analysis_to_json_html_xlsx_and_csv integration test verifies the standalone CLI report path and is present in the R17 required evidence set.",
+    "The six focused Rust metric/report contract checks also pass on the Windows host; Linux and macOS CI now run the same helper for platform evidence."
+  ],
+  "limitations": [
+    "This review includes Windows local acceptance only. The corresponding Linux/macOS CI runs are configured but have not yet produced evidence.",
+    "No claim is made about production data licensing or live venue readiness."
+  ],
+  "reviewed_run_ids": [
+    "5031ea2c-3466-4e76-b184-258bc6a55d1f"
+  ]
+}

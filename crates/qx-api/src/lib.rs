@@ -17,6 +17,17 @@ mod provider_registry;
 mod read_scope;
 mod snapshot_history;
 mod state_lock;
+mod strategy_deployments;
+pub use qx_runtime::{
+    StrategyHostLifecycleEvidenceV1, StrategyHostLifecycleEvidenceV2, StrategyWorkerObservationV1,
+    StrategyWorkerObservationV2, StrategyWorkerObservationV3, StrategyWorkerPhase,
+};
+pub use strategy_deployments::{
+    aggregate_strategy_deployment_nodes, ReceivedStrategyDeploymentNodeSnapshotV1,
+    RegisteredStrategyDeploymentNodeV1, StrategyDeploymentNodeFreshnessV1,
+    StrategyDeploymentNodeSnapshotV1, StrategyDeploymentNodeStatusV1,
+    StrategyDeploymentReconciliationV1, StrategyDeploymentStatusV1,
+};
 mod tls_config;
 mod transport;
 mod ws;
@@ -41,7 +52,7 @@ use qx_core::{
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
     ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2,
-    PROJECTION_ENVELOPE_SCHEMA_VERSION,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3, PROJECTION_ENVELOPE_SCHEMA_VERSION,
 };
 use qx_scheduler::JobRun;
 use qx_storage::FileTokenBucket;
@@ -842,6 +853,11 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
             venue_id,
             ..
         } => Some((account_id.as_str(), Some(venue_id.as_str()))),
+        EventKind::OrderStatusReconciled {
+            account_id,
+            venue_id,
+            ..
+        } => Some((account_id.as_str(), Some(venue_id.as_str()))),
         EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
         EventKind::ExecutionCapabilityDecision { decision } => Some((
             decision.account_id.as_str(),
@@ -933,12 +949,23 @@ pub struct ApiService {
     session_shutdown: Arc<AtomicBool>,
     /// None 表示仅供已受信的进程内调用；网络/生产入口应使用 `with_policy`。
     policy: Option<ApiPolicy>,
+    /// Runtime 装配的 paper-only loopback mode。它仅接受已验证的 Paper 工作流；
+    /// 通用控制命令仍须通过认证 operator policy。
+    local_paper_control: bool,
     rate_limiter: Arc<dyn ApiRateLimitBackend>,
     control_submitter: Option<ControlSubmitter>,
     command_enqueuer: Option<CommandEnqueuer>,
     metrics: Arc<ApiMetrics>,
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
+    strategy_deployments_provider: Option<strategy_deployments::StrategyDeploymentsProvider>,
+    strategy_deployment_nodes_provider:
+        Option<strategy_deployments::StrategyDeploymentNodesProvider>,
+    strategy_deployment_node_snapshot_acceptor:
+        Option<strategy_deployments::StrategyDeploymentNodeSnapshotAcceptor>,
+    deployment_revision_creator: Option<strategy_deployments::DeploymentRevisionCreator>,
+    deployment_operation_acceptor: Option<strategy_deployments::DeploymentOperationAcceptor>,
+    deployment_operation_reader: Option<strategy_deployments::DeploymentOperationReader>,
     query_models_provider: Option<QueryModelsProvider>,
     algo_execution_provider: Option<algo_lifecycle::Provider>,
     pub(crate) control_plane_provider: Option<ControlPlaneProvider>,
@@ -1075,44 +1102,7 @@ fn unconfigured_readiness_layers() -> BTreeMap<String, serde_json::Value> {
         ),
     ])
 }
-/// 对账读模型。订单差异和余额差异保留为 JSON 事实，避免 API 层依赖某个
-/// Venue 适配器的枚举；写入前由 Reconcile worker 生成并校验 schema_version。
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct ReconcileReportSnapshot {
-    pub schema_version: u32,
-    pub worker_id: String,
-    pub account_id: String,
-    pub venue_id: String,
-    pub observed_ts: u64,
-    #[serde(default)]
-    pub order_issues: Vec<serde_json::Value>,
-    pub balances_count: usize,
-    #[serde(default)]
-    pub balance_discrepancies: Vec<serde_json::Value>,
-    /// 下面三个是"这一轮有没有去取"的覆盖度，不是账户事实本身：`None` 表示这条对账链
-    /// 没有取该项（Binance 现货 worker 不查持仓/资金费/账单，CCXT 在该交易所报
-    /// "能力不支持"时跳过），`Some(0)` 才是取了且为空。此前三者是不可区分的 `usize`
-    /// 且 Binance 侧硬写 0，读侧把"没取"当成"账户没有"（V11 Q69）。
-    #[serde(default)]
-    pub position_snapshots_count: Option<usize>,
-    #[serde(default)]
-    pub funding_rate_snapshots_count: Option<usize>,
-    #[serde(default)]
-    pub cashflow_count: Option<usize>,
-}
-
-impl ReconcileReportSnapshot {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1
-            || self.worker_id.trim().is_empty()
-            || self.account_id.trim().is_empty()
-            || self.venue_id.trim().is_empty()
-        {
-            return Err("对账报告身份或 schema_version 非法".into());
-        }
-        Ok(())
-    }
-}
+pub use qx_runtime::ReconcileReportSnapshot;
 
 /// API 查询端口：只读方法集合，不持有 Ledger、Venue 或可变控制面引用；未来替换为独立 QueryService 时保持同一契约。
 ///
@@ -1176,11 +1166,20 @@ impl ApiService {
         Self::build(state, Some(policy))
     }
 
+    /// Allow the unauthenticated loopback API to submit only Paper workflow commands.
+    /// Runtime topology validation must restrict this service to `environment=paper` and a
+    /// loopback bind. The server grants Trading permission and replaces the body operator id.
+    pub fn with_local_paper_control(mut self) -> Self {
+        self.local_paper_control = true;
+        self
+    }
+
     fn build(state: ApiState, policy: Option<ApiPolicy>) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             session_shutdown: Arc::new(AtomicBool::new(false)),
             policy,
+            local_paper_control: false,
             rate_limiter: Arc::new(LocalRateLimitBackend {
                 limiter: Mutex::new(ApiRateLimiter::new(
                     DEFAULT_RATE_LIMIT_CAPACITY,
@@ -1192,6 +1191,12 @@ impl ApiService {
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            strategy_deployments_provider: None,
+            strategy_deployment_nodes_provider: None,
+            strategy_deployment_node_snapshot_acceptor: None,
+            deployment_revision_creator: None,
+            deployment_operation_acceptor: None,
+            deployment_operation_reader: None,
             query_models_provider: None,
             algo_execution_provider: None,
             control_plane_provider: None,
@@ -1497,7 +1502,7 @@ impl ApiService {
                 return ApiResponse::json(
                     400,
                     error_json("account activity requires account_id and venue_id"),
-                )
+                );
             }
             Err(error) => return ApiResponse::json(400, error_json(&error)),
         };
@@ -1522,7 +1527,7 @@ impl ApiService {
                 return ApiResponse::json(
                     500,
                     error_json(&format!("account_snapshot_serialization_failed: {error:?}")),
-                )
+                );
             }
         };
         let snapshot_value = match serde_json::from_str(&snapshot_json) {
@@ -1531,7 +1536,7 @@ impl ApiService {
                 return ApiResponse::json(
                     500,
                     error_json(&format!("account_snapshot_decode_failed: {error}")),
-                )
+                );
             }
         };
         let events = match self.projection_events_for_query(query) {
@@ -1631,7 +1636,7 @@ impl ApiService {
                         .exact_amounts
                         .is_some_and(|amounts| !amounts.quantity.is_zero())
             }) {
-                let symbol = position.instrument.symbol.to_ascii_uppercase();
+                let symbol = position.instrument.symbol().to_ascii_uppercase();
                 let derivative = position.settlement_currency.is_some()
                     || symbol.contains(':')
                     || symbol.ends_with("-PERP")
@@ -1642,7 +1647,7 @@ impl ApiService {
                 if !derivative {
                     let base_currency = position
                         .instrument
-                        .symbol
+                        .symbol()
                         .split(['/', '-'])
                         .next()
                         .map(str::trim)
@@ -2084,6 +2089,7 @@ impl ApiService {
                     | "/schema/account-snapshot-v1"
                     | "/schema/account-snapshot-v2"
                     | "/schema/account-snapshot-v3"
+                    | "/schema/account-snapshot-v4"
                     | "/schema/contract-matrix"
             )
         {
@@ -2114,9 +2120,47 @@ impl ApiService {
         }
         let permission =
             authenticated_operator.and_then(|operator| self.policy.as_ref()?.permission(operator));
+        if method == "POST"
+            && matches!(
+                route,
+                "/strategies/deployments/revisions" | "/strategies/deployments/operations"
+            )
+            && self.policy.is_some()
+            && permission != Some(Permission::Admin)
+        {
+            return ApiResponse::json(403, error_json("strategy_deployment_admin_required"));
+        }
         let trading_authorized = self.policy.is_none() || algo_lifecycle::can_trade(permission);
         let app_paths = &self.app_paths;
         match (method, route) {
+            ("GET", "/strategies/deployments") => self.strategy_deployments_response(query),
+            ("GET", "/strategies/deployment-nodes") => {
+                if query.is_empty() {
+                    self.strategy_deployment_nodes_response()
+                } else {
+                    ApiResponse::json(400, error_json("deployment_node_query_not_supported"))
+                }
+            }
+            ("POST", "/strategies/deployment-nodes") => {
+                if query.is_empty() {
+                    self.receive_strategy_deployment_node_snapshot_response(
+                        body,
+                        ts,
+                        authenticated_operator,
+                    )
+                } else {
+                    ApiResponse::json(400, error_json("deployment_node_query_not_supported"))
+                }
+            }
+            ("POST", "/strategies/deployments/revisions") => {
+                self.create_deployment_revision_response(body, ts, authenticated_operator)
+            }
+            ("POST", "/strategies/deployments/operations") => {
+                self.create_deployment_operation_response(body, ts, authenticated_operator)
+            }
+            ("GET", "/strategies/deployments/operations") => {
+                self.deployment_operation_response(query)
+            }
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
             ("GET", "/ready") => {
                 let mut readiness = self
@@ -2193,6 +2237,9 @@ qx_control_retired_audit_records_total {}\n",
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2)
             }
             ("GET", "/schema/account-snapshot-v3") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3)
+            }
+            ("GET", "/schema/account-snapshot-v4") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
             ("GET", "/schema/contract-matrix") => app_surface_route::contract_matrix_response(),
@@ -2242,6 +2289,7 @@ qx_control_retired_audit_records_total {}\n",
                 let body = serde_json::json!({
                     "cash_raw": snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
                     "equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw),
+                    "equity_diagnostic": snapshot.as_ref().and_then(|snapshot| snapshot.equity_diagnostic.clone()),
                     "available_raw": snapshot.as_ref().and_then(|snapshot| snapshot.available_raw),
                     "margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw),
                 });
@@ -2513,6 +2561,9 @@ qx_control_retired_audit_records_total {}\n",
             Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
         };
         let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
+        if self.local_paper_control && authenticated.is_none() {
+            return ApiResponse::json(403, error_json("authenticated_operator_required"));
+        }
         if let Some(operator_id) = authenticated {
             command.operator_id = operator_id.to_string();
         }
@@ -3008,6 +3059,23 @@ mod tests {
         assert!(
             absent_body.contains("\"equity_raw\":null"),
             "算不出标记价时权益必须印 null，而不是给账户兜一个 0: {absent_body}"
+        );
+        let mut diagnostic_state = ApiState::default();
+        let mut diagnostic_snapshot = AccountSnapshot::new(3, "main", "default", "paper", 30);
+        diagnostic_snapshot.equity_diagnostic = Some(qx_protocol::EquityDiagnostic {
+            reason: qx_protocol::EquityUnavailableReason::MissingMarkPrices,
+            missing_mark_instruments: vec!["BTC/USDT.BINANCE".into()],
+        });
+        diagnostic_state
+            .publish_snapshot(diagnostic_snapshot)
+            .unwrap();
+        let diagnostic_body = ApiService::new(diagnostic_state)
+            .handle("GET", "/account/balances", "", 3)
+            .body;
+        assert!(
+            diagnostic_body.contains("\"reason\":\"missing_mark_prices\"")
+                && diagnostic_body.contains("BTC/USDT.BINANCE"),
+            "余额读面应带出权益不可用原因和缺价标的: {diagnostic_body}"
         );
     }
 

@@ -1,0 +1,18 @@
+$ python tools/accept_long_only_sma_paper_parity.py
+exit_code=1
+
+[stdout]
+
+[stderr]
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\tools\accept_long_only_sma_paper_parity.py", line 219, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\aex_work\qianxing\tools\accept_long_only_sma_paper_parity.py", line 208, in main
+    local_fills, local_ledger = local_backtest(root / "local-bars.json", root / "local-run")
+                                ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_long_only_sma_paper_parity.py", line 125, in local_backtest
+    fills = fill_rows(trace)
+  File "D:\aex_work\qianxing\tools\accept_long_only_sma_paper_parity.py", line 45, in fill_rows
+    raise RuntimeError(f"fill has no preceding order side: {fill['order_id']}")
+RuntimeError: fill has no preceding order side: 1

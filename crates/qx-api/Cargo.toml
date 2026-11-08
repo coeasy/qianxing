@@ -20,6 +20,8 @@ qx-app = { version = "0.3.0", path = "../qx-app" }
 qx-data = { version = "0.3.0", path = "../qx-data" }
 qx-datastruct = { version = "0.3.0", path = "../qx-datastruct" }
 qx-strategy = { version = "0.3.0", path = "../qx-strategy" }
+qx-spec = { version = "0.3.0", path = "../qx-spec" }
+qx-runtime = { version = "0.3.0", path = "../qx-runtime" }
 qx-xingban = { version = "0.3.0", path = "../qx-xingban" }
 qx-provider = { version = "0.3.0", path = "../qx-provider" }
 serde = { workspace = true }

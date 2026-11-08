@@ -1,6 +1,7 @@
 //! 上一交易日收盘锚、除权除息参考价与逐 Bar 昨收序列。
 
 use super::*;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Default)]
 struct ExRightsAdjustment {
@@ -167,9 +168,20 @@ impl AshareRuleConfig {
         // Build the ex-date adjustment once. The former per-day call to
         // `ex_rights_reference` scanned every corporate action, making the
         // preparation pass O(days * actions) for long A-share histories.
+        let mut first_bar_by_day = HashMap::new();
+        for bar in bars {
+            first_bar_by_day
+                .entry(Self::day_key(bar.ts))
+                .or_insert(bar.ts);
+        }
         let mut per_event = self
             .corporate_actions
             .iter()
+            .filter(|event| {
+                first_bar_by_day
+                    .get(&Self::day_key(event.ts))
+                    .is_some_and(|first_bar_ts| event.is_visible_at(*first_bar_ts))
+            })
             .map(|event| Ok((event.ts, ex_rights_adjustment_for_event(event)?)))
             .collect::<Result<Vec<_>, String>>()?;
         // Validation normally guarantees this order. Stable sorting also preserves the public
@@ -217,7 +229,10 @@ impl AshareRuleConfig {
                             .get(adjustment_index)
                             .filter(|(ts, _)| *ts == ex_date)
                             .map(|(_, adjustment)| *adjustment)
-                            .unwrap_or_default();
+                            .unwrap_or(ExRightsAdjustment {
+                                share_factor: SCALE,
+                                ..ExRightsAdjustment::default()
+                            });
                         self.apply_ex_rights_adjustment(raw, adjustment)
                     })
                     .transpose()?;
@@ -285,7 +300,7 @@ impl AshareRuleConfig {
         for event in self
             .corporate_actions
             .iter()
-            .filter(|event| event.ts == ex_date)
+            .filter(|event| event.ts == ex_date && event.is_visible_at(anchor_ts))
         {
             adjustment.include(ex_rights_adjustment_for_event(event)?)?;
         }
@@ -330,6 +345,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ex_rights_adjustment_ignores_actions_published_after_the_first_bar() {
+        let previous_day = super::super::date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+        let ex_date = super::super::date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+        let first_bar = ex_date + 9 * 60 * 60 * 1_000 + 30 * 60 * 1_000;
+        let rules = AshareRuleConfig {
+            corporate_actions: vec![AshareCorporateActionEvent {
+                ts: ex_date,
+                action_type: AshareCorporateActionType::CashDividend,
+                cash_dividend_raw: SCALE / 2,
+                published_at_ms: Some(first_bar + 1),
+                ..AshareCorporateActionEvent::default()
+            }],
+            ..AshareRuleConfig::default()
+        };
+        let bars = [
+            Bar::new(
+                previous_day,
+                10 * SCALE,
+                10 * SCALE,
+                10 * SCALE,
+                10 * SCALE,
+                1,
+            ),
+            Bar::new(first_bar, 10 * SCALE, 10 * SCALE, 10 * SCALE, 10 * SCALE, 1),
+        ];
+
+        assert_eq!(rules.previous_close(&bars, 1).unwrap(), Some(10 * SCALE));
+        assert_eq!(
+            rules.previous_close_series(&bars).unwrap(),
+            vec![None, Some(10 * SCALE)]
+        );
+    }
+
+    #[test]
+    fn indexed_ex_rights_adjustment_uses_publication_visibility() {
+        let previous_day = super::super::date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+        let ex_date = super::super::date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+        let first_bar = ex_date + 9 * 60 * 60 * 1_000 + 30 * 60 * 1_000;
+        let mut bars = (0..7_999)
+            .map(|index| {
+                Bar::new(
+                    previous_day + index * 1_000,
+                    10 * SCALE,
+                    10 * SCALE,
+                    10 * SCALE,
+                    10 * SCALE,
+                    1,
+                )
+            })
+            .collect::<Vec<_>>();
+        bars.push(Bar::new(
+            first_bar,
+            10 * SCALE,
+            10 * SCALE,
+            10 * SCALE,
+            10 * SCALE,
+            1,
+        ));
+        let actions = (0..1_024)
+            .map(|index| AshareCorporateActionEvent {
+                ts: ex_date,
+                action_type: AshareCorporateActionType::CashDividend,
+                cash_dividend_raw: if index == 0 { SCALE / 2 } else { 0 },
+                published_at_ms: Some(first_bar + 1),
+                ..AshareCorporateActionEvent::default()
+            })
+            .collect();
+        let rules = AshareRuleConfig {
+            corporate_actions: actions,
+            ..AshareRuleConfig::default()
+        };
+
+        let series = rules.previous_close_series(&bars).unwrap();
+
+        assert_eq!(series.len(), 8_000);
+        assert_eq!(series[7_999], Some(10 * SCALE));
+    }
+
+    #[test]
     fn indexed_previous_close_series_rejects_corporate_action_sum_overflow() {
         let event = |cash_dividend_raw: i128| {
             serde_json::from_str::<AshareCorporateActionEvent>(&format!(
@@ -337,14 +431,16 @@ mod tests {
             ))
             .unwrap()
         };
-        let mut rules = AshareRuleConfig::default();
-        rules.corporate_actions = (0..1_024)
-            .map(|index| match index {
-                0 => event(i128::MAX),
-                1 => event(1),
-                _ => event(0),
-            })
-            .collect();
+        let rules = AshareRuleConfig {
+            corporate_actions: (0..1_024)
+                .map(|index| match index {
+                    0 => event(i128::MAX),
+                    1 => event(1),
+                    _ => event(0),
+                })
+                .collect(),
+            ..AshareRuleConfig::default()
+        };
         let bar = Bar::new(1, SCALE, SCALE, SCALE, SCALE, 1);
         let bars = vec![bar; 8_000];
 

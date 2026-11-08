@@ -42,6 +42,9 @@ use qx_app::{
 use qx_runtime::RuntimeConfig;
 use std::path::Path;
 
+mod report_readers;
+mod use_cases;
+
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
@@ -79,51 +82,71 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         std::process::exit(2);
     };
     let result = match &action {
-        AppCommand::ValidateDataset { spec } => validate(spec),
-        AppCommand::Backtest { spec } => backtest(spec),
-        AppCommand::ProviderBacktest { runtime, spec } => provider_backtest(runtime, spec),
+        AppCommand::ValidateDataset { spec } => use_cases::validate(spec),
+        AppCommand::Backtest { spec } => use_cases::backtest(spec),
+        AppCommand::ProviderBacktest { runtime, spec } => {
+            use_cases::provider_backtest(runtime, spec)
+        }
         AppCommand::ProviderDepthBacktest { runtime, spec } => {
-            provider_depth_backtest(runtime, spec)
+            use_cases::provider_depth_backtest(runtime, spec)
         }
-        AppCommand::Verify { outcome } => verify(outcome),
-        AppCommand::ReadReport { outcome } => read_bar_report(outcome),
-        AppCommand::ReadDepthReport { outcome } => read_depth_report(outcome),
-        AppCommand::ReadProviderReport { outcome } => read_provider_bar_report(outcome),
-        AppCommand::ReadProviderDepthReport { outcome } => read_provider_depth_report(outcome),
-        AppCommand::ReadMultiAccountReport { outcome } => read_multi_account_report(outcome),
+        AppCommand::Verify { outcome } => use_cases::verify(outcome),
+        AppCommand::ReadReport { outcome } => report_readers::read_bar_report(outcome),
+        AppCommand::ReadDepthReport { outcome } => report_readers::read_depth_report(outcome),
+        AppCommand::ReadProviderReport { outcome } => {
+            report_readers::read_provider_bar_report(outcome)
+        }
+        AppCommand::ReadProviderDepthReport { outcome } => {
+            report_readers::read_provider_depth_report(outcome)
+        }
+        AppCommand::ReadMultiAccountReport { outcome } => {
+            report_readers::read_multi_account_report(outcome)
+        }
         AppCommand::ReadMultiAccountJointReport { outcome } => {
-            read_multi_account_joint_report(outcome)
+            report_readers::read_multi_account_joint_report(outcome)
         }
-        AppCommand::ReadMultiLegReport { outcome } => read_multi_leg_report(outcome),
+        AppCommand::ReadMultiLegReport { outcome } => {
+            report_readers::read_multi_leg_report(outcome)
+        }
         AppCommand::ReadMultiLegResearchReport { request } => {
-            read_multi_leg_research_report(request)
+            report_readers::read_multi_leg_research_report(request)
         }
-        AppCommand::ReadMultiLegEventPage { request } => read_multi_leg_event_page(request),
-        AppCommand::ReadMultiMarketEventPage { request } => read_multi_market_event_page(request),
+        AppCommand::ReadMultiLegEventPage { request } => {
+            report_readers::read_multi_leg_event_page(request)
+        }
+        AppCommand::ReadMultiMarketEventPage { request } => {
+            report_readers::read_multi_market_event_page(request)
+        }
         AppCommand::ReadMultiMarketDepthEventPage { request } => {
-            read_multi_market_depth_event_page(request)
+            report_readers::read_multi_market_depth_event_page(request)
         }
         AppCommand::ReadMultiMarketDepthResearchReport { request } => {
-            read_multi_market_depth_research_report(request)
+            report_readers::read_multi_market_depth_research_report(request)
         }
         AppCommand::ReadMultiMarketResearchReport { request } => {
-            read_multi_market_research_report(request)
+            report_readers::read_multi_market_research_report(request)
         }
-        AppCommand::CompareRuns { spec } => compare(spec),
-        AppCommand::PlanRiskParity { spec } => risk_parity(spec),
-        AppCommand::PlanAlgoExecution { spec } => algo_execution(spec),
-        AppCommand::RunExperiment { spec } => experiment(spec),
-        AppCommand::RunDepthExperiment { spec } => depth_experiment(spec),
-        AppCommand::RunMultiLegExperiment { spec } => multi_leg_experiment(spec),
-        AppCommand::RunMultiMarketExperiment { spec } => multi_market_experiment(spec),
-        AppCommand::MultiMarketBacktest { spec } => multi_market_backtest(spec),
-        AppCommand::MultiMarketDepthBacktest { spec } => multi_market_depth_backtest(spec),
-        AppCommand::DepthBacktest { spec } => depth_backtest(spec),
-        AppCommand::VerifyDepth { outcome } => verify_depth(outcome),
-        AppCommand::MultiLegBacktest { spec } => multi_leg_backtest(spec),
-        AppCommand::MultiAccountBacktest { spec } => multi_account_backtest(spec),
-        AppCommand::MultiAccountDepthBacktest { spec } => multi_account_depth_backtest(spec),
-        AppCommand::MultiAccountJointBacktest { spec } => multi_account_joint_backtest(spec),
+        AppCommand::CompareRuns { spec } => use_cases::compare(spec),
+        AppCommand::PlanRiskParity { spec } => use_cases::risk_parity(spec),
+        AppCommand::PlanAlgoExecution { spec } => use_cases::algo_execution(spec),
+        AppCommand::RunExperiment { spec } => use_cases::experiment(spec),
+        AppCommand::RunDepthExperiment { spec } => use_cases::depth_experiment(spec),
+        AppCommand::RunMultiLegExperiment { spec } => use_cases::multi_leg_experiment(spec),
+        AppCommand::RunMultiMarketExperiment { spec } => use_cases::multi_market_experiment(spec),
+        AppCommand::MultiMarketBacktest { spec } => use_cases::multi_market_backtest(spec),
+        AppCommand::MultiMarketDepthBacktest { spec } => {
+            use_cases::multi_market_depth_backtest(spec)
+        }
+        AppCommand::DepthBacktest { spec } => use_cases::depth_backtest(spec),
+        AppCommand::VerifyDepth { outcome } => use_cases::verify_depth(outcome),
+        AppCommand::MultiLegBacktest { spec } => use_cases::multi_leg_backtest(spec),
+        AppCommand::MultiAccountBacktest { spec } => use_cases::multi_account_backtest(spec),
+        AppCommand::MultiAccountDepthBacktest { spec } => {
+            use_cases::multi_account_depth_backtest(spec)
+        }
+        AppCommand::MultiAccountJointBacktest { spec } => {
+            use_cases::multi_account_joint_backtest(spec)
+        }
     };
     match result {
         Ok(payload) => println!("{payload}"),
@@ -136,341 +159,6 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
     }
 }
 
-fn compare(spec_path: &Path) -> Result<String, AppError> {
-    let spec = CompareRunsSpec::from_json(&read_document(spec_path)?)?;
-    compare_runs(&spec, &context("compare-runs"))?.to_json()
-}
-
-fn risk_parity(spec_path: &Path) -> Result<String, AppError> {
-    let spec = RiskParitySpec::from_json(&read_document(spec_path)?)?;
-    plan_risk_parity(&spec, &context(&spec.portfolio_id))?.to_json()
-}
-
-fn algo_execution(spec_path: &Path) -> Result<String, AppError> {
-    let spec = AlgoExecutionSpec::from_json(&read_document(spec_path)?)?;
-    plan_algo_execution(&spec, &context(&spec.parent_id))?.to_json()
-}
-
-fn experiment(spec_path: &Path) -> Result<String, AppError> {
-    let spec = RunExperimentSpec::from_json(&read_document(spec_path)?)?;
-    run_experiment(&spec, &context(&spec.experiment_id))?.to_json()
-}
-
-fn multi_leg_experiment(spec_path: &Path) -> Result<String, AppError> {
-    let spec = RunMultiLegExperimentSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_leg_experiment(&spec, &context(&spec.experiment_id))?.to_json()
-}
-
-fn multi_market_experiment(spec_path: &Path) -> Result<String, AppError> {
-    let spec = RunMultiMarketExperimentSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_market_experiment(&spec, &context(&spec.experiment_id))?.to_json()
-}
-
-fn depth_experiment(spec_path: &Path) -> Result<String, AppError> {
-    let spec = RunDepthExperimentSpec::from_json(&read_document(spec_path)?)?;
-    run_depth_experiment(&spec, &context(&spec.experiment_id))?.to_json()
-}
-
-fn depth_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = DepthBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_depth_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn multi_leg_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiLegBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_leg_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn multi_account_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiAccountBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_account_backtest(&spec, &context(&spec.batch_id))?.to_json()
-}
-
-fn multi_account_depth_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiAccountDepthBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_account_depth_backtest(&spec, &context(&spec.batch_id))?.to_json()
-}
-
-fn multi_account_joint_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiAccountJointBacktestSpec::from_json(&read_document(spec_path)?)?;
-    qx_app::run_multi_account_joint_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn multi_market_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiMarketBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_market_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn multi_market_depth_backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = MultiMarketDepthBacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_multi_market_depth_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn verify_depth(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome = DepthBacktestOutcome::from_json(&read_document(outcome_path)?)?;
-    verify_depth_run(&outcome, &context(&outcome.run_id))?.to_json()
-}
-
-fn read_bar_report(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome = BacktestOutcome::from_json(&read_document(outcome_path)?)?;
-    let report = read_run_report_v1(&outcome, &context(&outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("Bar 研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_depth_report(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome = DepthBacktestOutcome::from_json(&read_document(outcome_path)?)?;
-    let report = read_depth_run_report_v1(&outcome, &context(&outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("深度研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_provider_bar_report(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome: ProviderBacktestOutcome = serde_json::from_str(&read_document(outcome_path)?)
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("Provider Bar 回测结果 JSON 无效: {error}"),
-            )
-        })?;
-    let report = read_provider_backtest_report_v1(&outcome, &context(&outcome.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("Provider Bar 研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_provider_depth_report(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome: ProviderDepthBacktestOutcome = serde_json::from_str(&read_document(outcome_path)?)
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("Provider 深度回测结果 JSON 无效: {error}"),
-            )
-        })?;
-    let report =
-        read_provider_depth_backtest_report_v1(&outcome, &context(&outcome.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("Provider 深度研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_account_report(outcome_path: &Path) -> Result<String, AppError> {
-    let payload = read_document(outcome_path)?;
-    let outcome: serde_json::Value = serde_json::from_str(&payload).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InvalidInput,
-            format!("多账户结果 JSON 无效: {error}"),
-        )
-    })?;
-    let batch_id = outcome
-        .get("batch_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("multi-account-report");
-    let report = read_multi_account_report_v1(&outcome, &context(batch_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多账户研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_account_joint_report(outcome_path: &Path) -> Result<String, AppError> {
-    let input: serde_json::Value =
-        serde_json::from_str(&read_document(outcome_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("联合账户报告请求 JSON 无效: {error}"),
-            )
-        })?;
-    let (outcome_value, options_value) = if let Some(object) = input.as_object() {
-        if let Some(outcome) = object.get("outcome") {
-            if object
-                .keys()
-                .any(|key| !matches!(key.as_str(), "outcome" | "joint_account_event_pages"))
-            {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "联合账户报告请求包含未知字段",
-                ));
-            }
-            (
-                outcome.clone(),
-                object.get("joint_account_event_pages").cloned(),
-            )
-        } else {
-            (input.clone(), None)
-        }
-    } else {
-        return Err(AppError::new(
-            AppErrorCategory::InvalidInput,
-            "联合账户报告请求必须是 JSON 对象",
-        ));
-    };
-    let outcome: MultiAccountJointBacktestOutcome =
-        serde_json::from_value(outcome_value).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("联合多账户结果 JSON 无效: {error}"),
-            )
-        })?;
-    let options = options_value
-        .map(|pages| {
-            serde_json::from_value::<MultiAccountJointReportReadOptionsV1>(serde_json::json!({
-                "joint_account_event_pages": pages
-            }))
-        })
-        .transpose()
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("联合账户事件分页选项无效: {error}"),
-            )
-        })?
-        .unwrap_or_default();
-    let report = read_multi_account_joint_report_v1_with_options(
-        &outcome,
-        &context(&outcome.run_id),
-        &options,
-    )?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("联合多账户研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_leg_report(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome = MultiLegBacktestOutcome::from_json(&read_document(outcome_path)?)?;
-    let report = read_multi_leg_report_facts_v1(&outcome, &context(&outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多腿研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_leg_research_report(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiLegResearchReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多腿完整研究报告请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report = read_multi_leg_research_report_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多腿完整研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_leg_event_page(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiLegEventReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多腿事件报告读取请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report = read_multi_leg_event_report_page_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多腿事件报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_market_event_page(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiMarketEventReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多市场事件报告读取请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report =
-        read_multi_market_event_report_page_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多市场事件报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_market_depth_event_page(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiMarketDepthEventReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多市场深度事件报告读取请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report =
-        read_multi_market_depth_event_report_page_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多市场深度事件报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_market_research_report(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiMarketResearchReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多市场完整研究报告请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report = read_multi_market_research_report_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多市场完整研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
-fn read_multi_market_depth_research_report(request_path: &Path) -> Result<String, AppError> {
-    let request: qx_app::MultiMarketDepthResearchReportReadRequestV1 =
-        serde_json::from_str(&read_document(request_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("多市场深度完整研究报告请求 JSON 无效: {error}"),
-            )
-        })?;
-    let report =
-        read_multi_market_depth_research_report_v1(&request, &context(&request.outcome.run_id))?;
-    serde_json::to_string(&report).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("多市场深度完整研究报告 DTO 序列化失败: {error}"),
-        )
-    })
-}
-
 /// 读一份 JSON 文档。文件不在是 `DataUnavailable`（去把数据准备好），不是"输入写错了"。
 fn read_document(path: &Path) -> Result<String, AppError> {
     std::fs::read_to_string(path)
@@ -480,102 +168,4 @@ fn read_document(path: &Path) -> Result<String, AppError> {
 /// 三个入口的调用上下文完全同形：R 档 + 身份串当 correlation id + 本二进制的构建身份。
 fn context(correlation_id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, correlation_id).with_code_commit(BUILD_REVISION)
-}
-
-fn validate(spec_path: &Path) -> Result<String, AppError> {
-    let spec = DatasetSpec::from_json(&read_document(spec_path)?)?;
-    validate_dataset(&spec, &context(&spec.dataset_id))?.to_json()
-}
-
-fn backtest(spec_path: &Path) -> Result<String, AppError> {
-    let spec = BacktestSpec::from_json(&read_document(spec_path)?)?;
-    run_backtest(&spec, &context(&spec.run_id))?.to_json()
-}
-
-fn provider_backtest(runtime_path: &Path, spec_path: &Path) -> Result<String, AppError> {
-    let runtime = RuntimeConfig::from_json(&read_document(runtime_path)?).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InvalidInput,
-            format!("运行时 Provider 配置无效: {error}"),
-        )
-    })?;
-    let spec: ProviderBacktestSpec =
-        serde_json::from_str(&read_document(spec_path)?).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("ProviderBacktestSpec JSON 无效: {error}"),
-            )
-        })?;
-    spec.validate()?;
-    let registry = qx_service::provider_registry::from_runtime_config(
-        &runtime,
-        runtime_path,
-        &crate::python_interpreter(),
-    )
-    .map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("装配 ProviderRegistry 失败: {error}"),
-        )
-    })?
-    .ok_or_else(|| {
-        AppError::new(
-            AppErrorCategory::DataUnavailable,
-            "运行时配置没有 api.data_providers，无法执行 Provider 回测",
-        )
-    })?;
-    let outcome =
-        run_provider_backtest_with_manifest(&registry, &spec, &context(&spec.backtest.run_id))?;
-    serde_json::to_string(&outcome).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("ProviderBacktestOutcome 序列化失败: {error}"),
-        )
-    })
-}
-
-fn provider_depth_backtest(runtime_path: &Path, spec_path: &Path) -> Result<String, AppError> {
-    let runtime = RuntimeConfig::from_json(&read_document(runtime_path)?).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InvalidInput,
-            format!("运行时 Provider 配置无效: {error}"),
-        )
-    })?;
-    let spec: ProviderDepthBacktestSpec = serde_json::from_str(&read_document(spec_path)?)
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("ProviderDepthBacktestSpec JSON 无效: {error}"),
-            )
-        })?;
-    spec.validate()?;
-    let registry = qx_service::provider_registry::from_runtime_config(
-        &runtime,
-        runtime_path,
-        &crate::python_interpreter(),
-    )
-    .map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("装配 ProviderRegistry 失败: {error}"),
-        )
-    })?
-    .ok_or_else(|| {
-        AppError::new(
-            AppErrorCategory::DataUnavailable,
-            "运行时配置没有 api.data_providers，无法执行 Provider 深度回测",
-        )
-    })?;
-    let outcome = run_provider_depth_backtest(&registry, &spec, &context(&spec.backtest.run_id))?;
-    serde_json::to_string(&outcome).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InternalInvariant,
-            format!("ProviderDepthBacktestOutcome 序列化失败: {error}"),
-        )
-    })
-}
-
-fn verify(outcome_path: &Path) -> Result<String, AppError> {
-    let outcome = BacktestOutcome::from_json(&read_document(outcome_path)?)?;
-    verify_run(&outcome, &context(&outcome.run_id))?.to_json()
 }

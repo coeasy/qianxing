@@ -270,10 +270,15 @@ fn run_backtest_inner_unchecked_with_details(
         Some(portfolio) => portfolio
             .primary_reserved_capital()
             .map_err(|message| AppError::new(AppErrorCategory::InvalidInput, message))?,
-        None => spec.initial_cash_exact.unwrap_or_else(|| {
-            ExactDecimal::from_parts(spec.initial_cash_raw, 9)
-                .expect("validated initial cash fits ExactDecimal")
-        }),
+        None => match spec.initial_cash_exact {
+            Some(value) => value,
+            None => ExactDecimal::from_parts(spec.initial_cash_raw, 9).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("初始资金无法表示为精确金额: {error}"),
+                )
+            })?,
+        },
     };
     let primary_priority = spec
         .portfolio
@@ -562,6 +567,26 @@ fn run_backtest_inner_unchecked_with_details(
         final_equity_raw: report.final_equity(),
         fees_raw: report.fees_raw,
         turnover_raw: report.turnover_raw,
+        metrics: {
+            let risk = qx_core::backtest_risk_metrics(
+                &report.equity,
+                report.return_bps,
+                report.max_drawdown_bps,
+            );
+            Some(serde_json::json!({
+                "return_bps": report.return_bps,
+                "max_drawdown_bps": report.max_drawdown_bps,
+                "fees_raw": report.fees_raw,
+                "turnover_raw": report.turnover_raw,
+                "final_equity_raw": report.final_equity(),
+                "sharpe": risk.sharpe,
+                "sortino": risk.sortino,
+                "calmar": risk.calmar,
+                "win_rate": risk.win_rate,
+                "profit_factor": risk.profit_factor,
+            }))
+        },
+        metrics_definition: Some(crate::artifact_store::backtest_metrics_definition_json()),
         metrics_exact: Some(report.exact_metrics_json()),
         replay_events: replay.events as u64,
         replay: Some(RunReplaySummary {
@@ -618,10 +643,12 @@ fn run_backtest_inner_unchecked_with_details(
     write_text(&artifacts.equity, &equity_payload)?;
     write_text(&artifacts.fills, &fills_csv(&report.fills)?)?;
     write_text(
-        artifacts
-            .event_trace
-            .as_deref()
-            .expect("Bar backtest trace path"),
+        artifacts.event_trace.as_deref().ok_or_else(|| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                "Bar backtest 缺少事件追踪产物路径",
+            )
+        })?,
         &event_trace_jsonl(report.event_log.events())?,
     )?;
     // 核心文件先写完，再发布 manifest 和 RunRecord；RunRecord 是这套身份文件的完成标记。

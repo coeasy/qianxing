@@ -76,7 +76,7 @@ impl VenueCapabilities {
                 if order.instrument.venue.is_binance()
                     && !order
                         .instrument
-                        .symbol
+                        .symbol()
                         .to_ascii_uppercase()
                         .contains("-PERP") => {}
             VenueMarketScope::RuntimeConfigured

@@ -2,15 +2,23 @@
 
 use crate::StorageError;
 
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 4;
 #[cfg(feature = "sqlite")]
 pub(crate) const SQLITE_V1_SCHEMA: &str = include_str!("../migrations/sqlite/0001_schema.sql");
 #[cfg(feature = "sqlite")]
 pub(crate) const SQLITE_V2_SCHEMA: &str = include_str!("../migrations/sqlite/0002_schema.sql");
+#[cfg(feature = "sqlite")]
+pub(crate) const SQLITE_V3_SCHEMA: &str = include_str!("../migrations/sqlite/0003_schema.sql");
+#[cfg(feature = "sqlite")]
+pub(crate) const SQLITE_V4_SCHEMA: &str = include_str!("../migrations/sqlite/0004_schema.sql");
 #[cfg(feature = "postgres")]
 pub(crate) const POSTGRES_V1_SCHEMA: &str = include_str!("../migrations/postgres/0001_schema.sql");
 #[cfg(feature = "postgres")]
 pub(crate) const POSTGRES_V2_SCHEMA: &str = include_str!("../migrations/postgres/0002_schema.sql");
+#[cfg(feature = "postgres")]
+pub(crate) const POSTGRES_V3_SCHEMA: &str = include_str!("../migrations/postgres/0003_schema.sql");
+#[cfg(feature = "postgres")]
+pub(crate) const POSTGRES_V4_SCHEMA: &str = include_str!("../migrations/postgres/0004_schema.sql");
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub(crate) const CREATE_SCHEMA_MIGRATIONS_SQL: &str =
     "CREATE TABLE IF NOT EXISTS qx_schema_migrations (
@@ -18,10 +26,10 @@ pub(crate) const CREATE_SCHEMA_MIGRATIONS_SQL: &str =
          applied_ts TEXT NOT NULL
      );";
 
-const MIGRATION_VERSIONS: [&str; 2] = ["1", "2"];
+const MIGRATION_VERSIONS: [&str; 4] = ["1", "2", "3", "4"];
 
 /// Return unapplied migrations in order. An unversioned database is bootstrappable only when it
-/// has no business tables; databases already at v1 can be upgraded transactionally to v2.
+/// has no business tables; previously versioned databases upgrade transactionally in order.
 pub(crate) fn pending_schema_versions(
     versions: &[String],
     has_existing_schema_tables: bool,
@@ -81,14 +89,27 @@ mod tests {
 
     #[test]
     fn migration_plan_upgrades_v1_and_rejects_unknown_or_unversioned_data() {
-        assert_eq!(pending_schema_versions(&[], false).unwrap(), vec!["1", "2"]);
+        assert_eq!(
+            pending_schema_versions(&[], false).unwrap(),
+            vec!["1", "2", "3", "4"]
+        );
         assert_eq!(
             pending_schema_versions(&["1".into()], true).unwrap(),
-            vec!["2"]
+            vec!["2", "3", "4"]
         );
-        assert!(pending_schema_versions(&["1".into(), "2".into()], true)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            pending_schema_versions(&["1".into(), "2".into()], true).unwrap(),
+            vec!["3", "4"]
+        );
+        assert!(
+            pending_schema_versions(&["1".into(), "2".into(), "3".into()], true).unwrap()
+                == vec!["4"]
+        );
+        assert!(
+            pending_schema_versions(&["1".into(), "2".into(), "3".into(), "4".into()], true)
+                .unwrap()
+                .is_empty()
+        );
         assert!(pending_schema_versions(&[], true).is_err());
         assert!(pending_schema_versions(&["2".into()], true).is_err());
         assert!(pending_schema_versions(&["1".into(), "3".into()], true).is_err());

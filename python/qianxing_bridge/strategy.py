@@ -23,6 +23,7 @@ INPUT_V6_SCHEMA_VERSION = 6
 INPUT_V7_SCHEMA_VERSION = 7
 INPUT_V8_SCHEMA_VERSION = 8
 INPUT_V9_SCHEMA_VERSION = 9
+INPUT_V10_SCHEMA_VERSION = 10
 STRATEGY_CHECKPOINT_SCHEMA_VERSION = 1
 ORDER_STATUS_VALUES = {
     "pending_submit",
@@ -875,6 +876,7 @@ class StrategyInput:
     execution_updates: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     fill_updates: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     strategy_checkpoint: Mapping[str, Any] | None = None
+    strategy_checkpoint_sha256: str | None = None
     market_ticks: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     account_updates: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     market_order_books: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
@@ -893,6 +895,7 @@ class StrategyInput:
                 INPUT_V7_SCHEMA_VERSION,
                 INPUT_V8_SCHEMA_VERSION,
                 INPUT_V9_SCHEMA_VERSION,
+                INPUT_V10_SCHEMA_VERSION,
             )
         ):
             raise ValueError(f"unsupported strategy schema_version: {self.schema_version}")
@@ -930,6 +933,7 @@ class StrategyInput:
         if self.schema_version not in (
             INPUT_V5_SCHEMA_VERSION, INPUT_V6_SCHEMA_VERSION, INPUT_V7_SCHEMA_VERSION,
             INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION,
+            INPUT_V10_SCHEMA_VERSION,
         ) and has_exact_ohlcv:
             raise ValueError("strategy input v1-v4 cannot contain exact OHLCV")
         if self.schema_version == INPUT_V6_SCHEMA_VERSION and not self.market_ticks:
@@ -943,15 +947,31 @@ class StrategyInput:
         if self.schema_version == INPUT_V8_SCHEMA_VERSION and not self.market_order_books:
             raise ValueError("strategy input v8 requires non-empty market_order_books")
         has_exact_account_facts = bool(self.cash_exact) or self.available_margin_exact is not None
-        if has_exact_account_facts and self.schema_version != INPUT_V9_SCHEMA_VERSION:
+        if has_exact_account_facts and self.schema_version not in (
+            INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION
+        ):
             raise ValueError("exact cash/margin requires strategy input v9")
         if self.schema_version == INPUT_V9_SCHEMA_VERSION and not has_exact_account_facts:
             raise ValueError("strategy input v9 requires non-empty cash_exact or available_margin_exact")
-        if self.schema_version not in (INPUT_V6_SCHEMA_VERSION, INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION) and self.market_ticks:
+        if self.schema_version == INPUT_V10_SCHEMA_VERSION:
+            checkpoint = self.strategy_checkpoint
+            if (
+                checkpoint is None
+                or not isinstance(self.strategy_checkpoint_sha256, str)
+                or re.fullmatch(r"[A-Fa-f0-9]{64}", self.strategy_checkpoint_sha256) is None
+                or not isinstance(checkpoint.get("adapter_state"), Mapping)
+                or checkpoint["adapter_state"].get("state_mode") != "external-process"
+            ):
+                raise ValueError(
+                    "strategy input v10 requires an external-process checkpoint and its 64-digit SHA-256"
+                )
+        elif self.strategy_checkpoint_sha256 is not None:
+            raise ValueError("strategy_checkpoint_sha256 requires strategy input v10")
+        if self.schema_version not in (INPUT_V6_SCHEMA_VERSION, INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION) and self.market_ticks:
             raise ValueError("strategy input v1-v5 cannot contain market_ticks")
-        if self.schema_version not in (INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION) and self.account_updates:
+        if self.schema_version not in (INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION) and self.account_updates:
             raise ValueError("strategy input v1-v6 cannot contain account_updates")
-        if self.schema_version not in (INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION) and self.market_order_books:
+        if self.schema_version not in (INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION) and self.market_order_books:
             raise ValueError("strategy input v1-v7 cannot contain market_order_books")
         for value, name in (
             (self.request_id, "request_id"),
@@ -1117,6 +1137,7 @@ class StrategyInput:
             INPUT_V7_SCHEMA_VERSION,
             INPUT_V8_SCHEMA_VERSION,
             INPUT_V9_SCHEMA_VERSION,
+            INPUT_V10_SCHEMA_VERSION,
         ) and self.execution_updates:
             result["execution_updates"] = [dict(update) for update in self.execution_updates]
         if self.schema_version in (
@@ -1127,21 +1148,24 @@ class StrategyInput:
             INPUT_V7_SCHEMA_VERSION,
             INPUT_V8_SCHEMA_VERSION,
             INPUT_V9_SCHEMA_VERSION,
+            INPUT_V10_SCHEMA_VERSION,
         ) and self.fill_updates:
             result["fill_updates"] = [dict(update) for update in self.fill_updates]
         if self.strategy_checkpoint is not None:
             result["strategy_checkpoint"] = dict(self.strategy_checkpoint)
-        if self.schema_version in (INPUT_V6_SCHEMA_VERSION, INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION) and self.market_ticks:
+        if self.schema_version in (INPUT_V6_SCHEMA_VERSION, INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION) and self.market_ticks:
             result["market_ticks"] = [dict(tick) for tick in self.market_ticks]
-        if self.schema_version in (INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION) and self.account_updates:
+        if self.schema_version in (INPUT_V7_SCHEMA_VERSION, INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION) and self.account_updates:
             result["account_updates"] = [dict(update) for update in self.account_updates]
-        if self.schema_version in (INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION):
+        if self.schema_version in (INPUT_V8_SCHEMA_VERSION, INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION):
             result["market_order_books"] = [dict(book) for book in self.market_order_books]
-        if self.schema_version == INPUT_V9_SCHEMA_VERSION:
+        if self.schema_version in (INPUT_V9_SCHEMA_VERSION, INPUT_V10_SCHEMA_VERSION):
             if self.cash_exact:
                 result["cash_exact"] = dict(self.cash_exact)
             if self.available_margin_exact is not None:
                 result["available_margin_exact"] = self.available_margin_exact
+        if self.schema_version == INPUT_V10_SCHEMA_VERSION:
+            result["strategy_checkpoint_sha256"] = self.strategy_checkpoint_sha256
         return result
 
     def to_json(self) -> str:
@@ -1193,6 +1217,11 @@ class StrategyInput:
                 None
                 if value.get("strategy_checkpoint") is None
                 else dict(value["strategy_checkpoint"])
+            ),
+            strategy_checkpoint_sha256=(
+                None
+                if value.get("strategy_checkpoint_sha256") is None
+                else str(value["strategy_checkpoint_sha256"])
             ),
             market_ticks=tuple(dict(tick) for tick in value.get("market_ticks", [])),
             account_updates=tuple(dict(update) for update in value.get("account_updates", [])),

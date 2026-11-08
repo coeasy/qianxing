@@ -508,7 +508,7 @@ fn rust_invokes_python_basestrategy_class_through_process_contract() {
         StrategyTransport::SharedMemoryJson,
         StrategyTransport::SharedMemoryColumnar,
     ] {
-        let mut client = PythonStrategyClient::start_with_strategy_config_in(
+        let mut client = PythonStrategyClient::start_for_runtime_worker(
             module.to_string_lossy().as_ref(),
             PYTHON_STRATEGY_TIMEOUT_MS,
             transport,
@@ -517,7 +517,8 @@ fn rust_invokes_python_basestrategy_class_through_process_contract() {
             Some(&spec),
             Some("main"),
             Some("okx"),
-            &ring_directory,
+            None,
+            Some("strategy-base-class-test"),
         )
         .unwrap();
 
@@ -558,6 +559,216 @@ fn rust_invokes_python_basestrategy_class_through_process_contract() {
         );
         assert!(client.take_strategy_checkpoint().is_some());
     }
+    // The real Runtime launcher supplies a host-owned catalog to class workers.
+    // A fresh process must accept supported requirements and still checkpoint.
+    std::fs::create_dir_all(&ring_directory).unwrap();
+    let capability_module = ring_directory.join("capability_strategy.py");
+    let source = std::fs::read_to_string(&module).unwrap();
+    let declaration = r#"
+STRATEGY_MANIFEST = {
+    "schema_version": 1, "parameters": {},
+    "instrument_requirements": {"requires_explicit_spec": False},
+    "data_level": "bar", "warmup_bars": 1,
+    "required_capabilities": ["bar", "bar_history", "fill_updates", "order_status_updates", "account_updates", "position_updates", "durable_checkpoint"]
+}
+"#;
+    std::fs::write(&capability_module, format!("{source}\n{declaration}")).unwrap();
+    for transport in [
+        StrategyTransport::Jsonl,
+        StrategyTransport::FramedJson,
+        StrategyTransport::SharedMemoryJson,
+        StrategyTransport::SharedMemoryColumnar,
+    ] {
+        let mut runtime_client = PythonStrategyClient::start_for_runtime_worker(
+            capability_module.to_string_lossy().as_ref(),
+            5000,
+            transport,
+            SharedRingConfig::default(),
+            None,
+            Some(&spec),
+            Some("main"),
+            Some("okx"),
+            None,
+            Some("strategy-capability-test"),
+        )
+        .unwrap();
+        assert_eq!(runtime_client.request(&input).unwrap().intents.len(), 1);
+        assert!(runtime_client.take_strategy_checkpoint().is_some());
+    }
+    // A backtest advertises its local host catalog, never the Runtime catalog.
+    let local_capabilities =
+        qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_python(Some("bar"));
+    let backtest = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        capability_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        None,
+        Some("bar-backtest:capability-test"),
+        Some(&local_capabilities),
+    );
+    assert!(
+        backtest.is_err(),
+        "backtest must not advertise Runtime capabilities"
+    );
+    // Local Python file mode receives the local host catalog and validates the
+    // module-level manifest before exposing the worker for request dispatch.
+    let file_module = ring_directory.join("file_strategy.py");
+    let strategy_target = workspace_root
+        .join("python")
+        .join("tests")
+        .join("fixtures")
+        .join("strategy_target.py");
+    let file_source = std::fs::read_to_string(strategy_target).unwrap();
+    std::fs::write(
+        &file_module,
+        format!("{file_source}\nSTRATEGY_MANIFEST = {{'required_capabilities': ['bar']}}\n"),
+    )
+    .unwrap();
+    let mut file_input = input.clone();
+    file_input.research_targets.insert("BTC/USDT.OKX".into(), 3);
+    let mut file_client = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        file_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("local-python-file-capability"),
+        Some(&local_capabilities),
+    )
+    .expect("local Python file accepts its delivered Bar capability");
+    file_client
+        .request(&file_input)
+        .expect("local Python file dispatches after capability negotiation");
+    let unsupported_file_module = ring_directory.join("unsupported_file_strategy.py");
+    std::fs::write(
+        &unsupported_file_module,
+        format!("{file_source}\nSTRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\n"),
+    )
+    .unwrap();
+    let mut rejected_file = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        unsupported_file_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("local-python-file-unsupported-capability"),
+        Some(&local_capabilities),
+    )
+    .expect("local Python file worker starts before its first request");
+    let rejected_file = rejected_file
+        .request(&file_input)
+        .expect_err("local Python file rejects Timer before calling its handler");
+    assert!(rejected_file.contains("timer"), "{rejected_file}");
+
+    // Runtime module-function mode has a distinct server catalog from class mode.
+    let module_function = ring_directory.join("module_function_strategy.py");
+    std::fs::write(
+        &module_function,
+        format!("{file_source}\nSTRATEGY_STATELESS = True\nSTRATEGY_MANIFEST = {{'required_capabilities': ['bar', 'durable_checkpoint']}}\n"),
+    )
+    .unwrap();
+    let mut module_function_client = PythonStrategyClient::start_for_runtime_worker(
+        module_function.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("runtime-module-function-capability"),
+    )
+    .expect("Runtime module-function accepts Bar and durable checkpoint requirements");
+    module_function_client
+        .request(&file_input)
+        .expect("Runtime module-function dispatches after capability negotiation");
+    assert!(module_function_client.take_strategy_checkpoint().is_some());
+    std::fs::write(
+        &module_function,
+        format!("{file_source}\nSTRATEGY_STATELESS = True\nSTRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\n"),
+    )
+    .unwrap();
+    let mut rejected_module_function = PythonStrategyClient::start_for_runtime_worker(
+        module_function.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("runtime-module-function-unsupported-capability"),
+    )
+    .expect("Runtime module-function host starts before its first request");
+    let rejected_module_function = rejected_module_function
+        .request(&file_input)
+        .expect_err("Runtime module-function rejects Timer before calling its handler");
+    assert!(
+        rejected_module_function.contains("timer"),
+        "{rejected_module_function}"
+    );
+
+    // Missing capability fails at startup, before the factory can write a marker.
+    let marker = ring_directory.join("factory-executed");
+    let rejected_source = format!(
+        "STRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\ndef create_strategy(spec):\n    open({:?}, 'w').write('bad')\n", marker.to_string_lossy()
+    );
+    std::fs::write(&capability_module, rejected_source).unwrap();
+    let rejected = PythonStrategyClient::start_for_runtime_worker(
+        capability_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        None,
+        Some("strategy-capability-test"),
+    );
+    assert!(rejected.is_err());
+    assert!(!marker.exists());
+    // A factory that never finishes cannot publish Runtime readiness.
+    std::fs::write(
+        &capability_module,
+        "import time\ndef create_strategy(spec):\n    time.sleep(30)\n",
+    )
+    .unwrap();
+    let audit_path = ring_directory.join("hung-startup.jsonl");
+    let timed_out = PythonStrategyClient::start_for_runtime_worker(
+        capability_module.to_string_lossy().as_ref(),
+        500,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        Some(&audit_path),
+        Some("strategy-capability-timeout"),
+    )
+    .err()
+    .expect("hung factory must fail startup");
+    assert!(
+        timed_out.contains("initialization timed out"),
+        "{timed_out}"
+    );
+    assert!(!audit_path.with_extension("ready").exists());
     let _ = std::fs::remove_dir_all(ring_directory);
 }
 

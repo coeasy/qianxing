@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/provider-depth-backtest-spec-v1.json",
   "title": "Qianxing ProviderDepthBacktestSpec v1",
-  "description": "Provider Quote fetch, immutable L1/L2 freeze with source identity, and shared Rust depth backtest input. Runtime binds exactly one instrument, Quote/tick request, required data tier, and matching optional market spec.",
+  "description": "Provider Quote fetch, immutable L1/L2 freeze with source identity, owner-supplied DatasetSnapshotContextV1, and shared Rust depth backtest input.",
   "type": "object",
   "required": [
     "schema_version",
     "data_request",
-    "backtest"
+    "backtest",
+    "timezone",
+    "snapshot_context"
   ],
   "properties": {
     "schema_version": {
@@ -18,6 +20,14 @@
     },
     "backtest": {
       "$ref": "#/$defs/DepthBacktestSpec"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "snapshot_context": {
+      "$ref": "dataset-snapshot-context-v1.json"
     }
   },
   "additionalProperties": false,

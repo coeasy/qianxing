@@ -94,6 +94,14 @@ pub(super) struct RunSummary {
     pub final_equity_raw: i128,
     pub fees_raw: i128,
     pub turnover_raw: i128,
+    /// Rust-owned metric projection shared by HTML/XLSX/JSON report consumers.
+    /// Absent in older schema-v1 run summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<serde_json::Value>,
+    /// Versioned definitions for risk-ratio periods and fee projections.
+    /// Absent in older schema-v1 run summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_definition: Option<serde_json::Value>,
     /// Currency-aware, scale-preserving costs and turnover; absent on legacy summaries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics_exact: Option<serde_json::Value>,

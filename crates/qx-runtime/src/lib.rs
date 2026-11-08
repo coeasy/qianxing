@@ -21,9 +21,13 @@ mod data_binding;
 #[cfg(feature = "nats")]
 mod messaging_workers;
 mod pipeline;
+mod reconcile;
 mod runtime_config;
 mod strategy_contract;
+mod strategy_deployment_config;
+pub mod strategy_deployment_store;
 mod strategy_environment;
+mod strategy_observation;
 mod strategy_process_diagnostics;
 mod supervision;
 mod time;
@@ -59,9 +63,19 @@ pub use pipeline::{
     PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,
     RuntimeIngestReceipt, PIPELINE_INGEST_WARNING_BUDGET_NS,
 };
+pub use reconcile::{
+    load_reconcile_reports, require_fresh_clean_reconciliation, ReconcileReportSnapshot,
+    LIVE_RECONCILE_MAX_AGE_MS,
+};
 pub use runtime_config::*;
 pub use strategy_contract::*;
+pub use strategy_deployment_config::deployment_runtime_config;
 pub use strategy_environment::{strategy_child_environment, validate_strategy_external_env};
+pub use strategy_observation::{
+    runtime_config_digest, StrategyHostLifecycleEvidenceV1, StrategyHostLifecycleEvidenceV2,
+    StrategyWorkerObservationV1, StrategyWorkerObservationV2, StrategyWorkerObservationV3,
+    StrategyWorkerPhase,
+};
 pub use strategy_process_diagnostics::{
     read_capped_worker_line, record_stderr_tail, stderr_tail_note, STDERR_TAIL_LINES,
     STDERR_TAIL_MAX_CHARS,

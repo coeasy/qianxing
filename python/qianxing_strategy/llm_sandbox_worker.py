@@ -176,6 +176,7 @@ def _guest_environment_setup(
     account_id: str | None,
     venue_id: str | None,
     artifact_sha256: str | None,
+    host_capabilities_json: str | None,
     package_version: str,
 ) -> str:
     # Values are serialized as Python literals and contain only host-validated
@@ -197,6 +198,10 @@ def _guest_environment_setup(
         env["QX_STRATEGY_VENUE_ID"] = venue_id
     if artifact_sha256:
         env["QX_STRATEGY_ARTIFACT_SHA256"] = artifact_sha256
+    if host_capabilities_json:
+        env["QX_STRATEGY_HOST_CAPABILITIES_JSON"] = host_capabilities_json
+    if os.environ.get("QX_STRATEGY_REQUIRE_CHECKPOINT") == "true":
+        env["QX_STRATEGY_REQUIRE_CHECKPOINT"] = "true"
     setup = "\n".join(
         [
             "import argparse as _qx_argparse",
@@ -537,6 +542,7 @@ class LlmSandboxPythonStrategyWorker:
                         account_id=self.account_id,
                         venue_id=self.venue_id,
                         artifact_sha256=self.artifact_sha256 or None,
+                        host_capabilities_json=os.environ.get("QX_STRATEGY_HOST_CAPABILITIES_JSON"),
                         package_version=self.package_version,
                     ),
                     "class _QxBoundedSink:\n"

@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const EXCHANGE_GATEWAY_SCHEMA_VERSION: u32 = 1;
+pub const EXCHANGE_GATEWAY_HEALTH_SCHEMA_VERSION: u32 = 2;
 pub const INSTRUMENT_RULES_SCHEMA_VERSION: u32 = 1;
 pub const CAPABILITY_PROFILE_SCHEMA_VERSION: u32 = 1;
 
@@ -99,6 +100,8 @@ pub(crate) struct GatewayWorkerHealthV1 {
     pub status: GatewayWorkerHealthStatus,
     pub business_status: GatewayBusinessHealthStatus,
     pub heartbeat_timestamp_seconds: Option<u64>,
+    pub venue_reconnects_total: Option<u64>,
+    pub venue_last_event_timestamp_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -570,11 +573,20 @@ impl ExchangeGatewayRegistry {
                                         }
                                     })
                                     .unwrap_or(GatewayBusinessHealthStatus::Unobserved);
+                                let venue_diagnostics = fact.and_then(|fact| {
+                                    fact.venues
+                                        .get(&gateway.venue_id.as_str().to_ascii_uppercase())
+                                });
                                 GatewayWorkerHealthV1 {
                                     worker_id: worker_id.clone(),
                                     status,
                                     business_status,
                                     heartbeat_timestamp_seconds,
+                                    venue_reconnects_total: venue_diagnostics
+                                        .and_then(|diagnostics| diagnostics.reconnects_total),
+                                    venue_last_event_timestamp_seconds: venue_diagnostics.and_then(
+                                        |diagnostics| diagnostics.last_event_timestamp_seconds,
+                                    ),
                                 }
                             })
                             .collect::<Vec<_>>();
@@ -587,7 +599,7 @@ impl ExchangeGatewayRegistry {
                     })
                     .collect();
                 ExchangeGatewayHealthV1 {
-                    schema_version: EXCHANGE_GATEWAY_SCHEMA_VERSION,
+                    schema_version: EXCHANGE_GATEWAY_HEALTH_SCHEMA_VERSION,
                     venue_id: gateway.venue_id.clone(),
                     account_id: gateway.account_id.clone(),
                     account_event_log: gateway.account_event_log.clone(),
@@ -639,6 +651,13 @@ struct WorkerMetricFact {
     up: Option<bool>,
     heartbeat_timestamp_seconds: Option<u64>,
     business: BTreeMap<ExchangeGatewayPort, WorkerBusinessMetricFact>,
+    venues: BTreeMap<String, WorkerVenueMetricFact>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WorkerVenueMetricFact {
+    reconnects_total: Option<u64>,
+    last_event_timestamp_seconds: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -661,6 +680,10 @@ fn parse_worker_metrics(
             "business_status"
         } else if line.starts_with("qx_gateway_port_business_timestamp_seconds{") {
             "business_timestamp"
+        } else if line.starts_with("qx_gateway_venue_reconnects_total{") {
+            "venue_reconnects"
+        } else if line.starts_with("qx_gateway_venue_last_event_timestamp_seconds{") {
+            "venue_last_event"
         } else {
             continue;
         };
@@ -698,10 +721,33 @@ fn parse_worker_metrics(
                     _ => unreachable!("business metric kind is selected from known prefixes"),
                 }
             }
+            "venue_reconnects" | "venue_last_event" => {
+                let Some(venue) = metric_label_value(line, "venue") else {
+                    continue;
+                };
+                let diagnostics = fact.venues.entry(venue.to_ascii_uppercase()).or_default();
+                match metric {
+                    "venue_reconnects" => {
+                        diagnostics.reconnects_total = value.map(|value| value as u64)
+                    }
+                    "venue_last_event" => {
+                        diagnostics.last_event_timestamp_seconds = value.map(|value| value as u64)
+                    }
+                    _ => unreachable!("venue metric kind is selected from known prefixes"),
+                }
+            }
             _ => unreachable!("metric kind is selected from known worker metric prefixes"),
         }
     }
     result
+}
+
+fn metric_label_value<'a>(line: &'a str, label: &str) -> Option<&'a str> {
+    let labels = line.split_once('{')?.1.split_once('}')?.0;
+    labels.split(',').find_map(|pair| {
+        let (key, value) = pair.trim().split_once('=')?;
+        (key == label).then(|| value.trim().trim_matches('"'))
+    })
 }
 
 fn aggregate_port_health(workers: &[GatewayWorkerHealthV1]) -> GatewayPortHealthStatus {
@@ -781,12 +827,12 @@ pub(crate) fn attach_gateway_health_to_readiness(
 ) {
     let gateway_health = match ExchangeGatewayRegistry::from_runtime_config(config) {
         Ok(registry) => serde_json::json!({
-            "schema_version": EXCHANGE_GATEWAY_SCHEMA_VERSION,
+            "schema_version": EXCHANGE_GATEWAY_HEALTH_SCHEMA_VERSION,
             "source": "worker_metrics",
             "gateways": registry.health_snapshots(metrics, now_ms, stale_after_ms),
         }),
         Err(error) => serde_json::json!({
-            "schema_version": EXCHANGE_GATEWAY_SCHEMA_VERSION,
+            "schema_version": EXCHANGE_GATEWAY_HEALTH_SCHEMA_VERSION,
             "status": "unavailable",
             "error_code": "EXCHANGE_GATEWAY_REGISTRY_INVALID",
             "detail": error,
@@ -1119,6 +1165,55 @@ mod tests {
             market_data.business_status,
             GatewayBusinessHealthStatus::Unobserved
         );
+    }
+
+    #[test]
+    fn health_projection_exposes_venue_diagnostics_without_changing_health_status() {
+        let workers = vec![worker(
+            "binance-user-stream",
+            WorkerRole::UserStream,
+            "BINANCE",
+            Some("main"),
+            None,
+        )];
+        let registry = ExchangeGatewayRegistry::from_workers(&workers, &catalog()).unwrap();
+        let metrics = concat!(
+            "qx_worker_up{worker=\"binance-user-stream\",account=\"main\"} 1\n",
+            "qx_worker_heartbeat_timestamp_seconds{worker=\"binance-user-stream\",account=\"main\"} 100\n",
+            "qx_gateway_venue_reconnects_total{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 4\n",
+            "qx_gateway_venue_last_event_timestamp_seconds{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 99\n"
+        );
+        let snapshots = registry.health_snapshots(metrics, 100_000, 20_000);
+        let gateway = snapshots
+            .iter()
+            .find(|snapshot| snapshot.account_id == "main")
+            .unwrap();
+        assert_eq!(
+            gateway.schema_version,
+            EXCHANGE_GATEWAY_HEALTH_SCHEMA_VERSION
+        );
+        let stream = gateway
+            .ports
+            .iter()
+            .find(|port| port.port == ExchangeGatewayPort::PrivateOrderStream)
+            .unwrap();
+        assert_eq!(stream.status, GatewayPortHealthStatus::Healthy);
+        assert_eq!(
+            stream.business_status,
+            GatewayBusinessHealthStatus::Unobserved
+        );
+        assert_eq!(stream.workers[0].venue_reconnects_total, Some(4));
+        assert_eq!(
+            stream.workers[0].venue_last_event_timestamp_seconds,
+            Some(99)
+        );
+        let execution = gateway
+            .ports
+            .iter()
+            .find(|port| port.port == ExchangeGatewayPort::VenueExecution)
+            .unwrap();
+        assert_eq!(execution.status, GatewayPortHealthStatus::Unconfigured);
+        assert!(execution.workers.is_empty());
     }
 
     #[test]

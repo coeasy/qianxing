@@ -109,7 +109,7 @@ pub(crate) fn current_summary_fixture(label: &str) -> (PathBuf, PathBuf) {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let config = read_runtime_config(&template).expect("读取内置回测 runtime 模板");
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, label);
-    run_strategy_backtest(&runtime, &frame, None).expect("生成 v7 summary fixture");
+    run_strategy_backtest(&runtime, &frame, None).expect("生成 v8 summary fixture");
     let summary = list_backtest_summary_paths(&root.join("runs"))
         .expect("读取生成的 summary")
         .into_iter()
@@ -147,6 +147,109 @@ pub(crate) fn mk_worker(
         max_order_notional_raw: None,
         max_position_notional_raw: None,
     }
+}
+
+/// Write a live-test market spec with a deterministic, test-only signed role catalog and install
+/// its public key as the admission trust root. This keeps live risk tests focused on order
+/// admission while still exercising the production signature and instrument-binding checks.
+pub(crate) fn write_signed_market_spec_fixture(
+    root: &Path,
+    name: &str,
+    spec: &TradingInstrumentSpec,
+) -> PathBuf {
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const SEED: [u8; 32] = [0x5a; 32];
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time is after the Unix epoch")
+        .as_millis() as u64;
+    let role = match spec.product {
+        TradingProduct::Spot | TradingProduct::Margin => qx_data::DatasetInstrumentRole::CryptoSpot,
+        TradingProduct::Perpetual | TradingProduct::Future => {
+            qx_data::DatasetInstrumentRole::Future
+        }
+        TradingProduct::Option => qx_data::DatasetInstrumentRole::OtherTradable,
+    };
+    let instrument = spec.instrument.to_string();
+    let public_key_hex = qx_data::DatasetInstrumentRoleCatalogV1::ed25519_public_key_hex(&SEED)
+        .expect("test role signer key is valid");
+    let key_id = qx_data::sha256_hex_bytes(
+        &public_key_hex
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>(),
+    );
+    let mut roles = BTreeMap::new();
+    roles.insert(instrument.clone(), role);
+    let catalog = qx_data::DatasetInstrumentRoleCatalogV1::new_unsigned_dataset_role_catalog_v1(
+        format!("qx-cli-test-{name}"),
+        "qx-cli-test-supplier".into(),
+        "fixture-v1".into(),
+        now_ms,
+        now_ms.saturating_sub(1_000).max(1),
+        now_ms.saturating_add(86_400_000),
+        roles,
+    )
+    .sign_with_ed25519_seed(&SEED)
+    .expect("test role catalog signs");
+    let trusted = BTreeMap::from([(
+        key_id,
+        qx_data::DatasetRoleTrustedKeyV1 {
+            supplier_id: "qx-cli-test-supplier".into(),
+            public_key_hex,
+        },
+    )]);
+    std::env::set_var(
+        "QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS",
+        serde_json::to_string(&trusted).expect("serialize test trust root"),
+    );
+
+    let mut payload = serde_json::to_value(spec).expect("serialize market spec fixture");
+    payload["dataset_instrument_role"] = serde_json::to_value(role).unwrap();
+    payload["dataset_instrument_role_catalog"] = serde_json::to_value(catalog).unwrap();
+    let path = root.join(name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+    path
+}
+
+pub(crate) fn write_signed_market_spec_set_fixture(
+    root: &Path,
+    name: &str,
+    source: &Path,
+) -> PathBuf {
+    let mut payload: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(source).expect("read source market spec set"))
+            .expect("parse source market spec set");
+    let markets = payload["markets"]
+        .as_object_mut()
+        .expect("market spec set has markets object");
+    let entries = markets
+        .iter_mut()
+        .enumerate()
+        .map(|(index, (instrument, market))| {
+            let spec: TradingInstrumentSpec =
+                serde_json::from_value(market.clone()).expect("parse market spec");
+            assert_eq!(instrument, &spec.instrument.to_string());
+            let signed_path =
+                write_signed_market_spec_fixture(root, &format!("{name}.{index}.json"), &spec);
+            let signed: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(signed_path).expect("read signed market spec"),
+            )
+            .expect("parse signed market spec");
+            market["dataset_instrument_role"] = signed["dataset_instrument_role"].clone();
+            market["dataset_instrument_role_catalog"] =
+                signed["dataset_instrument_role_catalog"].clone();
+        })
+        .collect::<Vec<_>>();
+    drop(entries);
+    let path = root.join(name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+    path
 }
 
 /// 读取回测产物目录里的第一份摘要。风控与成本口径用例读的是同一批产物，
@@ -472,6 +575,7 @@ mod risk_port_channel;
 mod run_entry_argument_honesty;
 mod run_evidence;
 mod runtime_api_worker_identity;
+mod runtime_cors_warning;
 mod runtime_market_spec_preflight;
 mod scheduler_dispatch_support;
 mod scheduler_owner_routing;

@@ -3,12 +3,16 @@
 //! Data providers are kept outside the runtime kernel. All external sources
 //! must be converted into canonical schemas before entering research/runtime.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod bar_manifest;
 pub mod batch;
 pub mod calendar_fingerprint;
 pub mod catalog;
 pub mod catalog_v2;
 pub mod corporate_action;
+pub mod dataset_role_catalog;
+pub mod dataset_snapshot;
 pub mod fingerprint;
 pub mod incremental;
 pub mod ingestion;
@@ -46,6 +50,14 @@ pub use catalog_v2::{
     DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 pub use corporate_action::{CorporateAction, CorporateActionType};
+pub use dataset_role_catalog::{
+    DatasetInstrumentRoleCatalogV1, DatasetRoleTrustedKeyV1, DATASET_ROLE_CATALOG_SCHEMA_VERSION,
+};
+pub use dataset_snapshot::{
+    parse_dataset_manifest_or_snapshot, CorporateActionPolicy, DatasetCoverageGapV1,
+    DatasetInstrumentRole, DatasetSnapshotContextV1, DatasetSnapshotV1, DatasetTimestampSemantics,
+    DATASET_SNAPSHOT_CONTEXT_SCHEMA_VERSION, DATASET_SNAPSHOT_SCHEMA_VERSION,
+};
 pub use fingerprint::{
     barframe_registry_version, barframe_snapshot_version, fingerprint_bar_frame, fingerprint_bars,
 };
