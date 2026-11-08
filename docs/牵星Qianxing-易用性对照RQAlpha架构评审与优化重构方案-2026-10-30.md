@@ -165,7 +165,7 @@ Python 侧没有对应物：`project init` 的脚手架只写 `qianxing.strategy
 
 缺 extra 时三个适配器都会抛带安装命令的 `AshareProviderError`（`python/qianxing_ashare/__init__.py:1146-1150`），这一点包内已经做对了；差的是把它接到统一错误信封与 `data doctor` 上。它同时具备三件别的“数据能力”往往缺的东西：**血缘清单**（清单里能读出用了哪个源、哪个版本、哪批字节）、**离线可测**（provider 以注入方式接收模块，`python/tests/test_ashare.py:199-210` 用 `_FakeAkShare` 全程不联网）、**跨语言同源**（`source_hash` 复用 Rust `qx-data` 的规范 BarFrame 指纹）。
 
-但它的产品面只有一条：`python -m qianxing_ashare fetch|actions|bundle|screen`（`python/qianxing_ashare/__main__.py:27-61`）。`qianxing` 命令表（`python/qianxing/cli.py:267-340`）里没有 `data`——这是评审时点事实，2026-10-30 首跑收口轮已按 D5 落地 `data sources/doctor/fetch/install` 等子命令（口径见 §4 D5 的状态行）；SDK 侧只有再导出 `qianxing.ashare`（`python/qianxing/ashare.py:3-4`）；wheel 打包清单包含 `qianxing_ashare`（`python/pyproject.toml:88`），第三方库在 extras 里（`:51-68`）。
+但它的产品面只有一条：`python -m qianxing_ashare fetch|actions|bundle|screen`（`python/qianxing_ashare/cli.py:670`）。`qianxing` 命令表（`python/qianxing/cli.py:267-340`）里没有 `data`——这是评审时点事实，2026-10-30 首跑收口轮已按 D5 落地 `data sources/doctor/fetch/install` 等子命令（口径见 §4 D5 的状态行）；SDK 侧只有再导出 `qianxing.ashare`（`python/qianxing/ashare.py:3-4`）；wheel 打包清单包含 `qianxing_ashare`（`python/pyproject.toml:88`），第三方库在 extras 里（`:51-68`）。
 
 **缺口**
 
@@ -208,7 +208,7 @@ Python 侧没有对应物：`project init` 的脚手架只写 `qianxing.strategy
 | 架构门禁 | `python -X utf8 tools/check_architecture.py --fast` | `tools/check_architecture.py` |
 | 台账门禁 | `python -X utf8 tools/check_strategy_refactor_ledger.py` | `maturity/strategy-run-refactor-work-packages.json` |
 | Python 全量 | `python -X utf8 -m unittest discover -s python/tests` | CI 同款 |
-| 取 A 股数据（当前唯一入口） | `python -m qianxing_ashare fetch --provider akshare --code 000001.SZSE --start 20240101 --end 20241231 --output bars.json --manifest bars.manifest.json` | `python/qianxing_ashare/__main__.py:27-61` |
+| 取 A 股数据（当前唯一入口） | `python -m qianxing_ashare fetch --provider akshare --code 000001.SZSE --start 20240101 --end 20241231 --output bars.json --manifest bars.manifest.json` | `python/qianxing_ashare/cli.py:670` |
 
 开发细节里最容易被忽略的两条：① wheel 必须在本轮最后一次构建之后重打，扩展文件不能复用旧产物（`docs/installation.md:147`）；② 活文档里的 `path:NN` 引用会被架构门禁做可达性检查（文件存在 + 行号不越界），新增文档时行号范围要按当前文件长度核过。
 
@@ -258,7 +258,7 @@ Python 侧没有对应物：`project init` 的脚手架只写 `qianxing.strategy
 
 **现象**：千行有完整的数据规范（spec / bundle / snapshot / manifest / 校验），但没有“装完就有一份能跑的数据”。Rust 入口的首跑只能用 `qx-cli init` 自带的一份样例 BarFrame，wheel 入口连这份都没有；真实 A 股/加密数据要装 extra、写 provider 配置、跑 ingest。
 
-**证据**：`crates/qx-cli/src/init_project.rs:424-443`；`python/pyproject.toml:38-81`；`crates/qx-cli/src/cli_args.rs:137-155`（只有 ingest/bundle，没有下载命令）；`python/qianxing_ashare/__main__.py:27-61`（真实取数确实存在，但入口在另一个包的 `__main__` 里）。
+**证据**：`crates/qx-cli/src/init_project.rs:424-443`；`python/pyproject.toml:38-81`；`crates/qx-cli/src/cli_args.rs:137-155`（只有 ingest/bundle，没有下载命令）；`python/qianxing_ashare/cli.py:670`（真实取数确实存在，但入口在另一个包的 `__main__` 里）。
 
 **为什么不合理**：数据规范越完整，首次使用越需要一份“合规、带血缘、可复核”的样例包来展示规范怎么用。rqalpha 用 `download-bundle` 把这一步变成一条命令；千行没有对应物，用户第一次接触 `DatasetSnapshot` 就是在自己造数据的时候。
 
@@ -326,7 +326,7 @@ Python 侧没有对应物：`project init` 的脚手架只写 `qianxing.strategy
 
 这五条是**评审时点的现象记录**，2026-10-30 首跑收口轮已逐条落地：第 1 条见 D11（`qianxing data sources|doctor|env|fetch|actions|bundle|screen|install` 与 `python -m qianxing_ashare` 共用同一实现，命令链写在 `docs/first-run.md` B5）；第 2 条见 D13（`MootdxProvider` 进注册表，只给不复权行情、能力位显式 `false`，离线假模块用例）；第 3 条见 D15（内容寻址缓存 + `--offline/--refresh/--no-cache/--cache-dir`，CI 与单测不联网）；第 4 条见 D11 的 `data sources` 与 D12 的能力位注册表（每行给源 / 市场 / 频率 / 复权 / 公司行为 / 日历 / 凭据 / extra）；第 5 条见 D14（`init --demo --source …` 与 `run -f --source` 把取数结果直接写成数据集包 + `input_spec` + 血缘）。失败面由 D16 收口（固定 category 与退出码）。原有的“显式失败不静默换源”性质保留，并从 A 股包上移到 D12 的统一优先级链。
 
-**证据**：`python/qianxing_ashare/__init__.py:1438-1455`；`python/qianxing_ashare/__main__.py:27-61`；`python/pyproject.toml:51-68`；`python/qianxing/cli.py:267-340`；`python/qianxing/strategy_project.py:91-94`。
+**证据**：`python/qianxing_ashare/__init__.py:1438-1455`；`python/qianxing_ashare/cli.py:670`；`python/pyproject.toml:51-68`；`python/qianxing/cli.py:267-340`；`python/qianxing/strategy_project.py:91-94`。
 
 **为什么不合理**：数据是首跑的最后一道门槛，而当前取数能力藏在“另一个包的 `__main__`”里。rqalpha 用一条 `download-bundle` 把“拿到能跑的数据”变成命令；千行不必搬它的数据包，但必须把“选源 → 取数 → 登记血缘 → 喂给 spec”做成同一条命令链。否则 D1/D2 的零配置首跑只能用内置样例，一碰真实数据又回到手工拼装。已有的“显式失败不静默换源”是这条链最该保留的性质，却只活在 A 股包内部。
 
@@ -747,7 +747,7 @@ rqalpha 的 bundle 是“全市场 + 月度更新 + 固定 CDN”。千行不采
 - 内置示例策略：`python/qianxing_strategy/long_only_sma.py:38-64`
 - 安装与依赖：`python/pyproject.toml:32-81`、`:88`、`docs/installation.md:17-125`
 - A 股数据适配与血缘清单：`python/qianxing_ashare/__init__.py:419`、`:450`、`:530-615`、`:647`、`:795`、`:1137`、`:1209`、`:1306`、`:1438-1455`
-- A 股取数命令：`python/qianxing_ashare/__main__.py:27-61`
+- A 股取数命令：`python/qianxing_ashare/cli.py:670`
 - SDK 数据再导出：`python/qianxing/ashare.py:3-4`
 - 数据 extras：`python/pyproject.toml:51-68`
 - 离线契约测试范式：`python/tests/test_ashare.py:199-210`
