@@ -90,19 +90,26 @@ mod tests {
     use std::io::Cursor;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn test_path(label: &str) -> PathBuf {
+        let target = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("qx-orchestrator has a repository root")
+            .join("target");
+        fs::create_dir_all(&target).expect("create workspace test output directory");
+        target.join(format!(
+            "process-log-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos()
+        ))
+    }
+
     #[test]
     fn output_rotation_keeps_only_the_latest_two_bounded_chunks() {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join(format!(
-                "process-log-rotation-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+        let path = test_path("rotation");
         let file = File::create(&path).unwrap();
         copy_rotating(&mut Cursor::new(b"abcdefghijkl"), path.clone(), file, 4).unwrap();
 
@@ -117,17 +124,7 @@ mod tests {
 
     #[test]
     fn pipe_pump_rotates_at_the_worker_log_limit() {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join(format!(
-                "process-log-pump-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+        let path = test_path("pump");
         let file = File::create(&path).unwrap();
         let payload = vec![b'x'; MAX_PROCESS_LOG_BYTES as usize + 1];
         pump(
@@ -149,17 +146,7 @@ mod tests {
 
     #[test]
     fn preparing_a_worker_log_discards_the_previous_rotation() {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join(format!(
-                "process-log-prepare-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+        let path = test_path("prepare");
         fs::write(rotated_path(&path), b"old").unwrap();
         fs::write(&path, b"current").unwrap();
         drop(prepare(&path).unwrap());
