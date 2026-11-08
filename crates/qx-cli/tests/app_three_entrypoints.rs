@@ -60,12 +60,10 @@ fn scratch(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("系统时间晚于 Unix epoch")
         .as_nanos();
-    let root = repo_root()
-        .join("target")
-        .join(format!(
-            "qx-app-g1/{label}-{}-{nonce}-{serial}",
-            std::process::id()
-        ));
+    let root = repo_root().join("target").join(format!(
+        "qx-app-g1/{label}-{}-{nonce}-{serial}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&root).expect("建临时目录");
     root
 }
