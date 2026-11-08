@@ -335,7 +335,7 @@ Build a template once from the same release version as the local SDK:
 from e2b import Template
 
 template = Template().from_python_image("3.12").run_cmd(
-    "pip install qianxing==0.3.0"
+    "pip install qianxing==0.4.0"
 )
 Template.build(template, name="qianxing-0-2-2", cpu_count=2, memory_mb=2048)
 ```

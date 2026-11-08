@@ -56,7 +56,7 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 ### B1 装
 
 ```bash
-python -m pip install dist/qianxing-0.3.0-cp310-abi3-win_amd64.whl    # 平台换成你的那份
+python -m pip install dist/qianxing-0.4.0-cp310-abi3-win_amd64.whl    # 平台换成你的那份
 python -c "import qianxing as qx; print(qx.doctor()['status'])"
 ```
 

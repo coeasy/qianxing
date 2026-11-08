@@ -113,10 +113,10 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.3.0-cp310-abi3-win_amd64.whl
+uv pip install --offline dist/qianxing-0.4.0-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
-# PyPI 安装（v0.3.0 发布工作流完成后）
-python -m pip install "qianxing==0.3.0"
+# PyPI 安装（v0.4.0 发布工作流完成后）
+python -m pip install "qianxing==0.4.0"
 # PyPI 可选 extras 示例
 python -m pip install "qianxing[a-share]"
 # 本地 wheel 已进入缓存时，也可离线安装可选 extras
