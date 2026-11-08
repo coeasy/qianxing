@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "kind": "release_candidate_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-08T19:26:38Z",
+  "source": {
+    "commit": "5502734cbb0352ac539f2e5734c55275afbf9acc",
+    "working_tree": "clean",
+    "tagged": false,
+    "published": false
+  },
+  "checks": {
+    "version_consistency": {
+      "workspace_crates": 29,
+      "versions": ["0.4.0"],
+      "python_project": "0.4.0",
+      "python_uninstalled_fallback": "0.4.0",
+      "cpp_sdk": "0.4.0",
+      "maturity_release_baselines": "0.4.0",
+      "result": "passed"
+    },
+    "architecture_fast": {
+      "command": "python tools/check_architecture.py --fast",
+      "checks": 372,
+      "failed": 0,
+      "result": "passed"
+    },
+    "windows": {
+      "format_check": "passed",
+      "python_tests": {
+        "test_app_use_cases.py": 45,
+        "test_project_runs.py": 41,
+        "failed": 0
+      },
+      "cargo_install_local_source": {
+        "exit_code": 0,
+        "version_output": "qianxing 0.4.0 (build 5502734, target x86_64-pc-windows-msvc, profile debug, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
+      },
+      "cargo_install_pushed_git_branch": {
+        "exit_code": 0,
+        "branch": "codex/release-windows-longpaths",
+        "version_output": "qianxing 0.4.0 (build 5502734, target x86_64-pc-windows-msvc, profile debug, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
+      }
+    },
+    "linux_x86_64": {
+      "environment": {
+        "os": "Ubuntu 24.04",
+        "kernel": "Linux 6.8.0-142-generic",
+        "rust": "1.98.1 (48a229cea 2026-09-01)",
+        "python": "3.12.3"
+      },
+      "release_cli": {
+        "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite -j 1",
+        "exit_code": 0,
+        "size_bytes": 41646224,
+        "sha256": "b8dc1e531f7a326dcbefadacff35990be687426c5847b1da206eb99730b5a2a8",
+        "version_output": "qianxing 0.4.0 (build 5502734, target x86_64-unknown-linux-gnu, profile release, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
+      },
+      "python_wheel": {
+        "command": "PYTHON=/tmp/qx-wheel-venv/bin/python3 OUTPUT_DIRECTORY=dist/release-candidate-v0.4.0-linux-x86_64 bash tools/build_python_wheel.sh",
+        "exit_code": 0,
+        "filename": "qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+        "path_on_box": "/workspace/qianxing-ad6a/dist/release-candidate-v0.4.0-linux-x86_64/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+        "size_bytes": 23058082,
+        "sha256": "bdade61d0034cb2282f35f0076c0ab7a5e6d37c9814b5ffcb7a78497ddfeb9aa",
+        "stable_abi_check": "passed",
+        "payloads": [
+          "qianxing_bridge/_qianxing_native.abi3.so",
+          "qianxing/_bin/qx-cli"
+        ],
+        "clean_venv_install": "passed",
+        "smoke": {
+          "result": "passed",
+          "summary": "strategies=17 rows=70 fills=1 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=true depth_account_overflow_preflight=true multileg=1/2 depth_fills=1 custom_fills=1 run_handle=succeeded verified=true"
+        }
+      }
+    }
+  },
+  "limitations": [
+    "This is an unpublished candidate, not a GitHub Release or PyPI artifact.",
+    "The Windows 0.4.0 install smoke used the debug profile; a Windows 0.4.0 release wheel has not been built in this round.",
+    "macOS release artifacts, PostgreSQL/NATS service matrix, and live/testnet authorization remain unverified."
+  ]
+}
