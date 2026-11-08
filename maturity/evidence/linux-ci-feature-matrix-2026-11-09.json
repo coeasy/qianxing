@@ -4,6 +4,13 @@
   "platform": "linux-x86_64",
   "source_commit": "4cbadfbd440ce8156571d382ebba7863e2acce61",
   "source_state": "clean-worktree",
+  "published_baseline": {
+    "github_release": "v0.3.0",
+    "published_at": "2026-10-27T14:22:51Z",
+    "release_url": "https://github.com/coeasy/qianxing/releases/tag/v0.3.0",
+    "current_branch_is_post_release": true,
+    "workspace_and_python_versions_still": "0.3.0"
+  },
   "validation": {
     "workspace_default_tests": {
       "command": "cargo test --workspace --locked -j 1 --quiet",
@@ -63,17 +70,35 @@
     },
     "linux_release_build": {
       "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite",
-      "status": "interrupted_during_lto_link",
+      "status": "process_disappeared_during_final_lto_link",
       "fresh_artifact_produced": false,
-      "notes": "The detached build process ended before writing an exit marker or qx-cli binary. No successful release artifact is claimed."
+      "exit_status_recorded": false,
+      "notes": "The build process was no longer present before writing an exit marker or qx-cli binary. No successful release artifact is claimed."
+    },
+    "package_registry_probe": {
+      "pypi": {
+        "project": "qianxing",
+        "http_status": 404
+      },
+      "crates_io": {
+        "projects_probed": [
+          "qx-cli",
+          "qx-core",
+          "qx-sdk",
+          "qx-adapter"
+        ],
+        "http_status": 404
+      },
+      "notes": "The prior GitHub release includes binary and wheel assets, but these registry endpoints did not contain the queried projects at the time of verification."
     }
   },
-  "release_status": "unpublished-local-candidate",
+  "release_status": "v0.3.0-published-current-branch-unreleased",
   "remaining_release_gates": [
+    "Choose the next release version and align Cargo, Python, C++, and maturity baseline metadata",
     "Fresh Linux release build and artifact verification",
     "macOS runtime and wheel build",
     "Clean tag reproducible build",
-    "PyPI and GitHub Release upload validation",
-    "Cargo registry publication requires prior publication of internal workspace dependencies"
+    "Configure and validate PyPI Trusted Publishing for the qianxing project",
+    "Publish internal Rust workspace crates in dependency order before qx-cli can be installed from crates.io"
   ]
 }
