@@ -693,7 +693,11 @@ mod postgres_tests {
                 .as_nanos()
         );
         let worker_id = format!("cursor-contract-{suffix}");
-        let root = std::env::temp_dir().join(format!("qx-postgres-cursor-{suffix}"));
+        // Keep the fixture under the workspace target directory: restricted Windows runners
+        // can deny process-created directories below the system temp directory.
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!("qx-postgres-cursor-{suffix}"));
         let legacy_path = cursor_path(&root, &worker_id);
         std::fs::create_dir_all(legacy_path.parent().expect("cursor parent"))
             .expect("create legacy cursor directory");
