@@ -49,13 +49,20 @@
         "rust": "1.98.1 (48a229cea 2026-09-01)",
         "python": "3.12.3"
       },
-      "release_cli": {
-        "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite -j 1",
-        "exit_code": 0,
-        "size_bytes": 41646224,
-        "sha256": "b8dc1e531f7a326dcbefadacff35990be687426c5847b1da206eb99730b5a2a8",
-        "version_output": "qianxing 0.4.0 (build 5502734, target x86_64-unknown-linux-gnu, profile release, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
-      },
+      "release_cli_builds": [
+        {
+          "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite -j 1",
+          "exit_code": 0,
+          "sha256": "25492fc688bfe173fadb38d03260dc37d53d138a6bdbf10c3afedc2f92ddd446"
+        },
+        {
+          "command": "cargo build --release --locked -p qx-cli (invoked by tools/build_python_wheel.sh)",
+          "exit_code": 0,
+          "size_bytes": 41646224,
+          "sha256": "b8dc1e531f7a326dcbefadacff35990be687426c5847b1da206eb99730b5a2a8",
+          "version_output": "qianxing 0.4.0 (build 5502734, target x86_64-unknown-linux-gnu, profile release, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
+        }
+      ],
       "python_wheel": {
         "command": "PYTHON=/tmp/qx-wheel-venv/bin/python3 OUTPUT_DIRECTORY=dist/release-candidate-v0.4.0-linux-x86_64 bash tools/build_python_wheel.sh",
         "exit_code": 0,
@@ -64,6 +71,8 @@
         "size_bytes": 23058082,
         "sha256": "bdade61d0034cb2282f35f0076c0ab7a5e6d37c9814b5ffcb7a78497ddfeb9aa",
         "stable_abi_check": "passed",
+        "embedded_cli_sha256": "b8dc1e531f7a326dcbefadacff35990be687426c5847b1da206eb99730b5a2a8",
+        "embedded_cli_size_bytes": 41646224,
         "payloads": [
           "qianxing_bridge/_qianxing_native.abi3.so",
           "qianxing/_bin/qx-cli"
