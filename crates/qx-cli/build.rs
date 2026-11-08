@@ -68,11 +68,14 @@ fn schema_catalog_sha256() -> Result<String, Box<dyn Error>> {
                     "schema filename is not valid UTF-8",
                 )
             })?;
-        let body = std::fs::read(&path)?;
+        // `core.autocrlf` may expand LF files in a Windows worktree. Hash the
+        // logical JSON text with canonical LF endings so the build identity is
+        // stable between local path builds and clean Git checkouts.
+        let body = std::fs::read_to_string(&path)?.replace("\r\n", "\n");
         digest.update((name.len() as u64).to_be_bytes());
         digest.update(name.as_bytes());
         digest.update((body.len() as u64).to_be_bytes());
-        digest.update(body);
+        digest.update(body.as_bytes());
     }
     Ok(format!("{:x}", digest.finalize()))
 }

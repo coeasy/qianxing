@@ -93,11 +93,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("schema filename is not valid UTF-8: {}", path.display()),
                 )
             })?;
-        let body = std::fs::read(&path)?;
+        // Keep the catalog identity stable when Windows expands checked-in LF
+        // files to CRLF in a local worktree.
+        let body = std::fs::read_to_string(&path)?.replace("\r\n", "\n");
         digest.update((name.len() as u64).to_be_bytes());
         digest.update(name.as_bytes());
         digest.update((body.len() as u64).to_be_bytes());
-        digest.update(body);
+        digest.update(body.as_bytes());
     }
     println!(
         "cargo:rustc-env=QX_SCHEMA_CATALOG_SHA256={:x}",
