@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-09",
+  "platform": "linux-x86_64",
+  "source_commit": "4cbadfbd440ce8156571d382ebba7863e2acce61",
+  "source_state": "clean-worktree",
+  "validation": {
+    "workspace_default_tests": {
+      "command": "cargo test --workspace --locked -j 1 --quiet",
+      "exit_code": 0,
+      "harnesses": 182,
+      "passed": 2718,
+      "failed": 0,
+      "ignored": 2
+    },
+    "cli_feature_matrix": {
+      "features": [
+        "sqlite",
+        "postgres",
+        "nats",
+        "postgres,nats",
+        "sqlite,bench-prepared-evaluation"
+      ],
+      "commands_per_feature": [
+        "cargo clippy -p qx-cli --no-default-features --features <features> --all-targets -- -D warnings",
+        "cargo check -p qx-cli --no-default-features --features <features>",
+        "cargo test -p qx-cli --no-default-features --features <features>"
+      ],
+      "all_commands_exit_code": 0,
+      "cli_unit_tests_per_feature": {
+        "passed": 496,
+        "failed": 0,
+        "ignored": 1
+      },
+      "cli_process_integration_tests_per_feature": {
+        "passed": 47,
+        "failed": 0
+      },
+      "notes": "The postgres,nats and sqlite,bench-prepared-evaluation groups were rerun to completion after the Box transport interrupted the first foreground run. Both reruns used detached jobs and recorded exit code 0."
+    },
+    "live_service_contracts": {
+      "services": [
+        "PostgreSQL 16",
+        "NATS JetStream 2.10.7"
+      ],
+      "storage_and_queue_contracts": {
+        "passed": 10,
+        "failed": 0
+      },
+      "nats_contracts": {
+        "passed": 8,
+        "failed": 0
+      },
+      "postgres_cursor_import_and_fencing": {
+        "passed": 1,
+        "failed": 0
+      },
+      "postgres_immutable_blob_and_runtime_cache": {
+        "passed": 2,
+        "failed": 0
+      },
+      "notes": "Service tests used fresh PostgreSQL databases and a local NATS JetStream server."
+    },
+    "linux_release_build": {
+      "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite",
+      "status": "interrupted_during_lto_link",
+      "fresh_artifact_produced": false,
+      "notes": "The detached build process ended before writing an exit marker or qx-cli binary. No successful release artifact is claimed."
+    }
+  },
+  "release_status": "unpublished-local-candidate",
+  "remaining_release_gates": [
+    "Fresh Linux release build and artifact verification",
+    "macOS runtime and wheel build",
+    "Clean tag reproducible build",
+    "PyPI and GitHub Release upload validation",
+    "Cargo registry publication requires prior publication of internal workspace dependencies"
+  ]
+}
