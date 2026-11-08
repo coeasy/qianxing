@@ -167,15 +167,43 @@ impl EventContext {
     }
 }
 
+/// Stable source classifications used by event producers.
+///
+/// `EventMetadata::source_kind` remains a string on the wire so older event logs and
+/// third-party sources remain readable. Producers should use these constants instead
+/// of inventing category spellings. `source_id` continues to identify the concrete
+/// venue, worker, or internal component.
+pub mod event_source_kind {
+    pub const INTERNAL: &str = "internal";
+    pub const CONTROL: &str = "control";
+    pub const CONTROL_ORDER_CANCEL_PENDING: &str = "control_order_cancel_pending";
+    pub const MARKET_DATA: &str = "market_data";
+    pub const MARKET_QUOTE: &str = "market_quote";
+    pub const MARKET_ORDER_BOOK: &str = "market_order_book";
+    pub const VENUE: &str = "venue";
+    pub const VENUE_ACCOUNT_BALANCE: &str = "venue_account_balance";
+    pub const VENUE_ACCOUNT_POSITION: &str = "venue_account_position";
+    pub const VENUE_FUNDING_RATE: &str = "venue_funding_rate";
+    pub const VENUE_CASHFLOW: &str = "venue_cashflow";
+    pub const VENUE_ORDER_ACCEPTED: &str = "venue_order_accepted";
+    pub const VENUE_ORDER_FILL: &str = "venue_order_fill";
+    pub const VENUE_FEE_ADJUSTMENT: &str = "venue_fee_adjustment";
+    pub const VENUE_ORDER_CANCELLED: &str = "venue_order_cancelled";
+    pub const VENUE_ORDER_CANCEL_PENDING: &str = "venue_order_cancel_pending";
+    pub const VENUE_RECONCILE_REQUIRED: &str = "venue_reconcile_required";
+    pub const VENUE_ORDER_STATUS_RECONCILED: &str = "venue_order_status_reconciled";
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct EventMetadata {
     #[serde(default = "default_event_metadata_schema_version")]
     pub schema_version: u32,
     #[serde(default)]
     pub source_id: String,
-    /// 稳定来源分类，例如 `market_data`、`venue`、`control` 或 `internal`。
-    /// 具体供应商/worker 仍由 `source_id` 表达；分类用于跨适配器审计和
-    /// 回放筛选，旧事件缺失时恢复为 `internal`。
+    /// 稳定来源分类。新生产者使用 [`event_source_kind`] 中的细分值；历史
+    /// `market_data` / `venue` / `control` 与第三方自定义值仍保持可读。
+    /// 具体供应商/worker 由 `source_id` 表达，分类用于跨适配器审计和回放筛选；
+    /// 旧事件缺失时恢复为 `internal`。
     #[serde(default = "default_event_source_kind")]
     pub source_kind: String,
     #[serde(default)]
@@ -195,7 +223,7 @@ fn default_event_rule_version() -> String {
 }
 
 fn default_event_source_kind() -> String {
-    "internal".into()
+    event_source_kind::INTERNAL.into()
 }
 
 /// Scale-aware values are appended only when present so legacy event digests remain unchanged.

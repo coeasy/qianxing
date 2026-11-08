@@ -34,8 +34,8 @@ use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
 
 pub use qx_control::order_from_submit_command;
 use qx_core::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, DecimalRounding, Event,
-    EventContext, EventKind, EventLog, EventMetadata, ExactDecimal,
+    event_source_kind, AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind,
+    DecimalRounding, Event, EventContext, EventKind, EventLog, EventMetadata, ExactDecimal,
     ExecutionCapabilityDecisionFact, ExecutionCapabilityDecisionKind, Fill, FundingRateSnapshot,
     InstrumentId, Ledger, MarketDepthLevel, Order, OrderStatus, Price, Priority, Quantity, QxError,
     QxResult, ReplayVerifier, TradingInstrumentSpec, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
@@ -180,7 +180,11 @@ impl RuntimeEventEnvelope {
             event_ts: quote.ts,
             receive_ts,
             source_seq,
-            metadata: runtime_event_metadata(&correlation_id, source_seq, "market_data"),
+            metadata: runtime_event_metadata(
+                &correlation_id,
+                source_seq,
+                event_source_kind::MARKET_QUOTE,
+            ),
             correlation_id,
         }
     }
@@ -208,7 +212,11 @@ impl RuntimeEventEnvelope {
             event_ts,
             receive_ts,
             source_seq,
-            metadata: runtime_event_metadata(&correlation_id, source_seq, "market_data"),
+            metadata: runtime_event_metadata(
+                &correlation_id,
+                source_seq,
+                event_source_kind::MARKET_ORDER_BOOK,
+            ),
             correlation_id,
         }
     }
@@ -221,12 +229,13 @@ impl RuntimeEventEnvelope {
         correlation_id: impl Into<String>,
     ) -> Self {
         let correlation_id = correlation_id.into();
+        let source_kind = venue_event_source_kind(&event);
         Self {
             event,
             event_ts,
             receive_ts,
             source_seq,
-            metadata: runtime_event_metadata(&correlation_id, source_seq, "venue"),
+            metadata: runtime_event_metadata(&correlation_id, source_seq, source_kind),
             correlation_id,
         }
     }
@@ -244,7 +253,11 @@ impl RuntimeEventEnvelope {
             event_ts,
             receive_ts,
             source_seq,
-            metadata: runtime_event_metadata(&correlation_id, source_seq, "control"),
+            metadata: runtime_event_metadata(
+                &correlation_id,
+                source_seq,
+                event_source_kind::CONTROL_ORDER_CANCEL_PENDING,
+            ),
             correlation_id,
         }
     }
@@ -252,6 +265,34 @@ impl RuntimeEventEnvelope {
     pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
         self.metadata = metadata;
         self
+    }
+}
+
+fn venue_event_source_kind(event: &RuntimeExternalEvent) -> &'static str {
+    match event {
+        RuntimeExternalEvent::MarketQuote { .. } => event_source_kind::MARKET_QUOTE,
+        RuntimeExternalEvent::MarketOrderBook { .. } => event_source_kind::MARKET_ORDER_BOOK,
+        RuntimeExternalEvent::AccountBalanceSnapshot { .. } => {
+            event_source_kind::VENUE_ACCOUNT_BALANCE
+        }
+        RuntimeExternalEvent::AccountPositionSnapshot { .. } => {
+            event_source_kind::VENUE_ACCOUNT_POSITION
+        }
+        RuntimeExternalEvent::FundingRateSnapshot { .. } => event_source_kind::VENUE_FUNDING_RATE,
+        RuntimeExternalEvent::AccountCashflow { .. } => event_source_kind::VENUE_CASHFLOW,
+        RuntimeExternalEvent::Accepted { .. } => event_source_kind::VENUE_ORDER_ACCEPTED,
+        RuntimeExternalEvent::Fill { .. } | RuntimeExternalEvent::FillWithSpec { .. } => {
+            event_source_kind::VENUE_ORDER_FILL
+        }
+        RuntimeExternalEvent::FeeAdjustment { .. } => event_source_kind::VENUE_FEE_ADJUSTMENT,
+        RuntimeExternalEvent::Cancelled { .. } => event_source_kind::VENUE_ORDER_CANCELLED,
+        RuntimeExternalEvent::CancelPending { .. } => event_source_kind::VENUE_ORDER_CANCEL_PENDING,
+        RuntimeExternalEvent::ReconcileRequired { .. } => {
+            event_source_kind::VENUE_RECONCILE_REQUIRED
+        }
+        RuntimeExternalEvent::OrderStatusReconciled { .. } => {
+            event_source_kind::VENUE_ORDER_STATUS_RECONCILED
+        }
     }
 }
 
@@ -1805,6 +1846,71 @@ mod tests {
             ));
         std::fs::create_dir_all(&root).expect("create capability EventLog test directory");
         root
+    }
+
+    #[test]
+    fn runtime_envelopes_use_fine_grained_event_source_kinds() {
+        let instrument = || {
+            InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")).expect("valid instrument fixture")
+        };
+        let cases = [
+            (
+                RuntimeExternalEvent::MarketQuote {
+                    instrument: instrument(),
+                    bid: Price::from_i64(99),
+                    ask: Price::from_i64(100),
+                    bid_qty: Quantity::from_i64(1),
+                    ask_qty: Quantity::from_i64(1),
+                    bid_qty_exact: None,
+                    ask_qty_exact: None,
+                    bid_exact: None,
+                    ask_exact: None,
+                },
+                event_source_kind::MARKET_QUOTE,
+            ),
+            (
+                RuntimeExternalEvent::MarketOrderBook {
+                    instrument: instrument(),
+                    sequence: 1,
+                    bids: vec![],
+                    asks: vec![],
+                },
+                event_source_kind::MARKET_ORDER_BOOK,
+            ),
+            (
+                RuntimeExternalEvent::AccountBalanceSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    balances: vec![],
+                },
+                event_source_kind::VENUE_ACCOUNT_BALANCE,
+            ),
+            (
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 1,
+                    venue_order_id: None,
+                },
+                event_source_kind::VENUE_ORDER_ACCEPTED,
+            ),
+            (
+                RuntimeExternalEvent::Fill {
+                    fill: Fill::default(),
+                },
+                event_source_kind::VENUE_ORDER_FILL,
+            ),
+            (
+                RuntimeExternalEvent::CancelPending { client_order_id: 1 },
+                event_source_kind::VENUE_ORDER_CANCEL_PENDING,
+            ),
+            (
+                RuntimeExternalEvent::ReconcileRequired { client_order_id: 1 },
+                event_source_kind::VENUE_RECONCILE_REQUIRED,
+            ),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(venue_event_source_kind(&event), expected);
+        }
     }
 
     fn order() -> Order {

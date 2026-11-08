@@ -45,11 +45,12 @@ pub use self::error::{
     ErrorContract, QxError, QxResult, Retryability,
 };
 pub use self::event::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
-    EventKind, EventMetadata, ExactAccountBalanceAmounts, ExactAccountPositionAmounts, ExactOhlcv,
-    ExecutionCapabilityDecisionFact, ExecutionCapabilityDecisionKind, FundingRateSnapshot,
-    MarketDepthLevel, OrderRiskDecisionFact, Priority, StrategyDecisionFact, StrategyIntentFact,
-    EVENT_METADATA_SCHEMA_VERSION, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
+    event_source_kind, AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind,
+    Event, EventContext, EventKind, EventMetadata, ExactAccountBalanceAmounts,
+    ExactAccountPositionAmounts, ExactOhlcv, ExecutionCapabilityDecisionFact,
+    ExecutionCapabilityDecisionKind, FundingRateSnapshot, MarketDepthLevel, OrderRiskDecisionFact,
+    Priority, StrategyDecisionFact, StrategyIntentFact, EVENT_METADATA_SCHEMA_VERSION,
+    EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
 };
 pub use self::fee::{
     bp_amount, bp_amount_checked, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel,
