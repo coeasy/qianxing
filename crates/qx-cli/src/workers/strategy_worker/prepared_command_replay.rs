@@ -428,12 +428,12 @@ mod tests {
             cursor_before
         );
 
-        let failed_at = crate::runtime_timestamp_ms();
+        let resolved_at = crate::runtime_timestamp_ms();
         let outcome = std::env::var("QX_LIVE_RECOVERY_OUTCOME").unwrap_or_else(|_| "failed".into());
         let executed = outcome == "executed";
         control
             .transact(|plane| {
-                plane.execute(command_id, failed_at, |_| {
+                plane.execute(command_id, resolved_at, |_| {
                     if executed {
                         Ok("SIMULATED_VENUE_EXECUTED".into())
                     } else {
@@ -444,21 +444,18 @@ mod tests {
             .unwrap()
             .1
             .unwrap();
-        if !executed {
-            let account_id = prepared.orders[0].account_id.as_str();
-            JsonStateStore::new(root)
-                .save_json_at(
-                    "reconcile/test-reconciler.json",
-                    &report(failed_at.saturating_add(1), account_id),
-                )
-                .unwrap();
-        }
         let account_id = prepared.orders[0].account_id.as_str();
+        JsonStateStore::new(root)
+            .save_json_at(
+                "reconcile/test-reconciler.json",
+                &report(resolved_at.saturating_add(1), account_id),
+            )
+            .unwrap();
         let log_name = qx_runtime::account_event_log_name(account_id, "binance").unwrap();
         let mut log = read_event_log(&config, root, &log_name);
         log.append_checked(Event::new(
             log.next_seq(),
-            failed_at.saturating_add(2),
+            resolved_at.saturating_add(2),
             0,
             EventKind::OrderStatusReconciled {
                 client_order_id: command_id,
