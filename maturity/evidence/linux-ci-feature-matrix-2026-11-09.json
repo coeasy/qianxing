@@ -9,7 +9,9 @@
     "published_at": "2026-10-27T14:22:51Z",
     "release_url": "https://github.com/coeasy/qianxing/releases/tag/v0.3.0",
     "current_branch_is_post_release": true,
-    "workspace_and_python_versions_still": "0.3.0"
+    "workspace_and_python_versions_still": "0.3.0",
+    "release_workflow_run": "https://github.com/coeasy/qianxing/actions/runs/40518467601",
+    "pypi_publish_job": "skipped because PYPI_PUBLISH_ENABLED was not true at the v0.3.0 tag"
   },
   "validation": {
     "workspace_default_tests": {
@@ -78,7 +80,13 @@
     "package_registry_probe": {
       "pypi": {
         "project": "qianxing",
-        "http_status": 404
+        "http_status": 404,
+        "pending_publisher": {
+          "repository": "coeasy/qianxing",
+          "workflow": "python-wheels.yml",
+          "environment": "any",
+          "first_publish_verified": false
+        }
       },
       "crates_io": {
         "projects_probed": [
@@ -87,9 +95,15 @@
           "qx-sdk",
           "qx-adapter"
         ],
-        "http_status": 404
+        "http_status": 404,
+        "cargo_publish_dry_run": {
+          "qx-core": "passed",
+          "qx-adapter": "blocked: qx-core is not yet present in the registry",
+          "qx-cli": "blocked: qx-adapter is not yet present in the registry",
+          "workspace_dry_run": "stopped at qx-genglu because qx-core was not uploaded"
+        }
       },
-      "notes": "The prior GitHub release includes binary and wheel assets, but these registry endpoints did not contain the queried projects at the time of verification."
+      "notes": "The GitHub v0.3.0 release includes binary and wheel assets. The owner previously configured the PyPI pending publisher for python-wheels.yml, but the v0.3.0 publish job was skipped and the first PyPI publish remains unverified. The Rust crate names probed are not yet present on crates.io."
     }
   },
   "release_status": "v0.3.0-published-current-branch-unreleased",
@@ -98,7 +112,7 @@
     "Fresh Linux release build and artifact verification",
     "macOS runtime and wheel build",
     "Clean tag reproducible build",
-    "Configure and validate PyPI Trusted Publishing for the qianxing project",
-    "Publish internal Rust workspace crates in dependency order before qx-cli can be installed from crates.io"
+    "Validate the existing PyPI pending publisher on the next release tag",
+    "Publish internal Rust workspace crates in normal-dependency order before qx-cli can be installed from crates.io"
   ]
 }
