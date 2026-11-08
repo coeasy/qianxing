@@ -3,12 +3,12 @@
   "kind": "qianxing-capability-catalog",
   "source_updated_at": {
     "matrix": "2026-10-24",
-    "maturity": "2026-11-08",
+    "maturity": "2026-11-09",
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "d15fca39784f6b5c2d0c7e4ae310e79463db557429b0e363e29b4c000ae2f035",
-    "maturity/capabilities.yaml": "84864f5a41724b2ddcc7b5fcae7543f5dd7b07645af39b81c8dad7627a140108",
+    "maturity/capabilities.yaml": "944799507a072981c24cf30116fa13847918aa52fbfd6db6d2e4cc89e6cb6aaa",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -90,7 +90,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 118,
+      "evidence_path_count": 120,
       "limitation_count": 1
     },
     {
@@ -509,8 +509,10 @@
           ],
           "evidence": [
             "crates/qx-core/src/event.rs",
+            "crates/qx-core/src/event.rs event_source_kind publishes stable fine-grained classifications while EventMetadata retains its string wire field for legacy and third-party values",
             "crates/qx-core/src/sourcing.rs",
             "crates/qx-runtime/src/pipeline.rs",
+            "crates/qx-runtime/src/pipeline.rs venue_event_source_kind maps each RuntimeExternalEvent variant to its stable event_source_kind and runtime_envelopes_use_fine_grained_event_source_kinds covers every classified variant",
             "EventMetadata schema v2 source_kind replay/digest tests",
             "crates/qx-api/tests/event_cursor_after_semantics.rs both_event_read_chains_answer_the_same_cursor_the_same_way drives the in-memory and the SQLite read chains with one cursor and demands the same sequence list, after both were fixed on \"strictly greater than after\" (V12 R4-g)",
             "crates/qx-api/tests/event_cursor_after_semantics.rs stale_or_ahead_cursors_are_rejected_on_both_chains keeps the guard symmetrical instead of only tightening the chain that was wrong (V12 R4-g)",
@@ -518,7 +520,7 @@
             "crates/qx-cli/tests/unit/event_kind_variant_ledger.rs checks the EventKind variant set, production constructors, retired names, and digest tags without a historical test-count floor",
             "crates/qx-cli/tests/unit/enum_variant_surface.rs parses balanced Rust enum bodies and checks production references for variant shapes the architecture scanner does not recognize"
           ],
-          "limitations_count": 3
+          "limitations_count": 2
         },
         {
           "id": "storage_consistency_contract",

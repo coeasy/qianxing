@@ -1886,6 +1886,51 @@ mod tests {
                 event_source_kind::VENUE_ACCOUNT_BALANCE,
             ),
             (
+                RuntimeExternalEvent::AccountPositionSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    positions: vec![AccountPositionSnapshot {
+                        instrument: instrument(),
+                        settlement_currency: None,
+                        quantity: Quantity::ZERO,
+                        average_price: None,
+                        mark_price: None,
+                        liquidation_price: None,
+                        unrealized_pnl: None,
+                        initial_margin: None,
+                        maintenance_margin: None,
+                        leverage: None,
+                        margin_mode: None,
+                        position_side: None,
+                        exact_amounts: None,
+                    }],
+                },
+                event_source_kind::VENUE_ACCOUNT_POSITION,
+            ),
+            (
+                RuntimeExternalEvent::FundingRateSnapshot {
+                    snapshot: FundingRateSnapshot {
+                        instrument: instrument(),
+                        funding_rate_bps: 0,
+                        next_funding_timestamp_ms: None,
+                    },
+                },
+                event_source_kind::VENUE_FUNDING_RATE,
+            ),
+            (
+                RuntimeExternalEvent::AccountCashflow {
+                    cashflow: AccountCashflow {
+                        account_id: "main".into(),
+                        venue_id: "BINANCE".into(),
+                        currency: "USDT".into(),
+                        kind: CashflowKind::Funding,
+                        amount: Money::ZERO,
+                        external_id: "funding-1".into(),
+                    },
+                },
+                event_source_kind::VENUE_CASHFLOW,
+            ),
+            (
                 RuntimeExternalEvent::Accepted {
                     client_order_id: 1,
                     venue_order_id: None,
@@ -1899,6 +1944,20 @@ mod tests {
                 event_source_kind::VENUE_ORDER_FILL,
             ),
             (
+                RuntimeExternalEvent::FeeAdjustment {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    order_id: 1,
+                    instrument: instrument(),
+                    fees: vec![],
+                },
+                event_source_kind::VENUE_FEE_ADJUSTMENT,
+            ),
+            (
+                RuntimeExternalEvent::Cancelled { client_order_id: 1 },
+                event_source_kind::VENUE_ORDER_CANCELLED,
+            ),
+            (
                 RuntimeExternalEvent::CancelPending { client_order_id: 1 },
                 event_source_kind::VENUE_ORDER_CANCEL_PENDING,
             ),
@@ -1906,11 +1965,30 @@ mod tests {
                 RuntimeExternalEvent::ReconcileRequired { client_order_id: 1 },
                 event_source_kind::VENUE_RECONCILE_REQUIRED,
             ),
+            (
+                RuntimeExternalEvent::OrderStatusReconciled {
+                    client_order_id: 1,
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    status: OrderStatus::PendingSubmit,
+                    venue_order_id: None,
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+                event_source_kind::VENUE_ORDER_STATUS_RECONCILED,
+            ),
         ];
 
         for (event, expected) in cases {
             assert_eq!(venue_event_source_kind(&event), expected);
         }
+
+        let control_cancel =
+            RuntimeEventEnvelope::order_cancel_pending(1, 10, 11, 12, "control-cancel");
+        assert_eq!(
+            control_cancel.metadata.source_kind,
+            event_source_kind::CONTROL_ORDER_CANCEL_PENDING
+        );
     }
 
     fn order() -> Order {

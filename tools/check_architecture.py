@@ -1668,6 +1668,9 @@ NAAIVE_TRUNCATION = '.split("' + CFG_TEST_MARKER + '")[0]'
 # 每条理由都要能在被引文件里就地复核（本轮 23 条零读者全部逐条查过调用点）。
 PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     # 对外契约：README / deploy 文档 / 跨语言 SDK 把这些名字当成公布的能力。
+    "qx-core::CONTROL": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime cancellation events now use a fine-grained category",
+    "qx-core::MARKET_DATA": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime market events now use quote or order-book categories",
+    "qx-core::VENUE": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime venue facts now use per-fact categories",
     "qx-plugin::sign_ed25519": "README 公布 Ed25519 签名能力；validate() 的 ed25519 分支是消费侧",
     "qx-data::ed25519_public_key_hex": "R15 外部数据供应方签名 DatasetInstrumentRoleCatalogV1 时导出与种子匹配的公钥；运行时以 operator trust root 核验",
     "qx-data::sign_with_ed25519_seed": "R15 外部数据供应方离线签发版本化 instrument-role catalog 的公开签名 API；qx-service 只验签不持有供应方私钥",
@@ -23472,6 +23475,92 @@ EVENT_LOG_POLICY_REGISTRY_NAMES = (
 )
 
 
+def event_source_taxonomy_check() -> None:
+    """Keep runtime event source categories stable, classified, and regression-tested."""
+    core_event = (ROOT / "crates/qx-core/src/event.rs").read_text(encoding="utf-8")
+    core_lib = (ROOT / "crates/qx-core/src/lib.rs").read_text(encoding="utf-8")
+    pipeline = (ROOT / "crates/qx-runtime/src/pipeline.rs").read_text(encoding="utf-8")
+    production_pipeline = production_text(pipeline)
+    classifier = _fn_body(production_pipeline, "fn venue_event_source_kind(")
+    expected_kinds = (
+        "CONTROL_ORDER_CANCEL_PENDING",
+        "MARKET_QUOTE",
+        "MARKET_ORDER_BOOK",
+        "VENUE_ACCOUNT_BALANCE",
+        "VENUE_ACCOUNT_POSITION",
+        "VENUE_FUNDING_RATE",
+        "VENUE_CASHFLOW",
+        "VENUE_ORDER_ACCEPTED",
+        "VENUE_ORDER_FILL",
+        "VENUE_FEE_ADJUSTMENT",
+        "VENUE_ORDER_CANCELLED",
+        "VENUE_ORDER_CANCEL_PENDING",
+        "VENUE_RECONCILE_REQUIRED",
+        "VENUE_ORDER_STATUS_RECONCILED",
+    )
+    constants_present = all(
+        re.search(rf'pub const {kind}: &str = "[a-z_]+";', core_event)
+        for kind in expected_kinds
+    )
+    check(
+        constants_present and "event_source_kind" in core_lib,
+        "qx-core exports stable event source kind constants for runtime producers",
+        "source-kind constants or the qx-core public export are missing",
+    )
+    variants = (
+        ("MarketQuote", "MARKET_QUOTE"),
+        ("MarketOrderBook", "MARKET_ORDER_BOOK"),
+        ("AccountBalanceSnapshot", "VENUE_ACCOUNT_BALANCE"),
+        ("AccountPositionSnapshot", "VENUE_ACCOUNT_POSITION"),
+        ("FundingRateSnapshot", "VENUE_FUNDING_RATE"),
+        ("AccountCashflow", "VENUE_CASHFLOW"),
+        ("Accepted", "VENUE_ORDER_ACCEPTED"),
+        ("FeeAdjustment", "VENUE_FEE_ADJUSTMENT"),
+        ("Cancelled", "VENUE_ORDER_CANCELLED"),
+        ("CancelPending", "VENUE_ORDER_CANCEL_PENDING"),
+        ("ReconcileRequired", "VENUE_RECONCILE_REQUIRED"),
+        ("OrderStatusReconciled", "VENUE_ORDER_STATUS_RECONCILED"),
+    )
+    mapping_present = bool(classifier) and all(
+        re.search(
+            rf"RuntimeExternalEvent::{variant}\s*\{{\s*\.\.\s*\}}\s*=>\s*\{{?\s*event_source_kind::{kind}",
+            classifier,
+            re.DOTALL,
+        )
+        for variant, kind in variants
+    )
+    mapping_present = mapping_present and bool(
+        re.search(
+            r"RuntimeExternalEvent::Fill\s*\{\s*\.\.\s*\}\s*\|\s*"
+            r"RuntimeExternalEvent::FillWithSpec\s*\{\s*\.\.\s*\}\s*=>\s*\{\s*"
+            r"event_source_kind::VENUE_ORDER_FILL\s*\}",
+            classifier,
+            re.DOTALL,
+        )
+    )
+    check(
+        mapping_present,
+        "every RuntimeExternalEvent maps to its stable fine-grained source category",
+        "venue_event_source_kind is missing or misclassifies an event variant",
+    )
+    test = _fn_body(pipeline, "fn runtime_envelopes_use_fine_grained_event_source_kinds(")
+    test_covers_all_kinds = bool(test) and all(
+        f"event_source_kind::{kind}" in test for kind in expected_kinds
+    )
+    check(
+        test_covers_all_kinds,
+        "runtime source taxonomy regression test covers every classified event variant",
+        "the taxonomy test is missing or no longer covers every event category",
+    )
+    register = (ROOT / "maturity/capabilities.yaml").read_text(encoding="utf-8")
+    check(
+        "external_adapter_fine_grained_source_taxonomy_pending" not in register
+        and "event_source_kind publishes stable fine-grained classifications" in register,
+        "event source taxonomy is reflected in the maturity register",
+        "the closed gap is still listed as pending or its code evidence is missing",
+    )
+
+
 def event_log_retention_policy_check() -> None:
     """P0-2(b)：EventLog 的保留/归档策略写下来、且与代码事实一致。
 
@@ -33795,6 +33884,7 @@ def main() -> int:
     cli_surface_coverage_check()
     file_lock_single_source_check()
     io_budget_and_venue_cache_check()
+    event_source_taxonomy_check()
     event_log_retention_policy_check()
     pipeline_commit_rollback_check()
     parallel_run_isolation_check()
