@@ -12,10 +12,10 @@ postgres = ["dep:postgres", "dep:tokio-postgres", "dep:postgres-native-tls", "de
 nats = ["dep:async-nats", "dep:futures-util", "dep:tokio"]
 
 [dependencies]
-qx-core = { version = "0.3.0", path = "../qx-core" }
-qx-control = { version = "0.3.0", path = "../qx-control" }
-qx-scheduler = { version = "0.3.0", path = "../qx-scheduler" }
-qx-protocol = { version = "0.3.0", path = "../qx-protocol" }
+qx-core = { version = "0.4.0", path = "../qx-core" }
+qx-control = { version = "0.4.0", path = "../qx-control" }
+qx-scheduler = { version = "0.4.0", path = "../qx-scheduler" }
+qx-protocol = { version = "0.4.0", path = "../qx-protocol" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"

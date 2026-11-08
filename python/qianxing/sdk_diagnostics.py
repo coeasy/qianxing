@@ -64,7 +64,7 @@ def _sdk_package_version() -> str:
     try:
         return version("qianxing")
     except PackageNotFoundError:
-        return "0.3.0"
+        return "0.4.0"
 
 
 def _probe_qx_cli(

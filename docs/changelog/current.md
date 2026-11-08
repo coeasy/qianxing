@@ -1,5 +1,6 @@
-### 0.3.0 发布候选复验 · Windows 本机门禁通过（2026-11-08，未发布工作区）
+### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 
+- GitHub `v0.3.0` 已于 2026-10-27 发布；后续功能按 minor 版本收敛为 `0.4.0` 候选。Workspace 29 个 crate、内部路径依赖要求、Python 包及未安装版本回退、C++ SDK、maturity 发布基线和九个场景目标版本已统一，Cargo.lock 已同步。版本快检与架构 372 项快检通过；Python 诊断和项目运行定向测试共 86 项通过。当前只准备候选，尚未打 tag 或上传。
 - Linux 复测修复了三类失败：将测试子进程指向隔离 Python venv、把明文模板数契约从 15 更新为当前的 16、将并发文件锁等待预算从约 100ms 提至约 5s；PreparedEvaluation 无待清理文件时不再同步不存在的父目录。相关 7 个定向回归、SQLite 严格 Clippy 与 `cargo check` 通过。随后取消构建争用，Linux 默认 SQLite CLI 全套复测通过 696 项、14 个 harness、0 失败，先前 7 项 Python/外部 worker 超时未复现；证据见 `maturity/evidence/linux-sqlite-cli-retest-2026-11-08.json`。PostgreSQL/NATS feature matrix 与真实服务仍未验收。
 - Windows 全量测试捕获并修复 A 股 portable EvidenceBundle 导出配置指纹不一致：声明配置现与回测共同规范化 built-in strategy version。修复后 `cargo test --workspace --all-features -j 1 --quiet` 通过（qx-cli 498 passed、1 ignored，另有需 PostgreSQL DSN/C++ fixture 的测试按条件忽略），严格 workspace Clippy 通过；Python 604 passed、3 skipped，架构快检 372 项通过。`maturity/evidence/windows-release-candidate-rebuild-2026-11-08.json` 记录本轮证据。
 - Rust CLI crate 增加 crates.io 元数据并从包文件清单排除 `.task-tmp`；检查确认 0 个测试临时文件会进入 tarball。源码包生成目前被未发布的 workspace 依赖拦截（配置 registry index 中找不到 `qx-adapter`），因此 Rust 发布渠道保持 GitHub Release 二进制或 `cargo install --git`；本轮未进行任何外部上传。

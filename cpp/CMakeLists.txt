@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(qianxing_strategy_sdk VERSION 0.3.0 LANGUAGES CXX)
+project(qianxing_strategy_sdk VERSION 0.4.0 LANGUAGES CXX)
 
 if(MSVC)
     # Project sources and comments are UTF-8; do not let the active Windows

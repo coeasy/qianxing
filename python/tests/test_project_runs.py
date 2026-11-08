@@ -488,7 +488,7 @@ class ProjectRunTests(unittest.TestCase):
         return patch(
             "qianxing.report_renderer.require_report_renderer",
             return_value={"path": "qx-cli", "status": "ready", "origin": "external",
-                          "selection": "explicit", "version": "0.3.0"},
+                          "selection": "explicit", "version": "0.4.0"},
         )
 
     def test_report_renderer_prefers_the_bundled_copy_and_never_falls_back_silently(self):
