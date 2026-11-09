@@ -18011,6 +18011,178 @@
         }
       ],
       "notes": "Final ledger verification after removing its non-manifest self-input from the preceding passing run record"
+    },
+    {
+      "run_id": "55030763-da4d-44b4-a589-3362e720d462",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:35:13.066102Z",
+      "source_revision": "07505ae108e044b2637dcf2e7d7dc77c1033b36b",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/55030763-da4d-44b4-a589-3362e720d462.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "qianxing-linux-test",
+        "sh",
+        "-lc",
+        "set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo build -p qx-python --locked --offline"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "crates/qx-python/Cargo.toml",
+          "sha256": "1a8ad2281986eac518414dac884af54921bdaf6e97dc857fe0ab9a4d313fdefa"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/55030763-da4d-44b4-a589-3362e720d462.log",
+          "sha256": "f7e823154c3339d9d6bb480c61ec339bd74dd6791eb016c5fa44a018cc6b3d12"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/55030763-da4d-44b4-a589-3362e720d462.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Linux Debian 12 build of qx-python native extension from current pushed head in isolated worktree; PATH is set explicitly inside the preserved Podman build container"
+    },
+    {
+      "run_id": "9507ff33-96db-4510-969e-73a49ffe8eef",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:38:34.110375Z",
+      "source_revision": "07505ae108e044b2637dcf2e7d7dc77c1033b36b",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/9507ff33-96db-4510-969e-73a49ffe8eef.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "qianxing-linux-test",
+        "sh",
+        "-lc",
+        "set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo test --workspace --all-targets --locked --offline"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "4e23177a1dcab476a4560b7aeed1434943d9a9171afeb1c44a641e97195c23ca"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/9507ff33-96db-4510-969e-73a49ffe8eef.log",
+          "sha256": "3d610e78d1abd5e224883af78510ab6f864a3d1a5752a653117d9de3f3e8aca7"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/9507ff33-96db-4510-969e-73a49ffe8eef.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Linux Debian 12 workspace all-targets test on exact current pushed head using isolated clean worktree, persisted cargo target volume, and explicit QX_PYTHON"
+    },
+    {
+      "run_id": "0b3bcd13-2456-47ac-8a0c-ab1ebaea9549",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:45:48.571981Z",
+      "source_revision": "07505ae108e044b2637dcf2e7d7dc77c1033b36b",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "qianxing-linux-test",
+        "sh",
+        "-lc",
+        "set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target/linux-07505ae CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo test --workspace --all-targets --locked --offline"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.log",
+          "sha256": "afda0fb36da788b7b265e5f2e5e5d2d1cd4c9cc7ddee0bd51a0f9f91336c8c18"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Linux Debian 12 workspace test at pushed HEAD; isolated Cargo target dir to avoid prior interrupted incremental state."
+    },
+    {
+      "run_id": "b539f851-f41f-4bf7-8e26-ad7ceda68b3c",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:52:22.214113Z",
+      "source_revision": "07505ae108e044b2637dcf2e7d7dc77c1033b36b",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "qianxing-linux-test",
+        "sh",
+        "-lc",
+        "set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target/linux-07505ae CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo test --workspace --all-targets --locked --offline"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.log",
+          "sha256": "4e4b137a2b705558203ba9cffdbb4cdb578532b12adafa8352d0836d432b06ca"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Retry after Podman WSL VM stopped during test run; increased VM memory. Reusing isolated Linux build cache."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
