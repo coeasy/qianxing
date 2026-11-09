@@ -4,7 +4,7 @@
 
 - 提交 `3e92babb` 的 PR CI #423 全部 **33/33 jobs 通过**：Ubuntu/macOS/Windows Python 3.10–3.13 wheel 构建和安装测试、macOS R07/R17/R19、Linux/PostgreSQL Paper lifecycle/checkpoint、文件/SQLite/PostgreSQL 队列容量与六类 worker 崩溃边界、PostgreSQL/NATS service contracts、性能基准均通过。证据与 artifact digest 见 `maturity/evidence/hosted-ci-release-candidate-2026-11-10.json`。Testnet 离线 fail-closed 检查通过，但真实凭据往返步骤因无凭据跳过；本次没有运行 tag 发布、上传 GitHub Release/PyPI 或批准生产。
 - GitHub Release 采用“先创建草稿，PyPI 发布成功后再公开”的顺序；`tools/check_architecture.py` 将草稿、PyPI 依赖、最终 `gh release edit --draft=false` 与写权限纳入发布门禁。本机完整架构检查 1,624 项通过，PR CI 四个架构分片及聚合门也通过。
-- 文件型 EventLog 与 Outbox 写入现在共用跨进程事务锁和耐久 redo journal；单文件、分段日志及所有公开 Outbox 读写入口在返回数据前先恢复 journal。写到 Outbox 失败时保留 journal 并要求对账，读者不会看到只提交一半的 EventLog/Outbox；恢复用例覆盖解除故障后的自动回放。该改动收敛“EventLog 已提交、Outbox 未完成”这一文件后端崩溃窗口，不把文件后端提升为生产事务后端；production 仍由 topology validation 强制 PostgreSQL，P0-2 的队列/consumer 崩溃矩阵仍需分别验收。Windows `cargo test --workspace`、全特性 `cargo check`、格式门禁及 1,624 项架构门禁通过。
+- 文件型 EventLog 与 Outbox 写入现在共用跨进程事务锁和耐久 redo journal；单文件、分段日志及所有公开 Outbox 读写入口在返回数据前先恢复 journal。写到 Outbox 失败时保留 journal 并要求对账，读者不会看到只提交一半的 EventLog/Outbox；恢复用例覆盖解除故障后的自动回放。该改动收敛“EventLog 已提交、Outbox 未完成”这一文件后端崩溃窗口，不把文件后端提升为生产事务后端；production 仍由 topology validation 强制 PostgreSQL。新增长期忽略的 NATS service acceptance：在真实 JetStream 上先交付但不 ACK，再原子提交业务投影/consumer checkpoint，等待 ack_wait 后由重启 adapter 接收重复投递；投影 reducer 只执行一次，重复被确认，定向测试 2/2 通过。Outbox duplicate relay 与 fencing stale ACK 仍由文件/SQLite/PostgreSQL 后端契约覆盖；NATS 慢 ACK、握手重试与长拉取的预算故障注入仍未覆盖。提交并推送为 `0bdc4359`；本轮 NATS 崩溃测试及台账更新尚未提交。之前 Windows `cargo test --workspace`、全特性 `cargo check`、格式门禁及 1,624 项架构门禁通过。
 
 ### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 

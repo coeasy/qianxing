@@ -704,6 +704,7 @@ capabilities:
     evidence:
       - crates/qx-storage/src/nats.rs
       - crates/qx-storage/tests/nats_jetstream.rs publish/consume/dedup contract plus validation test
+      - 'crates/qx-storage/tests/nats_jetstream.rs test nats_redelivery_after_projection_commit_before_ack_is_idempotent runs against a real NATS 2.10 JetStream broker: the first delivery is left unacknowledged after the transactional projection/checkpoint commit, then the broker redelivers after ack_wait and the restarted adapter records Duplicate, ACKs it, and does not invoke the reducer again (local Podman service acceptance, 2026-11-10)'
       - crates/qx-storage/src/wait_budget.rs 把连接、请求/发布确认、有界拉取三条等待写成一处可校验的 NatsWaitBudget（默认 5000/5000/1000），下界统一 100ms 防热循环、上界 60000/300000/30000；此前这三格全在 async-nats 0.50 的默认值上（握手 5s、连接层请求 10s、ack 5s），配置文件里找不到、日志里读不出 (V13 R2 第十九遍 #220)
       - crates/qx-storage/src/nats.rs 的连接形状：jetstream::new(client) 会 tokio::spawn 一条 ack 监视任务，原先在 block_on_runtime 返回之后才调用，于是 --features nats 的五个 relay/consumer 入口与测试线程在握手成功后的下一步当场 panic「there is no reactor running」（logs/s443_pass19_nats_wait_probe_before2.txt 实测 20s 看门狗内没有返回）。现在 Context 在已进入的 runtime 内建好再交出 (V13 R2 第十九遍 #220)
       - crates/qx-storage/src/nats.rs 把同一枚 request 预算同时接到 ConnectOptions::request_timeout 与 Context::set_timeout：只接后者时哑 server 上 publish 5.017s 有界、get_stream/get_consumer 仍走依赖默认的 10.029s（logs/s444_pass19_nats_wait_probe_after_b1.txt），即 $JS.API.* 的界在连接层不在 ack 层 (V13 R2 第十九遍 #220)
@@ -712,7 +713,7 @@ capabilities:
       - .github/workflows/ci.yml Backend service contracts job
       - maturity/evidence/hosted-ci-release-candidate-2026-11-10.json
     limitations:
-      - 'nats_wait_budget_bounds_measured_on_local_tcp_stubs_only：三条预算的有界性只在本机桩上量过（被拒端口、哑 server），真 NATS/JetStream broker 下的握手重试、慢 ack 与长拉取仍无记录，sandbox_tested 保持 false (V13 R2 第十九遍 #220) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）'
+      - 'nats_wait_budget_bounds_measured_on_local_tcp_stubs_only：三条预算的有界性只在本机桩上量过（被拒端口、哑 server）；真实 NATS/JetStream 已覆盖发布/消费/重复去重及投影提交后 ACK 前崩溃的重投递，但握手重试、慢 ack 与长拉取的预算边界仍未在故障 broker 下实测，sandbox_tested 保持 false (V13 R2 第十九遍 #220；P0-2 consumer crash boundary, 2026-11-10) （状态：未收口；收口门：三条预算在可注入故障的真实 broker 上均有有界验收；未排期原因：保留 broker 故障注入风险）'
   python_bridge:
     implementation: true
     code_tested: true

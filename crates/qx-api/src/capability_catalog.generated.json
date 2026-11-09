@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "306031faba45993be266b86299817d579af21d059443384820fdd1e2e38dde27",
+    "maturity/capabilities.yaml": "8f95ec0f7c9c69abf01e8248d88dd1624b55d8e1bcf3a70bdc53780c71440006",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -224,7 +224,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 95,
+      "evidence_path_count": 96,
       "limitation_count": 2
     },
     {
@@ -2004,6 +2004,7 @@
           "evidence": [
             "crates/qx-storage/src/nats.rs",
             "crates/qx-storage/tests/nats_jetstream.rs publish/consume/dedup contract plus validation test",
+            "crates/qx-storage/tests/nats_jetstream.rs test nats_redelivery_after_projection_commit_before_ack_is_idempotent runs against a real NATS 2.10 JetStream broker: the first delivery is left unacknowledged after the transactional projection/checkpoint commit, then the broker redelivers after ack_wait and the restarted adapter records Duplicate, ACKs it, and does not invoke the reducer again (local Podman service acceptance, 2026-11-10)",
             "crates/qx-storage/src/wait_budget.rs 把连接、请求/发布确认、有界拉取三条等待写成一处可校验的 NatsWaitBudget（默认 5000/5000/1000），下界统一 100ms 防热循环、上界 60000/300000/30000；此前这三格全在 async-nats 0.50 的默认值上（握手 5s、连接层请求 10s、ack 5s），配置文件里找不到、日志里读不出 (V13 R2 第十九遍",
             "crates/qx-storage/src/nats.rs 的连接形状：jetstream::new(client) 会 tokio::spawn 一条 ack 监视任务，原先在 block_on_runtime 返回之后才调用，于是 --features nats 的五个 relay/consumer 入口与测试线程在握手成功后的下一步当场 panic「there is no reactor running」（logs/s443_pass19_nats_wait_probe_before2.txt 实测 20s 看门狗内没有返回）。现在 Context 在已进入的 runtime 内建好再交出 (V13 R2 第十九遍",
             "crates/qx-storage/src/nats.rs 把同一枚 request 预算同时接到 ConnectOptions::request_timeout 与 Context::set_timeout：只接后者时哑 server 上 publish 5.017s 有界、get_stream/get_consumer 仍走依赖默认的 10.029s（logs/s444_pass19_nats_wait_probe_after_b1.txt），即 $JS.API.* 的界在连接层不在 ack 层 (V13 R2 第十九遍",
