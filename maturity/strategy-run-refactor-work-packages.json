@@ -65,11 +65,11 @@
     {
       "id": "R04",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Windows static and dynamic process-tree acceptance is reviewed. POSIX normal-return cleanup now explicitly reaps the owned process group, and Linux CI now measures an explicitly detached new-session child; that Linux acceptance has not run yet."
+        "Windows 11 and Debian 12 Linux Podman dynamic acceptances pass after parent normal return and timeout; the detached POSIX new-session boundary is explicitly verified and its fixture is reaped."
       ],
-      "next_action": "Run and review the Linux/POSIX descendant cleanup acceptance, including the detached-child boundary case.",
+      "next_action": "Keep normal-return, timeout, and detached-session process-tree coverage when process supervision changes.",
       "code_paths": [
         "docs/strategy-project-runs.md",
         "python/qianxing/process_tree.py",
@@ -86,7 +86,11 @@
         "maturity/acceptance-artifacts/58a4978a-f9ca-46c9-a38c-700c3ddbb56b.log",
         "maturity/acceptance-artifacts/58a4978a-f9ca-46c9-a38c-700c3ddbb56b.source-tree.json",
         "maturity/acceptance-artifacts/e66153be-8147-4434-872b-adac7d0be687.log",
-        "maturity/acceptance-artifacts/e66153be-8147-4434-872b-adac7d0be687.source-tree.json"
+        "maturity/acceptance-artifacts/e66153be-8147-4434-872b-adac7d0be687.source-tree.json",
+        "maturity/evidence/strategy-preflight-process-tree-linux.json",
+        "maturity/acceptance-artifacts/6743e933-c2f6-462f-8b57-b9915a40ee10.log",
+        "maturity/acceptance-artifacts/6743e933-c2f6-462f-8b57-b9915a40ee10.source-tree.json",
+        "maturity/evidence/strategy-preflight-process-tree-windows-2026-11-09.json"
       ]
     },
     {
@@ -144,9 +148,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows ENOSPC durability and identity paths have been reviewed. Native Linux /proc identity and native macOS proc_pidinfo plus real ps fallback acceptance are now configured in CI; neither hosted runner has produced new R07 evidence yet."
+        "Windows and Debian 12 Linux process identity acceptance pass, including stable live identity, stale start rejection, and reaped-child detection. Native macOS proc_pidinfo and real ps fallback acceptance remain pending."
       ],
-      "next_action": "Run the configured Linux and macOS PID identity acceptances and review their recorded process-start precision and stale-owner results.",
+      "next_action": "Run and review the native macOS proc_pidinfo and ps fallback acceptance, then update R07 if both native paths reject stale owners.",
       "code_paths": [
         "python/qianxing/project_runs.py",
         "python/tests/test_project_runs.py",
@@ -164,7 +168,10 @@
         "maturity/acceptance-artifacts/af7564e8-9a37-4ba2-be7b-2f7a353b6e53.source-tree.json",
         "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.log",
         "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.source-tree.json",
-        "maturity/evidence/r07-project-run-identity-disk-full-human-review-2026-11-05.json"
+        "maturity/evidence/r07-project-run-identity-disk-full-human-review-2026-11-05.json",
+        "maturity/evidence/project-run-identity-linux.json",
+        "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.log",
+        "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json"
       ]
     },
     {

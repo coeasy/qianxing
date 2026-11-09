@@ -202,7 +202,11 @@ def main() -> int:
         "detached_process_limit_documented": "POSIX children that deliberately start a new session escape the owned process group and require separate ownership; the Linux acceptance verifies this boundary and cleans up its fixture child.",
     }
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"out": str(output), "cases": len(rows), "all_descendants_reaped": all(row["descendant_reaped"] for row in rows)}))
+    all_descendants_reaped = all(
+        row.get("descendant_reaped", row.get("acceptance_cleanup_reaped_child", False))
+        for row in rows
+    )
+    print(json.dumps({"out": str(output), "cases": len(rows), "all_descendants_reaped": all_descendants_reaped}))
     return 0
 
 

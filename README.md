@@ -277,7 +277,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 本机 Windows 验收结果：
 
 - `cargo test --workspace --all-features -j 1 --quiet`：全 workspace 无失败；需要 PostgreSQL DSN 或 C++ 共享库 fixture 的用例按环境条件忽略。
-- `cargo fmt --all -- --check`、qx-core/qx-storage 全 features Clippy、架构自检 372 项、能力目录生成与未验证清单核验通过。
+- `cargo fmt --all -- --check`、qx-core/qx-storage 全 features Clippy、架构自检 373 项、能力目录生成与未验证清单核验通过。
 - Windows x86_64 的 0.4.0 Release CLI 与 CPython stable-ABI wheel 已在干净工作树构建；wheel 通过结构审计、隔离安装与发布面 smoke，两次构建字节一致。记录见 [Windows wheel 预检](maturity/evidence/windows-wheel-release-preflight-2026-11-09.json)。C++ SDK 的 Release、安装包和独立消费者验收记录见 [Windows 本机预检](maturity/evidence/windows-local-release-preflight-2026-11-07.json)。
 - Paper 控制链、本机回测、CLI/API/Python 入口与跨语言契约有本地代码测试。运行时拒绝 sandbox/testnet 明文 API；paper 明文限 loopback，只开放固定 Trading grant 的 Paper workflow。仓库 16 份 paper 明文与 5 份 mTLS runtime 模板由测试逐份核验。
 - Windows x86_64 本地候选包含 CLI、CPython stable-ABI wheel、C++ SDK、Web Console、SBOM 与 SHA256SUMS；wheel 在全新虚拟环境离线安装，CLI/schema/platform 身份匹配，quickstart 首跑成功。候选只用于复核，不代表正式发布。

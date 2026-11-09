@@ -251,7 +251,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R01 环境身份与兼容检查 | 部分 | Python doctor、native/CLI版本接口、兼容矩阵 | 无 | 部分：doctor 可比对 Python wheel 与 Rust 扩展编译版本并提示修复；qx-cli 对照/安装器仍缺 |
 | R02 PathResolver与执行上下文 | P1/部分 | project_service/strategy_project/project_runs | — | 预检与受管执行不切换进程 cwd；受管执行将输入规格和引用的数据文件冻结到 Run 目录。策略包快照、服务层解耦及并发集成验收仍未完成 |
 | R03 项目应用服务 | P1/完成 | strategy_project/strategy_execution/project_runs | R02 | CLI不递归main、不被应用层反向导入；传统 `run-strategy` 与 `project run` 共用应用服务并保持结果契约 |
-| R04 静态/动态doctor | P1/部分 | 元数据与限时检查进程树 | R01,R03 | 静态 doctor 与 server plan 不导入策略；dynamic doctor、本地 plan、run 的执行边界有文档；动态路径在 POSIX 清理 session、Windows 使用 kill-on-close Job Object，跨平台后代进程验收仍未闭环 |
+| R04 静态/动态doctor | P1/完成 | 元数据与限时检查进程树 | R01,R03 | 静态 doctor 与 server plan 不导入策略；dynamic doctor、本地 plan、run 的执行边界有文档；POSIX process group 与 Windows kill-on-close Job Object 均覆盖正常返回和超时后代回收；Debian Linux 另验证 detached new-session 子进程逃逸边界并回收 fixture（`maturity/evidence/strategy-preflight-process-tree-linux.json`） |
 | R05 不可变计划与输入快照 | P0/部分 | qx-spec、service、项目runner、hs300工具 | R02 | 执行/散列/归档同字节；源中途改变也不污染结果 |
 | R06 报告输出保护 | P0/完成 | project_runs + Rust报告发布 | R02 | 输入别名/符号链接覆盖被拒；普通失败回滚；事务日志支持进程退出后的恢复；报告与可选 EvidenceBundle 同包提交 |
 | R07 运行状态与产物完整性 | P1/部分 | run receipt、owner身份、错误信封 | R03,R05 | 缺产物、损坏记录、PID复用、磁盘满均可诊断 |

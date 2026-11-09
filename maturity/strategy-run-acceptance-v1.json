@@ -15673,6 +15673,93 @@
         }
       ],
       "notes": "Windows-local serialized CLI behavior parity rerun after final fail-closed/template changes."
+    },
+    {
+      "run_id": "6743e933-c2f6-462f-8b57-b9915a40ee10",
+      "acceptance_id": "R04-AC01",
+      "recorded_at_utc": "2026-11-09T11:26:37.679834Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "4239b7be9bc951a9856051ec016b2c338ef0399870a14e899a0d8ff98cf2cc26",
+      "source_manifest": "maturity/acceptance-artifacts/6743e933-c2f6-462f-8b57-b9915a40ee10.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_process_tree.py",
+        "--output",
+        "maturity/evidence/strategy-preflight-process-tree-linux.json",
+        "--timeout-seconds",
+        "0.5"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_process_tree.py",
+          "sha256": "33908ed6bda1ec244635e3a8213b1b3eb3c944dfa5b07e3c8cf03da35439184b"
+        },
+        {
+          "path": "python/qianxing/process_tree.py",
+          "sha256": "0cfc404dfba643c55551298894e709311aedffabc2a899cf06510d7e59053f57"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/6743e933-c2f6-462f-8b57-b9915a40ee10.log",
+          "sha256": "4716992d4e6eb3a6c9f5df5a80c2523365470055b792ba957fd02f629ff3b506"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/6743e933-c2f6-462f-8b57-b9915a40ee10.source-tree.json",
+          "sha256": "4584b0fcd158bf638699459d55821783ccb1e581fc5fc994cbf3147c8b30ff9e"
+        }
+      ],
+      "notes": "Debian 12 Podman Linux acceptance after normal parent return and timeout; explicitly verifies a detached new-session child escapes owned-group cleanup and is then reaped by the acceptance fixture."
+    },
+    {
+      "run_id": "b19985c1-30aa-4ce1-8489-df728fd3a02e",
+      "acceptance_id": "R07-AC01",
+      "recorded_at_utc": "2026-11-09T11:26:38.910796Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cd7302f65ea9dc79a42703b0fa8566a02c75e32b2c70c56b78d3c9cd4c77f10f",
+      "source_manifest": "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_project_run_identity.py",
+        "maturity/evidence/project-run-identity-linux.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_project_run_identity.py",
+          "sha256": "26f42b8ab9369c5ebc430d33de1ead48ffb6161ddf31ddea12f4175ceda4a69c"
+        },
+        {
+          "path": "python/qianxing/project_runs.py",
+          "sha256": "6e2f9214d0fc8588eca27a8257c7633a80727f899999718677ad54da38b3221c"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.log",
+          "sha256": "2ced3537712693e0c2831741cd8b79d1f2ac5651772d61fbf695665e0cd9d35b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json",
+          "sha256": "b5f06052f444ee0ad21addcfd3b6ca9c669399bf03cf26cb483f4aa21364ce35"
+        }
+      ],
+      "notes": "Debian 12 Podman Linux native /proc identity remains stable for the current PID, distinguishes a live child from a stale process-start identity, and reports the reaped child as dead."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
