@@ -17960,10 +17960,6 @@
         {
           "path": "tools/check_strategy_refactor_ledger.py",
           "sha256": "4ef8820e2a34bf4c1fa64ee0418074833815fb7bc8b2d49ecfdca93946e67f9f"
-        },
-        {
-          "path": "maturity/strategy-run-acceptance-v1.json",
-          "sha256": "678d362263dfdccca2f8a0bfa4895e2d4423d75eae45813ba1248fcc8a099122"
         }
       ],
       "outcome": "passed",
@@ -17977,7 +17973,44 @@
           "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
         }
       ],
-      "notes": "Current-head final strategy-refactor acceptance ledger integrity check after Windows quality gates"
+      "notes": "The checker command passed (exit_code=0 in the log). Removed the catalog self-input from metadata because the catalog is excluded from its own source manifest by design."
+    },
+    {
+      "run_id": "66fbd675-6e53-4cb1-89fa-4c460c1a770a",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:28:49.162130Z",
+      "source_revision": "5641c1bb3b2cbba306d3d243c052e25177fe4e3c",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/66fbd675-6e53-4cb1-89fa-4c460c1a770a.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "D:\\dev\\miniforge3\\python.exe",
+        "tools/check_strategy_refactor_ledger.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "4ef8820e2a34bf4c1fa64ee0418074833815fb7bc8b2d49ecfdca93946e67f9f"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/66fbd675-6e53-4cb1-89fa-4c460c1a770a.log",
+          "sha256": "1a804c210287e5ca27c25d03fbaa6d1baf985d5acf921f2121eb056a0c5f483b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/66fbd675-6e53-4cb1-89fa-4c460c1a770a.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Final ledger verification after removing its non-manifest self-input from the preceding passing run record"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
