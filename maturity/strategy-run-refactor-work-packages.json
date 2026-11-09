@@ -179,9 +179,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows host capability matrix, positive/negative dispatch, and legacy C ABI compatibility have been reviewed. Linux Rust dispatch, legacy C ABI compatibility, and Python capability negotiation are now covered by targeted CI steps; hosted Linux execution remains pending."
+        "All three targeted Linux checks pass in Debian 12 Podman: built-in Rust dispatch, legacy C ABI capability compatibility, and Python host negotiation. The hosted ubuntu-latest/Python 3.12 workflow has not produced a run for this branch."
       ],
-      "next_action": "Run and review the targeted Linux host-capability CI outputs, then update R08 status if every dispatch and legacy-ABI gate passes.",
+      "next_action": "Run and review the same three acceptance steps on hosted ubuntu-latest/Python 3.12, then close R08 if the outputs match the Podman results.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -222,7 +222,13 @@
         "maturity/acceptance-artifacts/83b507fd-fce1-4ebe-917c-7835975a1bb8.source-tree.json",
         "maturity/acceptance-artifacts/f1aa248a-8b36-4451-8957-b5cf82d9bb44.log",
         "maturity/acceptance-artifacts/f1aa248a-8b36-4451-8957-b5cf82d9bb44.source-tree.json",
-        "maturity/evidence/r08-host-capability-human-review-2026-11-05.json"
+        "maturity/evidence/r08-host-capability-human-review-2026-11-05.json",
+        "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.log",
+        "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.source-tree.json",
+        "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.log",
+        "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.source-tree.json",
+        "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.log",
+        "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.source-tree.json"
       ]
     },
     {

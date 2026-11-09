@@ -255,7 +255,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R05 不可变计划与输入快照 | P0/部分 | qx-spec、service、项目runner、hs300工具 | R02 | 执行/散列/归档同字节；源中途改变也不污染结果 |
 | R06 报告输出保护 | P0/完成 | project_runs + Rust报告发布 | R02 | 输入别名/符号链接覆盖被拒；普通失败回滚；事务日志支持进程退出后的恢复；报告与可选 EvidenceBundle 同包提交 |
 | R07 运行状态与产物完整性 | P1/部分 | run receipt、owner身份、错误信封 | R03,R05 | 缺产物、损坏记录、PID复用、磁盘满均可诊断 |
-| R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | 所有声称支持的能力均有实际交付与负例；未知先拒绝 |
+| R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | Debian 12 Podman 已实跑 Linux 内置 Rust dispatch、旧式 C ABI 能力兼容和 Python host capability 三条针对性验收，均在构造/dispatch 前拒绝未知能力；仍待 hosted Ubuntu 24.04/Python 3.12 对照验收 |
 | R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | 部分：不可变配置载荷、单文件工件快照、幂等受理和终态存储已实现；多文件bundle与worker实际切换、fence/readiness证据仍未完成 |
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | 缺行情/对账/恢复/fence任一必需证据时不得发新live命令 |
 | R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | 发送前持久化命令批次/checkpoint候选及逐命令本地进度；重启时核验job/config/执行事实摘要后重放幂等本地命令并提交checkpoint/cursor。崩溃注入与多后端验收未完成 |
@@ -807,3 +807,5 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 2026-11-05 R18 Windows packaged console/BFF 与 browser acceptance 人工复核：session/CSRF cookie 与缺少 CSRF 的写拒绝成立；revision 与 Deploy operation 可授权写入、读回，审计身份来自登录 operator。browser 展示 desired_revision=1、accepted operation 与未观察 worker；readiness 保持 fail-closed，trading_enabled=null。未启动 supervisor/venue worker，也未发送订单。复核记录：`maturity/evidence/r18-packaged-console-human-review-2026-11-05.json`。权威 worker/host/checkpoint/reconciliation/authorization 仍待提供，R18 保持 partial。
 
 2026-11-07 V13 R16 DatasetBundle JSON 组件格式规范化：`DatasetComponentManifest.format` 现在始终序列化；显式 `json` 清单往返保持字节稳定，旧版省略字段的输入写出统一规范格式。`qx-data` 42 项测试、workspace all-features 全量测试、Python 687/14、workspace Clippy、严格 unwrap/expect、格式与架构 372 项检查通过。crypto/A 股回测与 Paper 验收使用新 release CLI 重跑；A 股 Bundle fingerprint 更新为 `dataset-bundle:b1e0200f8a3aa3da`，回测结果哈希保持不变。当前源码 wheel 与独立 CLI clean-install 通过。证据：`maturity/evidence/dataset-manifest-json-canonicalization-2026-11-07.json`、`maturity/evidence/clean-install-current-worktree-2026-11-07.json`。仅为 dirty Windows 本机证据；Linux/macOS 与 PostgreSQL 服务实例验收仍待完成。
+
+2026-11-09 R08 Linux host-capability 真实运行：在干净 b17 源码 worktree 的 Debian 12 Podman 中，逐条执行 CI 所列 Rust built-in dispatch、legacy C ABI capability compatibility 与 Python host negotiation 测试；三条均通过，并分别记录源码指纹和日志。记录 run IDs 为 `7eba9069-4aaf-40f4-9dad-6c10d31f82ba`、`6634a97f-e1f7-4525-b905-44e499245b90`、`5d1f8dbd-de0a-4166-b618-60c598e7a69d`。R08 仍为 partial，因 hosted `ubuntu-latest` / Python 3.12 runner 尚未产生对应运行。

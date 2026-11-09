@@ -15760,6 +15760,146 @@
         }
       ],
       "notes": "Debian 12 Podman Linux native /proc identity remains stable for the current PID, distinguishes a live child from a stale process-start identity, and reports the reaped child as dead."
+    },
+    {
+      "run_id": "7eba9069-4aaf-40f4-9dad-6c10d31f82ba",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T11:43:55.625004Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "--",
+        "--test-threads=1",
+        "builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "0d3006c5bdc292728ab288d39f49816f92d9618aaffb919d0606e2bc6a5be00a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.log",
+          "sha256": "c42edff16b7c07d6fd0f872b33cb33ad52a1ee76ab8df02e8fda466264aed33a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux built-in Strategy host accepts supported requirements and rejects unsupported or algorithm-missing capabilities before dispatch."
+    },
+    {
+      "run_id": "6634a97f-e1f7-4525-b905-44e499245b90",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T11:44:08.179933Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-strategy",
+        "--test",
+        "legacy_c_abi_capability_load"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-strategy/tests/legacy_c_abi_capability_load.rs",
+          "sha256": "9eea7af438836cbc6a3939347c87f4a00a04d349d205b133d1fc84d4235121aa"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "0d3006c5bdc292728ab288d39f49816f92d9618aaffb919d0606e2bc6a5be00a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.log",
+          "sha256": "c9827e40e5b18ebc0e0f110829c24199750cda72c56da62f673213a7ee7533a8"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux legacy C ABI plugin without optional capability export remains compatible with empty requirements and rejects unsupported requirements before create."
+    },
+    {
+      "run_id": "5d1f8dbd-de0a-4166-b618-60c598e7a69d",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T11:44:09.505464Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "python/tests",
+        "-p",
+        "test_strategy_capabilities.py"
+      ],
+      "inputs": [
+        {
+          "path": "python/qianxing_strategy/worker.py",
+          "sha256": "4b36a530fb33c271bb2ae209b729692577bb5a920cbabcee3d94d8d049fc768b"
+        },
+        {
+          "path": "python/tests/test_strategy_capabilities.py",
+          "sha256": "e56c1e266558f40c0bf832fe1d919c643f6d91c4fb1a4e1be1ac2f8eab538f19"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.log",
+          "sha256": "050db07eeebad47e35e6d6141707f8648352a03a269f5c964620a768bc9d3f4c"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux Python strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

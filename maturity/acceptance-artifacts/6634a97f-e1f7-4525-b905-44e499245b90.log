@@ -1,0 +1,20 @@
+$ cargo test -p qx-strategy --test legacy_c_abi_capability_load
+exit_code=0
+
+[stdout]
+
+running 1 test
+test legacy_plugin_without_optional_requirement_export_loads_empty_requirements_and_fails_closed_before_create ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+[stderr]
+   Compiling quote v1.0.47
+   Compiling syn v3.0.4
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling qx-core v0.4.0 (/tmp/qx-r08-clean/crates/qx-core)
+   Compiling qx-strategy v0.4.0 (/tmp/qx-r08-clean/crates/qx-strategy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.30s
+     Running tests/legacy_c_abi_capability_load.rs (/target/debug/deps/legacy_c_abi_capability_load-beba74962b0f1fa4)
