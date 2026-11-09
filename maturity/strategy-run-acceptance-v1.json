@@ -17129,6 +17129,60 @@
         }
       ],
       "notes": "Linux PostgreSQL Paper supervisor restart commits and restores a Python strategy checkpoint across supervisor and worker PID changes with clean stdin EOF shutdown"
+    },
+    {
+      "run_id": "b285c6c8-1694-47d9-9331-cedf152494a1",
+      "acceptance_id": "R12-AC01",
+      "recorded_at_utc": "2026-11-09T13:22:29.751729Z",
+      "source_revision": "553d299562c1f7c6db937bcf7c119d36c7331b6e",
+      "source_tree_sha256": "fe683bf08fb1c03e4f99135901b8bf5a2b456a459a348c68c550745ddf939a4b",
+      "source_manifest": "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--features",
+        "sqlite,postgres",
+        "--bin",
+        "qx-cli",
+        "workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts",
+        "--",
+        "--nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+          "sha256": "32e3e950ef5e0f4adf1c8820b319a144b183b54c805ed86d38d7e38affc20a87"
+        },
+        {
+          "path": "crates/qx-service/src/configured_backends.rs",
+          "sha256": "f99ddce2d7f5c5a7f6d489c865fad4b3764b6c2d85807f4f2985a27444c03050"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
+          "sha256": "a30a8fb367667b56accc198d0c4bc1e4b77080b76d0b8d6dfaeec1c53b0827bf"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json",
+          "sha256": "475a872fcd273fcce9720d30286d7e3d0821e77011606967c64ab3e91e931ff7"
+        }
+      ],
+      "notes": "Linux worker recovery after durable Unknown across file, SQLite, and PostgreSQL; cursor remains fixed until venue facts and fresh reconciliation resolve the command"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

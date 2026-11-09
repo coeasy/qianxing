@@ -403,9 +403,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows file/SQLite/PostgreSQL cross-process recovery and durable live Unknown resolution evidence has been manually reviewed. Linux process-recovery and authorized venue/testnet integration remain pending."
+    "Windows file/SQLite/PostgreSQL cross-process recovery and durable live Unknown resolution evidence has been manually reviewed; Debian 12 Podman R12-AC01 passes real file/SQLite/PostgreSQL worker-process restarts. Hosted Linux reproduction and authorized venue/testnet integration remain pending."
       ],
-      "next_action": "Run and review the same process-recovery fixture on Linux, then assess authorized venue/testnet integration requirements.",
+  "next_action": "Run and review R12-AC01 on hosted Linux, then assess authorized venue/testnet integration requirements.",
       "code_paths": [
         "maturity/evidence/client-order-submission-identity-2026-10-27.json",
         "crates/qx-cli/src/workers/strategy_worker/admission.rs",
@@ -447,7 +447,9 @@
         "maturity/acceptance-artifacts/e8dcc722-6f75-45bc-b6ec-9f472d11bb83.source-tree.json",
         "maturity/evidence/r12-unknown-recovery-human-review-2026-11-05.json",
         "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.log",
-        "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json"
+    "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json",
+    "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
+    "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json"
       ]
     },
     {

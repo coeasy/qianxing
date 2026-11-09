@@ -259,7 +259,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | 部分：不可变配置载荷、单文件工件快照、幂等受理和终态存储已实现；多文件bundle与worker实际切换、fence/readiness证据仍未完成 |
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | 缺行情/对账/恢复/fence任一必需证据时不得发新live命令 |
 | R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | Debian 12 Podman 的 file/SQLite/PostgreSQL 六边界崩溃恢复通过，cursor 摘要在恢复后和幂等重启间稳定；hosted Linux 与独立 atomic journal 边界复核仍待完成 |
-| R12 Outbox与未知结果恢复 | P0/部分 | execution/control/storage/venue适配 | R10,R11 | 提交前后断网/崩溃/重启均可查清或明确阻断，不盲重发 |
+| R12 Outbox与未知结果恢复 | P0/部分 | execution/control/storage/venue适配 | R10,R11 | Debian 12 Podman 对 file/SQLite/PostgreSQL durable Unknown 跨 worker 进程重启恢复通过；hosted Linux 与授权 venue/testnet 仍待完成 |
 | R13 状态迁移和修订切换 | P0/部分 | checkpoint版本、部署协调 | R09,R12 | Debian 12 Podman PostgreSQL 部署/暂停/恢复/回滚/失败替换恢复/停止及 supervisor Python checkpoint 重启验收通过；hosted Ubuntu 与权威 live-readiness 仍待验收 |
 | R14 观察保留与聚合 | P1/部分 | strategy_deployments、归档任务 | R09 | 超限有诊断；归档不删活跃owner；多节点状态不靠共享本机目录假设 |
 | R15 数据快照与交易角色 | P1/部分 | data/spec/hs300工具/导入入口 | R05 | 缺日/过时/复权与角色冲突先拒绝；指数不能进入真实下单路径 |
@@ -792,7 +792,9 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 
 2026-11-05 R10 Windows file/SQLite Strategy worker crash recovery 与 host lifecycle 人工复核：崩溃前已持久化的 Submitted 在恢复时不会重复调用 Venue；模糊结果保持 Unknown，直到权威 Venue facts 与新鲜 clean reconciliation 解决后才推进 cursor。worker recovery 写入 host catalog/constructed/initialized lifecycle observation 并交由 readiness projection 消费，trading_enabled 保持 null。复核记录：`maturity/evidence/r10-worker-host-recovery-human-review-2026-11-05.json`。PostgreSQL/Linux、真实 venue 与授权 testnet/live 证据仍未取得，R10 保持 partial。
 
-2026-11-05 R12 Windows file/SQLite Unknown process recovery 人工复核：独立 worker 进程崩溃后可重载 durable Unknown；结果未决时 cursor/checkpoint 不前进、不重复提交；Accepted 与 Failed/Rejected 路径需匹配终态事实和晚于 failure 的 clean reconciliation 后才收口。Paper 六边界 file/SQLite 重启工件覆盖持久游标/checkpoint 对拍。复核记录：`maturity/evidence/r12-unknown-recovery-human-review-2026-11-05.json`。PostgreSQL/Linux CI 与授权 venue/testnet 仍待完成，R12 保持 partial。
+2026-11-05 R12 Windows file/SQLite Unknown process recovery 人工复核：独立 worker 进程崩溃后可重载 durable Unknown；结果未决时 cursor/checkpoint 不前进、不重复提交；Accepted 与 Failed/Rejected 路径需匹配终态事实和晚于 failure 的 clean reconciliation 后才收口。Paper 六边界 file/SQLite 重启工件覆盖持久游标/checkpoint 对拍。复核记录：`maturity/evidence/r12-unknown-recovery-human-review-2026-11-05.json`。Linux/PostgreSQL 与授权 venue/testnet 当时仍待完成。
+
+2026-11-09 R12 Debian 12 Podman PostgreSQL acceptance：R12-AC01 对 file、SQLite、PostgreSQL 分别启动真实 worker 子进程，持久化 Unknown 后强制进程重启，并验证未决期间 cursor/checkpoint 不前进、不盲目重发；取得新鲜 reconciliation 与 venue facts 后才 resolve。测试使用本机 PostgreSQL，不访问真实 venue 或发送真实订单。run ID `b285c6c8-1694-47d9-9331-cedf152494a1`，日志和 source-tree manifest 已绑定 acceptance ledger。R12 仍等待 hosted Linux 对照及授权 venue/testnet 证据。
 
 2026-11-05 R11 Windows file/SQLite/PostgreSQL worker recovery 人工复核：三后端 Paper worker 证据均覆盖 command persistence、command result、cursor/checkpoint、scheduler completion、queue ack 与 journal cleanup 六个崩溃边界；PostgreSQL 运行使用六个隔离数据库并验证恢复及幂等重启，未发送真实订单。复核记录：`maturity/evidence/r11-multibackend-worker-recovery-human-review-2026-11-05.json`。Linux CI 仍待运行，R11 保持 partial。
 
