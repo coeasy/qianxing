@@ -325,7 +325,7 @@ jobs:
           path: sbom.json
 
   release:
-    name: GitHub Release
+    name: Assemble draft GitHub Release
     needs: [quality-gates, binary, wheel, cpp-sdk, web-console, sbom]
     runs-on: ubuntu-latest
     permissions:
@@ -373,6 +373,19 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "${GITHUB_REF_NAME}" \
+            --draft \
             --title "牵星 ${GITHUB_REF_NAME}" \
             --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
             dist/*
+
+  publish-github-release:
+    name: Publish GitHub Release after PyPI
+    needs: [publish-python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish staged release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
