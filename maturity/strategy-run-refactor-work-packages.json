@@ -634,9 +634,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows metric/reports acceptance has been reviewed. The six focused metric/report Rust checks are now configured for Linux and macOS CI; both platform runs remain pending."
+        "Linux Debian 12 Podman acceptance passes; hosted macOS acceptance remains pending."
       ],
-      "next_action": "Run and review the Linux and macOS focused metric/report contract acceptances.",
+      "next_action": "Run and review the focused metric/report contract acceptance on hosted macOS.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -699,7 +699,9 @@
         "maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.source-tree.json",
         "maturity/evidence/r17-benchmark-human-review-2026-11-04.json",
         "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.log",
-        "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.source-tree.json"
+        "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.source-tree.json",
+        "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.log",
+        "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json"
       ]
     },
     {
@@ -748,9 +750,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows qx-cli unit suite passes 486/486 and serialized behavior parity passes 36/36; both runs are recorded. Required Linux/macOS hosted gates remain pending."
+        "Linux Debian 12 Podman qx-cli unit and behavior-parity acceptance passes; hosted macOS acceptance remains pending."
       ],
-      "next_action": "Run and review the configured hosted Linux/macOS CLI gates; update R19 acceptance after the platform artifacts are available.",
+      "next_action": "Run and review the configured CLI gates on hosted macOS.",
       "code_paths": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "python/qianxing/client_trading.py",
@@ -1156,7 +1158,11 @@
         "maturity/acceptance-artifacts/a0997619-5b3a-4aaf-9d84-906b88fe86dc.log",
         "maturity/acceptance-artifacts/a0997619-5b3a-4aaf-9d84-906b88fe86dc.source-tree.json",
         "maturity/acceptance-artifacts/fa388f8a-2b7d-4f7b-ac6e-d0d2fbd6523b.log",
-        "maturity/acceptance-artifacts/fa388f8a-2b7d-4f7b-ac6e-d0d2fbd6523b.source-tree.json"
+        "maturity/acceptance-artifacts/fa388f8a-2b7d-4f7b-ac6e-d0d2fbd6523b.source-tree.json",
+        "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.log",
+        "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.source-tree.json",
+        "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.log",
+        "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json"
       ]
     },
     {

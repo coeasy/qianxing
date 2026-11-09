@@ -15900,6 +15900,159 @@
         }
       ],
       "notes": "Debian 12 Linux Python strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction."
+    },
+    {
+      "run_id": "ab02e693-9a9a-4346-9a1e-18b38e339c6a",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-09T11:51:58.471398Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "3404ce8952112e9e8a9bf1f3e10303a04d20957bfe2513d53ad189a71bb5f811"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "559146fa2274ca6601983873db4c40ac35ec8b96d48954af02c8cac4ceab5b3b"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "0244b778012a41a914987e4e4d0cf477edd5eff9d384aa3e53ba15965e42ffbf"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "dad79a2d5aa020f68dbaced94ceb14edd6154b8de8f69ac4955ad4833a212614"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "ff5d4bc35cc5c8bcbc9b9c6b91845619eb5821d4d9a87de814ca32e33424d3b9"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.log",
+          "sha256": "f58251c1fcfd585569d5765ece7bbb2b39c5e1ccfa52bfc4362d5206c05d6b3a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Linux focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "a6462fd4-36d1-485f-a640-da3d49595267",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-09T11:56:59.520489Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/cli.rs",
+          "sha256": "fe41188bd814c7b8ad4c2397a55e14b82d9d8cb8ef651e56ac597721025333dc"
+        },
+        {
+          "path": "crates/qx-cli/src/cli_command_manifest.json",
+          "sha256": "4bb37e5e40f0a4a12c574085effe2cb2955ddd45bb7072ff76825843b1b097cc"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "d42a6819c733de6ce8ac9a8049ff135f73ca9c1873d56f85c94f21f800c363aa"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "a380e37caef0fb6e6463c5ca9feccfa7e0e62bc310208e463e45a5c81f9b27d9"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.log",
+          "sha256": "a89d3f94facdd0b633f37702b1eacf8aa548bd3453c98cec2c1f130dbf85638b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Linux qx-cli unit suite verifies CLI facade routing and compatibility after clean binary build"
+    },
+    {
+      "run_id": "1208ff2d-e044-4db1-a9ee-92fd5ef06799",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-09T11:57:26.931595Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--test",
+        "cli_behavior_parity",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "d42a6819c733de6ce8ac9a8049ff135f73ca9c1873d56f85c94f21f800c363aa"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "a380e37caef0fb6e6463c5ca9feccfa7e0e62bc310208e463e45a5c81f9b27d9"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.log",
+          "sha256": "3a12a89ef61b277f4a903c0c9732a2f06772ad5e8a1feedcde313dbbe6d9d2e6"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Linux CLI behavior-parity integration target preserves report and facade compatibility"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

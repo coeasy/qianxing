@@ -264,9 +264,9 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R14 观察保留与聚合 | P1/部分 | strategy_deployments、归档任务 | R09 | 超限有诊断；归档不删活跃owner；多节点状态不靠共享本机目录假设 |
 | R15 数据快照与交易角色 | P1/部分 | data/spec/hs300工具/导入入口 | R05 | 缺日/过时/复权与角色冲突先拒绝；指数不能进入真实下单路径 |
 | R16 策略模式和预热一致性 | P1/部分 | builtin config、Python SMA、manifest | R08,R15 | long_only死叉只平多；预热/评估分开；本地与paper信号对齐 |
-| R17 报告统一事实与指标 | P1/部分 | qx-app report、HTML/XLSX/JSON | R06,R15,R16 | 同源指标跨格式一致；基准/年化/费用口径齐全 |
+| R17 报告统一事实与指标 | P1/部分 | qx-app report、HTML/XLSX/JSON | R06,R15,R16 | Windows 验收已人工复核；Debian 12 Podman 六项聚焦指标/报告检查通过，仍待 hosted macOS 对照 |
 | R18 Console部署操作与状态 | P1/部分 | web/console、API | R09,R10,R14 | desired/observed/readiness清楚；操作失败可追踪；权限不被绕开 |
-| R19 按职责拆模块 | P2/部分 | app.py/cli.py/strategy_host/execution_updates | R03,R08,R11 | 行为契约不变、依赖无环；删除重复而非仅转移大文件 |
+| R19 按职责拆模块 | P2/部分 | app.py/cli.py/strategy_host/execution_updates | R03,R08,R11 | Windows 已人工复核；Debian 12 Podman CLI facade 单测与行为兼容集成测试通过，仍待 hosted macOS 对照 |
 | R20 安装分发与平台矩阵 | P1/部分 | wheel、CLI、可选镜像、CI | R01,R08 | Windows/Linux目标架构全新环境验收；源码树外可运行 |
 | R21 性能与故障恢复验收 | P1/待完善 | 固定基准、故障注入、容量上限 | R12,R17,R19 | 固定数据/硬件/版本记录p50/p95/RSS/恢复时长，无无界积压 |
 | R22 真实数据和外部验收 | P1/阻断 | HS300与crypto历史、paper/testnet证据 | R10,R12,R15,R17 | 实际覆盖、数据来源、报告和恢复证据齐全；blocked不算通过 |
@@ -809,3 +809,6 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 2026-11-07 V13 R16 DatasetBundle JSON 组件格式规范化：`DatasetComponentManifest.format` 现在始终序列化；显式 `json` 清单往返保持字节稳定，旧版省略字段的输入写出统一规范格式。`qx-data` 42 项测试、workspace all-features 全量测试、Python 687/14、workspace Clippy、严格 unwrap/expect、格式与架构 372 项检查通过。crypto/A 股回测与 Paper 验收使用新 release CLI 重跑；A 股 Bundle fingerprint 更新为 `dataset-bundle:b1e0200f8a3aa3da`，回测结果哈希保持不变。当前源码 wheel 与独立 CLI clean-install 通过。证据：`maturity/evidence/dataset-manifest-json-canonicalization-2026-11-07.json`、`maturity/evidence/clean-install-current-worktree-2026-11-07.json`。仅为 dirty Windows 本机证据；Linux/macOS 与 PostgreSQL 服务实例验收仍待完成。
 
 2026-11-09 R08 Linux host-capability 真实运行：在干净 b17 源码 worktree 的 Debian 12 Podman 中，逐条执行 CI 所列 Rust built-in dispatch、legacy C ABI capability compatibility 与 Python host negotiation 测试；三条均通过，并分别记录源码指纹和日志。记录 run IDs 为 `7eba9069-4aaf-40f4-9dad-6c10d31f82ba`、`6634a97f-e1f7-4525-b905-44e499245b90`、`5d1f8dbd-de0a-4166-b618-60c598e7a69d`。R08 仍为 partial，因 hosted `ubuntu-latest` / Python 3.12 runner 尚未产生对应运行。
+
+
+2026-11-09 R17/R19 Linux Podman 验收：Debian 12 干净源码 worktree 上，R17 的六项 Rust 指标/报告断言通过；R19 的 qx-cli 单元测试 497 项全通过，CLI 行为兼容集成测试通过。运行 IDs 为 R17 `ab02e693-9a9a-4346-9a1e-18b38e339c6a`、R19 单元 `a6462fd4-36d1-485f-a640-da3d49595267` 和集成 `1208ff2d-e044-4db1-a9ee-92fd5ef06799`，日志与源码指纹绑定在 acceptance ledger。R17/R19 仍为 partial，等待 hosted macOS 复验。
