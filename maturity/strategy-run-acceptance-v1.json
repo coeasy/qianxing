@@ -17279,6 +17279,390 @@
         }
       ],
       "notes": "Debian Linux file EventLog timeout recovery reopens durable Unknown, blocks retry before any second Venue call, and resolves only after authoritative Rejected reconciliation; Venue behavior is simulated"
+    },
+    {
+      "run_id": "e7fe98af-7f63-4599-98d3-ff16b8f485d6",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:08:04.184949Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "8cec86faeaa487ee805726e80d92a0203debdb906c0d8689ad38e942029c3513",
+      "source_manifest": "maturity/acceptance-artifacts/e7fe98af-7f63-4599-98d3-ff16b8f485d6.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--offline"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "4e23177a1dcab476a4560b7aeed1434943d9a9171afeb1c44a641e97195c23ca"
+        },
+        {
+          "path": "Cargo.lock",
+          "sha256": "dc9deaea4519c0de8e81b87bc61e6e80982533e16b4685b18ad53109a84db82a"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e7fe98af-7f63-4599-98d3-ff16b8f485d6.log",
+          "sha256": "ce9e125aeb766a6209cba3917584c231f471162d363436c1eeec481075d26ff6"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e7fe98af-7f63-4599-98d3-ff16b8f485d6.source-tree.json",
+          "sha256": "c6c35e4157cd1eef6ed68076e0833b1f8f33169b5e43af616b9cc1a57892f110"
+        }
+      ],
+      "notes": "Windows x64 full Rust workspace test suite with Python worker interpreter explicitly pinned to D:\\dev\\miniforge3\\python.exe; complementary to the Linux CI command"
+    },
+    {
+      "run_id": "49ac73b6-a15c-48ff-8bec-c202ba8578bc",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:12:06.980446Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "8cec86faeaa487ee805726e80d92a0203debdb906c0d8689ad38e942029c3513",
+      "source_manifest": "maturity/acceptance-artifacts/49ac73b6-a15c-48ff-8bec-c202ba8578bc.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--test",
+        "app_three_entrypoints",
+        "--",
+        "--test-threads=1",
+        "--offline"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints.rs",
+          "sha256": "ccf1f1e9eee5cc85f725bd33440e1604fcfa31a7413b048353925b54653f2ce1"
+        },
+        {
+          "path": "crates/qx-api/src/lib.rs",
+          "sha256": "b6118273e9e17209d2be255320ca347febe5d8270277a331ad7e399298b5461b"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/49ac73b6-a15c-48ff-8bec-c202ba8578bc.log",
+          "sha256": "73fae174bbd5d1b110d09814171bba5b07f9085bfcb139f1ed8378fba20969ea"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/49ac73b6-a15c-48ff-8bec-c202ba8578bc.source-tree.json",
+          "sha256": "c6c35e4157cd1eef6ed68076e0833b1f8f33169b5e43af616b9cc1a57892f110"
+        }
+      ],
+      "notes": "Windows serial app_three_entrypoints diagnostic run to isolate shared API artifact-root collisions from test-order concurrency"
+    },
+    {
+      "run_id": "d6975556-3bce-429d-b3c3-b566cc63f563",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:14:09.733089Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "8cec86faeaa487ee805726e80d92a0203debdb906c0d8689ad38e942029c3513",
+      "source_manifest": "maturity/acceptance-artifacts/d6975556-3bce-429d-b3c3-b566cc63f563.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--offline",
+        "--test",
+        "app_three_entrypoints",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints.rs",
+          "sha256": "ccf1f1e9eee5cc85f725bd33440e1604fcfa31a7413b048353925b54653f2ce1"
+        },
+        {
+          "path": "crates/qx-api/src/lib.rs",
+          "sha256": "b6118273e9e17209d2be255320ca347febe5d8270277a331ad7e399298b5461b"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/d6975556-3bce-429d-b3c3-b566cc63f563.log",
+          "sha256": "575d27778b3380dfd861bed0956f9342b942616c876134dfc242749c26ad2380"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/d6975556-3bce-429d-b3c3-b566cc63f563.source-tree.json",
+          "sha256": "c6c35e4157cd1eef6ed68076e0833b1f8f33169b5e43af616b9cc1a57892f110"
+        }
+      ],
+      "notes": "Windows serial app_three_entrypoints diagnostic run to isolate shared API artifact-root collisions from test-order concurrency"
+    },
+    {
+      "run_id": "5f76a9d6-38ce-4989-ae45-3de5b18eb599",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:18:02.214410Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "8a21b43cd4f3f0175f48ce8824cf61b417cb1e1ca52c469718e87761617d7470",
+      "source_manifest": "maturity/acceptance-artifacts/5f76a9d6-38ce-4989-ae45-3de5b18eb599.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--offline",
+        "--test",
+        "app_three_entrypoints",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-api/src/lib.rs",
+          "sha256": "070524d3997866be15418ff9ce9fdd95b91368b119b7b718a9d06fa2f9583a17"
+        },
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints.rs",
+          "sha256": "e725208a62b820b76538f48feb193937754ca37fed4c772a90f10fc1c3b87279"
+        },
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs",
+          "sha256": "945deda4c3329c6e4816d9d1f594cb3f839b6b10fd4997e2f1eaf81bf7009582"
+        },
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints/multi_market_experiment.rs",
+          "sha256": "39a85c511fdf5fc396b777e41298037c0c8336837a4e112c3b3ada2e0252b9f1"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5f76a9d6-38ce-4989-ae45-3de5b18eb599.log",
+          "sha256": "1fc013789dcf4fc4f92bb27228e45a0e3da45f17e2cd5521815b0c671ef8fa42"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5f76a9d6-38ce-4989-ae45-3de5b18eb599.source-tree.json",
+          "sha256": "d81faa6f86943f2df5d9f61cba716600971a75fb550db46f6085b8ddb6cf71e9"
+        }
+      ],
+      "notes": "Windows serial app_three_entrypoints regression after isolating each HTTP service artifact root by its per-test scratch directory"
+    },
+    {
+      "run_id": "8cbff68a-3194-4164-88b3-8bbe8e028875",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:20:11.449239Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "85ced8877587735f5c25c76d574edaa2ae5f56d0638b791885578cae17221042",
+      "source_manifest": "maturity/acceptance-artifacts/8cbff68a-3194-4164-88b3-8bbe8e028875.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "qx-python",
+        "--offline"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-python/src/lib.rs",
+          "sha256": "ef1811321ba6cb2a0df259b68f7efa8a34ce6acb6041e14a5b14a3263cd6982d"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "4e23177a1dcab476a4560b7aeed1434943d9a9171afeb1c44a641e97195c23ca"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/8cbff68a-3194-4164-88b3-8bbe8e028875.log",
+          "sha256": "227c7fc8695036cc17a9a023e2e2beb7461bc7be7d0338ce411dd26648778b7a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/8cbff68a-3194-4164-88b3-8bbe8e028875.source-tree.json",
+          "sha256": "904523b73cd9f30e49b4787d8a3543ee98c4e39209f7455121d0a7600060df09"
+        }
+      ],
+      "notes": "Windows preparatory build of the current Python native extension required by workspace entrypoint parity tests"
+    },
+    {
+      "run_id": "e6459ac6-e3d8-4c00-92ea-f157fb8bae14",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:24:58.446489Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "85ced8877587735f5c25c76d574edaa2ae5f56d0638b791885578cae17221042",
+      "source_manifest": "maturity/acceptance-artifacts/e6459ac6-e3d8-4c00-92ea-f157fb8bae14.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "qx-python",
+        "--offline"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-python/src/lib.rs",
+          "sha256": "ef1811321ba6cb2a0df259b68f7efa8a34ce6acb6041e14a5b14a3263cd6982d"
+        },
+        {
+          "path": "crates/qx-app/src/context.rs",
+          "sha256": "ba9b48cb98bab923bb8ca5312a81a0b76d700ac7e3462bf76dffa532861cabf1"
+        },
+        {
+          "path": "crates/qx-cli/build.rs",
+          "sha256": "2f74ef434aba81593f82c75aa0e76c058ba8f5b989fa138e959bb135a8cdea10"
+        },
+        {
+          "path": "crates/qx-python/build.rs",
+          "sha256": "f58ef37f2420a0310fb3925d4a9d276f10fb01db80cbff4015620075e99dc859"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e6459ac6-e3d8-4c00-92ea-f157fb8bae14.log",
+          "sha256": "c9e2fe3287bd9d95dcb908e56814eba5b2c0ed78b593378aa00033114345b5c4"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e6459ac6-e3d8-4c00-92ea-f157fb8bae14.source-tree.json",
+          "sha256": "904523b73cd9f30e49b4787d8a3543ee98c4e39209f7455121d0a7600060df09"
+        }
+      ],
+      "notes": "Rebuild Python native extension and workspace app crates from current branch to rule out stale Cargo target artifacts before parity rerun"
+    },
+    {
+      "run_id": "6eadb39d-efff-4388-be09-77caa12480a9",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:27:35.425100Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "85ced8877587735f5c25c76d574edaa2ae5f56d0638b791885578cae17221042",
+      "source_manifest": "maturity/acceptance-artifacts/6eadb39d-efff-4388-be09-77caa12480a9.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--offline",
+        "--test",
+        "app_three_entrypoints"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/app_three_entrypoints.rs",
+          "sha256": "0f9c3cee773f07e3292c3cc7fdc02b7a232919018ef02fb3bc5d8d49df856a98"
+        },
+        {
+          "path": "crates/qx-python/src/lib.rs",
+          "sha256": "ef1811321ba6cb2a0df259b68f7efa8a34ce6acb6041e14a5b14a3263cd6982d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/6eadb39d-efff-4388-be09-77caa12480a9.log",
+          "sha256": "9f9173318f9bd0075d5145ea3eba38a92a8c897dedbc10b64aff3eb089cfa32c"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/6eadb39d-efff-4388-be09-77caa12480a9.source-tree.json",
+          "sha256": "904523b73cd9f30e49b4787d8a3543ee98c4e39209f7455121d0a7600060df09"
+        }
+      ],
+      "notes": "Windows app_three_entrypoints parity after clean rebuild of qx-python, qx-app, and qx-cli artifacts"
+    },
+    {
+      "run_id": "2c4b5d39-df8f-4456-80bf-6572c8198d1f",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T14:54:24.460745Z",
+      "source_revision": "f4abfbf900494557ea7a6221ed4797c821cca5e7",
+      "source_tree_sha256": "85ced8877587735f5c25c76d574edaa2ae5f56d0638b791885578cae17221042",
+      "source_manifest": "maturity/acceptance-artifacts/2c4b5d39-df8f-4456-80bf-6572c8198d1f.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--offline"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "crates/qx-python/src/lib.rs",
+          "sha256": "ef1811321ba6cb2a0df259b68f7efa8a34ce6acb6041e14a5b14a3263cd6982d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/2c4b5d39-df8f-4456-80bf-6572c8198d1f.log",
+          "sha256": "716bbdab07fddd746732a88c5098222ac2a28b042d080d12e386518fdfe7d6f3"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/2c4b5d39-df8f-4456-80bf-6572c8198d1f.source-tree.json",
+          "sha256": "904523b73cd9f30e49b4787d8a3543ee98c4e39209f7455121d0a7600060df09"
+        }
+      ],
+      "notes": "Windows offline workspace test after clean native extension rebuild; same build-before-test order as CI and explicit Python interpreter"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
