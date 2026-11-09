@@ -5,9 +5,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux Ubuntu clean-install acceptance remains pending."
+        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance passes; hosted Ubuntu 24.04 matrix run remains pending."
       ],
-      "next_action": "Run the Ubuntu Python 3.12 clean-install CI acceptance and review the recorded native/CLI schema match and target compatibility.",
+      "next_action": "Run and review the same Python 3.12 clean-install acceptance on hosted Ubuntu 24.04.",
       "code_paths": [
         "python/tests/test_app_use_cases.py",
         "tools/accept_clean_install.py"
@@ -20,7 +20,9 @@
         "maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.source-tree.json",
         "maturity/evidence/r01-clean-install-human-review-2026-11-05.json",
         "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.log",
-        "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.source-tree.json"
+        "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.source-tree.json",
+        "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.log",
+        "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json"
       ]
     },
     {
@@ -179,9 +181,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "All three targeted Linux checks pass in Debian 12 Podman: built-in Rust dispatch, legacy C ABI capability compatibility, and Python host negotiation. The hosted ubuntu-latest/Python 3.12 workflow has not produced a run for this branch."
+        "Debian 12 Podman Linux Python 3.12.16 built-in dispatch, legacy C ABI capability, and Python host capability acceptances pass; hosted Ubuntu 24.04/Python 3.12 runner remains pending."
       ],
-      "next_action": "Run and review the same three acceptance steps on hosted ubuntu-latest/Python 3.12, then close R08 if the outputs match the Podman results.",
+      "next_action": "Run and review the same three capability acceptances on hosted Ubuntu 24.04/Python 3.12.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -228,7 +230,13 @@
         "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.log",
         "maturity/acceptance-artifacts/6634a97f-e1f7-4525-b905-44e499245b90.source-tree.json",
         "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.log",
-        "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.source-tree.json"
+        "maturity/acceptance-artifacts/7eba9069-4aaf-40f4-9dad-6c10d31f82ba.source-tree.json",
+        "maturity/acceptance-artifacts/3c33cb68-46d4-412e-b26d-7c76a84f8a49.log",
+        "maturity/acceptance-artifacts/3c33cb68-46d4-412e-b26d-7c76a84f8a49.source-tree.json",
+        "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.log",
+        "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.source-tree.json",
+        "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.log",
+        "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json"
       ]
     },
     {
@@ -1170,9 +1178,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Ubuntu Python 3.12 clean wheel/CLI acceptance remains pending."
+        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance passes; hosted Ubuntu 24.04 matrix run remains pending."
       ],
-      "next_action": "Run and review the Ubuntu Python 3.12 clean wheel/CLI acceptance for SDK doctor schema/capability match, examples, and CLI quickstart.",
+      "next_action": "Run and review the same clean wheel/CLI acceptance on hosted Ubuntu 24.04.",
       "code_paths": [
         "tools/accept_clean_install.py",
         "crates/qx-cli/src/init_project.rs",
@@ -1187,7 +1195,9 @@
         "maturity/acceptance-artifacts/4c6f80f7-7224-475a-bfc5-d6eca9b2e49d.log",
         "maturity/evidence/r20-clean-install-human-review-2026-11-05.json",
         "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.log",
-        "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.source-tree.json"
+        "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.source-tree.json",
+        "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.log",
+        "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json"
       ]
     },
     {

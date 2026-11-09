@@ -248,14 +248,14 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 
 | 工作包 | 优先级/状态 | 主要交付与代码落点 | 依赖 | 完成门槛 |
 |---|---|---|---|---|
-| R01 环境身份与兼容检查 | 部分 | Python doctor、native/CLI版本接口、兼容矩阵 | 无 | 部分：doctor 可比对 Python wheel 与 Rust 扩展编译版本并提示修复；qx-cli 对照/安装器仍缺 |
+| R01 环境身份与兼容检查 | 部分 | Python doctor、native/CLI版本接口、兼容矩阵 | 无 | Debian 12 Podman CPython 3.12.16 clean wheel/CLI 验收通过，native/CLI schema、target 匹配；hosted Ubuntu 24.04 矩阵仍待验收 |
 | R02 PathResolver与执行上下文 | P1/部分 | project_service/strategy_project/project_runs | — | 预检与受管执行不切换进程 cwd；受管执行将输入规格和引用的数据文件冻结到 Run 目录。策略包快照、服务层解耦及并发集成验收仍未完成 |
 | R03 项目应用服务 | P1/完成 | strategy_project/strategy_execution/project_runs | R02 | CLI不递归main、不被应用层反向导入；传统 `run-strategy` 与 `project run` 共用应用服务并保持结果契约 |
 | R04 静态/动态doctor | P1/完成 | 元数据与限时检查进程树 | R01,R03 | 静态 doctor 与 server plan 不导入策略；dynamic doctor、本地 plan、run 的执行边界有文档；POSIX process group 与 Windows kill-on-close Job Object 均覆盖正常返回和超时后代回收；Debian Linux 另验证 detached new-session 子进程逃逸边界并回收 fixture（`maturity/evidence/strategy-preflight-process-tree-linux.json`） |
 | R05 不可变计划与输入快照 | P0/部分 | qx-spec、service、项目runner、hs300工具 | R02 | 执行/散列/归档同字节；源中途改变也不污染结果 |
 | R06 报告输出保护 | P0/完成 | project_runs + Rust报告发布 | R02 | 输入别名/符号链接覆盖被拒；普通失败回滚；事务日志支持进程退出后的恢复；报告与可选 EvidenceBundle 同包提交 |
 | R07 运行状态与产物完整性 | P1/部分 | run receipt、owner身份、错误信封 | R03,R05 | 缺产物、损坏记录、PID复用、磁盘满均可诊断 |
-| R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | Debian 12 Podman 已实跑 Linux 内置 Rust dispatch、旧式 C ABI 能力兼容和 Python host capability 三条针对性验收，均在构造/dispatch 前拒绝未知能力；仍待 hosted Ubuntu 24.04/Python 3.12 对照验收 |
+| R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | Debian 12 Podman 已实跑 Linux 内置 Rust dispatch、旧式 C ABI 能力兼容和 Python host capability 三条针对性验收，且三条现均在 CPython 3.12.16 通过，均在构造/dispatch 前拒绝未知能力；仍待 hosted Ubuntu 24.04/Python 3.12 对照验收 |
 | R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | 部分：不可变配置载荷、单文件工件快照、幂等受理和终态存储已实现；多文件bundle与worker实际切换、fence/readiness证据仍未完成 |
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | 缺行情/对账/恢复/fence任一必需证据时不得发新live命令 |
 | R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | 发送前持久化命令批次/checkpoint候选及逐命令本地进度；重启时核验job/config/执行事实摘要后重放幂等本地命令并提交checkpoint/cursor。崩溃注入与多后端验收未完成 |
@@ -267,7 +267,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R17 报告统一事实与指标 | P1/部分 | qx-app report、HTML/XLSX/JSON | R06,R15,R16 | Windows 验收已人工复核；Debian 12 Podman 六项聚焦指标/报告检查通过，仍待 hosted macOS 对照 |
 | R18 Console部署操作与状态 | P1/部分 | web/console、API | R09,R10,R14 | desired/observed/readiness清楚；操作失败可追踪；权限不被绕开 |
 | R19 按职责拆模块 | P2/部分 | app.py/cli.py/strategy_host/execution_updates | R03,R08,R11 | Windows 已人工复核；Debian 12 Podman CLI facade 单测与行为兼容集成测试通过，仍待 hosted macOS 对照 |
-| R20 安装分发与平台矩阵 | P1/部分 | wheel、CLI、可选镜像、CI | R01,R08 | Windows/Linux目标架构全新环境验收；源码树外可运行 |
+| R20 安装分发与平台矩阵 | P1/部分 | wheel、CLI、可选镜像、CI | R01,R08 | Windows clean install 与 Debian 12 Podman CPython 3.12.16 wheel/CLI 验收通过；hosted Ubuntu 24.04 和 macOS 矩阵仍待验收 |
 | R21 性能与故障恢复验收 | P1/待完善 | 固定基准、故障注入、容量上限 | R12,R17,R19 | 固定数据/硬件/版本记录p50/p95/RSS/恢复时长，无无界积压 |
 | R22 真实数据和外部验收 | P1/阻断 | HS300与crypto历史、paper/testnet证据 | R10,R12,R15,R17 | 实际覆盖、数据来源、报告和恢复证据齐全；blocked不算通过 |
 | R23 唯一任务台账/文档入口 | P1/部分 | docs索引、maturity任务清单 | 无 | 已有逐工作包的机器可读状态、代码/证据入口和阻断/下一步，CI会校验ID、状态及链接存在性；逐场景Run身份和产物摘要关联尚未接入 |
@@ -812,3 +812,9 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 
 
 2026-11-09 R17/R19 Linux Podman 验收：Debian 12 干净源码 worktree 上，R17 的六项 Rust 指标/报告断言通过；R19 的 qx-cli 单元测试 497 项全通过，CLI 行为兼容集成测试通过。运行 IDs 为 R17 `ab02e693-9a9a-4346-9a1e-18b38e339c6a`、R19 单元 `a6462fd4-36d1-485f-a640-da3d49595267` 和集成 `1208ff2d-e044-4db1-a9ee-92fd5ef06799`，日志与源码指纹绑定在 acceptance ledger。R17/R19 仍为 partial，等待 hosted macOS 复验。
+
+
+2026-11-09 R01/R20 Linux Python 3.12 clean-install acceptance：Debian 12 Podman 使用 CPython 3.12.16，对 manylinux abi3 wheel dbd0d646026636d8d96603b82ad157c487135be7e0c2c063051fcaf286475396 执行离线隔离安装；doctor 报告 native extension/app 与 CLI schema、target 匹配，quickstart 成功，13 个示例模块编译且策略 callback 被调用。R01 run 5ee99dfe-ed22-49b9-8b8f-cb28b9945a51，R20 run 9cb8bdb-26f7-42c8-ac57-af3525ca6ef6，日志和源码指纹已绑定 acceptance ledger。两项仍待 hosted Ubuntu 24.04/Python 3.12 runner 对照。
+
+
+2026-11-09 R08 Debian 12 CPython 3.12.16 复验：built-in dispatch、legacy C ABI capability compatibility 与 Python host capability negotiation 三项全通过，run IDs 3c33cb68-46d4-412e-b26d-7c76a84f8a49、f726719-4d42-4005-919b-f66b2b36250f、d838a78c-6ace-4503-b670-02f886792f49；日志、源码清单绑定到 acceptance ledger。托管 Ubuntu 24.04 对照仍待跑。

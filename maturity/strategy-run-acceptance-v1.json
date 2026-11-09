@@ -16053,6 +16053,240 @@
         }
       ],
       "notes": "Linux CLI behavior-parity integration target preserves report and facade compatibility"
+    },
+    {
+      "run_id": "e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6",
+      "acceptance_id": "R20-AC01",
+      "recorded_at_utc": "2026-11-09T12:18:33.854897Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3.12",
+        "--work-dir",
+        "/tmp/qx-clean-install-r20-retry",
+        "--wheel",
+        "/tmp/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "536c0fbf2b4b70f85e3856fd6d72dee3cc00e115bf3663cb41ab251359ad5064"
+        },
+        {
+          "path": "docs/installation.md",
+          "sha256": "3790427bae9b665266b217e78ebff5819d8557618d06903b9f0a10ba7f2628ca"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.log",
+          "sha256": "6b752caa2b24f244d1775f6e9382b4e96f532f5dab3121c36aba8cff2d98d8d4"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
+    },
+    {
+      "run_id": "5ee99dfe-ed22-49b9-8b8f-cb28b9945a51",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-09T12:19:08.700225Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3.12",
+        "--work-dir",
+        "/tmp/qx-clean-install-r01-retry",
+        "--wheel",
+        "/tmp/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "536c0fbf2b4b70f85e3856fd6d72dee3cc00e115bf3663cb41ab251359ad5064"
+        },
+        {
+          "path": "python/tests/test_app_use_cases.py",
+          "sha256": "dc9b71ffec4c9e7b89900c2c48dfdd19650fa49165c501cf46163fd1195fe0c6"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.log",
+          "sha256": "65e4dc13bc8afb8fb7be2d47097efdea43df8ec15f0027fc279f8bac1ecc666d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution"
+    },
+    {
+      "run_id": "3c33cb68-46d4-412e-b26d-7c76a84f8a49",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T12:20:49.629030Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/3c33cb68-46d4-412e-b26d-7c76a84f8a49.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "--",
+        "--test-threads=1",
+        "builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "0d3006c5bdc292728ab288d39f49816f92d9618aaffb919d0606e2bc6a5be00a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/3c33cb68-46d4-412e-b26d-7c76a84f8a49.log",
+          "sha256": "5e835dd7cbc76c5d65684522d87a6a0fb1b1bbf1b64c2dc8b5a9a53554e0bde3"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/3c33cb68-46d4-412e-b26d-7c76a84f8a49.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux Python 3.12 built-in Strategy host accepts supported requirements and rejects unsupported or algorithm-missing capabilities before dispatch"
+    },
+    {
+      "run_id": "ef726719-4d42-4005-919b-f66b2b36250f",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T12:20:50.406037Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-strategy",
+        "--test",
+        "legacy_c_abi_capability_load"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-strategy/tests/legacy_c_abi_capability_load.rs",
+          "sha256": "9eea7af438836cbc6a3939347c87f4a00a04d349d205b133d1fc84d4235121aa"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "0d3006c5bdc292728ab288d39f49816f92d9618aaffb919d0606e2bc6a5be00a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.log",
+          "sha256": "50d4c2f70fd6b0882633924d7f099ef3c604e9f25017c11dce58de9971b8f3f8"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux Python 3.12 legacy C ABI plugin without optional capability export remains compatible with empty requirements and rejects unsupported requirements before create"
+    },
+    {
+      "run_id": "d838a78c-6ace-4503-b670-02f886792f49",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-09T12:20:50.825322Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "python/tests",
+        "-p",
+        "test_strategy_capabilities.py"
+      ],
+      "inputs": [
+        {
+          "path": "python/qianxing_strategy/worker.py",
+          "sha256": "4b36a530fb33c271bb2ae209b729692577bb5a920cbabcee3d94d8d049fc768b"
+        },
+        {
+          "path": "python/tests/test_strategy_capabilities.py",
+          "sha256": "e56c1e266558f40c0bf832fe1d919c643f6d91c4fb1a4e1be1ac2f8eab538f19"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.log",
+          "sha256": "0b695658e81bc1a6131d3c922e90419bd398e853c98f96258b2f055b71d160e5"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Debian 12 Linux Python 3.12 strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
