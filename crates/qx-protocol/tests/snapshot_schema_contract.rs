@@ -29,7 +29,7 @@ fn writer_sample() -> Value {
 }
 
 fn current_writer_sample() -> Value {
-    let mut snapshot = AccountSnapshot::new(12, "main", "portfolio", "BINANCE", 100);
+    let mut snapshot = AccountSnapshot::new(12, "main", "portfolio", "BINANCE", "20260911", 100);
     let cash = qx_core::ExactDecimal::parse("123.4567890123").unwrap();
     snapshot.cash_raw.insert(
         "USDT".into(),
@@ -97,7 +97,7 @@ fn string_array(value: &Value) -> Vec<String> {
 fn served_schema_is_the_repository_file_verbatim() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../schemas/account-snapshot-v4.json"
+        "/../../schemas/account-snapshot-v5.json"
     );
     let on_disk = std::fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("schema 文件必须存在: {error}"));
@@ -211,9 +211,9 @@ fn schema_keeps_uncomputed_money_nullable() {
     let properties = contract["properties"]
         .as_object()
         .expect("properties 应为对象");
-    let mut uncomputed = AccountSnapshot::new(11, "main", "default", "BINANCE", 10);
+    let mut uncomputed = AccountSnapshot::new(11, "main", "default", "BINANCE", "20260911", 10);
     uncomputed.seal();
-    let mut computed = AccountSnapshot::new(12, "main", "default", "BINANCE", 10);
+    let mut computed = AccountSnapshot::new(12, "main", "default", "BINANCE", "20260911", 10);
     computed.equity_raw = Some(1_000);
     for slot in [
         &mut computed.available_raw,
@@ -319,7 +319,7 @@ fn reader_rejects_versions_the_served_schema_does_not_declare() {
         );
     }
     AccountSnapshot::from_json(&base.to_string()).expect("v1 历史快照必须继续读得回来");
-    let current = AccountSnapshot::new(11, "main", "default", "BINANCE", 10)
+    let current = AccountSnapshot::new(11, "main", "default", "BINANCE", "20260911", 10)
         .to_json()
         .expect("v2 当前快照必须能编码");
     let current: Value = serde_json::from_str(&current).expect("当前快照必须是 JSON");
@@ -357,7 +357,7 @@ fn reader_rejects_versions_the_served_schema_does_not_declare() {
 #[test]
 fn reader_refuses_a_self_consistent_document_from_another_version() {
     let foreign = ACCOUNT_SNAPSHOT_SCHEMA_VERSION + 1;
-    let mut document = AccountSnapshot::new(7, "main", "default", "BINANCE", 10);
+    let mut document = AccountSnapshot::new(7, "main", "default", "BINANCE", "20260911", 10);
     document.equity_raw = Some(1000);
     document.header.schema_version = foreign;
     document.seal();
@@ -389,8 +389,8 @@ fn schema_frame_matches_the_protocol_it_describes() {
     );
     assert_eq!(
         frame["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v4.json"),
-        "$id 里的 v4 必须与 schema_version 常量说的是同一份契约"
+        Some("https://qianxing.dev/schema/account-snapshot-v5.json"),
+        "$id 里的 v5 必须与 schema_version 常量说的是同一份契约"
     );
     assert_eq!(frame["type"].as_str(), Some("object"));
     assert_eq!(
@@ -406,6 +406,7 @@ fn schema_frame_matches_the_protocol_it_describes() {
         "account_id",
         "portfolio_id",
         "venue_id",
+        "trading_day",
         "as_of",
         "event_seq",
         "state_hash",
@@ -415,4 +416,8 @@ fn schema_frame_matches_the_protocol_it_describes() {
             "header 的契约里没有 {key}，而读模型每天都在印它"
         );
     }
+    assert_eq!(
+        frame["properties"]["header"]["properties"]["trading_day"]["pattern"],
+        "^[0-9]{8}$"
+    );
 }

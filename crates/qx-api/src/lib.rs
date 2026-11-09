@@ -52,7 +52,8 @@ use qx_core::{
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
     ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2,
-    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3, PROJECTION_ENVELOPE_SCHEMA_VERSION,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V4,
+    PROJECTION_ENVELOPE_SCHEMA_VERSION,
 };
 use qx_scheduler::JobRun;
 use qx_storage::FileTokenBucket;
@@ -2090,6 +2091,7 @@ impl ApiService {
                     | "/schema/account-snapshot-v2"
                     | "/schema/account-snapshot-v3"
                     | "/schema/account-snapshot-v4"
+                    | "/schema/account-snapshot-v5"
                     | "/schema/contract-matrix"
             )
         {
@@ -2240,6 +2242,9 @@ qx_control_retired_audit_records_total {}\n",
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3)
             }
             ("GET", "/schema/account-snapshot-v4") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V4)
+            }
+            ("GET", "/schema/account-snapshot-v5") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
             ("GET", "/schema/contract-matrix") => app_surface_route::contract_matrix_response(),
@@ -3032,7 +3037,7 @@ mod tests {
     #[test]
     fn balances_endpoint_publishes_absent_money_as_null_not_zero() {
         let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 10);
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", "20260911", 10);
         snapshot.equity_raw = Some(500);
         snapshot.available_raw = Some(0);
         state.publish_snapshot(snapshot).unwrap();
@@ -3051,7 +3056,9 @@ mod tests {
         // 而不是被 `.unwrap_or(0)` 折回一个看起来合法的零。
         let mut absent_state = ApiState::default();
         absent_state
-            .publish_snapshot(AccountSnapshot::new(2, "main", "default", "paper", 20))
+            .publish_snapshot(AccountSnapshot::new(
+                2, "main", "default", "paper", "20260911", 20,
+            ))
             .unwrap();
         let absent_body = ApiService::new(absent_state)
             .handle("GET", "/account/balances", "", 2)
@@ -3061,7 +3068,8 @@ mod tests {
             "算不出标记价时权益必须印 null，而不是给账户兜一个 0: {absent_body}"
         );
         let mut diagnostic_state = ApiState::default();
-        let mut diagnostic_snapshot = AccountSnapshot::new(3, "main", "default", "paper", 30);
+        let mut diagnostic_snapshot =
+            AccountSnapshot::new(3, "main", "default", "paper", "20260911", 30);
         diagnostic_snapshot.equity_diagnostic = Some(qx_protocol::EquityDiagnostic {
             reason: qx_protocol::EquityUnavailableReason::MissingMarkPrices,
             missing_mark_instruments: vec!["BTC/USDT.BINANCE".into()],
@@ -3082,7 +3090,7 @@ mod tests {
     #[test]
     fn portfolio_equity_adds_exchange_pnl_only_in_its_settlement_currency() {
         let mut state = ApiState::default();
-        let mut okx = AccountSnapshot::new(1, "account-okx", "joint", "okx", 10);
+        let mut okx = AccountSnapshot::new(1, "account-okx", "joint", "okx", "20260911", 10);
         okx.cash_raw.insert("USDT".into(), 1_000);
         let btc = InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap();
         okx.positions.insert(
@@ -3099,7 +3107,8 @@ mod tests {
             .publish_snapshot_for("account-okx", "okx", okx)
             .unwrap();
 
-        let mut bitget = AccountSnapshot::new(2, "account-bitget", "joint", "bitget", 10);
+        let mut bitget =
+            AccountSnapshot::new(2, "account-bitget", "joint", "bitget", "20260911", 10);
         bitget.cash_raw.insert("USDC".into(), 300);
         let eth = InstrumentId::parse("ETH/USDC:USDC.BITGET").unwrap();
         bitget.positions.insert(
@@ -3133,7 +3142,8 @@ mod tests {
     #[test]
     fn portfolio_preserves_sub_nano_wallet_cash_and_derivative_pnl() {
         let mut state = ApiState::default();
-        let mut account = AccountSnapshot::new(1, "micro-account", "micro", "binance", 10);
+        let mut account =
+            AccountSnapshot::new(1, "micro-account", "micro", "binance", "20260911", 10);
         account.cash_raw.insert("USDT".into(), 0);
         account
             .cash_exact
@@ -3183,7 +3193,8 @@ mod tests {
     #[test]
     fn portfolio_fx_conversion_preserves_sub_nano_rate_and_cash() {
         let mut state = ApiState::default();
-        let mut account = AccountSnapshot::new(1, "micro-fx-account", "micro-fx", "bitget", 10);
+        let mut account =
+            AccountSnapshot::new(1, "micro-fx-account", "micro-fx", "bitget", "20260911", 10);
         account.cash_raw.insert("TINY".into(), SCALE);
         account
             .cash_exact
@@ -3274,7 +3285,7 @@ mod tests {
     #[test]
     fn query_port_exposes_account_orders_positions_balances_and_audit() {
         let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", 100);
+        let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", "20260911", 100);
         snapshot.cash_raw.insert("USDT".into(), 123);
         let instrument = qx_core::InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
         snapshot.orders.insert(
@@ -3374,7 +3385,7 @@ mod tests {
     #[test]
     fn account_activity_requires_identity_and_pages_one_account_projection() {
         let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(11, "primary", "crypto", "OKX", 50);
+        let mut snapshot = AccountSnapshot::new(11, "primary", "crypto", "OKX", "20260911", 50);
         snapshot.header.event_seq = 4;
         snapshot.cash_raw.insert("USDT".into(), 1_000_000_000);
         snapshot.cash_exact.insert(
@@ -3699,9 +3710,11 @@ mod tests {
     #[test]
     fn account_projections_isolate_snapshots_events_and_cursors() {
         let mut state = ApiState::default();
-        let mut paper = AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", 10);
+        let mut paper =
+            AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", "20260911", 10);
         paper.cash_raw.insert("USDT".into(), 100);
-        let mut binance = AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", 10);
+        let mut binance =
+            AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", "20260911", 10);
         binance.cash_raw.insert("USDT".into(), 200);
         state
             .publish_snapshot_for("account-a", "paper", paper)
@@ -3910,10 +3923,10 @@ mod tests {
     #[test]
     fn snapshot_diff_and_event_cursor_require_a_valid_base() {
         let mut state = ApiState::default();
-        let mut base = AccountSnapshot::new(1, "a", "p", "paper", 1);
+        let mut base = AccountSnapshot::new(1, "a", "p", "paper", "20260911", 1);
         base.cash_raw.insert("USD".into(), 100);
         let base_hash = state.publish_snapshot(base).unwrap();
-        let mut target = AccountSnapshot::new(2, "a", "p", "paper", 2);
+        let mut target = AccountSnapshot::new(2, "a", "p", "paper", "20260911", 2);
         target.cash_raw.insert("USD".into(), 120);
         state.publish_snapshot(target).unwrap();
         let seq = state.events.alloc_seq();

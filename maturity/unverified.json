@@ -27,8 +27,7 @@
         "production_approved"
       ],
       "limitations": [
-        "cross_process_schema_registry_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "snapshot_header_trading_day_is_written_empty_yet_hashed_and_exported：`AccountSnapshot::new`（`crates/qx-protocol/src/lib.rs`）是 `SnapshotHeader` 的唯一生产构造点，它把 `trading_day` 写成空串，全仓没有任何赋值点或判读点把交易日历接到这一格；可它照旧进 `state_hash()`（同一个文件里逐字段 write_text 的第五格）、照旧进稳定 JSON 的 header 键集与 `schemas/account-snapshot-v1.json`。后果是「按交易日定位快照」在读侧只能由 `as_of` 推断，header 那一格是个恒空的定位符——改它的含义等于改哈希（要升 schema 世代），不改它就永远要在文档里解释「快照带交易日」这一格为什么从不带值 (V13 R7 扫描B) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
+        "cross_process_schema_registry_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
     "storage_consistency_contract": {

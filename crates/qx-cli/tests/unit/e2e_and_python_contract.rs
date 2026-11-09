@@ -19,6 +19,13 @@ fn api_snapshot_is_rebuilt_from_persisted_account_eventlog() {
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = root.to_string_lossy().into_owned();
     config.storage.event_log_segment_events = Some(2);
+    let trading_days = root.join("account-trading-days.json");
+    std::fs::write(
+        &trading_days,
+        r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+    )
+    .unwrap();
+    config.api.account_trading_days_path = Some(trading_days.to_string_lossy().into_owned());
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let order = mk_order(9401, &instrument, Side::Buy, 1);
     let mut pipeline = LiveEventPipeline::open_configured(

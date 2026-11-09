@@ -1,3 +1,5 @@
+- 账户快照升级为 v5：新构造器要求显式传入市场日历交易日，Rust 与 Python 共同校验有效 `YYYYMMDD`；API 启动恢复和实时刷新从 `api.account_trading_days_path` 的外部日历映射读取每个账户/venue 的交易日，不从 `as_of` 或事件时间推断。旧 v1-v4 快照保持读取兼容，v4 schema 路由保留并新增 v5 路由；交易日沿用已有状态哈希字段，但仅 v5 强制非空合法值。更新发布 schema、API 文档、迁移/能力台账及回归门禁。
+
 ### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 
 - GitHub `v0.3.0` 已于 2026-10-27 发布；后续功能按 minor 版本收敛为 `0.4.0` 候选。Workspace 29 个 crate、内部路径依赖要求、Python 包及未安装版本回退、C++ SDK、maturity 发布基线和九个场景目标版本已统一，Cargo.lock 与安装示例已同步。版本快检、架构 372 项快检及 Windows Python 定向测试 86 项通过；Windows 本地/GitHub 分支 Rust 安装验证成功。Simular Linux Box 干净克隆的 0.4.0 release CLI 构建通过，Linux CPython stable-ABI wheel 通过结构检查、干净 venv 安装与 17 策略冒烟；SHA-256 与环境见 `maturity/evidence/release-candidate-0.4.0-2026-11-09.json`。当前只准备候选，尚未打 tag 或上传；Windows 0.4.0 release wheel、macOS、PostgreSQL/NATS 服务矩阵仍待验收。

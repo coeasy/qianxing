@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date
 from fractions import Fraction
 from typing import Any
 
@@ -408,7 +409,7 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
     missing = sorted(required.difference(value))
     if missing:
         raise ValueError(f"missing snapshot fields: {missing}")
-    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] not in (1, 2, 3, 4):
+    if value["protocol"] != "QIANXING_ACCOUNT" or value["schema_version"] not in (1, 2, 3, 4, 5):
         raise ValueError("unsupported account snapshot schema")
     header_version = value["header"].get("schema_version", value["schema_version"])
     if header_version != value["schema_version"]:
@@ -453,6 +454,14 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
                 raise ValueError("equity_diagnostic reason and instruments disagree")
             if value["equity_raw"] is not None:
                 raise ValueError("computed equity cannot carry equity_diagnostic")
+    if value["schema_version"] == 5:
+        trading_day = value["header"].get("trading_day")
+        if not isinstance(trading_day, str) or not re.fullmatch(r"[0-9]{8}", trading_day):
+            raise ValueError("v5 account snapshot requires a valid YYYYMMDD trading_day")
+        try:
+            date(int(trading_day[:4]), int(trading_day[4:6]), int(trading_day[6:8]))
+        except ValueError as error:
+            raise ValueError("v5 account snapshot requires a valid YYYYMMDD trading_day") from error
     cash_exact = value.get("cash_exact", {})
     if not isinstance(cash_exact, dict):
         raise ValueError("cash_exact must be an object")

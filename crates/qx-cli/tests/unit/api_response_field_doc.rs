@@ -105,10 +105,10 @@ struct Seeded {
 
 fn seeded_service() -> Seeded {
     let mut state = ApiState::default();
-    let mut base = AccountSnapshot::new(1, "main", "default", "paper", 20);
+    let mut base = AccountSnapshot::new(1, "main", "default", "paper", "20260911", 20);
     base.cash_raw.insert("USDT".into(), 100_000);
     let base_hash = state.publish_snapshot(base).expect("基线快照必须能发布");
-    let mut target = AccountSnapshot::new(2, "main", "default", "paper", 21);
+    let mut target = AccountSnapshot::new(2, "main", "default", "paper", "20260911", 21);
     target.cash_raw.insert("USDT".into(), 99_000);
     target.equity_raw = Some(101_000);
     state.publish_snapshot(target).expect("目标快照必须能发布");

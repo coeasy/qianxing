@@ -186,7 +186,7 @@ fn net_cash_uses_the_single_kernel_formula() {
     };
     assert_eq!(balance.net_cash_raw(), Some(Money::from_i64(150).raw()));
 
-    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
     snapshot.upsert_balance(&balance).unwrap();
     assert_eq!(
         snapshot.cash_raw.get("USDT").copied(),
@@ -202,7 +202,7 @@ fn net_cash_uses_the_single_kernel_formula() {
         exact_amounts: None,
     };
     assert_eq!(overflowed.net_cash_raw(), None);
-    let mut batch = AccountSnapshot::new(2, "main", "default", "BINANCE", 11);
+    let mut batch = AccountSnapshot::new(2, "main", "default", "BINANCE", "20260911", 11);
     batch.cash_raw.insert("USDT".into(), 7);
     let error = batch
         .upsert_balances(&[

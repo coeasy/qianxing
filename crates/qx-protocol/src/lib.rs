@@ -43,12 +43,16 @@ pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2: &str =
 pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3: &str =
     include_str!("../../../schemas/account-snapshot-v3.json");
 
-/// Current account snapshot JSON Schema. v4 adds an explanation for unavailable equity.
-pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+/// Historical v4 account snapshot JSON Schema, retained for compatibility clients.
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA_V4: &str =
     include_str!("../../../schemas/account-snapshot-v4.json");
 
-/// New snapshots use v4; readers continue to accept v1 through v4.
-pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 4;
+/// Current account snapshot JSON Schema. v5 requires an explicit canonical trading day.
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+    include_str!("../../../schemas/account-snapshot-v5.json");
+
+/// New snapshots use v5; readers continue to accept v1 through v5.
+pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 5;
 pub const ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION: u32 = 1;
 const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;
 
@@ -189,6 +193,7 @@ impl AccountSnapshot {
         account_id: impl Into<String>,
         portfolio_id: impl Into<String>,
         venue_id: impl Into<String>,
+        trading_day: impl Into<String>,
         as_of: u64,
     ) -> Self {
         Self {
@@ -198,7 +203,7 @@ impl AccountSnapshot {
                 account_id: account_id.into(),
                 portfolio_id: portfolio_id.into(),
                 venue_id: venue_id.into(),
-                trading_day: String::new(),
+                trading_day: trading_day.into(),
                 as_of,
                 event_seq: 0,
                 state_hash: 0,
@@ -229,6 +234,11 @@ impl AccountSnapshot {
         // 混在一起会让"版本不受支持"和"哈希不对"共用一条通道，判据就分不出是谁拒的（V11 S10）。
         if self.header.schema_version == 0 || self.header.account_id.trim().is_empty() {
             return Err(ProtocolError::Invalid("快照头或 account_id 非法".into()));
+        }
+        if self.header.schema_version >= 5 && !is_valid_trading_day(&self.header.trading_day) {
+            return Err(ProtocolError::Invalid(
+                "v5 account snapshot requires a valid YYYYMMDD trading_day".into(),
+            ));
         }
         if self.header.state_hash != 0 && self.header.state_hash != self.state_hash() {
             return Err(ProtocolError::StateHashMismatch);
@@ -796,6 +806,24 @@ impl AccountSnapshot {
         snapshot.validate()?;
         Ok(snapshot)
     }
+}
+
+pub fn is_valid_trading_day(value: &str) -> bool {
+    if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let year = value[..4].parse::<u32>().unwrap_or_default();
+    let month = value[4..6].parse::<u32>().unwrap_or_default();
+    let day = value[6..8].parse::<u32>().unwrap_or_default();
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => return false,
+    };
+    year > 0 && day > 0 && day <= max_day
 }
 
 /// 四张稳定 JSON 键表整份交给 serde 写，避免手抄格式与读侧分叉。

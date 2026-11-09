@@ -45,6 +45,13 @@ artifacts:
     on_unknown_version: refuse
     refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
     refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
+  - schema_id: account-snapshot-v5
+    reader: crates/qx-protocol/src/lib.rs
+    version_field: schema_version
+    version_const: ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "账户快照 schema_version={top_schema} 不受支持（本构建支持 {}..={}）"
+    refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
   - schema_id: strategy-api-v1
     reader: crates/qx-strategy/src/contract.rs
     version_field: schema_version

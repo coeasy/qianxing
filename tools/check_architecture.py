@@ -6313,7 +6313,7 @@ def api_lock_fail_closed_check() -> None:
 # 版本号有三处说法（Rust 常量 / 对外公布的契约文本 / Python 桥），必须同号，否则
 # "只接受契约声明的 const"这句话本身就是假话。公布的那份文本自 V12 审计第三遍起只有
 # `schemas/account-snapshot-v1.json` 一份——crate 里过去另手写了一份，两份的字段约束不一致。
-SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v4.json"
+SNAPSHOT_CONTRACT_REPO_FILE = "schemas/account-snapshot-v5.json"
 SNAPSHOT_CONTRACT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 # 两道版本闸门各守一个读入口（`from_json` 的稳定 JSON 与 `from_wire_json` 的 wire JSON）；
 # `validate()` 只做"这一份文档自洽吗"，不放闸门 —— 自洽的跨版本文档必须拿到"版本不受支持"
@@ -6546,7 +6546,7 @@ def snapshot_contract_version_check() -> None:
         and all(protocol.count(needle) == 1 for needle in SNAPSHOT_VERSION_GATES)
         and protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK) == 0
         and protocol.count("self.header.schema_version == 0") == 1,
-        "当前版本与 legacy 下界各有单一声明，两个读入口只接受 v1..v4，validate 只做自洽体检",
+        "当前版本与 legacy 下界各有单一声明，两个读入口只接受 v1..v5，validate 只做自洽体检",
         f"常量 {len(SNAPSHOT_RUST_VERSION.findall(protocol))} 处、"
         f"范围闸门在位 {[protocol.count(needle) for needle in SNAPSHOT_VERSION_GATES]}（期望全为 1）、"
         f"validate 里的等值判断 {protocol.count(SNAPSHOT_VALIDATE_VERSION_CHECK)}（期望 0）",
@@ -6570,7 +6570,7 @@ def snapshot_contract_version_check() -> None:
         len(declared) == 1
         and repository == declared
         and bridge == list(range(1, declared[0] + 1)),
-        "Rust 当前版本、v4 公布契约与 Python 支持范围一致，Python 同时保留 v1-v3 读取",
+        "Rust 当前版本、v5 公布契约与 Python 支持范围一致，Python 同时保留 v1-v4 读取",
         f"Rust {declared} / 契约 {repository} / Python 支持 {bridge}",
     )
     # 公布的那份契约只能有仓库这一份文本：V12 审计第三遍发现 crate 里另手写了一份，
@@ -6578,7 +6578,7 @@ def snapshot_contract_version_check() -> None:
     # 而 deploy/README.md 宣称"同一份 schema"。手抄第二份的形态必须写不出来。
     code_only = without_line_comments(protocol)
     served_from_file = code_only.count(
-        'include_str!("../../../schemas/account-snapshot-v4.json")'
+        'include_str!("../../../schemas/account-snapshot-v5.json")'
     )
     check(
         served_from_file == 1 and not SNAPSHOT_SCHEMA_CONST.findall(code_only),
@@ -7804,8 +7804,8 @@ def api_route_contract_check() -> None:
 
 
 # V11 S10 / T3：对外发布的那一份账户快照 JSON Schema，以及"契约说的"与三方实现是否同宽。
-SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v4.json"
-SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v4"
+SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v5.json"
+SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v5"
 SNAPSHOT_SCHEMA_CASE_FILE = "crates/qx-protocol/tests/snapshot_schema_contract.rs"
 SNAPSHOT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
 SNAPSHOT_SCHEMA_CASES = (
@@ -7842,7 +7842,7 @@ CALENDAR_PYTHON_CASES = (
 def account_snapshot_schema_check() -> None:
     """账户快照的对外契约只有一份文本，且它承诺的每一格两侧都做得到（V11 S10 / T3）。
 
-    `schemas/account-snapshot-v4.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
+    `schemas/account-snapshot-v5.json` 是服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 的唯一来源：
     文件多 `title` 与顶层 `additionalProperties`，双方又都漏掉写侧真实印出的八个钱字段，比对时
     没有谁是权威；读侧 `from_json` 只核对协议字符串与两处版本号是否自相矛盾，一份按别的版本
     自洽封存的文档会被当成 v1 收下，而对面 Python 的 `load_account_snapshot` 对同一份产物直接
@@ -7873,7 +7873,7 @@ def account_snapshot_schema_check() -> None:
     check(
         re.search(
             r"pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =\s*"
-            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v4\.json"\)',
+            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v5\.json"\)',
             protocol,
         )
         is not None
@@ -7889,6 +7889,18 @@ def account_snapshot_schema_check() -> None:
         f"required 越界 {sorted(set(schema['required']) - set(properties))}"
         f" / 缺钱字段 {[name for name in SNAPSHOT_SCALARS if name not in properties]}",
     )
+    trading_day_schema = properties.get("header", {})
+    trading_day_field = trading_day_schema.get("properties", {}).get("trading_day", {})
+    check(
+        supported == 5
+        and "trading_day" in trading_day_schema.get("required", [])
+        and trading_day_field.get("type") == "string"
+        and trading_day_field.get("pattern") == "^[0-9]{8}$"
+        and "never inferred from UTC as_of" in trading_day_field.get("description", "")
+        and "is_valid_trading_day(&self.header.trading_day)" in protocol,
+        "v5 要求交易日显式传入，契约与 Rust 都校验 YYYYMMDD 且不从 as_of 推导",
+        f"version={supported} / header.required={trading_day_schema.get('required')} / trading_day={trading_day_field}",
+    )
     diagnostic = properties.get("equity_diagnostic", {})
     diagnostic_reasons = {
         reason
@@ -7896,7 +7908,7 @@ def account_snapshot_schema_check() -> None:
         for reason in branch.get("properties", {}).get("reason", {}).get("enum", [])
     }
     check(
-        supported == 4
+        supported == 5
         and "equity_diagnostic" in schema["required"]
         and diagnostic_reasons
         == {
@@ -7908,7 +7920,7 @@ def account_snapshot_schema_check() -> None:
         and "equity_diagnostic" in protocol
         and "equity_diagnostic" in (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
         and "account_missing_mark_instruments" in (ROOT / "crates/qx-service/src/api_read_model.rs").read_text(encoding="utf-8"),
-        "v4 requires a typed null-equity diagnostic across Rust, service, schema, and Python",
+        "v5 preserves the v4 typed null-equity diagnostic across Rust, service, schema, and Python",
         f"version={supported} / required={schema['required']} / reasons={sorted(diagnostic_reasons)}",
     )
     check(
@@ -7916,7 +7928,7 @@ def account_snapshot_schema_check() -> None:
         and (set(properties) - set(emitted)) <= {"fees_by_currency_raw", "cash_exact", "equity_diagnostic"}
         and "fees_by_currency_raw" not in schema["required"]
         and "cash_exact" not in schema["required"],
-        "v4 契约覆盖写侧字段；空手续费/精确余额 map 与 v1-v3 兼容诊断字段可省略",
+        "v5 契约覆盖写侧字段；空手续费/精确余额 map 与版本化诊断字段可省略",
         f"只在契约 {sorted(set(properties) - set(emitted))}"
         f" / 只在产物 {sorted(set(emitted) - set(properties))}",
     )
@@ -7955,7 +7967,7 @@ def account_snapshot_schema_check() -> None:
         f" / 协议名同源 {named}",
     )
     served = re.search(
-        r'\("GET", "/schema/account-snapshot-v4"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
+            r'\("GET", "/schema/account-snapshot-v5"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
         r"ACCOUNT_SNAPSHOT_JSON_SCHEMA\s*\)",
         endpoint,
     )
@@ -7965,7 +7977,7 @@ def account_snapshot_schema_check() -> None:
     listed = whitelist.group(1).strip() if whitelist else ""
     check(
         served is not None and SNAPSHOT_SCHEMA_ROUTE in listed,
-        "GET /schema/account-snapshot-v4 发出的就是这份常量，且客户端取契约不必带操作者凭据",
+        "GET /schema/account-snapshot-v5 发出的就是这份常量，且客户端取契约不必带操作者凭据",
         f"发出常量={served is not None} / 鉴权白名单 {listed}",
     )
     bridge = (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
@@ -7979,17 +7991,24 @@ def account_snapshot_schema_check() -> None:
         bridge,
         re.S,
     ) is not None
+    python_v5_trading_day_required = re.search(
+        r'if value\["schema_version"\] == 5:.*?valid YYYYMMDD trading_day',
+        bridge,
+        re.S,
+    ) is not None
     check(
         python_versions is not None
         and supported is not None
         and [int(item.strip()) for item in python_versions.group(1).split(",") if item.strip()]
         == list(range(1, supported + 1))
         and python_required == sorted(set(schema["required"]) - {"equity_diagnostic"})
-        and python_v4_diagnostic_required,
-        "对面 Python 的快照读侧与契约同宽：支持 v1-v4，v4 单独要求诊断键",
+        and python_v4_diagnostic_required
+        and python_v5_trading_day_required,
+        "对面 Python 的快照读侧与契约同宽：支持 v1-v5，v4 要求诊断键且 v5 校验交易日",
         f"Python 版本 {python_versions.group(1) if python_versions else None} vs 1..={supported}"
         f" / 必填差 {sorted(set(python_required) ^ (set(schema['required']) - {'equity_diagnostic'}))}"
-        f" / v4 条件必填={python_v4_diagnostic_required}",
+        f" / v4 条件必填={python_v4_diagnostic_required}"
+        f" / v5 trading_day={python_v5_trading_day_required}",
     )
     cases = (ROOT / SNAPSHOT_SCHEMA_CASE_FILE).read_text(encoding="utf-8")
     missing_cases = [name for name in SNAPSHOT_SCHEMA_CASES if f"fn {name}()" not in cases]
@@ -18695,7 +18714,7 @@ def artifact_migration_check() -> None:
             continue
         text = _artifact_code_only(reader)
         gate = row.get("version_const", "")
-        if schema_id in {"account-snapshot-v1", "account-snapshot-v2", "account-snapshot-v3", "account-snapshot-v4"}:
+        if schema_id in {"account-snapshot-v1", "account-snapshot-v2", "account-snapshot-v3", "account-snapshot-v4", "account-snapshot-v5"}:
             gate_ok = (
                 ARTIFACT_MIGRATION_CONST.format(gate=gate) in text
                 and "const MIN_SUPPORTED_ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;" in text
@@ -22839,14 +22858,14 @@ def web_console_field_wiring_check() -> None:
         f"名册 {rosters.get('balances')} / 后端 {json_object_keys_of(CONSOLE_BALANCES_MARKER)}",
     )
     schema = json.loads(
-        (ROOT / "schemas/account-snapshot-v4.json").read_text(encoding="utf-8")
+        (ROOT / "schemas/account-snapshot-v5.json").read_text(encoding="utf-8")
     )
     check(
         set(top) <= set(schema["properties"])
         and set(schema["properties"]) - set(top) <= {"fees_by_currency_raw", "cash_exact"}
         and "fees_by_currency_raw" not in schema["required"]
         and "cash_exact" not in schema["required"],
-        "快照写侧的顶层键均由当前 v4 schema 声明，精确余额与费用 map 都可省略",
+        "快照写侧的顶层键均由当前 v5 schema 声明，精确余额与费用 map 都可省略",
         f"写侧 {sorted(top)} / schema {sorted(schema['properties'])}",
     )
 

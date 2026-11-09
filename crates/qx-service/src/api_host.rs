@@ -522,6 +522,21 @@ pub fn spawn_api_projection_bridge(
                             .unwrap_or(account_id);
                         match load_reconcile_reports(&data_root) {
                             Ok(reports) => {
+                                let trading_day =
+                                    match crate::api_read_model::configured_account_trading_day(
+                                        &runtime_config,
+                                        account_id,
+                                        venue_id,
+                                    ) {
+                                        Ok(trading_day) => trading_day,
+                                        Err(error) => {
+                                            eprintln!(
+                                            "[运行时 · API] 刷新账户快照缺少有效交易日 account={} venue={}: {error}",
+                                            account_id, venue_id
+                                        );
+                                            continue;
+                                        }
+                                    };
                                 match project_api_account_snapshot_with_portfolio_and_market_specs(
                                     worker,
                                     log_name,
@@ -529,6 +544,7 @@ pub fn spawn_api_projection_bridge(
                                     &reports,
                                     portfolio_id,
                                     &fx_specs,
+                                    &trading_day,
                                 ) {
                                     Ok(snapshot) => {
                                         let publish =
@@ -832,6 +848,13 @@ mod tests {
         ))
         .expect("paper runtime fixture is valid");
         config.storage.data_dir = root.to_string_lossy().into_owned();
+        let calendar_path = root.join("account-trading-days.json");
+        std::fs::write(
+            &calendar_path,
+            r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+        )
+        .expect("write explicit account trading day");
+        config.api.account_trading_days_path = Some(calendar_path.to_string_lossy().into_owned());
 
         let mut pipeline = PipelineStorage::from_config(&config)
             .expect("configured file storage")
@@ -912,6 +935,13 @@ mod tests {
         ))
         .expect("paper runtime fixture is valid");
         config.storage.data_dir = root.to_string_lossy().into_owned();
+        let calendar_path = root.join("account-trading-days.json");
+        std::fs::write(
+            &calendar_path,
+            r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+        )
+        .expect("write explicit account trading day");
+        config.api.account_trading_days_path = Some(calendar_path.to_string_lossy().into_owned());
         let mut pipeline = PipelineStorage::from_config(&config)
             .expect("configured file storage")
             .open("paper-main-paper-events", "USDT")

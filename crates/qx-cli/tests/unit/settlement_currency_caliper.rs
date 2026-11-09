@@ -16,6 +16,13 @@ fn usdc_paper_runtime(data_dir: &Path) -> RuntimeConfig {
         .join("qianxing.runtime.paper-strategy.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let trading_days = data_dir.join("account-trading-days.json");
+    std::fs::write(
+        &trading_days,
+        r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+    )
+    .unwrap();
+    config.api.account_trading_days_path = Some(trading_days.to_string_lossy().into_owned());
     let usdc_spec = spot_spec_settled_in(data_dir, "USDC")
         .to_string_lossy()
         .into_owned();

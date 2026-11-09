@@ -6,7 +6,7 @@ use super::*;
 
 fn snapshot() -> AccountSnapshot {
     let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
-    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
     snapshot.cash_raw.insert("USDT".into(), 1000);
     snapshot.positions.insert(
         instrument.clone(),
@@ -18,6 +18,29 @@ fn snapshot() -> AccountSnapshot {
     );
     snapshot.seal();
     snapshot
+}
+
+#[test]
+fn v5_requires_a_real_explicit_trading_day_and_legacy_v4_stays_readable() {
+    for trading_day in ["", "2026-09-11", "20230229", "20261301", "00000101"] {
+        let mut current = snapshot();
+        current.header.trading_day = trading_day.into();
+        current.seal();
+        assert!(matches!(
+            current.validate(),
+            Err(ProtocolError::Invalid(message)) if message.contains("valid YYYYMMDD trading_day")
+        ));
+    }
+
+    let mut legacy = snapshot();
+    legacy.header.schema_version = 4;
+    legacy.header.trading_day.clear();
+    legacy.seal();
+    assert!(legacy.validate().is_ok());
+    assert_eq!(
+        AccountSnapshot::from_json(&legacy.to_json().unwrap()).unwrap(),
+        legacy
+    );
 }
 
 #[test]
@@ -37,7 +60,7 @@ fn diff_is_deterministic_and_replayable() {
 
 #[test]
 fn unavailable_equity_diagnostic_is_hash_bound_and_diffable() {
-    let mut base = AccountSnapshot::new(30, "main", "default", "BINANCE", 100);
+    let mut base = AccountSnapshot::new(30, "main", "default", "BINANCE", "20260911", 100);
     base.equity_diagnostic = Some(EquityDiagnostic {
         reason: EquityUnavailableReason::MissingMarkPrices,
         missing_mark_instruments: vec![
@@ -46,7 +69,7 @@ fn unavailable_equity_diagnostic_is_hash_bound_and_diffable() {
         ],
     });
     base.seal();
-    let serialized = base.to_json().expect("v4 snapshot serializes");
+    let serialized = base.to_json().expect("v5 snapshot serializes");
     assert!(serialized.contains("missing_mark_prices"));
     assert!(serialized.contains("ETH/USDT:USDT.BINANCE"));
     assert_eq!(AccountSnapshot::from_json(&serialized).unwrap(), base);
@@ -63,7 +86,7 @@ fn unavailable_equity_diagnostic_is_hash_bound_and_diffable() {
     assert_eq!(diff.apply(&base).unwrap(), target);
 
     let mut missing =
-        serde_json::from_str::<serde_json::Value>(&base.to_json().expect("v4 snapshot serializes"))
+        serde_json::from_str::<serde_json::Value>(&base.to_json().expect("v5 snapshot serializes"))
             .unwrap();
     missing.as_object_mut().unwrap().remove("equity_diagnostic");
     assert!(matches!(
@@ -72,7 +95,7 @@ fn unavailable_equity_diagnostic_is_hash_bound_and_diffable() {
     ));
 
     let mut missing_wire = serde_json::from_str::<serde_json::Value>(
-        &base.to_wire_json().expect("v4 wire snapshot serializes"),
+        &base.to_wire_json().expect("v5 wire snapshot serializes"),
     )
     .unwrap();
     missing_wire
@@ -117,7 +140,7 @@ fn json_wire_format_is_stable_and_uses_raw_integers() {
 #[test]
 fn precise_balance_and_position_amounts_survive_snapshot_and_diff() {
     let instrument = InstrumentId::parse("TINY/USDT:USDT.BINANCE").unwrap();
-    let mut base = AccountSnapshot::new(1, "main", "portfolio", "BINANCE", 10);
+    let mut base = AccountSnapshot::new(1, "main", "portfolio", "BINANCE", "20260911", 10);
     let balance = AccountBalance {
         asset: "USDT".into(),
         free: Money::from_raw(0),
@@ -218,7 +241,7 @@ fn v3_hash_commits_settlement_currency_and_v1_rejects_new_fields() {
 #[test]
 fn rows_keyed_by_integer_still_produce_and_recover_valid_json() {
     let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
-    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
     snapshot.cash_raw.insert("USDT".into(), 1000);
     snapshot.orders.insert(
         7,
@@ -305,7 +328,7 @@ fn rows_keyed_by_integer_still_produce_and_recover_valid_json() {
 
 #[test]
 fn exact_order_and_fill_amounts_round_trip_through_snapshot_and_state_hash() {
-    let mut snapshot = AccountSnapshot::new(9, "main", "default", "OKX", 10);
+    let mut snapshot = AccountSnapshot::new(9, "main", "default", "OKX", "20260911", 10);
     let instrument = InstrumentId::parse("PEPE/USDT.OKX").unwrap();
     snapshot.orders.insert(
         21,
@@ -411,7 +434,7 @@ fn stable_json_and_file_snapshot_store_are_recoverable_and_idempotent() {
     std::fs::remove_dir_all(root).expect("remove workspace-local snapshot test data");
 }
 
-/// 契约版本要"会失败"：读侧接受声明过的 v1-v4，并明确拒绝超出范围的自洽版本。
+/// 契约版本要"会失败"：读侧接受声明过的 v1-v5，并明确拒绝超出范围的自洽版本。
 #[test]
 fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     let mut value: serde_json::Value =
@@ -424,7 +447,7 @@ fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     let error = AccountSnapshot::from_json(&future).expect_err("自洽的 schema_version=7 必须被拒");
     assert!(
         matches!(error, ProtocolError::Invalid(ref message)
-            if message.contains("schema_version=7") && message.contains("支持 1..=4")),
+            if message.contains("schema_version=7") && message.contains("支持 1..=5")),
         "拒绝理由必须点出实到版本与本构建认的版本，实际: {error:?}"
     );
 
@@ -450,7 +473,7 @@ fn self_consistent_unknown_schema_version_is_rejected_by_every_entry() {
     assert_eq!(
         AccountSnapshot::from_wire_json(&foreign.to_wire_json().unwrap()).err(),
         Some(ProtocolError::Invalid(
-            "账户快照 schema_version=7 不受支持（本构建支持 1..=4）".into()
+            "账户快照 schema_version=7 不受支持（本构建支持 1..=5）".into()
         )),
         "wire 入口与稳定 JSON 入口必须共用同一道版本闸门"
     );
@@ -533,12 +556,12 @@ fn future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_prob
         .expect_err("自洽的高版本号即使形状读不出来也必须被拒");
     assert!(
         matches!(error, ProtocolError::Invalid(ref message)
-            if message.contains("schema_version=7") && message.contains("支持 1..=4")),
+            if message.contains("schema_version=7") && message.contains("支持 1..=5")),
         "版本判定必须排在字段解析之前，实际: {error:?}"
     );
 }
 
-/// 当前常量与 `/schema/account-snapshot-v4` 公布的契约必须同号，
+/// 当前常量与 `/schema/account-snapshot-v5` 公布的契约必须同号，
 /// 否则"只接受契约声明的 const"这句话本身就是一份假话。
 ///
 /// 这里原本还比一次"内嵌文本 vs 仓库契约文件"：那份内嵌文本是手写的第二份 schema，
@@ -558,7 +581,7 @@ fn known_version_constant_matches_the_served_contract() {
     // 外部读者拿错契约，所以公布身份也要落在文本里。
     assert_eq!(
         contract["$id"].as_str(),
-        Some("https://qianxing.dev/schema/account-snapshot-v4.json"),
+        Some("https://qianxing.dev/schema/account-snapshot-v5.json"),
         "公布的 $id 必须指向当前契约，读者才知道自己校验的是哪一份"
     );
     let legacy: serde_json::Value =

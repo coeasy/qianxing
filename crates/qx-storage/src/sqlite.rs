@@ -2954,7 +2954,7 @@ mod tests {
     fn sqlite_snapshot_store_seals_and_revalidates_account_state() {
         let path = temp_db("snapshot");
         let store = SqliteSnapshotStore::new(&path).unwrap();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
         snapshot.cash_raw.insert("USDT".into(), 1000);
         snapshot.seal();
         store.save(&snapshot).unwrap();

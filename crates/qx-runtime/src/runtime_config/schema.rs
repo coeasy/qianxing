@@ -99,6 +99,9 @@ pub struct ApiRuntimeConfig {
     /// 本 API 服务拥有的历史行情 Provider。空数组保持旧配置行为；每个源必须显式声明能力与适配器配置。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data_providers: Vec<ApiDataProviderRuntimeConfig>,
+    /// 动态账户交易日映射文件。API 快照 v5 必须从外部市场日历显式读取交易日；文件可由日历同步器更新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_trading_days_path: Option<String>,
     /// 允许跨源读本面的浏览器源，逐条必须是精确的 `http(s)://host[:port]`。
     ///
     /// 缺省（空）表示这份部署不开浏览器准入：响应里不带任何 `Access-Control-*`，

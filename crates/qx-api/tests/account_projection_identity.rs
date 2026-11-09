@@ -203,7 +203,7 @@ fn unknown_projection_key_is_404_on_every_scoped_read_face() {
         .publish_snapshot_for(
             "account-a",
             "paper",
-            AccountSnapshot::new(1, "account-a", "default", "paper", 40),
+            AccountSnapshot::new(1, "account-a", "default", "paper", "20260911", 40),
         )
         .expect("快照挂在同一份投影上");
     let service = ApiService::new(state);

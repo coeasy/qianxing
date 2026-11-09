@@ -102,6 +102,10 @@
     },
     {
       "method": "GET",
+      "path": "/schema/account-snapshot-v5"
+    },
+    {
+      "method": "GET",
       "path": "/schema/contract-matrix"
     },
     {

@@ -56,7 +56,7 @@ mod tests {
     use super::*;
 
     fn snapshot(id: u64) -> AccountSnapshot {
-        AccountSnapshot::new(id, "main", "default", "paper", id * 1_000)
+        AccountSnapshot::new(id, "main", "default", "paper", "20260911", id * 1_000)
     }
 
     /// 越限只退最旧的那一份，且容量是硬上界：重装同一份摘要不能把窗口撑大。

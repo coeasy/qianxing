@@ -268,7 +268,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 ### HTTP 读面与控制面路由
 
 下表是 `qx-api` 当前实现的全部 HTTP 与 WebSocket 入口。静态路由来自
-`crates/qx-api/src/lib.rs` 的 `handle_inner`，带 `{run_id}` 的动态路由由 `app_surface.rs` 的路由模板登记。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/account-snapshot-v2`、`/schema/account-snapshot-v3`、`/schema/account-snapshot-v4`、`/schema/contract-matrix`
+`crates/qx-api/src/lib.rs` 的 `handle_inner`，带 `{run_id}` 的动态路由由 `app_surface.rs` 的路由模板登记。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/account-snapshot-v2`、`/schema/account-snapshot-v3`、`/schema/account-snapshot-v4`、`/schema/account-snapshot-v5`、`/schema/contract-matrix`
 之外，只要运行时配置里装了操作员权限策略（`transport: "mtls"` 必然装），未通过证书识别的
 请求一律 `403 {"error":"authenticated_operator_required"}`。「返回」那一格里写成 `{…}` 的键集不是示意：`crates/qx-cli/tests/unit/api_response_field_doc.rs` 会在同一进程里驱动 `ApiService`，把每条入口真的序列化出来的键集与这一格逐条比相等（V13 R2 第六遍）。
 路由名这一层的相等由 `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs` **逐张表**核对，
@@ -285,8 +285,9 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /metrics` | Prometheus 文本 | 见下「指标出口」：API 自身四条指标逐行印出，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
 | `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
 | `GET /schema/account-snapshot-v2` | JSON Schema | 历史兼容快照契约，公布的就是仓库里的 `schemas/account-snapshot-v2.json`（编译期 `include_str!` 取用） |
-| `GET /schema/account-snapshot-v3` | JSON Schema | v3 历史快照契约；读侧仍兼容 v1-v4 |
-| `GET /schema/account-snapshot-v4` | JSON Schema | 当前契约 `schemas/account-snapshot-v4.json`；读侧兼容 v1-v4，v4 增加权益不可用诊断 |
+| `GET /schema/account-snapshot-v3` | JSON Schema | v3 历史快照契约；读侧仍兼容 v1-v5 |
+| `GET /schema/account-snapshot-v4` | JSON Schema | v4 历史快照契约，增加权益不可用诊断；读侧仍兼容 |
+| `GET /schema/account-snapshot-v5` | JSON Schema | 当前契约 `schemas/account-snapshot-v5.json`；读侧兼容 v1-v5，并要求提供有效的 `YYYYMMDD` 市场交易日 |
 | `GET /schema/contract-matrix` | JSON 数组 | 稳定契约的**命名转换矩阵**（`qx_core::contract::CONTRACT_MATRIX`）：每行 `{concept, canonical_types, canonical_source, duplicates, adapter, note}`，登记同名概念谁是规范单点、哪些是同名兄弟、由哪个显式 adapter 桥接；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 |
 | `GET /app/strategies` | JSON 数组 | 由 `qx-app` 投影的稳定顺序内置策略目录；每项包含 `name`、`description`、`signal_knobs` 与 `requires_reference_leg`，供 Rust/Python/C++ 客户端发现策略 |
 | `GET /app/capabilities` | 版本化应用能力目录 | 声明共享 Rust 核心用例及路由，并明确提示必须执行运行时预检；不承诺交易所/数据源配置可用、实盘已获认证，或跨账户净额风险 |
@@ -297,7 +298,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/read-multi-leg-report` | 多腿 `MultiLegResearchReportV1` 共享版本化 DTO | 使用 qx-app 完整重放 reader；工件和行情输入分别限制在服务端 artifact root 与 data root |
 | `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` / `404 account_projection_not_found` | 单账户投影快照；八个汇总钱字段里未算的那几格是 `null` 而不是 0，名单见下 |
 | `GET /account/activity` | `AccountActivityReportV1` JSON | 必须指定一个账户/venue；包含原币种余额、持仓/委托/成交/划转的有界快照行、对账状态和 retained account-projection event page；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 使用当前 v3 账户快照格式，保留 v1/v2 读取兼容 |
+| `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 使用当前 v5 账户快照格式，保留 v1-v4 读取兼容 |
 | `GET /account/snapshot/diff?base_hash=<u64>` | `{schema_version, base_state_hash, target_state_hash, target_header, cash, cash_exact, positions, orders, fills, transfers, replacement}` | `base_hash` 缺失或非无符号整数 → `400`；基准不存在 → `409 snapshot_base_not_found`；`cash`/`cash_exact`/`positions`/`orders`/`fills`/`transfers` 六条是 `Change` 数组（`{"Upsert":{"key":…,"value":…}}` 或 `{"Remove":{"key":…}}`），汇总钱标量只由 `replacement` 整格搬运，见下 |
 | `GET /account/orders`、`/account/positions` | 数组 | 全局投影没有快照时返回空数组，不返回 `404`；带键且这份部署里没有该投影 → `404 account_projection_not_found` |
 | `GET /account/balances` | `{cash_raw, equity_raw, available_raw, margin_raw, equity_diagnostic}` | `cash_raw` 是按币种聚合的 map（没有快照时是 `{}`），另三格是标量；未算出的钱保持 `null`，不印成 `0`（V11 Q70） |
@@ -353,6 +354,8 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/run-multi-leg-experiment/start` | `RunMultiLegExperimentSpec::start` 的后台多腿参数实验句柄 | 立即返回 `run_id/status`；候选之间及双腿 Rust 撮合循环协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 重新读取并核对 manifest、summary、权益/成交计数与重放账簿条数；不一致为 200 + verified=false |
 | 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
+
+API 运行时若要从账户 EventLog 生成 v5 快照，必须在 `api.account_trading_days_path` 配置由市场日历同步器维护的 JSON 文件。文件形状为 `{"schema_version":1,"account_trading_days":{"<account_id>":{"<venue_id>":"YYYYMMDD"}}}`；API 在启动装载和每次快照刷新时重新读取，以支持日历同步器原子更新。缺少映射、日期无效或文件不可读时，该账户快照不会发布；服务不会从 `as_of`、UTC 日期或事件时间推断交易日。
 
 七条兼容读投影入口（`/account/snapshot`、`/account/snapshot/envelope`、`/account/orders`、
 `/account/positions`、`/account/balances`、`/events`、`/events/live`）都接受 `?account_id=&venue_id=`：
@@ -410,7 +413,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 先接上层代理。
 
 `serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
-`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），而第一列方括号里的查询串是名单不是提示：那几条带键入口只认列出的键名，名单外的键一律 `400`（V13 R6）；表里那八条**全局出口**（`/health`、`/ready`、`/metrics`、`/schema/account-snapshot-v1`、`/schema/account-snapshot-v2`、`/schema/account-snapshot-v3`、`/schema/account-snapshot-v4`、`/schema/contract-matrix`）不在任何名册里，走的是 `crates/qx-api/src/admission.rs` 的 `refused_query_param` 那句 `accepted_query_params(route)?`（名册里没有这条路径就整支不判，`read_scope` 是名册的单点）——它们**不判查询串**，给它们带 `?account_id=` 既不会换来 400，也不会换来任何按账户收窄的数据（这些路由本来就不读收窄键，判它们没有意义）。所以「名单外一律 400」这条口径的覆盖面是 13 条读面入口 + WS 那一支，其余 8 条是这里明写的边界，不是漏网：
+`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），而第一列方括号里的查询串是名单不是提示：那几条带键入口只认列出的键名，名单外的键一律 `400`（V13 R6）；表里那九条**全局出口**（`/health`、`/ready`、`/metrics`、`/schema/account-snapshot-v1`、`/schema/account-snapshot-v2`、`/schema/account-snapshot-v3`、`/schema/account-snapshot-v4`、`/schema/account-snapshot-v5`、`/schema/contract-matrix`）不在任何名册里，走的是 `crates/qx-api/src/admission.rs` 的 `refused_query_param` 那句 `accepted_query_params(route)?`（名册里没有这条路径就整支不判，`read_scope` 是名册的单点）——它们**不判查询串**，给它们带 `?account_id=` 既不会换来 400，也不会换来任何按账户收窄的数据（这些路由本来就不读收窄键，判它们没有意义）。所以「名单外一律 400」这条口径的覆盖面是 13 条读面入口 + WS 那一支，其余 9 条是这里明写的边界，不是漏网：
 
 | 端点 | 语义 | 非 200 口径 |
 | --- | --- | --- |
@@ -424,7 +427,8 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/account-snapshot-v2` | 历史账户快照 JSON Schema，就是 `schemas/account-snapshot-v2.json` 那一份 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/account-snapshot-v3` | 历史账户快照 v3 JSON Schema；读侧继续兼容 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /schema/account-snapshot-v4` | 当前账户快照 JSON Schema，就是 `schemas/account-snapshot-v4.json` 那一份；新快照用 v4，读侧保留 v1-v3 兼容 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /schema/account-snapshot-v4` | 历史账户快照 v4 JSON Schema，包含权益不可用诊断；读侧继续兼容 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /schema/account-snapshot-v5` | 当前账户快照 JSON Schema；新快照要求显式提供有效 `YYYYMMDD` 交易日，读侧保留 v1-v4 兼容 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/contract-matrix` | 稳定契约的命名转换矩阵，公布的就是 `qx_core::contract::CONTRACT_MATRIX` 那一份（编译期取用，不是第二份手抄）；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法（键形状不合法，或点了这条入口不认的查询键——正文点名那把键，下同）；404 `snapshot_not_found`；404 `account_projection_not_found`（带键但这份部署没有该投影）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/activity` | 一个账户的快照、原币种余额、持仓/订单/成交/划转、对账状态和有界事件页；仅说明 retained projection log 范围 | 必须同时给出 account_id 与 venue_id；默认事件页 50 条，limit 上限见前段说明；after/before 互斥且为排他游标；400 参数非法或 limit 越界，404 快照/账户投影不存在，409 游标超前/过旧，500 `account_snapshot_invalid` / `account_snapshot_serialization_failed` / `account_snapshot_decode_failed`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

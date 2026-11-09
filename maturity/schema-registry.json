@@ -395,6 +395,23 @@
       ]
     },
     {
+      "schema_id": "account-snapshot-v5",
+      "version": 5,
+      "path": "schemas/account-snapshot-v5.json",
+      "producer": "qx-protocol",
+      "consumers": [
+        "qx-python",
+        "qx-cli",
+        "qx-api"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-protocol/tests/snapshot_schema_contract.rs",
+        "crates/qx-protocol/src/tests.rs",
+        "python/tests/test_bridge.py"
+      ]
+    },
+    {
       "schema_id": "strategy-api-v1",
       "version": 1,
       "path": "schemas/strategy_api_v1.schema.json",

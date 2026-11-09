@@ -16,6 +16,7 @@ pub(crate) fn config() -> RuntimeConfig {
             strategy_deployment_nodes: Vec::new(),
             strategy_deployment_publisher: None,
             data_providers: Vec::new(),
+            account_trading_days_path: None,
             cors_allowed_origins: Vec::new(),
             max_concurrent_connections: None,
             console: None,

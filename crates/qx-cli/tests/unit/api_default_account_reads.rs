@@ -26,6 +26,11 @@ fn unkeyed_read_models_describe_the_same_account() {
     shadow.id = "paper-execution-shadow".into();
     shadow.account_id = Some("shadow".into());
     config.workers.push(shadow);
+    std::fs::write(
+        config.api.account_trading_days_path.as_ref().unwrap(),
+        r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"},"shadow":{"paper":"20260911"}}}"#,
+    )
+    .unwrap();
     let shadow_log = account_event_log_name("shadow", "paper").expect("shadow 拼得出日志身份");
     let ts = runtime_timestamp_ms();
     let mut pipeline = LiveEventPipeline::open(&root, &shadow_log, "USDT").unwrap();

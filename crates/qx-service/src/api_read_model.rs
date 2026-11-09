@@ -8,10 +8,18 @@ use qx_runtime::{
     account_event_log_name, owns_account_event_log, settlement_currency_for_log,
     worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
 };
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::pipeline::{event_log_exists, PipelineStorage};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountTradingDaysFile {
+    schema_version: u32,
+    account_trading_days: BTreeMap<String, BTreeMap<String, String>>,
+}
 
 /// Select the first configured account writer whose canonical EventLog has persisted facts.
 pub fn default_account_event_log(
@@ -99,6 +107,7 @@ fn load_api_account_snapshot_for_worker_with_market_specs(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
+    let trading_day = configured_account_trading_day(config, account_id, venue_id)?;
     let currency = settlement_currency_for_log(config, &log_name)?;
     let pipeline = PipelineStorage::from_config(config)?
         .open_read_only(log_name.clone(), currency)
@@ -123,8 +132,47 @@ fn load_api_account_snapshot_for_worker_with_market_specs(
             reports,
             portfolio_id,
             market_specs,
+            &trading_day,
         )?,
     ))
+}
+
+/// Read one account's current market-calendar day from the externally maintained mapping file.
+/// The file nests `account_trading_days` by account and venue; timestamps are never used to
+/// synthesize or infer this protocol field.
+pub fn configured_account_trading_day(
+    config: &RuntimeConfig,
+    account_id: &str,
+    venue_id: &str,
+) -> Result<String, String> {
+    let path = config
+        .api
+        .account_trading_days_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| {
+            "API 快照 v5 需要 api.account_trading_days_path 指向市场日历映射文件".to_owned()
+        })?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("读取账户交易日历映射失败 path={path}: {error}"))?;
+    let document: AccountTradingDaysFile = serde_json::from_str(&text)
+        .map_err(|error| format!("账户交易日历映射 JSON 非法 path={path}: {error}"))?;
+    if document.schema_version != 1 {
+        return Err(format!("账户交易日历映射 schema_version 必须为 1: {path}"));
+    }
+    let trading_day = document
+        .account_trading_days
+        .get(account_id)
+        .and_then(|venues| venues.get(venue_id))
+        .ok_or_else(|| {
+            format!("账户交易日历映射缺少 account_id={account_id} venue_id={venue_id}: {path}")
+        })?;
+    if !qx_protocol::is_valid_trading_day(trading_day) {
+        return Err(format!(
+            "账户交易日历映射中的 account_id={account_id} venue_id={venue_id} 不是有效 YYYYMMDD: {trading_day}"
+        ));
+    }
+    Ok(trading_day.to_owned())
 }
 
 pub(crate) fn configured_market_specs(
@@ -257,8 +305,16 @@ pub fn project_api_account_snapshot(
     log_name: &str,
     pipeline: &LiveEventPipeline,
     reports: &[ReconcileReportSnapshot],
+    trading_day: &str,
 ) -> Result<AccountSnapshot, String> {
-    project_api_account_snapshot_with_portfolio(worker, log_name, pipeline, reports, "default")
+    project_api_account_snapshot_with_portfolio(
+        worker,
+        log_name,
+        pipeline,
+        reports,
+        "default",
+        trading_day,
+    )
 }
 
 pub fn project_api_account_snapshot_with_portfolio(
@@ -267,6 +323,7 @@ pub fn project_api_account_snapshot_with_portfolio(
     pipeline: &LiveEventPipeline,
     reports: &[ReconcileReportSnapshot],
     portfolio_id: &str,
+    trading_day: &str,
 ) -> Result<AccountSnapshot, String> {
     project_api_account_snapshot_with_portfolio_and_market_specs(
         worker,
@@ -275,6 +332,7 @@ pub fn project_api_account_snapshot_with_portfolio(
         reports,
         portfolio_id,
         &BTreeMap::new(),
+        trading_day,
     )
 }
 
@@ -285,6 +343,7 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
     reports: &[ReconcileReportSnapshot],
     portfolio_id: &str,
     market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
+    trading_day: &str,
 ) -> Result<AccountSnapshot, String> {
     let account_id = worker.account_id.as_deref().unwrap_or_default().trim();
     let venue_id = worker.venue_id.as_deref().unwrap_or_default().trim();
@@ -294,6 +353,7 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
         account_id,
         portfolio_id,
         venue_id,
+        trading_day,
         runtime_snapshot.last_engine_ts.max(1),
     );
     snapshot.header.event_seq = pipeline
@@ -784,7 +844,7 @@ fn account_missing_mark_instruments(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_reconcile_reports, default_account_event_log,
+        apply_reconcile_reports, configured_account_trading_day, default_account_event_log,
         load_api_account_snapshots_with_market_specs, load_api_query_models,
         load_reconcile_reports, project_position_unrealized_pnl, query_api_models,
     };
@@ -898,6 +958,43 @@ mod tests {
         root
     }
 
+    fn configure_account_trading_day(config: &mut RuntimeConfig, root: &Path) {
+        let path = root.join("account-trading-days.json");
+        std::fs::write(
+            &path,
+            r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+        )
+        .expect("write explicit account calendar mapping");
+        config.api.account_trading_days_path = Some(path.to_string_lossy().into_owned());
+    }
+
+    #[test]
+    fn api_snapshot_trading_day_comes_from_the_account_calendar_file() {
+        let root = temp_root("account-trading-day-calendar");
+        std::fs::create_dir_all(&root).expect("create calendar fixture directory");
+        let mut config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("valid paper runtime fixture");
+        assert!(configured_account_trading_day(&config, "main", "paper").is_err());
+
+        configure_account_trading_day(&mut config, &root);
+        assert_eq!(
+            configured_account_trading_day(&config, "main", "paper").unwrap(),
+            "20260911"
+        );
+        let path = config.api.account_trading_days_path.as_ref().unwrap();
+        std::fs::write(
+            path,
+            r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260230"}}}"#,
+        )
+        .expect("replace calendar mapping with an invalid day");
+        assert!(configured_account_trading_day(&config, "main", "paper")
+            .unwrap_err()
+            .contains("不是有效 YYYYMMDD"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn report(
         worker: &str,
         account: &str,
@@ -952,7 +1049,7 @@ mod tests {
 
     #[test]
     fn report_projection_aggregates_only_the_canonical_account_and_preserves_absence() {
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 1);
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", "20260911", 1);
         let reports = [
             report("first", " main ", "Paper", 10, 1, 0),
             report("second", "main", "paper", 20, 0, 2),
@@ -963,7 +1060,7 @@ mod tests {
 
         assert_eq!(snapshot.reconcile.last_reconcile_ts, Some(20));
         assert_eq!(snapshot.reconcile.discrepancy_count, Some(3));
-        let mut no_reports = AccountSnapshot::new(2, "missing", "default", "paper", 1);
+        let mut no_reports = AccountSnapshot::new(2, "missing", "default", "paper", "20260911", 1);
         apply_reconcile_reports(&mut no_reports, "paper-missing-paper-events", &reports);
         assert_eq!(no_reports.reconcile.last_reconcile_ts, None);
         assert_eq!(no_reports.reconcile.discrepancy_count, None);
@@ -1003,6 +1100,7 @@ mod tests {
         ))
         .expect("valid paper runtime fixture");
         config.storage.data_dir = root.to_string_lossy().into_owned();
+        configure_account_trading_day(&mut config, &root);
         let log_name = "paper-main-paper-events";
 
         assert_eq!(default_account_event_log(&config, &root).unwrap(), None);
@@ -1079,6 +1177,7 @@ mod tests {
         ))
         .expect("valid paper runtime fixture");
         config.storage.data_dir = root.to_string_lossy().into_owned();
+        configure_account_trading_day(&mut config, &root);
         let log_name = "paper-main-paper-events";
         let mut pipeline = PipelineStorage::from_config(&config)
             .unwrap()
@@ -1164,6 +1263,7 @@ mod tests {
         config.storage.data_dir = root.to_string_lossy().into_owned();
         config.storage.sqlite_path =
             Some(root.join("event-log.sqlite").to_string_lossy().into_owned());
+        configure_account_trading_day(&mut config, &root);
         let log_name = "paper-main-paper-events";
         let mut pipeline = PipelineStorage::from_config(&config)
             .unwrap()
