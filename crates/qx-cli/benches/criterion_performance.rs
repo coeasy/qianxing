@@ -320,6 +320,60 @@ fn legacy_allocating_risk_metrics(
     }
 }
 
+fn float_close(actual: f64, expected: f64) -> bool {
+    actual == expected
+        || (actual.is_finite()
+            && expected.is_finite()
+            && (actual - expected).abs() <= 5e-12 + 1e-8 * actual.abs().max(expected.abs()))
+}
+
+fn option_float_close(actual: Option<f64>, expected: Option<f64>) -> bool {
+    match (actual, expected) {
+        (None, None) => true,
+        (Some(actual), Some(expected)) => float_close(actual, expected),
+        _ => false,
+    }
+}
+
+fn assert_risk_metrics_equivalent(
+    actual: qx_core::performance::BacktestRiskMetrics,
+    expected: qx_core::performance::BacktestRiskMetrics,
+) {
+    assert!(
+        option_float_close(actual.sharpe, expected.sharpe)
+            && option_float_close(actual.sortino, expected.sortino)
+            && option_float_close(actual.calmar, expected.calmar)
+            && option_float_close(actual.win_rate, expected.win_rate)
+            && option_float_close(actual.profit_factor, expected.profit_factor),
+        "optimized risk metrics must preserve the legacy values within floating-point tolerance: actual={actual:?}, expected={expected:?}"
+    );
+}
+
+fn assert_benchmark_metrics_equivalent(
+    actual: &qx_core::BenchmarkRelativeMetrics,
+    expected: &qx_core::BenchmarkRelativeMetrics,
+) {
+    let active_returns_match = actual.active_returns_bps.len() == expected.active_returns_bps.len()
+        && actual
+            .active_returns_bps
+            .iter()
+            .zip(&expected.active_returns_bps)
+            .all(|(actual, expected)| float_close(*actual, *expected));
+    assert!(
+        actual.benchmark_return_bps == expected.benchmark_return_bps
+            && actual.active_return_bps == expected.active_return_bps
+            && option_float_close(
+                actual.mean_active_return_bps,
+                expected.mean_active_return_bps
+            )
+            && option_float_close(actual.tracking_error_bps, expected.tracking_error_bps)
+            && option_float_close(actual.information_ratio, expected.information_ratio)
+            && actual.aligned_periods == expected.aligned_periods
+            && active_returns_match,
+        "optimized benchmark metrics must preserve legacy values within floating-point tolerance"
+    );
+}
+
 fn bench_backtest_risk_metrics(c: &mut Criterion) {
     use qx_core::performance::backtest_risk_metrics;
 
@@ -327,7 +381,10 @@ fn bench_backtest_risk_metrics(c: &mut Criterion) {
     for size in SIZES {
         let equity = performance_equity(size);
         let expected = legacy_allocating_risk_metrics(&equity, 137, 420);
-        assert_eq!(backtest_risk_metrics(&equity, 137, 420), expected);
+        // The optimized implementation subtracts fixed-point values before converting to f64;
+        // the allocating reference converts endpoints first. Large balances can therefore differ
+        // by a few ulps even though every reported metric remains numerically equivalent.
+        assert_risk_metrics_equivalent(backtest_risk_metrics(&equity, 137, 420), expected);
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(
             BenchmarkId::new("optimized_single_vector", size),
@@ -366,12 +423,14 @@ fn bench_benchmark_relative_columns(c: &mut Criterion) {
             .expect("valid aligned legacy benchmark series");
         let expected = qx_core::benchmark_relative_metrics(&portfolio, &pairs, 17)
             .expect("valid aligned benchmark series");
-        assert_eq!(expected, legacy);
-        assert_eq!(
+        // The optimized path subtracts fixed-point endpoints before converting to f64. The
+        // allocating reference converts endpoints first, and tiny return differences can be
+        // amplified by information ratios when tracking error is close to zero.
+        assert_benchmark_metrics_equivalent(&expected, &legacy);
+        let from_columns =
             qx_core::benchmark_relative_metrics_from_columns(&portfolio, &timestamps, &closes, 17)
-                .expect("valid columnar benchmark series"),
-            legacy
-        );
+                .expect("valid columnar benchmark series");
+        assert_eq!(from_columns, expected);
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(
             BenchmarkId::new("legacy_two_pass_tuple_prebuilt", size),
