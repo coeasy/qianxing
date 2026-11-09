@@ -410,6 +410,7 @@ class AppUseCaseTests(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout=identity, stderr="")
         with (
             patch("qianxing.sdk_diagnostics.shutil.which", return_value="C:/tools/qx-cli.exe"),
+            patch("qianxing.sdk_diagnostics.platform.machine", return_value="AMD64"),
             patch("qianxing.sdk_diagnostics.subprocess.run", return_value=completed) as run,
         ):
             report = app._probe_qx_cli("0.4.0", schema_digest)
