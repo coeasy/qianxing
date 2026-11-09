@@ -15374,6 +15374,7 @@ def release_supply_chain_check() -> None:
         "web-console",
         "sbom",
         "release",
+        "publish-github-release",
     )
     release_job_sections = {}
     for job_name in release_producer_jobs:
@@ -15406,16 +15407,27 @@ def release_supply_chain_check() -> None:
     ungated_jobs = [
         name
         for name, section in release_job_sections.items()
-        if "quality-gates" not in section
+        if "quality-gates" not in section and name != "publish-github-release"
     ]
+    github_publish_job = release_job_sections["publish-github-release"]
+    pypi_publish_after_draft = (
+        "--draft" in release_job_sections["release"]
+        and "release" in release_job_sections["publish-python"]
+        and "needs: [publish-python]" in github_publish_job
+        and "gh release edit" in github_publish_job
+        and "--draft=false" in github_publish_job
+        and "contents: write" in github_publish_job
+    )
     check(
         ci_workflow.is_file()
         and ci_reusable
         and "uses: ./.github/workflows/ci.yml" in quality_job
-        and not ungated_jobs,
-        "正式 tag 发布复用完整 CI，所有发布产出及 Release 均依赖门禁成功",
+        and not ungated_jobs
+        and pypi_publish_after_draft,
+        "正式 tag 发布复用完整 CI；PyPI 成功后才公开草稿 GitHub Release",
         f"CI 可复用={ci_reusable}，"
-        f"quality job={bool(quality_job)}，未接门禁的 job={ungated_jobs}",
+        f"quality job={bool(quality_job)}，未接门禁的 job={ungated_jobs}，"
+        f"PyPI-before-public-GitHub={pypi_publish_after_draft}",
     )
     publish_job = release_job_sections["publish-python"]
     pyproject = ROOT / "python" / "pyproject.toml"
