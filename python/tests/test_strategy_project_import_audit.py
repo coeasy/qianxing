@@ -7,6 +7,7 @@ import gc
 import hashlib
 import importlib
 import importlib.abc
+import inspect
 import io
 import json
 import sys
@@ -80,7 +81,15 @@ class StrategyProjectImportAuditTests(unittest.TestCase):
                 # The audit's distribution scan makes importlib.metadata cache a
                 # zipp handle for every sys.path entry, which keeps the archive
                 # locked on Windows until the cache is dropped and collected.
-                importlib_metadata.MetadataPathFinder.invalidate_caches()
+                # importlib_metadata's backport exposes this as an unbound
+                # class method on Python 3.10, while newer stdlib versions
+                # bind the class automatically.
+                finder = importlib_metadata.MetadataPathFinder
+                invalidate_caches = finder.invalidate_caches
+                if inspect.signature(invalidate_caches).parameters:
+                    invalidate_caches(finder)
+                else:
+                    invalidate_caches()
                 gc.collect()
 
             record = next(

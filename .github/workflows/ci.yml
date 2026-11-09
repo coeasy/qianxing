@@ -371,7 +371,7 @@ jobs:
       - name: Python suite against the built extension
         shell: bash
         run: |
-          python -m pip install --quiet jsonschema tomli tzdata
+          python -m pip install --quiet jsonschema tomli tzdata pytest
           python -m unittest discover -s python/tests -q
       - name: POSIX strategy preflight descendant cleanup (R04)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
@@ -839,11 +839,23 @@ jobs:
         run: |
           set -euo pipefail
           for config in deploy/qianxing.runtime*.json; do
-            if [[ "$config" == *production.example.json ]]; then
+            if [[ "$config" == *production.example.json || "$config" == *binance-testnet.example.json ]]; then
               continue
             fi
             cargo run -p qx-cli --features sqlite,postgres -- runtime-check "$config"
           done
+      - name: Verify unprovisioned Binance testnet remains fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          cargo run -p qx-cli --features sqlite,postgres -- \
+            runtime-check deploy/qianxing.runtime.binance-testnet.example.json --json \
+            > /tmp/qianxing-binance-testnet-check.json
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 -c "import json; value=json.load(open('/tmp/qianxing-binance-testnet-check.json')); failures=' '.join(value['failures']); assert value['ok'] is False; assert '签名角色目录' in failures; assert value.get('network_accessed', False) is False; assert value.get('orders_sent', False) is False"
       - name: Verify production config remains fail closed
         shell: bash
         run: |

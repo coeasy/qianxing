@@ -328,6 +328,34 @@ def assert_fail_closed(binary: Path, config: Path) -> None:
     log("live-check 已确认只读校验：network_accessed=False orders_sent=False")
 
 
+def assert_missing_role_catalog_is_fail_closed(binary: Path, config: Path) -> None:
+    """Accept only the known unprovisioned testnet trust root as an offline block."""
+    result = run(binary, ["runtime-check", str(config), "--json"])
+    if not result.stdout.strip():
+        fail("runtime-check", result)
+    try:
+        check = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"runtime-check 输出不是 JSON：{error}") from error
+    failures = check.get("failures")
+    failure_text = " ".join(str(item) for item in failures) if isinstance(failures, list) else ""
+    expected_block = (
+        result.returncode != 0
+        and check.get("ok") is False
+        and isinstance(failures, list)
+        and len(failures) == 1
+        and "签名角色目录" in failure_text
+        and check.get("network_accessed", False) is False
+        and check.get("orders_sent", False) is False
+    )
+    if not expected_block:
+        raise SystemExit(
+            "缺少测试网凭据时只允许由未配置的运营方签名角色目录阻断；"
+            f"实际退出码 {result.returncode}，失败项 {failures!r}"
+        )
+    log("runtime-check 按预期因缺少运营方签名角色目录而 fail closed；未触网或发单")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, help="qx-cli 可执行文件路径")
@@ -420,13 +448,20 @@ def main() -> int:
     missing = [name for name in spec["cred_envs"] if not os.environ.get(name)]
     outcome, detail = "fail", "未到达终态"
     try:
-        assert_fail_closed(binary, config)
-
         if missing:
+            try:
+                assert_fail_closed(binary, config)
+            except SystemExit:
+                assert_missing_role_catalog_is_fail_closed(binary, config)
             outcome = "skipped"
-            detail = f"缺少凭据 {', '.join(missing)}：只执行了离线前两段"
+            detail = (
+                f"缺少凭据 {', '.join(missing)}：未执行联网或下单；"
+                "运行时模板通过离线安全检查或按预期因缺少签名角色目录 fail closed"
+            )
             log(f"{detail}（skip 而不是假通过）")
             return 0 if args.allow_skip else EXIT_SKIPPED
+
+        assert_fail_closed(binary, config)
 
         dry_run = not args.send_orders
         client_id = int(time.time())

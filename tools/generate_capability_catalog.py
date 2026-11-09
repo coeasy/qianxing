@@ -83,7 +83,12 @@ def read_yaml(path: Path) -> dict[str, Any]:
 
 def source_digests() -> dict[str, str]:
     return {
-        path.as_posix(): hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+        # Git's core.autocrlf can change YAML checkout bytes by platform. Hash the
+        # canonical LF form so the committed catalog is portable across Windows,
+        # Linux, and macOS worktrees.
+        path.as_posix(): hashlib.sha256(
+            (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        ).hexdigest()
         for path in SOURCE_PATHS
     }
 

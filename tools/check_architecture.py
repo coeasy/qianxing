@@ -27794,7 +27794,11 @@ def capability_crosswalk_check() -> None:
         CAPABILITY_CROSSWALK_FILE,
     )
     expected_digests = {
-        path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+        # Match the generator's canonical LF hashing so core.autocrlf does not
+        # make this gate disagree across Windows and hosted Unix runners.
+        path: hashlib.sha256(
+            (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        ).hexdigest()
         for path in source_paths
         if (ROOT / path).is_file()
     }

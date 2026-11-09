@@ -409,7 +409,7 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
             std::time::Instant::now() < deadline,
             "depth experiment lifecycle stalled"
         );
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

@@ -27,6 +27,13 @@ EXCLUDED_PREFIXES = (
 )
 EXCLUDED_DIRS = {".codex-tmp-build", ".task-tmp"}
 EXCLUDED_FILES = {"maturity/strategy-run-acceptance-v1.json", "runtime.sqlite3"}
+TEXT_SUFFIXES = {
+    ".bat", ".c", ".cjs", ".cpp", ".css", ".csv", ".fingerprint", ".h",
+    ".hpp", ".html", ".in", ".js", ".json", ".lock", ".log", ".md",
+    ".prom", ".ps1", ".py", ".rs", ".sh", ".sql", ".svg", ".toml",
+    ".typed", ".txt", ".yaml", ".yml",
+}
+TEXT_FILENAMES = {".gitattributes", ".gitignore"}
 
 
 def is_excluded_source_path(relative: str) -> bool:
@@ -41,11 +48,12 @@ def is_excluded_source_path(relative: str) -> bool:
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    content = path.read_bytes()
+    if path.suffix.lower() in TEXT_SUFFIXES or path.name in TEXT_FILENAMES:
+        # Keep source manifests and log artifacts stable when core.autocrlf
+        # checks text files out with CRLF on Windows and LF on Unix.
+        content = content.replace(b"\r\n", b"\n")
+    return hashlib.sha256(content).hexdigest()
 
 
 def tracked_source_manifest(artifact_path: Path) -> dict[str, object]:
@@ -150,9 +158,8 @@ def main() -> int:
         + b"[stdout]\n" + completed.stdout + b"\n[stderr]\n" + completed.stderr
     )
     source_manifest_path = ARTIFACT_DIR / f"{run_id}.source-tree.json"
-    source_manifest_path.write_text(
-        json.dumps(source_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    with source_manifest_path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(source_manifest, ensure_ascii=False, indent=2) + "\n")
     record = {
         "run_id": run_id,
         "acceptance_id": args.acceptance_id,

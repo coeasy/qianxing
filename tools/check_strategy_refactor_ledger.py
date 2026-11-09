@@ -13,6 +13,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER = ROOT / "maturity" / "strategy-run-refactor-work-packages.json"
 ACCEPTANCE = ROOT / "maturity" / "strategy-run-acceptance-v1.json"
+TEXT_ARTIFACT_SUFFIXES = {".json", ".log"}
 EXPECTED_IDS = {f"R{number:02}" for number in range(1, 24)}
 VALID_STATUSES = {"partial", "not_started", "blocked", "complete"}
 
@@ -232,7 +233,12 @@ def validate() -> list[str]:
                     # Preserve their recorded digest; new records always include the manifest.
                     actual = entry["sha256"]
                 else:
-                    actual = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+                    artifact_bytes = artifact_path.read_bytes()
+                    if artifact_path.suffix.lower() in TEXT_ARTIFACT_SUFFIXES:
+                        # Git may normalize text artifacts on checkout; ledger
+                        # digests must describe the same bytes on every platform.
+                        artifact_bytes = artifact_bytes.replace(b"\r\n", b"\n")
+                    actual = hashlib.sha256(artifact_bytes).hexdigest()
                 if actual != entry["sha256"]:
                     errors.append(f"{run_id}: artifact digest mismatch: {entry['path']}")
     for scenario in scenarios:

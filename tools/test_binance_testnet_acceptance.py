@@ -14,6 +14,41 @@ from tools.binance_testnet_acceptance import (
 
 
 class SandboxFlipGateTests(unittest.TestCase):
+    def test_unprovisioned_testnet_role_catalog_is_an_explicit_offline_block(self):
+        import json
+
+        result = acceptance.subprocess.CompletedProcess(
+            args=["qx", "runtime-check"],
+            returncode=2,
+            stdout=json.dumps({
+                "ok": False,
+                "failures": ["live execution worker 缺少签名角色目录"],
+                "network_accessed": False,
+                "orders_sent": False,
+            }),
+            stderr="",
+        )
+        with patch("tools.binance_testnet_acceptance.run", return_value=result):
+            acceptance.assert_missing_role_catalog_is_fail_closed(Path("qx"), Path("runtime.json"))
+
+    def test_unprovisioned_role_catalog_does_not_hide_other_runtime_failures(self):
+        import json
+
+        result = acceptance.subprocess.CompletedProcess(
+            args=["qx", "runtime-check"],
+            returncode=2,
+            stdout=json.dumps({
+                "ok": False,
+                "failures": ["live execution worker 缺少签名角色目录", "storage 配置无效"],
+                "network_accessed": False,
+                "orders_sent": False,
+            }),
+            stderr="",
+        )
+        with patch("tools.binance_testnet_acceptance.run", return_value=result):
+            with self.assertRaisesRegex(SystemExit, "只允许由未配置"):
+                acceptance.assert_missing_role_catalog_is_fail_closed(Path("qx"), Path("runtime.json"))
+
     def test_credentials_are_redacted_from_diagnostics(self):
         message = "request failed key=public-key secret=private-secret passphrase=demo-pass"
         redacted = redact_credentials(

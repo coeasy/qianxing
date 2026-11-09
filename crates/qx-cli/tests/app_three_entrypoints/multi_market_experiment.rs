@@ -174,6 +174,6 @@ fn multi_market_experiment_async_route_delivers_terminal_report() {
             std::time::Instant::now() < deadline,
             "experiment did not finish"
         );
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }

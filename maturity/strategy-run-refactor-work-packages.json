@@ -1366,9 +1366,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows qx-cli unit suite passes 486/486 and serialized behavior parity passes 36/36; ledger integrity validates all 23 acceptance scenarios and 271 artifact-bound runs. Hosted Linux/macOS, Linux/PostgreSQL, licensed-data, and external venue evidence remain pending."
+        "Windows qx-cli unit suite passes 486/486 and serialized behavior parity passes 36/36; Debian 12 Linux cargo test --workspace --all-targets --locked --offline passed on source revision 07505ae. GitHub Actions run 417 passed the Rust workspace tests but exposed runtime-data pollution from the CLI dispatch fixture, Python wheel test setup, Python 3.10 import-cache cleanup, Windows/Linux source digest portability, and the intentionally unprovisioned Binance testnet trust catalog. Local fix verification now passes: Linux qx-cli unit and integration targets, the CLI runtime-data isolation check, all four architecture shards (1,624 checks), and the Windows Python suite (608 tests, 7 skipped). The hosted rerun is pending. Hosted macOS-native acceptance, licensed-data, authorized venue, and live-readiness evidence remain pending."
       ],
-      "next_action": "Review configured hosted Linux/macOS and Linux/PostgreSQL acceptance artifacts when available; retain licensed-data and external venue gates until their evidence exists.",
+      "next_action": "Push the locally validated fixes and review the new hosted CI run; then add hosted macOS-native acceptance evidence and retain licensed-data, authorized venue, and live-readiness gates until their evidence exists.",
       "code_paths": [
         "maturity/strategy-run-acceptance-v1.json",
         "schemas/strategy-run-acceptance-v1.json",
@@ -1439,7 +1439,15 @@
         "maturity/acceptance-artifacts/360a0a38-d3e2-4678-b754-f2fa38d0a92c.log",
         "maturity/acceptance-artifacts/360a0a38-d3e2-4678-b754-f2fa38d0a92c.source-tree.json",
         "maturity/acceptance-artifacts/3f73e167-333b-49cb-a93f-5a59f43fe283.log",
-        "maturity/acceptance-artifacts/3f73e167-333b-49cb-a93f-5a59f43fe283.source-tree.json"
+        "maturity/acceptance-artifacts/3f73e167-333b-49cb-a93f-5a59f43fe283.source-tree.json",
+        "maturity/acceptance-artifacts/55030763-da4d-44b4-a589-3362e720d462.log",
+        "maturity/acceptance-artifacts/55030763-da4d-44b4-a589-3362e720d462.source-tree.json",
+        "maturity/acceptance-artifacts/9507ff33-96db-4510-969e-73a49ffe8eef.log",
+        "maturity/acceptance-artifacts/9507ff33-96db-4510-969e-73a49ffe8eef.source-tree.json",
+        "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.log",
+        "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.source-tree.json",
+        "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.log",
+        "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.source-tree.json"
       ]
     }
   ],

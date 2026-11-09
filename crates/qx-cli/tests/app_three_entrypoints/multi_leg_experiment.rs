@@ -200,7 +200,7 @@ fn multi_leg_experiment_run_handle_delivers_the_terminal_report_over_http() {
             std::time::Instant::now() < deadline,
             "multi-leg experiment did not reach a terminal state"
         );
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     };
     assert_eq!(
         terminal["status"], "succeeded",
