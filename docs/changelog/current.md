@@ -3308,3 +3308,4 @@ Runtime Tick 输入携带冻结行情 EventLog 范围、exact bid/ask 与挂单�
 
 - 修复 Debian Linux 上 worker crash-recovery 验收对 PostgreSQL psql wrapper 符号链接的处理，并扩展 PostgreSQL JSON cursor 证据读取；新增回归测试。R11/R21 的 Linux Podman file/SQLite/PostgreSQL 容量与六边界恢复全部通过，证据含数据库 cursor 与幂等重启摘要，真实网络和订单均未触发。托管 Linux、固定性能基准及独立 atomic journal 边界仍待验收。
 - 崩溃恢复验收现强制要求恢复后存在 execution cursor；PostgreSQL 场景从 qx_json_state 读取并绑定 cursor generation/哈希。修改后 file、SQLite、PostgreSQL 三后端六边界全部复验通过，提交边界 cursor 稳定、重复重启幂等。
+- R13 的 Debian 12 Podman PostgreSQL Paper 生命周期及独立 supervisor/Python checkpoint 重启验收通过；测试夹具在 stop 后清理 recurring checkpoint job 和 scheduler 快照，避免空 owner 任务导致 restart 失败。两份结构化证据确认无 venue worker、真实订单或外部网络。hosted Ubuntu 和 live-readiness 仍待验收。

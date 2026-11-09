@@ -569,7 +569,6 @@ def main() -> int:
             and restore_records[0]["bar_count"] > 0,
             f"restored strategy state was empty: {restore_records[0]}",
         )
-
         submit_operation("pause", 1)
         paused = projection()
         require(paused.get("observed_phase", "").lower() == "paused" or "paused" in json.dumps(paused).lower(), "paused observation missing")
@@ -612,6 +611,14 @@ def main() -> int:
         supervisor_exit_before_restart, supervisor_stopped_gracefully = stop_supervisor(
             supervisor, timeout=30
         )
+        # The recurring checkpoint jobs have served their purpose. Stop the
+        # supervisor before clearing their declarations and scheduler snapshot so
+        # the final restart cannot revive a job owned by the stopped Strategy.
+        jobs_path.write_text("[]\n", encoding="utf-8")
+        scheduler_state_path = Path(config["scheduler"]["state_path"])
+        if not scheduler_state_path.is_absolute():
+            scheduler_state_path = Path(config["storage"]["data_dir"]) / scheduler_state_path
+        scheduler_state_path.unlink(missing_ok=True)
         supervisor = launch_supervisor()
         wait_listener(api_port, supervisor, "restarted supervised API")
         restart_projection: dict[str, Any] | None = None

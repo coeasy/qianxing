@@ -260,7 +260,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | 缺行情/对账/恢复/fence任一必需证据时不得发新live命令 |
 | R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | Debian 12 Podman 的 file/SQLite/PostgreSQL 六边界崩溃恢复通过，cursor 摘要在恢复后和幂等重启间稳定；hosted Linux 与独立 atomic journal 边界复核仍待完成 |
 | R12 Outbox与未知结果恢复 | P0/部分 | execution/control/storage/venue适配 | R10,R11 | 提交前后断网/崩溃/重启均可查清或明确阻断，不盲重发 |
-| R13 状态迁移和修订切换 | P0/待开发 | checkpoint版本、部署协调 | R09,R12 | 不兼容状态拒绝；旧owner不可继续提交；切换与回滚后对账 |
+| R13 状态迁移和修订切换 | P0/部分 | checkpoint版本、部署协调 | R09,R12 | Debian 12 Podman PostgreSQL 部署/暂停/恢复/回滚/失败替换恢复/停止及 supervisor Python checkpoint 重启验收通过；hosted Ubuntu 与权威 live-readiness 仍待验收 |
 | R14 观察保留与聚合 | P1/部分 | strategy_deployments、归档任务 | R09 | 超限有诊断；归档不删活跃owner；多节点状态不靠共享本机目录假设 |
 | R15 数据快照与交易角色 | P1/部分 | data/spec/hs300工具/导入入口 | R05 | 缺日/过时/复权与角色冲突先拒绝；指数不能进入真实下单路径 |
 | R16 策略模式和预热一致性 | P1/部分 | builtin config、Python SMA、manifest | R08,R15 | long_only死叉只平多；预热/评估分开；本地与paper信号对齐 |
@@ -824,3 +824,6 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 
 
 2026-11-09 R11/R21 最终采集器复验：崩溃恢复验收现强制要求恢复后存在 execution cursor，并在 PostgreSQL 中直接读取 qx_json_state；file、SQLite、PostgreSQL 三后端各六个崩溃边界都产出 cursor，已提交边界重启前后 generation 一致，幂等重启 cursor 哈希保持不变。最终 run IDs：回归单测 baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57，file 59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba，SQLite 38a7eec0-165d-4749-a2c8-d30e67be702c，PostgreSQL 58875a25-f3ae-46fc-98c8-c08eaae43816。三份结构化输出确认 network_accessed=false、real_order_sent=false。
+
+
+2026-11-09 R13 Debian 12 Podman PostgreSQL acceptance：真实 supervisor/console 走完 deploy、pause、resume、rollback、失败替换后恢复旧 revision、stop，并在 supervisor PID 改变后从 PostgreSQL 恢复 Python Strategy checkpoint。验收夹具在 checkpoint roundtrip 完成后，于最终 supervisor stop 之后清理临时 recurring job 声明和 scheduler 快照，避免停止 Strategy 后重启无主任务；两个证据均确认未启动 venue worker、未发订单且无外部网络。run IDs 0e4ce680-40b1-41c4-be16-04c221d5d901 与 aa76cf92-4efd-48ee-93c8-46cc74245d9e，证据 maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json 与 maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json。R13 仍等待 hosted Ubuntu 对照和权威 live-readiness。

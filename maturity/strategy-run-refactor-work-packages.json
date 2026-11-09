@@ -455,9 +455,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows supervisor-driven checkpoint commit/restart/restore is now reviewed on SQLite Paper. Linux execution, Linux checkpoint recovery, and live readiness remain unproven."
+        "Debian 12 Podman PostgreSQL lifecycle and supervisor checkpoint restart pass; hosted Ubuntu Linux CI and authoritative live-readiness evidence remain pending."
       ],
-      "next_action": "Run Linux deployment lifecycle and checkpoint restart CI; retain partial status until that gate and authoritative live-readiness evidence are available.",
+      "next_action": "Run and review the same PostgreSQL lifecycle/checkpoint acceptance on hosted Ubuntu, then bind authoritative live-readiness evidence.",
       "code_paths": [
         ".github/workflows/ci.yml",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/checkpoint.rs",
@@ -522,7 +522,13 @@
         "python/tests/fixtures/runtime_checkpoint_process_strategy.py",
         "maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json",
         "maturity/acceptance-artifacts/80c02d4d-0668-4e5f-bece-697c95b64f8d.log",
-        "maturity/acceptance-artifacts/80c02d4d-0668-4e5f-bece-697c95b64f8d.source-tree.json"
+        "maturity/acceptance-artifacts/80c02d4d-0668-4e5f-bece-697c95b64f8d.source-tree.json",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json",
+        "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
+        "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
+        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
+        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json"
       ]
     },
     {

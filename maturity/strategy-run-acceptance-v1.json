@@ -17003,6 +17003,132 @@
         }
       ],
       "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries, required cursor/checkpoint snapshot, and idempotent recovery"
+    },
+    {
+      "run_id": "0e4ce680-40b1-41c4-be16-04c221d5d901",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-09T13:06:10.492455Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "56970d6f5624535369fae25f723b93a3ae18318daf189be7642a6e006e32f8e2",
+      "source_manifest": "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_deployment_lifecycle.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--runtime-template",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--openssl",
+        "/usr/bin/openssl",
+        "--storage-backend",
+        "postgres",
+        "--evidence-out",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_deployment_lifecycle.py",
+          "sha256": "5e03fa9f47de50d86e292441045fd59eb0142766a3ff1fb8b48712cfef5ae10b"
+        },
+        {
+          "path": "tools/check_strategy_deployment_lifecycle_evidence.py",
+          "sha256": "54d4466ad9bd85e916b2c4ef2de26afb041de98054c3178fe98bb33f4e34a81d"
+        },
+        {
+          "path": "crates/qx-orchestrator/src/strategy_deployment.rs",
+          "sha256": "1e126bb74f6002980a0ee2aa3a1643899007ee7a1371e7908c464e0823d8f344"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        },
+        {
+          "path": "crates/qx-runtime/src/strategy_deployment_store.rs",
+          "sha256": "0a5c44efe6a0790f26dd9dd7544329131a19a3ac44836d0fa3603ab1ec3da5dc"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
+          "sha256": "87c25b06ebff1d5f7393e4a203d9f80ff3a12cd845b497e2ee7ca232b2816c57"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
+          "sha256": "e3c40d035c065aa4528f79f131e59403c12e3f91b288426fcb42230d7bf562bd"
+        }
+      ],
+      "notes": "Linux PostgreSQL Paper lifecycle: deploy, pause/resume, rollback, failed replacement restoration, stop, and stopped-state supervisor restart"
+    },
+    {
+      "run_id": "aa76cf92-4efd-48ee-93c8-46cc74245d9e",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-09T13:07:10.357575Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "b10fdcc25b8d876494a90b7a1232a0c302b5ab4d0e38429df8f848d94aa03229",
+      "source_manifest": "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_deployment_lifecycle.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--runtime-template",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--openssl",
+        "/usr/bin/openssl",
+        "--storage-backend",
+        "postgres",
+        "--evidence-out",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_deployment_lifecycle.py",
+          "sha256": "5e03fa9f47de50d86e292441045fd59eb0142766a3ff1fb8b48712cfef5ae10b"
+        },
+        {
+          "path": "tools/check_strategy_deployment_lifecycle_evidence.py",
+          "sha256": "54d4466ad9bd85e916b2c4ef2de26afb041de98054c3178fe98bb33f4e34a81d"
+        },
+        {
+          "path": "crates/qx-orchestrator/src/lib.rs",
+          "sha256": "6a7b34a99a15ab3d9db0685e681586066e106289aed88b84a71776d133c6f6e5"
+        },
+        {
+          "path": "crates/qx-runtime/src/supervision/shutdown.rs",
+          "sha256": "54e317cc4c21923ee5ba5efa9d75e09ac509f3057a22e1767ab51d9e8ec53b35"
+        },
+        {
+          "path": "python/tests/fixtures/runtime_checkpoint_process_strategy.py",
+          "sha256": "5a88c116e3014e426dd05f9024a68cc02bdac83ada40cb4ab5ca73bf789fce79"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
+          "sha256": "aa58fd0f98069fe91e899f7ce11d07242f67888f9d0eb1ed59bcb7c222c4402f"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json",
+          "sha256": "d78119cf71554667eaa42fa12d4bd654aad3a877cefeb5d2f7c8fe7113ce6495"
+        }
+      ],
+      "notes": "Linux PostgreSQL Paper supervisor restart commits and restores a Python strategy checkpoint across supervisor and worker PID changes with clean stdin EOF shutdown"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
