@@ -17183,6 +17183,102 @@
         }
       ],
       "notes": "Linux worker recovery after durable Unknown across file, SQLite, and PostgreSQL; cursor remains fixed until venue facts and fresh reconciliation resolve the command"
+    },
+    {
+      "run_id": "0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb",
+      "acceptance_id": "R10-AC01",
+      "recorded_at_utc": "2026-11-09T13:32:51.430288Z",
+      "source_revision": "8c1d492caea2f65d7ed08abae3571e6f22b76ab4",
+      "source_tree_sha256": "089618d759d04d470bd5d878c7c915f34b21383f4284f7f40c7c8768117e977a",
+      "source_manifest": "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-runtime",
+        "--features",
+        "sqlite",
+        "--lib",
+        "pipeline::tests::submission_worker_process_exit",
+        "--offline",
+        "-j1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-runtime/src/pipeline.rs",
+          "sha256": "656ea13b3e951c584e1605abe8897a795c42846510f0abf9e1468b86c6e93ec1"
+        },
+        {
+          "path": "crates/qx-execution/src/lib.rs",
+          "sha256": "8f46fa54c7894106a43df99da718f0a1bc09dc035281903e5e5095293cd65bfd"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.log",
+          "sha256": "ec01f52fda19253ac18deb4a9a939241e3c6ef7b757f3ec4866ba275daa244e9"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.source-tree.json",
+          "sha256": "3b38d4d518d03f2bd6d0220ff53032a64919b389f8daed59ec15a085bb98ff2a"
+        }
+      ],
+      "notes": "Debian Linux process-crash recovery across file and SQLite EventLog: pre-effect and post-simulated-remote-acceptance crashes remain fail-closed and never submit a duplicate; venue is simulated"
+    },
+    {
+      "run_id": "c304dc9b-5687-4e77-a343-c719401da0c2",
+      "acceptance_id": "R10-AC01",
+      "recorded_at_utc": "2026-11-09T13:33:16.804115Z",
+      "source_revision": "8c1d492caea2f65d7ed08abae3571e6f22b76ab4",
+      "source_tree_sha256": "089618d759d04d470bd5d878c7c915f34b21383f4284f7f40c7c8768117e977a",
+      "source_manifest": "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.11.2",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-runtime",
+        "--lib",
+        "pipeline::tests::failed_submit_reopens_as_unknown_and_requires_authoritative_rejection",
+        "--offline",
+        "-j1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-runtime/src/pipeline.rs",
+          "sha256": "656ea13b3e951c584e1605abe8897a795c42846510f0abf9e1468b86c6e93ec1"
+        },
+        {
+          "path": "crates/qx-execution/src/lib.rs",
+          "sha256": "8f46fa54c7894106a43df99da718f0a1bc09dc035281903e5e5095293cd65bfd"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.log",
+          "sha256": "d2b54b80b1f443cf8134e69432a5646455b4178da1287a8a619438507f116c30"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.source-tree.json",
+          "sha256": "3b38d4d518d03f2bd6d0220ff53032a64919b389f8daed59ec15a085bb98ff2a"
+        }
+      ],
+      "notes": "Debian Linux file EventLog timeout recovery reopens durable Unknown, blocks retry before any second Venue call, and resolves only after authoritative Rejected reconciliation; Venue behavior is simulated"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

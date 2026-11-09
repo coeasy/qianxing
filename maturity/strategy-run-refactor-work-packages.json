@@ -275,9 +275,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows file/SQLite worker recovery and host lifecycle evidence have been manually reviewed; tests use simulated Venue facts. PostgreSQL/Linux recovery, venue integration, licensed data and authorized testnet/live proof remain pending."
+      "Windows and Debian 12 Podman Linux file/SQLite process-crash recovery pass; Debian Linux R12-AC01 also verifies PostgreSQL Strategy-worker Unknown recovery across a real process restart. Venue behavior remains simulated, so authorized venue integration, licensed data and testnet/live proof remain outstanding."
       ],
-      "next_action": "Run and review PostgreSQL/Linux recovery acceptance, then obtain authorized venue integration evidence before claiming live recovery readiness.",
+    "next_action": "Obtain authorized venue integration and licensed data evidence, then run the authorized testnet recovery acceptance before claiming live recovery readiness.",
       "code_paths": [
         "crates/qx-service/src/reconcile_report.rs",
         "crates/qx-cli/src/strategy_host.rs",
@@ -351,7 +351,13 @@
         "maturity/acceptance-artifacts/4fbf4756-cc32-48cd-b9cd-0d5ef954abb6.source-tree.json",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.log",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.source-tree.json",
-        "maturity/evidence/r10-worker-host-recovery-human-review-2026-11-05.json"
+      "maturity/evidence/r10-worker-host-recovery-human-review-2026-11-05.json",
+      "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.log",
+      "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.source-tree.json",
+      "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.log",
+      "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.source-tree.json",
+      "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
+      "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json"
       ]
     },
     {
