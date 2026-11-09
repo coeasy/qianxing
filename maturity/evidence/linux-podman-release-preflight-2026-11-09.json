@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "linux_podman_release_preflight",
   "candidate_version": "0.4.0",
-  "generated_at_utc": "2026-11-09T10:41:03Z",
+  "generated_at_utc": "2026-11-09T11:02:18Z",
   "source": {
     "commit": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
     "branch": "codex/release-windows-longpaths",
@@ -80,11 +80,24 @@
       "local_copy": "target/linux-release-preflight/qx-cli",
       "result": "passed"
     },
+    "linux_python_wheel": {
+      "command": "bash tools/build_python_wheel.sh",
+      "exit_code": 0,
+      "wheel": "qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+      "size_bytes": 23003099,
+      "sha256": "dbd0d646026636d8d96603b82ad157c487135be7e0c2c063051fcaf286475396",
+      "source_commit": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "reproducible_rebuild": true,
+      "stable_abi_wheel_audit": "passed",
+      "pip_target_install": "passed",
+      "python_wheel_e2e_smoke": "passed",
+      "bundled_cli_runtime": "passed",
+      "result": "passed"
+    },
     "notes": "Tests ran on the committed source snapshot with a clean tracked worktree. PostgreSQL 16 and NATS 2.10 JetStream were run in isolated Podman containers."
   },
   "limitations": [
     "macOS release artifacts and hosted GitHub Actions for this branch have not been verified.",
-    "A Linux Python wheel was not rebuilt in this Podman container; prior Linux Box wheel evidence is a separate unpublished preflight.",
     "No release tag or publication to GitHub Releases or PyPI was created.",
     "Private venue credentials and production acceptance remain unavailable."
   ],
