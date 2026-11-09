@@ -256,7 +256,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R06 报告输出保护 | P0/完成 | project_runs + Rust报告发布 | R02 | 输入别名/符号链接覆盖被拒；普通失败回滚；事务日志支持进程退出后的恢复；报告与可选 EvidenceBundle 同包提交 |
 | R07 运行状态与产物完整性 | P1/部分 | run receipt、owner身份、错误信封 | R03,R05 | 缺产物、损坏记录、PID复用、磁盘满均可诊断 |
 | R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | Debian 12 Podman 已实跑 Linux 内置 Rust dispatch、旧式 C ABI 能力兼容和 Python host capability 三条针对性验收，且三条现均在 CPython 3.12.16 通过，均在构造/dispatch 前拒绝未知能力；仍待 hosted Ubuntu 24.04/Python 3.12 对照验收 |
-| R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | 部分：不可变配置载荷、单文件工件快照、幂等受理和终态存储已实现；多文件bundle与worker实际切换、fence/readiness证据仍未完成 |
+| R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | Debian 12 Podman Linux/PostgreSQL 部署生命周期和 supervisor checkpoint 重启通过；hosted Ubuntu CI、完整 live-readiness 与 venue 授权仍待完成 |
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | Windows 与 Debian Linux file/SQLite 进程崩溃恢复通过；Linux PostgreSQL Strategy Unknown 恢复也通过；真实 venue、授权行情与 testnet 仍未验收 |
 | R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | Debian 12 Podman 的 file/SQLite/PostgreSQL 六边界崩溃恢复通过，cursor 摘要在恢复后和幂等重启间稳定；hosted Linux 与独立 atomic journal 边界复核仍待完成 |
 | R12 Outbox与未知结果恢复 | P0/部分 | execution/control/storage/venue适配 | R10,R11 | Debian 12 Podman 对 file/SQLite/PostgreSQL durable Unknown 跨 worker 进程重启恢复通过；hosted Linux 与授权 venue/testnet 仍待完成 |
@@ -831,3 +831,5 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 2026-11-09 R13 Debian 12 Podman PostgreSQL acceptance：真实 supervisor/console 走完 deploy、pause、resume、rollback、失败替换后恢复旧 revision、stop，并在 supervisor PID 改变后从 PostgreSQL 恢复 Python Strategy checkpoint。验收夹具在 checkpoint roundtrip 完成后，于最终 supervisor stop 之后清理临时 recurring job 声明和 scheduler 快照，避免停止 Strategy 后重启无主任务；两个证据均确认未启动 venue worker、未发订单且无外部网络。run IDs 0e4ce680-40b1-41c4-be16-04c221d5d901 与 aa76cf92-4efd-48ee-93c8-46cc74245d9e，证据 maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json 与 maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json。R13 仍等待 hosted Ubuntu 对照和权威 live-readiness。
 
 2026-11-09 R10 Debian 12 Podman process-crash acceptance：file/SQLite `submission_worker_process_exit` 矩阵覆盖提交前进程退出、模拟 Venue 已接单但本地 Accepted 未落盘后的进程退出，恢复均保持 fail-closed 且不重复提交；另验证 file EventLog 上 timeout 形成的 durable Unknown 在重开后禁止重试，直到权威 Rejected reconciliation 写入。Linux PostgreSQL Strategy Unknown 跨进程恢复由 R12-AC01 单独覆盖。所有 Venue 均为模拟实现；没有真实 venue、授权行情或 testnet 证据。run IDs 0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb 与 c304dc9b-5687-4e77-a343-c719401da0c2。
+
+2026-11-09 R09 Linux lifecycle 证据复用审核：R13 Debian 12 Podman PostgreSQL acceptance 已覆盖 deploy、pause、resume、rollback、失败替换后恢复旧 revision、stop，以及独立 supervisor 重启后的 Python Strategy checkpoint roundtrip，因此可证明 Linux Paper lifecycle/restart 行为；它不是 hosted Ubuntu CI，也不提供 live readiness 或 venue authorization。run IDs 0e4ce680-40b1-41c4-be16-04c221d5d901、aa76cf92-4efd-48ee-93c8-46cc74245d9e。

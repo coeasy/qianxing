@@ -244,9 +244,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows Paper deployment lifecycle is manually reviewed on SQLite and local PostgreSQL 18.6. Linux lifecycle CI and authoritative full live-readiness proof remain pending; no live readiness or venue authorization is inferred from Paper runs."
+      "Windows Paper lifecycle is manually reviewed on SQLite and local PostgreSQL 18.6; Debian 12 Podman Linux/PostgreSQL deploy, pause, resume, rollback, failed-replacement recovery, stop and independent supervisor checkpoint restart pass under R13 acceptance. Hosted Ubuntu CI and authoritative full live-readiness proof remain pending; Paper runs do not establish venue authorization."
       ],
-      "next_action": "Run and review Linux lifecycle/restart CI, then bind authoritative full live-readiness proof.",
+    "next_action": "Run and review the same lifecycle/restart acceptance on hosted Ubuntu, then bind authoritative full live-readiness proof.",
       "code_paths": [
         "docs/strategy-deployment-observations.md",
         "crates/qx-service/src/worker_host.rs",
@@ -267,7 +267,13 @@
         "maturity/acceptance-artifacts/155259d0-9e95-4f88-8efc-424c585fb733.source-tree.json",
         "maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json",
         "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.log",
-        "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.source-tree.json"
+      "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.source-tree.json",
+      "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json",
+      "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json",
+      "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
+      "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
+      "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
+      "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json"
       ]
     },
     {
