@@ -272,23 +272,23 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 
 ## 版本与现状
 
-> 本节读数对应 2026-11-08 的当前工作树。功能成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
+> 本节读数对应 2026-11-09 的候选快照。功能成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
 
 本机 Windows 验收结果：
 
 - `cargo test --workspace --all-features -j 1 --quiet`：全 workspace 无失败；需要 PostgreSQL DSN 或 C++ 共享库 fixture 的用例按环境条件忽略。
 - `cargo fmt --all -- --check`、qx-core/qx-storage 全 features Clippy、架构自检 372 项、能力目录生成与未验证清单核验通过。
-- Windows x86_64 Release CLI 构建成功；Python 0.3.0 stable-ABI wheel 通过结构检查、干净虚拟环境安装与发布面 smoke，两次独立构建字节一致。C++ SDK Release 的 3 个测试通过，安装后的独立消费者通过配置、链接与运行测试。
+- Windows x86_64 的 0.4.0 Release CLI 与 CPython stable-ABI wheel 已在干净工作树构建；wheel 通过结构审计、隔离安装与发布面 smoke，两次构建字节一致。记录见 [Windows wheel 预检](maturity/evidence/windows-wheel-release-preflight-2026-11-09.json)。C++ SDK 的 Release、安装包和独立消费者验收记录见 [Windows 本机预检](maturity/evidence/windows-local-release-preflight-2026-11-07.json)。
 - Paper 控制链、本机回测、CLI/API/Python 入口与跨语言契约有本地代码测试。运行时拒绝 sandbox/testnet 明文 API；paper 明文限 loopback，只开放固定 Trading grant 的 Paper workflow。仓库 16 份 paper 明文与 5 份 mTLS runtime 模板由测试逐份核验。
 - Windows x86_64 本地候选包含 CLI、CPython stable-ABI wheel、C++ SDK、Web Console、SBOM 与 SHA256SUMS；wheel 在全新虚拟环境离线安装，CLI/schema/platform 身份匹配，quickstart 首跑成功。候选只用于复核，不代表正式发布。
 
 Linux 本机补充验收：
 
-- Podman Alpine 3.22 x86_64（musl）中，`cargo test -p qx-core -p qx-storage -j 2` 与 `cargo test -p qx-storage --features sqlite -j 2` 均通过。该结果覆盖 Linux 运行和 SQLite 存储路径，不代表 Ubuntu/glibc 发布构建或 PostgreSQL DSN 验收。
+- Debian 12 x86_64 Podman 中，workspace 全目标测试、Python crate 测试、PostgreSQL 16/NATS JetStream 集成合同、Release CLI 与 `cp310-abi3-manylinux_2_34_x86_64` wheel 均通过；wheel 结构审计、隔离安装、端到端 smoke、包内 CLI 启动及重复构建哈希一致。记录见 [Linux Podman 发布预检](maturity/evidence/linux-podman-release-preflight-2026-11-09.json)。
 
-成熟度台账目前登记 **33** 项能力，其中 `implementation=true` 为 **32** 项、`code_tested=true` 为 **31** 项；`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **131** 条限制项和 **788** 条证据路径，其中 **121** 条明确标记为未收口。实现与本机测试证据不能替代外部环境验收。
+成熟度台账目前登记 **33** 项能力，其中 `implementation=true` 为 **29** 项、`code_tested=true` 为 **29** 项；另有 2 项仅在 feature matrix 条件下验证。`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **128** 条限制项和 **795** 条证据路径，其中 **117** 条明确标记为未收口。实现与本机测试证据不能替代外部环境验收。
 
-当前已验证的交付边界是本机可重放的研究/回测与 Paper 工作流，以及 Binance/CCXT 适配器的代码级契约。以下项目仍需外部环境或额外立项：Linux/macOS 发布产物与构建来源证明、PostgreSQL DSN 分布式复验、供应商签名角色目录及市场规格审阅、授权测试网往返、生产批准与发布签名。性能目标仍是目标值；本机候选为解决 Windows release 编译内存峰值使用优化级别 2，尚无该配置的性能基准。
+当前已验证的交付边界是本机可重放的研究/回测与 Paper 工作流、Linux 和 Windows x86_64 的 0.4.0 候选构建，以及 PostgreSQL/NATS 的本地集成路径。正式发布仍待 macOS 产物、当前分支托管 CI/构建来源证明、供应商签名角色目录及市场规格审阅、授权测试网往返、生产批准与发布签名。性能目标仍是目标值；本机候选为解决 Windows release 编译内存峰值使用优化级别 2，尚无该配置的性能基准。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可
