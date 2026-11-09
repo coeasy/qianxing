@@ -323,10 +323,13 @@ pub(crate) fn workspace_source(rel: &str) -> String {
 /// 判据问的是"生产里有没有人读"，所以 `src/tests/` 与任何名为 `tests` 的目录都不算
 /// 读者 —— 用例读者是回归证明，按仓库口径另走"保留 + 登记 limitation"那条路。
 pub(crate) fn all_crate_production_sources() -> Vec<PathBuf> {
-    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("crates")];
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let mut stack = std::fs::read_dir(crates_dir.join("crates"))
+        .unwrap_or_else(|error| panic!("读取 crates 目录失败: {error}"))
+        .flatten()
+        .map(|entry| entry.path().join("src"))
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
     let mut files = Vec::new();
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {

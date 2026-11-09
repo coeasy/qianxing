@@ -426,15 +426,17 @@ jobs:
           -- python3 tools/accept_backtest_metrics_contract.py
       - name: macOS qx-cli behavior and ownership tests (R19)
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
-        run: >-
-          python3 tools/record_strategy_acceptance.py
-          --acceptance-id R19-AC01
-          --input crates/qx-cli/src/cli.rs
-          --input crates/qx-cli/src/cli_command_manifest.json
-          --input crates/qx-cli/tests/cli_behavior_parity.rs
-          --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs
-          --notes "macOS qx-cli unit suite verifies CLI facade routing and compatibility"
-          -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
+        run: |
+          cargo clean -p qx-cli
+          cargo build --locked -p qx-cli
+          python3 tools/record_strategy_acceptance.py \
+            --acceptance-id R19-AC01 \
+            --input crates/qx-cli/src/cli.rs \
+            --input crates/qx-cli/src/cli_command_manifest.json \
+            --input crates/qx-cli/tests/cli_behavior_parity.rs \
+            --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs \
+            --notes "macOS qx-cli unit suite verifies CLI facade routing and compatibility" \
+            -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
       - name: macOS qx-cli behavior parity (R19)
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
         run: >-
