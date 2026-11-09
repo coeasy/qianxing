@@ -2,9 +2,9 @@
   "schema_version": 1,
   "kind": "linux_podman_release_preflight",
   "candidate_version": "0.4.0",
-  "generated_at_utc": "2026-11-09T09:48:20Z",
+  "generated_at_utc": "2026-11-09T10:41:03Z",
   "source": {
-    "commit": "c35339c35f1e8ee395c9eccf6f1e5727fdeeca3b",
+    "commit": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
     "branch": "codex/release-windows-longpaths",
     "tagged": false,
     "published": false
@@ -14,7 +14,8 @@
     "distribution": "Debian GNU/Linux 12 (bookworm)",
     "architecture": "x86_64",
     "python": "3.11.2",
-    "cargo_registry": "offline mirror cache"
+    "cargo_registry": "offline mirror cache",
+    "python_development_package": "python3-dev 3.11.2-1+b1; libpython3.11 3.11.2-6+deb12u9"
   },
   "checks": {
     "cli_all_targets": {
@@ -22,9 +23,16 @@
       "result": "passed",
       "notes": "Includes qx-cli unit, integration, and benchmark targets."
     },
-    "workspace_all_targets_excluding_python": {
-      "command": "cargo test --workspace --all-targets --exclude qx-python --locked --offline",
+    "workspace_all_targets": {
+      "command": "cargo test --workspace --all-targets --locked --offline",
       "exit_code": 0,
+      "result": "passed"
+    },
+    "python_crate_unit_tests": {
+      "command": "cargo test -p qx-python --locked --offline",
+      "exit_code": 0,
+      "passed": 6,
+      "failed": 0,
       "result": "passed"
     },
     "python_extension_build": {
@@ -32,15 +40,51 @@
       "exit_code": 0,
       "result": "passed"
     },
-    "python_crate_unit_tests": {
-      "command": "cargo test -p qx-python --features extension-module --locked --offline",
-      "result": "blocked_by_container_dependency",
-      "detail": "The minimal Debian image has no libpython3.11 development/link library. Installing python3-dev was attempted, but the container could not reach apt sources. Linking failed on unresolved Python C API symbols."
-    }
+    "postgres_nats_ignored_contracts": {
+      "command": "cargo test -p qx-storage --features sqlite,postgres,nats --locked --offline -- --ignored --test-threads=1 --nocapture",
+      "exit_code": 0,
+      "passed": 10,
+      "failed": 0,
+      "result": "passed"
+    },
+    "nats_adapter_contracts": {
+      "command": "cargo test -p qx-storage --features sqlite,postgres,nats --locked --offline --no-fail-fast --test nats_jetstream --test nats_wait_budget",
+      "exit_code": 0,
+      "passed": 8,
+      "ignored": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    "postgres_cursor_import_and_fencing": {
+      "exit_code": 0,
+      "passed": 1,
+      "result": "passed"
+    },
+    "postgres_deployment_blob_runtime_cache": {
+      "exit_code": 0,
+      "passed": 1,
+      "result": "passed"
+    },
+    "live_unknown_recovery_with_postgres": {
+      "exit_code": 0,
+      "passed": 1,
+      "duration_seconds": 135.19,
+      "result": "passed"
+    },
+    "linux_release_cli": {
+      "command": "cargo build --release --locked --offline -p qx-cli",
+      "exit_code": 0,
+      "runtime_identity": "qianxing 0.4.0 (build b17a9c0, target x86_64-unknown-linux-gnu, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)",
+      "size_bytes": 41447384,
+      "sha256": "04e1085284b9d0b5695a7b6cba4c46f2563a9c3bd08467255a0c0d509278b4b0",
+      "local_copy": "target/linux-release-preflight/qx-cli",
+      "result": "passed"
+    },
+    "notes": "Tests ran on the committed source snapshot with a clean tracked worktree. PostgreSQL 16 and NATS 2.10 JetStream were run in isolated Podman containers."
   },
   "limitations": [
-    "Linux Python extension build passed, but qx-python Rust unit tests require libpython3.11-dev in the container.",
     "macOS release artifacts and hosted GitHub Actions for this branch have not been verified.",
+    "A Linux Python wheel was not rebuilt in this Podman container; prior Linux Box wheel evidence is a separate unpublished preflight.",
     "No release tag or publication to GitHub Releases or PyPI was created.",
     "Private venue credentials and production acceptance remain unavailable."
   ],
