@@ -1,0 +1,8 @@
+$ D:\dev\miniforge3\python.exe tools/check_markdown_links.py
+exit_code=0
+
+[stdout]
+Markdown links are valid: 93 tracked files checked
+Path citations examined: 4316, case-mismatched: 0, ambiguous: 0
+
+[stderr]

@@ -17663,6 +17663,321 @@
         }
       ],
       "notes": "Windows offline workspace test after clean native extension rebuild; same build-before-test order as CI and explicit Python interpreter"
+    },
+    {
+      "run_id": "165810e4-217c-4543-9508-cec93ebdf2b2",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:03:41.593796Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/165810e4-217c-4543-9508-cec93ebdf2b2.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "crates/qx-cli/build.rs",
+          "sha256": "2f74ef434aba81593f82c75aa0e76c058ba8f5b989fa138e959bb135a8cdea10"
+        },
+        {
+          "path": "crates/qx-python/build.rs",
+          "sha256": "f58ef37f2420a0310fb3925d4a9d276f10fb01db80cbff4015620075e99dc859"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/165810e4-217c-4543-9508-cec93ebdf2b2.log",
+          "sha256": "adf7dfa0cb098f2014df3e8d9e3e429533f976cf6801ad7027a78cb58b5e632e"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/165810e4-217c-4543-9508-cec93ebdf2b2.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Windows local execution of the CI workspace all-targets Clippy gate on the current release candidate"
+    },
+    {
+      "run_id": "c6ce97f5-2795-4d15-b278-7706f3409cfe",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:04:35.679977Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/c6ce97f5-2795-4d15-b278-7706f3409cfe.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--lib",
+        "--bins",
+        "--offline",
+        "--",
+        "-D",
+        "clippy::unwrap_used",
+        "-D",
+        "clippy::expect_used"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "crates/qx-app/build.rs",
+          "sha256": "4713260750158f1bb3bcfff276c7019096a8e1d00a4dd2f0bf18c0888fb0a2f4"
+        },
+        {
+          "path": "crates/qx-cli/build.rs",
+          "sha256": "2f74ef434aba81593f82c75aa0e76c058ba8f5b989fa138e959bb135a8cdea10"
+        },
+        {
+          "path": "crates/qx-python/build.rs",
+          "sha256": "f58ef37f2420a0310fb3925d4a9d276f10fb01db80cbff4015620075e99dc859"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/c6ce97f5-2795-4d15-b278-7706f3409cfe.log",
+          "sha256": "7835c6cb1091b58db5128cac8172f0471c9cf9b53b16294cc09ef3a92d8d319b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/c6ce97f5-2795-4d15-b278-7706f3409cfe.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Windows execution of the CI production-library and binary unwrap/expect Clippy deny gate"
+    },
+    {
+      "run_id": "4ce0f460-f289-42cc-a685-2c8a06cd098e",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:09:06.459426Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/4ce0f460-f289-42cc-a685-2c8a06cd098e.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "D:\\dev\\miniforge3\\python.exe",
+        "tools\\check_architecture.py",
+        "--fast"
+      ],
+      "inputs": [
+        {
+          "path": "tools/check_architecture.py",
+          "sha256": "1693aaa810dcfc215e2bc1466efed4a7e6aab2372860435512b3fa18cd08e3d6"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/4ce0f460-f289-42cc-a685-2c8a06cd098e.log",
+          "sha256": "77761750a5a4c3e2da16843c45969e77ed490a3474bd83a8970303cb378d62ca"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/4ce0f460-f289-42cc-a685-2c8a06cd098e.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Windows current-head run of the configured fast architecture invariant gate"
+    },
+    {
+      "run_id": "a7028790-e62b-43ff-95c9-eea1304fa398",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:17:43.274526Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/a7028790-e62b-43ff-95c9-eea1304fa398.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "D:\\dev\\miniforge3\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "python/tests",
+        "-q"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": "python/pyproject.toml",
+          "sha256": "064bd67a22fa85682834779305b129e9d5f8cb646a03e70098383e5f56a5650c"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/a7028790-e62b-43ff-95c9-eea1304fa398.log",
+          "sha256": "15ebfde87311e38943e5fa8471fe2880a75fb79a8c53a54eff6324f05d31453a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/a7028790-e62b-43ff-95c9-eea1304fa398.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Windows Python 3.13 source-suite execution with release test dependencies present; current branch code and native extension import path"
+    },
+    {
+      "run_id": "c927a352-6b28-41ab-8459-d2f37f9f0c2b",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:26:18.062514Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/c927a352-6b28-41ab-8459-d2f37f9f0c2b.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "go",
+        "run",
+        "github.com/rhysd/actionlint/cmd/actionlint@v1.7.7",
+        ".github/workflows/ci.yml",
+        ".github/workflows/python-wheels.yml"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "7b1adad455c55e1681651e0e49b9960315d6e37af8902a6e62cc3c85fe7e821f"
+        },
+        {
+          "path": ".github/workflows/python-wheels.yml",
+          "sha256": "e6cd80cbd0ed717cfce5f7e716d70cf6a4a4d75701ff20340b27cfcd6f51877a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/c927a352-6b28-41ab-8459-d2f37f9f0c2b.log",
+          "sha256": "dbc892668e1ee4a1c56a374a52dacb802c929e62544db556f0c822fa2253dce2"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/c927a352-6b28-41ab-8459-d2f37f9f0c2b.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Windows current-head run of the same actionlint version and workflow files as the configured Linux quality gate"
+    },
+    {
+      "run_id": "e675373d-5c6d-4641-a658-6c1aa9e9ed7d",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:26:36.239337Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/e675373d-5c6d-4641-a658-6c1aa9e9ed7d.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "D:\\dev\\miniforge3\\python.exe",
+        "tools/check_markdown_links.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/check_markdown_links.py",
+          "sha256": "4ead5b9f9d3bea31c88379be3aa1fce651871e1985f592b717ba12bc3f6c2855"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e675373d-5c6d-4641-a658-6c1aa9e9ed7d.log",
+          "sha256": "59973389b2782eff733849d076e9a12a34953acc362d5f51e1c2b1c126a8088f"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e675373d-5c6d-4641-a658-6c1aa9e9ed7d.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Current-head Windows execution of the CI tracked Markdown link and case check"
+    },
+    {
+      "run_id": "0a6d970c-88fc-4b72-8081-893df248485a",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-09T15:26:43.556840Z",
+      "source_revision": "18009ef26088f1c4e3ce1d0c142675761682a8c7",
+      "source_tree_sha256": "66d15d26398446944e32e04823c4c4107c5ce1eabb04562722d5c8642adfff16",
+      "source_manifest": "maturity/acceptance-artifacts/0a6d970c-88fc-4b72-8081-893df248485a.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "D:\\dev\\miniforge3\\python.exe",
+        "tools/check_strategy_refactor_ledger.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "4ef8820e2a34bf4c1fa64ee0418074833815fb7bc8b2d49ecfdca93946e67f9f"
+        },
+        {
+          "path": "maturity/strategy-run-acceptance-v1.json",
+          "sha256": "678d362263dfdccca2f8a0bfa4895e2d4423d75eae45813ba1248fcc8a099122"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0a6d970c-88fc-4b72-8081-893df248485a.log",
+          "sha256": "89f4d69af8cdf461b6aaa4f7e0b57bd70eb01d706e67f90212b760afe2d300f8"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0a6d970c-88fc-4b72-8081-893df248485a.source-tree.json",
+          "sha256": "94efef012ec79162bb1b82a479fcfaab2d0bb2c3eaeb0fa1fab5132eb0fbcf02"
+        }
+      ],
+      "notes": "Current-head final strategy-refactor acceptance ledger integrity check after Windows quality gates"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
