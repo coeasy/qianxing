@@ -964,6 +964,8 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 可直接复制 `qianxing.runtime.ccxt.example.json` 作为多交易所 sandbox 拓扑样例；执行和行情 Worker 的 `endpoint` 指向 CCXT 配置文件，supervisor 会优先启动公共 CCXT 路径，旧 Binance Worker 仅作为无 CCXT endpoint 时的兼容回退。该配置使用 mTLS 占位路径；启动前要换成实际服务端证书、客户端 CA 与 Operator 证书，并按最小权限配置 Operator。
 
+该 CCXT 样例以及 `qianxing.runtime.multi-venue-arbitrage.example.json`、`qianxing.runtime.multi-venue-contract.example.json` 中的执行 Worker 使用离线市场规格夹具。非 Paper 执行还要求供应商签发的版本化角色目录，并由 Operator 显式钉住供应商公钥；未取得该目录或未配置可信公钥时，`runtime-check` 必须以 `FAIL_CLOSED` 拒绝，且不访问网络、不发送订单。拿到对应供应商资料后，先配置签名角色目录与可信公钥，再按实际交易所 sandbox 和证书更新这些模板；离线夹具不能代替授权目录。
+
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
 
 双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。可分别用 `data-validate` 为主腿、对冲腿生成清单，再通过 `--primary-dataset-manifest` 和 `--reference-dataset-manifest` 同时绑定；回测前逐腿核对文件摘要、数据身份、样本区间和质量字段。`--root` 会落盘腿级与组合级摘要、RunManifest、权益/成交 CSV 和 EvidenceBundle，可交给 `report` 导出 JSON/HTML/XLSX，并对同一组输入下的多个运行输出排名比较。示例输入为 `qianxing.bar-frame.pairs-primary.example.json` 与 `qianxing.bar-frame.pairs-reference.example.json`：套利信号要等两腿累计收益差越过 `builtin_threshold_bps`（默认 100 bps）才发单，`qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json` 只差约 9 bps，用它们跑双腿示例会得到两腿都 `fills=0`。

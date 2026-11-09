@@ -839,23 +839,45 @@ jobs:
         run: |
           set -euo pipefail
           for config in deploy/qianxing.runtime*.json; do
-            if [[ "$config" == *production.example.json || "$config" == *binance-testnet.example.json ]]; then
-              continue
-            fi
+            case "$config" in
+              *production.example.json|*binance-testnet.example.json|*ccxt.example.json|*multi-venue-arbitrage.example.json|*multi-venue-contract.example.json)
+                continue
+                ;;
+            esac
             cargo run -p qx-cli --features sqlite,postgres -- runtime-check "$config"
           done
-      - name: Verify unprovisioned Binance testnet remains fail closed
+      - name: Verify unprovisioned venue examples remain fail closed
         shell: bash
         run: |
           set -euo pipefail
-          set +e
-          cargo run -p qx-cli --features sqlite,postgres -- \
-            runtime-check deploy/qianxing.runtime.binance-testnet.example.json --json \
-            > /tmp/qianxing-binance-testnet-check.json
-          status=$?
-          set -e
-          test "$status" -ne 0
-          python3 -c "import json; value=json.load(open('/tmp/qianxing-binance-testnet-check.json')); failures=' '.join(value['failures']); assert value['ok'] is False; assert '签名角色目录' in failures; assert value.get('network_accessed', False) is False; assert value.get('orders_sent', False) is False"
+          for example in binance-testnet ccxt multi-venue-arbitrage multi-venue-contract; do
+            report="/tmp/qianxing-${example}-runtime-check.json"
+            set +e
+            cargo run -p qx-cli --features sqlite,postgres -- \
+              runtime-check "deploy/qianxing.runtime.${example}.example.json" --json > "$report"
+            status=$?
+            set -e
+            test "$status" -ne 0
+            python3 - "$report" "$example" <<'PY'
+          import json
+          import sys
+
+          expected_failure_counts = {
+              "binance-testnet": 1,
+              "ccxt": 1,
+              "multi-venue-arbitrage": 2,
+              "multi-venue-contract": 2,
+          }
+          with open(sys.argv[1], encoding="utf-8") as report_file:
+              report = json.load(report_file)
+          failures = report["failures"]
+          assert report["ok"] is False
+          assert len(failures) == expected_failure_counts[sys.argv[2]], failures
+          assert all("FAIL_CLOSED" in failure and "签名角色目录" in failure for failure in failures), failures
+          assert report.get("network_accessed", False) is False
+          assert report.get("orders_sent", False) is False
+          PY
+          done
       - name: Verify production config remains fail closed
         shell: bash
         run: |

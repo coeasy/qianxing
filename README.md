@@ -147,6 +147,7 @@ cargo run -p qx-cli -- backtest multi-builtin spot_futures_arbitrage deploy/qian
 cargo run -p qx-cli -- fast-backtest deploy/qianxing.fast-backtest.example.json
 cargo run -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
 # DatasetBundle bars 必须绑定实际 BarFrame 与 DatasetSnapshotV1；命令示例见 deploy/README.md
+# CCXT/testnet/multi-venue 模板缺供应商签名角色目录和钉住的供应商公钥时，runtime-check 应按设计 fail closed
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.ccxt.example.json
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.multi-venue-arbitrage.example.json
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json --json
@@ -223,6 +224,8 @@ python tools/binance_testnet_acceptance.py --binary target/release/qx-cli --allo
 python tools/verify_cpp_worker.py build/cpp/Release/qianxing_strategy_jsonl.exe shared_memory_json
 python tools/verify_cpp_worker.py build/cpp/Release/qianxing_strategy_jsonl.exe shared_memory_columnar
 ```
+
+`runtime-check` 对 CCXT、Binance testnet 和 multi-venue 示例可能会因缺少供应商签发的版本化角色目录及 Operator 钉住的供应商公钥而按设计 `FAIL_CLOSED`；这些模板里的离线市场规格仅用于展示拓扑，不能作为授权。配置真实供应商目录与信任公钥后，才可继续连接对应 sandbox。
 
 `deploy/qianxing.runtime.binance-testnet.example.json` 是测试网络拓扑模板：行情走
 `wss://stream.testnet.binance.vision/ws`，执行与对账 worker 默认指向 `paper` 之外的
