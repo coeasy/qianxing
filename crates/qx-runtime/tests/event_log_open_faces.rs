@@ -11,9 +11,9 @@
 //! ② 写面打开同一个空洞仍然把它填上（否则本轮就是拿掉真修复来换性能）；
 //! ③ 两条公开入口各自走各自的分支，任何一条被改回另一条都会红。
 
-use qx_core::{Event, EventKind, EventLog};
+use qx_core::{Event, EventKind, EventLog, QxError};
 use qx_runtime::LiveEventPipeline;
-use qx_storage::EventLogFileStore;
+use qx_storage::{EventLogFileStore, SegmentedEventLogStore};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -100,6 +100,54 @@ fn write_face_open_still_reprojects_the_crash_gap() {
     );
     assert_eq!(pipeline.log().digest(), expected.digest());
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn file_backends_report_committed_facts_when_outbox_projection_fails() {
+    for (label, segmented) in [("flat", false), ("segmented", true)] {
+        let root = temp_root(label);
+        std::fs::create_dir_all(root.join("outbox")).unwrap();
+        // A file at the directory path makes the first Outbox append fail after EventLog
+        // has been atomically persisted. This is the real two-file crash boundary.
+        std::fs::write(root.join("outbox/events"), b"injected blocker").unwrap();
+        let mut pipeline = if segmented {
+            LiveEventPipeline::open_configured(&root, LOG_NAME, "USDT", Some(8)).unwrap()
+        } else {
+            LiveEventPipeline::open(&root, LOG_NAME, "USDT").unwrap()
+        };
+
+        let error = pipeline
+            .register_order(order(1), 1)
+            .expect_err("Outbox projection must fail while the path is blocked");
+        assert!(
+            matches!(&error, QxError::ReconcileRequired(message) if message.contains("EventLog") && message.contains("Outbox")),
+            "partial commit must be reported as reconciliation required, got {error:?}"
+        );
+        let committed = if segmented {
+            SegmentedEventLogStore::new(root.clone(), 8)
+                .unwrap()
+                .read(LOG_NAME)
+        } else {
+            EventLogFileStore::new(root.clone()).read(LOG_NAME)
+        }
+        .expect("EventLog fact remains durably committed");
+        assert_eq!(pipeline.log().digest(), committed.digest());
+        assert_eq!(outbox_files(&root), 0);
+
+        std::fs::remove_file(root.join("outbox/events")).unwrap();
+        let recovered = if segmented {
+            LiveEventPipeline::open_configured(&root, LOG_NAME, "USDT", Some(8)).unwrap()
+        } else {
+            LiveEventPipeline::open(&root, LOG_NAME, "USDT").unwrap()
+        };
+        assert_eq!(recovered.log().digest(), committed.digest());
+        assert_eq!(
+            outbox_files(&root),
+            committed.len(),
+            "writable reopen must complete the pending Outbox projection"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 /// 分段后端的两个公开入口同样要各走各的分支：`open_configured` 补投影，

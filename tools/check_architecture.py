@@ -23706,9 +23706,9 @@ def pipeline_commit_rollback_check() -> None:
     rollback_calls = commit.count(COMMIT_ROLLBACK_CALL)
     rollback_diagnostics = (
         "if let Err(rollback_error) = self.rebuild_from_store(true)" in commit
-        and "提交失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
-        and "归约失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
-        and "执行能力证据提交失败: {error}; 从持久化日志回滚失败: {rollback_error}" in commit
+        and "提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
+        and "归约失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
+        and "执行能力证据提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
     )
     check(
         missing_wrappers == []

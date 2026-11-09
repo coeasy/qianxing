@@ -94,12 +94,20 @@ pub struct EventLogFileStore {
 #[derive(Debug)]
 pub enum StorageError {
     Io(String),
+    /// The append-only EventLog was durably committed, but its file Outbox projection failed.
+    /// Callers must not treat this as a rolled-back write; writable reopen reprojects the log.
+    CommittedButProjectionPending(String),
     InvalidName(String),
     NonAppendOnly(String),
     Conflict(String),
     NotFound(String),
-    LeaseHeld { run_id: u64, owner: String },
-    LeaseExpired { run_id: u64 },
+    LeaseHeld {
+        run_id: u64,
+        owner: String,
+    },
+    LeaseExpired {
+        run_id: u64,
+    },
     Unauthorized(String),
     Core(QxError),
 }

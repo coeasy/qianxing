@@ -1,10 +1,11 @@
-//! 事实提交与失败回滚（P0-2：从顶格文件 `pipeline.rs` 切出的同 crate inherent impl）。
+//! 事实提交与失败恢复（P0-2：从顶格文件 `pipeline.rs` 切出的同 crate inherent impl）。
 //!
 //! 稳态提交不再 `self.clone()` 整份状态（那是每次追加 O(日志长度) 的源头）；改成就地提交，
-//! 失败时由薄包装调 `rebuild_from_store(true)` 从 store 重放回滚——store 只在 `persist` 成功时
-//! 才写，所以失败时它仍是旧账本，重放即回滚。`true` 是必须的：`append_at_engine` 会在
+//! 失败时由薄包装调 `rebuild_from_store(true)`，让内存状态重新吻合持久化事实。数据库后端的
+//! EventLog/Outbox 在同一事务中提交；文件后端可能已提交 EventLog、但 Outbox 投影待恢复，
+//! 此时错误会明确要求对账，已提交事实会保留并在写面重开时补投影。`true` 是必须的：`append_at_engine` 会在
 //! `append_checked` 之前就 `alloc_seq` 推过 `next_seq`，而 `events` 一条没变，常规重建的
-//! "日志逐条相等就跳过"短路会让这一格漏回滚。
+//! "日志逐条相等就跳过"短路会让这一格无法恢复。
 
 use super::*;
 
@@ -21,7 +22,7 @@ impl LiveEventPipeline {
             Err(error) => {
                 if let Err(rollback_error) = self.rebuild_from_store(true) {
                     return Err(QxError::ReconcileRequired(format!(
-                        "执行能力证据提交失败: {error}; 从持久化日志回滚失败: {rollback_error}"
+                        "执行能力证据提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}"
                     )));
                 }
                 Err(error)
@@ -138,11 +139,10 @@ impl LiveEventPipeline {
         Ok(event.seq)
     }
 
-    /// 失败即回滚的薄包装：就地提交失败时从 store 重放，把状态收回上一次成功提交的那一点。
+    /// 就地提交后的恢复包装：失败时从 store 重放，使本地状态与持久化事实一致。
     ///
-    /// 原实现靠 `self.clone()` 整份拷贝换这个保证（每次追加 O(日志长度)）；现在稳态提交不再
-    /// 拷贝，只有失败路径付一次重放。store 只在 `persist` 成功时才写，所以失败时它仍是旧账本，
-    /// 重放即回滚。
+    /// 普通失败会恢复到先前事实；文件后端若已提交 EventLog 但 Outbox 投影失败，则保留已提交
+    /// 事实并让错误明确进入对账。稳态提交不再整份克隆，只有失败路径付一次重放。
     pub(super) fn register_order_with_correlation_once(
         &mut self,
         order: Order,
@@ -152,11 +152,11 @@ impl LiveEventPipeline {
         match self.register_order_commit(order, ts, correlation) {
             Ok(seq) => Ok(seq),
             Err(error) => {
-                // 回滚本身失败说明 store 已经不可信：让它的错误浮上来（fail-closed），
-                // 同时保留触发回滚的原始错误，否则根因会被回滚错误覆盖。
+                // 重建失败说明 store 已经不可信：让它的错误浮上来（fail-closed），
+                // 同时保留触发恢复的原始错误，便于诊断两处失败。
                 if let Err(rollback_error) = self.rebuild_from_store(true) {
                     return Err(QxError::ReconcileRequired(format!(
-                        "提交失败: {error}; 从持久化日志回滚失败: {rollback_error}"
+                        "提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}"
                     )));
                 }
                 Err(error)
@@ -164,7 +164,7 @@ impl LiveEventPipeline {
         }
     }
 
-    /// 就地提交一个订单事实（不拷贝整份状态；回滚由调用方 [`Self::register_order_with_correlation_once`] 负责）。
+    /// 就地提交一个订单事实（不拷贝整份状态；失败后的恢复由调用方 [`Self::register_order_with_correlation_once`] 负责）。
     fn register_order_commit(
         &mut self,
         mut order: Order,
@@ -217,7 +217,7 @@ impl LiveEventPipeline {
         Ok(event.seq)
     }
 
-    /// 失败即回滚的薄包装：见 [`Self::register_order_with_correlation_once`] 的同族说明。
+    /// 就地归约后的恢复包装：见 [`Self::register_order_with_correlation_once`] 的同族说明。
     pub(super) fn ingest_once(
         &mut self,
         envelope: RuntimeEventEnvelope,
@@ -227,7 +227,7 @@ impl LiveEventPipeline {
             Err(error) => {
                 if let Err(rollback_error) = self.rebuild_from_store(true) {
                     return Err(QxError::ReconcileRequired(format!(
-                        "归约失败: {error}; 从持久化日志回滚失败: {rollback_error}"
+                        "归约失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}"
                     )));
                 }
                 Err(error)
@@ -235,7 +235,7 @@ impl LiveEventPipeline {
         }
     }
 
-    /// 就地归约一条外部事实（不拷贝整份状态；回滚由 [`Self::ingest_once`] 负责）。
+    /// 就地归约一条外部事实（不拷贝整份状态；失败后的恢复由 [`Self::ingest_once`] 负责）。
     fn ingest_commit(&mut self, envelope: RuntimeEventEnvelope) -> QxResult<RuntimeIngestReceipt> {
         let RuntimeEventEnvelope {
             event,

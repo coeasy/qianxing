@@ -387,14 +387,22 @@ impl RuntimeEventStore {
             Self::Flat(store, outbox) => {
                 let path = store.write(name, log)?;
                 for event in outbox_events {
-                    outbox.append(event)?;
+                    outbox.append(event).map_err(|error| {
+                        StorageError::CommittedButProjectionPending(format!(
+                            "EventLog {name} 已提交，Outbox 投影待恢复: {error:?}"
+                        ))
+                    })?;
                 }
                 Ok(path)
             }
             Self::Segmented(store, outbox) => {
                 let path = store.write(name, log)?;
                 for event in outbox_events {
-                    outbox.append(event)?;
+                    outbox.append(event).map_err(|error| {
+                        StorageError::CommittedButProjectionPending(format!(
+                            "分段 EventLog {name} 已提交，Outbox 投影待恢复: {error:?}"
+                        ))
+                    })?;
                 }
                 Ok(path)
             }
@@ -1573,6 +1581,9 @@ impl LiveEventPipeline {
             Err(StorageError::NonAppendOnly(_)) => Err(QxError::Transient(
                 "共享 EventLog 已被其他 worker 追加，需重新载入".into(),
             )),
+            Err(StorageError::CommittedButProjectionPending(message)) => {
+                Err(QxError::ReconcileRequired(message))
+            }
             Err(error) => Err(storage_error(error)),
         }
     }
