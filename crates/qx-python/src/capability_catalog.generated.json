@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "c804460a5d1107bb83f7882da61fa8e0512f1f6deb5ccd2f01cd63f54e386634",
+    "maturity/capabilities.yaml": "306031faba45993be266b86299817d579af21d059443384820fdd1e2e38dde27",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -224,7 +224,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 93,
+      "evidence_path_count": 95,
       "limitation_count": 2
     },
     {
@@ -1982,9 +1982,10 @@
             "crates/qx-storage/src/postgres/connection.rs `connect_deadline_cancels_a_stalled_postgres_startup_handshake` and `connect_deadline_cancels_a_stalled_tls_handshake` use local TCP stubs to verify bounded return and peer socket closure when either handshake stalls.",
             "Cargo test -p qx-storage --features postgres -j 1 passes; database-backed PostgreSQL integration tests remain ignored without `QX_TEST_POSTGRES_DSN`. tools/check_architecture.py postgres_connect_budget_check checks the total deadline and both cancellation regressions.",
             "crates/qx-storage/src/postgres/connection.rs synchronously drives rollback when a pooled `BoundedTransaction` is dropped; `crates/qx-storage/tests/queue_backend_semantics.rs` exercises a `LeaseHeld` error followed by takeover on a two-connection PostgreSQL pool. Linux Alpine 3.22 + PostgreSQL 16 ran the regular and all nine ignored qx-storage PostgreSQL tests successfully (V13 §9.618).",
-            ".github/workflows/ci.yml service-backends job"
+            ".github/workflows/ci.yml Backend service contracts job",
+            "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
           ],
-          "limitations_count": 2
+          "limitations_count": 1
         },
         {
           "id": "nats",
@@ -2008,9 +2009,10 @@
             "crates/qx-storage/src/nats.rs 把同一枚 request 预算同时接到 ConnectOptions::request_timeout 与 Context::set_timeout：只接后者时哑 server 上 publish 5.017s 有界、get_stream/get_consumer 仍走依赖默认的 10.029s（logs/s444_pass19_nats_wait_probe_after_b1.txt），即 $JS.API.* 的界在连接层不在 ack 层 (V13 R2 第十九遍",
             "crates/qx-storage/tests/nats_wait_budget.rs 七条无 broker 判据（被拒端口 + 只完成握手、对请求有去无回的哑 TCP 桩）：三条预算各自有界、默认值与被替换的依赖默认逐项相等、越界在发起任何 IO 之前被拒、两个 connect 在无 reactor 的线程上都能返回；--features nats 下 7 passed / 0 failed / 1.33s（logs/s467_pass19_nats_wait_green_final.txt），默认 profile 该 target 报 running 0 tests，即 §4「在册 ≠ 实跑」在本轮新增面上同样成立 (V13 R2 第十九遍",
             "crates/qx-runtime/src/runtime_config/schema.rs 与 topology_validation.rs、deploy/qianxing.runtime.messaging.example.json、deploy/qianxing.runtime.consumer.example.json 补 messaging.connect_timeout_ms / request_timeout_ms / pull_expires_ms 三键，默认值取自 NatsWaitBudget::default() 而不是另写一份常量，打开配置时按同一区间校验，报错形如 messaging.pull_expires_ms 必须在 100..=30000 内 (V13 R2 第十九遍",
-            ".github/workflows/ci.yml service-backends job"
+            ".github/workflows/ci.yml Backend service contracts job",
+            "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
           ],
-          "limitations_count": 2
+          "limitations_count": 1
         },
         {
           "id": "merge_c07ad22_rollback_register",

@@ -275,7 +275,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 
 ## 版本与现状
 
-> 本节读数对应 2026-11-09 的候选快照。功能成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
+> 本节读数对应 2026-11-10 的 0.4.0 候选快照。功能成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
 
 本机 Windows 验收结果：
 
@@ -289,9 +289,9 @@ Linux 本机补充验收：
 
 - Debian 12 x86_64 Podman 中，workspace 全目标测试、Python crate 测试、PostgreSQL 16/NATS JetStream 集成合同、Release CLI 与 `cp310-abi3-manylinux_2_34_x86_64` wheel 均通过；wheel 结构审计、隔离安装、端到端 smoke、包内 CLI 启动及重复构建哈希一致。记录见 [Linux Podman 发布预检](maturity/evidence/linux-podman-release-preflight-2026-11-09.json)。
 
-成熟度台账目前登记 **33** 项能力，其中 `implementation=true` 为 **29** 项、`code_tested=true` 为 **29** 项；另有 2 项仅在 feature matrix 条件下验证。`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **128** 条限制项和 **795** 条证据路径，其中 **117** 条明确标记为未收口。实现与本机测试证据不能替代外部环境验收。
+成熟度台账目前登记 **33** 项能力，其中 `implementation=true` 为 **29** 项、`code_tested=true` 为 **29** 项；另有 2 项仅在 feature matrix 条件下验证。`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **126** 条限制项和 **797** 条证据路径，其中 **115** 条明确标记为未收口。实现与 CI/本机测试证据不能替代外部环境验收。
 
-当前已验证的交付边界是本机可重放的研究/回测与 Paper 工作流、Linux 和 Windows x86_64 的 0.4.0 候选构建，以及 PostgreSQL/NATS 的本地集成路径。正式发布仍待 macOS 产物、当前分支托管 CI/构建来源证明、供应商签名角色目录及市场规格审阅、授权测试网往返、生产批准与发布签名。性能目标仍是目标值；本机候选为解决 Windows release 编译内存峰值使用优化级别 2，尚无该配置的性能基准。
+当前已验证的交付边界是本机可重放的研究/回测与 Paper 工作流、Linux 和 Windows x86_64 的 0.4.0 候选构建，以及 PostgreSQL/NATS 集成路径。PR #3 的提交 `3e92babb` 已通过托管 CI（33/33 jobs），覆盖 Ubuntu/macOS/Windows Python wheel、macOS R17/R19、Linux/PostgreSQL 恢复、clean-install 和性能回归；详细结果见[托管 CI 证据](maturity/evidence/hosted-ci-release-candidate-2026-11-10.json)。正式发布仍需实际 tag 工作流生成并复核最终发行资产/构建来源证明、供应商签名角色目录及市场规格审阅、授权测试网往返、生产批准与发布签名。Testnet 在线验收因缺少凭据跳过，`sandbox_tested` 与 `production_approved` 继续为 0；CI 性能回归通过不代表已达到所有性能目标。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可

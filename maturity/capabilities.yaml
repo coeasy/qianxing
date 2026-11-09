@@ -692,10 +692,10 @@ capabilities:
       - crates/qx-storage/src/postgres/connection.rs `connect_deadline_cancels_a_stalled_postgres_startup_handshake` and `connect_deadline_cancels_a_stalled_tls_handshake` use local TCP stubs to verify bounded return and peer socket closure when either handshake stalls.
       - Cargo test -p qx-storage --features postgres -j 1 passes; database-backed PostgreSQL integration tests remain ignored without `QX_TEST_POSTGRES_DSN`. tools/check_architecture.py postgres_connect_budget_check checks the total deadline and both cancellation regressions.
       - crates/qx-storage/src/postgres/connection.rs synchronously drives rollback when a pooled `BoundedTransaction` is dropped; `crates/qx-storage/tests/queue_backend_semantics.rs` exercises a `LeaseHeld` error followed by takeover on a two-connection PostgreSQL pool. Linux Alpine 3.22 + PostgreSQL 16 ran the regular and all nine ignored qx-storage PostgreSQL tests successfully (V13 §9.618).
-      - .github/workflows/ci.yml service-backends job
+      - .github/workflows/ci.yml Backend service contracts job
+      - maturity/evidence/hosted-ci-release-candidate-2026-11-10.json
     limitations:
-      - postgres_system_dns_worker_may_outlive_connect_deadline：Tokio 的系统解析器通过不可取消的 spawn_blocking/libc getaddrinfo 工作线程执行 DNS；超时会及时返回并销毁未完成连接，但操作系统解析线程本身可能继续运行到 resolver 返回。调用方等待有界已由本地握手桩覆盖；真实 DNS 故障注入与完整 Linux service-backends CI 作业仍待复验 （状态：未收口；收口门：目标 Linux/PostgreSQL 环境完成 DNS 故障注入并确认 resolver 行为可接受，同时当前工作树的 service-backends 作业通过；未排期原因：本轮已完成本机数据库集成复验，DNS 故障注入与推送后的 CI 仍待执行）
-      - service_backends_success_record_is_from_prior_revision_current_workspace_unverified：2026-10-21 的提交 fe9cc49a2a04764e61f5d7097ec3168d3dc7187b 作业成功（https://github.com/coeasy/qianxing/actions/runs/39623016459），当前工作树尚未复跑 （状态：未收口；收口门：当前工作树对应提交的 Linux service-backends 作业通过；未排期原因：当前工作树尚未推送触发 CI）
+      - postgres_system_dns_worker_may_outlive_connect_deadline：Tokio 的系统解析器通过不可取消的 spawn_blocking/libc getaddrinfo 工作线程执行 DNS；超时会及时返回并销毁未完成连接，但操作系统解析线程本身可能继续运行到 resolver 返回。调用方等待有界已由本地握手桩覆盖；PR CI run 423 在 Linux/PostgreSQL 16 上通过 service contracts 与 durable recovery，但真实 DNS 故障注入仍待完成 （状态：未收口；收口门：目标 Linux/PostgreSQL 环境完成 DNS 故障注入并确认 resolver 行为可接受；未排期原因：保留不可取消系统 resolver 的实测风险）
   nats:
     implementation: optional
     code_tested: feature_matrix_only
@@ -709,9 +709,9 @@ capabilities:
       - crates/qx-storage/src/nats.rs 把同一枚 request 预算同时接到 ConnectOptions::request_timeout 与 Context::set_timeout：只接后者时哑 server 上 publish 5.017s 有界、get_stream/get_consumer 仍走依赖默认的 10.029s（logs/s444_pass19_nats_wait_probe_after_b1.txt），即 $JS.API.* 的界在连接层不在 ack 层 (V13 R2 第十九遍 #220)
       - crates/qx-storage/tests/nats_wait_budget.rs 七条无 broker 判据（被拒端口 + 只完成握手、对请求有去无回的哑 TCP 桩）：三条预算各自有界、默认值与被替换的依赖默认逐项相等、越界在发起任何 IO 之前被拒、两个 connect 在无 reactor 的线程上都能返回；--features nats 下 7 passed / 0 failed / 1.33s（logs/s467_pass19_nats_wait_green_final.txt），默认 profile 该 target 报 running 0 tests，即 §4「在册 ≠ 实跑」在本轮新增面上同样成立 (V13 R2 第十九遍 #220)
       - crates/qx-runtime/src/runtime_config/schema.rs 与 topology_validation.rs、deploy/qianxing.runtime.messaging.example.json、deploy/qianxing.runtime.consumer.example.json 补 messaging.connect_timeout_ms / request_timeout_ms / pull_expires_ms 三键，默认值取自 NatsWaitBudget::default() 而不是另写一份常量，打开配置时按同一区间校验，报错形如 messaging.pull_expires_ms 必须在 100..=30000 内 (V13 R2 第十九遍 #220)
-      - .github/workflows/ci.yml service-backends job
+      - .github/workflows/ci.yml Backend service contracts job
+      - maturity/evidence/hosted-ci-release-candidate-2026-11-10.json
     limitations:
-      - service_backends_success_record_is_from_prior_revision_current_workspace_unverified：2026-10-21 的提交 fe9cc49a2a04764e61f5d7097ec3168d3dc7187b 作业成功（https://github.com/coeasy/qianxing/actions/runs/39623016459），当前工作树尚未复跑 （状态：未收口；收口门：当前工作树对应提交的 Linux service-backends 作业通过；未排期原因：当前工作树尚未推送触发 CI）
       - 'nats_wait_budget_bounds_measured_on_local_tcp_stubs_only：三条预算的有界性只在本机桩上量过（被拒端口、哑 server），真 NATS/JetStream broker 下的握手重试、慢 ack 与长拉取仍无记录，sandbox_tested 保持 false (V13 R2 第十九遍 #220) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）'
   python_bridge:
     implementation: true

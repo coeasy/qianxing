@@ -5,9 +5,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance passes; hosted Ubuntu 24.04 matrix run remains pending."
+        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance and hosted Ubuntu Python 3.12 acceptance both pass in PR CI #423 at 3e92babb; uploaded clean-install artifact awaits evidence review."
       ],
-      "next_action": "Run and review the same Python 3.12 clean-install acceptance on hosted Ubuntu 24.04.",
+      "next_action": "Review clean-install-acceptance-linux-py312 from PR CI #423 and bind its acceptance record to this work package.",
       "code_paths": [
         "python/tests/test_app_use_cases.py",
         "tools/accept_clean_install.py"
@@ -22,7 +22,8 @@
         "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.log",
         "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.source-tree.json",
         "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.log",
-        "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json"
+        "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -181,9 +182,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Linux Python 3.12.16 built-in dispatch, legacy C ABI capability, and Python host capability acceptances pass; hosted Ubuntu 24.04/Python 3.12 runner remains pending."
+        "Debian 12 Podman and hosted Ubuntu Python 3.12 (PR CI #423) pass built-in dispatch, legacy C ABI compatibility, and Python host-capability acceptance; uploaded acceptance artifact awaits review."
       ],
-      "next_action": "Run and review the same three capability acceptances on hosted Ubuntu 24.04/Python 3.12.",
+      "next_action": "Review host-capability-acceptance-linux from PR CI #423 and bind the reviewed acceptance records.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -236,7 +237,8 @@
         "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.log",
         "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.source-tree.json",
         "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.log",
-        "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json"
+        "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -244,9 +246,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-      "Windows Paper lifecycle is manually reviewed on SQLite and local PostgreSQL 18.6; Debian 12 Podman Linux/PostgreSQL deploy, pause, resume, rollback, failed-replacement recovery, stop and independent supervisor checkpoint restart pass under R13 acceptance. Hosted Ubuntu CI and authoritative full live-readiness proof remain pending; Paper runs do not establish venue authorization."
+        "Windows and Debian 12 Podman Paper lifecycle reviews pass. Hosted Ubuntu PR CI #423 validates PostgreSQL deploy/pause/resume/rollback/failed-replacement/stop and supervisor checkpoint restart. Authoritative full live-readiness proof remains open; Paper runs do not establish venue authorization."
       ],
-    "next_action": "Run and review the same lifecycle/restart acceptance on hosted Ubuntu, then bind authoritative full live-readiness proof.",
+      "next_action": "Review strategy-storage-recovery-linux from PR CI #423, then bind authoritative full live-readiness and authorized venue evidence.",
       "code_paths": [
         "docs/strategy-deployment-observations.md",
         "crates/qx-service/src/worker_host.rs",
@@ -267,13 +269,14 @@
         "maturity/acceptance-artifacts/155259d0-9e95-4f88-8efc-424c585fb733.source-tree.json",
         "maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json",
         "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.log",
-      "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.source-tree.json",
-      "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json",
-      "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json",
-      "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
-      "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
-      "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
-      "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json"
+        "maturity/acceptance-artifacts/7570c915-b9e2-4ec1-9e6d-e05d453c2839.source-tree.json",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json",
+        "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
+        "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
+        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
+        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -281,9 +284,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-      "Windows and Debian 12 Podman Linux file/SQLite process-crash recovery pass; Debian Linux R12-AC01 also verifies PostgreSQL Strategy-worker Unknown recovery across a real process restart. Venue behavior remains simulated, so authorized venue integration, licensed data and testnet/live proof remain outstanding."
+        "Windows and Debian 12 Podman Linux file/SQLite process-crash recovery pass; Debian Linux R12-AC01 also verifies PostgreSQL Strategy-worker Unknown recovery across a real process restart. Venue behavior remains simulated, so authorized venue integration, licensed data and testnet/live proof remain outstanding."
       ],
-    "next_action": "Obtain authorized venue integration and licensed data evidence, then run the authorized testnet recovery acceptance before claiming live recovery readiness.",
+      "next_action": "Obtain authorized venue integration and licensed data evidence, then run the authorized testnet recovery acceptance before claiming live recovery readiness.",
       "code_paths": [
         "crates/qx-service/src/reconcile_report.rs",
         "crates/qx-cli/src/strategy_host.rs",
@@ -357,13 +360,13 @@
         "maturity/acceptance-artifacts/4fbf4756-cc32-48cd-b9cd-0d5ef954abb6.source-tree.json",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.log",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.source-tree.json",
-      "maturity/evidence/r10-worker-host-recovery-human-review-2026-11-05.json",
-      "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.log",
-      "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.source-tree.json",
-      "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.log",
-      "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.source-tree.json",
-      "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
-      "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json"
+        "maturity/evidence/r10-worker-host-recovery-human-review-2026-11-05.json",
+        "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.log",
+        "maturity/acceptance-artifacts/0f0c4e96-ee29-4f0a-8558-dc0e4b7311eb.source-tree.json",
+        "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.log",
+        "maturity/acceptance-artifacts/c304dc9b-5687-4e77-a343-c719401da0c2.source-tree.json",
+        "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
+        "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json"
       ]
     },
     {
@@ -371,9 +374,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Linux file/SQLite/PostgreSQL six-boundary recovery passes with required persisted cursor and idempotent-restart stability; hosted Ubuntu job and separate atomic journal-boundary acceptance remain pending."
+        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass six-boundary worker recovery across file, SQLite, and PostgreSQL with persisted cursor assertions. Separate atomic journal-boundary acceptance remains open; hosted artifacts still need comparison/review."
       ],
-      "next_action": "Run and review the hosted Linux strategy-storage-recovery job, then complete the separate atomic journal-boundary evidence review.",
+      "next_action": "Review strategy-storage-recovery-linux from PR CI #423 against the Podman results, then complete the separate atomic journal-boundary evidence review.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
@@ -407,7 +410,8 @@
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.log",
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
-        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json"
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -415,9 +419,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-    "Windows file/SQLite/PostgreSQL cross-process recovery and durable live Unknown resolution evidence has been manually reviewed; Debian 12 Podman R12-AC01 passes real file/SQLite/PostgreSQL worker-process restarts. Hosted Linux reproduction and authorized venue/testnet integration remain pending."
+        "Windows and Debian 12 Podman recovery reviews pass. Hosted PR CI #423 passes Live Unknown recovery across file, SQLite, and PostgreSQL process restarts plus six worker crash boundaries. Authorized venue/testnet integration remains open; hosted artifacts still need review."
       ],
-  "next_action": "Run and review R12-AC01 on hosted Linux, then assess authorized venue/testnet integration requirements.",
+      "next_action": "Review the hosted recovery artifacts from PR CI #423 against R12-AC01, then assess authorized venue/testnet integration requirements.",
       "code_paths": [
         "maturity/evidence/client-order-submission-identity-2026-10-27.json",
         "crates/qx-cli/src/workers/strategy_worker/admission.rs",
@@ -459,9 +463,10 @@
         "maturity/acceptance-artifacts/e8dcc722-6f75-45bc-b6ec-9f472d11bb83.source-tree.json",
         "maturity/evidence/r12-unknown-recovery-human-review-2026-11-05.json",
         "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.log",
-    "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json",
-    "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
-    "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json"
+        "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json",
+        "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
+        "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -469,9 +474,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman PostgreSQL lifecycle and supervisor checkpoint restart pass; hosted Ubuntu Linux CI and authoritative live-readiness evidence remain pending."
+        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass PostgreSQL Paper lifecycle and supervisor checkpoint restart; hosted evidence validators pass. Authoritative full live-readiness evidence remains open."
       ],
-      "next_action": "Run and review the same PostgreSQL lifecycle/checkpoint acceptance on hosted Ubuntu, then bind authoritative live-readiness evidence.",
+      "next_action": "Review strategy-storage-recovery-linux from PR CI #423 and bind authoritative live-readiness evidence.",
       "code_paths": [
         ".github/workflows/ci.yml",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/checkpoint.rs",
@@ -542,7 +547,8 @@
         "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.log",
         "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
         "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
-        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json"
+        "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -683,9 +689,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux Debian 12 Podman acceptance passes; hosted macOS acceptance remains pending."
+        "Linux Debian 12 Podman and hosted macOS Python 3.12 PR CI #423 pass the focused metrics/report contract; uploaded macOS acceptance evidence awaits review."
       ],
-      "next_action": "Run and review the focused metric/report contract acceptance on hosted macOS.",
+      "next_action": "Review the macOS R17-AC01 acceptance log and source manifest from PR CI #423, then bind the reviewed evidence.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -750,7 +756,8 @@
         "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.log",
         "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.source-tree.json",
         "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.log",
-        "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json"
+        "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -799,9 +806,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux Debian 12 Podman qx-cli unit and behavior-parity acceptance passes; hosted macOS acceptance remains pending."
+        "Linux Debian 12 Podman and hosted macOS Python 3.12 PR CI #423 pass qx-cli behavior/ownership and parity acceptance; uploaded macOS acceptance evidence awaits review."
       ],
-      "next_action": "Run and review the configured CLI gates on hosted macOS.",
+      "next_action": "Review the macOS R19-AC01 acceptance logs and source manifests from PR CI #423, then bind the reviewed evidence.",
       "code_paths": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "python/qianxing/client_trading.py",
@@ -1211,7 +1218,8 @@
         "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.log",
         "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.source-tree.json",
         "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.log",
-        "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json"
+        "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -1219,9 +1227,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance passes; hosted Ubuntu 24.04 matrix run remains pending."
+        "Debian 12 Podman and hosted Ubuntu Python 3.12 PR CI #423 pass clean wheel/CLI acceptance; the uploaded clean-install artifact awaits review."
       ],
-      "next_action": "Run and review the same clean wheel/CLI acceptance on hosted Ubuntu 24.04.",
+      "next_action": "Review clean-install-acceptance-linux-py312 from PR CI #423 and bind the reviewed clean-install evidence.",
       "code_paths": [
         "tools/accept_clean_install.py",
         "crates/qx-cli/src/init_project.rs",
@@ -1238,7 +1246,8 @@
         "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.log",
         "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.source-tree.json",
         "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.log",
-        "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json"
+        "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {
@@ -1246,9 +1255,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Linux file/SQLite/PostgreSQL 4096-entry capacity and six-boundary worker recovery pass with persisted cursor assertions; hosted Ubuntu job remains pending."
+        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass 4,096-entry capacity on file, SQLite, and PostgreSQL plus six worker crash boundaries. The uploaded capacity/recovery artifact still needs comparison with the Podman results."
       ],
-      "next_action": "Run and review the hosted Linux strategy-storage-recovery job and compare its nine capacity/recovery artifacts with the Podman results.",
+      "next_action": "Compare the capacity and recovery evidence in strategy-storage-recovery-linux from PR CI #423 with the Podman results, then bind the comparison.",
       "code_paths": [
         "crates/qx-storage/src/lib.rs",
         "crates/qx-storage/src/job_queue.rs",
@@ -1343,7 +1352,8 @@
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.log",
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
-        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json"
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
       ]
     },
     {

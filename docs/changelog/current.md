@@ -1,5 +1,10 @@
 - 账户快照升级为 v5：新构造器要求显式传入市场日历交易日，Rust 与 Python 共同校验有效 `YYYYMMDD`；API 启动恢复和实时刷新从 `api.account_trading_days_path` 的外部日历映射读取每个账户/venue 的交易日，不从 `as_of` 或事件时间推断。旧 v1-v4 快照保持读取兼容，v4 schema 路由保留并新增 v5 路由；交易日沿用已有状态哈希字段，但仅 v5 强制非空合法值。更新发布 schema、API 文档、迁移/能力台账及回归门禁。
 
+### 0.4.0 发布候选准备 · 跨平台托管验收（2026-11-10，未发布工作区）
+
+- 提交 `3e92babb` 的 PR CI #423 全部 **33/33 jobs 通过**：Ubuntu/macOS/Windows Python 3.10–3.13 wheel 构建和安装测试、macOS R07/R17/R19、Linux/PostgreSQL Paper lifecycle/checkpoint、文件/SQLite/PostgreSQL 队列容量与六类 worker 崩溃边界、PostgreSQL/NATS service contracts、性能基准均通过。证据与 artifact digest 见 `maturity/evidence/hosted-ci-release-candidate-2026-11-10.json`。Testnet 离线 fail-closed 检查通过，但真实凭据往返步骤因无凭据跳过；本次没有运行 tag 发布、上传 GitHub Release/PyPI 或批准生产。
+- GitHub Release 采用“先创建草稿，PyPI 发布成功后再公开”的顺序；`tools/check_architecture.py` 将草稿、PyPI 依赖、最终 `gh release edit --draft=false` 与写权限纳入发布门禁。本机完整架构检查 1,624 项通过，PR CI 四个架构分片及聚合门也通过。
+
 ### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 
 - GitHub `v0.3.0` 已于 2026-10-27 发布；后续功能按 minor 版本收敛为 `0.4.0` 候选。Workspace 29 个 crate、内部路径依赖要求、Python 包及未安装版本回退、C++ SDK、maturity 发布基线和九个场景目标版本已统一，Cargo.lock 与安装示例已同步。版本快检与架构 373 项快检通过。当前干净提交 `3e5aaf1a` 的 Windows 0.4.0 Release CLI/wheel 已重复构建并通过离线隔离安装和端到端 smoke；Linux Podman 的全 workspace、PostgreSQL 16/NATS JetStream、Release CLI 与 wheel 预检也通过，证据见 `maturity/evidence/windows-wheel-release-preflight-2026-11-09.json` 和 `maturity/evidence/linux-podman-release-preflight-2026-11-09.json`。候选仍未打 tag 或上传；macOS、当前分支托管 GitHub Actions、venue 授权往返、生产批准与发布签名仍未验收。
