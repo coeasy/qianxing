@@ -7,7 +7,7 @@
 
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::retry;
-use qx_core::{EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
+use qx_core::{Event, EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
 use qx_scheduler::{JobRun, JobSpec, JobStatus, Scheduler};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,8 @@ mod nats;
 pub use nats::{NatsConsumerBatchReport, NatsJetStreamConsumer, NatsJetStreamPublisher};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const FILE_EVENT_OUTBOX_JOURNAL: &str = ".event-outbox.transaction.json";
+const FILE_EVENT_OUTBOX_LOCK: &str = ".event-outbox.transaction.lock";
 
 #[derive(Clone, Debug)]
 pub struct EventLogFileStore {
@@ -94,9 +96,8 @@ pub struct EventLogFileStore {
 #[derive(Debug)]
 pub enum StorageError {
     Io(String),
-    /// The append-only EventLog was durably committed, but its file Outbox projection failed.
-    /// Callers must not treat this as a rolled-back write; writable reopen reprojects the log.
-    CommittedButProjectionPending(String),
+    /// A durable file transaction journal exists and still needs replay before reads can proceed.
+    CommittedButRecoveryPending(String),
     InvalidName(String),
     NonAppendOnly(String),
     Conflict(String),
@@ -118,6 +119,141 @@ impl From<StorageError> for QxError {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FileEventOutboxJournal {
+    schema_version: u32,
+    log_name: String,
+    prefix_event_count: usize,
+    prefix_digest: u64,
+    tail: Vec<Event>,
+    max_events_per_segment: Option<usize>,
+    outbox_events: Vec<OutboxEvent>,
+}
+
+fn acquire_file_event_outbox_lock(root: &Path) -> Result<FileLock, StorageError> {
+    std::fs::create_dir_all(root).map_err(|error| StorageError::Io(error.to_string()))?;
+    acquire_storage_lock(root.join(FILE_EVENT_OUTBOX_LOCK))
+        .map_err(|error| StorageError::Io(format!("获取 EventLog/Outbox 事务锁失败: {error:?}")))
+}
+
+fn recover_file_event_outbox_journal(root: &Path) -> Result<(), StorageError> {
+    let journal_path = root.join(FILE_EVENT_OUTBOX_JOURNAL);
+    if !journal_path.exists() {
+        return Ok(());
+    }
+    let journal: FileEventOutboxJournal = read_state_json(&journal_path)?;
+    let mut log = match journal.max_events_per_segment {
+        Some(events_per_segment) => SegmentedEventLogStore::new(root, events_per_segment)?
+            .read_if_exists_unlocked(&journal.log_name)?,
+        None => EventLogFileStore::new(root).read_if_exists_unlocked(&journal.log_name)?,
+    }
+    .unwrap_or_default();
+
+    if journal.prefix_event_count > log.len()
+        || log.digest_of_prefix(journal.prefix_event_count) != Some(journal.prefix_digest)
+    {
+        return Err(StorageError::Conflict(
+            "EventLog/Outbox 事务 journal 的 EventLog 前缀不匹配".into(),
+        ));
+    }
+    let committed_len = journal
+        .prefix_event_count
+        .checked_add(journal.tail.len())
+        .ok_or_else(|| StorageError::Conflict("EventLog/Outbox journal 长度溢出".into()))?;
+    if log.len() == journal.prefix_event_count {
+        log.append_batch(&journal.tail)
+            .map_err(StorageError::Core)?;
+    } else if log.len() != committed_len
+        || log.events()[journal.prefix_event_count..] != journal.tail
+    {
+        return Err(StorageError::Conflict(
+            "EventLog/Outbox 事务 journal 与已落盘 EventLog 尾部不匹配".into(),
+        ));
+    }
+
+    match journal.max_events_per_segment {
+        Some(events_per_segment) => SegmentedEventLogStore::new(root, events_per_segment)?
+            .write_unlocked(&journal.log_name, &log)?,
+        None => EventLogFileStore::new(root).write_unlocked(&journal.log_name, &log)?,
+    };
+    let outbox = FileOutboxStore::new(root);
+    for event in journal.outbox_events {
+        outbox.append_unlocked(event)?;
+    }
+    std::fs::remove_file(&journal_path).map_err(|error| {
+        StorageError::Io(format!(
+            "清理已完成的 EventLog/Outbox 事务 journal 失败: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+/// Commit a file-backed EventLog and its Outbox projection as one recoverable transaction.
+/// Readers and writers share one cross-process lock, and a durable redo journal closes the
+/// process-crash window between replacing the log and publishing all Outbox records.
+pub fn write_file_event_log_with_outbox(
+    root: impl AsRef<Path>,
+    name: &str,
+    log: &EventLog,
+    projection_cursor: u64,
+    max_events_per_segment: Option<usize>,
+) -> Result<PathBuf, StorageError> {
+    let root = root.as_ref();
+    let _lock = acquire_file_event_outbox_lock(root)?;
+    recover_file_event_outbox_journal(root)?;
+    validate_event_log_name(name)?;
+    validate_event_log(log)?;
+    if max_events_per_segment == Some(0) {
+        return Err(StorageError::Conflict(
+            "事件日志 segment 大小必须为正".into(),
+        ));
+    }
+    let existing = match max_events_per_segment {
+        Some(events_per_segment) => {
+            SegmentedEventLogStore::new(root, events_per_segment)?.read_if_exists_unlocked(name)?
+        }
+        None => EventLogFileStore::new(root).read_if_exists_unlocked(name)?,
+    };
+    let prefix_event_count = existing.as_ref().map_or(0, EventLog::len);
+    if prefix_event_count > log.len()
+        || existing.as_ref().is_some_and(|existing| {
+            existing
+                .events()
+                .iter()
+                .zip(log.events())
+                .any(|(old, new)| old != new)
+        })
+    {
+        return Err(StorageError::NonAppendOnly(name.into()));
+    }
+    let prefix_digest = existing
+        .as_ref()
+        .map_or_else(|| EventLog::new().digest(), EventLog::digest);
+    let tail = log.events()[prefix_event_count..].to_vec();
+    let outbox_events = project_event_log_to_outbox(name, log, projection_cursor)?;
+    let journal = FileEventOutboxJournal {
+        schema_version: 1,
+        log_name: name.into(),
+        prefix_event_count,
+        prefix_digest,
+        tail,
+        max_events_per_segment,
+        outbox_events,
+    };
+    write_state_json(root, &root.join(FILE_EVENT_OUTBOX_JOURNAL), &journal)?;
+    if let Err(error) = recover_file_event_outbox_journal(root) {
+        return Err(StorageError::CommittedButRecoveryPending(format!(
+            "EventLog {name} 的 EventLog/Outbox 事务 journal 已提交，恢复仍待完成: {error:?}"
+        )));
+    }
+    match max_events_per_segment {
+        Some(events_per_segment) => {
+            SegmentedEventLogStore::new(root, events_per_segment)?.manifest_path(name)
+        }
+        None => EventLogFileStore::new(root).path(name),
+    }
+}
+
 impl EventLogFileStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -128,6 +264,16 @@ impl EventLogFileStore {
     }
 
     pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
+        let _lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
+        self.write_unlocked(name, log)
+    }
+
+    pub(crate) fn write_unlocked(
+        &self,
+        name: &str,
+        log: &EventLog,
+    ) -> Result<PathBuf, StorageError> {
         let path = self.path(name)?;
         std::fs::create_dir_all(&self.root).map_err(|error| {
             StorageError::Io(format!(
@@ -143,7 +289,7 @@ impl EventLogFileStore {
             ))
         })?;
         if path.exists() {
-            let existing = self.read(name).map_err(|error| {
+            let existing = self.read_unlocked(name).map_err(|error| {
                 StorageError::Io(format!(
                     "读取现有 EventLog {} 失败: {error:?}",
                     path.display()
@@ -166,6 +312,12 @@ impl EventLogFileStore {
     }
 
     pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
+        let _lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
+        self.read_unlocked(name)
+    }
+
+    fn read_unlocked(&self, name: &str) -> Result<EventLog, StorageError> {
         let path = self.path(name)?;
         let content = std::fs::read_to_string(&path).map_err(|error| {
             StorageError::Io(format!("读取 EventLog {} 失败: {error}", path.display()))
@@ -178,6 +330,15 @@ impl EventLogFileStore {
     /// 运行时编排器需要区分“首次启动”和“已有日志损坏”。因此不能用
     /// `read(...).unwrap_or_default()` 把 JSON/校验错误吞掉。
     pub fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
+        let _lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
+        self.read_if_exists_unlocked(name)
+    }
+
+    pub(crate) fn read_if_exists_unlocked(
+        &self,
+        name: &str,
+    ) -> Result<Option<EventLog>, StorageError> {
         let path = self.path(name)?;
         match std::fs::read_to_string(path) {
             Ok(content) => EventLog::from_json(&content)
@@ -939,6 +1100,30 @@ impl JsonStateEnvelope for OutboxEvent {
 
     fn validate_loaded(&self) -> Result<(), StorageError> {
         self.validate()
+    }
+}
+
+impl JsonStateEnvelope for FileEventOutboxJournal {
+    const LABEL: &'static str = "EventLog/Outbox 事务 journal";
+
+    fn embedded_schema_version(&self) -> Option<u32> {
+        Some(self.schema_version)
+    }
+
+    fn validate_loaded(&self) -> Result<(), StorageError> {
+        validate_event_log_name(&self.log_name)?;
+        if self
+            .max_events_per_segment
+            .is_some_and(|events_per_segment| events_per_segment == 0)
+        {
+            return Err(StorageError::Conflict(
+                "EventLog/Outbox journal 的 segment 大小必须为正".into(),
+            ));
+        }
+        for event in &self.outbox_events {
+            event.validate()?;
+        }
+        Ok(())
     }
 }
 

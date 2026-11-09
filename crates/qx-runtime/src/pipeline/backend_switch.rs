@@ -37,10 +37,8 @@ fn abandoned_log_for(
     name: &str,
 ) -> Result<Option<AbandonedBackendLog>, StorageError> {
     match store {
-        RuntimeEventStore::Flat(event_store, _) => {
-            abandoned_file_log(event_store.root(), name, false)
-        }
-        RuntimeEventStore::Segmented(event_store, _) => {
+        RuntimeEventStore::Flat(event_store) => abandoned_file_log(event_store.root(), name, false),
+        RuntimeEventStore::Segmented(event_store) => {
             abandoned_file_log(event_store.root(), name, true)
         }
         #[cfg(feature = "sqlite")]

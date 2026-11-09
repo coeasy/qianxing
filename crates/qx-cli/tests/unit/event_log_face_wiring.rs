@@ -139,8 +139,8 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
         pipeline
             .matches("project_event_log_to_outbox(name, log, projection_cursor)")
             .count(),
-        1,
-        "#169b 的游标没有传进投影：写面回到全量序列化"
+        2,
+        "#169b 的游标必须分别传进 SQLite 与 PostgreSQL 投影：写面回到全量序列化"
     );
     assert!(
         !pipeline.contains(".retain("),
@@ -150,8 +150,8 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
     let storage = workspace_source("crates/qx-storage/src/lib.rs");
     assert_eq!(
         storage.matches("projection_cursor: u64").count(),
-        1,
-        "`project_event_log_to_outbox` 的游标参数没了"
+        2,
+        "写事务与 `project_event_log_to_outbox` 都必须接收投影游标"
     );
     assert_eq!(
         storage

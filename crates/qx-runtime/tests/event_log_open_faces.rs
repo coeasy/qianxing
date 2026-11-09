@@ -123,16 +123,18 @@ fn file_backends_report_committed_facts_when_outbox_projection_fails() {
             matches!(&error, QxError::ReconcileRequired(message) if message.contains("EventLog") && message.contains("Outbox")),
             "partial commit must be reported as reconciliation required, got {error:?}"
         );
-        let committed = if segmented {
-            SegmentedEventLogStore::new(root.clone(), 8)
-                .unwrap()
-                .read(LOG_NAME)
-        } else {
-            EventLogFileStore::new(root.clone()).read(LOG_NAME)
-        }
-        .expect("EventLog fact remains durably committed");
-        assert_eq!(pipeline.log().digest(), committed.digest());
-        assert_eq!(outbox_files(&root), 0);
+        assert!(root.join(".event-outbox.transaction.json").exists());
+        assert!(
+            if segmented {
+                SegmentedEventLogStore::new(root.clone(), 8)
+                    .unwrap()
+                    .read(LOG_NAME)
+                    .is_err()
+            } else {
+                EventLogFileStore::new(root.clone()).read(LOG_NAME).is_err()
+            },
+            "EventLog readers must not observe a transaction with an incomplete Outbox"
+        );
 
         std::fs::remove_file(root.join("outbox/events")).unwrap();
         let recovered = if segmented {
@@ -140,6 +142,15 @@ fn file_backends_report_committed_facts_when_outbox_projection_fails() {
         } else {
             LiveEventPipeline::open(&root, LOG_NAME, "USDT").unwrap()
         };
+        let committed = if segmented {
+            SegmentedEventLogStore::new(root.clone(), 8)
+                .unwrap()
+                .read(LOG_NAME)
+        } else {
+            EventLogFileStore::new(root.clone()).read(LOG_NAME)
+        }
+        .expect("recovery must publish the EventLog");
+        assert_eq!(pipeline.log().digest(), committed.digest());
         assert_eq!(recovered.log().digest(), committed.digest());
         assert_eq!(
             outbox_files(&root),

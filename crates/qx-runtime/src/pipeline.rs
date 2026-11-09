@@ -41,13 +41,16 @@ use qx_core::{
     QxResult, ReplayVerifier, TradingInstrumentSpec, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
 };
 use qx_guanxing::QuoteTick;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+use qx_storage::project_event_log_to_outbox;
+#[cfg(test)]
+use qx_storage::FileOutboxStore;
 #[cfg(feature = "postgres")]
 use qx_storage::PostgresEventLogStore;
 #[cfg(feature = "sqlite")]
 use qx_storage::SqliteEventLogStore;
 use qx_storage::{
-    project_event_log_to_outbox, EventLogFileStore, FileOutboxStore, SegmentedEventLogStore,
-    StorageError,
+    write_file_event_log_with_outbox, EventLogFileStore, SegmentedEventLogStore, StorageError,
 };
 use qx_zhenlu::Oms;
 use serde::{Deserialize, Serialize};
@@ -348,8 +351,8 @@ pub struct RuntimeBalanceDiscrepancy {
 
 #[derive(Clone)]
 enum RuntimeEventStore {
-    Flat(EventLogFileStore, FileOutboxStore),
-    Segmented(SegmentedEventLogStore, FileOutboxStore),
+    Flat(EventLogFileStore),
+    Segmented(SegmentedEventLogStore),
     #[cfg(feature = "sqlite")]
     Sqlite(SqliteEventLogStore),
     #[cfg(feature = "postgres")]
@@ -359,8 +362,8 @@ enum RuntimeEventStore {
 impl RuntimeEventStore {
     fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
         match self {
-            Self::Flat(store, _) => store.read_if_exists(name),
-            Self::Segmented(store, _) => store.read_if_exists(name),
+            Self::Flat(store) => store.read_if_exists(name),
+            Self::Segmented(store) => store.read_if_exists(name),
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store
                 .read_if_exists(name)
@@ -382,34 +385,29 @@ impl RuntimeEventStore {
         // 已投递并确认的事实重新放回 Outbox，relay/consumer 于是永远重复消费同一批
         // 事件；写放大也随日志长度变成平方级。过滤发生在序列化之前（见
         // `project_event_log_to_outbox`），所以游标之后的序号不再为已投递的事实付 serde。
-        let outbox_events = project_event_log_to_outbox(name, log, projection_cursor)?;
         match self {
-            Self::Flat(store, outbox) => {
-                let path = store.write(name, log)?;
-                for event in outbox_events {
-                    outbox.append(event).map_err(|error| {
-                        StorageError::CommittedButProjectionPending(format!(
-                            "EventLog {name} 已提交，Outbox 投影待恢复: {error:?}"
-                        ))
-                    })?;
-                }
-                Ok(path)
+            Self::Flat(store) => {
+                write_file_event_log_with_outbox(store.root(), name, log, projection_cursor, None)
             }
-            Self::Segmented(store, outbox) => {
-                let path = store.write(name, log)?;
-                for event in outbox_events {
-                    outbox.append(event).map_err(|error| {
-                        StorageError::CommittedButProjectionPending(format!(
-                            "分段 EventLog {name} 已提交，Outbox 投影待恢复: {error:?}"
-                        ))
-                    })?;
-                }
-                Ok(path)
-            }
+            Self::Segmented(store) => write_file_event_log_with_outbox(
+                store.root(),
+                name,
+                log,
+                projection_cursor,
+                Some(store.max_events_per_segment()),
+            ),
             #[cfg(feature = "sqlite")]
-            Self::Sqlite(store) => store.append_batch(name, log, &outbox_events),
+            Self::Sqlite(store) => store.append_batch(
+                name,
+                log,
+                &project_event_log_to_outbox(name, log, projection_cursor)?,
+            ),
             #[cfg(feature = "postgres")]
-            Self::Postgres(store) => store.write_with_outbox(name, log, &outbox_events),
+            Self::Postgres(store) => store.write_with_outbox(
+                name,
+                log,
+                &project_event_log_to_outbox(name, log, projection_cursor)?,
+            ),
         }
     }
 
@@ -434,7 +432,7 @@ impl RuntimeEventStore {
             &expected_next_seq,
         );
         match self {
-            Self::Segmented(store, _) => store.read_since(
+            Self::Segmented(store) => store.read_since(
                 name,
                 expected_prefix,
                 expected_event_digest,
@@ -571,12 +569,8 @@ impl LiveEventPipeline {
             Some(max_events_per_segment) => RuntimeEventStore::Segmented(
                 SegmentedEventLogStore::new(root.clone(), max_events_per_segment)
                     .map_err(storage_error)?,
-                FileOutboxStore::new(root),
             ),
-            None => RuntimeEventStore::Flat(
-                EventLogFileStore::new(root.clone()),
-                FileOutboxStore::new(root),
-            ),
+            None => RuntimeEventStore::Flat(EventLogFileStore::new(root)),
         };
         Self::open_with_store(store, log_name, currency, recovery)
     }
@@ -1581,7 +1575,7 @@ impl LiveEventPipeline {
             Err(StorageError::NonAppendOnly(_)) => Err(QxError::Transient(
                 "共享 EventLog 已被其他 worker 追加，需重新载入".into(),
             )),
-            Err(StorageError::CommittedButProjectionPending(message)) => {
+            Err(StorageError::CommittedButRecoveryPending(message)) => {
                 Err(QxError::ReconcileRequired(message))
             }
             Err(error) => Err(storage_error(error)),

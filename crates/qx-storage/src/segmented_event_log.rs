@@ -54,12 +54,27 @@ impl SegmentedEventLogStore {
         &self.root
     }
 
+    pub fn max_events_per_segment(&self) -> usize {
+        self.max_events_per_segment
+    }
+
     pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
-        self.read_if_exists(name)?
+        let _lock = super::acquire_file_event_outbox_lock(&self.root)?;
+        super::recover_file_event_outbox_journal(&self.root)?;
+        self.read_if_exists_unlocked(name)?
             .ok_or_else(|| StorageError::NotFound(format!("segmented event log {name} 不存在")))
     }
 
     pub fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
+        let _lock = super::acquire_file_event_outbox_lock(&self.root)?;
+        super::recover_file_event_outbox_journal(&self.root)?;
+        self.read_if_exists_unlocked(name)
+    }
+
+    pub(super) fn read_if_exists_unlocked(
+        &self,
+        name: &str,
+    ) -> Result<Option<EventLog>, StorageError> {
         validate_segment_name(name)?;
         let mut cached = self
             .validated_manifest
@@ -155,6 +170,23 @@ impl SegmentedEventLogStore {
         expected_event_digest: u64,
         expected_next_seq: u64,
     ) -> Result<Option<Vec<Event>>, StorageError> {
+        let _transaction_lock = super::acquire_file_event_outbox_lock(&self.root)?;
+        super::recover_file_event_outbox_journal(&self.root)?;
+        self.read_since_unlocked(
+            name,
+            expected_prefix,
+            expected_event_digest,
+            expected_next_seq,
+        )
+    }
+
+    fn read_since_unlocked(
+        &self,
+        name: &str,
+        expected_prefix: Option<(&Event, usize)>,
+        expected_event_digest: u64,
+        expected_next_seq: u64,
+    ) -> Result<Option<Vec<Event>>, StorageError> {
         validate_segment_name(name)?;
         let cached_manifest = self
             .validated_manifest
@@ -242,7 +274,7 @@ impl SegmentedEventLogStore {
         Ok(Some(manifest))
     }
 
-    fn manifest_path(&self, name: &str) -> Result<PathBuf, StorageError> {
+    pub(super) fn manifest_path(&self, name: &str) -> Result<PathBuf, StorageError> {
         validate_segment_name(name)?;
         Ok(self.root.join(format!("{name}.manifest.json")))
     }
@@ -326,6 +358,16 @@ fn read_segment_range(
 
 impl SegmentedEventLogStore {
     pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
+        let _transaction_lock = super::acquire_file_event_outbox_lock(&self.root)?;
+        super::recover_file_event_outbox_journal(&self.root)?;
+        self.write_unlocked(name, log)
+    }
+
+    pub(super) fn write_unlocked(
+        &self,
+        name: &str,
+        log: &EventLog,
+    ) -> Result<PathBuf, StorageError> {
         validate_segment_name(name)?;
         log.validate().map_err(StorageError::Core)?;
         std::fs::create_dir_all(self.root.join("segments"))
@@ -353,7 +395,7 @@ impl SegmentedEventLogStore {
             )
         } else if disk_manifest.is_some() {
             let existing = self
-                .read_if_exists(name)?
+                .read_if_exists_unlocked(name)?
                 .ok_or_else(|| StorageError::Conflict("segment manifest 在校验时消失".into()))?;
             (existing.len(), self.read_manifest(name)?)
         } else {

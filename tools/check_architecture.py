@@ -17681,22 +17681,27 @@ def pipeline_cursor_refresh_check() -> None:
     )
     segmented_storage = case_source("crates/qx-storage/src/segmented_event_log.rs")
     segmented_read_since = _rust_fn_body(segmented_storage, "read_since")
+    segmented_read_since_unlocked = _rust_fn_body(segmented_storage, "read_since_unlocked")
     check(
         segmented_read_since is not None
+        and segmented_read_since_unlocked is not None
         and "expected_event_digest: u64" in segmented_storage
         and "expected_next_seq: u64" in segmented_storage
-        and "acquire_storage_lock(" in segmented_read_since
-        and "read_segment_event_at(" in segmented_read_since
-        and "read_segment_range(" in segmented_read_since
-        and "EventLog::extend_event_digest(expected_event_digest, &tail)" in segmented_read_since
-        and "manifest.digest" in segmented_read_since
-        and "manifest.next_seq" in segmented_read_since,
+        and "acquire_file_event_outbox_lock(" in segmented_read_since
+        and "recover_file_event_outbox_journal(" in segmented_read_since
+        and "read_since_unlocked(" in segmented_read_since
+        and "acquire_storage_lock(" in segmented_read_since_unlocked
+        and "read_segment_event_at(" in segmented_read_since_unlocked
+        and "read_segment_range(" in segmented_read_since_unlocked
+        and "EventLog::extend_event_digest(expected_event_digest, &tail)" in segmented_read_since_unlocked
+        and "manifest.digest" in segmented_read_since_unlocked
+        and "manifest.next_seq" in segmented_read_since_unlocked,
         "分段文件尾读持锁校验前缀并以 rolling digest/next_seq 核验新尾部",
         "分段 read_since 缺少持锁、前缀尾事件或增量摘要/序号校验",
     )
     check(
         re.search(
-            r"Self::Segmented\(store, _\) => store\.read_since\(\s*name,\s*expected_prefix,\s*"
+            r"Self::Segmented\(store\) => store\.read_since\(\s*name,\s*expected_prefix,\s*"
             r"expected_event_digest,\s*expected_next_seq,\s*\)",
             pipeline,
         )
