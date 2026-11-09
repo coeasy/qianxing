@@ -3305,3 +3305,6 @@ Runtime Tick 输入携带冻结行情 EventLog 范围、exact bid/ask 与挂单�
 2026-11-04 R19 qx-app 多市场身份计算拆分：Bar/Depth 规格与策略身份指纹、按 spec 市场顺序构建的输入集 fingerprint/component 映射迁入 `multi_market_report::identity`；公共 DTO 与 API 保持 facade/lib 原路径，内部策略集合指纹保留 crate 内重导出。
 2026-11-04 R19 多市场 Depth 报告权益核验拆分：完整权益曲线、exact equity index/time/raw 投影、收益/回撤与交易金额/费用核验迁入 `multi_market_depth_research_report::equity`；主报告继续按既有顺序消费 VerifiedEquity 并生成 bounded preview。
 2026-11-04 R19 多市场 Depth 报告质量边界拆分：质量记录提取、市场索引去重、spec 声明集合核验与 clean/issues 面板投影迁入 `multi_market_depth_research_report::quality`；报告流程保持原有读取顺序。
+
+- 修复 Debian Linux 上 worker crash-recovery 验收对 PostgreSQL psql wrapper 符号链接的处理，并扩展 PostgreSQL JSON cursor 证据读取；新增回归测试。R11/R21 的 Linux Podman file/SQLite/PostgreSQL 容量与六边界恢复全部通过，证据含数据库 cursor 与幂等重启摘要，真实网络和订单均未触发。托管 Linux、固定性能基准及独立 atomic journal 边界仍待验收。
+- 崩溃恢复验收现强制要求恢复后存在 execution cursor；PostgreSQL 场景从 qx_json_state 读取并绑定 cursor generation/哈希。修改后 file、SQLite、PostgreSQL 三后端六边界全部复验通过，提交边界 cursor 稳定、重复重启幂等。

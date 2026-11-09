@@ -359,13 +359,15 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows file/SQLite/PostgreSQL 18.6 six-boundary Paper worker crash/restart evidence has been manually reviewed. Linux strategy-storage-recovery CI remains pending."
+        "Debian 12 Podman Linux file/SQLite/PostgreSQL six-boundary recovery passes with required persisted cursor and idempotent-restart stability; hosted Ubuntu job and separate atomic journal-boundary acceptance remain pending."
       ],
-      "next_action": "Run the strategy-storage-recovery Linux CI job, bind and review its six-boundary recovery outputs, and retain the separate atomic journal-boundary evidence.",
+      "next_action": "Run and review the hosted Linux strategy-storage-recovery job, then complete the separate atomic journal-boundary evidence review.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
-        "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs"
+        "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "python/tests/test_worker_crash_recovery_psql_path.py"
       ],
       "evidence_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -374,7 +376,26 @@
         "maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json",
         "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log",
         "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.source-tree.json",
-        "maturity/evidence/r11-multibackend-worker-recovery-human-review-2026-11-05.json"
+        "maturity/evidence/r11-multibackend-worker-recovery-human-review-2026-11-05.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json",
+        "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.log",
+        "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.source-tree.json",
+        "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.log",
+        "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.source-tree.json",
+        "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.log",
+        "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.source-tree.json",
+        "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.log",
+        "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.source-tree.json",
+        "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.log",
+        "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.source-tree.json",
+        "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.log",
+        "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.source-tree.json",
+        "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.log",
+        "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json"
       ]
     },
     {
@@ -1205,9 +1226,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows file/SQLite/PostgreSQL queue-capacity and six-boundary Paper worker-recovery evidence has been manually reviewed. Linux strategy-storage-recovery acceptance remains pending."
+        "Debian 12 Podman Linux file/SQLite/PostgreSQL 4096-entry capacity and six-boundary worker recovery pass with persisted cursor assertions; hosted Ubuntu job remains pending."
       ],
-      "next_action": "Run the strategy-storage-recovery Linux CI job, review its file/SQLite/PostgreSQL capacity and worker-recovery artifacts, then bind those artifacts.",
+      "next_action": "Run and review the hosted Linux strategy-storage-recovery job and compare its nine capacity/recovery artifacts with the Podman results.",
       "code_paths": [
         "crates/qx-storage/src/lib.rs",
         "crates/qx-storage/src/job_queue.rs",
@@ -1236,7 +1257,8 @@
         "crates/qx-storage/src/control_queue.rs",
         "crates/qx-storage/Cargo.toml",
         "benchmarks/run_strategy_worker_crash_recovery.py",
-        "crates/qx-storage/tests/queue_backend_semantics.rs"
+        "crates/qx-storage/tests/queue_backend_semantics.rs",
+        "python/tests/test_worker_crash_recovery_psql_path.py"
       ],
       "evidence_paths": [
         "maturity/evidence/prepared-evaluation-capacity-2026-10-29.json",
@@ -1264,7 +1286,44 @@
         "maturity/acceptance-artifacts/06d20fac-83dc-4795-af9d-eb43a064ad5d.source-tree.json",
         "maturity/acceptance-artifacts/8a6bc31a-8bad-46fc-a778-9a3e207fd8be.log",
         "maturity/acceptance-artifacts/8a6bc31a-8bad-46fc-a778-9a3e207fd8be.source-tree.json",
-        "maturity/evidence/r21-capacity-and-worker-recovery-human-review-2026-11-05.json"
+        "maturity/evidence/r21-capacity-and-worker-recovery-human-review-2026-11-05.json",
+        "maturity/evidence/job-queue-capacity-linux-file.json",
+        "maturity/evidence/job-queue-capacity-linux-sqlite.json",
+        "maturity/evidence/job-queue-capacity-linux-postgres.json",
+        "maturity/evidence/control-command-queue-capacity-linux-file.json",
+        "maturity/evidence/control-command-queue-capacity-linux-sqlite.json",
+        "maturity/evidence/control-command-queue-capacity-linux-postgres.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json",
+        "maturity/acceptance-artifacts/4f73bb3b-3051-4871-bf27-a150ffaa1f6e.log",
+        "maturity/acceptance-artifacts/4f73bb3b-3051-4871-bf27-a150ffaa1f6e.source-tree.json",
+        "maturity/acceptance-artifacts/88858269-c697-4136-a6bc-87af14b336ae.log",
+        "maturity/acceptance-artifacts/88858269-c697-4136-a6bc-87af14b336ae.source-tree.json",
+        "maturity/acceptance-artifacts/be9ccd90-3b4c-42c2-ba84-d83cffa376f5.log",
+        "maturity/acceptance-artifacts/be9ccd90-3b4c-42c2-ba84-d83cffa376f5.source-tree.json",
+        "maturity/acceptance-artifacts/f38d623e-607a-4306-9294-edab9703a822.log",
+        "maturity/acceptance-artifacts/f38d623e-607a-4306-9294-edab9703a822.source-tree.json",
+        "maturity/acceptance-artifacts/2249ace7-36c6-4ee7-8082-8148e507ffcf.log",
+        "maturity/acceptance-artifacts/2249ace7-36c6-4ee7-8082-8148e507ffcf.source-tree.json",
+        "maturity/acceptance-artifacts/00ae5c75-b3d9-477d-ae03-0cad98acfca6.log",
+        "maturity/acceptance-artifacts/00ae5c75-b3d9-477d-ae03-0cad98acfca6.source-tree.json",
+        "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.log",
+        "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.source-tree.json",
+        "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.log",
+        "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.source-tree.json",
+        "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.log",
+        "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.source-tree.json",
+        "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.log",
+        "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.source-tree.json",
+        "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.log",
+        "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.source-tree.json",
+        "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.log",
+        "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.source-tree.json",
+        "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.log",
+        "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
+        "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json"
       ]
     },
     {

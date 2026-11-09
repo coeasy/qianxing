@@ -258,7 +258,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R08 宿主协商一致性 | P1/部分 | qx-strategy、orchestrator、Python/C ABI/remote | R01,R05 | Debian 12 Podman 已实跑 Linux 内置 Rust dispatch、旧式 C ABI 能力兼容和 Python host capability 三条针对性验收，且三条现均在 CPython 3.12.16 通过，均在构造/dispatch 前拒绝未知能力；仍待 hosted Ubuntu 24.04/Python 3.12 对照验收 |
 | R09 部署修订/operation | P1/部分 | qx-spec、service、control、API | R05,R08 | 部分：不可变配置载荷、单文件工件快照、幂等受理和终态存储已实现；多文件bundle与worker实际切换、fence/readiness证据仍未完成 |
 | R10 readiness与执行门禁 | P0/部分 | service、worker、execution | R08,R09 | 缺行情/对账/恢复/fence任一必需证据时不得发新live命令 |
-| R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | 发送前持久化命令批次/checkpoint候选及逐命令本地进度；重启时核验job/config/执行事实摘要后重放幂等本地命令并提交checkpoint/cursor。崩溃注入与多后端验收未完成 |
+| R11 PreparedEvaluation存储 | P0/部分 | strategy worker、storage、窄恢复端口 | R05,R08 | Debian 12 Podman 的 file/SQLite/PostgreSQL 六边界崩溃恢复通过，cursor 摘要在恢复后和幂等重启间稳定；hosted Linux 与独立 atomic journal 边界复核仍待完成 |
 | R12 Outbox与未知结果恢复 | P0/部分 | execution/control/storage/venue适配 | R10,R11 | 提交前后断网/崩溃/重启均可查清或明确阻断，不盲重发 |
 | R13 状态迁移和修订切换 | P0/待开发 | checkpoint版本、部署协调 | R09,R12 | 不兼容状态拒绝；旧owner不可继续提交；切换与回滚后对账 |
 | R14 观察保留与聚合 | P1/部分 | strategy_deployments、归档任务 | R09 | 超限有诊断；归档不删活跃owner；多节点状态不靠共享本机目录假设 |
@@ -268,7 +268,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 | R18 Console部署操作与状态 | P1/部分 | web/console、API | R09,R10,R14 | desired/observed/readiness清楚；操作失败可追踪；权限不被绕开 |
 | R19 按职责拆模块 | P2/部分 | app.py/cli.py/strategy_host/execution_updates | R03,R08,R11 | Windows 已人工复核；Debian 12 Podman CLI facade 单测与行为兼容集成测试通过，仍待 hosted macOS 对照 |
 | R20 安装分发与平台矩阵 | P1/部分 | wheel、CLI、可选镜像、CI | R01,R08 | Windows clean install 与 Debian 12 Podman CPython 3.12.16 wheel/CLI 验收通过；hosted Ubuntu 24.04 和 macOS 矩阵仍待验收 |
-| R21 性能与故障恢复验收 | P1/待完善 | 固定基准、故障注入、容量上限 | R12,R17,R19 | 固定数据/硬件/版本记录p50/p95/RSS/恢复时长，无无界积压 |
+| R21 性能与故障恢复验收 | P1/待完善 | 固定基准、故障注入、容量上限 | R12,R17,R19 | Debian 12 Podman 的 file/SQLite/PostgreSQL JobQueue 与 ControlCommandQueue 4096 容量检查及六边界恢复通过；固定基准 p50/p95/RSS 和 hosted Linux 对照仍待补齐 |
 | R22 真实数据和外部验收 | P1/阻断 | HS300与crypto历史、paper/testnet证据 | R10,R12,R15,R17 | 实际覆盖、数据来源、报告和恢复证据齐全；blocked不算通过 |
 | R23 唯一任务台账/文档入口 | P1/部分 | docs索引、maturity任务清单 | 无 | 已有逐工作包的机器可读状态、代码/证据入口和阻断/下一步，CI会校验ID、状态及链接存在性；逐场景Run身份和产物摘要关联尚未接入 |
 
@@ -814,7 +814,13 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 2026-11-09 R17/R19 Linux Podman 验收：Debian 12 干净源码 worktree 上，R17 的六项 Rust 指标/报告断言通过；R19 的 qx-cli 单元测试 497 项全通过，CLI 行为兼容集成测试通过。运行 IDs 为 R17 `ab02e693-9a9a-4346-9a1e-18b38e339c6a`、R19 单元 `a6462fd4-36d1-485f-a640-da3d49595267` 和集成 `1208ff2d-e044-4db1-a9ee-92fd5ef06799`，日志与源码指纹绑定在 acceptance ledger。R17/R19 仍为 partial，等待 hosted macOS 复验。
 
 
-2026-11-09 R01/R20 Linux Python 3.12 clean-install acceptance：Debian 12 Podman 使用 CPython 3.12.16，对 manylinux abi3 wheel dbd0d646026636d8d96603b82ad157c487135be7e0c2c063051fcaf286475396 执行离线隔离安装；doctor 报告 native extension/app 与 CLI schema、target 匹配，quickstart 成功，13 个示例模块编译且策略 callback 被调用。R01 run 5ee99dfe-ed22-49b9-8b8f-cb28b9945a51，R20 run 9cb8bdb-26f7-42c8-ac57-af3525ca6ef6，日志和源码指纹已绑定 acceptance ledger。两项仍待 hosted Ubuntu 24.04/Python 3.12 runner 对照。
+2026-11-09 R01/R20 Linux Python 3.12 clean-install acceptance：Debian 12 Podman 使用 CPython 3.12.16，对 manylinux abi3 wheel dbd0d646026636d8d96603b82ad157c487135be7e0c2c063051fcaf286475396 执行离线隔离安装；doctor 报告 native extension/app 与 CLI schema、target 匹配，quickstart 成功，13 个示例模块编译且策略 callback 被调用。R01 run 5ee99dfe-ed22-49b9-8b8f-cb28b9945a51，R20 run e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6，日志和源码指纹已绑定 acceptance ledger。两项仍待 hosted Ubuntu 24.04/Python 3.12 runner 对照。
 
 
-2026-11-09 R08 Debian 12 CPython 3.12.16 复验：built-in dispatch、legacy C ABI capability compatibility 与 Python host capability negotiation 三项全通过，run IDs 3c33cb68-46d4-412e-b26d-7c76a84f8a49、f726719-4d42-4005-919b-f66b2b36250f、d838a78c-6ace-4503-b670-02f886792f49；日志、源码清单绑定到 acceptance ledger。托管 Ubuntu 24.04 对照仍待跑。
+2026-11-09 R08 Debian 12 CPython 3.12.16 复验：built-in dispatch、legacy C ABI capability compatibility 与 Python host capability negotiation 三项全通过，run IDs 3c33cb68-46d4-412e-b26d-7c76a84f8a49、ef726719-4d42-4005-919b-f66b2b36250f、d838a78c-6ace-4503-b670-02f886792f49；日志、源码清单绑定到 acceptance ledger。托管 Ubuntu 24.04 对照仍待跑。
+
+
+2026-11-09 R11/R21 Linux durable storage acceptance：Debian 12 Podman 对 file、SQLite、PostgreSQL 三后端分别完成 JobQueue 与 ControlCommandQueue 4096 容量、溢出拒绝、确认及六个 worker 崩溃边界恢复；PostgreSQL 报告读取 qx_json_state cursor，提交后的 cursor generation 在恢复和幂等重启间一致，Paper 测试不访问网络且不发送真实订单。R21 运行 IDs：4f73bb3b-3051-4871-bf27-a150ffaa1f6e、88858269-c697-4136-a6bc-87af14b336ae、be9ccd90-3b4c-42c2-ba84-d83cffa376f5、f38d623e-607a-4306-9294-edab9703a822、2249ace7-36c6-4ee7-8082-8148e507ffcf、00ae5c75-b3d9-477d-ae03-0cad98acfca6、256dd094-fcf8-41cb-8141-97ce3afea6e1、487eb955-4fc1-4919-b74b-121817cf1459、4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e；符号链接与 PG cursor 快照回归测试 5669a32a-7f9b-49fe-809e-d426f099e550。R11/R21 仍等待 hosted Linux job；R21 固定基准和 R11 atomic journal 边界仍需独立收口。
+
+
+2026-11-09 R11/R21 最终采集器复验：崩溃恢复验收现强制要求恢复后存在 execution cursor，并在 PostgreSQL 中直接读取 qx_json_state；file、SQLite、PostgreSQL 三后端各六个崩溃边界都产出 cursor，已提交边界重启前后 generation 一致，幂等重启 cursor 哈希保持不变。最终 run IDs：回归单测 baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57，file 59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba，SQLite 38a7eec0-165d-4749-a2c8-d30e67be702c，PostgreSQL 58875a25-f3ae-46fc-98c8-c08eaae43816。三份结构化输出确认 network_accessed=false、real_order_sent=false。

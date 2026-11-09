@@ -16287,6 +16287,722 @@
         }
       ],
       "notes": "Debian 12 Linux Python 3.12 strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction"
+    },
+    {
+      "run_id": "4f73bb3b-3051-4871-bf27-a150ffaa1f6e",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:26:47.120913Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "cdaeb71593885d4994b0ad2ebf9fa4511ea65f5df907720f78e08733665a0faf",
+      "source_manifest": "maturity/acceptance-artifacts/4f73bb3b-3051-4871-bf27-a150ffaa1f6e.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "file",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/4f73bb3b-3051-4871-bf27-a150ffaa1f6e.log",
+          "sha256": "b7f25752406a4642c5301b90452a2a261283e11434eb9afaad68ad44f51c3e82"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/4f73bb3b-3051-4871-bf27-a150ffaa1f6e.source-tree.json",
+          "sha256": "18fa49590c13ebce9e719eb4300b34d0bf4c93e39a1b247d52efcbee7dd5a1bb"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: file; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "88858269-c697-4136-a6bc-87af14b336ae",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:28:13.265877Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "59c981d60671460eacb6e05466e7f737d5abe1251f0d16791e1d1f46830df557",
+      "source_manifest": "maturity/acceptance-artifacts/88858269-c697-4136-a6bc-87af14b336ae.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "sqlite",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/88858269-c697-4136-a6bc-87af14b336ae.log",
+          "sha256": "b19776d628f143e5a081faba1796c8032799cbac2b023fbd279016ade13abe50"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/88858269-c697-4136-a6bc-87af14b336ae.source-tree.json",
+          "sha256": "4ee565f97058c104318d9327ffa7b3776c92ef52021985b6d18905fb2030a760"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: sqlite; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "be9ccd90-3b4c-42c2-ba84-d83cffa376f5",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:28:43.353821Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "9c8c3d68f508ab7699d98f3be90fec22029fb789425570175877c611c6522c49",
+      "source_manifest": "maturity/acceptance-artifacts/be9ccd90-3b4c-42c2-ba84-d83cffa376f5.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "postgres",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/be9ccd90-3b4c-42c2-ba84-d83cffa376f5.log",
+          "sha256": "b05a6d7774085e757e445344adb9bfee38c1166aab318b7ce4d1013011c37e15"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/be9ccd90-3b4c-42c2-ba84-d83cffa376f5.source-tree.json",
+          "sha256": "83cb96942d5ffff3bf9f9fa397a0134f036a0d9fb4df9edefe5a3ae3bb366eb5"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: postgres; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "f38d623e-607a-4306-9294-edab9703a822",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:29:04.615468Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "80938a7d71ca157526aba735028eb67dd8f8ea49c9c75f2a589e69a6a1b04e95",
+      "source_manifest": "maturity/acceptance-artifacts/f38d623e-607a-4306-9294-edab9703a822.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "file",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "2d9fee1c366e34ad023abdb73fd227845ca81de9973871ab3009fce002307f90"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/f38d623e-607a-4306-9294-edab9703a822.log",
+          "sha256": "a8a479498caa2763e71e8bcb8778c00dd8e22129e8d23f3c1c9d1d7dde5c158b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/f38d623e-607a-4306-9294-edab9703a822.source-tree.json",
+          "sha256": "68bda4adf5ae7f3b8d0303ebd55d4b545576e1b397b640befa1e3b466b58ade8"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: file; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "2249ace7-36c6-4ee7-8082-8148e507ffcf",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:30:27.254109Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "48b1c239fa7c87f74ea0c6e3d6aebca41abed73ed1b7f74fe056cf0a97c1d869",
+      "source_manifest": "maturity/acceptance-artifacts/2249ace7-36c6-4ee7-8082-8148e507ffcf.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "sqlite",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "2d9fee1c366e34ad023abdb73fd227845ca81de9973871ab3009fce002307f90"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/2249ace7-36c6-4ee7-8082-8148e507ffcf.log",
+          "sha256": "8112df66905c1ab0095717fa4f7a0353df5c05f9a91a8d6b6ba307dd5e0c87b1"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/2249ace7-36c6-4ee7-8082-8148e507ffcf.source-tree.json",
+          "sha256": "8b9b12d5236f147584f7b87367d2b27f5fc17abb69f451f1aca5723215c4c125"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: sqlite; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "00ae5c75-b3d9-477d-ae03-0cad98acfca6",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:30:56.961416Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "c99e21efbd9ebcafcc315dd798e0c3e133a5f9e49da9de983e2a78748d0f8530",
+      "source_manifest": "maturity/acceptance-artifacts/00ae5c75-b3d9-477d-ae03-0cad98acfca6.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "postgres",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "80bbfe22b51f6df263b322bf641dd9436210676f31dcb41f8fe26e6718f4b295"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "2d9fee1c366e34ad023abdb73fd227845ca81de9973871ab3009fce002307f90"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/00ae5c75-b3d9-477d-ae03-0cad98acfca6.log",
+          "sha256": "dc773dacb7ab7e08b5df1b8af1cb1b757ae3dcfc210c3ed5f8b7274bfc5bce02"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/00ae5c75-b3d9-477d-ae03-0cad98acfca6.source-tree.json",
+          "sha256": "57ffa176f8a3ef7bbd7c05edf2c015aa3f1c7b6425ad41245c27190994e9a353"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: postgres; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "5669a32a-7f9b-49fe-809e-d426f099e550",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:43:34.531171Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "d01b9127fd62072d6a8dfbdb20a6179fbbf11a5975008855eabe30e4a6844739",
+      "source_manifest": "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "python.tests.test_worker_crash_recovery_psql_path"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "930f4c9cc8640f78a345d9f1c5257875c4c59efe653ae0e08abdc0e47c76791a"
+        },
+        {
+          "path": "python/tests/test_worker_crash_recovery_psql_path.py",
+          "sha256": "5c2790fc77b13930867f4c5fee4a30573dfb61e0b9b644d9b80bb34230a80355"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.log",
+          "sha256": "01fb99b539fd5d1ae75082c05cc5b1c1e13889b17cc0c690d0f6c098fb0211c4"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5669a32a-7f9b-49fe-809e-d426f099e550.source-tree.json",
+          "sha256": "3a5101509739003c0a5382f7845136c6c4a5460177aff28ee50a849383f7cf7d"
+        }
+      ],
+      "notes": "psql wrapper path and PostgreSQL JSON cursor snapshot regressions"
+    },
+    {
+      "run_id": "4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:44:34.604584Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "d01b9127fd62072d6a8dfbdb20a6179fbbf11a5975008855eabe30e4a6844739",
+      "source_manifest": "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "postgres",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "930f4c9cc8640f78a345d9f1c5257875c4c59efe653ae0e08abdc0e47c76791a"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.log",
+          "sha256": "507c16b71e835afaa69c244de94e6ff26ef9305fdc0dd74e0f691d0e3672c955"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/4bc1e51e-31ee-4c29-a1dd-d5f40a35ad2e.source-tree.json",
+          "sha256": "3a5101509739003c0a5382f7845136c6c4a5460177aff28ee50a849383f7cf7d"
+        }
+      ],
+      "notes": "Linux PostgreSQL Paper worker recovery: six crash boundaries, persisted cursor snapshot, and idempotent restart"
+    },
+    {
+      "run_id": "256dd094-fcf8-41cb-8141-97ce3afea6e1",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:45:28.778763Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "89cf2b8b7e3246338b9485c47840abede3638953ee98a58283153390e75a69e3",
+      "source_manifest": "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "file",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "930f4c9cc8640f78a345d9f1c5257875c4c59efe653ae0e08abdc0e47c76791a"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.log",
+          "sha256": "a06e48e4ae37857480d8309c4087da1c841b748a21371b00084fbe5d7b29f700"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.source-tree.json",
+          "sha256": "4f71f807a4c7423d24cc9413d54c257bd44996cc2df91c82bba7de1c9344eed0"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: file; six persistence boundaries, cursor/checkpoint snapshot, and idempotent recovery"
+    },
+    {
+      "run_id": "487eb955-4fc1-4919-b74b-121817cf1459",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:45:51.268943Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "e80c8c20d9aa187966284b655e0706323b3c577d5b89528ae66223866346facb",
+      "source_manifest": "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "sqlite",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "930f4c9cc8640f78a345d9f1c5257875c4c59efe653ae0e08abdc0e47c76791a"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.log",
+          "sha256": "f32e6bb29d8ee16253428d08569da63f1aee671708578bb3da955160ff371a11"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.source-tree.json",
+          "sha256": "8880ae5cd2ca77dfd822e553450ce0bc1cc32ababd2ef821870026351e1603b8"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: sqlite; six persistence boundaries, cursor/checkpoint snapshot, and idempotent recovery"
+    },
+    {
+      "run_id": "baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:50:02.413345Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "0956e3c68da7d0dc57c113ae16220b86b3f75f1048a8531cd0ed41d49fc80d06",
+      "source_manifest": "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "python.tests.test_worker_crash_recovery_psql_path"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "python/tests/test_worker_crash_recovery_psql_path.py",
+          "sha256": "5c2790fc77b13930867f4c5fee4a30573dfb61e0b9b644d9b80bb34230a80355"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.log",
+          "sha256": "01fb99b539fd5d1ae75082c05cc5b1c1e13889b17cc0c690d0f6c098fb0211c4"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/baad8e4d-d8f2-4d7d-a08a-bd48e75d4d57.source-tree.json",
+          "sha256": "f8295afa878203368154ec0408bc9abe4b4452d4d40d426acfe549e6cf2a3a55"
+        }
+      ],
+      "notes": "psql wrapper path, PostgreSQL JSON cursor snapshot, and required recovery cursor regressions"
+    },
+    {
+      "run_id": "59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:50:24.343622Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "0956e3c68da7d0dc57c113ae16220b86b3f75f1048a8531cd0ed41d49fc80d06",
+      "source_manifest": "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "file",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.log",
+          "sha256": "a06e48e4ae37857480d8309c4087da1c841b748a21371b00084fbe5d7b29f700"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/59e4cb1f-e1fa-4acd-ad70-9dc224b6e6ba.source-tree.json",
+          "sha256": "f8295afa878203368154ec0408bc9abe4b4452d4d40d426acfe549e6cf2a3a55"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: file; six persistence boundaries, required cursor/checkpoint snapshot, and idempotent recovery"
+    },
+    {
+      "run_id": "38a7eec0-165d-4749-a2c8-d30e67be702c",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:50:46.744513Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "fad49e2ed5cf8e8de8cae8276e4c09366737ab87998f649699f2979eb05b340f",
+      "source_manifest": "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "sqlite",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.log",
+          "sha256": "f32e6bb29d8ee16253428d08569da63f1aee671708578bb3da955160ff371a11"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
+          "sha256": "06c35c891ae79c64e9037d774083c4e31f8ae6d5f7a5d39d1986e529d4346bb9"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: sqlite; six persistence boundaries, required cursor/checkpoint snapshot, and idempotent recovery"
+    },
+    {
+      "run_id": "58875a25-f3ae-46fc-98c8-c08eaae43816",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-09T12:51:47.295829Z",
+      "source_revision": "b17a9c0dbbb1f9c63ca83860ae2a472f53d52f98",
+      "source_tree_sha256": "26baca5fc394344c1284378034b852d679a1d517c69c09394e2797d0b332e8a2",
+      "source_manifest": "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "6.18.40.1-microsoft-standard-WSL2",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/root/.local/share/uv/python/cpython-3.12.16-linux-x86_64-gnu/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "postgres",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "53157b8fbd1a2a7ed257e400967ca920051149a92bd9252de05b75ab808f6f88"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d53430b6746380572e863de59e6063d70a9de565b551775dac9247ad513c056d"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
+          "sha256": "507c16b71e835afaa69c244de94e6ff26ef9305fdc0dd74e0f691d0e3672c955"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
+          "sha256": "bd77a09abdf3f8bd10dae65cea9ed6c058483a58cc3e28711aa5723e4d5699d1"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries, required cursor/checkpoint snapshot, and idempotent recovery"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

@@ -96,6 +96,16 @@ def postgres_client_environment(dsn: str, database: str | None = None) -> dict[s
     return environment
 
 
+def locate_psql(explicit: Path | None = None) -> Path | None:
+    """Find psql while preserving wrapper symlinks such as Debian's /usr/bin/psql."""
+    discovered = shutil.which("psql") if explicit is None else None
+    candidate = Path(discovered) if discovered else explicit
+    if candidate is None:
+        return None
+    candidate = candidate.expanduser().absolute()
+    return candidate if candidate.is_file() else None
+
+
 def psql(
     executable: Path,
     dsn: str,
@@ -153,14 +163,40 @@ def run(binary: Path, runtime: Path, env: dict[str, str]) -> subprocess.Complete
     )
 
 
-def cursor_snapshot(data: Path) -> dict[str, object] | None:
-    cursors = sorted((data / "strategy-live-state").glob("*.execution-cursor.json"))
-    if len(cursors) > 1:
-        raise RuntimeError(f"expected at most one Strategy cursor, found {len(cursors)}")
-    if not cursors:
-        return None
-    payload = cursors[0].read_bytes()
-    state = json.loads(payload)
+def cursor_snapshot(
+    data: Path,
+    *,
+    backend: str = "file",
+    psql_binary: Path | None = None,
+    postgres_dsn: str | None = None,
+    worker_id: str = "strategy-paper",
+) -> dict[str, object] | None:
+    if backend == "postgres":
+        if psql_binary is None or postgres_dsn is None:
+            raise RuntimeError("PostgreSQL cursor snapshot requires psql and a database DSN")
+        if not psql(psql_binary, postgres_dsn, "SELECT to_regclass('public.qx_json_state')"):
+            return None
+        state_key = f"strategy-execution-cursor/{worker_id}"
+        escaped_key = state_key.replace("'", "''")
+        content = psql(
+            psql_binary,
+            postgres_dsn,
+            f"SELECT content FROM qx_json_state WHERE state_key = '{escaped_key}'",
+        )
+        if not content:
+            return None
+        payload = content.encode("utf-8")
+        state = json.loads(content)
+        cursor_path = f"postgres:{state_key}"
+    else:
+        cursors = sorted((data / "strategy-live-state").glob("*.execution-cursor.json"))
+        if len(cursors) > 1:
+            raise RuntimeError(f"expected at most one Strategy cursor, found {len(cursors)}")
+        if not cursors:
+            return None
+        payload = cursors[0].read_bytes()
+        state = json.loads(payload)
+        cursor_path = cursors[0].name
     checkpoint = state.get("strategy_checkpoint")
     checkpoint_payload = (
         json.dumps(checkpoint, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -168,7 +204,7 @@ def cursor_snapshot(data: Path) -> dict[str, object] | None:
         else b""
     )
     return {
-        "path": cursors[0].name,
+        "path": cursor_path,
         "sha256": hashlib.sha256(payload).hexdigest(),
         "next_seq_by_log": state.get("next_seq_by_log", {}),
         "commit_generation": state.get("commit_generation", 0),
@@ -203,13 +239,10 @@ def main() -> int:
     for path in (source, binary):
         if not path.is_file():
             parser.error(f"file not found: {path}")
-    psql_binary = args.psql.resolve() if args.psql is not None else None
+    psql_binary = locate_psql(args.psql)
     if args.backend == "postgres":
         if not args.postgres_dsn_env.strip():
             parser.error("--postgres-dsn-env must name the PostgreSQL DSN environment variable")
-        if psql_binary is None:
-            discovered_psql = shutil.which("psql")
-            psql_binary = Path(discovered_psql).resolve() if discovered_psql else None
         if psql_binary is None or not psql_binary.is_file():
             parser.error("PostgreSQL worker recovery requires psql; pass --psql PATH")
         if not os.environ.get(args.postgres_dsn_env):
@@ -235,7 +268,23 @@ def main() -> int:
                 runtime, data, sqlite_path = runtime_for_attempt(
                     source, scratch, args.backend, args.postgres_dsn_env
                 )
-                cursor_before_crash = cursor_snapshot(data)
+                runtime_config = json.loads(runtime.read_text(encoding="utf-8"))
+                strategy_worker_ids = [
+                    worker["id"] for worker in runtime_config["workers"]
+                    if worker.get("role") == "strategy"
+                ]
+                if len(strategy_worker_ids) != 1:
+                    raise RuntimeError(
+                        f"expected exactly one Strategy worker for cursor evidence, found {strategy_worker_ids}"
+                    )
+                worker_id = strategy_worker_ids[0]
+                cursor_args = {
+                    "backend": args.backend,
+                    "psql_binary": psql_binary,
+                    "postgres_dsn": attempt_dsn,
+                    "worker_id": worker_id,
+                }
+                cursor_before_crash = cursor_snapshot(data, **cursor_args)
                 env = os.environ.copy()
                 if attempt_dsn is not None:
                     env[args.postgres_dsn_env] = attempt_dsn
@@ -247,7 +296,7 @@ def main() -> int:
                         f"{point}: expected injected exit 86, got {crashed.returncode}\n"
                         f"stdout:\n{crashed.stdout}\nstderr:\n{crashed.stderr}"
                     )
-                cursor_after_crash = cursor_snapshot(data)
+                cursor_after_crash = cursor_snapshot(data, **cursor_args)
 
                 time.sleep(args.recovery_wait_seconds)
                 env.pop("QX_BENCH_PREPARED_CRASH_AFTER", None)
@@ -280,14 +329,16 @@ def main() -> int:
                 summary = next((line for line in recovered.stdout.splitlines() if "[Paper · E2E]" in line), "")
                 if "orders=1 (+1" not in summary or "ledger_entries=4 (+4" not in summary:
                     raise RuntimeError(f"{point}: Paper recovery summary did not show one new order and four ledger entries: {summary}")
-                cursor_after_recovery = cursor_snapshot(data)
+                cursor_after_recovery = cursor_snapshot(data, **cursor_args)
+                if cursor_after_recovery is None:
+                    raise RuntimeError(f"{point}: execution cursor/checkpoint was not persisted after recovery")
                 repeated = run(binary, runtime, env)
                 if repeated.returncode != 0:
                     raise RuntimeError(
                         f"{point}: idempotence restart failed with exit {repeated.returncode}\n"
                         f"stdout:\n{repeated.stdout}\nstderr:\n{repeated.stderr}"
                     )
-                cursor_after_idempotent_restart = cursor_snapshot(data)
+                cursor_after_idempotent_restart = cursor_snapshot(data, **cursor_args)
                 if cursor_after_recovery != cursor_after_idempotent_restart:
                     raise RuntimeError(
                         f"{point}: cursor/checkpoint changed after idempotent restart: "
