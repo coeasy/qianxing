@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "linux_podman_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-09T09:48:20Z",
+  "source": {
+    "commit": "c35339c35f1e8ee395c9eccf6f1e5727fdeeca3b",
+    "branch": "codex/release-windows-longpaths",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "runtime": "Podman Linux VM",
+    "distribution": "Debian GNU/Linux 12 (bookworm)",
+    "architecture": "x86_64",
+    "python": "3.11.2",
+    "cargo_registry": "offline mirror cache"
+  },
+  "checks": {
+    "cli_all_targets": {
+      "command": "cargo test -p qx-cli --all-targets --locked --offline",
+      "result": "passed",
+      "notes": "Includes qx-cli unit, integration, and benchmark targets."
+    },
+    "workspace_all_targets_excluding_python": {
+      "command": "cargo test --workspace --all-targets --exclude qx-python --locked --offline",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    "python_extension_build": {
+      "command": "cargo build -p qx-python --features extension-module --locked --offline",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    "python_crate_unit_tests": {
+      "command": "cargo test -p qx-python --features extension-module --locked --offline",
+      "result": "blocked_by_container_dependency",
+      "detail": "The minimal Debian image has no libpython3.11 development/link library. Installing python3-dev was attempted, but the container could not reach apt sources. Linking failed on unresolved Python C API symbols."
+    }
+  },
+  "limitations": [
+    "Linux Python extension build passed, but qx-python Rust unit tests require libpython3.11-dev in the container.",
+    "macOS release artifacts and hosted GitHub Actions for this branch have not been verified.",
+    "No release tag or publication to GitHub Releases or PyPI was created.",
+    "Private venue credentials and production acceptance remain unavailable."
+  ],
+  "release_status": "candidate_preflight_passed_with_platform_gaps"
+}
