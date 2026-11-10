@@ -953,6 +953,42 @@ impl LiveEventPipeline {
         })
     }
 
+    /// 返回最近一次完整 L1 报价与本地接收时间，供实时执行入口检查行情新鲜度。
+    pub fn latest_quote_with_depth_and_receive_time(
+        &self,
+        instrument: &InstrumentId,
+    ) -> Option<(QuoteTick, u64)> {
+        self.log.events().iter().rev().find_map(|event| {
+            // Paper execution persists the quote used by a fill as an execution fact. That echo
+            // proves what price was applied, but it is not a new market-data observation and
+            // must never refresh the quote's receive-time freshness window.
+            if event.correlation_id.starts_with("paper-execution:market:") {
+                return None;
+            }
+            if let EventKind::MarketQuote {
+                instrument: event_instrument,
+                bid,
+                ask,
+                bid_qty,
+                ask_qty,
+                bid_qty_exact,
+                ask_qty_exact,
+                bid_exact,
+                ask_exact,
+            } = &event.kind
+            {
+                (event_instrument == instrument).then_some((
+                    QuoteTick::new(event.ts, *bid, *bid_qty, *ask, *ask_qty, event.source_seq)
+                        .with_optional_exact_prices(*bid_exact, *ask_exact)
+                        .with_optional_exact_sizes(*bid_qty_exact, *ask_qty_exact),
+                    event.receive_time,
+                ))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn metrics(&self) -> PipelineMetricsSnapshot {
         self.metrics.snapshot()
     }

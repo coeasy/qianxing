@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "df99e056cc6c3449533c74f2be88679e62ce5006085ade39b246ec8217206449",
+    "maturity/capabilities.yaml": "d022e02e404026a57616e237d47b34310cf6d7f9be300aa410f27b2341877595",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -185,7 +185,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 241,
+      "evidence_path_count": 242,
       "limitation_count": 10
     },
     {
@@ -253,7 +253,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 111,
+      "evidence_path_count": 112,
       "limitation_count": 3
     },
     {
@@ -1637,11 +1637,12 @@
             "crates/qx-service/src/paper_execution_host.rs `terminal_submit_rejection` 是终态失败指路文案唯一出口；CLI Paper/Binance/CCXT 提交入口继续复用同一句口径，Accepted 后的拒绝要求换新的 `command_id` 与 `request_id` 重投（V13 第三十一遍 ②",
             "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 六条用例覆盖真实 `run_paper_submit_order` 与 Paper worker：缺行情落 Failed、有行情仍 Executed、常驻循环拒绝后继续、one-shot 遇到 resident lease 保留 Accepted 并原租约移交、真实队列写失败后保留 Accepted 并由 worker 恢复成交、队列缺项时 worker 从 Accepted 重建并完成命令（V13 第三十一遍 ②",
             "tools/check_architecture.py submit_terminal_state_check 覆盖提交顺序、Accepted 后退出登记、租约 owner 唯一性、LeaseHeld 移交、终态回写/ack 顺序、共享指路与撮合尝试单点，以及六条 Paper 终态/移交/恢复用例挂载；独立 one-shot owner 不能复用常驻 worker 的 fencing token（V13 第三十一遍 ②",
+            "crates/qx-runtime/src/pipeline.rs `latest_quote_with_depth_and_receive_time` 同时返回行情本地接收时间并排除 `paper-execution:market:` 执行回声；crates/qx-service/src/paper_execution_host.rs 对 Paper SubmitOrder 使用 30 秒接收新鲜度窗口，拒绝过期与未来时间；`crates/qx-cli/tests/unit/paper_submit_terminal_state.rs` 证明过期行情终态失败且不生成订单，账户并发测试证明执行回声不会刷新源行情时间；服务单测覆盖边界、过期和未来接收时间（WP-3.55）",
             "判据取数按 `_collapsed_code` 压行并去掉尾逗号：`cargo fmt` 把长实参拆成多行会给最后一个实参补尾逗号，按字面取段的判据当场读出 0 处——本轮 `lease_clock_domain_check` 的 ack 秒域判据就是这么红的。格式重排因此成为常驻负对照（重排后必须仍绿，退回缺陷形状必须红）",
             "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
             "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 22
+          "limitations_count": 21
         },
         {
           "id": "factor_research_bridge",
@@ -2282,11 +2283,12 @@
             "crates/qx-service/src/paper_execution_host.rs `terminal_submit_rejection` 是终态失败指路文案唯一出口；CLI Paper/Binance/CCXT 提交入口继续复用同一句口径，Accepted 后的拒绝要求换新的 `command_id` 与 `request_id` 重投（V13 第三十一遍 ②",
             "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs 六条用例覆盖真实 `run_paper_submit_order` 与 Paper worker：缺行情落 Failed、有行情仍 Executed、常驻循环拒绝后继续、one-shot 遇到 resident lease 保留 Accepted 并原租约移交、真实队列写失败后保留 Accepted 并由 worker 恢复成交、队列缺项时 worker 从 Accepted 重建并完成命令（V13 第三十一遍 ②",
             "tools/check_architecture.py submit_terminal_state_check 覆盖提交顺序、Accepted 后退出登记、租约 owner 唯一性、LeaseHeld 移交、终态回写/ack 顺序、共享指路与撮合尝试单点，以及六条 Paper 终态/移交/恢复用例挂载；独立 one-shot owner 不能复用常驻 worker 的 fencing token（V13 第三十一遍 ②",
+            "crates/qx-runtime/src/pipeline.rs `latest_quote_with_depth_and_receive_time` 同时返回行情本地接收时间并排除 `paper-execution:market:` 执行回声；crates/qx-service/src/paper_execution_host.rs 对 Paper SubmitOrder 使用 30 秒接收新鲜度窗口，拒绝过期与未来时间；`crates/qx-cli/tests/unit/paper_submit_terminal_state.rs` 证明过期行情终态失败且不生成订单，账户并发测试证明执行回声不会刷新源行情时间；服务单测覆盖边界、过期和未来接收时间（WP-3.55）",
             "判据取数按 `_collapsed_code` 压行并去掉尾逗号：`cargo fmt` 把长实参拆成多行会给最后一个实参补尾逗号，按字面取段的判据当场读出 0 处——本轮 `lease_clock_domain_check` 的 ack 秒域判据就是这么红的。格式重排因此成为常驻负对照（重排后必须仍绿，退回缺陷形状必须红）",
             "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
             "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 22
+          "limitations_count": 21
         }
       ]
     },

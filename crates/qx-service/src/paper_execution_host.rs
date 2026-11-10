@@ -31,6 +31,19 @@ fn runtime_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn validate_paper_quote_receive_freshness(received_at: u64, now: u64) -> Result<(), String> {
+    const MAX_PAPER_MARKET_QUOTE_AGE_MS: u64 = 30_000;
+    let age_ms = now
+        .checked_sub(received_at)
+        .ok_or_else(|| "FAIL_CLOSED: Paper 最新行情接收时间晚于本地时间".to_string())?;
+    if age_ms > MAX_PAPER_MARKET_QUOTE_AGE_MS {
+        return Err(format!(
+            "FAIL_CLOSED: Paper 最新行情已过期 {age_ms}ms（上限 {MAX_PAPER_MARKET_QUOTE_AGE_MS}ms）"
+        ));
+    }
+    Ok(())
+}
+
 /// 为 Paper 账户写入一次可恢复、可幂等的初始资金事实。
 /// 资金只通过 AccountCashflow 进入 Ledger，不直接修改内存余额。
 pub fn seed_paper_initial_cash_from_config(
@@ -424,14 +437,16 @@ pub fn paper_submit_match_attempt(
         )
     })?;
     // fail-closed：撮合行情必须来自同一 EventLog 的行情事实，缺行情拒绝执行。
-    let market_quote = pipeline
-        .latest_quote_with_depth(&order.instrument)
+    let (market_quote, quote_received_at) = pipeline
+        .latest_quote_with_depth_and_receive_time(&order.instrument)
         .ok_or_else(|| {
             terminal_submit_rejection(format!(
                 "FAIL_CLOSED: Paper SubmitOrder 缺少 {} 的最新行情事实",
                 order.instrument
             ))
         })?;
+    validate_paper_quote_receive_freshness(quote_received_at, runtime_timestamp_ms())
+        .map_err(terminal_submit_rejection)?;
     execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
             command,
             pipeline,
@@ -472,4 +487,28 @@ pub fn paper_submit_matches_worker(command: &ControlCommand, worker: &WorkerConf
                     }))
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod paper_quote_freshness_tests {
+    use super::validate_paper_quote_receive_freshness;
+
+    #[test]
+    fn accepts_quotes_within_the_thirty_second_receive_window() {
+        assert!(validate_paper_quote_receive_freshness(70_000, 100_000).is_ok());
+    }
+
+    #[test]
+    fn rejects_quotes_older_than_the_receive_window() {
+        assert!(validate_paper_quote_receive_freshness(69_999, 100_000)
+            .unwrap_err()
+            .contains("已过期 30001ms"));
+    }
+
+    #[test]
+    fn rejects_a_quote_received_in_the_future() {
+        assert!(validate_paper_quote_receive_freshness(100_001, 100_000)
+            .unwrap_err()
+            .contains("接收时间晚于本地时间"));
+    }
 }

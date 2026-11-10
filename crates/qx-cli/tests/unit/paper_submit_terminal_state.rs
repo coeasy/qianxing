@@ -183,6 +183,7 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
             dry_run: false,
         }
     };
+    let first_now = runtime_timestamp_ms();
     let first = paper_submit_match_attempt(
         &config,
         &case.config_path,
@@ -191,13 +192,12 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
         &worker,
         &mut first_pipeline,
         &spread_store,
-        10,
+        first_now,
     );
     assert!(
         first.is_ok(),
         "first order should consume most of the available 1,000 USDT: {first:?}"
     );
-
     let second = paper_submit_match_attempt(
         &config,
         &case.config_path,
@@ -206,7 +206,7 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
         &worker,
         &mut second_pipeline,
         &spread_store,
-        11,
+        first_now.saturating_add(1),
     );
     let second = second.expect_err("a stale pre-submit balance must not authorize a second order");
     assert!(
@@ -292,6 +292,61 @@ fn paper_submit_order_with_market_quote_still_reaches_executed() {
     );
     let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
     assert_eq!(pipeline.orders().len(), 1, "成交事实要留在同一本账户日志");
+    assert!(queue_of(&case).pending().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
+#[test]
+fn paper_submit_rejects_a_market_quote_received_more_than_thirty_seconds_ago() {
+    let case = paper_submit_case("paper-submit-stale-market-quote", 8030, true);
+    let received_at = runtime_timestamp_ms().saturating_sub(30_001);
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT")
+        .unwrap()
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument,
+            QuoteTick::new(
+                received_at,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                received_at,
+            ),
+            received_at,
+            received_at,
+            "paper-submit-stale-market-quote",
+        ))
+        .unwrap();
+    let execution_echo_at = runtime_timestamp_ms();
+    LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT")
+        .unwrap()
+        .ingest(RuntimeEventEnvelope::market_quote(
+            InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            QuoteTick::new(
+                execution_echo_at,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                execution_echo_at,
+            ),
+            execution_echo_at,
+            execution_echo_at,
+            "paper-execution:market:BTCUSDT.BINANCE:stale-quote-echo",
+        ))
+        .unwrap();
+
+    let error = run_paper_submit_order(&case.config_path, &case.command_path)
+        .expect_err("an execution echo must not refresh stale market data");
+    assert!(error.contains("Paper 最新行情已过期"), "{error}");
+    assert!(error.contains("command_id") && error.contains("request_id"));
+    assert_eq!(terminal_record(&case, 8030).0, CommandStatus::Failed);
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    assert!(
+        pipeline.orders().is_empty(),
+        "stale quote must not create an order"
+    );
     assert!(queue_of(&case).pending().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&case.dir);
 }
