@@ -1,6 +1,7 @@
 use qx_strategy::{
     capabilities::StrategyCapability, sha256_hex, DynamicCAbiLoadPolicy, DynamicCAbiStrategy,
 };
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use std::path::Path;
 use std::process::Command;
 
@@ -49,6 +50,9 @@ pub extern "C" fn qx_strategy_get_vtable() -> *const VTable {{ &VTABLE }}
     std::fs::write(&source, source_text).expect("write minimal legacy C ABI plugin");
     let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let output = Command::new(compiler)
+        .env("TEMP", directory)
+        .env("TMP", directory)
+        .env("TMPDIR", directory)
         .args(["--edition=2021", "--crate-type", "cdylib"])
         .arg(&source)
         .arg("-o")
@@ -69,13 +73,22 @@ fn verified_policy(library: &Path) -> DynamicCAbiLoadPolicy {
         .with_max_library_bytes(u64::try_from(bytes.len()).expect("library size fits u64"))
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn isolated_directory() -> std::path::PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is after Unix epoch")
         .as_nanos();
+    let target_directory = std::env::current_exe()
+        .expect("integration test executable path is available")
+        .parent()
+        .expect("integration test executable has a parent directory")
+        .to_path_buf();
     let directory =
-        std::env::temp_dir().join(format!("qx-legacy-c-abi-{}-{nonce}", std::process::id()));
+        target_directory.join(format!("qx-legacy-c-abi-{}-{nonce}", std::process::id()));
     std::fs::create_dir(&directory).expect("create isolated legacy plugin directory");
     directory
 }
@@ -122,4 +135,39 @@ fn legacy_plugin_without_optional_requirement_export_loads_empty_requirements_an
         "capability rejection must happen before the plugin create callback"
     );
     std::fs::remove_dir_all(directory).expect("remove isolated legacy plugin directory");
+}
+
+#[test]
+fn signed_c_abi_library_loads_and_bad_signature_is_rejected_before_plugin_create() {
+    let directory = isolated_directory();
+    let marker = directory.join("plugin-create-called");
+    let library = build_legacy_plugin(&directory, &marker);
+    let bytes = std::fs::read(&library).expect("read signed C ABI library");
+    let seed = [9_u8; 32];
+    let key_pair = Ed25519KeyPair::from_seed_unchecked(&seed).expect("build test signing key");
+    let public_key = hex(key_pair.public_key().as_ref());
+    let signature = key_pair.sign(&bytes);
+    let valid_policy = verified_policy(&library)
+        .with_ed25519_signature(public_key.clone(), hex(signature.as_ref()));
+
+    let strategy = unsafe { DynamicCAbiStrategy::load_verified(&library, "{}", &valid_policy) }
+        .expect("valid signature must allow the C ABI library to load");
+    assert!(
+        marker.is_file(),
+        "verified library reaches its create callback"
+    );
+    drop(strategy);
+
+    std::fs::remove_file(&marker).expect("clear create marker before invalid signature case");
+    let invalid_policy =
+        verified_policy(&library).with_ed25519_signature(public_key, "00".repeat(64));
+    let error = unsafe { DynamicCAbiStrategy::load_verified(&library, "{}", &invalid_policy) }
+        .err()
+        .expect("invalid signature must reject the C ABI library");
+    assert!(error.contains("Ed25519 签名校验失败"), "{error}");
+    assert!(
+        !marker.exists(),
+        "invalid signature must be rejected before the plugin create callback"
+    );
+    std::fs::remove_dir_all(directory).expect("remove isolated signed C ABI fixture");
 }
