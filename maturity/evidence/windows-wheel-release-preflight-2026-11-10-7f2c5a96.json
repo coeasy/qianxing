@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-10T12:43:51Z",
+  "source": {
+    "commit": "7f2c5a964dcf5466dcabf6cd1412021322878ce7",
+    "worktree": "clean detached worktree",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows 11",
+    "rust": "1.98.1",
+    "python": "3.13.13",
+    "maturin": "1.15.0",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifacts": {
+    "directory": "dist/release-candidate-v0.4.0-windows-x86_64-7f2c5a96-artifacts/",
+    "wheel": {
+      "file": "qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+      "size_bytes": 22889381,
+      "sha256": "90090205fd68847fdaa03ab48ae431c0df5e1779435b1f21ca5cf2a31462a136",
+      "stable_abi_check": "passed",
+      "clean_venv_install": "passed",
+      "native_import_and_e2e_smoke": {
+        "result": "passed",
+        "summary": "17 built-in strategies; native extension and bundled CLI matched schema and Windows target; quickstart completed; 13 documented Python modules compiled and the strategy example was invoked"
+      }
+    },
+    "cli": {
+      "file": "qx-cli-v0.4.0-Windows-X64.exe",
+      "size_bytes": 44078080,
+      "sha256": "8975d1f33c21bdc731d7a6a88f989466c5549f4cb45dfc44ffed273df3f5d8ee",
+      "identity": "qianxing 0.4.0 (build 7f2c5a9, target x86_64-pc-windows-msvc, profile release, schemas 844f6d99abdf26d44a2e20d53344c7ac415d02275540a62595896b0ff8b36e24)",
+      "version_check": "passed",
+      "clean_install_quickstart": {
+        "result": "passed",
+        "steps": 5,
+        "files": 17,
+        "result_hash": "45038cdcb863b87f",
+        "network_accessed": false,
+        "orders_sent": false
+      }
+    },
+    "sha256_sums": "SHA256SUMS"
+  },
+  "hosted_ci": {
+    "run_number": 452,
+    "run_id": 42810364377,
+    "conclusion": "success",
+    "jobs_total": 33,
+    "jobs_succeeded": 33,
+    "jobs_failed": 0,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/42810364377"
+  },
+  "limitations": [
+    "Unpublished Windows candidate; no GitHub Release, crates.io, or PyPI upload was performed.",
+    "Linux and macOS release artifacts are validated by hosted CI and are not in this Windows candidate directory.",
+    "Authenticated venue acceptance and production approval remain external release gates."
+  ]
+}
