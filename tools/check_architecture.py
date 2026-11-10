@@ -5986,7 +5986,10 @@ def snapshot_money_honesty_check() -> None:
         reader.count("snapshot.equity_raw =") == 1
         and "snapshot.equity_raw = if single_quote_spot {" in reader
         and "account_has_open_positions" in equity_stmt
-        and "equity_for(" in equity_stmt
+        and (
+            (".valuate(&valuation)" in equity_stmt and "result.equity.raw()" in equity_stmt)
+            or "equity_for(" in equity_stmt
+        )
         and "} else {\n        None\n    };" in equity_stmt,
         "账户标量权益只对可证明的单报价现货口径发布；多标的/多币种与无法估值的状态保持缺席",
         f"标量权益的限制或算点丢失：{equity_stmt.strip()!r}",
