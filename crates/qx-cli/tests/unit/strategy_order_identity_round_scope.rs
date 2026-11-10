@@ -532,19 +532,20 @@ fn paper_kelly_strategy_reaches_the_market_spec_risk_and_ledger_path() {
             "kelly-e2e:initial-cash",
         ))
         .unwrap();
+    let quote_received_at = runtime_timestamp_ms();
     pipeline
         .ingest(RuntimeEventEnvelope::market_quote(
             instrument.clone(),
             QuoteTick::new(
-                71,
+                quote_received_at,
                 Price::from_raw(167 * SCALE),
                 Quantity::from_i64(100),
                 Price::from_raw(167 * SCALE),
                 Quantity::from_i64(100),
-                70,
+                quote_received_at,
             ),
-            71,
-            71,
+            quote_received_at,
+            quote_received_at,
             "kelly-e2e:quote",
         ))
         .unwrap();
