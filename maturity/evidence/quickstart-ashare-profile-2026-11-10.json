@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "quickstart_ashare_profile_acceptance",
-  "captured_at_utc": "2026-11-10T06:15:25Z",
+  "captured_at_utc": "2026-11-10T07:04:06Z",
   "source": {
     "base_commit": "0129ba9f4b61ad518691758b1513c77faa66ff56",
     "worktree": "dirty; local quickstart ashare profile implementation",
@@ -69,6 +69,14 @@
       "passed": 4,
       "failed": 0
     },
+    "workspace_full_test_suite": {
+      "command": "cargo test --workspace --features qx-python/extension-module -j 1 --no-fail-fast -- --test-threads=1",
+      "result": "passed",
+      "exit_code": 0,
+      "feature_set": "workspace-wide with qx-python/extension-module",
+      "execution": "serial build and serial tests",
+      "note": "Built the workspace cdylib before testing so Python and CLI entrypoints used matching workspace features. All workspace unit, integration, and doc-test targets completed."
+    },
     "generated_catalogs": {
       "unverified_catalog": "passed",
       "capability_catalog": "passed"
@@ -77,6 +85,7 @@
   "limitations": [
     "The A-share quickstart uses bundled local sample bars and does not validate an external market-data source.",
     "CCXT sandbox quickstart remains open pending credentials and authorized external acceptance.",
-    "The recorded executable is a local debug build from a dirty worktree, not a release artifact."
+    "The recorded executable is a local debug build from a dirty worktree, not a release artifact.",
+    "The workspace suite is Windows-local evidence; Linux/macOS hosted CI and external venue acceptance remain separate release gates."
   ]
 }
