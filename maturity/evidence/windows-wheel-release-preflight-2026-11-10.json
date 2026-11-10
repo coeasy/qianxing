@@ -23,6 +23,13 @@
     "embedded_cli_size_bytes": 44112384,
     "embedded_cli_sha256": "c16fc10717cf2f420e440a9f1d6db9448de503d11f453c673fcbea4a7211ea8f6",
     "embedded_cli_identity": "qianxing 0.4.0 (build c679002, target x86_64-pc-windows-msvc, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)",
+    "standalone_cli": {
+      "path": "dist/release-candidate-v0.4.0-windows-x86_64/qx-cli-v0.4.0-Windows-X64.exe",
+      "size_bytes": 44112384,
+      "sha256": "c16fc10717cf2f420e440a9f1d6db9448de503d11f453c673fcbe4a7211ea8f6",
+      "checksum_file": "dist/release-candidate-v0.4.0-windows-x86_64/qx-cli-v0.4.0-Windows-X64.exe.sha256",
+      "version_check": "passed"
+    },
     "sbom": "qianxing-0.4.0.dist-info/sboms/qx-python.cyclonedx.json"
   },
   "checks": {
