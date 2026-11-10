@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "purpose": "Hosted CI acceptance for the 0.4.0 release candidate after the Windows absolute wheel output path fix",
+  "source": {
+    "commit": "994d3871a12ee362591d04ddea470520b84128c4",
+    "branch": "codex/release-windows-longpaths",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/3",
+    "run_id": 42827355369,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/42827355369",
+    "event": "pull_request"
+  },
+  "result": {
+    "workflow_conclusion": "success",
+    "workflow_jobs_total": 30,
+    "workflow_jobs_succeeded": 30,
+    "workflow_jobs_failed": 0,
+    "pull_request_checks_total": 33,
+    "pull_request_checks_succeeded": 33,
+    "pull_request_checks_failed": 0
+  },
+  "acceptance": {
+    "python_wheels": {
+      "platforms": [
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest"
+      ],
+      "python_versions": [
+        "3.10",
+        "3.11",
+        "3.12",
+        "3.13"
+      ],
+      "jobs_succeeded": 12,
+      "checks": [
+        "native extension and wheel build",
+        "stable-ABI tag and payload audit",
+        "installed wheel import",
+        "Python tests against built extension"
+      ]
+    },
+    "native_and_service_matrix": {
+      "rust_core": "success",
+      "sqlite_postgres_nats_feature_jobs": "success",
+      "linux_postgres_storage_recovery": "success",
+      "backend_service_contracts": "success",
+      "cpp_sdk_smoke_platforms": [
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest"
+      ],
+      "architecture_shards_and_aggregate": "success",
+      "performance_regression_gate": "success"
+    },
+    "windows_wheel_output_path": {
+      "absolute_output_directory_build": "passed locally",
+      "stable_abi_payload_audit": "passed locally",
+      "architecture_contract": "passed in hosted CI"
+    },
+    "venue_testnet": {
+      "offline_fail_closed_checks": "success",
+      "authenticated_testnet_roundtrip": "skipped",
+      "reason": "No testnet credentials were available to the workflow."
+    }
+  },
+  "release_boundary": {
+    "tag_workflow_run": false,
+    "github_release_published": false,
+    "pypi_release_published": false,
+    "production_approval": false,
+    "notes": "This PR CI validates source and hosted acceptance. It does not publish release artifacts or provide vendor authorization, authenticated testnet evidence, production approval, or release signing."
+  }
+}
