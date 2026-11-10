@@ -956,6 +956,16 @@ def normalize_corporate_action_rows(
         if as_of is not None and published_iso > as_of:
             continue
         action_type = _canonical_action_type(row)
+        if action_type == "unknown":
+            raw_action_type = _optional_pick(
+                row, "action_type", "type", "类别", "分红类型", "变动类型", "事件类型"
+            )
+            raise AshareProviderError(
+                f"无法安全识别公司行为类型: {raw_action_type!r}；请更新数据源映射后重试",
+                category="unsupported",
+                suggestion="确认数据源公司行为名称，并补充对应的标准动作映射",
+                source=source,
+            )
 
         cash_raw = _amount_pick(
             row, "cash_dividend", "派息", "现金分红", "每股派息", "fenhong", "cash_dividend"

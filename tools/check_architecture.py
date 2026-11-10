@@ -3143,6 +3143,23 @@ def ashare_cross_language_contract_check() -> None:
         "动作名往返有行为用例兜着（名册里每个名字逐个认回）",
         f"{ASHARE_CROSS_PY_TEST} 丢掉了名册往返用例",
     )
+    check(
+        'if action_type == "unknown"'
+        in python_text[
+            python_text.find("def normalize_corporate_action_rows(") : python_text.find(
+                "def _invoke_rows_method("
+            )
+        ]
+        and 'category="unsupported"'
+        in python_text[
+            python_text.find("def normalize_corporate_action_rows(") : python_text.find(
+                "def _invoke_rows_method("
+            )
+        ]
+        and "test_unrecognized_provider_action_names_fail_closed" in py_test,
+        "未知公司行为在数据源入口 fail closed，不参与现金分红折算",
+        f"{ASHARE_PYTHON_FILE} 或 {ASHARE_CROSS_PY_TEST} 未拒绝未知公司行为",
+    )
 
     # 定点单位口径必须单源：`*_raw` 是已定点整数，其余别名按元/股乘 SCALE。
     normalize_body = python_text[

@@ -186,8 +186,7 @@
       ],
       "limitations": [
         "barframe_json_carries_no_receive_time_so_registry_asof_queries_are_not_offered （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "provider_ingress_is_compared_against_a_shared_fixture_not_against_a_live_endpoint：A2 收的是\"Python 写侧与 Rust 读侧的线格式对照\"，对照物是仓库里的 `ashare_actions_cross_check.*` 三份夹具，akshare/baostock 的真实返回本轮一次都没打过（V13 §6 划定的\"不碰外部\"），所以 `sandbox_tested` 仍为 false；线上列名漂移（新增中文别名、`_raw` 语义变化）不会由这套用例发现，只能靠沙盒轮次 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
-        "canonical_action_names_are_recognised_by_exact_token_then_substring：写侧先按线格式名精确认回，再走中文别名的子串匹配；数据源若发明第 17 种事件名，读侧只会退化 `unknown`（按现金红利参与折算），不会报错 (V13 R1-A2) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
+        "provider_ingress_is_compared_against_a_shared_fixture_not_against_a_live_endpoint：A2 收的是\"Python 写侧与 Rust 读侧的线格式对照\"，对照物是仓库里的 `ashare_actions_cross_check.*` 三份夹具，akshare/baostock 的真实返回本轮一次都没打过（V13 §6 划定的\"不碰外部\"），所以 `sandbox_tested` 仍为 false；线上列名漂移（新增中文别名、`_raw` 语义变化）不会由这套用例发现，只能靠沙盒轮次 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
     "provider_capability_registry": {

@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "249a9d9951fe021e0d86a9d0b4495e968dc09adca7e39a3edca6a4881127e39a",
+    "maturity/capabilities.yaml": "5683e652be095376857b1b89119c61cde998a7dee7b8c3759852797fdf1f4b91",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -165,7 +165,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 109,
+      "evidence_path_count": 110,
       "limitation_count": 3
     },
     {
@@ -399,7 +399,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 20,
+      "evidence_path_count": 21,
       "limitation_count": 1
     },
     {
@@ -1245,9 +1245,10 @@
           ],
           "evidence": [
             "python/qianxing_ashare",
-            "crates/qx-data/src/provider.rs"
+            "crates/qx-data/src/provider.rs",
+            "python/tests/test_ashare_cross_language_contract.py"
           ],
-          "limitations_count": 3
+          "limitations_count": 2
         },
         {
           "id": "provider_capability_registry",
@@ -4021,9 +4022,10 @@
           ],
           "evidence": [
             "python/qianxing_ashare",
-            "crates/qx-data/src/provider.rs"
+            "crates/qx-data/src/provider.rs",
+            "python/tests/test_ashare_cross_language_contract.py"
           ],
-          "limitations_count": 3
+          "limitations_count": 2
         },
         {
           "id": "dataset_bundle_manifest",
