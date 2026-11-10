@@ -36,6 +36,11 @@ fn available_is_the_settlement_cash_and_not_a_copy_of_equity() {
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
+    assert_eq!(
+        snapshot.margin_raw,
+        Some(0),
+        "完整的 Paper 估值输入应发布 initial_margin"
+    );
     let settlement = snapshot
         .cash_raw
         .get("USDT")
@@ -97,7 +102,6 @@ fn uncomputed_money_is_absent_rather_than_zero() {
 
     let snapshot = paper_snapshot(&config);
     for (name, value) in [
-        ("margin_raw", snapshot.margin_raw),
         ("frozen_raw", snapshot.frozen_raw),
         ("funding_raw", snapshot.funding_raw),
     ] {
@@ -105,7 +109,7 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     }
     // 线格式侧：缺席要印成 null，不能印成一个合法的整数 0。
     let wire = snapshot.to_wire_json().unwrap();
-    for name in ["margin_raw", "frozen_raw", "funding_raw"] {
+    for name in ["frozen_raw", "funding_raw"] {
         assert!(
             wire.contains(&format!("\"{name}\":null")),
             "{name} 未算过时线格式必须印 null: {wire}"
@@ -113,8 +117,8 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     }
     let stable = snapshot.to_json().unwrap();
     assert!(
-        stable.contains("\"margin_raw\":null"),
-        "稳定 JSON 同样不得把未算填成 0: {stable}"
+        stable.contains("\"margin_raw\":0"),
+        "已算出的零保证金应保留数值 0: {stable}"
     );
     let _ = std::fs::remove_dir_all(root);
 }

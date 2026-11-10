@@ -575,6 +575,8 @@ pub struct ApiState {
     /// Frozen spot-market specs and the latest derived FX graph used only for read-only cash
     /// equivalents. This deliberately does not feed execution risk or shared margin.
     portfolio_fx_market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    /// Frozen specs for account snapshot valuation, including Paper margin projection.
+    account_market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
     portfolio_fx_rates_by_reporting: BTreeMap<String, BTreeMap<String, ExactDecimal>>,
     portfolio_fx_published_at_ms: u64,
     portfolio_fx_max_quote_age_ms: u64,
@@ -1413,6 +1415,28 @@ impl ApiService {
         &self,
     ) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
         Ok(lock_state(&self.state)?.portfolio_fx_market_specs.clone())
+    }
+
+    /// Configure the frozen market specs used by account snapshot valuation.
+    pub fn set_account_market_specs(
+        &self,
+        specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    ) -> Result<(), String> {
+        if specs
+            .iter()
+            .any(|(instrument, spec)| instrument != &spec.instrument)
+        {
+            return Err("账户估值规格必须与标的身份匹配".into());
+        }
+        lock_state(&self.state)?.account_market_specs = specs;
+        Ok(())
+    }
+
+    /// Return the immutable spec set used by the account projection loop.
+    pub fn account_market_specs(
+        &self,
+    ) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
+        Ok(lock_state(&self.state)?.account_market_specs.clone())
     }
 
     /// Publish FX conversion rates derived from fresh, configured Spot market quotes.

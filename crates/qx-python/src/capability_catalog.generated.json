@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "db5a27dfc92ca76694bb475deee9a4c2758040e0c42306bd5f7d5551535d8326",
+    "maturity/capabilities.yaml": "249a9d9951fe021e0d86a9d0b4495e968dc09adca7e39a3edca6a4881127e39a",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [

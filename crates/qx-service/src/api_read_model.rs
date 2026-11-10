@@ -460,6 +460,8 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
             .ledger()
             .cash_for(account_id, pipeline.settlement_currency())
     });
+    snapshot.margin_raw =
+        paper_account_initial_margin_raw(account_id, venue_id, pipeline, market_specs);
     let fill_facts = pipeline
         .log()
         .events()
@@ -618,6 +620,81 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
     apply_reconcile_reports(&mut snapshot, log_name, reports);
     snapshot.reconcile.recovery_state = "eventlog-replayed".into();
     Ok(snapshot)
+}
+
+fn paper_account_initial_margin_raw(
+    account_id: &str,
+    venue_id: &str,
+    pipeline: &LiveEventPipeline,
+    market_specs: &BTreeMap<InstrumentId, qx_core::TradingInstrumentSpec>,
+) -> Option<i128> {
+    if !venue_id.eq_ignore_ascii_case("paper") {
+        return None;
+    }
+
+    let ledger = pipeline.ledger();
+    let mut held_instruments = BTreeSet::new();
+    for entry in ledger
+        .entries()
+        .iter()
+        .filter(|entry| entry.account_id == account_id)
+    {
+        let Some(instrument) = entry.instrument.as_ref() else {
+            continue;
+        };
+        let aggregate = ledger.position_for(account_id, instrument);
+        let has_position = !aggregate.quantity.is_zero()
+            || [PositionSide::Long, PositionSide::Short]
+                .into_iter()
+                .any(|side| {
+                    !ledger
+                        .position_for_side(account_id, instrument, side)
+                        .quantity
+                        .is_zero()
+                });
+        if has_position {
+            held_instruments.insert(instrument.clone());
+        }
+    }
+    if held_instruments
+        .iter()
+        .any(|instrument| !market_specs.contains_key(instrument))
+    {
+        return None;
+    }
+
+    let reporting_currency = pipeline.settlement_currency().trim().to_ascii_uppercase();
+    let mut required_fx = ledger
+        .cash_balances_for(account_id)
+        .into_iter()
+        .filter(|(_, amount)| *amount != 0)
+        .map(|(currency, _)| currency.trim().to_ascii_uppercase())
+        .collect::<BTreeSet<_>>();
+    for instrument in &held_instruments {
+        let spec = market_specs.get(instrument)?;
+        required_fx.insert(if spec.product == qx_core::TradingProduct::Spot {
+            spec.quote_currency.trim().to_ascii_uppercase()
+        } else {
+            spec.settlement_currency.trim().to_ascii_uppercase()
+        });
+    }
+    required_fx.remove(&reporting_currency);
+    let fx_rates = crate::risk_host::spot_fx_rates_to_reporting(
+        market_specs,
+        pipeline.marks(),
+        required_fx,
+        &reporting_currency,
+    )
+    .ok()?;
+    let context = qx_core::PaperValuationContext::new(
+        account_id,
+        pipeline.marks(),
+        &reporting_currency,
+        market_specs,
+        &fx_rates,
+    );
+    let result = ledger.valuate_paper(&context).ok()?;
+    Some(result.initial_margin.raw())
 }
 
 /// Fill position PnL only when the venue omitted it and the read model has a frozen market

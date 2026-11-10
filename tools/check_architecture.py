@@ -4683,7 +4683,6 @@ SNAPSHOT_OPTIONAL_FIELDS = tuple(name for name in SNAPSHOT_SCALARS if name != "e
 # 没有来源可算、必须停在 `None` 的那三个；`available_raw`/`fees_raw` 各有自己的算点，
 # `realized_pnl_raw`/`unrealized_pnl_raw` 自 V13 R26 起由 Ledger 投影接上生产者。
 SNAPSHOT_UNCOMPUTED_FIELDS = (
-    "margin_raw",
     "frozen_raw",
     "funding_raw",
 )
@@ -6195,9 +6194,8 @@ def account_money_field_registry_check() -> None:
     case_names = sorted(set(re.findall(r'"(\w+_raw)"', case_body)))
     check(
         case_start >= 0
-        and case_names == sorted(uncomputed)
-        and r'\"margin_raw\":null' in case_body,
-        "读侧那条 null 用例逐字段点名这三格，并真的断言了线格式与稳定 JSON 印 null 而不是 0",
+        and case_names == sorted(uncomputed),
+        "读侧那条 null 用例逐字段点名无生产者字段，并真的断言了线格式印 null 而不是 0",
         f"用例在位={case_start >= 0} / 用例点名 {case_names} / 派生未算 {sorted(uncomputed)}",
     )
 

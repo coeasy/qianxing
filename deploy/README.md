@@ -370,11 +370,9 @@ snapshot_not_found`）：一个账户刚挂上投影、还没算出第一份快�
 是两件事，合成一个码就读不回来了。`/account/snapshot/diff` 不在这七条里——它的定位符是
 `base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。反过来，那四条整体现读端点里只有两条**没有收窄键**：`/scheduler/runs` 与 `/control/audit` 带任何查询串一律 `400`（第一张表原先在 `/account/ledger` 那一格写着 `[?…]`，而那条臂从头到尾没读过 `query`，递来 `?account_id=shadow` 只会把默认账户的流水念成 shadow 的流水，V13 R2 第十三遍 #205）。`/account/ledger` 与 `/reconcile/reports` 则反过来**真能收窄**——#205 的口径对它们当时只是暂时正确（两条臂确实都没读 `query`），而数据模型一直在：`LedgerEntry` 带 `account_id`，`ReconcileReportSnapshot` 还多带 `venue_id`，只有 `JobRun` 与 `AuditRecord` 两格什么账户列都没有。R31 把这两条臂接上 `read_scope::ScopeFilter::from_query`，键形状合法但过滤不出条目时回 `200` 空数组，而不是投影那族的 `404 account_projection_not_found`：它读的还是整份现读模型，收窄只发生在结果集上，跟「这份部署里没有这个账户的投影」不是一回事，两条通道各说各话才不会把「空流水」读成「这个账户不存在」；账簿那一格只认 `account_id` 不是取巧，`LedgerEntry` 没有 `venue_id` 字段，递 `?venue_id=` 照样 `400` 并点名被拒的那把键。
 
-账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建分两类：有算点的是 `equity_raw`、`available_raw`、
-`fees_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`；**账户级无生产者字段**：`margin_raw`、`frozen_raw`、
-`funding_raw`。后三格在 `/account/snapshot` 与其 envelope 里恒为 `null`（`/account/balances` 只公布其中
-`margin_raw` 一格，同样是 `null`）：`null` 的含义是"这一层没有算它"，不是 0，也不能读成"这个账户没有
-保证金占用 / 没交过资金费"。这份名单不靠手抄维持——门禁 `account_money_field_registry_check`
+账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建中，Paper 输入完整时有算点的是 `equity_raw`、`available_raw`、
+`margin_raw`、`fees_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`；**账户级无生产者字段**：`frozen_raw`、
+`funding_raw`；这两格为 `null`，不是 0。Paper 的 `margin_raw` 等于 `Ledger::valuate_paper` 返回的初始保证金；规格、标记价或 FX 缺失时，以及 Live 账户中，字段为 `null`。冻结金额和资金费在快照中仍为 `null`。这里的 `null` 表示未计算，不能读成没有保证金 / 资金费。Live 保证金语义待交易所规则与证据确认。这份名单不靠手抄维持——门禁 `account_money_field_registry_check`
 把它与协议里的 `Option<i128>` 声明、`schemas/account-snapshot-v1.json` 的逐字段 description、
 `maturity/capabilities.yaml` 的逐字段 limitation 与读侧 null 用例的点名集合逐条对齐，任一侧改口即红（V13 R1-A5；
 V13 R26 把 `realized_pnl_raw`/`unrealized_pnl_raw` 接上生产者，名单从五格收到三格）。

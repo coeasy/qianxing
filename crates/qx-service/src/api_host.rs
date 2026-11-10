@@ -56,12 +56,18 @@ pub fn build_configured_api_service(
     let command_queue = configured_command_queue(config, &control_root)?;
     let mut state = ApiState::default();
     state.control = control;
-    let portfolio_fx_specs = configured_portfolio_fx_specs(config, runtime_config_path)?;
+    let account_market_specs =
+        crate::api_read_model::configured_market_specs(config, Some(runtime_config_path))?;
+    let portfolio_fx_specs = account_market_specs
+        .iter()
+        .filter(|(_, spec)| spec.product == TradingProduct::Spot)
+        .map(|(instrument, spec)| (instrument.clone(), spec.clone()))
+        .collect::<BTreeMap<_, _>>();
     hydrate_api_initial_state_with_market_specs(
         config,
         &control_root,
         &mut state,
-        &portfolio_fx_specs,
+        &account_market_specs,
     )?;
 
     let readiness_store = control_store.clone();
@@ -185,6 +191,7 @@ pub fn build_configured_api_service(
             }
         });
     service.set_portfolio_fx_market_specs(portfolio_fx_specs)?;
+    service.set_account_market_specs(account_market_specs)?;
     service = attach_query_models_provider(service, config);
     if let Some(registry) = crate::provider_registry::from_runtime_config(
         config,
@@ -227,16 +234,6 @@ pub fn build_configured_api_service(
             });
     }
     configure_api_host_policies(service, config, &control_root)
-}
-
-fn configured_portfolio_fx_specs(
-    config: &RuntimeConfig,
-    runtime_config_path: &Path,
-) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
-    let mut specs =
-        crate::api_read_model::configured_market_specs(config, Some(runtime_config_path))?;
-    specs.retain(|_, spec| spec.product == TradingProduct::Spot);
-    Ok(specs)
 }
 
 fn portfolio_fx_rates(
@@ -387,6 +384,13 @@ pub fn spawn_api_projection_bridge(
         Ok(specs) => specs,
         Err(error) => {
             eprintln!("[运行时 · API] 读取组合 FX 规格失败: {error}");
+            BTreeMap::new()
+        }
+    };
+    let account_market_specs = match service.account_market_specs() {
+        Ok(specs) => specs,
+        Err(error) => {
+            eprintln!("[运行时 · API] 读取账户估值规格失败: {error}");
             BTreeMap::new()
         }
     };
@@ -543,7 +547,7 @@ pub fn spawn_api_projection_bridge(
                                     current,
                                     &reports,
                                     portfolio_id,
-                                    &fx_specs,
+                                    &account_market_specs,
                                     &trading_day,
                                 ) {
                                     Ok(snapshot) => {
