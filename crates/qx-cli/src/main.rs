@@ -323,7 +323,7 @@ fn run_recovery_child(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Python 解释器解析：`QX_PYTHON` 环境变量优先，否则回落到 `python`。
+/// Python 解释器解析：`QX_PYTHON` 环境变量优先；默认按平台使用 PATH 上的解释器。
 ///
 /// CLI 里所有跨语言子进程（CCXT worker、Python/C++ 策略 worker）都从这里取解释器，
 /// 避免同一份运行时配置在不同 worker 下指向不同解释器。
@@ -335,9 +335,18 @@ fn python_interpreter() -> String {
 /// 占位桩（实测 `python --version` 无 stdout/stderr、退出码 49），只报"worker 已关闭输出"
 /// 无法区分"解释器不可用"与"策略代码报错"，所以回落必须在失败信息里说出来。
 pub(crate) fn python_interpreter_origin() -> (String, &'static str) {
-    match std::env::var("QX_PYTHON") {
-        Ok(value) if !value.trim().is_empty() => (value, "来自 QX_PYTHON"),
-        _ => ("python".into(), "QX_PYTHON 未设置，回落 PATH python"),
+    let configured = std::env::var("QX_PYTHON").ok();
+    python_interpreter_for(configured.as_deref(), cfg!(windows))
+}
+
+fn python_interpreter_for(configured: Option<&str>, is_windows: bool) -> (String, &'static str) {
+    if let Some(value) = configured.filter(|value| !value.trim().is_empty()) {
+        return (value.to_owned(), "来自 QX_PYTHON");
+    }
+    if is_windows {
+        ("python".into(), "QX_PYTHON 未设置，回落 PATH python")
+    } else {
+        ("python3".into(), "QX_PYTHON 未设置，回落 PATH python3")
     }
 }
 
