@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-10T10:19:52Z",
+  "source": {
+    "commit": "47021fee02948a1c93021a1ccd072bba312d59cf",
+    "worktree": "clean detached worktree",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows 11",
+    "rust": "1.98.1",
+    "python": "3.13.13",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifacts": {
+    "directory": "dist/release-candidate-v0.4.0-windows-x86_64-artifacts/",
+    "wheel": {
+      "file": "qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+      "size_bytes": 22888816,
+      "sha256": "b177a3c60ed60ea0dfb15a56c06c3975e0b88d00fd0b6406e178d75898adc2ef",
+      "stable_abi_check": "passed",
+      "embedded_native_import": "passed",
+      "clean_venv_install": "passed",
+      "e2e_smoke": {
+        "result": "passed",
+        "summary": "17 strategies; 70 rows; fills=1; A-share fills=1; classic selection=13/13; parameter grid=4/4; accounts=2; multileg=1/2; depth fills=1; custom fills=1; run handle succeeded; verified=true"
+      }
+    },
+    "cli": {
+      "file": "qx-cli-v0.4.0-Windows-X64.exe",
+      "size_bytes": 44131840,
+      "sha256": "f903b7f62b3d943c02c17f080d3d1705a830594f67846a8282cdbc0b6ba33fd9",
+      "identity": "qianxing 0.4.0 (build 47021fe, target x86_64-pc-windows-msvc, profile release)",
+      "version_check": "passed",
+      "ashare_quickstart": {
+        "result": "passed",
+        "steps": 5,
+        "files": 16,
+        "result_hash": "a294bca0f96cc85b",
+        "network_accessed": false,
+        "orders_sent": false
+      }
+    },
+    "checksum_file": "SHA256SUMS"
+  },
+  "limitations": [
+    "Unpublished Windows candidate; no GitHub Release, crates.io, or PyPI upload was performed.",
+    "Linux and macOS release artifacts are covered by hosted CI but were not assembled into this local candidate directory.",
+    "Authenticated venue acceptance remains unavailable without authorized credentials."
+  ]
+}
