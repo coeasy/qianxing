@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "linux_c_abi_signature_load_acceptance",
+  "captured_at_utc": "2026-11-10T09:30:30Z",
+  "source": {
+    "commit": "32c6dd83135eb99b952a309a2f93fd4512feca90",
+    "branch": "codex/release-windows-longpaths",
+    "published": false
+  },
+  "environment": {
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "rust_version": "1.98.1",
+    "target": "x86_64-unknown-linux-gnu",
+    "cargo_net_offline": true
+  },
+  "acceptance": {
+    "command": "cargo test -p qx-strategy --test legacy_c_abi_capability_load -- --nocapture",
+    "passed": 2,
+    "failed": 0,
+    "cases": {
+      "legacy_plugin_without_optional_requirement_export_loads_empty_requirements_and_fails_closed_before_create": "passed",
+      "signed_c_abi_library_loads_and_bad_signature_is_rejected_before_plugin_create": "passed"
+    },
+    "signed_library_behavior": {
+      "valid_ed25519_signature_loads": true,
+      "invalid_signature_rejected_before_create": true
+    }
+  },
+  "limitations": [
+    "This is local code-level acceptance; it does not provide process-level memory isolation for an in-process native library.",
+    "It is not authenticated venue sandbox or production evidence."
+  ]
+}
