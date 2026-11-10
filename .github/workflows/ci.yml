@@ -864,7 +864,7 @@ jobs:
           import json
           import sys
 
-          expected_failure_counts = {
+          expected_signer_failure_counts = {
               "binance-testnet": 1,
               "ccxt": 1,
               "multi-venue-arbitrage": 2,
@@ -873,9 +873,21 @@ jobs:
           with open(sys.argv[1], encoding="utf-8") as report_file:
               report = json.load(report_file)
           failures = report["failures"]
+          signer_failures = [
+              failure for failure in failures
+              if "FAIL_CLOSED" in failure and "签名角色目录" in failure
+          ]
+          capability_failures = [
+              failure for failure in failures
+              if "multi_instrument" in failure
+          ]
           assert report["ok"] is False
-          assert len(failures) == expected_failure_counts[sys.argv[2]], failures
-          assert all("FAIL_CLOSED" in failure and "签名角色目录" in failure for failure in failures), failures
+          assert len(signer_failures) == expected_signer_failure_counts[sys.argv[2]], failures
+          if sys.argv[2] in {"multi-venue-arbitrage", "multi-venue-contract"}:
+              assert len(capability_failures) == 1, failures
+          else:
+              assert not capability_failures, failures
+          assert len(failures) == len(signer_failures) + len(capability_failures), failures
           assert report.get("network_accessed", False) is False
           assert report.get("orders_sent", False) is False
           PY
