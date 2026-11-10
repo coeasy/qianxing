@@ -387,6 +387,10 @@ def _canonical_action_type(row: Mapping[str, Any]) -> str:
         return "convertible_bond_conversion"
     if _optional_pick(row, "派息", "现金分红", "fenhong", "cash_dividend") is not None:
         return "cash_dividend"
+    if _optional_pick(row, "送股", "送股比例", "bonus_share", "bonus_ratio", "songzhuangu") is not None:
+        return "bonus_share"
+    if _optional_pick(row, "转增", "转增比例", "capital_transfer", "transfer_ratio") is not None:
+        return "capital_transfer"
     return "unknown"
 
 
