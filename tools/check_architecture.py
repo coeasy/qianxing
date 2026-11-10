@@ -676,6 +676,15 @@ def wheel_builder_check() -> None:
             f"{path.name} 在打 wheel 前把 qx-cli 装进 qianxing/_bin",
             f"qianxing/_bin 位置 {staged}，maturin build 位置 {build}：装载晚于打包或缺失时 wheel 没有报告渲染器",
         )
+        if path == ps1:
+            output_path = text.find("$OutputPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory))")
+            output_create = text.find("-Path $OutputPath")
+            output_use = text.find("--out $OutputPath")
+            check(
+                0 <= output_path < output_create < output_use,
+                "Windows wheel 构建器同时解析绝对与相对输出目录，并将同一路径用于创建和 maturin 输出",
+                f"OutputPath/root/create/use positions: {output_path}/{output_create}/{output_use}",
+            )
         check(
             0 <= maturin_config_dir < build,
             f"{path.name} 在打 wheel 前创建 Pyo3 配置目录",
