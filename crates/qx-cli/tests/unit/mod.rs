@@ -585,6 +585,7 @@ mod risk_port_channel;
 mod run_entry_argument_honesty;
 mod run_evidence;
 mod runtime_api_worker_identity;
+mod runtime_capability_matrix;
 mod runtime_cors_warning;
 mod runtime_market_spec_preflight;
 mod scheduler_dispatch_support;

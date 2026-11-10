@@ -176,7 +176,7 @@ fn runtime_check_report_is_machine_readable_and_safe() {
         .join("deploy")
         .join("qianxing.runtime.example.json");
     let report = collect_runtime_check_report(&path).unwrap();
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
     assert_eq!(report["ok"], true);
     assert_eq!(report["network_accessed"], false);
     assert_eq!(report["orders_sent"], false);

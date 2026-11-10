@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 #[path = "app_three_entrypoints/algo_execution.rs"]
 mod algo_execution_entrypoints;
@@ -210,16 +210,29 @@ fn via_cli(spec_json: &str, root: &Path) -> Value {
 
 /// HTTP 腿：走 `qx_api` 的分派入口（与 `qx-cli serve` 后面那台服务同一个入口）。
 fn via_http(route: &str, body: &str) -> (u16, Value) {
-    static CONFIGURED_PATHS: OnceLock<()> = OnceLock::new();
-    CONFIGURED_PATHS.get_or_init(|| {
-        std::env::set_var("QX_API_DATA_ROOT", repo_root());
-        std::env::set_var(
-            "QX_API_ARTIFACT_ROOT",
-            repo_root()
-                .join("target")
-                .join(format!("qx-app-g1-api-{}", std::process::id())),
-        );
+    static HTTP_ENV_LOCK: Mutex<()> = Mutex::new(());
+    static RUN_NONCE: OnceLock<u128> = OnceLock::new();
+    let _env_guard = HTTP_ENV_LOCK.lock().expect("HTTP test environment lock");
+    let run_nonce = *RUN_NONCE.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos()
     });
+    let body_fingerprint = body
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    std::env::set_var("QX_API_DATA_ROOT", repo_root());
+    std::env::set_var(
+        "QX_API_ARTIFACT_ROOT",
+        repo_root()
+            .join("target")
+            .join(format!("qx-app-g1-api-{}", std::process::id()))
+            .join(format!("{run_nonce}-{body_fingerprint:016x}")),
+    );
     let service = qx_api::ApiService::new(qx_api::ApiState::default());
     let response = service.handle("POST", route, body, 0);
     let payload = serde_json::from_str(&response.body)

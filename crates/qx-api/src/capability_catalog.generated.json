@@ -3,12 +3,12 @@
   "kind": "qianxing-capability-catalog",
   "source_updated_at": {
     "matrix": "2026-10-24",
-    "maturity": "2026-11-09",
+    "maturity": "2026-11-10",
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "44bb52a37a70f5ad6c7344c67ab5974f54c0885dd228514ca12dabc03c8182e3",
-    "maturity/capabilities.yaml": "8f95ec0f7c9c69abf01e8248d88dd1624b55d8e1bcf3a70bdc53780c71440006",
+    "maturity/capabilities.yaml": "df99e056cc6c3449533c74f2be88679e62ce5006085ade39b246ec8217206449",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -185,7 +185,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 240,
+      "evidence_path_count": 241,
       "limitation_count": 10
     },
     {
@@ -253,7 +253,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 110,
+      "evidence_path_count": 111,
       "limitation_count": 3
     },
     {
@@ -1552,6 +1552,7 @@
             "crates/qx-cli/tests/unit/strategy_worker_entries.rs builtin_worker_reads_the_declared_signal_parameters：paper/live worker 与四条回测链问的是同一个信号读点，四项全缺才回落 5/20/14/100（V11 Q64）",
             "crates/qx-cli/src/venue_runtime/paper_submit.rs refuses the A-share section as its first statement, ahead of reading the runtime config and the SubmitOrder command (V11 Q65)",
             "crates/qx-cli/tests/unit/ashare_submit_guard.rs covers paper-worker, paper-submit-order, binance-submit-order and ccxt-worker, each with a key-free baseline of the same fixture (V11 Q65)",
+            "crates/qx-cli/src/runtime_check/capabilities.rs + crates/qx-cli/src/runtime_check.rs: runtime-check schema v4 exposes every CommandKind with reason/required_evidence; enabled scheduler jobs are evaluated individually against JobSpec validation and the live dispatcher shape; configured A-share Paper submissions are structured blocking failures; explicit and built-in strategy requirements are checked against the configured host catalog, while C ABI requirements remain unknown until the verified library is loaded; unknown StrategyCapability values are rejected while reading RuntimeConfig. crates/qx-cli/tests/unit/runtime_capability_matrix.rs covers supported/unimplemented commands, unsupported manual scheduler trigger, A-share Paper refusal, unsupported explicit and implicit built-in strategy requirements, and unknown capability rejection (P0-5, 2026-11-10)",
             "crates/qx-cli/src/api_service.rs publishes available_raw from the settlement-currency ledger cash and fees_raw as the checked sum of the same snapshot's fills, refusing the snapshot instead of wrapping (V11 Q67)",
             "crates/qx-cli/tests/unit/api_snapshot_money_fields.rs 8 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, the reconcile block is projected from this account's own reports, and equity is absent while a held position has no mark price yet recomputes once a quote arrives (V11 Q67/Q68/R7/Q70)",
             "crates/qx-core/src/event.rs + crates/qx-protocol/src/wire.rs hold the three position money fields as Option and hash/serialize them with a presence tag, so \"venue did not report\" is no longer the same state as \"venue reported zero\" (V11 Q68)",
@@ -1640,7 +1641,7 @@
             "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
             "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 21
+          "limitations_count": 22
         },
         {
           "id": "factor_research_bridge",
@@ -2196,6 +2197,7 @@
             "crates/qx-cli/tests/unit/strategy_worker_entries.rs builtin_worker_reads_the_declared_signal_parameters：paper/live worker 与四条回测链问的是同一个信号读点，四项全缺才回落 5/20/14/100（V11 Q64）",
             "crates/qx-cli/src/venue_runtime/paper_submit.rs refuses the A-share section as its first statement, ahead of reading the runtime config and the SubmitOrder command (V11 Q65)",
             "crates/qx-cli/tests/unit/ashare_submit_guard.rs covers paper-worker, paper-submit-order, binance-submit-order and ccxt-worker, each with a key-free baseline of the same fixture (V11 Q65)",
+            "crates/qx-cli/src/runtime_check/capabilities.rs + crates/qx-cli/src/runtime_check.rs: runtime-check schema v4 exposes every CommandKind with reason/required_evidence; enabled scheduler jobs are evaluated individually against JobSpec validation and the live dispatcher shape; configured A-share Paper submissions are structured blocking failures; explicit and built-in strategy requirements are checked against the configured host catalog, while C ABI requirements remain unknown until the verified library is loaded; unknown StrategyCapability values are rejected while reading RuntimeConfig. crates/qx-cli/tests/unit/runtime_capability_matrix.rs covers supported/unimplemented commands, unsupported manual scheduler trigger, A-share Paper refusal, unsupported explicit and implicit built-in strategy requirements, and unknown capability rejection (P0-5, 2026-11-10)",
             "crates/qx-cli/src/api_service.rs publishes available_raw from the settlement-currency ledger cash and fees_raw as the checked sum of the same snapshot's fills, refusing the snapshot instead of wrapping (V11 Q67)",
             "crates/qx-cli/tests/unit/api_snapshot_money_fields.rs 8 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, the reconcile block is projected from this account's own reports, and equity is absent while a held position has no mark price yet recomputes once a quote arrives (V11 Q67/Q68/R7/Q70)",
             "crates/qx-core/src/event.rs + crates/qx-protocol/src/wire.rs hold the three position money fields as Option and hash/serialize them with a presence tag, so \"venue did not report\" is no longer the same state as \"venue reported zero\" (V11 Q68)",
@@ -2284,7 +2286,7 @@
             "crates/qx-cli/src/venue_runtime/paper_worker.rs `run_paper_pipeline_once` 末行按「本轮新增」给结论：进场快照 `orders_before`/`ledger_before`，`new_orders > 0` 才打带验收 ✓ 的成功行并并列 `(+N 本轮新增)`，否则如实说「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」；同日重跑两遍都退 0——幂等空转仍留 Ok，既有契约 `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 的两次 unwrap 不受影响。改前旧末行读累计量，第二遍 `skipped=1`/`processed=0` 也照打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt`）。判据 `tools/check_architecture.py paper_check_delta_honesty_check` 三条 + 集成用例 `paper_check_same_day_rerun_does_not_claim_a_fresh_success`（V13 第三十一遍 ②",
             "crates/qx-service/src/api_read_model.rs `position_unrealized_pnl_uses_frozen_spec_and_keeps_exact_result` 与 `position_unrealized_pnl_preserves_exchange_value_and_missing_inputs`，以及 crates/qx-cli/tests/unit/api_snapshot_pnl_fields.rs `realized_and_unrealized_pnl_are_projected_from_the_ledger` 钉住账户持仓 PnL：交易所已报时保留原值；缺失时只用匹配的冻结规格、数量、开仓价与标记价计算，并同时写精确侧车和 1e-9 兼容值；输入不全则继续缺席"
           ],
-          "limitations_count": 21
+          "limitations_count": 22
         }
       ]
     },
