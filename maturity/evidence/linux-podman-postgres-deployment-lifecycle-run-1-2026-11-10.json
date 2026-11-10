@@ -1,0 +1,576 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_strategy_deployment_lifecycle_acceptance",
+  "run_id": "196a97866ec0461192847bcbfe246aaa",
+  "environment": "linux_local_postgres_paper_loopback",
+  "storage_backend": "postgres",
+  "runtime_profile": "distributed",
+  "storage_consistency": "transactional",
+  "operator_id": "console-operator",
+  "worker_id": "strategy-r09-196a97866ec0",
+  "effects": {
+    "venue_worker_started": false,
+    "orders_sent": false,
+    "external_network_access": false
+  },
+  "operations": [
+    {
+      "action": "deploy",
+      "target_revision": 1,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+      "state": "succeeded",
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "action": "pause",
+      "target_revision": 1,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-pause-1-1",
+      "state": "succeeded",
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "action": "resume",
+      "target_revision": 1,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-resume-1-2",
+      "state": "succeeded",
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "action": "rollback",
+      "target_revision": 2,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-rollback-2-3",
+      "state": "succeeded",
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "action": "deploy",
+      "target_revision": 3,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-3-4",
+      "state": "failed",
+      "error_code": "STRATEGY_DEPLOYMENT_FAILED",
+      "error_message": "replacement failed and previous strategy revision was restored: replacement strategy worker exited before becoming ready (2)"
+    },
+    {
+      "action": "stop",
+      "target_revision": 4,
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+      "state": "succeeded",
+      "error_code": null,
+      "error_message": null
+    }
+  ],
+  "outcome": "passed",
+  "bootstrap_login_http_status": 200,
+  "session_cookie_issued": true,
+  "csrf_cookie_issued": true,
+  "revision_count": 4,
+  "restored_revision": 2,
+  "final_projection": {
+    "schema_version": 1,
+    "worker_id": "strategy-r09-196a97866ec0",
+    "strategy_id": "strategy-r09-196a97866ec0",
+    "strategy_version": "1.0",
+    "account_id": "main",
+    "venue_id": "paper",
+    "enabled": true,
+    "state": "stopped",
+    "observed_at_ms": 1794287106419,
+    "observation": {
+      "schema_version": 3,
+      "worker_id": "strategy-r09-196a97866ec0",
+      "config_sha256": "6fe135062ad1790499b652521c58aae8c8685c6a2277c1383e45ec28bf17485d",
+      "process_id": 6849,
+      "owner_id": "strategy-r09-196a97866ec0@6849-1794287105615351498-1",
+      "observed_at_ms": 1794287106419,
+      "phase": "stopped",
+      "host_capabilities": {
+        "schema_version": 1,
+        "host_id": "runtime_python_class_bar",
+        "profile": "server",
+        "supported": [
+          "bar",
+          "bar_history",
+          "fill_updates",
+          "order_status_updates",
+          "durable_checkpoint",
+          "account_updates",
+          "position_updates"
+        ]
+      },
+      "checkpoint_roundtrip_observed": false,
+      "host_lifecycle": {
+        "schema_version": 2,
+        "host_id": "runtime_python_class_bar",
+        "constructed": true,
+        "initialized": false,
+        "checkpoint_input_supplied": true,
+        "warmup_applicable": true,
+        "warmup_required_instruments": [],
+        "warmup_completed_instruments": []
+      }
+    },
+    "active_owner_ids": [],
+    "trading_enabled": null,
+    "blocking_reasons": [
+      "live_readiness_not_evaluated",
+      "worker_stopped",
+      "strategy_initialization_not_observed",
+      "checkpoint_roundtrip_not_observed"
+    ],
+    "desired_revision": 4,
+    "desired_running": false,
+    "latest_operation": {
+      "schema_version": 1,
+      "kind": "qianxing_strategy_deployment_operation",
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+      "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+      "request_sha256": "5a3cf3ad204a49d20ec6ef4ceceb5c2b380451ecc8d08404fa872791526df884",
+      "worker_id": "strategy-r09-196a97866ec0",
+      "action": "stop",
+      "target_revision": 4,
+      "requested_at_ms": 1794287106301,
+      "requested_by": "console-operator",
+      "state": "succeeded",
+      "accepted_at_ms": 1794287106301,
+      "completed_at_ms": 1794287106547,
+      "error_code": null,
+      "error_message": null
+    },
+    "reconciliation": {
+      "schema_version": 1,
+      "state": "missing",
+      "matching_report_count": 0,
+      "fresh_report_count": 0,
+      "observed_at_ms": null,
+      "freshest_age_ms": null,
+      "blocking_reasons": [
+        "live_reconciliation_missing"
+      ]
+    },
+    "operation_history": [
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+        "request_sha256": "5a3cf3ad204a49d20ec6ef4ceceb5c2b380451ecc8d08404fa872791526df884",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "stop",
+        "target_revision": 4,
+        "requested_at_ms": 1794287106301,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287106301,
+        "completed_at_ms": 1794287106547,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-3-4",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-3-4",
+        "request_sha256": "7f6e19559750b97e88fc2d970daa3d9ecb8f0cf592f0a2917fcf9c33f6380f1d",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "deploy",
+        "target_revision": 3,
+        "requested_at_ms": 1794287104900,
+        "requested_by": "console-operator",
+        "state": "failed",
+        "accepted_at_ms": 1794287104900,
+        "completed_at_ms": 1794287106234,
+        "error_code": "STRATEGY_DEPLOYMENT_FAILED",
+        "error_message": "replacement failed and previous strategy revision was restored: replacement strategy worker exited before becoming ready (2)"
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-rollback-2-3",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-rollback-2-3",
+        "request_sha256": "2353a8dc18b025daaaf9830bed0d4c885ef6fd6c68b2ac2980984826be83192b",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "rollback",
+        "target_revision": 2,
+        "requested_at_ms": 1794287103942,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103942,
+        "completed_at_ms": 1794287104834,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-resume-1-2",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-resume-1-2",
+        "request_sha256": "7890a09621aff96048fb1704c6aa86b5bb6585168665ec84751146e21caf2504",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "resume",
+        "target_revision": 1,
+        "requested_at_ms": 1794287103674,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103674,
+        "completed_at_ms": 1794287103882,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-pause-1-1",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-pause-1-1",
+        "request_sha256": "83f592aec7e5e74df7312f4d1f93b5e9732fc1f4a46494944496854070724696",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "pause",
+        "target_revision": 1,
+        "requested_at_ms": 1794287103194,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103194,
+        "completed_at_ms": 1794287103442,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "request_sha256": "71c221187a07e8f12088f4dae9ef0c243f02f252e370326dd46dc7a2671a21f0",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "deploy",
+        "target_revision": 1,
+        "requested_at_ms": 1794287063813,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287063813,
+        "completed_at_ms": 1794287064671,
+        "error_code": null,
+        "error_message": null
+      }
+    ]
+  },
+  "supervisor_restarted": true,
+  "supervisor_stopped_gracefully": true,
+  "supervisor_exit_code_before_restart": 0,
+  "restart_projection": {
+    "schema_version": 1,
+    "worker_id": "strategy-r09-196a97866ec0",
+    "strategy_id": "strategy-r09-196a97866ec0",
+    "strategy_version": "1.0",
+    "account_id": "main",
+    "venue_id": "paper",
+    "enabled": true,
+    "state": "stopped",
+    "observed_at_ms": 1794287106419,
+    "observation": {
+      "schema_version": 3,
+      "worker_id": "strategy-r09-196a97866ec0",
+      "config_sha256": "6fe135062ad1790499b652521c58aae8c8685c6a2277c1383e45ec28bf17485d",
+      "process_id": 6849,
+      "owner_id": "strategy-r09-196a97866ec0@6849-1794287105615351498-1",
+      "observed_at_ms": 1794287106419,
+      "phase": "stopped",
+      "host_capabilities": {
+        "schema_version": 1,
+        "host_id": "runtime_python_class_bar",
+        "profile": "server",
+        "supported": [
+          "bar",
+          "bar_history",
+          "fill_updates",
+          "order_status_updates",
+          "durable_checkpoint",
+          "account_updates",
+          "position_updates"
+        ]
+      },
+      "checkpoint_roundtrip_observed": false,
+      "host_lifecycle": {
+        "schema_version": 2,
+        "host_id": "runtime_python_class_bar",
+        "constructed": true,
+        "initialized": false,
+        "checkpoint_input_supplied": true,
+        "warmup_applicable": true,
+        "warmup_required_instruments": [],
+        "warmup_completed_instruments": []
+      }
+    },
+    "active_owner_ids": [],
+    "trading_enabled": null,
+    "blocking_reasons": [
+      "live_readiness_not_evaluated",
+      "worker_stopped",
+      "strategy_initialization_not_observed",
+      "checkpoint_roundtrip_not_observed"
+    ],
+    "desired_revision": 4,
+    "desired_running": false,
+    "latest_operation": {
+      "schema_version": 1,
+      "kind": "qianxing_strategy_deployment_operation",
+      "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+      "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+      "request_sha256": "5a3cf3ad204a49d20ec6ef4ceceb5c2b380451ecc8d08404fa872791526df884",
+      "worker_id": "strategy-r09-196a97866ec0",
+      "action": "stop",
+      "target_revision": 4,
+      "requested_at_ms": 1794287106301,
+      "requested_by": "console-operator",
+      "state": "succeeded",
+      "accepted_at_ms": 1794287106301,
+      "completed_at_ms": 1794287106547,
+      "error_code": null,
+      "error_message": null
+    },
+    "reconciliation": {
+      "schema_version": 1,
+      "state": "missing",
+      "matching_report_count": 0,
+      "fresh_report_count": 0,
+      "observed_at_ms": null,
+      "freshest_age_ms": null,
+      "blocking_reasons": [
+        "live_reconciliation_missing"
+      ]
+    },
+    "operation_history": [
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-stop-4-5",
+        "request_sha256": "5a3cf3ad204a49d20ec6ef4ceceb5c2b380451ecc8d08404fa872791526df884",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "stop",
+        "target_revision": 4,
+        "requested_at_ms": 1794287106301,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287106301,
+        "completed_at_ms": 1794287106547,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-3-4",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-3-4",
+        "request_sha256": "7f6e19559750b97e88fc2d970daa3d9ecb8f0cf592f0a2917fcf9c33f6380f1d",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "deploy",
+        "target_revision": 3,
+        "requested_at_ms": 1794287104900,
+        "requested_by": "console-operator",
+        "state": "failed",
+        "accepted_at_ms": 1794287104900,
+        "completed_at_ms": 1794287106234,
+        "error_code": "STRATEGY_DEPLOYMENT_FAILED",
+        "error_message": "replacement failed and previous strategy revision was restored: replacement strategy worker exited before becoming ready (2)"
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-rollback-2-3",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-rollback-2-3",
+        "request_sha256": "2353a8dc18b025daaaf9830bed0d4c885ef6fd6c68b2ac2980984826be83192b",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "rollback",
+        "target_revision": 2,
+        "requested_at_ms": 1794287103942,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103942,
+        "completed_at_ms": 1794287104834,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-resume-1-2",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-resume-1-2",
+        "request_sha256": "7890a09621aff96048fb1704c6aa86b5bb6585168665ec84751146e21caf2504",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "resume",
+        "target_revision": 1,
+        "requested_at_ms": 1794287103674,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103674,
+        "completed_at_ms": 1794287103882,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-pause-1-1",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-pause-1-1",
+        "request_sha256": "83f592aec7e5e74df7312f4d1f93b5e9732fc1f4a46494944496854070724696",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "pause",
+        "target_revision": 1,
+        "requested_at_ms": 1794287103194,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287103194,
+        "completed_at_ms": 1794287103442,
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "request_sha256": "71c221187a07e8f12088f4dae9ef0c243f02f252e370326dd46dc7a2671a21f0",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "deploy",
+        "target_revision": 1,
+        "requested_at_ms": 1794287063813,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287063813,
+        "completed_at_ms": 1794287064671,
+        "error_code": null,
+        "error_message": null
+      }
+    ]
+  },
+  "checkpoint_restart": {
+    "supervisor_stopped_gracefully": true,
+    "supervisor_exit_code": 0,
+    "before_process_id": 6647,
+    "after_process_id": 6791,
+    "checkpoint_input_supplied": true,
+    "checkpoint_roundtrip_observed": true,
+    "restore_records": [
+      {
+        "bar_count": 70,
+        "pid": 6805,
+        "worker_id": null
+      }
+    ],
+    "projection": {
+      "schema_version": 1,
+      "worker_id": "strategy-r09-196a97866ec0",
+      "strategy_id": "strategy-r09-196a97866ec0",
+      "strategy_version": "1.0",
+      "account_id": "main",
+      "venue_id": "paper",
+      "enabled": true,
+      "state": "running",
+      "observed_at_ms": 1794287102963,
+      "observation": {
+        "schema_version": 3,
+        "worker_id": "strategy-r09-196a97866ec0",
+        "config_sha256": "6fe135062ad1790499b652521c58aae8c8685c6a2277c1383e45ec28bf17485d",
+        "process_id": 6791,
+        "owner_id": "strategy-r09-196a97866ec0@6791-1794287101793158722-1",
+        "observed_at_ms": 1794287102963,
+        "phase": "running",
+        "host_capabilities": {
+          "schema_version": 1,
+          "host_id": "runtime_python_class_bar",
+          "profile": "server",
+          "supported": [
+            "bar",
+            "bar_history",
+            "fill_updates",
+            "order_status_updates",
+            "durable_checkpoint",
+            "account_updates",
+            "position_updates"
+          ]
+        },
+        "checkpoint_roundtrip_observed": true,
+        "host_lifecycle": {
+          "schema_version": 2,
+          "host_id": "runtime_python_class_bar",
+          "constructed": true,
+          "initialized": true,
+          "checkpoint_input_supplied": true,
+          "warmup_applicable": true,
+          "warmup_required_instruments": [
+            "BTCUSDT.BINANCE"
+          ],
+          "warmup_completed_instruments": [
+            "BTCUSDT.BINANCE"
+          ]
+        }
+      },
+      "active_owner_ids": [
+        "strategy-r09-196a97866ec0@6791-1794287101793158722-1"
+      ],
+      "trading_enabled": null,
+      "blocking_reasons": [
+        "live_readiness_not_evaluated"
+      ],
+      "desired_revision": 1,
+      "desired_running": true,
+      "latest_operation": {
+        "schema_version": 1,
+        "kind": "qianxing_strategy_deployment_operation",
+        "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+        "request_sha256": "71c221187a07e8f12088f4dae9ef0c243f02f252e370326dd46dc7a2671a21f0",
+        "worker_id": "strategy-r09-196a97866ec0",
+        "action": "deploy",
+        "target_revision": 1,
+        "requested_at_ms": 1794287063813,
+        "requested_by": "console-operator",
+        "state": "succeeded",
+        "accepted_at_ms": 1794287063813,
+        "completed_at_ms": 1794287064671,
+        "error_code": null,
+        "error_message": null
+      },
+      "reconciliation": {
+        "schema_version": 1,
+        "state": "missing",
+        "matching_report_count": 0,
+        "fresh_report_count": 0,
+        "observed_at_ms": null,
+        "freshest_age_ms": null,
+        "blocking_reasons": [
+          "live_reconciliation_missing"
+        ]
+      },
+      "operation_history": [
+        {
+          "schema_version": 1,
+          "kind": "qianxing_strategy_deployment_operation",
+          "operation_id": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+          "idempotency_key": "r09-196a97866ec0461192847bcbfe246aaa-deploy-1-0",
+          "request_sha256": "71c221187a07e8f12088f4dae9ef0c243f02f252e370326dd46dc7a2671a21f0",
+          "worker_id": "strategy-r09-196a97866ec0",
+          "action": "deploy",
+          "target_revision": 1,
+          "requested_at_ms": 1794287063813,
+          "requested_by": "console-operator",
+          "state": "succeeded",
+          "accepted_at_ms": 1794287063813,
+          "completed_at_ms": 1794287064671,
+          "error_code": null,
+          "error_message": null
+        }
+      ]
+    }
+  },
+  "api_readiness_assessed": false,
+  "supervisor_exit_code": 0,
+  "console_exit_code": 0,
+  "log_sha256": {
+    "supervisor": "83230c42c269ad9222b72c00f7d82c9e169c412340f022582b9346e365d80fa9",
+    "console": "bef1ccd318a11cc4dc6eedbf96b8d29b298558ef459030afdc52faca42147e2f"
+  }
+}
