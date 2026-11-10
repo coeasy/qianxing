@@ -300,7 +300,7 @@ capabilities:
       - production_runtime_template_refuses_validation_by_design_because_its_secret_and_snapshot_paths_are_placeholders （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）
       - 'the_exact_path_entries_still_resolve_against_the_current_directory_by_design：`scheduler-worker`、`dataset-*`、`strategy backtest`、以及要实盘凭据的 `binance-submit-order` 这类显式精确路径不接查找面，读不到时只点名「别处真有这一份」的位置——这条不对称是刻意的（写下来的路径该由使用者说了算），代价是同一份配置在两种启动目录下的形状并不完全一致；与之相对，一次性读取入口 `backtest`/`paper-submit-order`/`reconcile` 的必填位置参数已在 #274 挂上查找面（V13 R2 #271/#274） （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）'
       - 'the_builtin_layer_is_only_reachable_from_read_paths：报错文案那条链（`pick_deploy_file`）只认真实目录、绝不落盘，所以「内置模板能不能读出来」这一格只有 `locate_deploy_file` 的调用点会验证（V13 R2 #266） （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）'
-      - quickstart_binds_the_builtin_macd_project_only_so_the_a_share_and_ccxt_first_runs_still_need_their_own_profile （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）
+      - 'quickstart_supports_builtin_and_ashare_offline_first_runs：`qx-cli quickstart --profile ashare` reuses the A-share init/doctor/backtest/report/status chain with the bundled 6-Bar sample, yielding 1 fill without network or orders; regression `quickstart_first_run::ashare_profile_runs_the_full_offline_quickstart_chain` covers five steps, 16 project files, isolated output and runnable next commands. Evidence: maturity/evidence/quickstart-ashare-profile-2026-11-10.json. CCXT quickstart remains open because sandbox execution needs user credentials and external acceptance (V13 §9.632) （状态：未收口；收口门：A 股首跑已关闭；完成基于公开行情的 CCXT 本地准备流程，并在有授权的 sandbox 上验收认证路径）'
   paper_execution:
     implementation: true
     code_tested: true

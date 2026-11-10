@@ -20530,7 +20530,7 @@ def cli_project_command_module_check() -> None:
         and 'profile.as_deref() == Some("")' in module
         and 'PathBuf::from("qianxing.runtime.json")' in module
         and "run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())" in module
-        and "quickstart::run(project, html, force)" in module
+        and "quickstart::run(project, html, force, profile)" in module
         and "guide::run(args)" in module
         and "std::process::exit(2)" in module,
         "Init, Quickstart, and Guide CLI routes have one project command adapter owner",

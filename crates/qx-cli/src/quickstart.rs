@@ -86,14 +86,28 @@ pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     (files, false)
 }
 
-/// `qx-cli quickstart [目录] [--html] [--force]` 的实现体：失败自行以 2 退出，成功印收尾指引后返回。
-pub(crate) fn run(project: Option<PathBuf>, html: bool, force: bool) {
+/// `qx-cli quickstart [目录] [--profile builtin|ashare] [--html] [--force]` 的实现体。
+/// 失败自行以 2 退出，成功印收尾指引后返回。
+pub(crate) fn run(
+    project: Option<PathBuf>,
+    html: bool,
+    force: bool,
+    profile: cli_args::QuickstartProfile,
+) {
     let root = project.unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_DIR));
     let absolute = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
     let runtime = absolute.join(RUNTIME_FILE_NAME);
     let runtime_text = runtime.to_string_lossy().into_owned();
     let root_text = absolute.to_string_lossy().into_owned();
+    let profile_name = profile.as_str();
+    let (strategy_name, init_profile) = match profile {
+        cli_args::QuickstartProfile::Builtin => (Some(QUICKSTART_STRATEGY), None),
+        cli_args::QuickstartProfile::Ashare => (None, Some("ashare")),
+    };
     let mut retry_arguments = vec!["quickstart", root_text.as_str()];
+    if profile != cli_args::QuickstartProfile::Builtin {
+        retry_arguments.extend(["--profile", profile_name]);
+    }
     if html {
         retry_arguments.push("--html");
     }
@@ -102,15 +116,16 @@ pub(crate) fn run(project: Option<PathBuf>, html: bool, force: bool) {
     }
     let retry = command_line(&retry_arguments);
     println!(
-        "quickstart 依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 {}：",
+        "quickstart 使用 {profile_name} profile，依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 {}：",
         absolute.display()
     );
-    let mut init_arguments = vec![
-        "init",
-        runtime_text.as_str(),
-        "--strategy",
-        QUICKSTART_STRATEGY,
-    ];
+    let mut init_arguments = vec!["init", runtime_text.as_str()];
+    if let Some(strategy) = strategy_name {
+        init_arguments.extend(["--strategy", strategy]);
+    }
+    if let Some(profile) = init_profile {
+        init_arguments.extend(["--profile", profile]);
+    }
     if force {
         init_arguments.push("--force");
     }
@@ -118,7 +133,7 @@ pub(crate) fn run(project: Option<PathBuf>, html: bool, force: bool) {
         "建项目",
         &command_line(&init_arguments),
         &retry,
-        run_init_with_profile(&runtime, force, Some(QUICKSTART_STRATEGY), None),
+        run_init_with_profile(&runtime, force, strategy_name, init_profile),
     );
     require(
         "静态检查",
@@ -168,21 +183,22 @@ pub(crate) fn run(project: Option<PathBuf>, html: bool, force: bool) {
         absolute.join("data").display()
     );
     println!("下一步三条命令：");
+    let next_profile = match profile {
+        cli_args::QuickstartProfile::Builtin => "ashare",
+        cli_args::QuickstartProfile::Ashare => "ccxt",
+    };
     for step in [
         command_line(&["report", &runtime_text, "--json"]),
         command_line(&["strategy", "list"]),
-        // #261：这里不印注定报错的命令。`init --profile ashare` 会落一份 `qianxing.project.json`，
-        // 在刚建好的项目目录里再跑会撞「项目清单已存在」；改到独立子目录另起一个 ashare 项目，
-        // 既不覆盖刚建好的项目清单，也让这一条照抄就能跑通。
         command_line(&[
             "init",
             absolute
-                .join("ashare")
+                .join(next_profile)
                 .join("qianxing.runtime.json")
                 .to_string_lossy()
                 .as_ref(),
             "--profile",
-            "ashare",
+            next_profile,
         ]),
     ] {
         println!("  {step}");

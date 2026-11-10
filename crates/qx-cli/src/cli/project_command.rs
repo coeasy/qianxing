@@ -25,8 +25,13 @@ pub(super) fn dispatch_init(
     }
 }
 
-pub(super) fn dispatch_quickstart(project: Option<PathBuf>, html: bool, force: bool) {
-    quickstart::run(project, html, force);
+pub(super) fn dispatch_quickstart(
+    project: Option<PathBuf>,
+    html: bool,
+    force: bool,
+    profile: crate::cli_args::QuickstartProfile,
+) {
+    quickstart::run(project, html, force, profile);
 }
 
 pub(super) fn dispatch_guide(args: crate::guide_args::GuideArgs) {

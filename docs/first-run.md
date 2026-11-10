@@ -28,10 +28,14 @@ A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装�
 ```bash
 cargo install --path crates/qx-cli --locked     # 完全离线的机器再加 --offline
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
+qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 ```
 
 `quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
+
+`--profile` 当前支持 `builtin`（默认）与 `ashare`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
+完成一笔本地回测；不会连接外部行情源或发送订单。CCXT 的 sandbox 首跑仍需用户提供凭据并完成外部验收。
 
 ```bash
 cd my-qx

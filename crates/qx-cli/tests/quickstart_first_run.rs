@@ -229,6 +229,96 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// A 股首跑用内置样例离线完成同一条项目链，不连接行情源或交易所。
+#[test]
+fn ashare_profile_runs_the_full_offline_quickstart_chain() {
+    let base = temp_base("ashare");
+    let project = base.join("project");
+    let deploy_data = repository_root().join("deploy").join("data");
+    let deploy_before = count_files(&deploy_data);
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ashare",
+        ],
+    );
+    assert_eq!(code, 0, "A 股 quickstart 失败: {stderr}");
+    assert!(
+        stdout.contains("使用 ashare profile"),
+        "缺少 profile 声明:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("profile=ashare")
+            && stdout.contains("bars=6 fills=1")
+            && stdout.contains("instrument=000001.SZSE"),
+        "A 股首跑没有复用 A 股样例回测链:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("network_accessed=false orders_sent=false"),
+        "本地 A 股样例首跑不得访问网络或发送订单:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("[完成] ").count(),
+        5,
+        "A 股 quickstart 必须完成五步:\n{stdout}"
+    );
+    assert_eq!(
+        count_files(&project),
+        16,
+        "A 股首跑落盘份数与当前 init/回测产物不一致"
+    );
+    assert!(
+        !base.join("data").exists(),
+        "A 股 quickstart 把产物写到了启动目录"
+    );
+    assert_eq!(
+        count_files(&deploy_data),
+        deploy_before,
+        "A 股 quickstart 改动了仓库 deploy/data"
+    );
+    assert_eq!(
+        result_hashes(&stdout).len(),
+        1,
+        "A 股首跑应产生单一结果指纹"
+    );
+
+    let steps = advertised_next_steps(&stdout);
+    assert_eq!(steps.len(), 3, "A 股首跑必须提供三条下一步命令");
+    for step in steps {
+        let args = step.split_whitespace().skip(1).collect::<Vec<_>>();
+        let (code, _, stderr) = run(&base, &args);
+        assert_eq!(code, 0, "A 股首跑指路命令跑不通: {step}\n{stderr}");
+    }
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// 只有已经实现完整首跑链的 profile 才能通过 quickstart 参数校验。
+#[test]
+fn unsupported_quickstart_profile_is_rejected_before_writing() {
+    let base = temp_base("unsupported-profile");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ccxt",
+        ],
+    );
+    assert_eq!(code, 2, "未实现完整首跑链的 profile 必须拒绝");
+    assert!(
+        stderr.contains("invalid value 'ccxt'") || stderr.contains("invalid value `ccxt`"),
+        "拒绝信息应由 profile 枚举指出可用值: {stderr}"
+    );
+    assert!(stdout.is_empty(), "参数拒绝前不应开始 quickstart: {stdout}");
+    assert!(!project.exists(), "不支持的 profile 不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
 /// 指路的三条命令逐条照抄必须退 0（#261）。
 #[test]
 fn advertised_next_steps_run_as_printed() {

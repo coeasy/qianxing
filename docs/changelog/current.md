@@ -11,6 +11,7 @@
 - 使用 Release CLI `5f49ae8` 运行 Binance Spot Testnet 公共 MarketData worker 并连续抓取本地 `/metrics` 四次：HTTP 200，ingest 计数 31→69、停机后 74，0 次失败，最大耗时 79.5923ms，停机后 `qx_worker_up=0`。配置关闭执行/对账/策略 worker，不用凭据、不发订单；证据为 `maturity/evidence/binance-market-data-worker-metrics-scrape-2026-11-10.{json,prom}`。CCXT 与认证 worker、完整 profile 性能测量仍未验收。
 - 前一提交 `af693d24` 的托管 CI #437 已完成 30/30 jobs，包含 Linux/macOS/Windows wheel 矩阵、Rust workspace、PostgreSQL/NATS、C++ SDK、性能门禁；本次新增能力目录数据会随新提交再次运行托管 CI。
 - 提交 `f72e4564` 的 PR CI #438 经单独重跑最初失败的 Linux/PostgreSQL lifecycle job 后，run attempt 2 为 **33/33 jobs 成功**。该生命周期在本机 Podman/PostgreSQL 16 上再现两次均通过，详细 JSON 与摘要见 `maturity/evidence/linux-podman-postgres-deployment-lifecycle-{run-1,run-2,rerun}-2026-11-10.json`；首次失败的根因未确认，详见 V13 §9.631。
+- `qx-cli quickstart` 新增 `--profile ashare` 本地首跑：六根仓库 A 股样例 Bar 完成 1 笔模拟成交，doctor、报告和安全状态全链通过；默认 builtin/MACD 路径保持兼容。CLI 子进程回归 `project_commands` 49/49，quickstart 专项 6/6；证据 `maturity/evidence/quickstart-ashare-profile-2026-11-10.json`。CCXT sandbox quickstart 仍需外部凭据验收。
 
 ### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 

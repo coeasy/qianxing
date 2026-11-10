@@ -65,9 +65,10 @@ pub(crate) fn run() {
         } => project_command::dispatch_init(output, force, strategy, profile),
         Command::Quickstart {
             project,
+            profile,
             html,
             force,
-        } => project_command::dispatch_quickstart(project, html, force),
+        } => project_command::dispatch_quickstart(project, html, force, profile),
         Command::Guide(args) => project_command::dispatch_guide(args),
         Command::Doctor {
             path,

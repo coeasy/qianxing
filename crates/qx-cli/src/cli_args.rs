@@ -1,6 +1,6 @@
 //! clap 参数框架（V10 P2b）：命令表由本文件 `Command` 枚举派生，`cli.rs` 只保留对 `Command` 的一次显式 `match`；生成清单与显式派发逐项对账，帮助用例逐项运行真实子进程。`help`/`--help`/`-h` 进 clap 前同一条预检分支（按规范名 `help` 计一条）；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::cli_value_parsers::{parse_bps, parse_quantity, parse_relay_limit};
@@ -13,6 +13,21 @@ use super::{
     app_args::AppArgs, data_validate_args::DatasetValidateArgs, parse_deploy_path,
     plan_args::PlanArgs,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum QuickstartProfile {
+    Builtin,
+    Ashare,
+}
+
+impl QuickstartProfile {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Ashare => "ashare",
+        }
+    }
+}
 
 /// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上没有那个名字，首跑第二句就是 command not found（V13 R2 #260）。
 pub(crate) const PROGRAM_NAME: &str = "qx-cli";
@@ -40,6 +55,9 @@ pub(crate) enum Command {
     #[command(name = "quickstart")]
     Quickstart {
         project: Option<PathBuf>,
+        /// 首跑场景；ashare 使用仓库内的 A 股样例数据离线回测。
+        #[arg(long, value_enum, default_value_t = QuickstartProfile::Builtin)]
+        profile: QuickstartProfile,
         /// 额外生成自包含 HTML 报告与三张 SVG 图表。
         #[arg(long)]
         html: bool,

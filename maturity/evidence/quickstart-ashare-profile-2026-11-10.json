@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "kind": "quickstart_ashare_profile_acceptance",
+  "captured_at_utc": "2026-11-10T06:15:25Z",
+  "source": {
+    "base_commit": "0129ba9f4b61ad518691758b1513c77faa66ff56",
+    "worktree": "dirty; local quickstart ashare profile implementation",
+    "published": false
+  },
+  "build": {
+    "binary": "target/debug/qx-cli.exe",
+    "binary_sha256": "45123ead7c03aae939c517d0aa965c420a84012eb818680773abd75c2adc7aaf",
+    "python_extension": "target/debug/_qianxing_native.dll",
+    "python_extension_sha256": "01ed62971ce5e3de3e0e84a5c8c743005495da3d30c3e0983bcb3af00184cfc1",
+    "identity": "qianxing 0.4.0 (build 0129ba9-dirty, target x86_64-pc-windows-msvc, profile debug, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)",
+    "command": "cargo test -p qx-cli --test project_commands -- --test-threads=1"
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows",
+    "temporary_directory": "D:/aex_work/qianxing/target/windows-test-temp-quickstart"
+  },
+  "acceptance": {
+    "scenario": "A-share bundled sample quickstart, offline",
+    "profile": "ashare",
+    "steps_completed": 5,
+    "project_files": 16,
+    "bars": 6,
+    "fills": 1,
+    "result_hash": "a294bca0f96cc85b",
+    "network_accessed": false,
+    "orders_sent": false,
+    "stdout_log": {
+      "path": "target/quickstart-ashare-current.log",
+      "sha256": "57c989eb317ca3956b31ba0a2bfb3cb3403d636aab208ecb4e8621c3c16ef27c"
+    }
+  },
+  "checks": {
+    "project_commands_suite": {
+      "command": "cargo test -p qx-cli --test project_commands -- --test-threads=1",
+      "result": "passed",
+      "passed": 49,
+      "failed": 0
+    },
+    "quickstart_regressions": {
+      "command": "cargo test -p qx-cli --test project_commands quickstart_first_run:: -- --test-threads=1",
+      "result": "passed",
+      "passed": 6,
+      "failed": 0
+    },
+    "manual_binary_quickstart": {
+      "result": "passed",
+      "details": "Five steps completed; 16 project files; six bars; one fill; status reported network_accessed=false and orders_sent=false."
+    },
+    "unsupported_profile_preflight": {
+      "result": "passed",
+      "details": "--profile ccxt exits with argument error before creating the project directory."
+    },
+    "cross_entrypoint_regressions": {
+      "command": "cargo test -p qx-cli --test app_three_entrypoints -- --test-threads=1",
+      "result": "passed",
+      "passed": 33,
+      "failed": 0,
+      "note": "Rebuilt qx-python from the current worktree first; the earlier full workspace run had selected a stale Python extension."
+    },
+    "depth_entrypoint_regressions": {
+      "command": "cargo test -p qx-cli --test depth_app_three_entrypoints -- --test-threads=1",
+      "result": "passed",
+      "passed": 4,
+      "failed": 0
+    },
+    "generated_catalogs": {
+      "unverified_catalog": "passed",
+      "capability_catalog": "passed"
+    }
+  },
+  "limitations": [
+    "The A-share quickstart uses bundled local sample bars and does not validate an external market-data source.",
+    "CCXT sandbox quickstart remains open pending credentials and authorized external acceptance.",
+    "The recorded executable is a local debug build from a dirty worktree, not a release artifact."
+  ]
+}
