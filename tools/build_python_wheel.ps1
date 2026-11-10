@@ -51,6 +51,7 @@ New-Item -ItemType Directory -Path $RendererDirectory -Force | Out-Null
 Copy-Item -Path (Join-Path $RepositoryRoot "target/release/qx-cli.exe") -Destination (Join-Path $RendererDirectory "qx-cli.exe") -Force
 
 New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot $OutputDirectory) -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot "target/maturin") -Force | Out-Null
 Push-Location $PythonProject
 try {
     & $PythonCommand -m maturin build --release --locked --out (Join-Path $RepositoryRoot $OutputDirectory)

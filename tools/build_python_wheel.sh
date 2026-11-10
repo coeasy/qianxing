@@ -35,5 +35,6 @@ mkdir -p "${python_project}/qianxing/_bin"
 cp "${repository_root}/target/release/qx-cli" "${python_project}/qianxing/_bin/qx-cli"
 
 mkdir -p "${wheel_output_directory}"
+mkdir -p "${repository_root}/target/maturin"
 (cd "${python_project}" && "${python_bin}" -m maturin build --release --locked \
     --out "${wheel_output_directory}")

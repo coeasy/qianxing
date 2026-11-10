@@ -657,6 +657,7 @@ def wheel_builder_check() -> None:
         pip = text.find("-m pip --version")
         maturin = text.find("-m maturin --version")
         build = text.find("-m maturin build --release --locked")
+        maturin_config_dir = text.find("target/maturin")
         check(
             0 <= pip < maturin < build,
             f"{path.name} 先检查 pip 与 maturin，再进入锁定的 wheel 构建",
@@ -674,6 +675,11 @@ def wheel_builder_check() -> None:
             0 <= staged < build,
             f"{path.name} 在打 wheel 前把 qx-cli 装进 qianxing/_bin",
             f"qianxing/_bin 位置 {staged}，maturin build 位置 {build}：装载晚于打包或缺失时 wheel 没有报告渲染器",
+        )
+        check(
+            0 <= maturin_config_dir < build,
+            f"{path.name} 在打 wheel 前创建 Pyo3 配置目录",
+            f"target/maturin 初始化位置 {maturin_config_dir}，wheel 构建位置 {build}：全新 target 下 maturin 无法写配置",
         )
     pyproject = (ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "python-wheels.yml").read_text(encoding="utf-8")
