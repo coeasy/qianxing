@@ -7,6 +7,8 @@
 - GitHub Release 采用“先创建草稿，PyPI 发布成功后再公开”的顺序；`tools/check_architecture.py` 将草稿、PyPI 依赖、最终 `gh release edit --draft=false` 与写权限纳入发布门禁。本机完整架构检查 1,624 项通过，PR CI 四个架构分片及聚合门也通过。
 - 文件型 EventLog 与 Outbox 写入现在共用跨进程事务锁和耐久 redo journal；单文件、分段日志及所有公开 Outbox 读写入口在返回数据前先恢复 journal。写到 Outbox 失败时保留 journal 并要求对账，读者不会看到只提交一半的 EventLog/Outbox；恢复用例覆盖解除故障后的自动回放。该改动收敛“EventLog 已提交、Outbox 未完成”这一文件后端崩溃窗口，不把文件后端提升为生产事务后端；production 仍由 topology validation 强制 PostgreSQL。新增长期忽略的 NATS service acceptance：在真实 JetStream 上先交付但不 ACK，再原子提交业务投影/consumer checkpoint，等待 ack_wait 后由重启 adapter 接收重复投递；投影 reducer 只执行一次，重复被确认，定向测试 2/2 通过。Outbox duplicate relay 与 fencing stale ACK 仍由文件/SQLite/PostgreSQL 后端契约覆盖；NATS 慢 ACK、握手重试与长拉取的预算故障注入仍未覆盖。提交并推送为 `0bdc4359`；本轮 NATS 崩溃测试及台账更新尚未提交。之前 Windows `cargo test --workspace`、全特性 `cargo check`、格式门禁及 1,624 项架构门禁通过。
 - commit `5f49ae830270ae174a90810500232dec580c00db` 的 Windows Release CLI 与 Python stable-ABI wheel 已重新构建；wheel 两次构建字节一致，在干净 Python 3.13 venv 离线安装并从源码树外完成端到端 smoke。候选文件位于 `dist/release-candidate-v0.4.0-windows-x86_64-5f49ae83/`，证据为 `maturity/evidence/windows-wheel-release-preflight-2026-11-10-5f49ae8.json`。该候选未打 tag、未上传；记录时对应托管 CI 仍在运行。
+- 使用 Release CLI `5f49ae8` 运行 Binance Spot Testnet 公共 MarketData worker 并连续抓取本地 `/metrics` 四次：HTTP 200，ingest 计数 31→69、停机后 74，0 次失败，最大耗时 79.5923ms，停机后 `qx_worker_up=0`。配置关闭执行/对账/策略 worker，不用凭据、不发订单；证据为 `maturity/evidence/binance-market-data-worker-metrics-scrape-2026-11-10.{json,prom}`。CCXT 与认证 worker、完整 profile 性能测量仍未验收。
+- 前一提交 `af693d24` 的托管 CI #437 已完成 30/30 jobs，包含 Linux/macOS/Windows wheel 矩阵、Rust workspace、PostgreSQL/NATS、C++ SDK、性能门禁；本次新增能力目录数据会随新提交再次运行托管 CI。
 
 ### 0.4.0 发布候选准备 · Windows/Linux 构建门禁复验（2026-11-09，未发布工作区）
 
