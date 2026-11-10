@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-10T02:19:21Z",
+  "source": {
+    "commit": "c6790025bf88b98797bf99db65f1016bf5c9ca1f",
+    "worktree": "clean detached worktree at target/release-worktree-c679",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows 11 build 22631",
+    "rust": "1.98.1 (48a229cea 2026-09-01)",
+    "python": "3.12.13",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifact": {
+    "path": "dist/release-candidate-v0.4.0-windows-x86_64/qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+    "size_bytes": 22877121,
+    "sha256": "4f62d4ac0da05d9812c23e325493c0b5afcefeeeab28c0c25f5ebc5b4635aeb7",
+    "embedded_cli_size_bytes": 44112384,
+    "embedded_cli_sha256": "c16fc10717cf2f420e440a9f1d6db9448de503d11f453c673fcbea4a7211ea8f6",
+    "embedded_cli_identity": "qianxing 0.4.0 (build c679002, target x86_64-pc-windows-msvc, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)",
+    "sbom": "qianxing-0.4.0.dist-info/sboms/qx-python.cyclonedx.json"
+  },
+  "checks": {
+    "release_cli_build": {
+      "command": "cargo build --release --locked -p qx-cli",
+      "result": "passed",
+      "identity_is_clean": true
+    },
+    "fresh_target_maturin_config_directory": {
+      "result": "passed",
+      "details": "The Windows wheel builder created target/maturin in a fresh target directory before invoking maturin."
+    },
+    "wheel_structure": {
+      "command": "python tools/check_python_wheel.py target/release-worktree-c679/target/release-candidate-v0.4.0-windows-x86_64",
+      "result": "passed",
+      "native_extension": "qianxing_bridge/_qianxing_native.pyd",
+      "renderer": "qianxing/_bin/qx-cli.exe",
+      "stable_abi": true
+    },
+    "clean_install_and_smoke": {
+      "install": "python -m pip install --no-index --no-deps <wheel> into a fresh Python 3.12 venv",
+      "import_outside_source_tree": "passed",
+      "native_extension_available": true,
+      "doctor_use_case": "backtest.bar.v1",
+      "smoke": "passed",
+      "summary": "strategies=17 rows=70 fills=1 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=true depth_account_overflow_preflight=true multileg=1/2 depth_fills=1 custom_fills=1 run_handle=succeeded verified=true"
+    },
+    "reproducible_wheel": {
+      "second_build": "passed",
+      "first_sha256": "4f62d4ac0da05d9812c23e325493c0b5afcefeeeab28c0c25f5ebc5b4635aeb7",
+      "second_sha256": "4f62d4ac0da05d9812c23e325493c0b5afcefeeeab28c0c25f5ebc5b4635aeb7",
+      "identical": true
+    }
+  },
+  "limitations": [
+    "This is an unpublished Windows candidate; no GitHub Release or PyPI upload was performed.",
+    "Hosted CI for commit c6790025bf88b98797bf99db65f1016bf5c9ca1f is still running; macOS/Linux release wheel matrix is not yet verified.",
+    "Authenticated testnet credentials and production approval remain unavailable."
+  ]
+}
