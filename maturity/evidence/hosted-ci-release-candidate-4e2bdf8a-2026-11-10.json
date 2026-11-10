@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "hosted_ci_release_candidate",
+  "date": "2026-11-10",
+  "purpose": "Hosted acceptance for the 0.4.0 release candidate after Paper account margin projection",
+  "source": {
+    "commit": "4e2bdf8a480c2df83a55ac1594ea1693581c76d3",
+    "branch": "codex/release-windows-longpaths",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/3",
+    "run_number": 450,
+    "run_id": 42801795603,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/42801795603",
+    "event": "pull_request"
+  },
+  "result": {
+    "workflow_conclusion": "success",
+    "jobs_total": 33,
+    "jobs_succeeded": 33,
+    "jobs_failed": 0,
+    "jobs_cancelled": 0
+  },
+  "acceptance": {
+    "rust_workspace": "success",
+    "feature_matrix": ["sqlite", "postgres", "nats", "sqlite+bench-prepared-evaluation"],
+    "architecture_shards": "4/4 success",
+    "cpp_sdk": ["ubuntu-latest", "macos-latest", "windows-latest"],
+    "python_wheels": {
+      "platforms": ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "python_versions": ["3.10", "3.11", "3.12", "3.13"],
+      "jobs_succeeded": 12
+    },
+    "linux_postgres_storage_recovery": "success",
+    "backend_service_contracts": "success",
+    "runtime_and_paper_contracts": "success",
+    "performance_regression_gate": "success",
+    "venue_testnet": {
+      "offline_fail_closed_checks": "success",
+      "authenticated_testnet_roundtrip": "skipped",
+      "reason": "Testnet credentials were unavailable to the workflow."
+    }
+  },
+  "release_boundary": {
+    "tag_workflow_run": false,
+    "github_release_published": false,
+    "crates_io_published": false,
+    "pypi_release_published": false,
+    "production_approval": false,
+    "notes": "This pull-request run validates commit 4e2bdf8a and hosted acceptance jobs. It does not establish authenticated testnet acceptance or production approval."
+  }
+}
