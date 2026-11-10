@@ -395,11 +395,16 @@ pub fn project_api_account_snapshot_with_portfolio_and_market_specs(
                         .unwrap_or(0),
                 )
         } else {
-            pipeline.ledger().equity_for(
+            let valuation = qx_core::ValuationContext::spot(
                 account_id,
                 pipeline.marks(),
                 pipeline.settlement_currency(),
-            )
+            );
+            pipeline
+                .ledger()
+                .valuate(&valuation)
+                .ok()
+                .map(|result| result.equity.raw())
         }
     } else {
         None
