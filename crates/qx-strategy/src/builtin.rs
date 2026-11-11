@@ -371,6 +371,13 @@ impl Strategy for BuiltinStrategy {
         let mut intents = Vec::with_capacity(legs.len());
         let mut confidence = 0_i128;
         for (leg_instrument, leg_signal) in legs {
+            // A bearish signal in a long-only product means flatten the long,
+            // not submit a fresh short that the execution risk gate must reject.
+            let leg_signal = if !is_pair && !self.config.allow_short {
+                leg_signal.max(0)
+            } else {
+                leg_signal
+            };
             let current = context
                 .positions
                 .get(&leg_instrument.to_string())

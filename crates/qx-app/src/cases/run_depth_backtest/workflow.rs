@@ -199,6 +199,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
         target_volatility_bps: spec.strategy.target_volatility_bps,
         target_kelly_fraction_bps: spec.strategy.target_kelly_fraction_bps,
         kelly_lookback_bars: spec.strategy.kelly_lookback_bars,
+        allow_short: spec.allow_short(),
         primary_policy: spec.order_policy,
         ..BuiltinStrategyConfig::new(
             spec.strategy.kind,

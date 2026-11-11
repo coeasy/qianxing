@@ -193,6 +193,7 @@ pub(super) fn prepare_multi_market_markets(
                     data_fingerprint: &market_data_fingerprint,
                     as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
                     strategy_version: Some(&version),
+                    allow_short: contract.product.supports_leverage(),
                 },
                 external.map(|item| item.strategy),
             )?;

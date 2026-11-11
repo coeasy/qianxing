@@ -17,6 +17,10 @@ pub(crate) fn invoke_builtin_strategy(
     let context = super::native_strategy_context(&config.strategy, &input)?;
     let mut builtin_config =
         qx_runtime::builtin_strategy_config_from_runtime(&config.strategy, instrument)?;
+    builtin_config.allow_short = crate::runtime_wiring::strategy_allows_short(
+        config,
+        crate::runtime_wiring::config_margin_mode(config),
+    );
     let mut reference_route = None;
     if builtin_config.reference_instrument.is_some() {
         builtin_config.primary_market_spec =

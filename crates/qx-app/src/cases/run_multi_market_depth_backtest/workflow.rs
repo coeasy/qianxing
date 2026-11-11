@@ -167,6 +167,7 @@ pub(super) fn run_inner_with_strategies(
                     target_volatility_bps: request.strategy.target_volatility_bps,
                     target_kelly_fraction_bps: request.strategy.target_kelly_fraction_bps,
                     kelly_lookback_bars: request.strategy.kelly_lookback_bars,
+                    allow_short: request.market_spec.product.supports_leverage(),
                     primary_policy: request.order_policy,
                     ..BuiltinStrategyConfig::new(
                         request.strategy.kind,

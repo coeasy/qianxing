@@ -196,6 +196,13 @@ pub fn run_native_builtin_strategy_backtest_with_outcome(
     context_bindings: NativeStrategyBacktestContextBindings,
     context: &RunContext,
 ) -> Result<StrategyBacktestOutcome, AppError> {
+    let allow_short = spec.allow_short.unwrap_or_else(|| {
+        spec.market_spec
+            .as_ref()
+            .is_some_and(|market| market.product.supports_leverage())
+    });
+    let mut strategy_config = strategy_config;
+    strategy_config.allow_short = allow_short;
     let mut resolved_spec = spec.clone();
     resolved_spec.strategy = BuiltinStrategySpec::from_strategy_config(&strategy_config)?;
     let mut strategy =

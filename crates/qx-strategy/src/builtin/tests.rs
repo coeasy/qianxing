@@ -165,6 +165,7 @@ fn momentum_emits_a_target_order_after_warmup() {
         reference_instrument: None,
         primary_policy: None,
         reference_policy: None,
+        allow_short: false,
     };
     let mut strategy = BuiltinStrategy::new(config).unwrap();
     let mut context = context(&instrument);
@@ -204,6 +205,7 @@ fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior()
     .unwrap();
     config.fast_window = 3;
     config.slow_window = 7;
+    config.allow_short = true;
     let mut strategy = BuiltinStrategy::new(config).unwrap();
     let mut context = context(&instrument);
     let mut closes = Vec::<i128>::new();
@@ -322,6 +324,125 @@ fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior()
             },
         )
         .is_err());
+}
+
+#[test]
+fn long_only_bearish_cross_flattens_instead_of_opening_a_short() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::SmaCross,
+        "sma-long-only-exit",
+        instrument.clone(),
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.fast_window = 2;
+    config.slow_window = 3;
+    let mut strategy = BuiltinStrategy::new(config).unwrap();
+    let mut context = context(&instrument);
+    let mut bearish = None;
+    for (index, close) in [3_i128, 2, 1, 2, 3, 2, 1, 0]
+        .into_iter()
+        .map(|close| close * qx_core::SCALE)
+        .enumerate()
+    {
+        let ts = index as u64 + 1;
+        context.as_of = ts;
+        let decision = strategy
+            .on_event(
+                &context,
+                &MarketEvent::Bar {
+                    instrument: instrument.clone(),
+                    ts,
+                    open_raw: close,
+                    high_raw: close,
+                    low_raw: close,
+                    close_raw: close,
+                    volume_raw: 1,
+                    exact_ohlcv: None,
+                },
+            )
+            .unwrap();
+        if decision
+            .intents
+            .first()
+            .is_some_and(|intent| intent.side == Side::Buy)
+        {
+            context
+                .positions
+                .insert(instrument.to_string(), Quantity::from_i64(1).raw());
+        }
+        if decision
+            .intents
+            .first()
+            .is_some_and(|intent| intent.side == Side::Sell)
+        {
+            bearish = decision.intents.into_iter().next();
+        }
+    }
+    let exit = bearish.expect("falling cross emits an exit intent");
+    assert_eq!(exit.qty, Quantity::from_i64(1));
+    assert!(exit.reduce_only);
+}
+
+#[test]
+fn explicitly_short_enabled_bearish_cross_can_reverse_a_long_position() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::SmaCross,
+        "sma-short-enabled-reversal",
+        instrument.clone(),
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.fast_window = 2;
+    config.slow_window = 3;
+    config.allow_short = true;
+    let mut strategy = BuiltinStrategy::new(config).unwrap();
+    let mut context = context(&instrument);
+    let mut bearish = None;
+    for (index, close) in [3_i128, 2, 1, 2, 3, 2, 1, 0]
+        .into_iter()
+        .map(|close| close * qx_core::SCALE)
+        .enumerate()
+    {
+        let ts = index as u64 + 1;
+        context.as_of = ts;
+        let decision = strategy
+            .on_event(
+                &context,
+                &MarketEvent::Bar {
+                    instrument: instrument.clone(),
+                    ts,
+                    open_raw: close,
+                    high_raw: close,
+                    low_raw: close,
+                    close_raw: close,
+                    volume_raw: 1,
+                    exact_ohlcv: None,
+                },
+            )
+            .unwrap();
+        if decision
+            .intents
+            .first()
+            .is_some_and(|intent| intent.side == Side::Buy)
+        {
+            context
+                .positions
+                .insert(instrument.to_string(), Quantity::from_i64(1).raw());
+        }
+        if decision
+            .intents
+            .first()
+            .is_some_and(|intent| intent.side == Side::Sell)
+        {
+            bearish = decision.intents.into_iter().next();
+        }
+    }
+    let reversal = bearish.expect("falling cross emits a reversal intent");
+    assert_eq!(reversal.qty, Quantity::from_i64(2));
+    assert!(!reversal.reduce_only);
 }
 
 #[test]
@@ -456,6 +577,7 @@ fn every_builtin_strategy_survives_a_warmup_and_signal_cycle() {
                 reference_instrument: Some(reference.clone()),
                 primary_policy: None,
                 reference_policy: None,
+                allow_short: false,
             }
         } else {
             BuiltinStrategyConfig::new(

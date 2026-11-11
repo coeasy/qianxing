@@ -177,6 +177,9 @@ pub struct BuiltinStrategyConfig {
     pub reference_instrument: Option<InstrumentId>,
     pub primary_policy: Option<OrderPolicy>,
     pub reference_policy: Option<OrderPolicy>,
+    /// Whether a single-instrument bearish signal may target a short position.
+    /// Pair strategies keep their signed hedge leg semantics independently.
+    pub allow_short: bool,
 }
 
 impl BuiltinStrategyConfig {
@@ -239,6 +242,7 @@ impl BuiltinStrategyConfig {
             reference_instrument,
             primary_policy: None,
             reference_policy: None,
+            allow_short: false,
         };
         config.validate()?;
         Ok(config)

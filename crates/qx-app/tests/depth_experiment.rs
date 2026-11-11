@@ -395,6 +395,7 @@ fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
             "vwap_reversion"
         ]
     );
+    // These hashes pin the default spot product's long-only signal behavior.
     assert_eq!(
         result
             .candidates
@@ -404,17 +405,17 @@ fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
         [
             "b8646edf8be77ad8",
             "b8646edf8be77ad8",
-            "7c9c80855309e4f3",
-            "96e1b8599ab38ac2",
-            "45763eaafd9a88b5",
-            "144082afa09698e7",
-            "f9fac261f0c68fed",
-            "99926bc58bbdc06e",
-            "07bea6896df2684a",
-            "462495222f7865f9",
-            "29eaa3b5f7a79d32",
+            "a9ef11cc96e65e9a",
+            "bffdad3441bfb79e",
+            "2078bbb806d61787",
+            "8d2327a895affee6",
+            "3c949a814bc7e592",
+            "bab1cb4dc5f8e9ec",
+            "94ecaa830bf27a3c",
+            "9a0e8eb8c3fc2e70",
+            "9f98c3aff21e11c2",
             "b8646edf8be77ad8",
-            "91d4215d864e454e",
+            "3f6dcdf794914cd0",
         ]
     );
     assert_eq!(run_depth_experiment(&spec, &context).unwrap(), result);

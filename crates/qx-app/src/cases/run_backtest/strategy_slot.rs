@@ -20,6 +20,7 @@ pub(in crate::cases) struct StrategySlotContext<'a> {
     pub data_fingerprint: &'a str,
     pub as_of: u64,
     pub strategy_version: Option<&'a str>,
+    pub allow_short: bool,
 }
 
 pub(in crate::cases) struct BoxedStrategy(Box<dyn Strategy>);
@@ -111,6 +112,7 @@ fn build_native_strategy(
     strategy_config.target_volatility_bps = spec.target_volatility_bps;
     strategy_config.target_kelly_fraction_bps = spec.target_kelly_fraction_bps;
     strategy_config.kelly_lookback_bars = spec.kelly_lookback_bars;
+    strategy_config.allow_short = context.allow_short;
     strategy_config.strategy_version = context
         .strategy_version
         .map(str::to_string)

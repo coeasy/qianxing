@@ -351,6 +351,7 @@ fn build_targets(
         reference_instrument: Some(reference.instrument.clone()),
         primary_policy: None,
         reference_policy: None,
+        allow_short: true,
     };
     strategy_config.validate().map_err(invalid)?;
     let mut strategy = BuiltinStrategy::new(strategy_config).map_err(invalid)?;

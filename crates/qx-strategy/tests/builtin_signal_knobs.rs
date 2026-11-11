@@ -104,6 +104,7 @@ fn run(
         reference_instrument: reference.clone(),
         primary_policy: None,
         reference_policy: None,
+        allow_short: true,
     };
     // 装配失败本身就是一种"结果变了"：参数体检若还去管不上场的旋钮，这里就会与基线分叉。
     let Ok(mut strategy) = BuiltinStrategy::new(config) else {

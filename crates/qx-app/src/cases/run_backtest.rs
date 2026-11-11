@@ -300,6 +300,11 @@ fn run_backtest_inner_unchecked_with_details(
     } else {
         strategy_version(&spec.strategy)
     };
+    let allow_short = spec.allow_short.unwrap_or_else(|| {
+        spec.market_spec
+            .as_ref()
+            .is_some_and(|market| market.product.supports_leverage())
+    });
     let engine = match spec.protective_exit {
         Some(policy) => BacktestEngine::new(config)
             .with_protective_exits(ProtectiveExitPolicy {
@@ -338,6 +343,7 @@ fn run_backtest_inner_unchecked_with_details(
                 data_fingerprint: &data_fingerprint,
                 as_of,
                 strategy_version: injected_version.as_deref(),
+                allow_short,
             },
         )?;
         run_candidate_engine(engine, &bars, &mut strategy, cancellation, drawdown_pruning)?
@@ -354,6 +360,7 @@ fn run_backtest_inner_unchecked_with_details(
                 data_fingerprint: &data_fingerprint,
                 as_of,
                 strategy_version: injected_version.as_deref(),
+                allow_short,
             },
             injected
                 .remove(&spec.strategy.strategy_id)
@@ -376,6 +383,7 @@ fn run_backtest_inner_unchecked_with_details(
                         data_fingerprint: &data_fingerprint,
                         as_of,
                         strategy_version: None,
+                        allow_short,
                     },
                     injected
                         .remove(&member.strategy.strategy_id)

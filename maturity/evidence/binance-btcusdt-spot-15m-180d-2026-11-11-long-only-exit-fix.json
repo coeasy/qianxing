@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "scenario": "qx-cli app backtest with frozen public 180d BTCUSDT 15m data",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "target\\release\\qx-cli.exe",
+  "binary_sha256": "a04343c0780f8e09e885426bbc69e5a1ff8519c2e99b628b22089669f7c916ed",
+  "measurement_source_fingerprint": "e367dc661598e266ea5a029fad488bcde15869e22b3b4049fb8f803b78a2f84b",
+  "measurement_source_fingerprint_schema": 3,
+  "bars_path": "maturity\\fixtures\\binance-btcusdt-spot-15m-180d-2026-11-11.json",
+  "bars_sha256": "d3032cefeb01493b9e3bbb656bab902feb43f3cce18a7678769b2ff7e54fcc03",
+  "spec_template_path": "benchmarks\\fixtures\\binance-btcusdt-spot-15m-backtest.json",
+  "spec_template_sha256": "4238ec5b389de00970fda050db6576c48b02a4a30b911f7402d6b308679055b4",
+  "repeats": 2,
+  "bars": 17280,
+  "warmup_result_hash": "ec0156aed78ab9ef",
+  "result_hash": "ec0156aed78ab9ef",
+  "deterministic_across_repeats": true,
+  "bars_per_second_at_p50": 15271.58,
+  "p50_ms": 1131.513,
+  "p95_ms": 1167.755,
+  "mean_ms": 1149.634,
+  "resources": {
+    "peak_process_rss_bytes": 88924160,
+    "peak_process_tree_rss_bytes": 76427264,
+    "peak_process_count": 1,
+    "process_tree_cpu_seconds": 0.390625,
+    "process_tree_io_read_bytes": 2994207.0,
+    "process_tree_io_write_bytes": 7737877.0,
+    "resource_samples": 2,
+    "peak_rss_samples_available": 2
+  },
+  "samples": [
+    {
+      "elapsed_ms": 1167.755,
+      "peak_process_rss_bytes": 88924160,
+      "peak_process_tree_rss_bytes": 76427264,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": 0.359375,
+      "tree_io_read_bytes": 2994207,
+      "tree_io_write_bytes": 14881350
+    },
+    {
+      "elapsed_ms": 1131.513,
+      "peak_process_rss_bytes": 88825856,
+      "peak_process_tree_rss_bytes": 76365824,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": 0.421875,
+      "tree_io_read_bytes": 2994207,
+      "tree_io_write_bytes": 594404
+    }
+  ],
+  "limitations": [
+    "This measures qx-cli with this declared BacktestSpec and frozen data only; it is not a same-semantics competitor comparison.",
+    "Fill model, fee schedule, and inline market rules come from the spec template and are not claimed to be a current Binance exchangeInfo snapshot.",
+    "The result hash is deterministic execution evidence, not evidence of strategy profitability."
+  ]
+}
