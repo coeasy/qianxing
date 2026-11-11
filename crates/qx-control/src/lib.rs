@@ -18,6 +18,7 @@ pub enum Permission {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum CommandKind {
     SubmitOrder,
+    AmendOrder,
     PauseStrategy,
     ResumeStrategy,
     ChangeRiskLimit,
@@ -31,7 +32,7 @@ impl CommandKind {
     fn required_permission(&self) -> Permission {
         match self {
             Self::RetryJob => Permission::Research,
-            Self::SubmitOrder | Self::ReconcileAccount => Permission::Trading,
+            Self::SubmitOrder | Self::AmendOrder | Self::ReconcileAccount => Permission::Trading,
             Self::PauseStrategy | Self::ResumeStrategy | Self::CancelOrder => Permission::Trading,
             Self::ChangeRiskLimit | Self::SwitchVenue => Permission::Admin,
         }
@@ -47,9 +48,10 @@ impl CommandKind {
         )
     }
 
-    /// 全部 8 颗变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
-    pub const ALL: [CommandKind; 8] = [
+    /// 全部变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
+    pub const ALL: [CommandKind; 9] = [
         Self::SubmitOrder,
+        Self::AmendOrder,
         Self::PauseStrategy,
         Self::ResumeStrategy,
         Self::ChangeRiskLimit,
@@ -80,6 +82,14 @@ pub struct CancelOrderTarget {
     pub client_order_id: u64,
     pub account_id: String,
     pub venue_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AmendOrderTarget {
+    pub client_order_id: u64,
+    pub account_id: String,
+    pub venue_id: String,
+    pub order: Order,
 }
 
 fn parse_cancel_order_target(command: &ControlCommand) -> Result<CancelOrderTarget, ControlError> {
@@ -125,6 +135,68 @@ pub fn cancel_order_target_from_command(
     parse_cancel_order_target(command)
 }
 
+fn parse_amend_order_target(command: &ControlCommand) -> Result<AmendOrderTarget, ControlError> {
+    if command.kind != CommandKind::AmendOrder {
+        return Err(ControlError::Invalid("控制命令不是 AmendOrder".into()));
+    }
+    let client_order_id = command
+        .target
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| ControlError::Invalid("AmendOrder target 必须是正整数订单 ID".into()))?;
+    if command.payload.len() != 3
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+        || !command.payload.contains_key("order_json")
+    {
+        return Err(ControlError::Invalid(
+            "AmendOrder payload 必须且只能包含 account_id、venue_id、order_json".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "AmendOrder account_id/venue_id 不能为空".into(),
+        ));
+    }
+    let order: Order = serde_json::from_str(&command.payload["order_json"])
+        .map_err(|error| ControlError::Invalid(format!("AmendOrder order_json 非法: {error}")))?;
+    order.validate().map_err(|error| {
+        ControlError::Invalid(format!("AmendOrder order_json 校验失败: {error}"))
+    })?;
+    if order.client_id != client_order_id
+        || order.account_id != account_id
+        || !order
+            .instrument
+            .venue
+            .as_str()
+            .eq_ignore_ascii_case(venue_id)
+        || !matches!(
+            order.status,
+            OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+        )
+    {
+        return Err(ControlError::Invalid(
+            "AmendOrder target、账户、交易所或活动订单状态不匹配".into(),
+        ));
+    }
+    Ok(AmendOrderTarget {
+        client_order_id,
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+        order,
+    })
+}
+
+pub fn amend_order_target_from_command(
+    command: &ControlCommand,
+) -> Result<AmendOrderTarget, ControlError> {
+    command.validate()?;
+    parse_amend_order_target(command)
+}
+
 impl ControlCommand {
     pub fn validate(&self) -> Result<(), ControlError> {
         if self.request_id.trim().is_empty()
@@ -139,6 +211,9 @@ impl ControlCommand {
         }
         if self.kind == CommandKind::CancelOrder {
             parse_cancel_order_target(self)?;
+        }
+        if self.kind == CommandKind::AmendOrder {
+            parse_amend_order_target(self)?;
         }
         Ok(())
     }
@@ -674,6 +749,54 @@ fn has_permission(actual: Permission, required: Permission) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn amend_command(order: &Order) -> ControlCommand {
+        let mut value = command(Permission::Trading);
+        value.kind = CommandKind::AmendOrder;
+        value.target = order.client_id.to_string();
+        value.payload = BTreeMap::from([
+            ("account_id".into(), order.account_id.clone()),
+            (
+                "venue_id".into(),
+                order.instrument.venue.as_str().to_string(),
+            ),
+            ("order_json".into(), serde_json::to_string(order).unwrap()),
+        ]);
+        value
+    }
+
+    #[test]
+    fn amend_order_command_binds_target_route_and_active_order_snapshot() {
+        let order = Order {
+            client_id: 7,
+            instrument: qx_core::InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: qx_core::Side::Buy,
+            qty: qx_core::Quantity::from_i64(3),
+            limit: Some(qx_core::Price::from_i64(101)),
+            status: OrderStatus::PartiallyFilled,
+            filled: qx_core::Quantity::from_i64(1),
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let command = amend_command(&order);
+        let target = amend_order_target_from_command(&command).unwrap();
+        assert_eq!(target.client_order_id, 7);
+        assert_eq!(target.account_id, "main");
+        assert_eq!(target.venue_id, "BINANCE");
+        assert_eq!(target.order, order);
+
+        let mut mismatch = command.clone();
+        mismatch.target = "8".into();
+        assert!(amend_order_target_from_command(&mismatch).is_err());
+        let mut wrong_route = command.clone();
+        wrong_route.payload.insert("venue_id".into(), "OKX".into());
+        assert!(amend_order_target_from_command(&wrong_route).is_err());
+        let mut terminal = order;
+        terminal.status = OrderStatus::Filled;
+        assert!(amend_order_target_from_command(&amend_command(&terminal)).is_err());
+    }
 
     fn command(permission: Permission) -> ControlCommand {
         ControlCommand {

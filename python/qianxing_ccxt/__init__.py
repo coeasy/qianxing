@@ -2641,7 +2641,7 @@ class CcxtExchangeClient:
             params=call_params,
         )
 
-    def edit_order(
+    def validate_edit_order(
         self,
         order_id: str,
         instrument: str,
@@ -2652,11 +2652,12 @@ class CcxtExchangeClient:
         price_exact: str | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> CcxtOrder:
-        """Atomically edit an open order using its new total amount, never cancel/recreate.
+        """Read and validate an edit request without causing a venue side effect.
 
         `amount_exact` is the order's new total quantity, not its remaining quantity.
         The adapter reads the current order first and refuses a new total at or below
-        cumulative fills; this avoids ambiguous shrink semantics at the connector edge.
+        cumulative fills. Call this before persisting an amend intent so unsupported or
+        malformed requests do not strand the account in an unknown-operation state.
         """
         if (
             not isinstance(order_id, str)
@@ -2717,6 +2718,32 @@ class CcxtExchangeClient:
                 field="price",
                 known_step=None,
             )
+        return current
+
+    def edit_order(
+        self,
+        order_id: str,
+        instrument: str,
+        *,
+        side: str,
+        order_type: str,
+        amount_exact: str,
+        price_exact: str | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> CcxtOrder:
+        """Atomically edit an open order using its new total amount, never cancel/recreate."""
+        self.validate_edit_order(
+            order_id,
+            instrument,
+            side=side,
+            order_type=order_type,
+            amount_exact=amount_exact,
+            price_exact=price_exact,
+            params=params,
+        )
+        market = self.resolve_market(instrument)
+        amount = _exact_decimal_wire_text(amount_exact, field="amount")
+        price = None if price_exact is None else _exact_decimal_wire_text(price_exact, field="price")
         result = self._call(
             "edit_order",
             order_id,

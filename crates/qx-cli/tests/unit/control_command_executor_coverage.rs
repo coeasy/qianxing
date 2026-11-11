@@ -1,12 +1,12 @@
 //! #188 判据：控制面只受理真的有执行者的命令类型，且"有没有执行者"这条判定不漂移。
 //!
-//! 改前实况：`CommandKind` 八颗变体里有五颗（`ChangeRiskLimit` / `CancelOrder` /
+//! 改前实况：`CommandKind` 变体里有五颗（`ChangeRiskLimit` / `CancelOrder` /
 //! `ReconcileAccount` / `RetryJob` / `SwitchVenue`）在全仓没有任何派发者。提交入口照样
 //! 返回 `Accepted` 并把命令写进审计与队列，然后它永远停在那里 —— 运维读到"已受理"，
 //! 交易所、调度器那两侧什么都没有。现在提交入口按 `CommandKind::executed()` 裁决，
 //! 但判定式本身是一行手写的 `matches!`，它会腐坏，所以本文件钉住两侧：
 //!
-//! - **行为侧**：八颗逐个过真实提交入口 —— 四颗受理、四颗以 `Invalid` 拒绝，且拒绝时
+//! - **行为侧**：全部变体逐个过真实提交入口 —— 四颗受理、其余以 `Invalid` 拒绝，且拒绝时
 //!   既不写审计也不留待办（"拒绝"必须是真的没受理，而不是受理后再标失败）。
 //! - **源码侧**：`executed()` 为真的名字必须出现在生产派发者文件里；为假的名字在**任何**
 //!   生产源码里都不许以 `CommandKind::<名字>` 的形式出现。于是"加了派发者却忘了改判定式"
@@ -17,6 +17,7 @@
 
 use super::*;
 use qx_control::ControlError;
+use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use std::sync::OnceLock;
 
 /// 生产派发者名单按实际命令执行宿主登记，Venue runner 生命周期由 qx-service 持有。
@@ -81,6 +82,14 @@ fn dispatchers_of(kind_name: &str) -> Vec<String> {
     production_sources()
         .iter()
         .filter(|(_, source)| production_region(source).contains(&token))
+        // Contract parsing names a command kind but does not dispatch it. Executor coverage
+        // deliberately checks worker/service production sources only.
+        .filter(|(path, _)| {
+            !path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("crates/qx-control/src/lib.rs")
+        })
         .map(|(path, _)| {
             path.strip_prefix(&root)
                 .unwrap_or(path)
@@ -91,7 +100,29 @@ fn dispatchers_of(kind_name: &str) -> Vec<String> {
 }
 
 fn command(kind: CommandKind, id: u64) -> ControlCommand {
-    let (target, payload) = if kind == CommandKind::CancelOrder {
+    let (target, payload) = if kind == CommandKind::AmendOrder {
+        let order = Order {
+            client_id: id,
+            instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(2),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::Working,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        (
+            id.to_string(),
+            BTreeMap::from([
+                ("account_id".into(), "main".into()),
+                ("venue_id".into(), "BINANCE".into()),
+                ("order_json".into(), serde_json::to_string(&order).unwrap()),
+            ]),
+        )
+    } else if kind == CommandKind::CancelOrder {
         (
             id.to_string(),
             BTreeMap::from([
@@ -156,6 +187,7 @@ fn control_plane_accepts_only_the_kinds_that_have_an_executor() {
     assert_eq!(
         rejected,
         [
+            "AmendOrder",
             "ChangeRiskLimit",
             "ReconcileAccount",
             "RetryJob",

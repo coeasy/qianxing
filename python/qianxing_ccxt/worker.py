@@ -331,6 +331,19 @@ class CcxtJsonWorker:
                 params=dict(request.get("params", {})),
             )
             return {"order": _order_wire(order)}
+        if operation == "validate_edit_order":
+            order = self.client.validate_edit_order(
+                str(request["order_id"]),
+                str(request["instrument"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"validated": True, "order": _order_wire(order)}
         if operation == "fetch_order":
             order = self.client.fetch_order(
                 str(request["order_id"]),

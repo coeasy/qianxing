@@ -515,7 +515,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 
 - 有派发者的控制命令：`SubmitOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`。`CancelOrder` 目前路由到已启用的 Binance/CCXT Execution worker，必须提供 `account_id`、`venue_id` 和正整数 `client_order_id`；Paper worker 不接收该控制命令。
 - 有派发者、能被受理的：`SubmitOrder`、`CancelOrder`、`PauseStrategy`、`ResumeStrategy`。
-- 没有派发者、提交即以 400 拒绝的：`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
+- 没有派发者、提交即以 400 拒绝的：`AmendOrder`、`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
 
 这条闸门只在提交入口判，不进存档校验：队列与审计里已经落盘的历史命令重启后仍然读得回来，
 构建不受理与存档坏了是两条通道。上面两行名单由用例

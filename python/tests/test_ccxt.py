@@ -1670,6 +1670,16 @@ class CcxtMultiExchangeSandboxContractTest(unittest.TestCase):
             return CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
 
         exchange = EditableExchange()
+        validated = client_for(exchange).validate_edit_order(
+            "remote-1",
+            "BTC/USDT.BINANCE",
+            side="buy",
+            order_type="limit",
+            amount_exact="3",
+            price_exact="101",
+        )
+        self.assertEqual(validated.amount_exact, "2")
+        self.assertFalse(any(call[0] == "edit_order" for call in exchange.calls))
         amended = client_for(exchange).edit_order(
             "remote-1",
             "BTC/USDT.BINANCE",
