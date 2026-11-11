@@ -2157,6 +2157,30 @@ class CcxtExchangeClient:
         client_order_id: str | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> CcxtOrder:
+        if risk_leverage is not None and (
+            isinstance(risk_leverage, bool)
+            or not isinstance(risk_leverage, int)
+            or risk_leverage < 1
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "risk_leverage 必须为正整数",
+            )
+        if not isinstance(risk_reduce_only, bool):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "risk_reduce_only 必须为布尔值",
+            )
+        if not isinstance(risk_preflight_verified, bool):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "risk_preflight_verified 必须为布尔值",
+            )
+        if risk_margin_mode not in (None, "cross", "isolated"):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "risk_margin_mode 必须为 cross 或 isolated",
+            )
         market = self.resolve_market(instrument)
         if amount_exact is not None:
             if amount_raw is not None or price_raw is not None:
