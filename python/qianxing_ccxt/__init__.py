@@ -2652,7 +2652,12 @@ class CcxtExchangeClient:
         price_exact: str | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> CcxtOrder:
-        """Use a venue's native atomic edit operation; never emulate with cancel/recreate."""
+        """Atomically edit an open order using its new total amount, never cancel/recreate.
+
+        `amount_exact` is the order's new total quantity, not its remaining quantity.
+        The adapter reads the current order first and refuses a new total at or below
+        cumulative fills; this avoids ambiguous shrink semantics at the connector edge.
+        """
         if (
             not isinstance(order_id, str)
             or not order_id.strip()
@@ -2680,6 +2685,22 @@ class CcxtExchangeClient:
             raise CcxtConnectorError(
                 CcxtErrorClass.UNSUPPORTED,
                 f"交易所 {self.config.exchange_id} 未声明原生 editOrder；拒绝用撤单重挂模拟改单",
+            )
+        current = self.fetch_order(order_id, instrument, params=params)
+        if current.status.lower() != "open":
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                f"只允许改单活动订单；当前状态为 {current.status}",
+            )
+        if current.side.lower() != side or current.order_type.lower() != order_type:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "原生改单只能调整数量或价格，不能改变订单方向或市价/限价类型",
+            )
+        if Fraction(amount) <= Fraction(current.filled_exact):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "改单新总量必须大于订单当前累计成交量",
             )
         self._require_exact_exchange_precision_text(
             "amount_to_precision",

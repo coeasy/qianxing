@@ -1622,6 +1622,80 @@ class CcxtTest(unittest.TestCase):
 
 
 class CcxtMultiExchangeSandboxContractTest(unittest.TestCase):
+    def test_native_edit_uses_new_total_and_refuses_filled_or_terminal_orders(self):
+        class EditableExchange(FakeExchange):
+            def __init__(self, *, status="open", filled="1"):
+                super().__init__()
+                self.has = {"editOrder": True}
+                self.status = status
+                self.filled = filled
+
+            def amount_to_precision(self, symbol, value):
+                self.calls.append(("amount_to_precision", symbol, str(value)))
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                self.calls.append(("price_to_precision", symbol, str(value)))
+                return str(value)
+
+            def fetch_order(self, order_id, symbol, params):
+                self.calls.append(("fetch_order", order_id, symbol, params))
+                return {
+                    "id": order_id,
+                    "symbol": symbol,
+                    "status": self.status,
+                    "side": "buy",
+                    "type": "limit",
+                    "amount": "2",
+                    "filled": self.filled,
+                    "remaining": str(Fraction("2") - Fraction(self.filled)),
+                    "price": "100",
+                }
+
+            def edit_order(self, order_id, symbol, order_type, side, amount, price, params):
+                self.calls.append(("edit_order", order_id, symbol, amount, price, params))
+                return {
+                    "id": order_id,
+                    "symbol": symbol,
+                    "status": "open",
+                    "side": side,
+                    "type": order_type,
+                    "amount": amount,
+                    "filled": self.filled,
+                    "remaining": str(Fraction(amount) - Fraction(self.filled)),
+                    "price": price,
+                }
+
+        def client_for(exchange):
+            return CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+
+        exchange = EditableExchange()
+        amended = client_for(exchange).edit_order(
+            "remote-1",
+            "BTC/USDT.BINANCE",
+            side="buy",
+            order_type="limit",
+            amount_exact="3",
+            price_exact="101",
+        )
+        self.assertEqual(amended.amount_exact, "3")
+        self.assertEqual(amended.filled_exact, "1")
+        self.assertIn(("edit_order", "remote-1", "BTC/USDT", "3", "101", {}), exchange.calls)
+
+        for status, filled, amount in (("open", "1", "1"), ("closed", "2", "3")):
+            rejected = EditableExchange(status=status, filled=filled)
+            with self.subTest(status=status, filled=filled, amount=amount):
+                with self.assertRaises(CcxtConnectorError):
+                    client_for(rejected).edit_order(
+                        "remote-1",
+                        "BTC/USDT.BINANCE",
+                        side="buy",
+                        order_type="limit",
+                        amount_exact=amount,
+                    )
+                self.assertFalse(any(call[0] == "edit_order" for call in rejected.calls))
+
+
     def test_same_public_ccxt_contract_covers_binance_okx_and_bybit(self):
         for exchange_id in ("binance", "okx", "bybit"):
             with self.subTest(exchange_id=exchange_id):
