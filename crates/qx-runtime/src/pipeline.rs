@@ -141,6 +141,10 @@ pub enum RuntimeExternalEvent {
         filled_raw: i128,
         filled_exact: Option<ExactDecimal>,
     },
+    /// Full post-amendment order state returned by the venue.
+    OrderAmended {
+        order: Order,
+    },
 }
 
 /// 外部事实的时间与血缘元数据。
@@ -296,6 +300,7 @@ fn venue_event_source_kind(event: &RuntimeExternalEvent) -> &'static str {
         RuntimeExternalEvent::OrderStatusReconciled { .. } => {
             event_source_kind::VENUE_ORDER_STATUS_RECONCILED
         }
+        RuntimeExternalEvent::OrderAmended { .. } => event_source_kind::VENUE_ORDER_AMENDED,
     }
 }
 
@@ -1241,6 +1246,11 @@ impl LiveEventPipeline {
                     *filled_exact,
                 )?;
             }
+            EventKind::OrderAmended { order } => {
+                self.oms.amend_replayed(order.clone()).map_err(|error| {
+                    QxError::Invariant(format!("EventLog OrderAmended 无法进入 OMS: {error:?}"))
+                })?;
+            }
             EventKind::MarketQuote {
                 instrument, ask, ..
             } => {
@@ -2018,6 +2028,10 @@ mod tests {
                 },
                 event_source_kind::VENUE_ORDER_STATUS_RECONCILED,
             ),
+            (
+                RuntimeExternalEvent::OrderAmended { order: order() },
+                event_source_kind::VENUE_ORDER_AMENDED,
+            ),
         ];
 
         for (event, expected) in cases {
@@ -2101,6 +2115,66 @@ mod tests {
         let reopened = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(reopened.execution_capability_decision(7), Some(&decision));
         assert_eq!(reopened.log().events()[0].seq, seq);
+    }
+
+    #[test]
+    fn confirmed_order_amendment_updates_projection_and_replays_after_restart() {
+        let root = writable_eventlog_root("order-amended");
+        let mut pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        pipeline.register_order(order(), 100).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: Some("venue-7".into()),
+                },
+                110,
+                110,
+                1,
+                "accepted-7",
+            ))
+            .unwrap();
+        let mut amended = pipeline.orders()[0].clone();
+        amended.qty = Quantity::from_i64(3);
+        amended.limit = Some(Price::from_i64(101));
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmended {
+                    order: amended.clone(),
+                },
+                120,
+                120,
+                2,
+                "amended-7",
+            ))
+            .unwrap();
+        assert_eq!(pipeline.orders()[0], amended);
+        assert!(matches!(
+            pipeline.log().events().last().map(|event| &event.kind),
+            Some(EventKind::OrderAmended { order }) if order == &amended
+        ));
+
+        let reopened = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(reopened.orders()[0], amended);
+
+        let mut invalid = amended;
+        invalid.side = Side::Sell;
+        let log_len = pipeline.log().len();
+        assert!(pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmended { order: invalid },
+                130,
+                130,
+                3,
+                "invalid-amended-7",
+            ))
+            .is_err());
+        assert_eq!(
+            pipeline.log().len(),
+            log_len,
+            "invalid amendment must not poison EventLog"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

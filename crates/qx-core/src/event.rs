@@ -192,6 +192,7 @@ pub mod event_source_kind {
     pub const VENUE_ORDER_CANCEL_PENDING: &str = "venue_order_cancel_pending";
     pub const VENUE_RECONCILE_REQUIRED: &str = "venue_reconcile_required";
     pub const VENUE_ORDER_STATUS_RECONCILED: &str = "venue_order_status_reconciled";
+    pub const VENUE_ORDER_AMENDED: &str = "venue_order_amended";
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -577,6 +578,11 @@ pub enum EventKind {
     OrderSubmitted {
         order: crate::order::Order,
     },
+    /// Authoritative venue result for an order amendment. The full post-amendment snapshot is
+    /// persisted so the OMS terms and pending-order risk reserve rebuild identically on replay.
+    OrderAmended {
+        order: crate::order::Order,
+    },
     StrategyDecision {
         decision: StrategyDecisionFact,
     },
@@ -952,6 +958,97 @@ impl Event {
                         digest_optional_exact_decimal(h, conditional.trailing_amount);
                         digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
                     }
+                }
+            }
+            EventKind::OrderAmended { order } => {
+                h.write_u64(22);
+                h.write_u64(order.client_id);
+                h.write_text(&order.instrument.to_string());
+                h.write_u64(match order.side {
+                    crate::order::Side::Buy => 1,
+                    crate::order::Side::Sell => 2,
+                });
+                h.write_i128(order.qty.raw());
+                h.write_u64(u64::from(order.limit.is_some()));
+                h.write_i128(order.limit.map(|price| price.raw()).unwrap_or_default());
+                h.write_u64(match order.status {
+                    crate::order::OrderStatus::PendingSubmit => 1,
+                    crate::order::OrderStatus::Submitted => 2,
+                    crate::order::OrderStatus::Accepted => 3,
+                    crate::order::OrderStatus::Working => 4,
+                    crate::order::OrderStatus::PartiallyFilled => 5,
+                    crate::order::OrderStatus::Filled => 6,
+                    crate::order::OrderStatus::CancelPending => 7,
+                    crate::order::OrderStatus::Cancelled => 8,
+                    crate::order::OrderStatus::Rejected => 9,
+                    crate::order::OrderStatus::Expired => 10,
+                    crate::order::OrderStatus::Unknown => 11,
+                });
+                h.write_i128(order.filled.raw());
+                h.write_text(&order.account_id);
+                if let Some(trace) = &order.trace {
+                    h.write_text(trace.strategy_id.as_deref().unwrap_or_default());
+                    h.write_u64(trace.signal_id.unwrap_or_default());
+                    h.write_u64(trace.intent_id.unwrap_or_default());
+                    h.write_text(trace.rule_version.as_deref().unwrap_or_default());
+                } else {
+                    h.write_text("");
+                    h.write_u64(0);
+                    h.write_u64(0);
+                    h.write_text("");
+                }
+                if let Some(policy) = order.policy {
+                    h.write_u64(1);
+                    h.write_u64(u64::from(policy.reduce_only));
+                    h.write_u64(match policy.position_side {
+                        crate::trading::PositionSide::Long => 1,
+                        crate::trading::PositionSide::Short => 2,
+                        crate::trading::PositionSide::Net => 3,
+                    });
+                    h.write_u64(match policy.margin_mode {
+                        crate::trading::MarginMode::Cash => 1,
+                        crate::trading::MarginMode::Cross => 2,
+                        crate::trading::MarginMode::Isolated => 3,
+                    });
+                    h.write_u64(match policy.position_mode {
+                        crate::trading::PositionMode::OneWay => 1,
+                        crate::trading::PositionMode::Hedge => 2,
+                    });
+                    h.write_u64(policy.leverage as u64);
+                    h.write_u64(u64::from(policy.post_only));
+                } else {
+                    h.write_u64(0);
+                }
+                if let Some(exact) = order.exact_amounts {
+                    h.write_u64(0x4558_4143_545f_414d);
+                    digest_exact_decimal(h, exact.quantity);
+                    digest_optional_exact_decimal(h, exact.limit_price);
+                    digest_exact_decimal(h, exact.filled);
+                    digest_optional_exact_decimal(h, exact.quote_budget);
+                    digest_exact_decimal(h, exact.quote_filled);
+                    digest_optional_exact_decimal(h, exact.market_reference_price);
+                    h.write_u64(u64::from(exact.conditional.is_some()));
+                    if let Some(conditional) = exact.conditional {
+                        h.write_u64(0x434f_4e44_4954_494f);
+                        h.write_u64(match conditional.kind {
+                            crate::order::ConditionalOrderKind::Trigger => 1,
+                            crate::order::ConditionalOrderKind::StopLoss => 2,
+                            crate::order::ConditionalOrderKind::TakeProfit => 3,
+                            crate::order::ConditionalOrderKind::Trailing => 4,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trigger_price);
+                        h.write_u64(match conditional.trigger_price_type {
+                            None => 0,
+                            Some(crate::order::TriggerPriceType::Last) => 1,
+                            Some(crate::order::TriggerPriceType::Mark) => 2,
+                            Some(crate::order::TriggerPriceType::Index) => 3,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trailing_percent);
+                        digest_optional_exact_decimal(h, conditional.trailing_amount);
+                        digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
+                    }
+                } else {
+                    h.write_u64(0);
                 }
             }
             EventKind::StrategyDecision { decision } => {

@@ -222,6 +222,79 @@ impl Oms {
         self.submit(order)
     }
 
+    /// Replace the live OMS terms after an authoritative venue amendment fact.
+    /// The client order identity, routing, policy, lifecycle state, and cumulative fills
+    /// are immutable; only total quantity and a same-kind limit price may change.
+    pub fn validate_amendment(&self, amended: &Order) -> QxResult<()> {
+        amended.validate().map_err(QxError::BusinessViolation)?;
+        let current = self
+            .orders
+            .get(&amended.client_id)
+            .ok_or_else(|| QxError::ReconcileRequired("改单事实对应未知 OMS 订单".into()))?;
+        if !matches!(
+            current.status,
+            OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+        ) || amended.status != current.status
+            || amended.instrument != current.instrument
+            || amended.side != current.side
+            || amended.account_id != current.account_id
+            || amended.trace != current.trace
+            || amended.policy != current.policy
+        {
+            return Err(QxError::ReconcileRequired(format!(
+                "订单 {} 的改单事实改变了身份/生命周期，或原订单当前不可改单",
+                amended.client_id
+            )));
+        }
+
+        match (current.exact_amounts, amended.exact_amounts) {
+            (Some(old), Some(new)) => {
+                if old.filled != new.filled
+                    || new
+                        .quantity
+                        .checked_cmp(new.filled)
+                        .is_none_or(|ordering| !ordering.is_gt())
+                    || old.quote_budget != new.quote_budget
+                    || old.quote_filled != new.quote_filled
+                    || old.market_reference_price != new.market_reference_price
+                    || old.conditional != new.conditional
+                    || old.limit_price.is_some() != new.limit_price.is_some()
+                    || (old.quantity == new.quantity && old.limit_price == new.limit_price)
+                {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "精确订单 {} 的改单事实改动了成交、预算、风控参考或订单种类",
+                        amended.client_id
+                    )));
+                }
+            }
+            (None, None) => {
+                if current.filled != amended.filled
+                    || amended.qty.raw() <= amended.filled.raw()
+                    || current.limit.is_some() != amended.limit.is_some()
+                    || (current.qty == amended.qty && current.limit == amended.limit)
+                {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "订单 {} 的改单事实改动了成交状态、订单种类或没有改变订单条款",
+                        amended.client_id
+                    )));
+                }
+            }
+            _ => {
+                return Err(QxError::ReconcileRequired(format!(
+                    "订单 {} 的改单事实在旧精度与精确金额之间切换",
+                    amended.client_id
+                )))
+            }
+        }
+        Ok(())
+    }
+
+    pub fn amend_replayed(&mut self, amended: Order) -> QxResult<()> {
+        self.validate_amendment(&amended)?;
+        self.orders.insert(amended.client_id, amended);
+        Ok(())
+    }
+
     pub fn all_orders(&self) -> Vec<Order> {
         self.orders.values().cloned().collect()
     }
@@ -290,6 +363,41 @@ mod tests {
 
             exact_amounts: None,
         }
+    }
+
+    #[test]
+    fn amendment_replay_changes_only_order_terms_and_preserves_cumulative_fills() {
+        let mut oms = Oms::new();
+        let mut current = order();
+        current.status = OrderStatus::Working;
+        current.filled = Quantity::from_i64(1);
+        current.limit = Some(qx_core::Price::from_i64(100));
+        oms.submit(Order {
+            status: OrderStatus::Submitted,
+            filled: Quantity::ZERO,
+            ..current.clone()
+        })
+        .unwrap();
+        oms.get_mut(1).unwrap().status = OrderStatus::Working;
+        oms.get_mut(1).unwrap().filled = Quantity::from_i64(1);
+
+        let mut amended = current.clone();
+        amended.qty = Quantity::from_i64(3);
+        amended.limit = Some(qx_core::Price::from_i64(101));
+        oms.amend_replayed(amended.clone()).unwrap();
+        assert_eq!(oms.get(1), Some(&amended));
+
+        let before_invalid = oms.get(1).unwrap().clone();
+        let mut changed_identity = amended.clone();
+        changed_identity.side = Side::Sell;
+        assert!(oms.amend_replayed(changed_identity).is_err());
+        assert_eq!(oms.get(1), Some(&before_invalid));
+
+        let mut no_op = amended.clone();
+        assert!(oms.amend_replayed(no_op.clone()).is_err());
+        no_op.qty = Quantity::from_i64(1);
+        assert!(oms.amend_replayed(no_op).is_err());
+        assert_eq!(oms.get(1), Some(&before_invalid));
     }
 
     #[test]

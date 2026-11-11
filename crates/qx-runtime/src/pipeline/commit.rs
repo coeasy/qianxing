@@ -277,6 +277,7 @@ impl LiveEventPipeline {
                 | RuntimeExternalEvent::AccountCashflow { .. }
                 | RuntimeExternalEvent::FeeAdjustment { .. }
                 | RuntimeExternalEvent::FillWithSpec { .. }
+                | RuntimeExternalEvent::OrderAmended { .. }
         );
         if let Some(engine_ts) = self.event_identities.duplicate_ts(
             &metadata.dedup_key,
@@ -584,6 +585,15 @@ impl LiveEventPipeline {
                 },
                 Priority::FEEDBACK,
             ),
+            RuntimeExternalEvent::OrderAmended { order } => {
+                self.oms.validate_amendment(order)?;
+                (
+                    EventKind::OrderAmended {
+                        order: order.clone(),
+                    },
+                    Priority::FEEDBACK,
+                )
+            }
         };
         let primary = self.append_fact(
             event_ts,
@@ -768,6 +778,9 @@ impl LiveEventPipeline {
                     filled_raw,
                     filled_exact,
                 )?;
+            }
+            RuntimeExternalEvent::OrderAmended { order } => {
+                self.oms.amend_replayed(order)?;
             }
         }
         self.persist()?;
