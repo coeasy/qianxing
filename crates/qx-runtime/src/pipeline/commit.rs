@@ -278,6 +278,7 @@ impl LiveEventPipeline {
                 | RuntimeExternalEvent::FeeAdjustment { .. }
                 | RuntimeExternalEvent::FillWithSpec { .. }
                 | RuntimeExternalEvent::OrderAmended { .. }
+                | RuntimeExternalEvent::OrderAmendmentPending { .. }
         );
         if let Some(engine_ts) = self.event_identities.duplicate_ts(
             &metadata.dedup_key,
@@ -585,10 +586,54 @@ impl LiveEventPipeline {
                 },
                 Priority::FEEDBACK,
             ),
-            RuntimeExternalEvent::OrderAmended { order } => {
+            RuntimeExternalEvent::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => {
+                self.oms.validate_amendment(order)?;
+                if operation_id.trim().is_empty()
+                    || self.pending_amendments.contains_key(&order.client_id)
+                    || self
+                        .pending_amendments
+                        .values()
+                        .any(|(pending_id, _)| pending_id == operation_id)
+                {
+                    return Err(QxError::ReconcileRequired(
+                        "改单 operation_id 为空或该订单已有未结改单".into(),
+                    ));
+                }
+                (
+                    EventKind::OrderAmendmentPending {
+                        operation_id: operation_id.clone(),
+                        order: order.clone(),
+                    },
+                    Priority::COMMAND,
+                )
+            }
+            RuntimeExternalEvent::OrderAmended {
+                operation_id,
+                order,
+            } => {
+                if operation_id.trim().is_empty() {
+                    return Err(QxError::ReconcileRequired(
+                        "改单结果 operation_id 不能为空".into(),
+                    ));
+                }
+                let Some((pending_id, requested)) = self.pending_amendments.get(&order.client_id)
+                else {
+                    return Err(QxError::ReconcileRequired(
+                        "改单结果缺少对应的持久改单意图".into(),
+                    ));
+                };
+                if pending_id != operation_id || requested != order {
+                    return Err(QxError::ReconcileRequired(
+                        "改单结果与持久改单意图不匹配".into(),
+                    ));
+                }
                 self.oms.validate_amendment(order)?;
                 (
                     EventKind::OrderAmended {
+                        operation_id: operation_id.clone(),
                         order: order.clone(),
                     },
                     Priority::FEEDBACK,
@@ -779,8 +824,17 @@ impl LiveEventPipeline {
                     filled_exact,
                 )?;
             }
-            RuntimeExternalEvent::OrderAmended { order } => {
+            RuntimeExternalEvent::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => {
+                self.pending_amendments
+                    .insert(order.client_id, (operation_id, order));
+            }
+            RuntimeExternalEvent::OrderAmended { order, .. } => {
+                let client_order_id = order.client_id;
                 self.oms.amend_replayed(order)?;
+                self.pending_amendments.remove(&client_order_id);
             }
         }
         self.persist()?;

@@ -143,6 +143,11 @@ pub enum RuntimeExternalEvent {
     },
     /// Full post-amendment order state returned by the venue.
     OrderAmended {
+        operation_id: String,
+        order: Order,
+    },
+    OrderAmendmentPending {
+        operation_id: String,
         order: Order,
     },
 }
@@ -301,6 +306,9 @@ fn venue_event_source_kind(event: &RuntimeExternalEvent) -> &'static str {
             event_source_kind::VENUE_ORDER_STATUS_RECONCILED
         }
         RuntimeExternalEvent::OrderAmended { .. } => event_source_kind::VENUE_ORDER_AMENDED,
+        RuntimeExternalEvent::OrderAmendmentPending { .. } => {
+            event_source_kind::VENUE_ORDER_AMEND_PENDING
+        }
     }
 }
 
@@ -473,6 +481,7 @@ pub struct LiveEventPipeline {
     account_balances: BTreeMap<(String, String), Vec<AccountBalance>>,
     account_positions: BTreeMap<(String, String), Vec<AccountPositionSnapshot>>,
     funding_rates: BTreeMap<InstrumentId, FundingRateSnapshot>,
+    pending_amendments: BTreeMap<u64, (String, Order)>,
     event_identities: RuntimeEventIdentityIndex,
     // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
     // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
@@ -724,6 +733,7 @@ impl LiveEventPipeline {
             account_balances: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
+            pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             seen_fills: BTreeSet::new(),
             store,
@@ -907,6 +917,18 @@ impl LiveEventPipeline {
 
     pub fn orders(&self) -> Vec<Order> {
         self.oms.all_orders()
+    }
+
+    pub fn pending_amendment(&self, client_order_id: u64) -> Option<(&str, &Order)> {
+        self.pending_amendments
+            .get(&client_order_id)
+            .map(|(operation_id, order)| (operation_id.as_str(), order))
+    }
+
+    pub fn has_pending_amendment_for_account(&self, account_id: &str) -> bool {
+        self.pending_amendments
+            .values()
+            .any(|(_, order)| order.account_id == account_id)
     }
 
     pub fn venue_order_id(&self, client_order_id: u64) -> Option<String> {
@@ -1246,10 +1268,48 @@ impl LiveEventPipeline {
                     *filled_exact,
                 )?;
             }
-            EventKind::OrderAmended { order } => {
+            EventKind::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => {
+                self.oms.validate_amendment(order).map_err(|error| {
+                    QxError::Invariant(format!(
+                        "EventLog OrderAmendmentPending 无法校验: {error:?}"
+                    ))
+                })?;
+                if operation_id.trim().is_empty()
+                    || self.pending_amendments.contains_key(&order.client_id)
+                    || self
+                        .pending_amendments
+                        .values()
+                        .any(|(pending_id, _)| pending_id == operation_id)
+                {
+                    return Err(QxError::Invariant(
+                        "改单在途事实 operation_id 为空或订单已有未结操作".into(),
+                    ));
+                }
+                self.pending_amendments
+                    .insert(order.client_id, (operation_id.clone(), order.clone()));
+            }
+            EventKind::OrderAmended {
+                operation_id,
+                order,
+            } => {
+                let Some((pending_id, requested)) = self.pending_amendments.get(&order.client_id)
+                else {
+                    return Err(QxError::Invariant(
+                        "OrderAmended 缺少对应的改单在途事实".into(),
+                    ));
+                };
+                if pending_id != operation_id || requested != order {
+                    return Err(QxError::Invariant(
+                        "OrderAmended 与持久改单意图不匹配".into(),
+                    ));
+                }
                 self.oms.amend_replayed(order.clone()).map_err(|error| {
                     QxError::Invariant(format!("EventLog OrderAmended 无法进入 OMS: {error:?}"))
                 })?;
+                self.pending_amendments.remove(&order.client_id);
             }
             EventKind::MarketQuote {
                 instrument, ask, ..
@@ -1700,6 +1760,7 @@ impl LiveEventPipeline {
             account_balances: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
+            pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             seen_fills: BTreeSet::new(),
             store: self.store.clone(),
@@ -2029,8 +2090,18 @@ mod tests {
                 event_source_kind::VENUE_ORDER_STATUS_RECONCILED,
             ),
             (
-                RuntimeExternalEvent::OrderAmended { order: order() },
+                RuntimeExternalEvent::OrderAmended {
+                    operation_id: "amend-1".into(),
+                    order: order(),
+                },
                 event_source_kind::VENUE_ORDER_AMENDED,
+            ),
+            (
+                RuntimeExternalEvent::OrderAmendmentPending {
+                    operation_id: "amend-1".into(),
+                    order: order(),
+                },
+                event_source_kind::VENUE_ORDER_AMEND_PENDING,
             ),
         ];
 
@@ -2139,19 +2210,70 @@ mod tests {
         amended.limit = Some(Price::from_i64(101));
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmendmentPending {
+                    operation_id: "amend-7".into(),
+                    order: amended.clone(),
+                },
+                115,
+                115,
+                2,
+                "amend-pending-7",
+            ))
+            .unwrap();
+        assert_eq!(pipeline.pending_amendment(7), Some(("amend-7", &amended)));
+        assert!(pipeline.has_pending_amendment_for_account("main"));
+        let pending_reopened = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(
+            pending_reopened.pending_amendment(7),
+            Some(("amend-7", &amended)),
+            "an unknown venue outcome must survive restart"
+        );
+        let mut cancel_venue = CountingCancelVenue::default();
+        let mut source_seq = 4;
+        let cancel_error = qx_execution::PortExecutionService::new(
+            &mut cancel_venue,
+            &mut pipeline,
+            "amend-cancel-guard",
+            117,
+            &mut source_seq,
+        )
+        .cancel(7)
+        .expect_err("a pending amendment must block a racing cancellation");
+        assert!(cancel_error.contains("改单结果未知"), "{cancel_error}");
+        assert_eq!(cancel_venue.cancel_calls, 0);
+        let pending_log_len = pipeline.log().len();
+        assert!(pipeline
+            .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::OrderAmended {
+                    operation_id: "wrong-operation".into(),
+                    order: amended.clone(),
+                },
+                118,
+                118,
+                3,
+                "wrong-amend-response-7",
+            ))
+            .is_err());
+        assert_eq!(pipeline.log().len(), pending_log_len);
+        assert!(pipeline.pending_amendment(7).is_some());
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmended {
+                    operation_id: "amend-7".into(),
                     order: amended.clone(),
                 },
                 120,
                 120,
-                2,
+                3,
                 "amended-7",
             ))
             .unwrap();
         assert_eq!(pipeline.orders()[0], amended);
+        assert_eq!(pipeline.pending_amendment(7), None);
+        assert!(!pipeline.has_pending_amendment_for_account("main"));
         assert!(matches!(
             pipeline.log().events().last().map(|event| &event.kind),
-            Some(EventKind::OrderAmended { order }) if order == &amended
+            Some(EventKind::OrderAmended { order, operation_id }) if order == &amended && operation_id == "amend-7"
         ));
 
         let reopened = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
@@ -2162,7 +2284,10 @@ mod tests {
         let log_len = pipeline.log().len();
         assert!(pipeline
             .ingest(RuntimeEventEnvelope::venue(
-                RuntimeExternalEvent::OrderAmended { order: invalid },
+                RuntimeExternalEvent::OrderAmended {
+                    operation_id: "amend-7".into(),
+                    order: invalid,
+                },
                 130,
                 130,
                 3,

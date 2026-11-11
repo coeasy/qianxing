@@ -89,7 +89,8 @@ pub(super) fn enrich_runtime_event_context(
                 context.signal_id = cashflow.venue_id.clone();
             }
         }
-        RuntimeExternalEvent::OrderAmended { order } => {
+        RuntimeExternalEvent::OrderAmended { order, .. }
+        | RuntimeExternalEvent::OrderAmendmentPending { order, .. } => {
             if context.account_id.trim().is_empty() {
                 context.account_id = order.account_id.clone();
             }

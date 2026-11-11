@@ -127,6 +127,10 @@ pub(crate) fn event_kind_identity(kind: &EventKind) -> (&'static str, Option<u64
         EventKind::FundingRateSnapshot { .. } => ("FundingRateSnapshot", None),
         EventKind::AccountCashflow { .. } => ("AccountCashflow", None),
         EventKind::OrderSubmitted { order } => ("OrderSubmitted", Some(order.client_id)),
+        EventKind::OrderAmended { order, .. } => ("OrderAmended", Some(order.client_id)),
+        EventKind::OrderAmendmentPending { order, .. } => {
+            ("OrderAmendmentPending", Some(order.client_id))
+        }
         EventKind::StrategyDecision { .. } => ("StrategyDecision", None),
         EventKind::OrderRiskDecision { decision } => {
             ("OrderRiskDecision", Some(decision.client_order_id))

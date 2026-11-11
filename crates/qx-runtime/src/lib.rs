@@ -93,6 +93,10 @@ impl qx_execution::OrderStore for LiveEventPipeline {
         LiveEventPipeline::orders(self)
     }
 
+    fn has_pending_amendment(&self, client_order_id: u64) -> bool {
+        LiveEventPipeline::pending_amendment(self, client_order_id).is_some()
+    }
+
     fn register_order(
         &mut self,
         order: qx_core::Order,
@@ -137,6 +141,32 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                     envelope.correlation_id,
                 ))
             }
+            qx_execution::ExecutionEvent::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => self.ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmendmentPending {
+                    operation_id,
+                    order: *order,
+                },
+                envelope.event_ts,
+                envelope.receive_ts,
+                envelope.source_seq,
+                envelope.correlation_id,
+            )),
+            qx_execution::ExecutionEvent::OrderAmended {
+                operation_id,
+                order,
+            } => self.ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmended {
+                    operation_id,
+                    order: *order,
+                },
+                envelope.event_ts,
+                envelope.receive_ts,
+                envelope.source_seq,
+                envelope.correlation_id,
+            )),
             event => {
                 let event = match event {
                     qx_execution::ExecutionEvent::Accepted {
@@ -176,6 +206,10 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                     }
                     qx_execution::ExecutionEvent::CancelPending { .. } => {
                         unreachable!("CancelPending 在上面的分支处理")
+                    }
+                    qx_execution::ExecutionEvent::OrderAmendmentPending { .. }
+                    | qx_execution::ExecutionEvent::OrderAmended { .. } => {
+                        unreachable!("改单事实在上面的分支处理")
                     }
                 };
                 self.ingest(RuntimeEventEnvelope::venue(

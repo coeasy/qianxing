@@ -849,7 +849,9 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
         // 订单与账簿条目没有"账户域"这一栏，只有标的后缀：paper 账户交易的符号就叫
         // BTCUSDT.BINANCE，拿它当账户 venue 会把本账户自己的事实判成外来事实（V11 R13）。
         // 这两条只核对账户身份；交易所侧的串读由带显式 venue 的余额/持仓/资金/成交事实守住。
-        EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
+        EventKind::OrderSubmitted { order }
+        | EventKind::OrderAmended { order, .. }
+        | EventKind::OrderAmendmentPending { order, .. } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
         EventKind::FeeAdjustment {
             account_id,

@@ -60,8 +60,8 @@ pub fn require_fresh_live_balance_snapshot(
     Ok(())
 }
 
-/// Refuse another live order while this account has a local submission/cancellation whose venue
-/// outcome is not yet known. A fresh balance snapshot does not establish order acknowledgement.
+/// Refuse another live order while this account has a submission/cancellation/amendment whose
+/// venue outcome is not yet known. A fresh balance snapshot does not establish order acknowledgement.
 pub fn require_no_unresolved_live_order_operations(
     worker_id: &str,
     account_id: Option<&str>,
@@ -74,6 +74,11 @@ pub fn require_no_unresolved_live_order_operations(
     }
     let account_id = account_id.ok_or_else(|| format!("worker {worker_id} 缺少 account_id"))?;
     let venue_id = venue_id.ok_or_else(|| format!("worker {worker_id} 缺少 venue_id"))?;
+    if pipeline.has_pending_amendment_for_account(account_id) {
+        return Err(format!(
+            "FAIL_CLOSED: worker {worker_id} 账户存在改单结果未知的订单操作，需先完成交易所对账"
+        ));
+    }
     if let Some(order) = pipeline.orders().into_iter().find(|order| {
         order.account_id == account_id
             && Some(order.client_id) != except_client_order_id

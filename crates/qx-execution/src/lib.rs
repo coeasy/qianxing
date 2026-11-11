@@ -513,6 +513,12 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
 
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
         self.validate_order(&order)?;
+        if self.events.orders().iter().any(|existing| {
+            existing.account_id == order.account_id
+                && self.events.has_pending_amendment(existing.client_id)
+        }) {
+            return Err("账户存在改单结果未知的订单，必须先对账，禁止新增订单".into());
+        }
         self.venue.validate_submit_capabilities(&order)?;
         let existing_order = self
             .events
@@ -717,6 +723,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
 
     pub fn cancel(&mut self, client_order_id: u64) -> Result<PortExecutionResult, String> {
         self.venue.capabilities().validate_cancel()?;
+        if self.events.has_pending_amendment(client_order_id) {
+            return Err(format!(
+                "订单 {client_order_id} 存在改单结果未知的操作，必须先对账后才能撤单"
+            ));
+        }
         let order = self
             .order(client_order_id)
             .ok_or_else(|| format!("订单不存在: {client_order_id}"))?;
@@ -1679,6 +1690,14 @@ fn fact_tag(fact: &ExecutionEvent) -> String {
         ExecutionEvent::CancelPending { client_order_id } => {
             format!("cancel-pending:{client_order_id}")
         }
+        ExecutionEvent::OrderAmendmentPending {
+            operation_id,
+            order,
+        } => format!("amend-pending:{}:{}", order.client_id, operation_id),
+        ExecutionEvent::OrderAmended {
+            operation_id,
+            order,
+        } => format!("amended:{}:{}", order.client_id, operation_id),
         ExecutionEvent::Cancelled { client_order_id } => format!("cancelled:{client_order_id}"),
         ExecutionEvent::FeeAdjustment {
             account_id,

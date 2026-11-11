@@ -193,6 +193,7 @@ pub mod event_source_kind {
     pub const VENUE_RECONCILE_REQUIRED: &str = "venue_reconcile_required";
     pub const VENUE_ORDER_STATUS_RECONCILED: &str = "venue_order_status_reconciled";
     pub const VENUE_ORDER_AMENDED: &str = "venue_order_amended";
+    pub const VENUE_ORDER_AMEND_PENDING: &str = "venue_order_amend_pending";
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -581,6 +582,13 @@ pub enum EventKind {
     /// Authoritative venue result for an order amendment. The full post-amendment snapshot is
     /// persisted so the OMS terms and pending-order risk reserve rebuild identically on replay.
     OrderAmended {
+        operation_id: String,
+        order: crate::order::Order,
+    },
+    /// Durable intent written before contacting a venue. A restart must reconcile this
+    /// operation by the same identifier before another mutation is allowed.
+    OrderAmendmentPending {
+        operation_id: String,
         order: crate::order::Order,
     },
     StrategyDecision {
@@ -960,8 +968,12 @@ impl Event {
                     }
                 }
             }
-            EventKind::OrderAmended { order } => {
+            EventKind::OrderAmended {
+                operation_id,
+                order,
+            } => {
                 h.write_u64(22);
+                h.write_text(operation_id);
                 h.write_u64(order.client_id);
                 h.write_text(&order.instrument.to_string());
                 h.write_u64(match order.side {
@@ -1050,6 +1062,14 @@ impl Event {
                 } else {
                     h.write_u64(0);
                 }
+            }
+            EventKind::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => {
+                h.write_u64(23);
+                h.write_text(operation_id);
+                h.write_text(&serde_json::to_string(order).unwrap_or_default());
             }
             EventKind::StrategyDecision { decision } => {
                 h.write_u64(17);

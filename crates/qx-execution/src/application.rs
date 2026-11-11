@@ -36,6 +36,15 @@ pub enum ExecutionEvent {
     CancelPending {
         client_order_id: u64,
     },
+    /// Persisted before a venue amend side effect; retries after an unknown result are forbidden.
+    OrderAmendmentPending {
+        operation_id: String,
+        order: Box<Order>,
+    },
+    OrderAmended {
+        operation_id: String,
+        order: Box<Order>,
+    },
     Cancelled {
         client_order_id: u64,
     },
@@ -85,6 +94,10 @@ pub trait EventAppender {
 
 pub trait OrderStore {
     fn orders(&self) -> Vec<Order>;
+
+    fn has_pending_amendment(&self, _client_order_id: u64) -> bool {
+        false
+    }
 
     fn register_order(
         &mut self,
@@ -226,6 +239,9 @@ pub fn validate_submit_events(order: &Order, events: &[ExecutionEvent]) -> Resul
             ExecutionEvent::CancelPending { .. } => {
                 return Err("订单提交接口不能返回本地撤单发起事实".into());
             }
+            ExecutionEvent::OrderAmendmentPending { .. } | ExecutionEvent::OrderAmended { .. } => {
+                return Err("订单提交接口不能返回改单事实".into());
+            }
             ExecutionEvent::MarketQuote { instrument, .. } => {
                 return Err(format!("提交接口返回了行情事实: instrument={instrument}"));
             }
@@ -261,6 +277,9 @@ pub fn validate_cancel_events(
                     "撤单事实 client_order_id 不匹配: expected={} actual={}",
                     client_order_id, actual
                 ));
+            }
+            ExecutionEvent::OrderAmendmentPending { .. } | ExecutionEvent::OrderAmended { .. } => {
+                return Err("撤单接口返回了改单事实".into());
             }
             _ => return Err("撤单接口返回了非撤单事实".into()),
         }
