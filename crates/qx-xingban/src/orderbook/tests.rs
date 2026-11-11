@@ -142,6 +142,7 @@ fn exact_matcher_consumes_sub_nano_spot_depth_and_keeps_exact_fill_facts() {
         quote_budget: None,
         quote_filled: ExactDecimal::ZERO,
         market_reference_price: Some(ExactDecimal::parse("100.0000000002").unwrap()),
+        conditional: None,
     });
     let mut engine = OrderBookMatchingEngine::new(100)
         .unwrap()

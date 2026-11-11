@@ -62,6 +62,7 @@ impl OrderBookStrategy for ExactBuyOnce {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }])
     }

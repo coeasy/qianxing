@@ -1501,6 +1501,7 @@ mod paper_exact_risk_projection_tests {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }
     }
@@ -2184,6 +2185,7 @@ mod spot_fx_resolution_tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
 
@@ -2226,6 +2228,7 @@ mod spot_fx_resolution_tests {
                 quote_budget: Some(ExactDecimal::parse("10").unwrap()),
                 quote_filled: ExactDecimal::parse("4.25").unwrap(),
                 market_reference_price: Some(ExactDecimal::parse("0.000001").unwrap()),
+                conditional: None,
             }),
         };
         assert_eq!(
@@ -2284,6 +2287,7 @@ mod spot_fx_resolution_tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
 
@@ -2319,6 +2323,7 @@ mod spot_fx_resolution_tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
         let mut pre_snapshot_pending = pending.clone();
@@ -2330,6 +2335,7 @@ mod spot_fx_resolution_tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let pending_orders = [pending, pre_snapshot_pending];
         let all_pending =

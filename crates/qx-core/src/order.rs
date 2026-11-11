@@ -154,6 +154,44 @@ pub struct ExactOrderAmounts {
     /// It is never forwarded as the venue order price.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market_reference_price: Option<ExactDecimal>,
+    /// Exchange-side conditional execution intent. Legacy orders omit this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditional: Option<ConditionalOrderIntent>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionalOrderKind {
+    Trigger,
+    StopLoss,
+    TakeProfit,
+    Trailing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPriceType {
+    Last,
+    Mark,
+    Index,
+}
+
+/// Conditional terms are part of the immutable exact order request. For a trigger order,
+/// `limit_price` selects trigger-limit; omission selects trigger-market.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConditionalOrderIntent {
+    pub kind: ConditionalOrderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_price: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_price_type: Option<TriggerPriceType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_percent: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_amount: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_trigger_price: Option<ExactDecimal>,
 }
 
 /// Precise exchange fill values, kept separate from the legacy 1e9 amount fields.
@@ -208,6 +246,7 @@ impl Order {
                     && left.limit_price == right.limit_price
                     && left.quote_budget == right.quote_budget
                     && left.market_reference_price == right.market_reference_price
+                    && left.conditional == right.conditional
             }
             (None, None) => true,
             _ => false,
@@ -279,6 +318,53 @@ impl Order {
             }
             if exact.limit_price.is_some() && exact.market_reference_price.is_some() {
                 return Err("精确限价单不能同时携带市价风险参考价".into());
+            }
+            if let Some(conditional) = exact.conditional {
+                if exact.quote_budget.is_some() {
+                    return Err("条件单不能使用计价币预算数量".into());
+                }
+                let has_trailing = conditional.trailing_percent.is_some()
+                    || conditional.trailing_amount.is_some()
+                    || conditional.trailing_trigger_price.is_some();
+                match conditional.kind {
+                    ConditionalOrderKind::Trailing => {
+                        if conditional.trigger_price.is_some()
+                            || conditional.trigger_price_type.is_some()
+                            || (conditional.trailing_percent.is_some()
+                                == conditional.trailing_amount.is_some())
+                        {
+                            return Err(
+                                "追踪单必须且只能设置 trailing_percent 或 trailing_amount，不能设置普通触发价/来源".into(),
+                            );
+                        }
+                        if conditional
+                            .trailing_percent
+                            .is_some_and(|value| !value.is_positive())
+                            || conditional
+                                .trailing_amount
+                                .is_some_and(|value| !value.is_positive())
+                        {
+                            return Err("追踪幅度必须为正".into());
+                        }
+                    }
+                    _ => {
+                        if conditional
+                            .trigger_price
+                            .is_none_or(|value| !value.is_positive())
+                            || has_trailing
+                        {
+                            return Err(
+                                "触发/止损/止盈单必须提供正触发价，且不能携带追踪参数".into()
+                            );
+                        }
+                    }
+                }
+                if conditional
+                    .trailing_trigger_price
+                    .is_some_and(|value| !value.is_positive())
+                {
+                    return Err("追踪单启动价必须为正".into());
+                }
             }
         } else {
             if self.qty.raw() <= 0 {
@@ -581,6 +667,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn conditional_order_terms_are_validated_and_part_of_idempotency_identity() {
+        let mut order = Order {
+            client_id: 41,
+            instrument: InstrumentId::parse("BTC/USDT.OKX").unwrap(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("0.01").unwrap(),
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: Some(ExactDecimal::parse("65000").unwrap()),
+                conditional: Some(ConditionalOrderIntent {
+                    kind: ConditionalOrderKind::StopLoss,
+                    trigger_price: Some(ExactDecimal::parse("62000").unwrap()),
+                    trigger_price_type: Some(TriggerPriceType::Mark),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        };
+        order.validate().unwrap();
+        let mut retry = order.clone();
+        retry
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap()
+            .trigger_price = Some(ExactDecimal::parse("61000").unwrap());
+        assert!(!order.same_submission_identity(&retry));
+
+        let intent = order
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap();
+        intent.trigger_price = None;
+        assert!(order.validate().unwrap_err().contains("正触发价"));
+    }
+
+    #[test]
     fn remaining_decreases() {
         let o = Order {
             client_id: 1,
@@ -640,6 +779,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         };
         let order = Order {
             client_id: 2,
@@ -689,6 +829,7 @@ mod tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
         assert!(order.validate().is_err());

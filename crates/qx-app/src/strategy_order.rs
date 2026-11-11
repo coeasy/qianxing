@@ -361,6 +361,7 @@ pub fn build_strategy_order_from_intent(
                 quote_budget: Some(quote_budget),
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         )
     } else if let Some(quantity_text) = intent.qty_exact.as_deref() {
@@ -395,6 +396,7 @@ pub fn build_strategy_order_from_intent(
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
+                conditional: None,
             }),
         )
     } else {

@@ -270,6 +270,7 @@ fn reused_client_order_id_must_match_the_original_submission_identity() {
         quote_budget: None,
         quote_filled: qx_core::ExactDecimal::ZERO,
         market_reference_price: None,
+        conditional: None,
     };
     let mut existing_exact = port_order(89);
     existing_exact.qty = Quantity::ZERO;
@@ -539,6 +540,7 @@ fn exact_fill_identity_and_spec_gate_keep_sub_nano_reports_distinct() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
 
     let mut spec = qx_core::TradingInstrumentSpec::spot_default(&instrument, "USDT");

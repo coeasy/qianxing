@@ -1318,7 +1318,7 @@ impl Venue for CcxtProcessVenue {
                 params.insert("hedged".into(), Value::Bool(true));
             }
         }
-        let result = self.call_or_reconcile(json!({
+        let mut request = json!({
             "op": "create_order",
             "instrument": order.instrument.to_string(),
             "side": if matches!(order.side, qx_core::Side::Buy) { "buy" } else { "sell" },
@@ -1353,7 +1353,27 @@ impl Venue for CcxtProcessVenue {
             },
             "client_order_id": order.client_id.to_string(),
             "params": params,
-        }))?;
+        });
+        if let Some(conditional) = order.exact_amounts.and_then(|amounts| amounts.conditional) {
+            request["op"] = json!("create_conditional_order");
+            request["intent"] = json!(match conditional.kind {
+                qx_core::ConditionalOrderKind::Trigger => "trigger",
+                qx_core::ConditionalOrderKind::StopLoss => "stop_loss",
+                qx_core::ConditionalOrderKind::TakeProfit => "take_profit",
+                qx_core::ConditionalOrderKind::Trailing => "trailing",
+            });
+            request["trigger_price_exact"] = json!(conditional.trigger_price);
+            request["trigger_price_type"] =
+                json!(conditional.trigger_price_type.map(|kind| match kind {
+                    qx_core::TriggerPriceType::Last => "last",
+                    qx_core::TriggerPriceType::Mark => "mark",
+                    qx_core::TriggerPriceType::Index => "index",
+                }));
+            request["trailing_percent_exact"] = json!(conditional.trailing_percent);
+            request["trailing_amount_exact"] = json!(conditional.trailing_amount);
+            request["trailing_trigger_price_exact"] = json!(conditional.trailing_trigger_price);
+        }
+        let result = self.call_or_reconcile(request)?;
         if let Some(preflight) = result.get("preflight_rejected") {
             let class = preflight
                 .get("class")

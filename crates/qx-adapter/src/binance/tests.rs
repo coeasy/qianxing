@@ -447,6 +447,7 @@ fn binance_exact_market_rules_and_orders_keep_subnano_precision() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: ExactDecimal::ZERO,
+        conditional: None,
     });
     venue.validate_order_constraints(&spec, &exact).unwrap();
     assert_eq!(
@@ -475,6 +476,7 @@ fn binance_exact_submit_and_fill_preserve_subnano_amounts_and_fee() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: ExactDecimal::ZERO,
+        conditional: None,
     });
 
     let events = venue.submit(exact, 1_700_000_000_000).unwrap();
@@ -579,6 +581,7 @@ fn binance_max_position_quote_budget_fails_closed_without_private_reads() {
         market_reference_price: None,
         quote_budget: Some(ExactDecimal::parse("10").unwrap()),
         quote_filled: ExactDecimal::ZERO,
+        conditional: None,
     });
     assert!(matches!(
         venue.validate_order_constraints(&spec, &order),
@@ -838,6 +841,7 @@ fn binance_submit_serializes_subnano_exact_amounts() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
 
     venue.submit(exact, 1_700_000_000_000).unwrap();
@@ -863,6 +867,7 @@ fn binance_quote_budget_market_buy_uses_quote_order_qty() {
         market_reference_price: None,
         quote_budget: Some(ExactDecimal::parse("10.0000000001").unwrap()),
         quote_filled: ExactDecimal::ZERO,
+        conditional: None,
     });
     venue.submit(exact, 1_700_000_000_000).unwrap();
     let requests = transport.requests.lock().unwrap();
@@ -1015,6 +1020,7 @@ fn binance_exact_fill_and_fee_reach_exact_multicurrency_ledger() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: ExactDecimal::ZERO,
+        conditional: None,
     });
     pipeline.register_order(exact.clone(), 1).unwrap();
     let (mut venue, _) = venue(

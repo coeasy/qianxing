@@ -1338,6 +1338,7 @@ mod tests {
             quote_budget: None,
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         });
         fill.qty = Quantity::from_raw(0);
         fill.price = Price::from_raw(0);

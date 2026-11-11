@@ -6,6 +6,10 @@ use qx_core::Order;
 pub enum VenueOrderType {
     Market,
     Limit,
+    Trigger,
+    StopLoss,
+    TakeProfit,
+    Trailing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +35,14 @@ pub struct VenueCapabilities {
 }
 
 const MARKET_AND_LIMIT: &[VenueOrderType] = &[VenueOrderType::Market, VenueOrderType::Limit];
+const CCXT_ORDER_TYPES: &[VenueOrderType] = &[
+    VenueOrderType::Market,
+    VenueOrderType::Limit,
+    VenueOrderType::Trigger,
+    VenueOrderType::StopLoss,
+    VenueOrderType::TakeProfit,
+    VenueOrderType::Trailing,
+];
 
 pub const PAPER_VENUE_CAPABILITIES: VenueCapabilities = VenueCapabilities {
     market_scope: VenueMarketScope::InstrumentVenue,
@@ -57,7 +69,7 @@ pub const BINANCE_SPOT_VENUE_CAPABILITIES: VenueCapabilities = VenueCapabilities
 pub const CCXT_PROCESS_VENUE_CAPABILITIES: VenueCapabilities = VenueCapabilities {
     market_scope: VenueMarketScope::RuntimeConfigured,
     exact_orders: true,
-    order_types: MARKET_AND_LIMIT,
+    order_types: CCXT_ORDER_TYPES,
     data_tiers: &[],
     cancel: true,
     query: true,
@@ -92,11 +104,22 @@ impl VenueCapabilities {
                 ));
             }
         }
-        let order_type = if order.limit_price_decimal().is_some() {
-            VenueOrderType::Limit
-        } else {
-            VenueOrderType::Market
-        };
+        let order_type = order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .map(|intent| match intent.kind {
+                qx_core::ConditionalOrderKind::Trigger => VenueOrderType::Trigger,
+                qx_core::ConditionalOrderKind::StopLoss => VenueOrderType::StopLoss,
+                qx_core::ConditionalOrderKind::TakeProfit => VenueOrderType::TakeProfit,
+                qx_core::ConditionalOrderKind::Trailing => VenueOrderType::Trailing,
+            })
+            .unwrap_or_else(|| {
+                if order.limit_price_decimal().is_some() {
+                    VenueOrderType::Limit
+                } else {
+                    VenueOrderType::Market
+                }
+            });
         if !self.order_types.contains(&order_type) {
             return Err(format!(
                 "FAIL_CLOSED: Venue 未声明 {:?} 订单能力，拒绝注册/提交",
@@ -148,7 +171,10 @@ fn configured_market_venue(venue_id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_core::{ExactDecimal, ExactOrderAmounts, InstrumentId, OrderStatus, Quantity, Side};
+    use qx_core::{
+        ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
+        InstrumentId, OrderStatus, Quantity, Side,
+    };
 
     #[test]
     fn venue_submit_gate_rejects_exact_values_when_capability_is_not_declared() {
@@ -170,6 +196,7 @@ mod tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
         assert!(PAPER_VENUE_CAPABILITIES
@@ -177,6 +204,23 @@ mod tests {
             .is_ok());
         assert!(CCXT_PROCESS_VENUE_CAPABILITIES
             .validate_submit(&order, "ccxt-okx")
+            .is_ok());
+
+        let mut conditional = order;
+        conditional.exact_amounts.as_mut().unwrap().conditional = Some(ConditionalOrderIntent {
+            kind: ConditionalOrderKind::Trigger,
+            trigger_price: Some(ExactDecimal::parse("0.01").unwrap()),
+            trigger_price_type: None,
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        });
+        assert!(PAPER_VENUE_CAPABILITIES
+            .validate_submit(&conditional, "paper")
+            .unwrap_err()
+            .contains("未声明 Trigger 订单能力"));
+        assert!(CCXT_PROCESS_VENUE_CAPABILITIES
+            .validate_submit(&conditional, "ccxt-okx")
             .is_ok());
     }
 }

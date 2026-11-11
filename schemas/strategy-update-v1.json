@@ -32,7 +32,21 @@
         "filled": {"$ref": "#/$defs/exact_decimal"},
         "quote_budget": {"$ref": "#/$defs/exact_decimal"},
         "quote_filled": {"$ref": "#/$defs/exact_decimal"},
-        "market_reference_price": {"$ref": "#/$defs/exact_decimal"}
+        "market_reference_price": {"$ref": "#/$defs/exact_decimal"},
+        "conditional": {"$ref": "#/$defs/conditional_order_intent"}
+      },
+      "additionalProperties": false
+    },
+    "conditional_order_intent": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["trigger", "stop_loss", "take_profit", "trailing"]},
+        "trigger_price": {"$ref": "#/$defs/exact_decimal"},
+        "trigger_price_type": {"enum": ["last", "mark", "index"]},
+        "trailing_percent": {"$ref": "#/$defs/exact_decimal"},
+        "trailing_amount": {"$ref": "#/$defs/exact_decimal"},
+        "trailing_trigger_price": {"$ref": "#/$defs/exact_decimal"}
       },
       "additionalProperties": false
     },

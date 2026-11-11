@@ -330,6 +330,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         assert!(pending_order_gross_notional(
             &[pending],
@@ -387,6 +388,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let mark = ExactDecimal::parse("0.00000002").unwrap();
 
@@ -422,6 +424,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let error = pending_order_gross_notional_exact_at_reference_mark(
             [&market],
@@ -449,6 +452,7 @@ mod tests {
             market_reference_price: Some(ExactDecimal::parse("0.0000000009").unwrap()),
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
 
         let actual = pending_order_gross_notional_exact(
@@ -483,6 +487,7 @@ mod tests {
             quote_budget: Some(ExactDecimal::parse("10").unwrap()),
             quote_filled: ExactDecimal::parse("4").unwrap(),
             market_reference_price: Some(ExactDecimal::parse("0.000001").unwrap()),
+            conditional: None,
         });
         assert_eq!(
             pending_order_gross_notional_exact_at_reference_mark(

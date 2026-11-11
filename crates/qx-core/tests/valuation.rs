@@ -273,6 +273,7 @@ fn multi_market_exact_valuation_preserves_subnano_cash_and_position_value() {
             quote_budget: None,
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         }),
     };
     ledger

@@ -958,6 +958,7 @@ fn c_abi_order_status_prefers_typed_v2_and_preserves_exact_decimal_values() {
         quote_budget: None,
         quote_filled: qx_core::ExactDecimal::ZERO,
         market_reference_price: None,
+        conditional: None,
     });
     update.reason = Some(String::new());
     let mut strategy = unsafe { CAbiStrategy::from_vtable(&FAKE_VTABLE, "{}") }.unwrap();

@@ -1650,6 +1650,7 @@ mod tests {
             quote_budget: None,
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: Some(ExactDecimal::parse("100").unwrap()),
+            conditional: None,
         });
         candidate.validate().unwrap();
         let (margin, fees) = projected_margin_and_fees_exact(

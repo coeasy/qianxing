@@ -1518,6 +1518,7 @@ fn build_compensation_order(
         quote_budget: None,
         quote_filled: qx_core::ExactDecimal::ZERO,
         market_reference_price: source_leg.order.market_reference_price_decimal(),
+        conditional: None,
     });
     let order = Order {
         client_id,

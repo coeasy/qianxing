@@ -32,6 +32,7 @@ fn hedge_recovery_submits_and_books_sub_nano_exact_compensation() {
             quote_budget: None,
             quote_filled: qx_core::ExactDecimal::ZERO,
             market_reference_price: Some(qx_core::ExactDecimal::parse("100").unwrap()),
+            conditional: None,
         }),
     };
     let other_order = port_order(792);

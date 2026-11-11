@@ -802,6 +802,7 @@ mod tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
         let rejected = RiskEngine::evaluate_order(&OrderRiskContext::default(), &order);
@@ -864,6 +865,7 @@ mod tests {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         };
         let spec = TradingInstrumentSpec {

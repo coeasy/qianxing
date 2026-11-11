@@ -930,6 +930,28 @@ impl Event {
                         digest_exact_decimal(h, price);
                     }
                     digest_exact_decimal(h, exact.filled);
+                    if let Some(conditional) = exact.conditional {
+                        // Preserve hashes for every legacy and ordinary exact order. Conditional
+                        // requests add a versioned suffix so trigger changes cannot reuse an
+                        // EventLog identity or pass idempotent submission checks.
+                        h.write_u64(0x434f_4e44_4954_494f);
+                        h.write_u64(match conditional.kind {
+                            crate::order::ConditionalOrderKind::Trigger => 1,
+                            crate::order::ConditionalOrderKind::StopLoss => 2,
+                            crate::order::ConditionalOrderKind::TakeProfit => 3,
+                            crate::order::ConditionalOrderKind::Trailing => 4,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trigger_price);
+                        h.write_u64(match conditional.trigger_price_type {
+                            None => 0,
+                            Some(crate::order::TriggerPriceType::Last) => 1,
+                            Some(crate::order::TriggerPriceType::Mark) => 2,
+                            Some(crate::order::TriggerPriceType::Index) => 3,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trailing_percent);
+                        digest_optional_exact_decimal(h, conditional.trailing_amount);
+                        digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
+                    }
                 }
             }
             EventKind::StrategyDecision { decision } => {
@@ -1265,7 +1287,10 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ExactFillAmounts, ExactOrderAmounts, InstrumentId, Order, OrderStatus};
+    use crate::{
+        ConditionalOrderIntent, ConditionalOrderKind, ExactFillAmounts, ExactOrderAmounts,
+        InstrumentId, Order, OrderStatus,
+    };
 
     #[test]
     fn priority_order_is_deterministic() {
@@ -1793,6 +1818,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let exact = Event::new(1, 1, Priority::APPLY, EventKind::OrderSubmitted { order });
 
@@ -1805,6 +1831,26 @@ mod tests {
         let restored: Event =
             serde_json::from_str(&serde_json::to_string(&exact).unwrap()).unwrap();
         assert_eq!(restored, exact);
+
+        let with_trigger = |trigger: &str| {
+            let mut event = exact.clone();
+            if let EventKind::OrderSubmitted { order } = &mut event.kind {
+                order.exact_amounts.as_mut().unwrap().conditional = Some(ConditionalOrderIntent {
+                    kind: ConditionalOrderKind::Trigger,
+                    trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: None,
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                });
+            }
+            event
+        };
+        let triggered = with_trigger("0.01");
+        assert_ne!(digest(&triggered), digest(&with_trigger("0.02")));
+        let restored_triggered: Event =
+            serde_json::from_str(&serde_json::to_string(&triggered).unwrap()).unwrap();
+        assert_eq!(restored_triggered, triggered);
     }
 
     #[test]

@@ -103,6 +103,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         assert!(TestVenue::validate_order_spec(&order).is_ok());
     }

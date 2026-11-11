@@ -141,6 +141,7 @@ impl BarStrategy for ExactMultiMarketBudgetBuyer {
                 quote_budget: None,
                 quote_filled: qx_core::ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }]
     }

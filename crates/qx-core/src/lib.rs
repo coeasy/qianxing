@@ -76,8 +76,8 @@ pub use self::numeric::{
     SCALE,
 };
 pub use self::order::{
-    ExactFillAmounts, ExactFillFee, ExactOrderAmounts, Fill, FillFee, Order, OrderStatus,
-    OrderTrace, Side,
+    ConditionalOrderIntent, ConditionalOrderKind, ExactFillAmounts, ExactFillFee,
+    ExactOrderAmounts, Fill, FillFee, Order, OrderStatus, OrderTrace, Side, TriggerPriceType,
 };
 pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};

@@ -1,7 +1,7 @@
 use super::*;
 use qx_core::{
-    ExactDecimal, ExactOrderAmounts, InstrumentId, MarginMode, OrderPolicy, PositionMode,
-    PositionSide, Quantity, Side,
+    ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts, InstrumentId,
+    MarginMode, OrderPolicy, PositionMode, PositionSide, Quantity, Side, TriggerPriceType,
 };
 use std::sync::{Arc, Mutex};
 
@@ -332,6 +332,7 @@ fn ccxt_spot_submit_preserves_exact_amounts_in_worker_rpc() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
 
     assert!(matches!(
@@ -350,6 +351,61 @@ fn ccxt_spot_submit_preserves_exact_amounts_in_worker_rpc() {
     assert_eq!(create["price_exact"]["scale"], 10);
     assert!(create["amount_raw"].is_null());
     assert!(create["price_raw"].is_null());
+}
+
+#[test]
+fn ccxt_conditional_order_intent_reaches_the_conditional_worker_operation() {
+    struct CapturingRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for CapturingRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_conditional_order") => Ok(json!({
+                    "order": {"order_id": "remote-trigger-7", "status": "open", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(CapturingRpc(Arc::clone(&calls))));
+    let mut conditional = order();
+    conditional.qty = Quantity::ZERO;
+    conditional.limit = None;
+    conditional.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.002").unwrap(),
+        limit_price: None,
+        filled: ExactDecimal::ZERO,
+        market_reference_price: Some(ExactDecimal::parse("65000").unwrap()),
+        quote_budget: None,
+        quote_filled: ExactDecimal::ZERO,
+        conditional: Some(ConditionalOrderIntent {
+            kind: ConditionalOrderKind::StopLoss,
+            trigger_price: Some(ExactDecimal::parse("62000.5").unwrap()),
+            trigger_price_type: Some(TriggerPriceType::Mark),
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        }),
+    });
+
+    assert!(matches!(
+        venue.submit(conditional, 10).unwrap()[0],
+        VenueEvent::Accepted { .. }
+    ));
+    let calls = calls.lock().unwrap();
+    let create = calls
+        .iter()
+        .find(|call| call["op"] == "create_conditional_order")
+        .unwrap();
+    assert_eq!(create["intent"], "stop_loss");
+    assert_eq!(create["trigger_price_type"], "mark");
+    assert_eq!(create["trigger_price_exact"]["coefficient"], "620005");
+    assert_eq!(create["trigger_price_exact"]["scale"], 1);
 }
 
 #[test]
@@ -382,6 +438,7 @@ fn ccxt_exact_market_risk_reference_is_not_sent_as_an_order_price() {
         market_reference_price: Some(ExactDecimal::parse("0.0000000009").unwrap()),
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
 
     assert!(matches!(
@@ -520,6 +577,7 @@ fn ccxt_exact_sync_preserves_cancel_pending_during_partial_fill_and_emits_exact_
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
     let mut venue = CcxtProcessVenue::new("binance", Box::new(ExactSyncRpc { order_fetches: 0 }));
     venue.restore_order(precise_order, "remote-exact").unwrap();

@@ -56,6 +56,7 @@ fn exact_order(client_id: u64, quantity: &str) -> Order {
             quote_budget: None,
             quote_filled: qx_core::ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         }),
     }
 }

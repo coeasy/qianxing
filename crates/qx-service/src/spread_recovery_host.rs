@@ -807,6 +807,7 @@ mod tests {
                 market_reference_price: Some(ExactDecimal::parse("100").unwrap()),
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
+                conditional: None,
             }),
         };
         let other_order = Order {

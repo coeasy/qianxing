@@ -263,26 +263,16 @@ class CcxtJsonWorker:
                 intent=str(request["intent"]),
                 side=str(request["side"]),
                 order_type=str(request["order_type"]),
-                amount_exact=str(request["amount_exact"]),
+                amount_exact=request["amount_exact"],
                 amount_unit=str(request["amount_unit"]),
-                trigger_price_exact=None
-                if request.get("trigger_price_exact") is None
-                else str(request["trigger_price_exact"]),
+                trigger_price_exact=request.get("trigger_price_exact"),
                 trigger_price_type=None
                 if request.get("trigger_price_type") is None
                 else str(request["trigger_price_type"]),
-                trailing_percent_exact=None
-                if request.get("trailing_percent_exact") is None
-                else str(request["trailing_percent_exact"]),
-                trailing_amount_exact=None
-                if request.get("trailing_amount_exact") is None
-                else str(request["trailing_amount_exact"]),
-                trailing_trigger_price_exact=None
-                if request.get("trailing_trigger_price_exact") is None
-                else str(request["trailing_trigger_price_exact"]),
-                price_exact=None
-                if request.get("price_exact") is None
-                else str(request["price_exact"]),
+                trailing_percent_exact=request.get("trailing_percent_exact"),
+                trailing_amount_exact=request.get("trailing_amount_exact"),
+                trailing_trigger_price_exact=request.get("trailing_trigger_price_exact"),
+                price_exact=request.get("price_exact"),
                 risk_leverage=request.get("risk_leverage"),
                 risk_reduce_only=request.get("risk_reduce_only", False),
                 risk_margin_mode=request.get("risk_margin_mode"),

@@ -24,6 +24,43 @@ from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_jsonl_conditional_submit_preserves_exact_decimal_wire_objects(self):
+        class FeatureExchange(FakeExchange):
+            def feature_value(self, symbol, operation, feature):
+                return True
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+        exchange = FeatureExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange)
+        )
+        result = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_conditional_order",
+                        "instrument": "BTC/USDT.OKX",
+                        "intent": "stop_loss",
+                        "side": "sell",
+                        "order_type": "market",
+                        "amount_exact": {"coefficient": "2", "scale": 3},
+                        "amount_unit": "base",
+                        "trigger_price_exact": {"coefficient": "620005", "scale": 1},
+                        "trigger_price_type": "mark",
+                        "risk_reduce_only": False,
+                        "params": {},
+                    }
+                )
+            )
+        )
+
+        self.assertTrue(result["ok"], result)
+        request = next(call for call in exchange.calls if call[0] == "create_order")
+        self.assertEqual(request[4], "0.002")
+        self.assertEqual(request[6]["stopLossPrice"], "62000.5")
+
     def test_jsonl_balance_response_carries_scale_aware_decimal_sidecar(self):
         class BalanceExchange(FakeExchange):
             def fetch_balance(self, params):

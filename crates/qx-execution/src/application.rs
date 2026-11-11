@@ -367,6 +367,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let fill = Fill {
             order_id: order.client_id,

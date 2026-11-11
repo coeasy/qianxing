@@ -53,6 +53,7 @@ impl StrategyDecision {
                     quote_budget: None,
                     quote_filled: qx_core::ExactDecimal::ZERO,
                     market_reference_price: None,
+                    conditional: None,
                 })
                 .or_else(|| {
                     intent
@@ -64,6 +65,7 @@ impl StrategyDecision {
                             quote_budget: Some(budget),
                             quote_filled: qx_core::ExactDecimal::ZERO,
                             market_reference_price: None,
+                            conditional: None,
                         })
                 });
             let order = Order {

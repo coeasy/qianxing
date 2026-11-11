@@ -3503,6 +3503,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         pipeline.register_order(exact_order, 100).unwrap();
         pipeline

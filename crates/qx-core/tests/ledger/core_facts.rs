@@ -65,6 +65,7 @@ fn exact_spot_fills_keep_sub_nano_cash_fees_position_and_replay() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
     let buy_fill = Fill {
         order_id: buy.client_id,
@@ -107,6 +108,7 @@ fn exact_spot_fills_keep_sub_nano_cash_fees_position_and_replay() {
         market_reference_price: None,
         quote_budget: None,
         quote_filled: Default::default(),
+        conditional: None,
     });
     let sell_fill = Fill {
         order_id: sell.client_id,
@@ -210,6 +212,7 @@ fn quote_budget_spot_fill_books_reported_exact_quote_cost() {
         quote_budget: Some(ExactDecimal::parse("0.00000000000000002").unwrap()),
         quote_filled: ExactDecimal::ZERO,
         market_reference_price: None,
+        conditional: None,
     });
     let fill = Fill {
         order_id: buy.client_id,
@@ -293,6 +296,7 @@ fn exact_linear_derivative_fills_book_contract_pnl_fees_and_replay() {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         order
     };
@@ -466,6 +470,7 @@ fn exact_inverse_derivative_uses_harmonic_average_cost_for_pnl_and_replay() {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         let fill = Fill {
             order_id: client_id,

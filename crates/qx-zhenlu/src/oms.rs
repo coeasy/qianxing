@@ -357,6 +357,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         oms.submit(pending).unwrap();
         oms.accept(1).unwrap();
@@ -425,6 +426,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         oms.submit(precise_order).unwrap();
         oms.accept(1).unwrap();
@@ -463,6 +465,7 @@ mod tests {
             quote_budget: Some(ExactDecimal::parse("10").unwrap()),
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         });
         oms.submit(budget_order).unwrap();
         oms.accept(1).unwrap();
@@ -502,6 +505,7 @@ mod tests {
             quote_budget: Some(ExactDecimal::parse("10").unwrap()),
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         });
         oms.submit(budget_order).unwrap();
         oms.accept(1).unwrap();
@@ -538,6 +542,7 @@ mod tests {
             quote_budget: Some(ExactDecimal::parse("10").unwrap()),
             quote_filled: ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         });
         oms.submit(budget_order).unwrap();
         oms.accept(1).unwrap();
@@ -572,6 +577,7 @@ mod tests {
             market_reference_price: None,
             quote_budget: None,
             quote_filled: Default::default(),
+            conditional: None,
         });
         oms.submit(precise_order).unwrap();
         oms.accept(1).unwrap();

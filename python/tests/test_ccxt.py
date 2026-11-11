@@ -340,6 +340,34 @@ class CcxtTest(unittest.TestCase):
             CcxtConfig(exchange_id="binance"), exchange=self.exchange
         )
 
+    def test_conditional_order_decodes_exact_wire_decimals_without_float_conversion(self):
+        class FeatureExchange(FakeExchange):
+            def feature_value(self, symbol, operation, feature):
+                self.calls.append(("feature_value", symbol, operation, feature))
+                return True
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+        exchange = FeatureExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange)
+        order = client.create_conditional_order(
+            "BTC/USDT.OKX",
+            intent="stop_loss",
+            side="sell",
+            order_type="market",
+            amount_exact={"coefficient": "2", "scale": 3},
+            amount_unit="base",
+            trigger_price_exact={"coefficient": "620005", "scale": 1},
+            trigger_price_type="mark",
+        )
+        request = next(call for call in exchange.calls if call[0] == "create_order")
+        self.assertEqual(request[4], "0.002")
+        self.assertIsNone(request[5])
+        self.assertEqual(request[6]["stopLossPrice"], "62000.5")
+        self.assertEqual(request[6]["triggerPriceType"], "mark")
+        self.assertEqual(order.order_id, "order-1")
+
     def test_error_classification_and_retryability_delegate_to_rust(self):
         examples = {
             "DDoSProtection": CcxtErrorClass.RATE_LIMITED,

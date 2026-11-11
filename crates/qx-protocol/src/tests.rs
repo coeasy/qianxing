@@ -347,6 +347,7 @@ fn exact_order_and_fill_amounts_round_trip_through_snapshot_and_state_hash() {
                 market_reference_price: None,
                 quote_budget: None,
                 quote_filled: Default::default(),
+                conditional: None,
             }),
         },
     );

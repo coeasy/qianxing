@@ -129,6 +129,7 @@ impl OrderBookStrategy for ExactDerivativeBuyer {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }])
     }
@@ -171,6 +172,7 @@ impl OrderBookStrategy for ExactQuoteBudgetBuyer {
                 quote_budget: Some(ExactDecimal::parse("0.0000000301").unwrap()),
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }])
     }
@@ -208,6 +210,7 @@ impl OrderBookStrategy for ExactDepthBuyer {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }])
     }
@@ -256,6 +259,7 @@ impl OrderBookStrategy for ExactBuyOnce {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         }])
     }
@@ -764,6 +768,7 @@ impl OrderBookStrategy for ExactDoubleBuyer {
                     quote_budget: None,
                     quote_filled: ExactDecimal::ZERO,
                     market_reference_price: None,
+                    conditional: None,
                 }),
             })
             .collect())
@@ -1030,6 +1035,7 @@ impl OrderBookStrategy for ExactBuyThenCompetingSells {
                 quote_budget: None,
                 quote_filled: ExactDecimal::ZERO,
                 market_reference_price: None,
+                conditional: None,
             }),
         };
         let orders = if self.stage == 0 {

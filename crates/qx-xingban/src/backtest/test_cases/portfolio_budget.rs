@@ -104,6 +104,7 @@ fn strategy_budget_sums_each_pending_instrument_in_budget_currency() {
             quote_budget: None,
             quote_filled: qx_core::ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         }),
     };
     let candidate = Order {
@@ -124,6 +125,7 @@ fn strategy_budget_sums_each_pending_instrument_in_budget_currency() {
             quote_budget: None,
             quote_filled: qx_core::ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         }),
     };
     let mut budget = crate::backtest::portfolio_budget::PortfolioBudgetState::default();
@@ -225,6 +227,7 @@ fn strategy_budget_keeps_the_highest_pending_reference_price_per_instrument() {
             quote_budget: None,
             quote_filled: qx_core::ExactDecimal::ZERO,
             market_reference_price: None,
+            conditional: None,
         }),
     };
     let first = order(1, "0.1");
