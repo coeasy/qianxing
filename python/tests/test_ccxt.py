@@ -1545,6 +1545,27 @@ class CcxtTest(unittest.TestCase):
         with self.assertRaises(CcxtConnectorError):
             self.client.set_leverage("BTC/USDT:USDT.BINANCE", 51)
 
+    def test_leverage_and_position_mode_reject_ambiguous_types_before_exchange_call(self):
+        instrument = "BTC/USDT:USDT.BINANCE"
+        invalid_setters = (
+            lambda: self.client.set_leverage(instrument, True),
+            lambda: self.client.set_leverage(
+                instrument, 5, position_mode="one_way", position_side="long"
+            ),
+            lambda: self.client.set_leverage(
+                instrument, 5, position_mode="hedge", position_side="net"
+            ),
+            lambda: self.client.set_position_mode(1, instrument=instrument),
+        )
+        for setter in invalid_setters:
+            with self.subTest(setter=setter):
+                with self.assertRaises(CcxtConnectorError) as caught:
+                    setter()
+                self.assertEqual(caught.exception.error_class, CcxtErrorClass.INVALID)
+        self.assertFalse(
+            any(call[0] in {"set_leverage", "set_position_mode"} for call in self.exchange.calls)
+        )
+
     def test_public_ccxt_pro_streams_have_stable_fixed_point_envelopes(self):
         ticker = asyncio.run(
             watch_stream(

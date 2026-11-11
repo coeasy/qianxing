@@ -2842,7 +2842,7 @@ class CcxtExchangeClient:
         position_side: str = "net",
         params: Mapping[str, Any] | None = None,
     ) -> Any:
-        if leverage < 1:
+        if isinstance(leverage, bool) or not isinstance(leverage, int) or leverage < 1:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "leverage 必须大于等于 1")
         market = self.resolve_market(instrument)
         if not market.contract:
@@ -2858,6 +2858,11 @@ class CcxtExchangeClient:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "position_mode 必须为 one_way 或 hedge")
         if position_side not in {"net", "long", "short"}:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "position_side 必须为 net、long 或 short")
+        if position_mode == "one_way" and position_side != "net":
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "OneWay 杠杆设置的 position_side 必须为 net",
+            )
         if position_mode == "hedge" and position_side == "net":
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "Hedge 杠杆设置必须指定 long 或 short")
         if position_mode == "hedge" and margin_mode == "isolated":
@@ -2876,6 +2881,11 @@ class CcxtExchangeClient:
         instrument: str | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> Any:
+        if not isinstance(hedged, bool):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "hedged 必须为布尔值",
+            )
         symbol = None if instrument is None else self.resolve_market(instrument).symbol
         return self._call("set_position_mode", hedged, symbol, dict(params or {}))
 
