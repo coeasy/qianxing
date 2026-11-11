@@ -141,6 +141,31 @@ JSON 同时包含 `linear_scaling_curve`：相邻 N 的 p50 差分、每 Bar 边
 这是合成周期 Bar + `sma_cross` + 完整 CLI 持久化路径的本机初始基线，不是 180 天真实行情 profile，
 也不构成 Freqtrade/NautilusTrader/vectorbt 的同条件对比或领先结论。
 
+### 冻结真实行情的 180 天回测样本
+
+使用 Binance 公共 Spot REST K 线接口获取 BTCUSDT 15m 数据，不需要账户凭据：
+
+```bash
+python benchmarks/fetch_public_ohlcv.py \
+  --days 180 --symbol BTCUSDT \
+  --out maturity/fixtures/binance-btcusdt-spot-15m-180d-2026-11-11.json
+python benchmarks/run_real_data_backtest.py \
+  --binary target/release/qx-cli.exe \
+  --bars maturity/fixtures/binance-btcusdt-spot-15m-180d-2026-11-11.json \
+  --spec-template benchmarks/fixtures/binance-btcusdt-spot-15m-backtest.json \
+  --repeats 7 \
+  --out maturity/evidence/binance-btcusdt-spot-15m-180d-2026-11-11-backtest.json
+```
+
+2026-11-11 冻结样本含 17,280 根已闭合 Bar，时间轴连续、无重复/缺口、OHLCV 校验通过；SHA-256 为
+`d3032cefeb01493b9e3bbb656bab902feb43f3cce18a7678769b2ff7e54fcc03`。Windows Ryzen 7 8700G 上，
+`qx-cli app backtest` 的 7 次 p50/p95 为 1164.544/1277.187 ms（p50 约 14,838 Bar/s），进程峰值 RSS
+84,357,120 bytes，结果 hash 七次一致。完整资源采样、输入/二进制 hash 和硬件信息见
+[`binance-btcusdt-spot-15m-180d-2026-11-11-backtest.json`](../maturity/evidence/binance-btcusdt-spot-15m-180d-2026-11-11-backtest.json)。
+该数据可用于可复现的本机运行成本基线；模板中的费用、撮合和市场规格是明确声明的回测假设，不是当前
+Binance `exchangeInfo` 的冻结快照，也不是策略收益判断。不同产品的对比仍须先统一信号、手续费、滑点、
+撮合粒度、产物范围和结果正确性，不能把本数据直接解释成竞品领先证据。
+
 ## Crypto Paper worker 端到端
 
 ```bash
