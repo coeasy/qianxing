@@ -13,6 +13,7 @@ from qianxing.app import (
     ExperimentParameterRange,
     ExperimentParameterSpace,
     list_builtin_strategies,
+    list_builtin_strategy_recipes,
     run_backtest,
     verify_run,
 )
@@ -72,6 +73,24 @@ class StrategyCatalogTest(unittest.TestCase):
         )
         self.assertEqual(next(item for item in catalog if item.name == "macd").signal_knobs, ())
         self.assertTrue(all(item.description.strip() for item in catalog))
+
+    def test_recipes_match_all_builtin_strategies_and_disclose_required_costs(self) -> None:
+        recipes = list_builtin_strategy_recipes()
+        self.assertEqual(len(recipes), 17)
+        self.assertEqual({recipe.name for recipe in recipes}, {item.name for item in list_builtin_strategies()})
+        for recipe in recipes:
+            self.assertTrue(recipe.id.endswith(".v1"))
+            self.assertTrue(recipe.cost_inputs)
+            self.assertTrue(recipe.risk_notes)
+            self.assertTrue(recipe.validation_notes)
+        macd = next(recipe for recipe in recipes if recipe.name == "macd")
+        self.assertEqual(
+            [(item.name, item.default_value, item.configurable) for item in macd.signal_parameters],
+            [("fast_period", 12, False), ("slow_period", 26, False), ("signal_period", 9, False)],
+        )
+        pairs = next(recipe for recipe in recipes if recipe.name == "pairs_arbitrage")
+        self.assertEqual(pairs.required_inputs, ("primary_bar_series", "reference_bar_series"))
+        self.assertTrue(any("funding" in item for item in pairs.cost_inputs))
 
     def test_selecting_catalog_entry_runs_and_verifies_shared_rust_backtest(self) -> None:
         selected = next(

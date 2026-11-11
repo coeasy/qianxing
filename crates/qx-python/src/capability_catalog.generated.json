@@ -2,12 +2,12 @@
   "schema_version": 1,
   "kind": "qianxing-capability-catalog",
   "source_updated_at": {
-    "matrix": "2026-10-24",
+    "matrix": "2026-11-11",
     "maturity": "2026-11-10",
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "b95945dc0400fb5a0907c947835c0c736f8cfbbb259aa067570fb37dadb3fec1",
+    "maturity/capability-matrix.yaml": "d09779bf424b5a61c4d77bcbfa0184f2248eb35b0f8528d0eb0ee3cb7f82a4e3",
     "maturity/capabilities.yaml": "5683e652be095376857b1b89119c61cde998a7dee7b8c3759852797fdf1f4b91",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -715,6 +715,11 @@
           "python/tests/test_app_use_cases.py",
           "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
           "crates/qx-api/src/app_multi_market_tests.rs",
+          "crates/qx-app/src/strategy_recipe.rs",
+          "crates/qx-api/src/app_strategy_selection_tests.rs",
+          "crates/qx-python/src/strategy_catalog.rs",
+          "python/tests/test_strategy_catalog.py",
+          "python/tests/test_remote_strategy_catalog.py",
           "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml",
           "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml",
           "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml"

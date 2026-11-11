@@ -70,6 +70,21 @@ fn builtin_strategy_catalog_uses_the_shared_discovery_route() {
 }
 
 #[test]
+fn builtin_strategy_recipes_use_the_versioned_discovery_route() {
+    let transport = FakeTransport::default();
+    let client = RemoteApiClient::new(transport);
+    assert_eq!(
+        client.builtin_strategy_recipes().unwrap(),
+        serde_json::json!([])
+    );
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.as_slice(),
+        &[("/app/strategy-recipes".into(), String::new())]
+    );
+}
+
+#[test]
 fn application_capabilities_use_the_shared_runtime_discovery_route() {
     let client = RemoteApiClient::new(FakeTransport::default());
     assert_eq!(

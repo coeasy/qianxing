@@ -37,6 +37,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "product_capability_query": "/app/capabilities/query",
     "provider_preflight": "/app/capabilities/providers/preflight",
     "builtin_strategy_catalog": "/app/strategies",
+    "builtin_strategy_recipes": "/app/strategy-recipes",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
@@ -228,6 +229,29 @@ class BuiltinStrategyInfo:
     requires_reference_leg: bool
 
 
+@dataclass(frozen=True)
+class StrategyRecipeParameter:
+    name: str
+    config_key: str | None
+    default_value: int
+    unit: str
+    configurable: bool
+    description: str
+
+
+@dataclass(frozen=True)
+class BuiltinStrategyRecipe:
+    id: str
+    name: str
+    family: str
+    description: str
+    required_inputs: tuple[str, ...]
+    signal_parameters: tuple[StrategyRecipeParameter, ...]
+    cost_inputs: tuple[str, ...]
+    risk_notes: tuple[str, ...]
+    validation_notes: tuple[str, ...]
+
+
 _BUILTIN_STRATEGY_INFO_KEYS = frozenset(
     {"name", "description", "signal_knobs", "requires_reference_leg"}
 )
@@ -271,6 +295,104 @@ def _parse_builtin_strategy_catalog(value: Any) -> tuple[BuiltinStrategyInfo, ..
     return tuple(result)
 
 
+_STRATEGY_RECIPE_KEYS = frozenset(
+    {
+        "id", "name", "family", "description", "required_inputs",
+        "signal_parameters", "cost_inputs", "risk_notes", "validation_notes",
+    }
+)
+_STRATEGY_RECIPE_PARAMETER_KEYS = frozenset(
+    {"name", "config_key", "default_value", "unit", "configurable", "description"}
+)
+_STRATEGY_RECIPE_FAMILIES = frozenset(
+    {"trend", "mean_reversion", "breakout", "momentum", "grid", "arbitrage"}
+)
+
+
+def _parse_builtin_strategy_recipes(value: Any) -> tuple[BuiltinStrategyRecipe, ...]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "recipes"}
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+    ):
+        raise ValueError("strategy recipe catalog has an invalid versioned envelope")
+    entries = value["recipes"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("strategy recipe catalog must contain a non-empty recipe array")
+
+    def text_tuple(entry: dict[str, Any], field_name: str, label: str) -> tuple[str, ...]:
+        field_value = entry[field_name]
+        if (
+            not isinstance(field_value, list)
+            or not field_value
+            or any(not isinstance(item, str) or not item.strip() for item in field_value)
+            or len(set(field_value)) != len(field_value)
+        ):
+            raise ValueError(f"{label}.{field_name} must be a non-empty unique string list")
+        return tuple(field_value)
+
+    recipes: list[BuiltinStrategyRecipe] = []
+    names: set[str] = set()
+    ids: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"strategy recipe {index}"
+        if not isinstance(entry, dict) or set(entry) != _STRATEGY_RECIPE_KEYS:
+            raise ValueError(f"{label} has an invalid field set")
+        recipe_id, name, family, description = (
+            entry["id"], entry["name"], entry["family"], entry["description"]
+        )
+        if (
+            not isinstance(recipe_id, str) or not recipe_id.strip()
+            or not isinstance(name, str) or not name.strip()
+            or not isinstance(family, str) or family not in _STRATEGY_RECIPE_FAMILIES
+            or not isinstance(description, str) or not description.strip()
+            or name in names or recipe_id in ids
+        ):
+            raise ValueError(f"{label} has invalid or duplicate identity fields")
+        parameters = entry["signal_parameters"]
+        if not isinstance(parameters, list):
+            raise ValueError(f"{label}.signal_parameters must be an array")
+        parsed_parameters: list[StrategyRecipeParameter] = []
+        parameter_names: set[str] = set()
+        for parameter_index, parameter in enumerate(parameters):
+            parameter_label = f"{label}.signal_parameters[{parameter_index}]"
+            if not isinstance(parameter, dict) or set(parameter) != _STRATEGY_RECIPE_PARAMETER_KEYS:
+                raise ValueError(f"{parameter_label} has an invalid field set")
+            config_key = parameter["config_key"]
+            default_value = parameter["default_value"]
+            configurable = parameter["configurable"]
+            if (
+                not isinstance(parameter["name"], str) or not parameter["name"].strip()
+                or (config_key is not None and (not isinstance(config_key, str) or not config_key.strip()))
+                or type(default_value) is not int
+                or not isinstance(parameter["unit"], str) or not parameter["unit"].strip()
+                or type(configurable) is not bool
+                or configurable != (config_key is not None)
+                or not isinstance(parameter["description"], str) or not parameter["description"].strip()
+                or parameter["name"] in parameter_names
+            ):
+                raise ValueError(f"{parameter_label} has invalid values")
+            parameter_names.add(parameter["name"])
+            parsed_parameters.append(StrategyRecipeParameter(**parameter))
+        names.add(name)
+        ids.add(recipe_id)
+        recipes.append(
+            BuiltinStrategyRecipe(
+                id=recipe_id,
+                name=name,
+                family=family,
+                description=description,
+                required_inputs=text_tuple(entry, "required_inputs", label),
+                signal_parameters=tuple(parsed_parameters),
+                cost_inputs=text_tuple(entry, "cost_inputs", label),
+                risk_notes=text_tuple(entry, "risk_notes", label),
+                validation_notes=text_tuple(entry, "validation_notes", label),
+            )
+        )
+    return tuple(recipes)
+
+
 @dataclass(frozen=True)
 class BuiltinStrategySpec:
     kind: Literal[
@@ -301,6 +423,15 @@ def list_builtin_strategies() -> tuple[BuiltinStrategyInfo, ...]:
     try:
         value = json.loads(native.app_list_builtin_strategies())
         return _parse_builtin_strategy_catalog(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def list_builtin_strategy_recipes() -> tuple[BuiltinStrategyRecipe, ...]:
+    """List versioned strategy recipes derived from the Rust defaults and constraints."""
+    try:
+        value = json.loads(native.app_list_builtin_strategy_recipes())
+        return _parse_builtin_strategy_recipes(value)
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 

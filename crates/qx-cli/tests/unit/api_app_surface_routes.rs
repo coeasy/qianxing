@@ -7,6 +7,11 @@ pub(crate) fn insert_static_app_routes(pairs: &mut BTreeSet<(String, String)>) {
         ("GET", "/app/strategies", "builtin_strategy_catalog()"),
         (
             "GET",
+            "/app/strategy-recipes",
+            "builtin_strategy_recipe_catalog()",
+        ),
+        (
+            "GET",
             "/app/capabilities",
             "capabilities::application_capabilities(provider_registry)",
         ),

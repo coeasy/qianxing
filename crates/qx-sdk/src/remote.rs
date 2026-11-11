@@ -72,6 +72,11 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/capabilities/providers/preflight", &request_value)
     }
 
+    /// Discover versioned built-in strategy recipes with defaults and research cautions.
+    pub fn builtin_strategy_recipes(&self) -> Result<Value, RemoteApiError> {
+        self.get_discovery("/app/strategy-recipes")
+    }
+
     /// Run Provider selection, immutable dataset freezing and Bar backtest on the shared Rust API.
     pub fn run_provider_backtest_with_manifest(
         &self,
@@ -277,6 +282,14 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         let response = self
             .transport
             .post(path, &body)
+            .map_err(RemoteApiError::Transport)?;
+        Self::decode_response(response)
+    }
+
+    fn get_discovery(&self, path: &str) -> Result<Value, RemoteApiError> {
+        let response = self
+            .transport
+            .get(path)
             .map_err(RemoteApiError::Transport)?;
         Self::decode_response(response)
     }

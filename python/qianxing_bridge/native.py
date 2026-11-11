@@ -146,6 +146,7 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_experiment",
     "app_run_multi_leg_experiment_with_strategy",
     "app_start_multi_leg_experiment_with_strategy",
+    "app_list_builtin_strategy_recipes",
 )
 
 CAPABILITY_ENTRYPOINTS = (
@@ -334,6 +335,11 @@ def provider_registry() -> Any:
 def app_list_builtin_strategies() -> str:
     """Return the built-in strategy catalog from the shared Rust strategy crate."""
     return str(_extension().app_list_builtin_strategies())
+
+
+def app_list_builtin_strategy_recipes() -> str:
+    """Return versioned strategy recipes from the shared Rust application layer."""
+    return str(_extension().app_list_builtin_strategy_recipes())
 
 
 def provider_bar_dataset_json(

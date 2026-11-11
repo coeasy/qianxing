@@ -36,6 +36,11 @@ int main() {
     assert(observed_method == "GET");
     assert(observed_path == "/app/strategies");
 
+    const auto strategy_recipes = client.builtin_strategy_recipes();
+    assert(strategy_recipes.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/app/strategy-recipes");
+
     const auto capabilities = client.application_capabilities();
     assert(capabilities.ok());
     assert(observed_method == "GET");

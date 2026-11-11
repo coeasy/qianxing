@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-10-25"
+updated_at: "2026-11-11"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -28,6 +28,8 @@ python_native_helpers:
     note: "能力探测：报告本次安装里哪些 Rust 应用入口可用；不是用例，是安装自检"
   - name: list_builtin_strategies
     note: "策略发现：从共享 qx-strategy 返回名称、说明、信号旋钮和多腿限制；不执行回测用例"
+  - name: list_builtin_strategy_recipes
+    note: "策略配方发现：读取 Rust 默认参数、数据/成本要求及风险/OOS 提示；不执行回测或授权交易"
   - name: read_run_report_v1
     note: "报告读取：委托 qx-app 版本化报告读模型，复用 VerifyRun 并返回有界核心样本；不是新的回测执行用例"
   - name: read_depth_run_report_v1
@@ -121,6 +123,10 @@ python_remote_helpers:
     note: "Python 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
   - name: async_list_builtin_strategies
     note: "Python 远端策略发现的 asyncio 委托入口"
+  - name: list_builtin_strategy_recipes
+    note: "Python 远端读取 Rust 维护的版本化策略配方目录；不执行回测或交易"
+  - name: async_list_builtin_strategy_recipes
+    note: "Python 远端版本化策略配方发现的 asyncio 委托入口"
   - name: get_account_snapshot
     note: "按 account_id 与 venue_id 查询账户的一致性快照"
   - name: get_account_balances
@@ -147,6 +153,8 @@ cpp_remote_helpers:
     note: "C++ 远端按 DataRequest JSON 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: builtin_strategy_catalog
     note: "C++ 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
+  - name: builtin_strategy_recipes
+    note: "C++ 远端读取 Rust 维护的版本化策略配方目录；不执行回测或交易"
   - name: research_artifacts
     note: "C++ 远端读取已复核的回测报告明细，路径受 artifact root 约束且结果有界"
   - name: read_provider_run_report
@@ -161,6 +169,8 @@ cpp_remote_helpers:
     note: "按显式 account_id 与 venue_id 查询有界账户活动页；游标仅在该范围内有效"
 
 rust_remote_lifecycle_methods:
+  - name: builtin_strategy_recipes
+    note: "Rust 远端策略配方发现入口，读取 Rust 维护的版本化配方目录；不执行回测或交易"
   - name: get_run_events
     note: "Rust 远端门面按单次 Run 读取持久化生命周期事件"
   - name: provider_preflight

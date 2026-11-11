@@ -14,6 +14,7 @@ from .app import (
     BacktestOutcome,
     BacktestSpec,
     BuiltinStrategyInfo,
+    BuiltinStrategyRecipe,
     CompareRunsResult,
     CompareRunsSpec,
     DatasetSpec,
@@ -51,6 +52,7 @@ from .app import (
     _APP_ERRORS,
     _ResultT,
     _parse_builtin_strategy_catalog,
+    _parse_builtin_strategy_recipes,
 )
 
 
@@ -306,6 +308,22 @@ class AppClient(_HttpJsonClient):
 
     async def async_list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
         return await asyncio.to_thread(self.list_builtin_strategies)
+
+    def list_builtin_strategy_recipes(self) -> tuple[BuiltinStrategyRecipe, ...]:
+        """Fetch versioned strategy defaults, data requirements, and risk/cost notes."""
+        value = self._request_json_value(
+            APP_ROUTE_TEMPLATES["builtin_strategy_recipes"], method="GET"
+        )
+        try:
+            return _parse_builtin_strategy_recipes(value)
+        except (TypeError, ValueError) as exc:
+            raise QianxingError(
+                "Rust API returned an invalid built-in strategy recipe catalog",
+                payload={"category": "INTERNAL_INVARIANT"},
+            ) from exc
+
+    async def async_list_builtin_strategy_recipes(self) -> tuple[BuiltinStrategyRecipe, ...]:
+        return await asyncio.to_thread(self.list_builtin_strategy_recipes)
 
     def get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
         if after_seq is not None and (

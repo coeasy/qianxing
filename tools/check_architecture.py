@@ -1697,6 +1697,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::list_paper_algo_executions": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_live_events": "qx-sdk Rust 远端事件游标公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_run_events": "qx-sdk Rust 远端单次 Run 事件游标公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::builtin_strategy_recipes": "qx-sdk Rust 远端策略配方发现公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::run_backtest_with_strategy": "qx-sdk Rust 策略扩展公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_backtest_with_strategy": "qx-sdk Rust 可取消策略运行公开入口；由外部 SDK 消费者调用",
     "qx-sdk::run_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 组合回测入口；由外部 SDK 消费者提供具名策略槽",

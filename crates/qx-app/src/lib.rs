@@ -76,6 +76,7 @@ pub mod strategy_catalog;
 mod strategy_engine;
 pub mod strategy_order;
 pub mod strategy_preflight;
+pub mod strategy_recipe;
 pub mod trade_facts;
 
 #[cfg(test)]
@@ -338,6 +339,10 @@ pub use strategy_preflight::{
     validate_strategy_execution_preflight_v1, StrategyExecutionPreflightResultV1,
     StrategyExecutionPreflightSpecV1, StrategyPreflightMarketV1, StrategyPreflightPurpose,
     STRATEGY_EXECUTION_PREFLIGHT_SCHEMA_VERSION,
+};
+pub use strategy_recipe::{
+    builtin_strategy_recipe_catalog, BuiltinStrategyRecipe, BuiltinStrategyRecipeCatalog,
+    StrategyRecipeParameter, BUILTIN_STRATEGY_RECIPE_SCHEMA_VERSION,
 };
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};
 

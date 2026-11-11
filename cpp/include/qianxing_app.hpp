@@ -48,6 +48,7 @@ inline constexpr std::string_view kReadMultiAccountJointReport =
     "/app/read-multi-account-joint-report";
 inline constexpr std::string_view kReadMultiLegReport = "/app/read-multi-leg-report";
 inline constexpr std::string_view kBuiltinStrategyCatalog = "/app/strategies";
+inline constexpr std::string_view kBuiltinStrategyRecipes = "/app/strategy-recipes";
 inline constexpr std::string_view kApplicationCapabilities = "/app/capabilities";
 inline constexpr std::string_view kProductCapabilityQuery = "/app/capabilities/query";
 inline constexpr std::string_view kProviderPreflight = "/app/capabilities/providers/preflight";
@@ -103,7 +104,7 @@ inline constexpr std::string_view kAccountActivity = "/account/activity";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 55> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 56> kDeclaredRoutes = {
     kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
     kReadProviderReport, kReadProviderDepthReport, kReadMultiAccountJointReport,
     kReadMultiLegReport,
@@ -111,6 +112,7 @@ inline constexpr std::array<std::string_view, 55> kDeclaredRoutes = {
     kMultiAccountJointBacktest, kMultiAccountJointBacktestStart,
     kMultiAccountDepthBacktest, kMultiAccountDepthBacktestStart,
     kMultiMarketBacktest,   kMultiMarketBacktestStart, kBuiltinStrategyCatalog,
+    kBuiltinStrategyRecipes,
     kMultiMarketDepthBacktest, kMultiMarketDepthBacktestStart,
     kApplicationCapabilities,
     kProductCapabilityQuery,
@@ -193,6 +195,10 @@ public:
 
     AppResponse builtin_strategy_catalog() const {
         return get(routes::kBuiltinStrategyCatalog);
+    }
+
+    AppResponse builtin_strategy_recipes() const {
+        return get(routes::kBuiltinStrategyRecipes);
     }
 
     AppResponse application_capabilities() const {

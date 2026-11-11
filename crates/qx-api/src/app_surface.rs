@@ -494,6 +494,9 @@ pub(crate) fn route_app_run(
     if let ("GET", "/app/strategies") = (method, route) {
         return Some(builtin_strategy_catalog());
     }
+    if let ("GET", "/app/strategy-recipes") = (method, route) {
+        return Some(builtin_strategy_recipe_catalog());
+    }
     if let ("GET", "/app/capabilities") = (method, route) {
         return Some(capabilities::application_capabilities(provider_registry));
     }
@@ -529,6 +532,13 @@ pub(crate) fn route_app_run(
 
 fn builtin_strategy_catalog() -> ApiResponse {
     match serde_json::to_string(&qx_app::builtin_strategy_catalog()) {
+        Ok(body) => ApiResponse::json(200, body),
+        Err(error) => ApiResponse::json(500, crate::error_json(&error.to_string())),
+    }
+}
+
+fn builtin_strategy_recipe_catalog() -> ApiResponse {
+    match serde_json::to_string(&qx_app::builtin_strategy_recipe_catalog()) {
         Ok(body) => ApiResponse::json(200, body),
         Err(error) => ApiResponse::json(500, crate::error_json(&error.to_string())),
     }

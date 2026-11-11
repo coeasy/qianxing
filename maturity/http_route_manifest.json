@@ -54,6 +54,10 @@
     },
     {
       "method": "GET",
+      "path": "/app/strategy-recipes"
+    },
+    {
+      "method": "GET",
       "path": "/control/audit"
     },
     {

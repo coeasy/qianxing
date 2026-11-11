@@ -32,6 +32,38 @@ fn http_strategy_discovery_matches_the_shared_rust_catalog() {
 }
 
 #[test]
+fn http_strategy_recipes_are_versioned_and_expose_actionable_defaults_and_guards() {
+    let response =
+        ApiService::new(ApiState::default()).handle("GET", "/app/strategy-recipes", "", 0);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let catalog: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(catalog["schema_version"], 1);
+    let recipes = catalog["recipes"].as_array().unwrap();
+    assert_eq!(recipes.len(), 17);
+    let macd = recipes
+        .iter()
+        .find(|recipe| recipe["name"] == "macd")
+        .unwrap();
+    assert_eq!(macd["signal_parameters"][0]["default_value"], 12);
+    assert_eq!(macd["signal_parameters"][0]["configurable"], false);
+    let pairs = recipes
+        .iter()
+        .find(|recipe| recipe["name"] == "pairs_arbitrage")
+        .unwrap();
+    assert_eq!(pairs["required_inputs"].as_array().unwrap().len(), 2);
+    assert!(pairs["cost_inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item.as_str().is_some_and(|value| value.contains("funding"))));
+    assert!(pairs["validation_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item.as_str().is_some_and(|value| value.contains("时间戳"))));
+}
+
+#[test]
 fn http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness() {
     let response = ApiService::new(ApiState::default()).handle("GET", "/app/capabilities", "", 0);
     assert_eq!(response.status, 200, "{}", response.body);

@@ -10,6 +10,8 @@ from qianxing.app import (
     APP_ROUTE_TEMPLATES,
     AppClient,
     BuiltinStrategyInfo,
+    BuiltinStrategyRecipe,
+    StrategyRecipeParameter,
     QianxingError,
 )
 
@@ -194,6 +196,77 @@ class RemoteStrategyCatalogTest(unittest.TestCase):
         with patch.object(client, "list_builtin_strategies", return_value=expected) as listing:
             self.assertEqual(asyncio.run(client.async_list_builtin_strategies()), expected)
         listing.assert_called_once_with()
+
+    def test_remote_recipe_catalog_parses_versioned_defaults_and_risk_notes(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "recipes": [{
+                "id": "builtin.macd.v1",
+                "name": "macd",
+                "family": "trend",
+                "description": "MACD 趋势与动量",
+                "required_inputs": ["bar_series"],
+                "signal_parameters": [{
+                    "name": "fast_period",
+                    "config_key": None,
+                    "default_value": 12,
+                    "unit": "bars",
+                    "configurable": False,
+                    "description": "固定周期",
+                }],
+                "cost_inputs": ["maker/taker fee schedule"],
+                "risk_notes": ["no live authorization"],
+                "validation_notes": ["run OOS validation"],
+            }],
+        }
+        client = AppClient("https://localhost")
+        with patch.object(client, "_request_json_value", return_value=payload) as request:
+            recipes = client.list_builtin_strategy_recipes()
+        self.assertEqual(request.call_args.args[0], "/app/strategy-recipes")
+        self.assertEqual(request.call_args.kwargs["method"], "GET")
+        self.assertEqual(
+            recipes,
+            (BuiltinStrategyRecipe(
+                id="builtin.macd.v1",
+                name="macd",
+                family="trend",
+                description="MACD 趋势与动量",
+                required_inputs=("bar_series",),
+                signal_parameters=(StrategyRecipeParameter(
+                    name="fast_period", config_key=None, default_value=12,
+                    unit="bars", configurable=False, description="固定周期",
+                ),),
+                cost_inputs=("maker/taker fee schedule",),
+                risk_notes=("no live authorization",),
+                validation_notes=("run OOS validation",),
+            ),),
+        )
+
+    def test_remote_recipe_catalog_rejects_malformed_version_or_parameter(self) -> None:
+        valid = {
+            "id": "builtin.ema_cross.v1", "name": "ema_cross", "family": "trend",
+            "description": "EMA", "required_inputs": ["bar_series"],
+            "signal_parameters": [{
+                "name": "fast_window", "config_key": "builtin_fast_window",
+                "default_value": 5, "unit": "bars", "configurable": True,
+                "description": "fast window",
+            }],
+            "cost_inputs": ["fees"], "risk_notes": ["cap exposure"],
+            "validation_notes": ["validate OOS"],
+        }
+        malformed = (
+            {"schema_version": 2, "recipes": [valid]},
+            {"schema_version": 1, "recipes": [{**valid, "family": "unknown"}]},
+            {"schema_version": 1, "recipes": [{**valid, "signal_parameters": [{**valid["signal_parameters"][0], "configurable": False}]}]},
+        )
+        client = AppClient("https://localhost")
+        for payload in malformed:
+            with (
+                self.subTest(payload=payload),
+                patch.object(client, "_request_json_value", return_value=payload),
+                self.assertRaisesRegex(QianxingError, "invalid built-in strategy recipe catalog"),
+            ):
+                client.list_builtin_strategy_recipes()
 
 
 if __name__ == "__main__":
