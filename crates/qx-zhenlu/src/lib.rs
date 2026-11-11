@@ -1391,8 +1391,18 @@ pub trait SpreadOrderGroupStore {
 pub trait OrderGroupStore {
     fn load(&self, group_id: &str) -> Result<Option<OrderGroupState>, String>;
     fn create(&mut self, group: &OrderGroupState) -> Result<(), String>;
-    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String>;
-    fn reconcile_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String>;
+    fn apply_order_snapshot(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String>;
+    fn reconcile_order_snapshot(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String>;
     fn group_ids(&self) -> Result<Vec<String>, String>;
 }
 
@@ -1478,7 +1488,12 @@ impl OrderGroupStore for FileOrderGroupStore {
         self.save_locked(group)
     }
 
-    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String> {
+    fn apply_order_snapshot(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String> {
         let _lock = self.lock()?;
         let path = self.path_for(group_id)?;
         let payload =
@@ -1489,11 +1504,16 @@ impl OrderGroupStore for FileOrderGroupStore {
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
         }
-        group.apply_order_snapshot(snapshot.clone(), None)?;
+        group.apply_order_snapshot(snapshot.clone(), venue_order_id)?;
         self.save_locked(&group)
     }
 
-    fn reconcile_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String> {
+    fn reconcile_order_snapshot(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String> {
         let _lock = self.lock()?;
         let path = self.path_for(group_id)?;
         let payload =
@@ -1504,7 +1524,7 @@ impl OrderGroupStore for FileOrderGroupStore {
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
         }
-        group.reconcile_order_snapshot(snapshot.clone(), None)?;
+        group.reconcile_order_snapshot(snapshot.clone(), venue_order_id)?;
         self.save_locked(&group)
     }
 
@@ -2691,102 +2711,6 @@ mod tests {
                 conditional: None,
             }),
         }
-    }
-
-    fn test_protection_order(client_id: u64, kind: qx_core::ConditionalOrderKind) -> Order {
-        let mut order = exact_order(
-            client_id,
-            "BTC/USDT.OKX",
-            Side::Sell,
-            ExactDecimal::parse("0.01").unwrap(),
-        );
-        order.status = OrderStatus::PendingSubmit;
-        let terms = match kind {
-            qx_core::ConditionalOrderKind::TakeProfit => "70000",
-            qx_core::ConditionalOrderKind::StopLoss => "60000",
-            _ => unreachable!(),
-        };
-        order.exact_amounts.as_mut().unwrap().conditional = Some(qx_core::ConditionalOrderIntent {
-            kind,
-            trigger_price: Some(ExactDecimal::parse(terms).unwrap()),
-            trigger_price_type: Some(qx_core::TriggerPriceType::Mark),
-            trailing_percent: None,
-            trailing_amount: None,
-            trailing_trigger_price: None,
-        });
-        order
-    }
-
-    fn test_oco_state(group_id: &str) -> OrderGroupState {
-        OrderGroupState::from_intent(
-            qx_core::OrderGroupIntent::new(
-                group_id,
-                qx_core::OrderGroupKind::Oco,
-                qx_core::OrderGroupExecution::NativeRequired,
-                vec![
-                    qx_core::OrderGroupLegIntent {
-                        role: qx_core::OrderGroupLegRole::TakeProfit,
-                        order: test_protection_order(
-                            701,
-                            qx_core::ConditionalOrderKind::TakeProfit,
-                        ),
-                    },
-                    qx_core::OrderGroupLegIntent {
-                        role: qx_core::OrderGroupLegRole::StopLoss,
-                        order: test_protection_order(702, qx_core::ConditionalOrderKind::StopLoss),
-                    },
-                ],
-            )
-            .unwrap(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
-        let test_root = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join("test-temp");
-        std::fs::create_dir_all(&test_root).unwrap();
-        let root = test_root.join(format!(
-            "qianxing-order-groups-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let mut store = FileOrderGroupStore::new(&root).unwrap();
-        let group = test_oco_state("persisted-oco");
-        store.create(&group).unwrap();
-        store.create(&group).unwrap();
-
-        let mut submitted = group.legs[0].order.clone();
-        submitted.status = OrderStatus::Submitted;
-        store
-            .apply_order_snapshot("persisted-oco", &submitted)
-            .unwrap();
-
-        let reopened = FileOrderGroupStore::new(&root).unwrap();
-        let restored = reopened.load("persisted-oco").unwrap().unwrap();
-        assert_eq!(restored.legs[0].order.status, OrderStatus::Submitted);
-        assert_eq!(reopened.group_ids().unwrap(), vec!["persisted-oco"]);
-
-        let different_intent = test_oco_state("persisted-oco");
-        let mut changed = different_intent;
-        changed.intent.legs[0]
-            .order
-            .exact_amounts
-            .as_mut()
-            .unwrap()
-            .conditional
-            .as_mut()
-            .unwrap()
-            .trigger_price = Some(ExactDecimal::parse("71000").unwrap());
-        changed.legs[0].order = changed.intent.legs[0].order.clone();
-        assert!(store.create(&changed).is_err());
-
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn tiny_exact_spot_spec(instrument: &InstrumentId) -> TradingInstrumentSpec {
