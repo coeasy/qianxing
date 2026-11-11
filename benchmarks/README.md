@@ -165,6 +165,13 @@ Scheduler 活跃运行索引、L2 撮合、Paper Venue 订单生命周期、SQLi
 以及 A 股昨收逐点反扫/序列预计算；对拍必须得到
 相同 digest，A 股两种计算必须逐 Bar 返回相同锚点。运行完整测量并同时保留兼容 JSON 记录：
 
+Ledger exact cash snapshot 基准同时验证 owned map 与 allocation-free visitor 的遍历顺序和值一致，
+并比较两种方式完成相同金额累计的成本。2026-11-11 Windows Ryzen 7 8700G 样本中，1/8/64 币种
+visitor 的中位成本约低 28%/19%/26%。这是局部微基准；同日完整 CLI 回测的 1k/8k/64k p50 变化为
++1.3%/−0.5%/+2.6%，结果哈希保持不变且没有超过登记回归阈值，因此该结果证明多币种现金估值少建临时
+快照，不代表端到端回测整体提速。端到端样本见
+[`backtest-e2e-windows-ryzen7-8700g-2026-11-11-after-streaming-exact-cash-final.json`](../maturity/evidence/backtest-e2e-windows-ryzen7-8700g-2026-11-11-after-streaming-exact-cash-final.json)。
+
 ```bash
 cargo bench -p qx-core --bench criterion_performance -- --noplot
 cargo bench -p qx-scheduler --bench criterion_performance -- --noplot

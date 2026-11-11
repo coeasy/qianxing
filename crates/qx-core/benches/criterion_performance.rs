@@ -2,8 +2,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use qx_core::{
-    Event, EventKind, EventLog, Fnv1a, Ledger, LedgerEntry, LedgerEntryKind, Money, Priority,
-    Quantity,
+    Event, EventKind, EventLog, ExactDecimal, Fnv1a, Ledger, LedgerEntry, LedgerEntryKind, Money,
+    Priority, Quantity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::hint::black_box;
@@ -423,6 +423,80 @@ fn bench_ledger_cash_balances_snapshot(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ledger_exact_cash_snapshot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("qx_core_exact_cash_snapshot");
+    for currency_count in [1_usize, 8, 64] {
+        let mut ledger = Ledger::new();
+        for index in 0..currency_count {
+            let currency = format!("C{index:03}");
+            ledger
+                .deposit(
+                    "criterion-exact-cash",
+                    &currency,
+                    Money::from_raw(index as i128 + 1),
+                    index as u64 + 1,
+                )
+                .expect("append deterministic legacy balance");
+            if index % 2 == 0 {
+                ledger
+                    .deposit_exact(
+                        "criterion-exact-cash",
+                        &currency,
+                        ExactDecimal::parse("0.125").expect("valid exact decimal"),
+                        currency_count as u64 + index as u64 + 1,
+                    )
+                    .expect("append deterministic exact balance");
+            }
+        }
+        let owned = ledger.cash_balances_exact_for("criterion-exact-cash");
+        let mut streamed = Vec::new();
+        ledger
+            .for_each_cash_balance_exact_for("criterion-exact-cash", |currency, amount| {
+                streamed.push((currency.to_owned(), amount));
+                Ok(())
+            })
+            .expect("stream exact balances");
+        assert_eq!(owned.into_iter().collect::<Vec<_>>(), streamed);
+        group.throughput(Throughput::Elements(currency_count as u64));
+        group.bench_with_input(
+            BenchmarkId::new("owned_snapshot_then_sum", currency_count),
+            &ledger,
+            |b, ledger| {
+                b.iter(|| {
+                    let total = ledger
+                        .cash_balances_exact_for(black_box("criterion-exact-cash"))
+                        .values()
+                        .copied()
+                        .try_fold(ExactDecimal::ZERO, |total, amount| {
+                            total.checked_add(amount)
+                        })
+                        .expect("bounded deterministic total");
+                    black_box(total)
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("allocation_free_visit", currency_count),
+            &ledger,
+            |b, ledger| {
+                b.iter(|| {
+                    let mut total = ExactDecimal::ZERO;
+                    ledger
+                        .for_each_cash_balance_exact_for("criterion-exact-cash", |_, amount| {
+                            total = total
+                                .checked_add(amount)
+                                .expect("bounded deterministic total");
+                            Ok(())
+                        })
+                        .expect("visit exact balances");
+                    black_box(total)
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn configure_criterion() -> Criterion {
     Criterion::default()
         .sample_size(10)
@@ -435,6 +509,7 @@ criterion_group! {
     config = configure_criterion();
     targets = bench_append_batch, bench_digest, bench_prefix_digest, bench_event_log_validate,
         bench_event_log_manifest_digest, bench_ledger_entry_lookup, bench_ledger_cash_lookup,
-        bench_ledger_entry_commit, bench_ledger_cash_balances_snapshot
+        bench_ledger_entry_commit, bench_ledger_cash_balances_snapshot,
+        bench_ledger_exact_cash_snapshot
 }
 criterion_main!(benches);

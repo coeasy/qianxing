@@ -401,16 +401,17 @@ impl Ledger {
             return Err(QxError::BusinessViolation("回测合约乘数必须为正".into()));
         }
         let mut value = ExactDecimal::ZERO;
-        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+        self.for_each_cash_balance_exact_for(account_id, |currency, amount| {
             value = value
                 .checked_add(Self::convert_equity_currency_exact(
                     amount,
-                    &currency,
+                    currency,
                     reporting_currency,
                     fx_rates,
                 )?)
                 .ok_or_else(|| QxError::Invariant("精确现金权益累计溢出".into()))?;
-        }
+            Ok(())
+        })?;
         let multiplier = ExactDecimal::from_parts(multiplier, 0)
             .map_err(|error| QxError::Invariant(error.into()))?;
         for ((account, instrument), _) in self.iter_positions() {
@@ -687,16 +688,17 @@ impl Ledger {
             }
         }
         let mut equity = ExactDecimal::ZERO;
-        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+        self.for_each_cash_balance_exact_for(account_id, |currency, amount| {
             equity = equity
                 .checked_add(Self::convert_equity_currency_exact(
                     amount,
-                    &currency,
+                    currency,
                     reporting_currency,
                     fx_rates,
                 )?)
                 .ok_or_else(|| QxError::Invariant("多市场精确现金权益溢出".into()))?;
-        }
+            Ok(())
+        })?;
         for ((account, instrument), position) in self.iter_positions() {
             if account != account_id {
                 continue;
@@ -773,16 +775,17 @@ impl Ledger {
             }
         }
         let mut equity = ExactDecimal::ZERO;
-        for (currency, amount) in self.cash_balances_exact_for(account_id) {
+        self.for_each_cash_balance_exact_for(account_id, |currency, amount| {
             equity = equity
                 .checked_add(Self::convert_equity_currency_exact(
                     amount,
-                    &currency,
+                    currency,
                     reporting_currency,
                     fx_rates,
                 )?)
                 .ok_or_else(|| QxError::Invariant("多市场精确现金权益溢出".into()))?;
-        }
+            Ok(())
+        })?;
         for ((account, instrument), position) in self.iter_positions() {
             if account != account_id {
                 continue;

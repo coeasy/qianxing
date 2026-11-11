@@ -61,8 +61,8 @@ domains:
   - name: rust_kernel
     capability_id: qx.domain.rust_kernel
     level: implemented-and-verified
-    evidence: [crates/qx-core, maturity/capabilities.yaml, maturity/backtest_acceptance.yaml, maturity/evidence/backtest-e2e-windows-ryzen7-8700g-2026-11-11.json]
-    limitations: ["实盘轨的两档只对需要外部 venue 的能力有意义，对回测/Paper 主用法是不适用而不是待补（见 maturity/evidence/README.md）", "已建立 Windows Ryzen 7 8700G 上 1k/8k/64k 合成 Bar 的 CLI Release 时间、RSS、可用 CPU/I/O 与稳定结果哈希基线；该样本不代表真实行情/180 天产品 profile，也未进行跨产品同条件竞品测量，不能据此宣称性能领先"]
+    evidence: [crates/qx-core, maturity/capabilities.yaml, maturity/backtest_acceptance.yaml, maturity/evidence/backtest-e2e-windows-ryzen7-8700g-2026-11-11.json, maturity/evidence/backtest-e2e-windows-ryzen7-8700g-2026-11-11-after-streaming-exact-cash-final.json, crates/qx-core/benches/criterion_performance.rs]
+    limitations: ["实盘轨的两档只对需要外部 venue 的能力有意义，对回测/Paper 主用法是不适用而不是待补（见 maturity/evidence/README.md）", "已建立 Windows Ryzen 7 8700G 上 1k/8k/64k 合成 Bar 的 CLI Release 时间、RSS、可用 CPU/I/O 与稳定结果哈希基线；该样本不代表真实行情/180 天产品 profile，也未进行跨产品同条件竞品测量，不能据此宣称性能领先", "精确现金 visitor 微基准在 1/8/64 币种下有约 28%/19%/26% 局部改善，但对应端到端 1k/8k/64k 回测没有显著提速"]
     next_gate: "保持 tools/check_architecture.py 与 cargo test --workspace 全绿；内核不得长出对 UI/HTTP/CLI/Python/C++ 的依赖"
 
   - name: python_sdk
