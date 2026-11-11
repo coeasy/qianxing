@@ -1,0 +1,130 @@
+{
+  "binary": "target\\release\\qx-cli.exe",
+  "binary_sha256": "e691a4d2b07f9b4f24a2ddfc9c1f5ad2ba59b0f9b3819fe434ddd59700a58a50",
+  "hardware": {
+    "arch": "AMD64",
+    "logical_cpu_count": 16,
+    "os": "Windows",
+    "physical_core_count": 8,
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "total_ram_bytes": 65911173120
+  },
+  "linear_scaling_curve": {
+    "candidate_knee_threshold_pct": 20.0,
+    "candidate_positive_knee_at_bars": null,
+    "candidate_positive_knee_is_not_a_statistical_claim": true,
+    "interpretation": "positive knee means marginal wall-time per Bar increased beyond the threshold; a decreasing slope is reported as economies of scale, not a knee",
+    "method": "adjacent p50 wall-time differences; includes process startup and JSON parsing",
+    "points": [
+      {
+        "amortized_p50_ms_per_bar": 0.545336,
+        "bars": 1000,
+        "p50_ms": 545.336
+      },
+      {
+        "amortized_p50_ms_per_bar": 0.09832175,
+        "bars": 8000,
+        "p50_ms": 786.574
+      },
+      {
+        "amortized_p50_ms_per_bar": 0.034722625,
+        "bars": 64000,
+        "p50_ms": 2222.248
+      }
+    ],
+    "segments": [
+      {
+        "delta_p50_ms": 241.238,
+        "from_bars": 1000,
+        "marginal_p50_ms_per_bar": 0.034462571,
+        "marginal_p50_us_per_bar": 34.463,
+        "slope_change_pct_vs_previous_segment": null,
+        "to_bars": 8000
+      },
+      {
+        "delta_p50_ms": 1435.674,
+        "from_bars": 8000,
+        "marginal_p50_ms_per_bar": 0.025637036,
+        "marginal_p50_us_per_bar": 25.637,
+        "slope_change_pct_vs_previous_segment": -25.609,
+        "to_bars": 64000
+      }
+    ]
+  },
+  "measured": "end-to-end wall clock (parse + validate + event-driven backtest + summary)",
+  "measurement_source_fingerprint": "efebab1589feda7cc5f0838206222b8f0289de7cfe0d6cc8889c4f0837819a53",
+  "measurement_source_fingerprint_schema": 3,
+  "not_measured": [
+    "kernel append/refresh/replay/read-model/recovery per-stage p50/p95"
+  ],
+  "repeats": 7,
+  "resource_measurement": "process peak RSS uses OS high-water marks on Windows/Linux and max sampled RSS on macOS; process-tree RSS/CPU/I/O are sampled when psutil/platform counters are available; unavailable values remain null",
+  "rows": [
+    {
+      "bars": 1000,
+      "deterministic_across_repeats": true,
+      "max_ms": 593.801,
+      "mean_ms": 553.018,
+      "min_ms": 536.965,
+      "p50_ms": 545.336,
+      "p95_ms": 593.801,
+      "peak_process_count": 1,
+      "peak_process_rss_bytes": 13107200,
+      "peak_process_tree_rss_bytes": 12062720,
+      "peak_rss_samples_available": 7,
+      "process_tree_cpu_seconds": 0.015625,
+      "process_tree_io_read_bytes": 323863,
+      "process_tree_io_write_bytes": 727,
+      "repeats": 7,
+      "resource_samples": 7,
+      "result_hash": "cf28eb8f95602671"
+    },
+    {
+      "bars": 8000,
+      "deterministic_across_repeats": true,
+      "max_ms": 858.895,
+      "mean_ms": 782.261,
+      "min_ms": 732.476,
+      "p50_ms": 786.574,
+      "p95_ms": 858.895,
+      "peak_process_count": 1,
+      "peak_process_rss_bytes": 35479552,
+      "peak_process_tree_rss_bytes": 35348480,
+      "peak_rss_samples_available": 7,
+      "process_tree_cpu_seconds": 0.070312,
+      "process_tree_io_read_bytes": 2532802,
+      "process_tree_io_write_bytes": 728,
+      "repeats": 7,
+      "resource_samples": 7,
+      "result_hash": "5af7ee00ca5245c8"
+    },
+    {
+      "bars": 64000,
+      "deterministic_across_repeats": true,
+      "max_ms": 2350.61,
+      "mean_ms": 2243.852,
+      "min_ms": 2184.384,
+      "p50_ms": 2222.248,
+      "p95_ms": 2350.61,
+      "peak_process_count": 1,
+      "peak_process_rss_bytes": 217190400,
+      "peak_process_tree_rss_bytes": 217190400,
+      "peak_rss_samples_available": 7,
+      "process_tree_cpu_seconds": 0.8125,
+      "process_tree_io_read_bytes": 27742012,
+      "process_tree_io_write_bytes": 2357,
+      "repeats": 7,
+      "resource_samples": 7,
+      "result_hash": "2d796c7d2f02b250"
+    }
+  ],
+  "scenario": "backtest builtin sma_cross <frame_N>",
+  "schema_version": 1,
+  "sizes": [
+    1000,
+    8000,
+    64000
+  ]
+}

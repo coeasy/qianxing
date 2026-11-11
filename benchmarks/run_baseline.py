@@ -20,13 +20,12 @@ import argparse
 import hashlib
 import json
 import statistics
-import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from process_metrics import ProcessMeasurement, run_measured
 from source_fingerprint import MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA, measurement_source_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -81,7 +80,7 @@ def generate_frame(size: int, destination: Path) -> None:
     destination.write_text(json.dumps(document), encoding="utf-8")
 
 
-def run_once(binary: Path, frame: Path) -> tuple[float, str, int]:
+def run_once(binary: Path, frame: Path) -> tuple[ProcessMeasurement, str]:
     runtime_config = frame.with_suffix(".runtime.json")
     if not runtime_config.exists():
         config = json.loads(
@@ -93,8 +92,7 @@ def run_once(binary: Path, frame: Path) -> tuple[float, str, int]:
         # not register different manifests under the same persistent dataset key.
         config["storage"]["data_dir"] = str(frame.parent / f"data-{frame.stem}")
         runtime_config.write_text(json.dumps(config), encoding="utf-8")
-    started = time.perf_counter()
-    proc = subprocess.run(
+    measured = run_measured(
         [
             str(binary),
             "backtest",
@@ -104,21 +102,47 @@ def run_once(binary: Path, frame: Path) -> tuple[float, str, int]:
             "--config",
             str(runtime_config),
         ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        cwd=REPO_ROOT,
     )
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
-    if proc.returncode != 0:
-        diagnostic = proc.stderr.strip() or proc.stdout.strip() or "no CLI diagnostic"
-        print(f"[benchmark] qx-cli failed ({proc.returncode}): {diagnostic}", file=sys.stderr)
+    if measured.return_code != 0:
+        diagnostic = measured.stderr.strip() or measured.stdout.strip() or "no CLI diagnostic"
+        print(
+            f"[benchmark] qx-cli failed ({measured.return_code}): {diagnostic}",
+            file=sys.stderr,
+        )
     result_hash = ""
-    for line in proc.stdout.splitlines():
+    for line in measured.stdout.splitlines():
         if "result_hash=" in line:
             tail = line.split("result_hash=", 1)[1]
             result_hash = tail.split()[0].strip()
-    return elapsed_ms, result_hash, proc.returncode
+    return measured, result_hash
+
+
+def resource_summary(samples: list[ProcessMeasurement]) -> dict:
+    """Aggregate measured process-tree resources without turning unavailable into zero."""
+    fields = {
+        "peak_process_rss_bytes": "peak_rss_bytes",
+        "peak_process_tree_rss_bytes": "peak_tree_rss_bytes",
+        "peak_process_count": "peak_process_count",
+        "process_tree_cpu_seconds": "tree_cpu_seconds",
+        "process_tree_io_read_bytes": "tree_io_read_bytes",
+        "process_tree_io_write_bytes": "tree_io_write_bytes",
+    }
+    result = {}
+    for output_name, attribute in fields.items():
+        values = [getattr(sample, attribute) for sample in samples]
+        available = [value for value in values if isinstance(value, (int, float))]
+        if not available:
+            result[output_name] = None
+        elif output_name in {"peak_process_rss_bytes", "peak_process_tree_rss_bytes", "peak_process_count"}:
+            result[output_name] = max(available)
+        else:
+            result[output_name] = round(statistics.median(available), 6)
+    result["resource_samples"] = len(samples)
+    result["peak_rss_samples_available"] = sum(
+        sample.peak_rss_bytes is not None for sample in samples
+    )
+    return result
 
 
 def percentile(samples: list[float], fraction: float) -> float:
@@ -217,6 +241,11 @@ def main() -> int:
         "repeats": args.repeats,
         "scenario": "backtest builtin sma_cross <frame_N>",
         "measured": "end-to-end wall clock (parse + validate + event-driven backtest + summary)",
+        "resource_measurement": (
+            "process peak RSS uses OS high-water marks on Windows/Linux and max sampled RSS on "
+            "macOS; process-tree RSS/CPU/I/O are sampled when psutil/platform counters are "
+            "available; unavailable values remain null"
+        ),
         "not_measured": ["kernel append/refresh/replay/read-model/recovery per-stage p50/p95"],
         "rows": [],
     }
@@ -225,28 +254,31 @@ def main() -> int:
             frame = Path(workdir) / f"frame-{size}.json"
             generate_frame(size, frame)
             # 预热一次，再计时；预热结果不参与统计。
-            _, warm_hash, warm_rc = run_once(binary, frame)
-            if warm_rc != 0:
-                print(f"[FAIL] 预热回测退出码 {warm_rc}（N={size}）", file=sys.stderr)
+            warm, warm_hash = run_once(binary, frame)
+            if warm.return_code != 0:
+                print(f"[FAIL] 预热回测退出码 {warm.return_code}（N={size}）", file=sys.stderr)
                 return 1
-            samples, hashes = [], []
+            samples: list[ProcessMeasurement] = []
+            hashes = []
             for _ in range(args.repeats):
-                elapsed, result_hash, rc = run_once(binary, frame)
-                if rc != 0:
-                    print(f"[FAIL] 回测退出码 {rc}（N={size}）", file=sys.stderr)
+                measured, result_hash = run_once(binary, frame)
+                if measured.return_code != 0:
+                    print(f"[FAIL] 回测退出码 {measured.return_code}（N={size}）", file=sys.stderr)
                     return 1
-                samples.append(elapsed)
+                samples.append(measured)
                 hashes.append(result_hash)
+            elapsed_samples = [sample.elapsed_ms for sample in samples]
             deterministic = len(set(hashes)) == 1 and warm_hash == hashes[0]
             report["rows"].append(
                 {
                     "bars": size,
                     "repeats": args.repeats,
-                    "p50_ms": round(percentile(samples, 0.50), 3),
-                    "p95_ms": round(percentile(samples, 0.95), 3),
-                    "min_ms": round(min(samples), 3),
-                    "max_ms": round(max(samples), 3),
-                    "mean_ms": round(statistics.fmean(samples), 3),
+                    "p50_ms": round(percentile(elapsed_samples, 0.50), 3),
+                    "p95_ms": round(percentile(elapsed_samples, 0.95), 3),
+                    "min_ms": round(min(elapsed_samples), 3),
+                    "max_ms": round(max(elapsed_samples), 3),
+                    "mean_ms": round(statistics.fmean(elapsed_samples), 3),
+                    **resource_summary(samples),
                     "result_hash": hashes[0],
                     "deterministic_across_repeats": deterministic,
                 }
@@ -270,12 +302,16 @@ def main() -> int:
     print(f"binary: {report['binary']}")
     print(f"scenario: {report['scenario']}")
     print()
-    print("| bars | p50 (ms) | p95 (ms) | min | max | result_hash | 确定性 |")
+    print("| bars | p50 (ms) | p95 (ms) | peak RSS (MiB) | tree RSS (MiB) | result_hash | 确定性 |")
     print("| ---: | ---: | ---: | ---: | ---: | --- | :---: |")
     for row in report["rows"]:
+        peak_rss = row["peak_process_rss_bytes"]
+        peak_tree_rss = row["peak_process_tree_rss_bytes"]
         print(
-            f"| {row['bars']} | {row['p50_ms']} | {row['p95_ms']} | {row['min_ms']} | "
-            f"{row['max_ms']} | `{row['result_hash']}` | "
+            f"| {row['bars']} | {row['p50_ms']} | {row['p95_ms']} | "
+            f"{'unavailable' if peak_rss is None else f'{peak_rss / (1024 * 1024):.2f}'} | "
+            f"{'unavailable' if peak_tree_rss is None else f'{peak_tree_rss / (1024 * 1024):.2f}'} | "
+            f"`{row['result_hash']}` | "
             f"{'PASS' if row['deterministic_across_repeats'] else 'FAIL'} |"
         )
     curve = report["linear_scaling_curve"]

@@ -15636,6 +15636,14 @@ def performance_baseline_check() -> None:
         "端到端与 Rust 基准共用硬件指纹，记录物理核数与可见内存",
         "硬件信息重复实现、缺少共享模块或漏记核数/内存",
     )
+    check(
+        "from process_metrics import ProcessMeasurement, run_measured" in e2e_driver_source
+        and "run_measured(" in e2e_driver_source
+        and '"peak_process_rss_bytes"' in e2e_driver_source
+        and '"process_tree_cpu_seconds"' in e2e_driver_source,
+        "端到端回测基准采集进程 RSS 与可用进程树 CPU/I/O 资源",
+        "回测性能基线不得只记录墙钟，且资源采集不可用时需由 runner 保留 null",
+    )
     manifest = (ROOT / "crates/qx-cli/Cargo.toml").read_text(encoding="utf-8")
     core_manifest = (ROOT / "crates/qx-core/Cargo.toml").read_text(encoding="utf-8")
     scheduler_manifest = (ROOT / "crates/qx-scheduler/Cargo.toml").read_text(encoding="utf-8")

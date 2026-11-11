@@ -123,13 +123,23 @@ python benchmarks/compare_baseline.py benchmarks/results/baseline.json benchmark
 | 覆盖 | 不覆盖 |
 |---|---|
 | 端到端墙钟：读帧 → 校验 → 逐事件回测 → 印摘要 | 内核内部 append / refresh / replay / read-model / recovery 的**逐段** p50/p95 |
-| 回测吞吐随 N 的变化（N=1k/8k/64k） | 内存峰值与分配行为（需单独采集） |
-| 「同样输入必得同样结果」：`result_hash` 跨重复稳定 | L2 撮合时延分位数、语言桥开销、内存峰值与分配行为 |
+| 回测吞吐随 N 的变化（N=1k/8k/64k）、同输入 `result_hash` 跨重复稳定 | 内核 append/refresh/replay/read-model/recovery 的逐段延迟、L2 撮合分位数、语言桥开销、allocator 分配次数 |
+| 操作系统进程峰值 RSS；有 `psutil`/平台计数器时采样进程树 RSS、CPU、I/O 与进程数 | 进程树采样可能漏过短时尖峰；Unavailable 项按 `null` 输出，不能当作 0 |
 
 JSON 同时包含 `linear_scaling_curve`：相邻 N 的 p50 差分、每 Bar 边际墙钟与斜率变化。它只描述
 包含进程启动和 JSON 解析的端到端回测成本；斜率下降表示固定启动成本被摊薄，只有边际成本上升
 超过 20% 阈值才标记为候选正向拐点。该结果不是内核稳态单 tick 成本曲线，也不是统计显著性结论；
 不得用它替代 `maturity/capabilities.yaml` 里按 EventLog 长度测得的稳态单 tick 数据。
+每档 JSON 同时保存各轮资源采样；峰值 RSS 和进程数取重复样本最大值，CPU/I/O 取可用样本中位数，
+并记录资源采样数。Windows/Linux 使用操作系统进程 high-water mark；macOS 取采样期间最大 RSS。
+进程树采样依赖 `psutil`，缺少平台计数器时保留 `null`。
+
+2026-11-11 Windows Release 端到端初始基线：Ryzen 7 8700G、8 物理核/16 逻辑核、约 61.4 GiB RAM；
+1k/8k/64k Bar 的 p50 分别为 545.336/786.574/2222.248 ms，峰值进程 RSS 为
+12.50/33.84/207.13 MiB；三档 7 次重复的 `result_hash` 均稳定。完整硬件、二进制哈希、源码指纹和每轮
+资源读数见 [`backtest-e2e-windows-ryzen7-8700g-2026-11-11.json`](../maturity/evidence/backtest-e2e-windows-ryzen7-8700g-2026-11-11.json)。
+这是合成周期 Bar + `sma_cross` + 完整 CLI 持久化路径的本机初始基线，不是 180 天真实行情 profile，
+也不构成 Freqtrade/NautilusTrader/vectorbt 的同条件对比或领先结论。
 
 ## Crypto Paper worker 端到端
 
