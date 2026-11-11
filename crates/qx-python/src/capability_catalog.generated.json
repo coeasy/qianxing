@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "9e1cc430d6ae170f3b0fd2d48b9b09184252292fb0a4de95eb1088b25d7980db",
+    "maturity/capability-matrix.yaml": "b95945dc0400fb5a0907c947835c0c736f8cfbbb259aa067570fb37dadb3fec1",
     "maturity/capabilities.yaml": "5683e652be095376857b1b89119c61cde998a7dee7b8c3759852797fdf1f4b91",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -57,6 +57,7 @@
       "one_way"
     ],
     "operations": [
+      "amend",
       "cancel",
       "submit"
     ],
@@ -246,6 +247,7 @@
         "account_model": "implemented-and-verified",
         "fee": "implemented-and-verified",
         "cancel": "implemented-and-verified",
+        "amend": "unsupported",
         "query": "implemented-and-verified",
         "idempotency": "implemented-and-verified",
         "rate_limit": "unsupported",
@@ -275,6 +277,7 @@
         "account_model": "implemented-unverified",
         "fee": "partial",
         "cancel": "implemented-unverified",
+        "amend": "unsupported",
         "query": "implemented-unverified",
         "idempotency": "implemented-unverified",
         "rate_limit": "implemented-unverified",
@@ -304,6 +307,7 @@
         "account_model": "implemented-unverified",
         "fee": "partial",
         "cancel": "implemented-unverified",
+        "amend": "implemented-unverified",
         "query": "implemented-unverified",
         "idempotency": "implemented-unverified",
         "rate_limit": "implemented-unverified",
@@ -317,7 +321,7 @@
       "execution_scope_count": 8,
       "account_query_scope_count": 6,
       "evidence_path_count": 34,
-      "limitation_count": 5
+      "limitation_count": 6
     },
     {
       "id": "qx.provider.ccxt_bar",
@@ -2150,6 +2154,7 @@
         "account_model": "implemented-and-verified",
         "fee": "implemented-and-verified",
         "cancel": "implemented-and-verified",
+        "amend": "unsupported",
         "query": "implemented-and-verified",
         "idempotency": "implemented-and-verified",
         "rate_limit": "unsupported",
@@ -2319,6 +2324,7 @@
         "account_model": "implemented-unverified",
         "fee": "partial",
         "cancel": "implemented-unverified",
+        "amend": "unsupported",
         "query": "implemented-unverified",
         "idempotency": "implemented-unverified",
         "rate_limit": "implemented-unverified",
@@ -2530,6 +2536,7 @@
         "account_model": "implemented-unverified",
         "fee": "partial",
         "cancel": "implemented-unverified",
+        "amend": "implemented-unverified",
         "query": "implemented-unverified",
         "idempotency": "implemented-unverified",
         "rate_limit": "implemented-unverified",
@@ -2537,11 +2544,13 @@
         "precision": "implemented-unverified",
         "evidence": [
           "crates/qx-adapter/src/ccxt.rs",
+          "crates/qx-adapter/src/ccxt/tests.rs",
           "maturity/capabilities.yaml"
         ],
         "limitations": [
-          "运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型",
+          "运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型",
           "条件单形态虽已列入下方逐产品 execution_scopes，但全部仍是 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行",
+          "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收",
           "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收",
           "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保",
           "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"
@@ -2766,7 +2775,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -2855,7 +2865,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -2944,7 +2955,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3032,7 +3044,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3121,7 +3134,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3211,7 +3225,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3306,7 +3321,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3397,7 +3413,8 @@
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "amend"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3426,6 +3443,7 @@
             "not_applicable"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3515,6 +3533,7 @@
             "one_way"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3604,6 +3623,7 @@
             "hedge"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3692,6 +3712,7 @@
             "not_applicable"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3781,6 +3802,7 @@
             "one_way"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3871,6 +3893,7 @@
             "hedge"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -3961,6 +3984,7 @@
             "not_applicable"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],
@@ -4057,6 +4081,7 @@
             "one_way"
           ],
           "operations": [
+            "amend",
             "cancel",
             "submit"
           ],

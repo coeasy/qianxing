@@ -1050,6 +1050,94 @@ fn ccxt_native_amend_preflights_without_writing_then_confirms_remote_terms() {
 }
 
 #[test]
+fn ccxt_reconciler_confirms_a_persisted_amendment_without_resubmitting_it() {
+    let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    struct RecoveryRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for RecoveryRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "3",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "101",
+                        "fee_raw": 0
+                    }
+                })),
+                Some("fetch_my_trades") => Ok(json!({"trades": []})),
+                other => panic!("unexpected reconcile RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(RecoveryRpc(Arc::clone(&calls))));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    let facts = venue
+        .reconcile_amendment(&current, &amended, 30)
+        .unwrap()
+        .expect("remote order matches the durable amendment request");
+
+    assert!(facts.is_empty());
+    assert_eq!(venue.orders.get(&7), Some(&amended));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["op"] == "fetch_order")
+            .count(),
+        2
+    );
+    assert!(!calls.iter().any(|call| call["op"] == "edit_order"));
+}
+
+#[test]
+fn ccxt_reconciler_keeps_amendment_pending_when_remote_terms_do_not_match() {
+    struct UnchangedRpc;
+    impl CcxtRpc for UnchangedRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "2",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "100",
+                        "fee_raw": 0
+                    }
+                })),
+                other => panic!("unexpected reconcile RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(UnchangedRpc));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    assert!(venue
+        .reconcile_amendment(&current, &amended, 30)
+        .unwrap()
+        .is_none());
+    assert_eq!(venue.orders.get(&7), Some(&current));
+}
+
+#[test]
 fn ccxt_tier_preflight_rejection_is_not_treated_as_an_unknown_submission() {
     struct PreflightRejectRpc;
     impl CcxtRpc for PreflightRejectRpc {

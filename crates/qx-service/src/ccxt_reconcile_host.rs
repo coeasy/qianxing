@@ -373,11 +373,15 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
             let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client))
                 .with_shutdown_check(move || shutdown_context.should_stop());
             let orders = local_orders;
+            let pending_amendment_ids = orders
+                .iter()
+                .filter(|order| pipeline.pending_amendment(order.client_id).is_some())
+                .map(|order| order.client_id)
+                .collect::<BTreeSet<_>>();
             let mut updates = 0_usize;
-            for order in orders
-                .into_iter()
-                .filter(|order| !order.status.is_terminal())
-            {
+            for order in orders.into_iter().filter(|order| {
+                !order.status.is_terminal() || pending_amendment_ids.contains(&order.client_id)
+            }) {
                 let Some(remote_id) = pipeline.venue_order_id(order.client_id) else {
                     local_order_issues.push(ccxt_local_order_issue(
                         "local_order_missing_remote_id",
@@ -405,6 +409,83 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
                         seen_trade_ids,
                     )
                     .map_err(|error| format!("恢复 CCXT 本地订单失败: {error:?}"))?;
+                let pending_amendment = pipeline
+                    .pending_amendment(order.client_id)
+                    .map(|(operation_id, requested)| (operation_id.to_string(), requested.clone()));
+                let mut amendment_recovered = false;
+                let mut amendment_unresolved = false;
+                if let Some((operation_id, requested)) = pending_amendment {
+                    match venue.reconcile_amendment(&order, &requested, received_ts) {
+                        Ok(Some(events)) => {
+                            source_seq = source_seq.saturating_add(1);
+                            pipeline
+                                .ingest(RuntimeEventEnvelope::venue(
+                                    RuntimeExternalEvent::OrderAmended {
+                                        operation_id: operation_id.clone(),
+                                        order: requested,
+                                    },
+                                    received_ts,
+                                    received_ts,
+                                    source_seq,
+                                    format!("{}:amend-recovered:{}", worker.id, operation_id),
+                                ))
+                                .map_err(|error| {
+                                    format!("CCXT 改单恢复确认事实归约失败: {error:?}")
+                                })?;
+                            updates += 1;
+                            updates += if let Some(spec) = load_worker_market_spec_for_instrument(
+                                &worker,
+                                &order.instrument,
+                                Some(&runtime_config_path),
+                            )? {
+                                ingest_venue_events_with_spec(
+                                    &mut pipeline,
+                                    events,
+                                    &worker.id,
+                                    received_ts,
+                                    &mut source_seq,
+                                    &spec,
+                                )?
+                            } else {
+                                ingest_venue_events(
+                                    &mut pipeline,
+                                    events,
+                                    &worker.id,
+                                    received_ts,
+                                    &mut source_seq,
+                                )?
+                            };
+                            amendment_recovered = true;
+                        }
+                        Ok(None) => {
+                            local_order_issues.push(ccxt_local_order_issue(
+                                "pending_amendment_unresolved",
+                                &order,
+                                &venue_id,
+                                "交易所订单条款尚未确认改单请求；保留 pending 且暂停该订单同步",
+                            ));
+                            amendment_unresolved = true;
+                        }
+                        Err(error) => {
+                            local_order_issues.push(ccxt_local_order_issue(
+                                "pending_amendment_unresolved",
+                                &order,
+                                &venue_id,
+                                &format!("改单仍未能由远端订单确认: {error:?}"),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                if amendment_recovered {
+                    if context.should_stop() {
+                        return Ok(1);
+                    }
+                    continue;
+                }
+                if amendment_unresolved {
+                    continue;
+                }
                 match venue.sync_order(order.client_id, received_ts) {
                     Ok(events) => {
                         updates += if let Some(spec) = load_worker_market_spec_for_instrument(

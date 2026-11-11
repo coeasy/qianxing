@@ -475,6 +475,64 @@ impl CcxtProcessVenue {
 
     /// 拉取订单事实并生成增量成交/取消事件。该方法可由 REST 轮询或 CCXT Pro
     /// 用户流 worker 调用，二者都复用同一事实转换。
+    /// 当改单在途跨越进程重启时，仅在远端权威订单条款与持久请求完全相等后
+    /// 才采用新快照并继续常规成交归约；否则保留待对账状态，不重发改单。
+    pub fn reconcile_amendment(
+        &mut self,
+        current: &Order,
+        amended: &Order,
+        ts: u64,
+    ) -> QxResult<Option<Vec<VenueEvent>>> {
+        self.capabilities().require_query()?;
+        qx_zhenlu::oms::validate_amended_order(current, amended)?;
+        if self.orders.get(&current.client_id) != Some(current) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 本地订单快照与 EventLog 订单不一致，不能恢复改单".into(),
+            ));
+        }
+        let remote_id = self
+            .remote_ids
+            .get(&current.client_id)
+            .cloned()
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单缺少远端订单 ID".into()))?;
+        let result = self.call_or_reconcile(json!({
+            "op": "fetch_order",
+            "order_id": remote_id,
+            "instrument": current.instrument.to_string(),
+        }))?;
+        let remote = result
+            .get("order")
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单恢复查询缺少 order".into()))?;
+        if remote.get("order_id").and_then(Value::as_str) != Some(remote_id.as_str()) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT改单恢复查询的远端订单 ID 不匹配".into(),
+            ));
+        }
+        let amount_matches = remote
+            .get("amount_exact")
+            .and_then(Value::as_str)
+            .and_then(|value| ExactDecimal::parse(value).ok())
+            == Some(amended.quantity_decimal());
+        let price_matches = match amended.limit_price_decimal() {
+            Some(expected) => {
+                remote
+                    .get("price_exact")
+                    .and_then(Value::as_str)
+                    .and_then(|value| ExactDecimal::parse(value).ok())
+                    == Some(expected)
+            }
+            None => true,
+        };
+        if !amount_matches || !price_matches {
+            return Ok(None);
+        }
+
+        // The pending fact is the durable requested snapshot. Apply it before ingesting
+        // the authoritative fill delta so OMS validates any racing fill against new terms.
+        self.orders.insert(current.client_id, amended.clone());
+        self.sync_order(current.client_id, ts).map(Some)
+    }
+
     pub fn sync_order(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
         self.capabilities().require_query()?;
         let order = self

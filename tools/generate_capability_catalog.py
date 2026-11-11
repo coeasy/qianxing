@@ -68,7 +68,7 @@ MATURITY_STAGES = (
     "sandbox_tested",
     "production_approved",
 )
-EXECUTION_OPERATIONS = {"submit", "cancel"}
+EXECUTION_OPERATIONS = {"submit", "cancel", "amend"}
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
@@ -558,7 +558,7 @@ def render_markdown(catalog: dict[str, Any]) -> str:
             "",
             "## 交易所、产品与账户模式范围",
             "",
-            "范围行只表示仓内代码、配置样例和离线请求测试覆盖；`implemented-unverified` 不代表已通过真实供应商 sandbox。账户模式采用统一订单口径：`cash`、`one_way`、`hedge`；`account_models` 保留交易所账户路径名，保证金模式单独列出。`operations` 将 submit 与 cancel 分开登记；能提交订单不自动代表能撤单。",
+            "范围行只表示仓内代码、配置样例和离线请求测试覆盖；`implemented-unverified` 不代表已通过真实供应商 sandbox。账户模式采用统一订单口径：`cash`、`one_way`、`hedge`；`account_models` 保留交易所账户路径名，保证金模式单独列出。`operations` 将 submit、cancel、amend 分开登记；支持某项操作不自动代表支持其他操作。",
             "",
             "| Capability ID | Venue | Product | Account mode | Account models | Margin modes | Position modes | Operations | Order shapes | 状态 | 成熟度证据 | 代码/fixture 证据 |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|",

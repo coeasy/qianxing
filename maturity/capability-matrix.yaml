@@ -40,6 +40,7 @@ capability_fields:
   - account_model
   - fee
   - cancel
+  - amend
   - query
   - idempotency
   - rate_limit
@@ -128,6 +129,7 @@ venues:
     account_model: implemented-and-verified
     fee: implemented-and-verified
     cancel: implemented-and-verified
+    amend: unsupported
     query: implemented-and-verified
     idempotency: implemented-and-verified
     rate_limit: unsupported
@@ -150,6 +152,7 @@ venues:
     account_model: implemented-unverified
     fee: partial
     cancel: implemented-unverified
+    amend: unsupported
     query: implemented-unverified
     idempotency: implemented-unverified
     rate_limit: implemented-unverified
@@ -204,13 +207,14 @@ venues:
     account_model: implemented-unverified
     fee: partial
     cancel: implemented-unverified
+    amend: implemented-unverified
     query: implemented-unverified
     idempotency: implemented-unverified
     rate_limit: implemented-unverified
     sandbox: unsupported
     precision: implemented-unverified
-    evidence: [crates/qx-adapter/src/ccxt.rs, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "条件单形态虽已列入下方逐产品 execution_scopes，但全部仍是 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+    evidence: [crates/qx-adapter/src/ccxt.rs, crates/qx-adapter/src/ccxt/tests.rs, maturity/capabilities.yaml]
+    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "条件单形态虽已列入下方逐产品 execution_scopes，但全部仍是 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行", "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
     account_query_scopes:
       - venue: BINANCE
         product: spot
@@ -298,7 +302,7 @@ venues:
           - order_type: trailing
             quantity_unit: base
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-spot.example.json]
@@ -345,7 +349,7 @@ venues:
           - order_type: trailing
             quantity_unit: contracts
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-usdm.example.json]
@@ -392,7 +396,7 @@ venues:
           - order_type: trailing
             quantity_unit: contracts
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-binance-usdm.example.json]
@@ -439,7 +443,7 @@ venues:
           - order_type: trailing
             quantity_unit: base
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt.rs, python/examples/ccxt-okx-spot.example.json]
@@ -486,7 +490,7 @@ venues:
           - order_type: trailing
             quantity_unit: contracts
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt.rs, deploy/qianxing.runtime.ccxt.example.json, python/examples/ccxt-okx-swap.example.json]
@@ -533,7 +537,7 @@ venues:
           - order_type: trailing
             quantity_unit: contracts
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt.rs, deploy/qianxing.runtime.ccxt.example.json, python/examples/ccxt-okx-swap.example.json]
@@ -583,7 +587,7 @@ venues:
           - order_type: trailing
             quantity_unit: base
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt.rs, python/examples/ccxt-bitget-spot.example.json, python/examples/ccxt-bitget-uta-spot.example.json]
@@ -630,7 +634,7 @@ venues:
           - order_type: trailing
             quantity_unit: contracts
             side: sell
-        operations: [submit, cancel]
+        operations: [submit, cancel, amend]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt/tests.rs, python/examples/ccxt-bitget-perpetual.example.json, python/examples/ccxt-bitget-uta-perpetual.example.json]
