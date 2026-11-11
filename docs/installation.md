@@ -1,10 +1,10 @@
 # 安装与构建指南
 
-## R20 clean-install acceptance — Windows
+## R20 clean-install acceptance — historical Windows record
 
 2026-10-29 recorded acceptance `R20-AC01` run `b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7` on Windows 11 AMD64 with CPython 3.12.13. The mixed Python/Rust project metadata produced `qianxing-0.3.0-cp310-abi3-win_amd64.whl`; it installed in a fresh venv with no source-tree imports. `qx-cli` installed from the same source revision in an isolated root. SDK doctor reported native extension `matched`, app use cases `complete`, CLI `matched`, and schema catalog SHA-256 `c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa`. The CLI quickstart exited 0 and created the documented 16 project files; all 13 Python example modules compiled and the momentum strategy callback contract ran. The captured command log is `maturity/acceptance-artifacts/b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7.log`.
 
-This closes the Windows leg only. Linux still needs a clean wheel/CLI install and schema/capability acceptance before R20 can be accepted as a platform matrix.
+That 2026-10-29 record closed only the Windows leg at that time. The 0.4.0 candidate has since passed a Linux Debian 12 Podman workspace/CLI/Python wheel preflight ([Linux evidence](../maturity/evidence/linux-podman-release-preflight-2026-11-09.json)) and a clean Windows x64 wheel/CLI rebuild with isolated install and full smoke ([latest Windows evidence](../maturity/evidence/windows-wheel-release-preflight-2026-11-11-7c3cf30b.json)). Hosted CI also passed all 33 jobs for the release-candidate code and its subsequent documentation head, including Linux, macOS and Windows Python wheel jobs ([run #461](https://github.com/coeasy/qianxing/actions/runs/42852812040)). This supersedes the old pending-Linux sentence; it does not mean v0.4.0 has been tagged or published, or that the external venue/data/production approval gates are complete.
 
 ## 安装
 
