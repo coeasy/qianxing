@@ -257,6 +257,90 @@ class CcxtJsonWorker:
                 params=dict(request.get("params", {})),
             )
             return {"order": _order_wire(order)}
+        if operation == "create_conditional_order":
+            order = self.client.create_conditional_order(
+                str(request["instrument"]),
+                intent=str(request["intent"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                amount_unit=str(request["amount_unit"]),
+                trigger_price_exact=None
+                if request.get("trigger_price_exact") is None
+                else str(request["trigger_price_exact"]),
+                trigger_price_type=None
+                if request.get("trigger_price_type") is None
+                else str(request["trigger_price_type"]),
+                trailing_percent_exact=None
+                if request.get("trailing_percent_exact") is None
+                else str(request["trailing_percent_exact"]),
+                trailing_amount_exact=None
+                if request.get("trailing_amount_exact") is None
+                else str(request["trailing_amount_exact"]),
+                trailing_trigger_price_exact=None
+                if request.get("trailing_trigger_price_exact") is None
+                else str(request["trailing_trigger_price_exact"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                risk_leverage=request.get("risk_leverage"),
+                risk_reduce_only=request.get("risk_reduce_only", False),
+                risk_margin_mode=request.get("risk_margin_mode"),
+                client_order_id=None
+                if request.get("client_order_id") is None
+                else str(request["client_order_id"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"order": _order_wire(order)}
+        if operation == "create_bracket_order":
+            order = self.client.create_bracket_order(
+                str(request["instrument"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                amount_unit=str(request["amount_unit"]),
+                stop_loss_trigger_exact=None
+                if request.get("stop_loss_trigger_exact") is None
+                else str(request["stop_loss_trigger_exact"]),
+                stop_loss_limit_exact=None
+                if request.get("stop_loss_limit_exact") is None
+                else str(request["stop_loss_limit_exact"]),
+                stop_loss_price_type=None
+                if request.get("stop_loss_price_type") is None
+                else str(request["stop_loss_price_type"]),
+                take_profit_trigger_exact=None
+                if request.get("take_profit_trigger_exact") is None
+                else str(request["take_profit_trigger_exact"]),
+                take_profit_limit_exact=None
+                if request.get("take_profit_limit_exact") is None
+                else str(request["take_profit_limit_exact"]),
+                take_profit_price_type=None
+                if request.get("take_profit_price_type") is None
+                else str(request["take_profit_price_type"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                risk_leverage=request.get("risk_leverage"),
+                risk_margin_mode=request.get("risk_margin_mode"),
+                client_order_id=None
+                if request.get("client_order_id") is None
+                else str(request["client_order_id"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"order": _order_wire(order)}
+        if operation == "edit_order":
+            order = self.client.edit_order(
+                str(request["order_id"]),
+                str(request["instrument"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"order": _order_wire(order)}
         if operation == "fetch_order":
             order = self.client.fetch_order(
                 str(request["order_id"]),

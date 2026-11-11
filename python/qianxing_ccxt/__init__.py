@@ -821,6 +821,31 @@ class CcxtExchangeClient:
             category = classify_ccxt_error(error)
             raise CcxtConnectorError(category, f"CCXT {method} 失败: {error}", cause=error) from error
 
+    def _require_order_feature(self, symbol: str, feature: str) -> None:
+        """Require CCXT's per-market capability declaration before conditional writes."""
+        lookup = getattr(self.exchange, "feature_value", None)
+        if not callable(lookup):
+            lookup = getattr(self.exchange, "featureValue", None)
+        if not callable(lookup):
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "当前 CCXT 版本未提供订单能力查询，拒绝猜测条件单支持情况",
+            )
+        try:
+            supported = lookup(symbol, "createOrder", feature)
+        except Exception as error:
+            category = classify_ccxt_error(error)
+            raise CcxtConnectorError(
+                category,
+                f"查询 {symbol} 的 createOrder.{feature} 能力失败: {error}",
+                cause=error,
+            ) from error
+        if not supported:
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                f"交易所 {self.config.exchange_id} 的市场 {symbol} 未声明支持 createOrder.{feature}",
+            )
+
     def load_markets(self, *, reload: bool = False) -> Mapping[str, Mapping[str, Any]]:
         if self._markets is None or reload:
             markets = self._call("load_markets", reload)
@@ -2344,6 +2369,342 @@ class CcxtExchangeClient:
             _decimal_from_raw(amount_raw, field="amount"),
             None if price_raw is None else _decimal_from_raw(price_raw, field="price"),
             call_params,
+        )
+        return self._normalize_order(result, market)
+
+    def create_conditional_order(
+        self,
+        instrument: str,
+        *,
+        intent: str,
+        side: str,
+        order_type: str,
+        amount_exact: str,
+        amount_unit: str,
+        trigger_price_exact: str | None = None,
+        trigger_price_type: str | None = None,
+        trailing_percent_exact: str | None = None,
+        trailing_amount_exact: str | None = None,
+        trailing_trigger_price_exact: str | None = None,
+        price_exact: str | None = None,
+        risk_leverage: int | None = None,
+        risk_reduce_only: bool = False,
+        risk_margin_mode: str | None = None,
+        client_order_id: str | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> CcxtOrder:
+        """Place one capability-checked CCXT trigger, stop, take-profit or trailing order."""
+        if not isinstance(intent, str) or intent not in (
+            "trigger",
+            "stop_loss",
+            "take_profit",
+            "trailing",
+        ):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "未知条件订单 intent")
+        market = self.resolve_market(instrument)
+        call_params = dict(params or {})
+        supplied_reduce_only = call_params.get("reduceOnly")
+        if supplied_reduce_only is not None and (
+            not isinstance(supplied_reduce_only, bool)
+            or supplied_reduce_only != risk_reduce_only
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "params.reduceOnly 必须与 risk_reduce_only 一致",
+            )
+        if risk_reduce_only:
+            call_params["reduceOnly"] = True
+        if intent == "trailing":
+            if trigger_price_type is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "trailing 订单不接受 trigger_price_type",
+                )
+            if (trailing_percent_exact is None) == (trailing_amount_exact is None):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "trailing 订单必须且只能指定 trailing_percent_exact 或 trailing_amount_exact",
+                )
+            if trigger_price_exact is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "trailing 订单请使用 trailing_trigger_price_exact 设置启动价",
+                )
+            if trailing_percent_exact is not None:
+                value = _exact_decimal_wire_text(
+                    trailing_percent_exact, field="trailing_percent"
+                )
+                if Fraction(value) <= 0:
+                    raise CcxtConnectorError(CcxtErrorClass.INVALID, "trailing percent 必须为正")
+                feature = "trailingPercent"
+                call_params[feature] = value
+            else:
+                value = _exact_decimal_wire_text(
+                    trailing_amount_exact, field="trailing_amount"
+                )
+                if Fraction(value) <= 0:
+                    raise CcxtConnectorError(CcxtErrorClass.INVALID, "trailing amount 必须为正")
+                feature = "trailingAmount"
+                call_params[feature] = value
+            self._require_order_feature(market.symbol, feature)
+            if trailing_trigger_price_exact is not None:
+                trigger = _exact_decimal_wire_text(
+                    trailing_trigger_price_exact, field="trailing_trigger_price"
+                )
+                if Fraction(trigger) <= 0:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID, "trailing trigger price 必须为正"
+                    )
+                self._require_order_feature(market.symbol, "trailingTriggerPrice")
+                self._require_exact_exchange_precision_text(
+                    "price_to_precision",
+                    market.symbol,
+                    trigger,
+                    field="trailing trigger price",
+                    known_step=None,
+                )
+                call_params["trailingTriggerPrice"] = trigger
+        else:
+            if trigger_price_exact is None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID, f"{intent} 订单必须提供 trigger_price_exact"
+                )
+            trigger = _exact_decimal_wire_text(trigger_price_exact, field="trigger_price")
+            if Fraction(trigger) <= 0:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, "trigger price 必须为正")
+            feature = {
+                "trigger": "triggerPrice",
+                "stop_loss": "stopLossPrice",
+                "take_profit": "takeProfitPrice",
+            }[intent]
+            self._require_order_feature(market.symbol, feature)
+            self._require_exact_exchange_precision_text(
+                "price_to_precision",
+                market.symbol,
+                trigger,
+                field="trigger price",
+                known_step=None,
+            )
+            call_params[feature] = trigger
+            if trigger_price_type is not None:
+                if trigger_price_type not in ("last", "mark", "index"):
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "trigger_price_type 必须为 last、mark 或 index",
+                    )
+                self._require_order_feature(market.symbol, "triggerPriceType")
+                call_params["triggerPriceType"] = trigger_price_type
+
+        reserved = {
+            "triggerPrice",
+            "stopLossPrice",
+            "takeProfitPrice",
+            "trailingPercent",
+            "trailingAmount",
+            "trailingTriggerPrice",
+            "triggerPriceType",
+        }
+        supplied_reserved = reserved.intersection(params or {})
+        if supplied_reserved:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                f"params 不能覆盖结构化条件订单字段: {', '.join(sorted(supplied_reserved))}",
+            )
+        return self.create_order(
+            instrument,
+            side=side,
+            order_type=order_type,
+            amount_exact=amount_exact,
+            amount_unit=amount_unit,
+            price_exact=price_exact,
+            risk_leverage=risk_leverage,
+            risk_reduce_only=risk_reduce_only,
+            risk_margin_mode=risk_margin_mode,
+            client_order_id=client_order_id,
+            params=call_params,
+        )
+
+    def create_bracket_order(
+        self,
+        instrument: str,
+        *,
+        side: str,
+        order_type: str,
+        amount_exact: str,
+        amount_unit: str,
+        stop_loss_trigger_exact: str | None = None,
+        stop_loss_limit_exact: str | None = None,
+        stop_loss_price_type: str | None = None,
+        take_profit_trigger_exact: str | None = None,
+        take_profit_limit_exact: str | None = None,
+        take_profit_price_type: str | None = None,
+        price_exact: str | None = None,
+        risk_leverage: int | None = None,
+        risk_margin_mode: str | None = None,
+        client_order_id: str | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> CcxtOrder:
+        """Submit an entry with exchange-attached protective exits in one request."""
+        if stop_loss_trigger_exact is None and take_profit_trigger_exact is None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "Bracket 订单至少需要止损或止盈触发价"
+            )
+        if stop_loss_trigger_exact is None and stop_loss_limit_exact is not None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "止损限价必须同时提供止损触发价"
+            )
+        if take_profit_trigger_exact is None and take_profit_limit_exact is not None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "止盈限价必须同时提供止盈触发价"
+            )
+        if stop_loss_trigger_exact is None and stop_loss_price_type is not None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "止损 price type 必须同时提供止损触发价"
+            )
+        if take_profit_trigger_exact is None and take_profit_price_type is not None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "止盈 price type 必须同时提供止盈触发价"
+            )
+        market = self.resolve_market(instrument)
+        call_params = dict(params or {})
+        bracket_reduce_only = call_params.get("reduceOnly")
+        if bracket_reduce_only is not None and (
+            not isinstance(bracket_reduce_only, bool) or bracket_reduce_only
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "Bracket 入场单不能设置 reduceOnly；止损/止盈由附属保护单负责平仓",
+            )
+        if {"stopLoss", "takeProfit"}.intersection(call_params):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "params 不能覆盖结构化 bracket 字段"
+            )
+        for label, trigger, limit, price_type in (
+            ("stopLoss", stop_loss_trigger_exact, stop_loss_limit_exact, stop_loss_price_type),
+            (
+                "takeProfit",
+                take_profit_trigger_exact,
+                take_profit_limit_exact,
+                take_profit_price_type,
+            ),
+        ):
+            if trigger is None:
+                continue
+            self._require_order_feature(market.symbol, label)
+            trigger_text = _exact_decimal_wire_text(trigger, field=f"{label}.triggerPrice")
+            if Fraction(trigger_text) <= 0:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID, f"{label} trigger price 必须为正"
+                )
+            self._require_exact_exchange_precision_text(
+                "price_to_precision",
+                market.symbol,
+                trigger_text,
+                field=f"{label} trigger price",
+                known_step=None,
+            )
+            exit_params: dict[str, str] = {"triggerPrice": trigger_text}
+            if price_type is not None:
+                if price_type not in ("last", "mark", "index"):
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        f"{label} price type 必须为 last、mark 或 index",
+                    )
+                self._require_order_feature(market.symbol, f"{label}.priceType")
+                exit_params["priceType"] = price_type
+            if limit is not None:
+                self._require_order_feature(market.symbol, f"{label}.price")
+                limit_text = _exact_decimal_wire_text(limit, field=f"{label}.price")
+                if Fraction(limit_text) <= 0:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID, f"{label} limit price 必须为正"
+                    )
+                self._require_exact_exchange_precision_text(
+                    "price_to_precision",
+                    market.symbol,
+                    limit_text,
+                    field=f"{label} limit price",
+                    known_step=None,
+                )
+                exit_params["price"] = limit_text
+            call_params[label] = exit_params
+        return self.create_order(
+            instrument,
+            side=side,
+            order_type=order_type,
+            amount_exact=amount_exact,
+            amount_unit=amount_unit,
+            price_exact=price_exact,
+            risk_leverage=risk_leverage,
+            risk_margin_mode=risk_margin_mode,
+            client_order_id=client_order_id,
+            params=call_params,
+        )
+
+    def edit_order(
+        self,
+        order_id: str,
+        instrument: str,
+        *,
+        side: str,
+        order_type: str,
+        amount_exact: str,
+        price_exact: str | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> CcxtOrder:
+        """Use a venue's native atomic edit operation; never emulate with cancel/recreate."""
+        if (
+            not isinstance(order_id, str)
+            or not order_id.strip()
+            or not isinstance(side, str)
+            or side not in ("buy", "sell")
+        ):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "改单必须提供 order_id 和合法 side")
+        if not isinstance(order_type, str) or order_type not in ("market", "limit"):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "改单 order_type 必须为 market 或 limit")
+        amount = _exact_decimal_wire_text(amount_exact, field="amount")
+        if Fraction(amount) <= 0:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "改单数量必须为正")
+        if order_type == "limit" and price_exact is None:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "限价改单必须提供 price_exact")
+        price = None if price_exact is None else _exact_decimal_wire_text(price_exact, field="price")
+        if price is not None and Fraction(price) <= 0:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "改单价格必须为正")
+        market = self.resolve_market(instrument)
+        capabilities = getattr(self.exchange, "has", {})
+        if (
+            not isinstance(capabilities, Mapping)
+            or capabilities.get("editOrder") is not True
+            or not callable(getattr(self.exchange, "edit_order", None))
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                f"交易所 {self.config.exchange_id} 未声明原生 editOrder；拒绝用撤单重挂模拟改单",
+            )
+        self._require_exact_exchange_precision_text(
+            "amount_to_precision",
+            market.symbol,
+            amount,
+            field="amount",
+            known_step=None,
+        )
+        if price is not None:
+            self._require_exact_exchange_precision_text(
+                "price_to_precision",
+                market.symbol,
+                price,
+                field="price",
+                known_step=None,
+            )
+        result = self._call(
+            "edit_order",
+            order_id,
+            market.symbol,
+            order_type,
+            side,
+            amount,
+            price,
+            dict(params or {}),
         )
         return self._normalize_order(result, market)
 
