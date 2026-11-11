@@ -173,7 +173,14 @@ def execution_scopes_for_row(
                 for value in (order_type, quantity_unit, side)
             ):
                 raise ValueError(f"{label}: order shape values must be lowercase strings")
-            if order_type not in {"market", "limit"} or quantity_unit not in {
+            if order_type not in {
+                "market",
+                "limit",
+                "trigger",
+                "stop_loss",
+                "take_profit",
+                "trailing",
+            } or quantity_unit not in {
                 "base",
                 "contracts",
                 "quote",

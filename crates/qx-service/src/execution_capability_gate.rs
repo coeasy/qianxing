@@ -283,11 +283,7 @@ fn resolve_order_execution_capability(
         }
     };
 
-    let order_type = if order.limit_price_decimal().is_some() {
-        "limit"
-    } else {
-        "market"
-    };
+    let order_type = execution_order_type(&order);
     let quantity_unit = if order.is_quote_budget_order() {
         "quote"
     } else if market_spec.product.is_derivative() {
@@ -710,6 +706,25 @@ fn position_mode_name(mode: PositionMode) -> &'static str {
     }
 }
 
+fn execution_order_type(order: &Order) -> &'static str {
+    order
+        .exact_amounts
+        .and_then(|amounts| amounts.conditional)
+        .map(|conditional| match conditional.kind {
+            qx_core::ConditionalOrderKind::Trigger => "trigger",
+            qx_core::ConditionalOrderKind::StopLoss => "stop_loss",
+            qx_core::ConditionalOrderKind::TakeProfit => "take_profit",
+            qx_core::ConditionalOrderKind::Trailing => "trailing",
+        })
+        .unwrap_or_else(|| {
+            if order.limit_price_decimal().is_some() {
+                "limit"
+            } else {
+                "market"
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,7 +732,10 @@ mod tests {
         evaluate_execution_capability_preflight_v1, ExecutionCapabilityPreflightSpecV1,
         EXECUTION_CAPABILITY_PREFLIGHT_SCHEMA_VERSION,
     };
-    use qx_core::{InstrumentId, OrderStatus, Price, Quantity, Side, VenueId};
+    use qx_core::{
+        ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
+        InstrumentId, OrderStatus, Price, Quantity, Side, VenueId,
+    };
     use serde_json::json;
 
     fn test_order() -> Order {
@@ -775,6 +793,41 @@ mod tests {
     }
 
     #[test]
+    fn execution_preflight_uses_conditional_intent_instead_of_parent_market_limit_shape() {
+        let mut order = test_order();
+        order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::ONE,
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: None,
+        });
+        for (kind, expected) in [
+            (ConditionalOrderKind::Trigger, "trigger"),
+            (ConditionalOrderKind::StopLoss, "stop_loss"),
+            (ConditionalOrderKind::TakeProfit, "take_profit"),
+            (ConditionalOrderKind::Trailing, "trailing"),
+        ] {
+            let trailing = kind == ConditionalOrderKind::Trailing;
+            order.exact_amounts.as_mut().unwrap().conditional = Some(ConditionalOrderIntent {
+                kind,
+                trigger_price: (!trailing).then_some(ExactDecimal::ONE),
+                trigger_price_type: None,
+                trailing_percent: trailing.then_some(ExactDecimal::ONE),
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            });
+            assert_eq!(execution_order_type(&order), expected);
+        }
+        order.exact_amounts.as_mut().unwrap().conditional = None;
+        assert_eq!(execution_order_type(&order), "market");
+        order.exact_amounts.as_mut().unwrap().limit_price = Some(ExactDecimal::ONE);
+        assert_eq!(execution_order_type(&order), "limit");
+    }
+
+    #[test]
     fn generated_catalog_allows_only_a_code_tested_binance_sandbox_scope() {
         let catalog = qx_api::product_capability_catalog_document().expect("generated catalog");
         let spec = ExecutionCapabilityPreflightSpecV1 {
@@ -805,6 +858,44 @@ mod tests {
         assert_eq!(
             decision.evidence_stages["binance_direct"]["sandbox_tested"],
             false
+        );
+    }
+
+    #[test]
+    fn generated_ccxt_catalog_declares_conditional_shapes_without_production_approval() {
+        let catalog = qx_api::product_capability_catalog_document().expect("generated catalog");
+        let mut spec = ExecutionCapabilityPreflightSpecV1 {
+            schema_version: EXECUTION_CAPABILITY_PREFLIGHT_SCHEMA_VERSION,
+            profile: ExecutionProfile::SandboxAcceptance,
+            capability_id: "qx.venue.ccxt_process".into(),
+            venue: "OKX".into(),
+            product: "perpetual".into(),
+            account_mode: "one_way".into(),
+            account_model: "unified".into(),
+            margin_mode: "cross".into(),
+            position_mode: "one_way".into(),
+            order_type: "stop_loss".into(),
+            quantity_unit: "contracts".into(),
+            side: "sell".into(),
+            market_rule_fingerprint: "d".repeat(64),
+            sandbox_endpoint: true,
+        };
+        let context = RunContext::new(CallerCapability::Live, "conditional-catalog-contract");
+        let sandbox = evaluate_execution_capability_preflight_v1(&spec, &catalog, &context)
+            .expect("valid sandbox preflight");
+        assert!(sandbox.allowed, "{sandbox:?}");
+        assert_eq!(
+            sandbox.evidence_stages["ccxt_rest"]["sandbox_tested"],
+            false
+        );
+
+        spec.profile = ExecutionProfile::Production;
+        spec.sandbox_endpoint = false;
+        let production = evaluate_execution_capability_preflight_v1(&spec, &catalog, &context)
+            .expect("valid production decision");
+        assert_eq!(
+            production.reason_code.as_deref(),
+            Some("evidence_floor_not_met")
         );
     }
 

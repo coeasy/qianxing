@@ -334,8 +334,10 @@ fn validate_spec(spec: &ExecutionCapabilityPreflightSpecV1) -> Result<(), AppErr
             "market_rule_fingerprint 必须是 64 位 SHA-256 十六进制值",
         ));
     }
-    if !matches!(spec.order_type.as_str(), "market" | "limit")
-        || !matches!(spec.quantity_unit.as_str(), "base" | "contracts" | "quote")
+    if !matches!(
+        spec.order_type.as_str(),
+        "market" | "limit" | "trigger" | "stop_loss" | "take_profit" | "trailing"
+    ) || !matches!(spec.quantity_unit.as_str(), "base" | "contracts" | "quote")
         || !matches!(spec.side.as_str(), "buy" | "sell")
     {
         return Err(invalid("订单类型、数量单位或方向不受支持"));
@@ -553,6 +555,41 @@ mod tests {
             .require_allowed(&live_context())
             .expect_err("未声明 scope 必须拒绝执行");
         assert_eq!(error.reason_code(), Some("scope_not_declared"));
+    }
+
+    #[test]
+    fn conditional_order_requires_its_own_declared_shape_and_production_evidence() {
+        let mut request = spec(ExecutionProfile::SandboxAcceptance, true);
+        request.order_type = "stop_loss".into();
+        request.side = "sell".into();
+        let mut catalog = catalog();
+        let denied =
+            evaluate_execution_capability_preflight_v1(&request, &catalog, &live_context())
+                .expect("valid but undeclared shape");
+        assert_eq!(denied.reason_code.as_deref(), Some("scope_not_declared"));
+
+        catalog["capabilities"][0]["execution_scopes"][0]["order_shapes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "order_type": "stop_loss",
+                "quantity_unit": "base",
+                "side": "sell"
+            }));
+        let sandbox =
+            evaluate_execution_capability_preflight_v1(&request, &catalog, &live_context())
+                .expect("declared sandbox shape");
+        assert!(sandbox.allowed, "{sandbox:?}");
+
+        request.profile = ExecutionProfile::Production;
+        request.sandbox_endpoint = false;
+        let production =
+            evaluate_execution_capability_preflight_v1(&request, &catalog, &live_context())
+                .expect("production decision");
+        assert_eq!(
+            production.reason_code.as_deref(),
+            Some("evidence_floor_not_met")
+        );
     }
 
     #[test]

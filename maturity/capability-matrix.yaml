@@ -210,7 +210,7 @@ venues:
     sandbox: unsupported
     precision: implemented-unverified
     evidence: [crates/qx-adapter/src/ccxt.rs, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 订单、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "Rust CCXT SubmitOrder 已可传递结构化 trigger/stop_loss/take_profit/trailing 意图，Python client 会按市场能力预检；这些订单尚未加入下方逐产品 execution_scopes，也没有 Sandbox 证据，因此能力目录不得将其展示为已验收", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "条件单形态虽已列入下方逐产品 execution_scopes，但全部仍是 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
     account_query_scopes:
       - venue: BINANCE
         product: spot
@@ -274,6 +274,30 @@ venues:
           - order_type: limit
             quantity_unit: base
             side: sell
+          - order_type: trigger
+            quantity_unit: base
+            side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: base
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: base
+            side: sell
+          - order_type: take_profit
+            quantity_unit: base
+            side: buy
+          - order_type: take_profit
+            quantity_unit: base
+            side: sell
+          - order_type: trailing
+            quantity_unit: base
+            side: buy
+          - order_type: trailing
+            quantity_unit: base
+            side: sell
         operations: [submit, cancel]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
@@ -297,6 +321,30 @@ venues:
           - order_type: limit
             quantity_unit: contracts
             side: sell
+          - order_type: trigger
+            quantity_unit: contracts
+            side: buy
+          - order_type: trigger
+            quantity_unit: contracts
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: sell
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: buy
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trailing
+            quantity_unit: contracts
+            side: buy
+          - order_type: trailing
+            quantity_unit: contracts
+            side: sell
         operations: [submit, cancel]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
@@ -318,6 +366,30 @@ venues:
             quantity_unit: contracts
             side: buy
           - order_type: limit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trigger
+            quantity_unit: contracts
+            side: buy
+          - order_type: trigger
+            quantity_unit: contracts
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: sell
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: buy
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trailing
+            quantity_unit: contracts
+            side: buy
+          - order_type: trailing
             quantity_unit: contracts
             side: sell
         operations: [submit, cancel]
@@ -343,6 +415,30 @@ venues:
           - order_type: limit
             quantity_unit: base
             side: sell
+          - order_type: trigger
+            quantity_unit: base
+            side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: base
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: base
+            side: sell
+          - order_type: take_profit
+            quantity_unit: base
+            side: buy
+          - order_type: take_profit
+            quantity_unit: base
+            side: sell
+          - order_type: trailing
+            quantity_unit: base
+            side: buy
+          - order_type: trailing
+            quantity_unit: base
+            side: sell
         operations: [submit, cancel]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
@@ -366,6 +462,30 @@ venues:
           - order_type: limit
             quantity_unit: contracts
             side: sell
+          - order_type: trigger
+            quantity_unit: contracts
+            side: buy
+          - order_type: trigger
+            quantity_unit: contracts
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: sell
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: buy
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trailing
+            quantity_unit: contracts
+            side: buy
+          - order_type: trailing
+            quantity_unit: contracts
+            side: sell
         operations: [submit, cancel]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
@@ -387,6 +507,30 @@ venues:
             quantity_unit: contracts
             side: buy
           - order_type: limit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trigger
+            quantity_unit: contracts
+            side: buy
+          - order_type: trigger
+            quantity_unit: contracts
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: sell
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: buy
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trailing
+            quantity_unit: contracts
+            side: buy
+          - order_type: trailing
             quantity_unit: contracts
             side: sell
         operations: [submit, cancel]
@@ -415,6 +559,30 @@ venues:
           - order_type: market
             quantity_unit: quote
             side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: base
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: base
+            side: sell
+          - order_type: take_profit
+            quantity_unit: base
+            side: buy
+          - order_type: take_profit
+            quantity_unit: base
+            side: sell
+          - order_type: trailing
+            quantity_unit: base
+            side: buy
+          - order_type: trailing
+            quantity_unit: base
+            side: sell
         operations: [submit, cancel]
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
@@ -436,6 +604,30 @@ venues:
             quantity_unit: contracts
             side: buy
           - order_type: limit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trigger
+            quantity_unit: contracts
+            side: buy
+          - order_type: trigger
+            quantity_unit: contracts
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: contracts
+            side: sell
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: buy
+          - order_type: take_profit
+            quantity_unit: contracts
+            side: sell
+          - order_type: trailing
+            quantity_unit: contracts
+            side: buy
+          - order_type: trailing
             quantity_unit: contracts
             side: sell
         operations: [submit, cancel]

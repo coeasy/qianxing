@@ -20557,7 +20557,7 @@ def cli_project_command_module_check() -> None:
         and 'profile.as_deref() == Some("")' in module
         and 'PathBuf::from("qianxing.runtime.json")' in module
         and "run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())" in module
-        and "quickstart::run(project, html, force, profile)" in module
+        and "quickstart::run(project, html, force, profile, strategy)" in module
         and "guide::run(args)" in module
         and "std::process::exit(2)" in module,
         "Init, Quickstart, and Guide CLI routes have one project command adapter owner",
@@ -27993,7 +27993,14 @@ def capability_crosswalk_check() -> None:
                 if (
                     not isinstance(shape, dict)
                     or set(shape) != {"order_type", "quantity_unit", "side"}
-                    or shape.get("order_type") not in {"market", "limit"}
+                    or shape.get("order_type") not in {
+                        "market",
+                        "limit",
+                        "trigger",
+                        "stop_loss",
+                        "take_profit",
+                        "trailing",
+                    }
                     or shape.get("quantity_unit") not in {"base", "contracts", "quote"}
                     or shape.get("side") not in {"buy", "sell"}
                     or (
