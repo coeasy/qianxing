@@ -95,6 +95,10 @@ pub trait EventAppender {
 pub trait OrderStore {
     fn orders(&self) -> Vec<Order>;
 
+    fn refresh_order_state(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn has_pending_amendment(&self, _client_order_id: u64) -> bool {
         false
     }
@@ -152,6 +156,19 @@ pub trait VenuePort {
         client_order_id: u64,
         ts: u64,
     ) -> Result<Vec<ExecutionEvent>, String>;
+    fn validate_amend_order(&mut self, current: &Order, amended: &Order) -> Result<(), String> {
+        let _ = (current, amended);
+        Err("Venue 未声明原生改单预检能力".into())
+    }
+    fn amend_order(
+        &mut self,
+        current: &Order,
+        amended: &Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        let _ = (current, amended, ts);
+        Err("Venue 未声明原生改单能力".into())
+    }
 }
 
 /// 多 Venue 路由端口。它刻意只返回标准事实，不承诺跨 Venue 原子性；

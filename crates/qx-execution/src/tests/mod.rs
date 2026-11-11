@@ -23,6 +23,26 @@ impl OrderStore for PortState {
         self.orders.clone()
     }
 
+    fn has_pending_amendment(&self, client_order_id: u64) -> bool {
+        let mut pending = false;
+        for envelope in &self.events {
+            match &envelope.event {
+                ExecutionEvent::OrderAmendmentPending { order, .. }
+                    if order.client_id == client_order_id =>
+                {
+                    pending = true
+                }
+                ExecutionEvent::OrderAmended { order, .. }
+                    if order.client_id == client_order_id =>
+                {
+                    pending = false
+                }
+                _ => {}
+            }
+        }
+        pending
+    }
+
     fn register_order(
         &mut self,
         order: Order,
@@ -44,6 +64,16 @@ impl OrderStore for PortState {
 impl EventAppender for PortState {
     fn append_execution_event(&mut self, envelope: ExecutionEventEnvelope) -> Result<(), String> {
         match &envelope.event {
+            ExecutionEvent::OrderAmendmentPending { .. } => {}
+            ExecutionEvent::OrderAmended { order, .. } => {
+                if let Some(current) = self
+                    .orders
+                    .iter_mut()
+                    .find(|current| current.client_id == order.client_id)
+                {
+                    *current = (**order).clone();
+                }
+            }
             ExecutionEvent::Accepted {
                 client_order_id, ..
             } => {
@@ -142,6 +172,53 @@ impl EventAppender for PortState {
 
 struct PortVenue {
     result: Result<Vec<ExecutionEvent>, String>,
+}
+
+struct AmendPortVenue {
+    preflight_calls: usize,
+    amend_calls: usize,
+    result: Result<Vec<ExecutionEvent>, String>,
+}
+
+impl VenuePort for AmendPortVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("amend test must not submit a new order")
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("amend test must not cancel")
+    }
+
+    fn validate_amend_order(&mut self, _current: &Order, _amended: &Order) -> Result<(), String> {
+        self.preflight_calls += 1;
+        Ok(())
+    }
+
+    fn amend_order(
+        &mut self,
+        _current: &Order,
+        _amended: &Order,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.amend_calls += 1;
+        self.result.clone()
+    }
 }
 
 struct NeverCalledVenue;

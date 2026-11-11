@@ -208,6 +208,28 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
             .map(venue_events_to_application)
             .map_err(|error| format!("Venue cancel 失败: {error:?}"))
     }
+
+    fn validate_amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_amendment(current, amended)
+            .map_err(|error| format!("Venue amend preflight 失败: {error:?}"))
+    }
+
+    fn amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .amend(current, amended, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue amend 结果未知: {error:?}"))
+    }
 }
 
 impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
@@ -247,6 +269,28 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
             .cancel(client_order_id, ts)
             .map(venue_events_to_application)
             .map_err(|error| format!("Venue cancel 失败: {error:?}"))
+    }
+
+    fn validate_amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_amendment(current, amended)
+            .map_err(|error| format!("Venue amend preflight 失败: {error:?}"))
+    }
+
+    fn amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .amend(current, amended, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue amend 结果未知: {error:?}"))
     }
 }
 
@@ -854,6 +898,137 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         let result = self.cancel(target.client_order_id);
         self.cancel_operation_id = None;
         result
+    }
+
+    /// Apply a durable control-plane amendment. The adapter is preflighted before the
+    /// pending fact is written; after that fact exists a retry is forbidden until a
+    /// reconciler proves the exchange result.
+    pub fn amend_command(
+        &mut self,
+        command: &ControlCommand,
+    ) -> Result<PortExecutionResult, String> {
+        let target = qx_control::amend_order_target_from_command(command)
+            .map_err(|error| format!("AmendOrder 命令无效: {error:?}"))?;
+        let current = self
+            .order(target.client_order_id)
+            .ok_or_else(|| format!("订单不存在: {}", target.client_order_id))?;
+        if current.account_id != target.account_id
+            || !current
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(&target.venue_id)
+            || !self.venue.venue_id().eq_ignore_ascii_case(&target.venue_id)
+        {
+            return Err("AmendOrder 路由账户/交易所与 OMS 订单或执行 Venue 不一致".into());
+        }
+        if self.events.has_pending_amendment(current.client_id) {
+            return Err(format!(
+                "订单 {} 存在改单结果未知的操作，禁止重发；必须先对账",
+                current.client_id
+            ));
+        }
+        if current.filled != target.order.filled
+            || current.status != target.order.status
+            || current.instrument != target.order.instrument
+            || current.side != target.order.side
+            || current.account_id != target.order.account_id
+            || current.trace != target.order.trace
+            || current.policy != target.order.policy
+        {
+            return Err("AmendOrder 请求基于过期或身份不一致的订单快照".into());
+        }
+        self.venue.validate_amend_order(&current, &target.order)?;
+        self.events.refresh_order_state()?;
+        let refreshed = self
+            .order(target.client_order_id)
+            .ok_or_else(|| format!("订单在改单预检期间从 OMS 消失: {}", target.client_order_id))?;
+        if refreshed != current {
+            return Err(format!(
+                "订单 {} 在改单预检期间出现新成交或状态变化，拒绝基于旧快照改单",
+                target.client_order_id
+            ));
+        }
+        let operation_id = format!(
+            "control:amend:{}:{}",
+            command.command_id, target.client_order_id
+        );
+        let pending = self.append_with_outcome(
+            ExecutionEvent::OrderAmendmentPending {
+                operation_id: operation_id.clone(),
+                order: Box::new(target.order.clone()),
+            },
+            format!("{operation_id}:pending:{}", target.client_order_id),
+        )?;
+        if pending == EventAppendOutcome::Duplicate {
+            return Err(format!(
+                "订单 {} 的改单意图已持久化，禁止重复触达 Venue；必须先对账",
+                target.client_order_id
+            ));
+        }
+        let facts = match self.venue.amend_order(&current, &target.order, self.now) {
+            Ok(facts) => facts,
+            Err(error) => {
+                self.mark_reconcile_for_operation(
+                    target.client_order_id,
+                    "amend-error",
+                    &operation_id,
+                )?;
+                return Err(format!(
+                    "Venue amend 失败/结果未知: {error}；订单已标记为待对账"
+                ));
+            }
+        };
+        if facts.iter().any(|fact| match fact {
+            ExecutionEvent::Fill(fill) => fill.order_id != target.client_order_id,
+            ExecutionEvent::FillWithSpec { fill, .. } => fill.order_id != target.client_order_id,
+            ExecutionEvent::FeeAdjustment { order_id, .. } => *order_id != target.client_order_id,
+            ExecutionEvent::Cancelled { client_order_id }
+            | ExecutionEvent::CancelPending { client_order_id }
+            | ExecutionEvent::ReconcileRequired { client_order_id } => {
+                *client_order_id != target.client_order_id
+            }
+            ExecutionEvent::Accepted { .. }
+            | ExecutionEvent::OrderAmendmentPending { .. }
+            | ExecutionEvent::OrderAmended { .. }
+            | ExecutionEvent::MarketQuote { .. } => true,
+        }) {
+            self.mark_reconcile_for_operation(
+                target.client_order_id,
+                "invalid-amend-response",
+                &operation_id,
+            )?;
+            return Err("Venue amend 返回了非法或其他订单的事实，结果未知，必须先对账".into());
+        }
+
+        // The adapter reports success only after an authoritative fetch confirms the
+        // requested terms. Commit those terms before any concurrent fill facts so the
+        // OMS reduces fills against the amended total quantity.
+        self.append(
+            ExecutionEvent::OrderAmended {
+                operation_id: operation_id.clone(),
+                order: Box::new(target.order.clone()),
+            },
+            format!("{operation_id}:confirmed:{}", target.client_order_id),
+        )?;
+        let fact_count = facts.len();
+        let has_reconcile = facts
+            .iter()
+            .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
+        for fact in facts {
+            let correlation = fact_correlation(
+                &format!("{operation_id}:response:{}", target.client_order_id),
+                &fact,
+            );
+            self.append(fact, correlation)?;
+        }
+        if has_reconcile {
+            return Err("改单已确认但成交回报要求对账，账户进入待对账状态".into());
+        }
+        Ok(PortExecutionResult {
+            message: format!("AMENDED venue_events={fact_count}"),
+            event_count: fact_count + 1,
+        })
     }
 
     fn mark_reconcile(&mut self, client_order_id: u64, reason: &str) -> Result<(), String> {

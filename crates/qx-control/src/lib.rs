@@ -38,13 +38,17 @@ impl CommandKind {
         }
     }
 
-    /// 这一份构建里**真的有执行者**的命令类型：提交/撤单 worker 按它裁决，其余变体在仓内没有任何
+    /// 这一份构建里**真的有执行者**的命令类型：提交/改单/撤单 worker 按它裁决，其余变体在仓内没有任何
     /// 派发者，接受了只会以 `Accepted` 永远停在审计里（新增变体默认落在"拒绝"这一侧）。
     /// 判定式与执行者文件的对应关系由常驻用例 `control_command_kinds_match_executors` 钉住。
     pub fn executed(&self) -> bool {
         matches!(
             self,
-            Self::SubmitOrder | Self::CancelOrder | Self::PauseStrategy | Self::ResumeStrategy
+            Self::SubmitOrder
+                | Self::AmendOrder
+                | Self::CancelOrder
+                | Self::PauseStrategy
+                | Self::ResumeStrategy
         )
     }
 

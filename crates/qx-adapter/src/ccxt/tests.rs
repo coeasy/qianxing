@@ -986,6 +986,70 @@ fn ccxt_order_policy_is_translated_before_create_order() {
 }
 
 #[test]
+fn ccxt_native_amend_preflights_without_writing_then_confirms_remote_terms() {
+    let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    struct AmendRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for AmendRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false}
+                })),
+                Some("validate_edit_order") => Ok(json!({
+                    "validated": true,
+                    "order": {"order_id": "remote-7"}
+                })),
+                Some("edit_order") => Ok(json!({
+                    "order": {"order_id": "remote-7"}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "3",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "101",
+                        "fee_raw": 0
+                    }
+                })),
+                Some("fetch_my_trades") => Ok(json!({"trades": []})),
+                other => panic!("unexpected amend RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(AmendRpc(Arc::clone(&calls))));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    venue.validate_amendment(&current, &amended).unwrap();
+    {
+        let calls = calls.lock().unwrap();
+        assert!(calls.iter().any(|call| call["op"] == "validate_edit_order"));
+        assert!(!calls.iter().any(|call| call["op"] == "edit_order"));
+    }
+
+    let facts = venue.amend(&current, &amended, 20).unwrap();
+    assert!(facts.is_empty());
+    assert_eq!(venue.orders.get(&7), Some(&amended));
+    let calls = calls.lock().unwrap();
+    let edit = calls
+        .iter()
+        .find(|call| call["op"] == "edit_order")
+        .unwrap();
+    assert_eq!(edit["order_id"], "remote-7");
+    assert_eq!(edit["amount_exact"], "3");
+    assert_eq!(edit["price_exact"], "101");
+    assert!(calls.iter().any(|call| call["op"] == "fetch_order"));
+}
+
+#[test]
 fn ccxt_tier_preflight_rejection_is_not_treated_as_an_unknown_submission() {
     struct PreflightRejectRpc;
     impl CcxtRpc for PreflightRejectRpc {

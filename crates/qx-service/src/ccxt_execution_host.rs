@@ -1,6 +1,9 @@
 //! CCXT SubmitOrder queue and multi-leg recovery lifecycle.
 
-use crate::cancel_order_host::{execute_prepared_cancel_order, prepare_cancel_order};
+use crate::cancel_order_host::{
+    execute_prepared_amend_order, execute_prepared_cancel_order, prepare_amend_order,
+    prepare_cancel_order,
+};
 use crate::ccxt_market_host::{exact_json_decimal_or_raw, raw_json_i128};
 use crate::configured_backends::ControlStateBackend;
 use crate::execution_capability_gate::{
@@ -82,9 +85,25 @@ pub fn ccxt_cancel_matches_worker(command: &ControlCommand, worker: &WorkerConfi
         .unwrap_or(false)
 }
 
+pub fn ccxt_amend_matches_worker(command: &ControlCommand, worker: &WorkerConfig) -> bool {
+    let Some(expected_account) = worker.account_id.as_deref() else {
+        return false;
+    };
+    let Some(expected_venue) = worker.venue_id.as_deref() else {
+        return false;
+    };
+    qx_control::amend_order_target_from_command(command)
+        .map(|target| {
+            target.account_id == expected_account
+                && target.venue_id.eq_ignore_ascii_case(expected_venue)
+        })
+        .unwrap_or(false)
+}
+
 fn ccxt_execution_command_matches_worker(command: &ControlCommand, worker: &WorkerConfig) -> bool {
     match &command.kind {
         CommandKind::SubmitOrder => ccxt_submit_matches_worker(command, worker),
+        CommandKind::AmendOrder => ccxt_amend_matches_worker(command, worker),
         CommandKind::CancelOrder => ccxt_cancel_matches_worker(command, worker),
         _ => false,
     }
@@ -490,6 +509,18 @@ pub fn run_ccxt_execution_worker(input: CcxtExecutionWorkerInput) -> Result<(), 
                     &mut metrics,
                     dedicated_spread_recovery,
                 )?
+            } else if command.kind == CommandKind::AmendOrder {
+                execute_ccxt_queued_amend(
+                    &worker,
+                    &pipeline_storage,
+                    &settlement_currency,
+                    &python,
+                    &ccxt_config_path,
+                    &runtime_config_path,
+                    now,
+                    &command,
+                    &mut metrics,
+                )?
             } else if let Err(reason) =
                 require_worker_risk_spec(&worker, &command, &runtime_config_path)
             {
@@ -708,6 +739,106 @@ fn execute_ccxt_queued_cancel(
     }
     metrics.absorb(&prepared.pipeline);
     Ok(result)
+}
+
+fn execute_ccxt_queued_amend(
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    settlement_currency: &str,
+    python: &str,
+    ccxt_config_path: &str,
+    runtime_config_path: &Path,
+    now: u64,
+    command: &ControlCommand,
+    metrics: &mut PipelineMetricsReporter,
+) -> Result<Result<String, String>, String> {
+    let mut prepared = prepare_amend_order(
+        command,
+        worker,
+        worker.venue_id.as_deref().unwrap_or_default(),
+        pipeline_storage,
+        settlement_currency,
+    )?;
+    let target_id = prepared.target.client_order_id;
+    let target_remote_id = prepared.pipeline.venue_order_id(target_id).ok_or_else(|| {
+        format!("CCXT 改单目标 {target_id} 在账户 EventLog 中缺少 remote order id")
+    })?;
+    let client = CcxtProcessClient::spawn(python, ccxt_config_path, None)
+        .map_err(|error| format!("启动公共 CCXT 改单 Worker 失败: {error}"))?;
+    let mut venue = CcxtProcessVenue::new(
+        worker.venue_id.as_deref().unwrap_or("ccxt"),
+        Box::new(client),
+    );
+    for order in prepared
+        .pipeline
+        .orders()
+        .into_iter()
+        .filter(|order| !order.status.is_terminal())
+    {
+        let Some(remote_id) = prepared.pipeline.venue_order_id(order.client_id) else {
+            if order.client_id == target_id {
+                return Ok(Err(format!(
+                    "CCXT 改单目标 {} 缺少 remote order id",
+                    order.client_id
+                )));
+            }
+            continue;
+        };
+        let fee_baseline = prepared
+            .pipeline
+            .fee_baseline_for_order(order.client_id)
+            .map_err(|error| format!("读取 CCXT 持久手续费基线失败: {error}"))?;
+        let exact_fee_baseline = prepared
+            .pipeline
+            .exact_fee_baseline_for_order(order.client_id)
+            .map_err(|error| format!("读取 CCXT 持久精确手续费基线失败: {error}"))?;
+        let seen_trade_ids = prepared
+            .pipeline
+            .fee_trade_ids_for_order(order.client_id)
+            .map_err(|error| format!("读取 CCXT 成交费用去重状态失败: {error}"))?;
+        venue
+            .restore_order_with_exact_fee_state(
+                order.clone(),
+                remote_id,
+                fee_baseline,
+                exact_fee_baseline,
+                seen_trade_ids,
+            )
+            .map_err(|error| format!("恢复 CCXT 改单订单 {} 失败: {error:?}", order.client_id))?;
+    }
+    if venue
+        .snapshot()
+        .iter()
+        .all(|order| order.client_order_id != target_id)
+    {
+        return Ok(Err(format!(
+            "CCXT 改单目标 {target_id} 未能从 EventLog 恢复"
+        )));
+    }
+    if prepared.pipeline.venue_order_id(target_id).as_deref() != Some(target_remote_id.as_str()) {
+        return Ok(Err(format!(
+            "CCXT 改单目标 {target_id} 的远端订单身份发生变化"
+        )));
+    }
+    let mut venue = GatewayExecutionProbeVenue::new(venue, metrics);
+    let mut source_seq = prepared
+        .pipeline
+        .log()
+        .events()
+        .last()
+        .map(|event| event.source_seq)
+        .unwrap_or(0);
+    let result = execute_prepared_amend_order(
+        command,
+        worker,
+        pipeline_storage,
+        runtime_config_path,
+        &mut prepared,
+        &mut venue,
+        now,
+        &mut source_seq,
+    );
+    Ok(result.map_err(|error| format!("CCXT 原生改单未确认: {error}")))
 }
 
 struct CcxtQueuedOrderInput<'a> {
@@ -946,8 +1077,9 @@ mod exact_ticker_reference_tests {
 
 #[cfg(test)]
 mod cancel_route_tests {
-    use super::ccxt_cancel_matches_worker;
+    use super::{ccxt_amend_matches_worker, ccxt_cancel_matches_worker};
     use qx_control::{CommandKind, ControlCommand, Permission};
+    use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
     use qx_runtime::WorkerConfig;
     use std::collections::BTreeMap;
 
@@ -979,6 +1111,37 @@ mod cancel_route_tests {
         }
     }
 
+    fn amend(account_id: &str, venue_id: &str) -> ControlCommand {
+        let order = Order {
+            client_id: 21,
+            instrument: InstrumentId::parse(&format!("BTC/USDT.{venue_id}")).unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(2),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::Working,
+            filled: Quantity::ZERO,
+            account_id: account_id.into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        ControlCommand {
+            command_id: 22,
+            request_id: "amend-22".into(),
+            operator_id: "operator".into(),
+            reason: "amend route test".into(),
+            kind: CommandKind::AmendOrder,
+            target: "21".into(),
+            payload: BTreeMap::from([
+                ("account_id".into(), account_id.into()),
+                ("venue_id".into(), venue_id.into()),
+                ("order_json".into(), serde_json::to_string(&order).unwrap()),
+            ]),
+            permission: Permission::Admin,
+            dry_run: true,
+        }
+    }
+
     #[test]
     fn cancel_commands_route_by_account_and_case_insensitive_venue() {
         assert!(ccxt_cancel_matches_worker(
@@ -991,6 +1154,22 @@ mod cancel_route_tests {
         ));
         assert!(!ccxt_cancel_matches_worker(
             &cancel("main", "BITGET"),
+            &worker("main", "okx")
+        ));
+    }
+
+    #[test]
+    fn amend_commands_route_by_account_and_case_insensitive_venue() {
+        assert!(ccxt_amend_matches_worker(
+            &amend("main", "OKX"),
+            &worker("main", "okx")
+        ));
+        assert!(!ccxt_amend_matches_worker(
+            &amend("other", "OKX"),
+            &worker("main", "okx")
+        ));
+        assert!(!ccxt_amend_matches_worker(
+            &amend("main", "BITGET"),
             &worker("main", "okx")
         ));
     }

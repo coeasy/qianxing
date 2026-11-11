@@ -447,6 +447,8 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
                 ExecutionEvent::CancelPending { .. } => "cancel-pending",
+                ExecutionEvent::OrderAmendmentPending { .. } => "amend-pending",
+                ExecutionEvent::OrderAmended { .. } => "amended",
                 ExecutionEvent::Cancelled { .. } => "cancelled",
                 ExecutionEvent::ReconcileRequired { .. } => "reconcile",
                 ExecutionEvent::MarketQuote { .. } => "quote",

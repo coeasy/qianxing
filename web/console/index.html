@@ -470,6 +470,7 @@
         <label>kind
           <select id="cmd-kind">
             <option value="SubmitOrder">SubmitOrder</option>
+            <option value="AmendOrder">AmendOrder</option>
             <option value="PauseStrategy">PauseStrategy</option>
             <option value="ResumeStrategy">ResumeStrategy</option>
             <option value="ChangeRiskLimit">ChangeRiskLimit</option>
@@ -500,8 +501,8 @@
       <p class="foot">
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
-        本构建里 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code>
-        有派发者；撤单只路由到匹配账户和交易所的 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
+        本构建里 <code>SubmitOrder</code> / <code>AmendOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code>
+        有派发者；改单只路由到匹配账户和交易所的 CCXT 执行 worker，撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
         <strong>受理那一步就被拒</strong>（<code>400</code>），
         不会被记成 <code>Accepted</code>。
       </p>

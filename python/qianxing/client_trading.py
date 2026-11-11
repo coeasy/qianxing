@@ -20,7 +20,7 @@ class TradeCommand:
     operator_id: str
     reason: str
     kind: Literal[
-        "SubmitOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
+        "SubmitOrder", "AmendOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
         "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue",
     ]
     target: str

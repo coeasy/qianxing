@@ -226,67 +226,11 @@ impl Oms {
     /// The client order identity, routing, policy, lifecycle state, and cumulative fills
     /// are immutable; only total quantity and a same-kind limit price may change.
     pub fn validate_amendment(&self, amended: &Order) -> QxResult<()> {
-        amended.validate().map_err(QxError::BusinessViolation)?;
         let current = self
             .orders
             .get(&amended.client_id)
             .ok_or_else(|| QxError::ReconcileRequired("改单事实对应未知 OMS 订单".into()))?;
-        if !matches!(
-            current.status,
-            OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
-        ) || amended.status != current.status
-            || amended.instrument != current.instrument
-            || amended.side != current.side
-            || amended.account_id != current.account_id
-            || amended.trace != current.trace
-            || amended.policy != current.policy
-        {
-            return Err(QxError::ReconcileRequired(format!(
-                "订单 {} 的改单事实改变了身份/生命周期，或原订单当前不可改单",
-                amended.client_id
-            )));
-        }
-
-        match (current.exact_amounts, amended.exact_amounts) {
-            (Some(old), Some(new)) => {
-                if old.filled != new.filled
-                    || new
-                        .quantity
-                        .checked_cmp(new.filled)
-                        .is_none_or(|ordering| !ordering.is_gt())
-                    || old.quote_budget != new.quote_budget
-                    || old.quote_filled != new.quote_filled
-                    || old.market_reference_price != new.market_reference_price
-                    || old.conditional != new.conditional
-                    || old.limit_price.is_some() != new.limit_price.is_some()
-                    || (old.quantity == new.quantity && old.limit_price == new.limit_price)
-                {
-                    return Err(QxError::ReconcileRequired(format!(
-                        "精确订单 {} 的改单事实改动了成交、预算、风控参考或订单种类",
-                        amended.client_id
-                    )));
-                }
-            }
-            (None, None) => {
-                if current.filled != amended.filled
-                    || amended.qty.raw() <= amended.filled.raw()
-                    || current.limit.is_some() != amended.limit.is_some()
-                    || (current.qty == amended.qty && current.limit == amended.limit)
-                {
-                    return Err(QxError::ReconcileRequired(format!(
-                        "订单 {} 的改单事实改动了成交状态、订单种类或没有改变订单条款",
-                        amended.client_id
-                    )));
-                }
-            }
-            _ => {
-                return Err(QxError::ReconcileRequired(format!(
-                    "订单 {} 的改单事实在旧精度与精确金额之间切换",
-                    amended.client_id
-                )))
-            }
-        }
-        Ok(())
+        validate_amended_order(current, amended)
     }
 
     pub fn amend_replayed(&mut self, amended: Order) -> QxResult<()> {
@@ -319,6 +263,68 @@ impl Oms {
     pub fn is_empty(&self) -> bool {
         self.orders.is_empty()
     }
+}
+
+/// Validate a proposed amendment against the current authoritative OMS snapshot.
+/// This pure form is also used by adapters during their no-side-effect preflight.
+pub fn validate_amended_order(current: &Order, amended: &Order) -> QxResult<()> {
+    amended.validate().map_err(QxError::BusinessViolation)?;
+    if !matches!(
+        current.status,
+        OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+    ) || amended.status != current.status
+        || amended.instrument != current.instrument
+        || amended.side != current.side
+        || amended.account_id != current.account_id
+        || amended.trace != current.trace
+        || amended.policy != current.policy
+    {
+        return Err(QxError::ReconcileRequired(format!(
+            "订单 {} 的改单事实改变了身份/生命周期，或原订单当前不可改单",
+            amended.client_id
+        )));
+    }
+
+    match (current.exact_amounts, amended.exact_amounts) {
+        (Some(old), Some(new)) => {
+            if old.filled != new.filled
+                || new
+                    .quantity
+                    .checked_cmp(new.filled)
+                    .is_none_or(|ordering| !ordering.is_gt())
+                || old.quote_budget != new.quote_budget
+                || old.quote_filled != new.quote_filled
+                || old.market_reference_price != new.market_reference_price
+                || old.conditional != new.conditional
+                || old.limit_price.is_some() != new.limit_price.is_some()
+                || (old.quantity == new.quantity && old.limit_price == new.limit_price)
+            {
+                return Err(QxError::ReconcileRequired(format!(
+                    "精确订单 {} 的改单事实改动了成交、预算、风控参考或订单种类",
+                    amended.client_id
+                )));
+            }
+        }
+        (None, None) => {
+            if current.filled != amended.filled
+                || amended.qty.raw() <= amended.filled.raw()
+                || current.limit.is_some() != amended.limit.is_some()
+                || (current.qty == amended.qty && current.limit == amended.limit)
+            {
+                return Err(QxError::ReconcileRequired(format!(
+                    "订单 {} 的改单事实改动了成交状态、订单种类或没有改变订单条款",
+                    amended.client_id
+                )));
+            }
+        }
+        _ => {
+            return Err(QxError::ReconcileRequired(format!(
+                "订单 {} 的改单事实在旧精度与精确金额之间切换",
+                amended.client_id
+            )))
+        }
+    }
+    Ok(())
 }
 
 /// 内核的成交归约接缝只通过这三个方法读写订单状态，避免 `qx-core` 反向依赖 OMS。

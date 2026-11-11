@@ -513,9 +513,9 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 
 控制命令的受理面按 `kind` 分档（V13 R2 #188），本构建里两档的名单是：
 
-- 有派发者的控制命令：`SubmitOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`。`CancelOrder` 目前路由到已启用的 Binance/CCXT Execution worker，必须提供 `account_id`、`venue_id` 和正整数 `client_order_id`；Paper worker 不接收该控制命令。
-- 有派发者、能被受理的：`SubmitOrder`、`CancelOrder`、`PauseStrategy`、`ResumeStrategy`。
-- 没有派发者、提交即以 400 拒绝的：`AmendOrder`、`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
+- 有派发者的控制命令：`SubmitOrder`、`AmendOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`。`AmendOrder` 和 `CancelOrder` 路由到匹配账户/交易所的 CCXT Execution worker；Paper 和 Binance Direct 暂不接收改单命令。改单仅在 CCXT 交易所原生 editOrder 能力、订单形态和精度预检通过后执行；结果未知时保留持久 pending 并禁止重发。
+- 有派发者、能被受理的：`SubmitOrder`、`AmendOrder`、`CancelOrder`、`PauseStrategy`、`ResumeStrategy`。
+- 没有派发者、提交即以 400 拒绝的：`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
 
 这条闸门只在提交入口判，不进存档校验：队列与审计里已经落盘的历史命令重启后仍然读得回来，
 构建不受理与存档坏了是两条通道。上面两行名单由用例
@@ -719,7 +719,7 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 下单要走这条命令，由控制面**受理 → 判定执行者 → 走到终态退场**，页面把三个阶段都印出来。
 受理回 `202` 只表示"收下并落了审计"，**不是**"已经执行"；②③两阶段从 `/control/audit`
 回读（`CommandStatus` 走到 `Executed` / `Failed` 即终态退场）。`SubmitOrder` / `PauseStrategy` /
-`ResumeStrategy` / `CancelOrder` 有派发者；撤单要求配置匹配的 Binance/CCXT 执行 worker，Paper worker
+`ResumeStrategy` / `CancelOrder` / `AmendOrder` 有派发者；撤单要求配置匹配的 Binance/CCXT 执行 worker，改单要求配置匹配的 CCXT 执行 worker，Paper worker
 不接收控制面撤单，其余类型在提交时拒绝，避免命令停在 `Accepted`。
 
 **身份边界**：命令体里的 `operator_id` 是**审计字段，不是认证**。启用访问策略的部署里，

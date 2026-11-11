@@ -5,7 +5,9 @@ use crate::{
     runtime_timestamp_ms,
 };
 use qx_api::{ApiService, ControlSubmitError};
-use qx_control::{cancel_order_target_from_command, CommandKind, ControlError};
+use qx_control::{
+    amend_order_target_from_command, cancel_order_target_from_command, CommandKind, ControlError,
+};
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerRole};
 use std::path::Path;
@@ -45,6 +47,25 @@ pub(super) fn build_configured_api_service_inner(
             Some((
                 worker.account_id.as_deref()?.to_owned(),
                 venue_id.to_owned(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let amend_routes = config
+        .workers
+        .iter()
+        .filter(|worker| {
+            worker.enabled
+                && worker.role == WorkerRole::Execution
+                && worker
+                    .venue_id
+                    .as_deref()
+                    .and_then(|venue| VenueFamily::parse_option(Some(venue)))
+                    == Some(VenueFamily::Other)
+        })
+        .filter_map(|worker| {
+            Some((
+                worker.account_id.as_deref()?.to_owned(),
+                worker.venue_id.as_deref()?.to_owned(),
             ))
         })
         .collect::<Vec<_>>();
@@ -94,6 +115,22 @@ pub(super) fn build_configured_api_service_inner(
                 }) {
                     return Err(ControlSubmitError::Rejected(ControlError::Invalid(
                         "CancelOrder 未匹配到启用的账户/交易所 Execution worker".into(),
+                    )));
+                }
+                Ok(())
+            }
+            CommandKind::AmendOrder => {
+                let target = amend_order_target_from_command(command).map_err(|error| {
+                    ControlSubmitError::Rejected(ControlError::Invalid(format!(
+                        "AmendOrder 载荷非法: {error:?}"
+                    )))
+                })?;
+                if !amend_routes.iter().any(|(account_id, venue_id)| {
+                    account_id == &target.account_id
+                        && venue_id.eq_ignore_ascii_case(&target.venue_id)
+                }) {
+                    return Err(ControlSubmitError::Rejected(ControlError::Invalid(
+                        "AmendOrder 未匹配到启用的 CCXT 账户/交易所 Execution worker".into(),
                     )));
                 }
                 Ok(())

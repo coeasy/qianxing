@@ -93,6 +93,11 @@ impl qx_execution::OrderStore for LiveEventPipeline {
         LiveEventPipeline::orders(self)
     }
 
+    fn refresh_order_state(&mut self) -> Result<(), String> {
+        self.refresh()
+            .map_err(|error| format!("刷新订单状态失败: {error:?}"))
+    }
+
     fn has_pending_amendment(&self, client_order_id: u64) -> bool {
         LiveEventPipeline::pending_amendment(self, client_order_id).is_some()
     }

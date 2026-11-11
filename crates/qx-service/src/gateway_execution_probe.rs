@@ -61,6 +61,16 @@ impl<V: Venue> Venue for GatewayExecutionProbeVenue<'_, V> {
         result
     }
 
+    fn validate_amendment(&mut self, current: &Order, amended: &Order) -> QxResult<()> {
+        self.venue.validate_amendment(current, amended)
+    }
+
+    fn amend(&mut self, current: &Order, amended: &Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        let result = self.venue.amend(current, amended, ts);
+        self.observe(execution_result_status(&result), ts);
+        result
+    }
+
     fn snapshot(&self) -> Vec<VenueOrderSnapshot> {
         self.venue.snapshot()
     }

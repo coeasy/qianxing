@@ -664,6 +664,8 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
                 ExecutionEvent::CancelPending { .. } => "cancel-pending",
+                ExecutionEvent::OrderAmendmentPending { .. } => "amend-pending",
+                ExecutionEvent::OrderAmended { .. } => "amended",
                 ExecutionEvent::Cancelled { .. } => "cancelled",
                 ExecutionEvent::ReconcileRequired { .. } => "reconcile",
                 ExecutionEvent::MarketQuote { .. } => "quote",

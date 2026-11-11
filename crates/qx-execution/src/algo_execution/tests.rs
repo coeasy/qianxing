@@ -35,6 +35,10 @@ impl OrderStore for MemoryOms {
 impl EventAppender for MemoryOms {
     fn append_execution_event(&mut self, envelope: ExecutionEventEnvelope) -> Result<(), String> {
         match envelope.event {
+            ExecutionEvent::OrderAmendmentPending { .. } => {}
+            ExecutionEvent::OrderAmended { order, .. } => {
+                self.find_mut(order.client_id)?.clone_from(&order);
+            }
             ExecutionEvent::Accepted {
                 client_order_id, ..
             } => {

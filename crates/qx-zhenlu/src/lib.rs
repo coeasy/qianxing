@@ -415,6 +415,18 @@ pub trait Venue {
     }
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>>;
+    /// Check native amendment support and the requested order terms before any durable
+    /// amendment intent is appended. Implementations must not create a venue side effect here.
+    fn validate_amendment(&mut self, _current: &Order, _amended: &Order) -> QxResult<()> {
+        Err(QxError::BusinessViolation(
+            "Venue 未实现原生改单预检".into(),
+        ))
+    }
+    /// Amend an existing venue order and return only newly observed execution facts.
+    /// Success means a subsequent authoritative order query confirmed the requested terms.
+    fn amend(&mut self, _current: &Order, _amended: &Order, _ts: u64) -> QxResult<Vec<VenueEvent>> {
+        Err(QxError::BusinessViolation("Venue 未实现原生改单".into()))
+    }
     fn snapshot(&self) -> Vec<VenueOrderSnapshot>;
     fn connected(&self) -> bool;
 }

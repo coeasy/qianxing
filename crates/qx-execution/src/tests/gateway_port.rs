@@ -1,5 +1,121 @@
 use super::*;
 
+fn amend_command(order: &Order, command_id: u64) -> ControlCommand {
+    ControlCommand {
+        command_id,
+        request_id: format!("amend-{command_id}"),
+        operator_id: "operator".into(),
+        reason: "update active order terms".into(),
+        kind: CommandKind::AmendOrder,
+        target: order.client_id.to_string(),
+        payload: BTreeMap::from([
+            ("account_id".into(), order.account_id.clone()),
+            (
+                "venue_id".into(),
+                order.instrument.venue.as_str().to_string(),
+            ),
+            ("order_json".into(), serde_json::to_string(order).unwrap()),
+        ]),
+        permission: Permission::Trading,
+        dry_run: false,
+    }
+}
+
+#[test]
+fn amend_command_persists_before_rpc_and_applies_amendment_before_racing_fills() {
+    let mut current = port_order(88);
+    current.status = OrderStatus::Accepted;
+    current.qty = Quantity::from_i64(2);
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let command = amend_command(&amended, 888);
+    let mut state = PortState::default();
+    state.orders.push(current);
+    let mut venue = AmendPortVenue {
+        preflight_calls: 0,
+        amend_calls: 0,
+        result: Ok(vec![ExecutionEvent::Fill(Box::new(qx_core::Fill {
+            order_id: 88,
+            qty: Quantity::from_i64(1),
+            price: Price::from_i64(101),
+            ts: 21,
+            ..qx_core::Fill::default()
+        }))]),
+    };
+    let mut source_seq = 0;
+    let result =
+        PortExecutionService::new(&mut venue, &mut state, "amend-worker", 20, &mut source_seq)
+            .amend_command(&command)
+            .expect("confirmed amendment should commit");
+
+    assert_eq!(result.message, "AMENDED venue_events=1");
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.amend_calls, 1);
+    assert!(matches!(
+        state.events[0].event,
+        ExecutionEvent::OrderAmendmentPending { .. }
+    ));
+    assert!(matches!(
+        state.events[1].event,
+        ExecutionEvent::OrderAmended { .. }
+    ));
+    assert!(matches!(state.events[2].event, ExecutionEvent::Fill(_)));
+    assert_eq!(state.orders[0].qty, Quantity::from_i64(3));
+    assert_eq!(state.orders[0].filled, Quantity::from_i64(1));
+    assert_eq!(state.orders[0].status, OrderStatus::PartiallyFilled);
+    assert!(!state.has_pending_amendment(88));
+}
+
+#[test]
+fn unknown_amendment_result_is_persisted_and_never_retried_by_command_redelivery() {
+    let mut current = port_order(89);
+    current.status = OrderStatus::Accepted;
+    current.qty = Quantity::from_i64(2);
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let command = amend_command(&amended, 889);
+    let mut state = PortState::default();
+    state.orders.push(current);
+    let mut venue = AmendPortVenue {
+        preflight_calls: 0,
+        amend_calls: 0,
+        result: Err("transport timed out after write".into()),
+    };
+    let mut source_seq = 0;
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "amend-worker", 20, &mut source_seq)
+            .amend_command(&command)
+            .expect_err("unknown remote result must require reconciliation");
+    assert!(error.contains("结果未知"), "{error}");
+    assert!(state.has_pending_amendment(89));
+    assert!(matches!(
+        state.events[0].event,
+        ExecutionEvent::OrderAmendmentPending { .. }
+    ));
+    assert!(matches!(
+        state.events[1].event,
+        ExecutionEvent::ReconcileRequired {
+            client_order_id: 89
+        }
+    ));
+
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "amend-worker-restarted",
+        30,
+        &mut source_seq,
+    )
+    .amend_command(&command)
+    .expect_err("redelivery cannot repeat an ambiguous edit RPC");
+    assert!(error.contains("禁止重发"), "{error}");
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.amend_calls, 1);
+    assert_eq!(state.events.len(), 2);
+}
+
 #[test]
 fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_effects() {
     let mut state = PortState::default();
