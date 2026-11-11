@@ -1434,7 +1434,12 @@ class CcxtExchangeClient:
                     )
                 rows[timestamp] = row
                 previous = max(previous, timestamp)
-            if len(batch) < limit or reached_end:
+            # Some venues cap the response size below the requested ``limit``
+            # (for example OKX caps candles at 300). A short non-empty page does
+            # not prove that the requested time range is exhausted; advance the
+            # cursor and make one more request. An empty page or a timestamp past
+            # ``end_ms`` still ends pagination.
+            if reached_end or previous >= end_ms:
                 break
             if previous <= since:
                 raise CcxtConnectorError(

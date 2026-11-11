@@ -797,6 +797,26 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(frame.close_raw[0], 100_500_000_000)
         self.assertEqual(frame.source, "ccxt:binance:BTC/USDT:1m")
 
+    def test_ohlcv_continues_when_exchange_caps_nonempty_pages_below_requested_limit(self):
+        class CappedPageExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                all_rows = [
+                    [timestamp, 100, 101, 99, 100, 1]
+                    for timestamp in (1000, 1100, 1200, 1300)
+                ]
+                return [row for row in all_rows if row[0] >= since][:2]
+
+        exchange = CappedPageExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        frame = client.fetch_ohlcv(
+            "BTCUSDT.BINANCE", start_ms=1000, end_ms=1300, limit=3
+        )
+
+        self.assertEqual(frame.ts, (1000, 1100, 1200, 1300))
+        fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(fetch_calls), 2)
+
     def test_ohlcv_keeps_sub_nano_source_precision_for_small_tokens(self):
         class TinyTokenExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
