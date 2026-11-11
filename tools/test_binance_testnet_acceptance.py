@@ -14,6 +14,14 @@ from tools.binance_testnet_acceptance import (
 
 
 class SandboxFlipGateTests(unittest.TestCase):
+    def test_okx_acceptance_passphrase_env_matches_the_packaged_ccxt_example(self):
+        import json
+
+        config_path = acceptance.WORKSPACE / "python" / "examples" / "ccxt-okx-swap.example.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["exchange_id"], "okx")
+        self.assertEqual(config["credential_env"]["password"], acceptance.OKX_PASS_ENV)
+
     def test_unprovisioned_testnet_role_catalog_is_an_explicit_offline_block(self):
         import json
 

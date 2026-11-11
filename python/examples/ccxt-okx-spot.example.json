@@ -10,7 +10,7 @@
   "credential_env": {
     "api_key": "QX_CCXT_OKX_API_KEY",
     "secret": "QX_CCXT_OKX_SECRET",
-    "password": "QX_CCXT_OKX_PASSPHRASE"
+    "password": "QX_CCXT_OKX_PASSWORD"
   },
   "options": {},
   "instruments": [

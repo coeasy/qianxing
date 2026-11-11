@@ -127,6 +127,12 @@ class PackagingContractTest(unittest.TestCase):
                     all(name.isupper() and name.startswith("QX_CCXT_")
                         for name in config["credential_env"].values())
                 )
+                if exchange_id == "okx":
+                    self.assertEqual(
+                        config["credential_env"]["password"],
+                        "QX_CCXT_OKX_PASSWORD",
+                        "OKX examples must use the variable shared by runtime templates and sandbox acceptance",
+                    )
                 self.assertNotIn("apiKey", config)
                 self.assertNotIn("secret", config)
                 if filename == "ccxt-bitget-uta-perpetual.example.json":

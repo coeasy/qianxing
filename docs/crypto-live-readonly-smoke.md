@@ -46,7 +46,7 @@ cargo build -p qx-cli
 ```powershell
 $env:QX_CCXT_OKX_API_KEY = '<你的 Demo API Key>'
 $env:QX_CCXT_OKX_SECRET = '<你的 Demo Secret>'
-$env:QX_CCXT_OKX_PASSPHRASE = '<你的 Demo Passphrase>'
+$env:QX_CCXT_OKX_PASSWORD = '<你的 Demo Passphrase>'
 Set-Location D:\aex_work\qianxing\python
 python -m qianxing_ccxt.private_probe --config .\examples\ccxt-okx-swap.example.json
 ```
@@ -60,7 +60,7 @@ $env:QX_CCXT_BINANCE_SECRET = '<Testnet Secret>'
 Set-Location D:\aex_work\qianxing
 .\scripts\crypto-live-offline-check.ps1 -ProbeConfig .\python\examples\ccxt-binance-spot.example.json
 
-# OKX Demo：使用 QX_CCXT_OKX_API_KEY / SECRET / PASSPHRASE，配置换成 ccxt-okx-swap.example.json
+# OKX Demo：使用 QX_CCXT_OKX_API_KEY / SECRET / PASSWORD，配置换成 ccxt-okx-swap.example.json
 # Bitget Demo：使用 QX_CCXT_BITGET_API_KEY / SECRET / PASSPHRASE，配置换成 ccxt-bitget-uta-perpetual.example.json
 ```
 
@@ -151,7 +151,7 @@ $env:QX_CCXT_BINANCE_API_KEY = '<your sandbox key>'
 $env:QX_CCXT_BINANCE_SECRET = '<your sandbox secret>'
 $env:QX_CCXT_OKX_API_KEY = '<your demo key>'
 $env:QX_CCXT_OKX_SECRET = '<your demo secret>'
-$env:QX_CCXT_OKX_PASSPHRASE = '<your demo passphrase>'
+$env:QX_CCXT_OKX_PASSWORD = '<your demo passphrase>'
 $env:QX_CCXT_BITGET_API_KEY = '<your sandbox key>'
 $env:QX_CCXT_BITGET_SECRET = '<your sandbox secret>'
 $env:QX_CCXT_BITGET_PASSPHRASE = '<your sandbox passphrase>'
@@ -212,7 +212,7 @@ $env:QX_CCXT_BINANCE_API_KEY = '<Binance USD-M Testnet Key>'
 $env:QX_CCXT_BINANCE_SECRET = '<Binance USD-M Testnet Secret>'
 $env:QX_CCXT_OKX_API_KEY = '<OKX Demo API Key>'
 $env:QX_CCXT_OKX_SECRET = '<OKX Demo Secret>'
-$env:QX_CCXT_OKX_PASSPHRASE = '<OKX Demo Passphrase>'
+$env:QX_CCXT_OKX_PASSWORD = '<OKX Demo Passphrase>'
 ```
 
 Bitget UTA 永续对应 [ccxt-bitget-uta-perpetual.example.json](../python/examples/ccxt-bitget-uta-perpetual.example.json)，变量为 `QX_CCXT_BITGET_API_KEY`、`QX_CCXT_BITGET_SECRET`、`QX_CCXT_BITGET_PASSPHRASE`。增加 Bitget 执行腿时，要同时更新该 Worker 的 `account_id`/`venue_id`/`symbols`/`endpoint`、CCXT 配置的 `account_id`/`instruments`、账户表和精度集合中的完整 `InstrumentId`；只替换 endpoint 不会自动转换交易所合约面值或精度。
@@ -244,7 +244,7 @@ Each output reports connection status and asset/position counts. For configured 
 
 ```powershell
 Remove-Item Env:QX_CCXT_BINANCE_API_KEY, Env:QX_CCXT_BINANCE_SECRET -ErrorAction SilentlyContinue
-Remove-Item Env:QX_CCXT_OKX_API_KEY, Env:QX_CCXT_OKX_SECRET, Env:QX_CCXT_OKX_PASSPHRASE -ErrorAction SilentlyContinue
+Remove-Item Env:QX_CCXT_OKX_API_KEY, Env:QX_CCXT_OKX_SECRET, Env:QX_CCXT_OKX_PASSWORD -ErrorAction SilentlyContinue
 Remove-Item Env:QX_CCXT_BITGET_API_KEY, Env:QX_CCXT_BITGET_SECRET, Env:QX_CCXT_BITGET_PASSPHRASE -ErrorAction SilentlyContinue
 ```
 
