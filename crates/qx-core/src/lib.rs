@@ -26,6 +26,7 @@ pub mod identity;
 pub mod ledger;
 pub mod numeric;
 pub mod order;
+pub mod order_group;
 pub mod performance;
 pub mod retry;
 pub mod sourcing;
@@ -78,6 +79,10 @@ pub use self::numeric::{
 pub use self::order::{
     ConditionalOrderIntent, ConditionalOrderKind, ExactFillAmounts, ExactFillFee,
     ExactOrderAmounts, Fill, FillFee, Order, OrderStatus, OrderTrace, Side, TriggerPriceType,
+};
+pub use self::order_group::{
+    OrderGroupExecution, OrderGroupIntent, OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole,
+    OrderGroupLegState, OrderGroupState, OrderGroupStatus, ORDER_GROUP_SCHEMA_VERSION,
 };
 pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};

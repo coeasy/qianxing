@@ -14,8 +14,8 @@ pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
 use qx_core::{
-    DecimalRounding, ExactDecimal, FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace,
-    Price, Quantity, QxError, QxResult, Side, TradingInstrumentSpec,
+    DecimalRounding, ExactDecimal, FeeModel, Fill, InstrumentId, Order, OrderGroupState,
+    OrderStatus, OrderTrace, Price, Quantity, QxError, QxResult, Side, TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
 use qx_risk::{
@@ -1386,6 +1386,149 @@ pub trait SpreadOrderGroupStore {
     fn begin_leg_submission(&self, group_id: &str, client_order_id: u64) -> Result<(), String>;
 }
 
+/// Durable store for linked protective orders. The snapshot is stored separately
+/// from EventLog; callers must persist execution facts first, then reduce this view.
+pub trait OrderGroupStore {
+    fn load(&self, group_id: &str) -> Result<Option<OrderGroupState>, String>;
+    fn create(&mut self, group: &OrderGroupState) -> Result<(), String>;
+    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String>;
+    fn reconcile_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String>;
+    fn group_ids(&self) -> Result<Vec<String>, String>;
+}
+
+/// Single-host durable order group snapshots with serialized read/modify/write.
+#[derive(Clone, Debug)]
+pub struct FileOrderGroupStore {
+    root: std::path::PathBuf,
+}
+
+impl FileOrderGroupStore {
+    pub fn new(root: impl Into<std::path::PathBuf>) -> Result<Self, String> {
+        let root = root.into();
+        std::fs::create_dir_all(&root).map_err(|error| format!("创建订单组目录失败: {error}"))?;
+        Ok(Self { root })
+    }
+
+    fn path_for(&self, group_id: &str) -> Result<std::path::PathBuf, String> {
+        if group_id.trim().is_empty()
+            || group_id.contains('/')
+            || group_id.contains('\\')
+            || group_id.contains("..")
+        {
+            return Err("订单组 group_id 含非法路径字符".into());
+        }
+        Ok(self.root.join(format!("{group_id}.json")))
+    }
+
+    fn lock(&self) -> Result<qx_core::FileLock, String> {
+        qx_core::FileLock::acquire(self.root.join(".order-groups.lock"))
+            .map_err(|error| format!("获取订单组存储锁失败: {error}"))
+    }
+
+    fn save_locked(&self, group: &OrderGroupState) -> Result<(), String> {
+        group.validate_persisted()?;
+        let path = self.path_for(&group.intent.group_id)?;
+        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        let payload = serde_json::to_vec_pretty(group)
+            .map_err(|error| format!("序列化订单组失败: {error}"))?;
+        std::fs::write(&temporary, payload)
+            .map_err(|error| format!("写入订单组临时文件失败: {error}"))?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(&path);
+            std::fs::rename(&temporary, &path)
+                .map_err(|replacement| format!("替换订单组状态失败: {error}; {replacement}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl OrderGroupStore for FileOrderGroupStore {
+    fn load(&self, group_id: &str) -> Result<Option<OrderGroupState>, String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload = match std::fs::read_to_string(&path) {
+            Ok(payload) => payload,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("读取订单组状态失败: {error}")),
+        };
+        let group: OrderGroupState = serde_json::from_str(&payload)
+            .map_err(|error| format!("解析订单组状态失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        Ok(Some(group))
+    }
+
+    fn create(&mut self, group: &OrderGroupState) -> Result<(), String> {
+        let _lock = self.lock()?;
+        group.validate_persisted()?;
+        let path = self.path_for(&group.intent.group_id)?;
+        if path.exists() {
+            let existing: OrderGroupState = serde_json::from_slice(
+                &std::fs::read(&path).map_err(|error| format!("读取已存在订单组失败: {error}"))?,
+            )
+            .map_err(|error| format!("解析已存在订单组失败: {error}"))?;
+            existing.validate_persisted()?;
+            if existing.intent == group.intent {
+                return Ok(());
+            }
+            return Err("订单组 ID 已被不同意图占用".into());
+        }
+        self.save_locked(group)
+    }
+
+    fn apply_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取订单组状态失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析订单组状态失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.apply_order_snapshot(snapshot.clone(), None)?;
+        self.save_locked(&group)
+    }
+
+    fn reconcile_order_snapshot(&mut self, group_id: &str, snapshot: &Order) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取订单组状态失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析订单组状态失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.reconcile_order_snapshot(snapshot.clone(), None)?;
+        self.save_locked(&group)
+    }
+
+    fn group_ids(&self) -> Result<Vec<String>, String> {
+        let _lock = self.lock()?;
+        let mut ids = Vec::new();
+        for entry in
+            std::fs::read_dir(&self.root).map_err(|error| format!("读取订单组目录失败: {error}"))?
+        {
+            let path = entry
+                .map_err(|error| format!("读取订单组目录项失败: {error}"))?
+                .path();
+            if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("json") {
+                if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+                    ids.push(stem.to_string());
+                }
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+}
+
 /// 单机多腿状态文件存储。它只保存订单组状态，不替代 EventLog；每次状态
 /// 变化仍必须先由 EventLog 记录单腿事实，再更新该恢复快照。
 #[derive(Clone, Debug)]
@@ -2548,6 +2691,102 @@ mod tests {
                 conditional: None,
             }),
         }
+    }
+
+    fn test_protection_order(client_id: u64, kind: qx_core::ConditionalOrderKind) -> Order {
+        let mut order = exact_order(
+            client_id,
+            "BTC/USDT.OKX",
+            Side::Sell,
+            ExactDecimal::parse("0.01").unwrap(),
+        );
+        order.status = OrderStatus::PendingSubmit;
+        let terms = match kind {
+            qx_core::ConditionalOrderKind::TakeProfit => "70000",
+            qx_core::ConditionalOrderKind::StopLoss => "60000",
+            _ => unreachable!(),
+        };
+        order.exact_amounts.as_mut().unwrap().conditional = Some(qx_core::ConditionalOrderIntent {
+            kind,
+            trigger_price: Some(ExactDecimal::parse(terms).unwrap()),
+            trigger_price_type: Some(qx_core::TriggerPriceType::Mark),
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        });
+        order
+    }
+
+    fn test_oco_state(group_id: &str) -> OrderGroupState {
+        OrderGroupState::from_intent(
+            qx_core::OrderGroupIntent::new(
+                group_id,
+                qx_core::OrderGroupKind::Oco,
+                qx_core::OrderGroupExecution::NativeRequired,
+                vec![
+                    qx_core::OrderGroupLegIntent {
+                        role: qx_core::OrderGroupLegRole::TakeProfit,
+                        order: test_protection_order(
+                            701,
+                            qx_core::ConditionalOrderKind::TakeProfit,
+                        ),
+                    },
+                    qx_core::OrderGroupLegIntent {
+                        role: qx_core::OrderGroupLegRole::StopLoss,
+                        order: test_protection_order(702, qx_core::ConditionalOrderKind::StopLoss),
+                    },
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
+        let test_root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-temp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let root = test_root.join(format!(
+            "qianxing-order-groups-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut store = FileOrderGroupStore::new(&root).unwrap();
+        let group = test_oco_state("persisted-oco");
+        store.create(&group).unwrap();
+        store.create(&group).unwrap();
+
+        let mut submitted = group.legs[0].order.clone();
+        submitted.status = OrderStatus::Submitted;
+        store
+            .apply_order_snapshot("persisted-oco", &submitted)
+            .unwrap();
+
+        let reopened = FileOrderGroupStore::new(&root).unwrap();
+        let restored = reopened.load("persisted-oco").unwrap().unwrap();
+        assert_eq!(restored.legs[0].order.status, OrderStatus::Submitted);
+        assert_eq!(reopened.group_ids().unwrap(), vec!["persisted-oco"]);
+
+        let different_intent = test_oco_state("persisted-oco");
+        let mut changed = different_intent;
+        changed.intent.legs[0]
+            .order
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap()
+            .trigger_price = Some(ExactDecimal::parse("71000").unwrap());
+        changed.legs[0].order = changed.intent.legs[0].order.clone();
+        assert!(store.create(&changed).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn tiny_exact_spot_spec(instrument: &InstrumentId) -> TradingInstrumentSpec {
