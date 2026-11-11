@@ -28,6 +28,7 @@ A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装�
 ```bash
 cargo install --path crates/qx-cli --locked     # 完全离线的机器再加 --offline
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
+qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 ```
 
@@ -36,6 +37,8 @@ qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静
 
 `--profile` 当前支持 `builtin`（默认）与 `ashare`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
 完成一笔本地回测；不会连接外部行情源或发送订单。CCXT 的 sandbox 首跑仍需用户提供凭据并完成外部验收。
+`builtin` 支持 `--strategy` 选择单标的内置策略，默认 `macd`；用 `qx-cli builtin-strategies` 查看完整清单。
+双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
 
 ```bash
 cd my-qx

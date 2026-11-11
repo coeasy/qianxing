@@ -30,8 +30,9 @@ pub(super) fn dispatch_quickstart(
     html: bool,
     force: bool,
     profile: crate::cli_args::QuickstartProfile,
+    strategy: Option<String>,
 ) {
-    quickstart::run(project, html, force, profile);
+    quickstart::run(project, html, force, profile, strategy);
 }
 
 pub(super) fn dispatch_guide(args: crate::guide_args::GuideArgs) {

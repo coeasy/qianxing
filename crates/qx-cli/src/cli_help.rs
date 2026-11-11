@@ -77,8 +77,9 @@ pub(crate) fn print_cli_help() {
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
-  quickstart [项目目录] [--html] [--force]
-      一条命令跑完首跑链条：建 macd 项目 → doctor → backtest → report → status；
+  quickstart [项目目录] [--strategy <name>] [--profile <builtin|ashare>] [--html] [--force]
+      一条命令跑完首跑链条：建内置策略项目 → doctor → backtest → report → status；
+      --strategy 可选 sma_cross、ema_cross、macd、rsi、bollinger、donchian_breakout、momentum、mean_reversion、grid、atr_trend、keltner_trend、vwap_reversion 或 volatility_breakout；
       --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
   guide [researcher|strategy-author|operator|integrator]
       按角色打印可复制的上手步骤；不传角色时列出四条路径。

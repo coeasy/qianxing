@@ -63,6 +63,9 @@ pub(crate) enum Command {
         html: bool,
         #[arg(long)]
         force: bool,
+        /// 选择一个内置单标的策略（如 sma_cross、macd、rsi、bollinger）。
+        #[arg(long)]
+        strategy: Option<String>,
     },
     #[command(name = "guide")]
     Guide(super::guide_args::GuideArgs),

@@ -86,13 +86,14 @@ pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     (files, false)
 }
 
-/// `qx-cli quickstart [目录] [--profile builtin|ashare] [--html] [--force]` 的实现体。
+/// `qx-cli quickstart [目录] [--profile builtin|ashare] [--strategy KIND] [--html] [--force]` 的实现体。
 /// 失败自行以 2 退出，成功印收尾指引后返回。
 pub(crate) fn run(
     project: Option<PathBuf>,
     html: bool,
     force: bool,
     profile: cli_args::QuickstartProfile,
+    strategy: Option<String>,
 ) {
     let root = project.unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_DIR));
     let absolute = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
@@ -101,12 +102,38 @@ pub(crate) fn run(
     let root_text = absolute.to_string_lossy().into_owned();
     let profile_name = profile.as_str();
     let (strategy_name, init_profile) = match profile {
-        cli_args::QuickstartProfile::Builtin => (Some(QUICKSTART_STRATEGY), None),
-        cli_args::QuickstartProfile::Ashare => (None, Some("ashare")),
+        cli_args::QuickstartProfile::Builtin => {
+            let selected = strategy.as_deref().unwrap_or(QUICKSTART_STRATEGY);
+            let kind = match qx_strategy::BuiltinStrategyKind::parse(selected) {
+                Ok(kind) => kind,
+                Err(error) => {
+                    eprintln!("[止步] quickstart 策略无效：{error}");
+                    std::process::exit(2);
+                }
+            };
+            if kind.needs_reference_leg() {
+                eprintln!(
+                    "[止步] quickstart 暂不接受双腿策略 {}；请用 builtin-strategies 查看可用回测入口并运行 multi-builtin。",
+                    kind.name()
+                );
+                std::process::exit(2);
+            }
+            (Some(kind.name()), None)
+        }
+        cli_args::QuickstartProfile::Ashare => {
+            if strategy.is_some() {
+                eprintln!("[止步] --strategy 仅适用于 builtin profile");
+                std::process::exit(2);
+            }
+            (None, Some("ashare"))
+        }
     };
     let mut retry_arguments = vec!["quickstart", root_text.as_str()];
     if profile != cli_args::QuickstartProfile::Builtin {
         retry_arguments.extend(["--profile", profile_name]);
+    }
+    if let Some(strategy) = strategy.as_deref() {
+        retry_arguments.extend(["--strategy", strategy]);
     }
     if html {
         retry_arguments.push("--html");
@@ -119,6 +146,9 @@ pub(crate) fn run(
         "quickstart 使用 {profile_name} profile，依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 {}：",
         absolute.display()
     );
+    if let Some(strategy) = strategy_name {
+        println!("内置策略：{strategy}");
+    }
     let mut init_arguments = vec!["init", runtime_text.as_str()];
     if let Some(strategy) = strategy_name {
         init_arguments.extend(["--strategy", strategy]);

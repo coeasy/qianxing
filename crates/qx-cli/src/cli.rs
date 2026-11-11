@@ -68,7 +68,8 @@ pub(crate) fn run() {
             profile,
             html,
             force,
-        } => project_command::dispatch_quickstart(project, html, force, profile),
+            strategy,
+        } => project_command::dispatch_quickstart(project, html, force, profile, strategy),
         Command::Guide(args) => project_command::dispatch_guide(args),
         Command::Doctor {
             path,
