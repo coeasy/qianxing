@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import re
 
 
-MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 3
+MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 4
 
 
 def _workspace_version(root: Path) -> str | None:
@@ -55,7 +56,18 @@ def measurement_source_fingerprint(root: Path) -> str:
     candidates = [root / "Cargo.toml", root / "Cargo.lock"]
     for manifest in (root / "crates").glob("*/Cargo.toml"):
         candidates.append(manifest)
-    candidates.extend((root / "crates").rglob("*.rs"))
+    # Walk only source/test trees. `Path.rglob` over the entire crates directory
+    # also descends into `crates/target` and nested task scratch directories,
+    # where integration tests can leave tens of thousands of generated files.
+    for current, directories, filenames in os.walk(root / "crates"):
+        directories[:] = sorted(
+            name for name in directories if name not in {"target", ".task-tmp"}
+        )
+        candidates.extend(
+            Path(current) / filename
+            for filename in filenames
+            if filename.endswith(".rs")
+        )
     candidates.extend(
         root / "benchmarks" / name
         for name in (
