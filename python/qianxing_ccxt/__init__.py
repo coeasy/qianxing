@@ -2956,7 +2956,7 @@ class CcxtExchangeClient:
         }
 
     def fetch_bitget_uta_oco_order_group(self, instrument: str, *, strategy_order_id: str) -> dict[str, Any]:
-        """Fetch a Bitget UTA OCO resource without guessing generated child-leg roles."""
+        """Fetch Bitget UTA OCO and authoritative UTA order details for generated children."""
         if self.config.exchange_id.lower() != "bitget" or (self.config.options or {}).get("uta") is not True:
             raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget OCO 查询仅支持显式配置的 UTA")
         if not strategy_order_id or not strategy_order_id.isascii() or not strategy_order_id.isdigit():
@@ -3041,9 +3041,49 @@ class CcxtExchangeClient:
                 raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单数量精度非法") from error
             if qty <= 0 or filled < 0 or filled > qty:
                 raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单累计成交超出数量")
-            children.append({"order_id": child_id, "status": str(child.get("status") or "").lower(),
+            strategy_child_status = str(child.get("status") or "").lower()
+            child_price = str(child.get("price") or "")
+            child_order_type = ""
+            child_status = strategy_child_status
+            if state == "triggered":
+                detail_response = self._call(
+                    "request", "v3/trade/order-info", "uta", "GET", {"orderId": child_id}
+                )
+                if not isinstance(detail_response, Mapping) or detail_response.get("code") != "00000":
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 子单详情查询失败")
+                detail = detail_response.get("data")
+                if not isinstance(detail, Mapping):
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 子单详情缺少 data")
+                detail_order_id = str(detail.get("orderId") or "")
+                detail_category = str(detail.get("category") or "").upper()
+                detail_symbol = str(detail.get("symbol") or "")
+                detail_side = str(detail.get("side") or "").lower()
+                detail_type = str(detail.get("orderType") or "").lower()
+                detail_status = str(detail.get("orderStatus") or "").lower()
+                try:
+                    detail_qty = Fraction(_exact_decimal_wire_text(str(detail.get("qty")), field="Bitget OCO detail qty"))
+                    detail_filled = Fraction(_exact_decimal_wire_text(str(detail.get("cumExecQty")), field="Bitget OCO detail cumExecQty"))
+                except (CcxtConnectorError, ValueError, ZeroDivisionError) as error:
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 子单详情数量精度非法") from error
+                if (
+                    detail_order_id != child_id
+                    or detail_category != "SPOT"
+                    or detail_symbol != market.market_id
+                    or detail_side != child_side
+                    or detail_type not in ("limit", "market")
+                    or detail_qty != qty
+                    or detail_filled != filled
+                    or detail_status not in ("live", "new", "partially_filled", "filled", "cancelled")
+                    or strategy_child_status != detail_status
+                ):
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 子单详情与策略子单事实不一致")
+                child_price = str(detail.get("price") or "")
+                child_order_type = detail_type
+                child_status = detail_status
+            children.append({"order_id": child_id, "status": child_status,
                              "qty": str(child.get("qty")), "cum_exec_qty": str(child.get("cumExecQty")),
-                             "side": child_side, "price": str(child.get("price") or ""),
+                             "side": child_side, "price": child_price,
+                             "order_type": child_order_type, "detail_status": child_status,
                              "avg_price": str(child.get("avgPrice") or "")})
         return {"strategy_order_id": strategy_order_id, "instrument": market.instrument,
                 "order_type": "oco", "state": state,

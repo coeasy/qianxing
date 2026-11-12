@@ -7,19 +7,19 @@ use crate::ccxt_reconcile::{
 };
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::execution_capability_gate::{
-    require_account_query_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
+    AccountQueryPurpose, ExecutionConnectorProfile, require_account_query_execution_capability,
 };
 use crate::market_bridges::venue_balance_fact_identity;
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
-use crate::reconcile_report::{persist_reconcile_report, ReconcileReportInput};
+use crate::reconcile_report::{ReconcileReportInput, persist_reconcile_report};
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_adapter::{CcxtProcessClient, CcxtProcessVenue};
 use qx_core::{EventKind, VenueFamily};
-use qx_execution::{ingest_venue_events, ingest_venue_events_with_spec, EventLogReconcilePort};
+use qx_execution::{EventLogReconcilePort, ingest_venue_events, ingest_venue_events_with_spec};
 use qx_runtime::{
-    account_worker_settlement_currency, required_account_event_log, RuntimeConfig,
-    RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig, WorkerContext, WorkerRole,
+    RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig, WorkerContext,
+    WorkerRole, account_worker_settlement_currency, required_account_event_log,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -201,6 +201,17 @@ fn reconcile_ccxt_native_order_groups(
             .ok()
             .and_then(|response| response.get("order_group").cloned());
         let Some(remote) = fetched else {
+            if is_bitget {
+                mark_ccxt_group_unresolved(
+                    &group,
+                    worker,
+                    &mut store,
+                    pipeline,
+                    now,
+                    source_seq,
+                    "Bitget OCO 策略/子单查询结果未知",
+                )?;
+            }
             push_ccxt_group_issue(
                 issues,
                 &group,
@@ -211,7 +222,16 @@ fn reconcile_ccxt_native_order_groups(
         };
         if is_bitget {
             updates = updates.saturating_add(reconcile_bitget_uta_oco_observation(
-                &group, &remote, worker, &mut store, pipeline, now, source_seq, issues,
+                venue,
+                &group,
+                &remote,
+                worker,
+                runtime_config_path,
+                &mut store,
+                pipeline,
+                now,
+                source_seq,
+                issues,
             )?);
             continue;
         }
@@ -389,9 +409,11 @@ fn okx_algo_client_order_id(group_id: &str) -> String {
 }
 
 fn reconcile_bitget_uta_oco_observation(
+    venue: &mut CcxtProcessVenue,
     group: &qx_core::OrderGroupState,
     remote: &serde_json::Value,
     worker: &WorkerConfig,
+    runtime_config_path: &std::path::Path,
     store: &mut dyn qx_zhenlu::OrderGroupStore,
     pipeline: &mut qx_runtime::LiveEventPipeline,
     now: u64,
@@ -543,6 +565,18 @@ fn reconcile_bitget_uta_oco_observation(
             }
             reconcile_ccxt_cancelled_native_group(group, worker, store, pipeline, now, source_seq)
         }
+        Some("triggered") => reconcile_bitget_triggered_oco_children(
+            venue,
+            group,
+            children,
+            worker,
+            runtime_config_path,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            issues,
+        ),
         Some(state) => {
             mark_ccxt_group_unresolved(
                 group,
@@ -580,6 +614,289 @@ fn reconcile_bitget_uta_oco_observation(
             Ok(0)
         }
     }
+}
+
+pub(crate) fn bitget_oco_child_matches_leg(
+    child: &serde_json::Value,
+    leg: &qx_core::OrderGroupLegState,
+) -> bool {
+    let side = match leg.order.side {
+        qx_core::Side::Buy => "buy",
+        qx_core::Side::Sell => "sell",
+    };
+    let qty = child
+        .get("qty")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| qx_core::ExactDecimal::parse(value).ok());
+    if child.get("side").and_then(serde_json::Value::as_str) != Some(side)
+        || qty != Some(leg.order.quantity_decimal())
+    {
+        return false;
+    }
+    match child.get("order_type").and_then(serde_json::Value::as_str) {
+        Some("market") => {
+            leg.role == qx_core::OrderGroupLegRole::StopLoss
+                && leg
+                    .order
+                    .exact_amounts
+                    .is_some_and(|amounts| amounts.limit_price.is_none())
+        }
+        Some("limit") => {
+            let price = child
+                .get("price")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| qx_core::ExactDecimal::parse(value).ok());
+            price.is_some()
+                && price
+                    == leg
+                        .order
+                        .exact_amounts
+                        .and_then(|amounts| amounts.limit_price)
+                && (leg.role == qx_core::OrderGroupLegRole::TakeProfit
+                    || leg.role == qx_core::OrderGroupLegRole::StopLoss)
+        }
+        _ => false,
+    }
+}
+
+fn reconcile_bitget_triggered_oco_children(
+    venue: &mut CcxtProcessVenue,
+    group: &qx_core::OrderGroupState,
+    children: &[serde_json::Value],
+    worker: &WorkerConfig,
+    runtime_config_path: &std::path::Path,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    let unresolved = |reason: &str,
+                      store: &mut dyn qx_zhenlu::OrderGroupStore,
+                      pipeline: &mut qx_runtime::LiveEventPipeline,
+                      source_seq: &mut u64,
+                      issues: &mut Vec<serde_json::Value>| {
+        mark_ccxt_group_unresolved(group, worker, store, pipeline, now, source_seq, reason)?;
+        push_ccxt_group_issue(issues, group, "native_order_group_state_unresolved", reason);
+        Ok::<(), String>(())
+    };
+
+    if children.len() != 2 || group.legs.len() != 2 {
+        unresolved(
+            "Bitget OCO 触发后必须恰有两条可核验子单",
+            store,
+            pipeline,
+            source_seq,
+            issues,
+        )?;
+        return Ok(0);
+    }
+    let mut matched = Vec::with_capacity(2);
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for child in children {
+        let id = child
+            .get("order_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()));
+        let fill = child
+            .get("cum_exec_qty")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| qx_core::ExactDecimal::parse(value).ok());
+        let qty = child
+            .get("qty")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| qx_core::ExactDecimal::parse(value).ok());
+        let status = child.get("status").and_then(serde_json::Value::as_str);
+        let role_matches = group
+            .legs
+            .iter()
+            .enumerate()
+            .filter(|(_, leg)| bitget_oco_child_matches_leg(child, leg))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let child_status_valid = match status {
+            Some("filled") => fill == qty && fill.is_some_and(|amount| amount.is_positive()),
+            Some("partially_filled") => {
+                fill.is_some_and(|amount| amount.is_positive()) && fill != qty
+            }
+            Some("live" | "new") => fill.is_some_and(qx_core::ExactDecimal::is_zero),
+            Some("cancelled" | "canceled") => true,
+            _ => false,
+        };
+        if id.is_none()
+            || !seen_ids.insert(id.unwrap_or_default().to_owned())
+            || fill.is_none()
+            || qty.is_none_or(|quantity| {
+                fill.is_some_and(|amount| {
+                    amount.checked_cmp(quantity) == Some(std::cmp::Ordering::Greater)
+                })
+            })
+            || !child_status_valid
+            || role_matches.len() != 1
+        {
+            unresolved(
+                "Bitget OCO 子单身份、腿角色、状态或成交数量无法唯一核验",
+                store,
+                pipeline,
+                source_seq,
+                issues,
+            )?;
+            return Ok(0);
+        }
+        matched.push((role_matches[0], child, id.unwrap().to_owned()));
+    }
+    if matched
+        .iter()
+        .map(|(index, _, _)| *index)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        != 2
+    {
+        unresolved(
+            "Bitget OCO 子单未能分别对应止盈腿与止损腿",
+            store,
+            pipeline,
+            source_seq,
+            issues,
+        )?;
+        return Ok(0);
+    }
+    store.require_reconciliation(&group.intent.group_id)?;
+    let mut updates = 0;
+    let mut snapshots = Vec::with_capacity(2);
+    for (leg_index, child, remote_id) in matched {
+        let leg = &group.legs[leg_index];
+        let local = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+            .ok_or_else(|| format!("Bitget OCO 子腿 {} 不在 EventLog", leg.order.client_id))?;
+        if pipeline
+            .venue_order_id(local.client_id)
+            .is_some_and(|known| known != remote_id)
+        {
+            unresolved(
+                "Bitget OCO 子单 ID 与 EventLog 中已知身份冲突",
+                store,
+                pipeline,
+                source_seq,
+                issues,
+            )?;
+            return Ok(0);
+        }
+        if local.status.is_terminal() && pipeline.venue_order_id(local.client_id).is_none() {
+            unresolved(
+                "Bitget OCO 本地终态子腿缺少远端订单身份",
+                store,
+                pipeline,
+                source_seq,
+                issues,
+            )?;
+            return Ok(0);
+        }
+        let fees = pipeline
+            .fee_baseline_for_order(local.client_id)
+            .map_err(|error| format!("读取 Bitget OCO 手续费基线失败: {error}"))?;
+        let exact_fees = pipeline
+            .exact_fee_baseline_for_order(local.client_id)
+            .map_err(|error| format!("读取 Bitget OCO 精确手续费基线失败: {error}"))?;
+        let trade_ids = pipeline
+            .fee_trade_ids_for_order(local.client_id)
+            .map_err(|error| format!("读取 Bitget OCO 成交去重状态失败: {error}"))?;
+        venue
+            .restore_order_with_exact_fee_state(
+                local.clone(),
+                remote_id.clone(),
+                fees,
+                exact_fees,
+                trade_ids,
+            )
+            .map_err(|error| format!("恢复 Bitget OCO 子腿失败: {error:?}"))?;
+        let events = venue
+            .sync_order(local.client_id, now)
+            .map_err(|error| format!("查询 Bitget OCO 子腿精确成交失败: {error:?}"))?;
+        let spec = load_worker_market_spec_for_instrument(
+            worker,
+            &local.instrument,
+            Some(runtime_config_path),
+        )?;
+        updates += if let Some(spec) = spec {
+            ingest_venue_events_with_spec(pipeline, events, &worker.id, now, source_seq, &spec)?
+        } else {
+            ingest_venue_events(pipeline, events, &worker.id, now, source_seq)?
+        };
+        let reconciled = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == local.client_id)
+            .ok_or_else(|| format!("Bitget OCO 子腿 {} 对账后缺失", local.client_id))?;
+        let expected_fill = child
+            .get("cum_exec_qty")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| qx_core::ExactDecimal::parse(value).ok())
+            .ok_or_else(|| "Bitget OCO 子单缺少有效累计成交量".to_string())?;
+        let expected_status = match child.get("status").and_then(serde_json::Value::as_str) {
+            Some("filled") => qx_core::OrderStatus::Filled,
+            Some("partially_filled") => qx_core::OrderStatus::PartiallyFilled,
+            Some("live" | "new") => qx_core::OrderStatus::Accepted,
+            Some("cancelled" | "canceled") => qx_core::OrderStatus::Cancelled,
+            _ => {
+                unresolved(
+                    "Bitget OCO 子单状态在对账期间变为未知值",
+                    store,
+                    pipeline,
+                    source_seq,
+                    issues,
+                )?;
+                return Ok(updates);
+            }
+        };
+        if reconciled.status != expected_status
+            || reconciled.exact_amounts.map(|amounts| amounts.filled) != Some(expected_fill)
+        {
+            unresolved(
+                "Bitget OCO 子单精确成交与 order-info / fills 对账结果不一致",
+                store,
+                pipeline,
+                source_seq,
+                issues,
+            )?;
+            return Ok(updates);
+        }
+        if pipeline.venue_order_id(local.client_id).is_none()
+            || reconciled.status != expected_status
+        {
+            let filled_raw = expected_fill
+                .to_raw_truncated(9)
+                .map_err(|error| format!("Bitget OCO 子腿成交量无法投影到历史事件字段: {error}"))?;
+            *source_seq = (*source_seq).saturating_add(1);
+            pipeline
+                .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                    qx_runtime::RuntimeExternalEvent::OrderStatusReconciled {
+                        client_order_id: local.client_id,
+                        account_id: local.account_id.clone(),
+                        venue_id: local.instrument.venue.as_str().to_owned(),
+                        status: expected_status,
+                        venue_order_id: Some(remote_id.clone()),
+                        filled_raw,
+                        filled_exact: reconciled.exact_amounts.map(|amounts| amounts.filled),
+                    },
+                    now,
+                    now,
+                    *source_seq,
+                    format!("{}:bitget-oco-child-id:{}", worker.id, local.client_id),
+                ))
+                .map_err(|error| format!("持久化 Bitget OCO 子腿远端身份失败: {error:?}"))?;
+        }
+        let reconciled = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == local.client_id)
+            .ok_or_else(|| format!("Bitget OCO 子腿 {} 记录远端身份后缺失", local.client_id))?;
+        snapshots.push((reconciled, Some(remote_id)));
+    }
+    store_ccxt_group_snapshots(&group.intent.group_id, snapshots, true, store)?;
+    Ok(updates + group.legs.len())
 }
 
 pub(crate) fn bitget_cancel_children_are_unfilled(
@@ -1744,8 +2061,9 @@ fn runtime_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod native_order_group_reconcile_tests {
     use super::{
-        bitget_cancel_children_are_unfilled, classify_okx_oco_observation,
-        okx_algo_client_order_id, sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+        OkxOcoObservation, bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
+        classify_okx_oco_observation, okx_algo_client_order_id,
+        sync_ccxt_order_groups_from_user_stream,
     };
 
     fn protection_order(
@@ -1816,24 +2134,30 @@ mod native_order_group_reconcile_tests {
             })),
             Ok(OkxOcoObservation::Triggered(ids)) if ids.len() == 1
         ));
-        assert!(classify_okx_oco_observation(&serde_json::json!({
-            "state": "effective",
-            "order_ids": [],
-            "actual_size": "0.01"
-        }))
-        .is_err());
-        assert!(classify_okx_oco_observation(&serde_json::json!({
-            "state": "canceled",
-            "order_ids": [],
-            "actual_size": "0.001"
-        }))
-        .is_err());
-        assert!(classify_okx_oco_observation(&serde_json::json!({
-            "state": "live",
-            "order_ids": ["bad-id"],
-            "actual_size": "0"
-        }))
-        .is_err());
+        assert!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "effective",
+                "order_ids": [],
+                "actual_size": "0.01"
+            }))
+            .is_err()
+        );
+        assert!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "canceled",
+                "order_ids": [],
+                "actual_size": "0.001"
+            }))
+            .is_err()
+        );
+        assert!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "live",
+                "order_ids": ["bad-id"],
+                "actual_size": "0"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1913,6 +2237,65 @@ mod native_order_group_reconcile_tests {
             &[serde_json::json!({
                 "side": "sell", "qty": "0.01", "status": "cancelled", "cum_exec_qty": "unknown"
             })]
+        ));
+    }
+
+    #[test]
+    fn bitget_triggered_oco_children_match_exact_tp_and_sl_shapes() {
+        use qx_core::{
+            ConditionalOrderKind, ExactDecimal, OrderGroupExecution, OrderGroupIntent,
+            OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole, OrderGroupState,
+        };
+        let mut tp = protection_order(
+            41,
+            "account",
+            "BITGET",
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let tp_amounts = tp.exact_amounts.as_mut().unwrap();
+        tp_amounts.limit_price = Some(ExactDecimal::parse("70000").unwrap());
+        tp_amounts.conditional = None;
+        let sl = protection_order(
+            42,
+            "account",
+            "BITGET",
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let group = OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "bitget-role-match",
+                OrderGroupKind::Oco,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: tp,
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: sl,
+                    },
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let take_profit = serde_json::json!({
+            "side": "sell", "qty": "0.01", "order_type": "limit", "price": "70000"
+        });
+        let stop_loss = serde_json::json!({
+            "side": "sell", "qty": "0.01", "order_type": "market", "price": ""
+        });
+        assert!(bitget_oco_child_matches_leg(&take_profit, &group.legs[0]));
+        assert!(!bitget_oco_child_matches_leg(&take_profit, &group.legs[1]));
+        assert!(bitget_oco_child_matches_leg(&stop_loss, &group.legs[1]));
+        assert!(!bitget_oco_child_matches_leg(
+            &serde_json::json!({
+                "side": "sell", "qty": "0.01", "order_type": "limit", "price": "70001"
+            }),
+            &group.legs[0]
         ));
     }
 

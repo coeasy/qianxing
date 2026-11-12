@@ -132,6 +132,56 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(group["sub_orders"][0]["cum_exec_qty"], "0")
         self.assertEqual(exchange.calls[-1][1:4], ("v3/trade/strategy-sub-orders", "uta", "GET"))
 
+    def test_jsonl_bitget_uta_triggered_oco_checks_authoritative_child_order_details(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                return {"code": "00000", "data": []}
+
+            def private_uta_get_v3_trade_history_strategy_orders(self, params):
+                return {"code": "00000", "data": {"list": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "status": "success",
+                }], "cursor": 0}}
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "v3/trade/strategy-sub-orders":
+                    return {"code": "00000", "data": {"list": [
+                        {"subOrderId": "555", "category": "SPOT", "symbol": "BTCUSDT",
+                         "side": "sell", "qty": "0.5", "cumExecQty": "0.5",
+                         "price": "110", "avgPrice": "110", "status": "filled"},
+                        {"subOrderId": "556", "category": "SPOT", "symbol": "BTCUSDT",
+                         "side": "sell", "qty": "0.5", "cumExecQty": "0",
+                         "price": "0", "avgPrice": "0", "status": "cancelled"},
+                    ]}}
+                detail = {
+                    "555": {"orderId": "555", "category": "SPOT", "symbol": "BTCUSDT",
+                            "side": "sell", "qty": "0.5", "cumExecQty": "0.5",
+                            "price": "110", "orderType": "limit", "orderStatus": "filled"},
+                    "556": {"orderId": "556", "category": "SPOT", "symbol": "BTCUSDT",
+                            "side": "sell", "qty": "0.5", "cumExecQty": "0",
+                            "price": "0", "orderType": "market", "orderStatus": "cancelled"},
+                }[params["orderId"]]
+                return {"code": "00000", "data": detail}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        group = fetched["result"]["order_group"]
+        self.assertEqual(group["state"], "triggered")
+        self.assertEqual([child["order_type"] for child in group["sub_orders"]], ["limit", "market"])
+        self.assertEqual([child["detail_status"] for child in group["sub_orders"]], ["filled", "cancelled"])
+        self.assertEqual(
+            [call[1] for call in exchange.calls if call[0] == "request"],
+            ["v3/trade/strategy-sub-orders", "v3/trade/order-info", "v3/trade/order-info"],
+        )
+
     def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
         class OkxAlgoExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):
