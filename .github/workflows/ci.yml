@@ -229,6 +229,7 @@ jobs:
             --binary target/release/qx-cli \
             --out benchmarks/results/end-to-end.json --json --repeats 7
           python3 benchmarks/run_rust_bench.py \
+            --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}" \
             --out benchmarks/results/rust-micro.json
           python3 benchmarks/run_ashare_profile_backtest.py \
             --binary target/release/qx-cli \
