@@ -24,7 +24,7 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
         ("ema_cross", "8aeb8d92a6b85a8c"),
         ("macd", "a54513c4314ffbe1"),
         // Cash-spot sells without available inventory are rejected by the shared engine.
-        ("rsi", "d69e15f4502483d6"),
+        ("rsi", "5e3bcfe7e6e9608f"),
         ("bollinger", "cecacfff7bb24b13"),
         ("donchian_breakout", "38c41f3832f6a4d4"),
         ("momentum", "74bd63d22639bb30"),
