@@ -18438,6 +18438,267 @@
         }
       ],
       "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "64e99707-69e2-4584-85cd-ad44ac4275f7",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-12T23:13:36.155783Z",
+      "source_revision": "2cb458043effc92f6e10d17d3fc2390835b07b31",
+      "source_tree_sha256": "2a911f64cd66f1a2f829af6c176f2513b71e9851d2a410211690eb18f3d9461f",
+      "source_manifest": "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "7b9164d571574783c0f732e0190f2d9bfbc446cdf99820eef62de0079c5b61d9"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "089fbe40585a2c9557a3549b9b074bf2591de2e2038fe04ac5047be5bdec1fff"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "dc08a552ed25301b11f49775c004c61b8001f8b574b29696468c6fb012c34fc9"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "75daf5f23a11d7b60b70cdcf2d72412f84948b9ba39639f4cca2584a192b60c8"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "28b9c70480d13c3bd8974d72cf5edc53bd7a506e159b6efb0551d063ba5d8406"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.log",
+          "sha256": "4d2601f8047b43916ecf1381c9adece8a0f912ccc67b4d20f378c696c1fce886"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.source-tree.json",
+          "sha256": "e40e214c13af106275d91fbb6cf4c0605f506711c4a0afce84884c64e58f292e"
+        }
+      ],
+      "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "d9f6cb2c-ec84-46cd-b218-bb0401e1c565",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-12T23:21:53.110060Z",
+      "source_revision": "2cb458043effc92f6e10d17d3fc2390835b07b31",
+      "source_tree_sha256": "2a911f64cd66f1a2f829af6c176f2513b71e9851d2a410211690eb18f3d9461f",
+      "source_manifest": "maturity/acceptance-artifacts/d9f6cb2c-ec84-46cd-b218-bb0401e1c565.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/cli.rs",
+          "sha256": "c82304187f46aa50ffa7b30209edbc09f6bec0a4ce76cd087c78aac868d0f3f1"
+        },
+        {
+          "path": "crates/qx-cli/src/cli_command_manifest.json",
+          "sha256": "c2b05fc36e0ec19e37d9ced26d3ab4c2b6c7f800130b4957a1d112583f636d03"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "5874427ff30013e8f78b354e241480f0c13d9069c27f3062cb658f4646c611ac"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "82fe733b7ed6d8148a50e08d0709aed9742b1cb73acf9b1b1971af5f8d079904"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/d9f6cb2c-ec84-46cd-b218-bb0401e1c565.log",
+          "sha256": "b0093cb9b19147b4e97968d8f652d3f1cea3f9ab3ea390d003837861d710ccdc"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/d9f6cb2c-ec84-46cd-b218-bb0401e1c565.source-tree.json",
+          "sha256": "e40e214c13af106275d91fbb6cf4c0605f506711c4a0afce84884c64e58f292e"
+        }
+      ],
+      "notes": "macOS qx-cli unit suite verifies CLI facade routing and compatibility"
+    },
+    {
+      "run_id": "79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-12T22:59:15.935350Z",
+      "source_revision": "2cb458043effc92f6e10d17d3fc2390835b07b31",
+      "source_tree_sha256": "0383fcebcc37ea6ee9216a6ae0c055ac181122a0688a2af7254a076179ce646f",
+      "source_manifest": "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "7b9164d571574783c0f732e0190f2d9bfbc446cdf99820eef62de0079c5b61d9"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "089fbe40585a2c9557a3549b9b074bf2591de2e2038fe04ac5047be5bdec1fff"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "dc08a552ed25301b11f49775c004c61b8001f8b574b29696468c6fb012c34fc9"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "75daf5f23a11d7b60b70cdcf2d72412f84948b9ba39639f4cca2584a192b60c8"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "28b9c70480d13c3bd8974d72cf5edc53bd7a506e159b6efb0551d063ba5d8406"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.log",
+          "sha256": "4784a7c31338e0e736803c323e9006caa59f50e9d8afb11e1a44668faa74f45d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.source-tree.json",
+          "sha256": "6d10a9f069db1c5a5f08c4546999a9afb6a465997d710d065db8185478d2f7d8"
+        }
+      ],
+      "notes": "Linux focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "bde88a3b-938a-465d-8700-1bad4f4927b8",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-12T23:00:52.332433Z",
+      "source_revision": "2cb458043effc92f6e10d17d3fc2390835b07b31",
+      "source_tree_sha256": "0383fcebcc37ea6ee9216a6ae0c055ac181122a0688a2af7254a076179ce646f",
+      "source_manifest": "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/cli.rs",
+          "sha256": "c82304187f46aa50ffa7b30209edbc09f6bec0a4ce76cd087c78aac868d0f3f1"
+        },
+        {
+          "path": "crates/qx-cli/src/cli_command_manifest.json",
+          "sha256": "c2b05fc36e0ec19e37d9ced26d3ab4c2b6c7f800130b4957a1d112583f636d03"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "5874427ff30013e8f78b354e241480f0c13d9069c27f3062cb658f4646c611ac"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "82fe733b7ed6d8148a50e08d0709aed9742b1cb73acf9b1b1971af5f8d079904"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.log",
+          "sha256": "313643544a95e365c128efb6fbfcb040dc1581ead93f5e53a2b93dcb11b39bea"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.source-tree.json",
+          "sha256": "6d10a9f069db1c5a5f08c4546999a9afb6a465997d710d065db8185478d2f7d8"
+        }
+      ],
+      "notes": "Linux qx-cli unit suite verifies CLI facade routing and compatibility"
+    },
+    {
+      "run_id": "19d294fd-e239-48b6-9778-1b00e47e7e52",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-12T23:01:12.348860Z",
+      "source_revision": "2cb458043effc92f6e10d17d3fc2390835b07b31",
+      "source_tree_sha256": "0383fcebcc37ea6ee9216a6ae0c055ac181122a0688a2af7254a076179ce646f",
+      "source_manifest": "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--test",
+        "cli_behavior_parity",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "5874427ff30013e8f78b354e241480f0c13d9069c27f3062cb658f4646c611ac"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "82fe733b7ed6d8148a50e08d0709aed9742b1cb73acf9b1b1971af5f8d079904"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.log",
+          "sha256": "afbc3b207b9fbb28ba0da7660e62a09937694d24f8ee8c3371f8aa56a71890e7"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.source-tree.json",
+          "sha256": "6d10a9f069db1c5a5f08c4546999a9afb6a465997d710d065db8185478d2f7d8"
+        }
+      ],
+      "notes": "Linux CLI behavior-parity integration target preserves report and facade compatibility"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

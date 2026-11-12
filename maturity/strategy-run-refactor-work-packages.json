@@ -694,11 +694,11 @@
     {
       "id": "R17",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Latest hosted macOS Python 3.12 R17 command failed before executing its contract because the offline Cargo index lacked serde. The workflow now fetches locked Rust dependencies before focused macOS checks; hosted rerun is required."
+        "No current R17 acceptance gap remains: Linux and macOS focused metric/report contracts pass on the same PR merge revision; retain these source-bound records as the parity baseline."
       ],
-      "next_action": "Push the macOS cargo fetch workflow repair and bind a passing macOS R17 run plus source manifest.",
+      "next_action": "Keep the versioned metrics/report projection and cross-platform parity checks in CI when report schemas or cost/performance metrics change.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -768,7 +768,11 @@
         "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.log",
         "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json",
         "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.log",
-        "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.source-tree.json"
+        "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.source-tree.json",
+        "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.log",
+        "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.source-tree.json",
+        "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.log",
+        "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.source-tree.json"
       ]
     },
     {
@@ -817,9 +821,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux acceptance passes, but the latest macOS Python 3.12 job failed during the earlier R17 step because serde was missing from the offline Cargo index, so the macOS R19 checks did not run."
+        "Latest hosted macOS R19 run compiled successfully but 10 subprocess-oriented unit tests failed because Cargo exposed an OUT_DIR test path and the binary-discovery fallback did not locate qx-cli. The workflow now resolves the binary through cargo metadata and sets QX_CLI_TEST_BINARY; a hosted rerun is required."
       ],
-      "next_action": "Re-run the macOS matrix after cargo fetch --locked and bind the R19 acceptance logs and source manifests.",
+      "next_action": "Push the explicit macOS test-binary path fix and bind passing macOS R19 unit and behavior-parity results.",
       "code_paths": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "python/qianxing/client_trading.py",
@@ -1230,7 +1234,13 @@
         "maturity/acceptance-artifacts/a6462fd4-36d1-485f-a640-da3d49595267.source-tree.json",
         "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.log",
         "maturity/acceptance-artifacts/1208ff2d-e044-4db1-a9ee-92fd5ef06799.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/d9f6cb2c-ec84-46cd-b218-bb0401e1c565.log",
+        "maturity/acceptance-artifacts/d9f6cb2c-ec84-46cd-b218-bb0401e1c565.source-tree.json",
+        "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.log",
+        "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.source-tree.json",
+        "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.log",
+        "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.source-tree.json"
       ]
     },
     {

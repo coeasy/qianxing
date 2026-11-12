@@ -518,15 +518,17 @@ jobs:
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
         run: |
           cargo clean -p qx-cli
-          cargo build --locked -p qx-cli
+          cargo build --locked -p qx-cli --bin qx-cli
+          cli_binary="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/debug/qx-cli"
+          test -x "$cli_binary"
           python3 tools/record_strategy_acceptance.py \
             --acceptance-id R19-AC01 \
             --input crates/qx-cli/src/cli.rs \
             --input crates/qx-cli/src/cli_command_manifest.json \
             --input crates/qx-cli/tests/cli_behavior_parity.rs \
             --input crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs \
-            --notes "macOS qx-cli unit suite verifies CLI facade routing and compatibility" \
-            -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
+            --notes "macOS qx-cli unit suite uses the freshly built Cargo target binary explicitly and verifies CLI facade routing and compatibility" \
+            -- env QX_CLI_TEST_BINARY="$cli_binary" cargo test -p qx-cli --bin qx-cli -- --test-threads=1
       - name: macOS qx-cli behavior parity (R19)
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
         run: >-
