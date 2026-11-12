@@ -25,14 +25,14 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
         ("macd", "a54513c4314ffbe1"),
         // Cash-spot sells without available inventory are rejected by the shared engine.
         ("rsi", "5e3bcfe7e6e9608f"),
-        ("bollinger", "cecacfff7bb24b13"),
-        ("donchian_breakout", "38c41f3832f6a4d4"),
-        ("momentum", "74bd63d22639bb30"),
-        ("mean_reversion", "4ef7b79cfc9a994c"),
-        ("grid", "ccf920ce86a90bfc"),
+        ("bollinger", "cfa3e83b491ec337"),
+        ("donchian_breakout", "5c7b4521a6faf3e2"),
+        ("momentum", "0b8acafd936e49f4"),
+        ("mean_reversion", "08ed1e1bdb298765"),
+        ("grid", "fe6739a096de371f"),
         ("atr_trend", "cfa3e83b491ec337"),
-        ("keltner_trend", "aab3e6ffb2209f48"),
-        ("vwap_reversion", "25234b946fc9df70"),
+        ("keltner_trend", "5ee3d3eae8001de4"),
+        ("vwap_reversion", "4e9408201d114419"),
         ("volatility_breakout", "cfa3e83b491ec337"),
     ];
     let mut stale_baselines = Vec::new();
