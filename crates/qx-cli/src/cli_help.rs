@@ -210,9 +210,10 @@ pub(crate) fn print_cli_help() {
       strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
       --root 会持久化两份腿级摘要/RunManifest/权益与成交 CSV、组合摘要与 EvidenceBundle；可用 report 导出 JSON/HTML/XLSX，并在同一组腿数据上比较不同运行。
       质量清单须成对提供；回测前逐腿核对源文件摘要、数据身份和质量字段，结果报告保留两腿各自的清单身份。
-  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
+  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>] [--use-public-default-fees]
       一次完成 CCXT OHLCV 获取、不可变 BarFrame 快照与 DatasetManifestV2 绑定、持久内置策略回测。
       交易所/交易对/timeframe/请求窗口写入来源 lineage，内容变化形成新数据身份；A 股段与费用口径同样生效。
+      --use-public-default-fees 使用 market metadata 的公开默认 maker/taker 费率；需两者均存在且可精确换算为整数 bp，账户自定义费率请用 runtime cost_rules_path。
   backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>] [--config <runtime.json>] [--dataset-manifest <manifest-v2.json>]
       深度档回测：--fill-tier 只认 l1 与 l2 两个值。l1 走 Tick 内核，帧里每一 snapshot 必须只有一档
       盘口（多一档即拒）；l2 走订单簿内核，按内核的 L2L3 档位吃掉帧里带的全部深度，因此没有第三个

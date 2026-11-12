@@ -624,6 +624,9 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Use the public CCXT market metadata maker/taker defaults as the frozen backtest cost.
+        #[arg(long)]
+        use_public_default_fees: bool,
     },
     #[command(name = "book")]
     Book {

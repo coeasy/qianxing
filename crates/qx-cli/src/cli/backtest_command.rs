@@ -78,6 +78,7 @@ pub(super) fn dispatch(
             spec,
             quantity,
             config,
+            use_public_default_fees,
         }) => {
             if let Err(error) = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
                 ccxt_config_path: &ccxt_config,
@@ -89,6 +90,7 @@ pub(super) fn dispatch(
                 spec_path: spec.as_deref(),
                 quantity: quantity.unwrap_or(1),
                 runtime_config_path: config.as_deref(),
+                use_public_default_fees,
             }) {
                 eprintln!("[qx-cli · CLI] CCXT 内置策略回测失败: {error}");
                 std::process::exit(2);

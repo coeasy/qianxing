@@ -406,6 +406,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         spec_path: None,
         quantity: 1,
         runtime_config_path: Some(&valid_runtime),
+        use_public_default_fees: false,
     })
     .expect_err("不支持的月线周期必须在启动外部 worker 前拒绝");
     assert!(
@@ -427,6 +428,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         spec_path: None,
         quantity: 1,
         runtime_config_path: Some(&runtime),
+        use_public_default_fees: false,
     })
     .expect_err("Runtime 必须在外部 worker 启动前被完整校验");
     assert!(error.contains("读取"), "应返回 runtime 读取错误: {error}");
