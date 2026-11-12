@@ -508,8 +508,13 @@ fn assert_binary_fresh(binary: &Path) {
 fn qx_cli_binary() -> PathBuf {
     if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
         let binary = PathBuf::from(path);
-        assert_binary_fresh(&binary);
-        return binary;
+        // Some Cargo invocations expose an OUT_DIR-style path for bin unit tests
+        // without materializing that executable. Fall through to target/<profile>/qx-cli
+        // when the advertised path is absent; feature-matrix jobs build that binary first.
+        if binary.is_file() {
+            assert_binary_fresh(&binary);
+            return binary;
+        }
     }
     let profile_dir = std::env::current_exe()
         .expect("读取测试可执行文件路径失败")
@@ -523,9 +528,8 @@ fn qx_cli_binary() -> PathBuf {
         "qx-cli"
     });
     assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
-    // 本 crate 的 `--bin` 单元测试里 `option_env!("CARGO_BIN_EXE_qx-cli")` 取不到值（它只喂给
-    // 集成测试壳），所以走的正是这条回落分支——也正是 `cargo test --bin` 不重链 binary 的那条路。
-    // 新鲜度只写在上面那条分支等于没写：定向跑子进程用例时会静默对着旧行为变绿（V11 S6）。
+    // `cargo test --bin` 不重链 CLI executable；fallback 仍要检查 binary 新鲜度，
+    // 防止定向跑子进程用例时静默对着旧行为变绿（V11 S6）。
     assert_binary_fresh(&binary);
     binary
 }
