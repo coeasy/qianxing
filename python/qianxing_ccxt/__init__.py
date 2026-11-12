@@ -2641,6 +2641,265 @@ class CcxtExchangeClient:
             params=call_params,
         )
 
+    def create_okx_oco_order_group(
+        self,
+        instrument: str,
+        *,
+        side: str,
+        amount_exact: str,
+        take_profit_trigger_exact: str,
+        take_profit_order_price_exact: str | None,
+        take_profit_price_type: str,
+        stop_loss_trigger_exact: str,
+        stop_loss_order_price_exact: str | None,
+        stop_loss_price_type: str,
+        algo_client_order_id: str,
+        risk_margin_mode: str | None = None,
+        risk_position_mode: str = "one_way",
+        risk_position_side: str = "net",
+        risk_reduce_only: bool = False,
+    ) -> dict[str, Any]:
+        """Place a native OKX OCO algo order and return its exchange resource identity.
+
+        OCO is one OKX algo resource with TP and SL triggers. This deliberately uses the
+        OKX REST contract through CCXT's authenticated ``request`` path instead of translating
+        it into two ordinary ``create_order`` calls.
+        """
+        if self.config.exchange_id.lower() != "okx":
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "原生订单组当前只实现 OKX OCO",
+            )
+        if side not in ("buy", "sell"):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OCO side 必须为 buy 或 sell")
+        if (
+            not algo_client_order_id
+            or len(algo_client_order_id) > 32
+            or not algo_client_order_id.isascii()
+            or not algo_client_order_id.isalnum()
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "OKX algoClOrdId 必须为 1 至 32 位 ASCII 字母或数字",
+            )
+        if risk_position_mode not in ("one_way", "hedge"):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "position mode 必须为 one_way 或 hedge")
+        if risk_position_mode == "one_way" and risk_position_side != "net":
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OneWay OCO 的 position side 必须为 net")
+        if risk_position_mode == "hedge" and risk_position_side not in ("long", "short"):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "Hedge OCO 必须指定 long 或 short")
+        if not isinstance(risk_reduce_only, bool):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "reduce_only 必须为布尔值")
+
+        market = self.resolve_market(instrument)
+        if market.contract and market.market_type not in ("swap", "future"):
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                f"OKX 合约 OCO 当前不支持产品类型 {market.market_type}",
+            )
+        if not market.contract and market.market_type != "spot":
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                f"OKX 非合约 OCO 当前只支持现货，产品类型为 {market.market_type}",
+            )
+        if market.contract and risk_margin_mode not in ("cross", "isolated"):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "OKX 合约 OCO 必须显式指定 cross 或 isolated 保证金模式",
+            )
+        if not market.contract and (
+            risk_position_mode != "one_way"
+            or risk_position_side != "net"
+            or risk_margin_mode not in (None, "cash")
+        ):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OKX 现货 OCO 不接受合约仓位字段")
+        if market.contract and not risk_reduce_only:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "OKX 合约 OCO 保护腿必须显式 reduce_only",
+            )
+
+        amount_text = _exact_decimal_wire_text(amount_exact, field="OCO amount")
+        if Fraction(amount_text) <= 0:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OCO amount 必须为正")
+        self._require_exact_exchange_precision_text(
+            "amount_to_precision", market.symbol, amount_text, field="OCO amount", known_step=None
+        )
+
+        def trigger_text(value: str, label: str) -> str:
+            result = _exact_decimal_wire_text(value, field=f"{label} trigger price")
+            if Fraction(result) <= 0:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{label} trigger price 必须为正")
+            self._require_exact_exchange_precision_text(
+                "price_to_precision", market.symbol, result, field=f"{label} trigger price", known_step=None
+            )
+            return result
+
+        def order_price_text(value: str | None, label: str) -> str:
+            if value is None:
+                return "-1"
+            result = _exact_decimal_wire_text(value, field=f"{label} order price")
+            if Fraction(result) <= 0:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{label} order price 必须为正")
+            self._require_exact_exchange_precision_text(
+                "price_to_precision", market.symbol, result, field=f"{label} order price", known_step=None
+            )
+            return result
+
+        tp_type = self._validate_okx_oco_price_type(take_profit_price_type, market.contract, "止盈")
+        sl_type = self._validate_okx_oco_price_type(stop_loss_price_type, market.contract, "止损")
+        params: dict[str, Any] = {
+            "instId": market.market_id,
+            "tdMode": risk_margin_mode if market.contract else "cash",
+            "side": side,
+            "ordType": "oco",
+            "sz": amount_text,
+            "algoClOrdId": algo_client_order_id,
+            "tpTriggerPx": trigger_text(take_profit_trigger_exact, "止盈"),
+            "tpOrdPx": order_price_text(take_profit_order_price_exact, "止盈"),
+            "tpTriggerPxType": tp_type,
+            "slTriggerPx": trigger_text(stop_loss_trigger_exact, "止损"),
+            "slOrdPx": order_price_text(stop_loss_order_price_exact, "止损"),
+            "slTriggerPxType": sl_type,
+        }
+        if market.contract:
+            params["posSide"] = "net" if risk_position_mode == "one_way" else risk_position_side
+            if risk_position_mode == "one_way" and risk_reduce_only:
+                params["reduceOnly"] = True
+
+        response = self._call("request", "trade/order-algo", "private", "POST", params)
+        if not isinstance(response, Mapping) or response.get("code") != "0":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 顶层响应失败")
+        rows = response.get("data")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX OCO 响应必须包含一条 algo 结果")
+        row = rows[0]
+        if row.get("sCode") != "0":
+            message = str(row.get("sMsg") or "OKX 拒绝 OCO algo order")
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, message)
+        algo_id = str(row.get("algoId") or "").strip()
+        echoed_client_id = str(row.get("algoClOrdId") or "").strip()
+        if not algo_id or not algo_id.isdigit() or echoed_client_id != algo_client_order_id:
+            raise CcxtConnectorError(
+                CcxtErrorClass.EXCHANGE,
+                "OKX OCO 返回的 algoId/algoClOrdId 与提交身份不完整或不匹配",
+            )
+        return {
+            "algo_id": algo_id,
+            "algo_client_order_id": echoed_client_id,
+            "instrument": market.instrument,
+            "order_type": "oco",
+        }
+
+    def fetch_okx_oco_order_group(
+        self,
+        instrument: str,
+        *,
+        algo_id: str | None = None,
+        algo_client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch the authoritative OKX algo snapshot used to reconcile an OCO group."""
+        if self.config.exchange_id.lower() != "okx":
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "algo OCO 查询当前只实现 OKX")
+        if bool(algo_id) == bool(algo_client_order_id):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "OKX algo 查询必须且只能提供 algo_id 或 algo_client_order_id",
+            )
+        market = self.resolve_market(instrument)
+        params: dict[str, str] = {}
+        if algo_id:
+            if not algo_id.isdigit():
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, "OKX algo_id 必须为数字字符串")
+            params["algoId"] = algo_id
+        else:
+            client_id = str(algo_client_order_id)
+            if not client_id.isascii() or not client_id.isalnum() or len(client_id) > 32:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, "OKX algoClOrdId 格式非法")
+            params["algoClOrdId"] = client_id
+        response = self._call("request", "trade/order-algo", "private", "GET", params)
+        if not isinstance(response, Mapping) or response.get("code") != "0":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 查询顶层响应失败")
+        rows = response.get("data")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 查询必须返回一条记录")
+        row = rows[0]
+        if (
+            str(row.get("instId") or "") != market.market_id
+            or str(row.get("ordType") or "") != "oco"
+            or (algo_id is not None and str(row.get("algoId") or "") != algo_id)
+            or (
+                algo_client_order_id is not None
+                and str(row.get("algoClOrdId") or "") != algo_client_order_id
+            )
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.EXCHANGE,
+                "OKX 返回的 OCO algo 交易标的、类型或查询身份不匹配",
+            )
+        ord_id_list = row.get("ordIdList", [])
+        if not isinstance(ord_id_list, list) or any(
+            not isinstance(order_id, str) or not order_id for order_id in ord_id_list
+        ):
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX OCO ordIdList 格式非法")
+        state = str(row.get("state") or "")
+        if not state:
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX OCO 查询缺少 state")
+        return {
+            "algo_id": str(row.get("algoId") or ""),
+            "algo_client_order_id": str(row.get("algoClOrdId") or ""),
+            "instrument": market.instrument,
+            "order_type": "oco",
+            "state": state,
+            "actual_side": str(row.get("actualSide") or ""),
+            "actual_size": str(row.get("actualSz") or "0"),
+            "actual_price": str(row.get("actualPx") or ""),
+            "order_ids": list(ord_id_list),
+            "take_profit_trigger_price": str(row.get("tpTriggerPx") or ""),
+            "take_profit_trigger_price_type": str(row.get("tpTriggerPxType") or ""),
+            "take_profit_order_price": str(row.get("tpOrdPx") or ""),
+            "stop_loss_trigger_price": str(row.get("slTriggerPx") or ""),
+            "stop_loss_trigger_price_type": str(row.get("slTriggerPxType") or ""),
+            "stop_loss_order_price": str(row.get("slOrdPx") or ""),
+        }
+
+    def cancel_okx_oco_order_group(self, instrument: str, *, algo_id: str) -> dict[str, str]:
+        """Cancel an untriggered OKX OCO as one algo resource and validate its ack identity."""
+        if self.config.exchange_id.lower() != "okx":
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "algo OCO 撤销当前只实现 OKX")
+        if not algo_id.isdigit():
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OKX algo_id 必须为数字字符串")
+        market = self.resolve_market(instrument)
+        response = self._call(
+            "request",
+            "trade/cancel-algos",
+            "private",
+            "POST",
+            [{"instId": market.market_id, "algoId": algo_id}],
+        )
+        if not isinstance(response, Mapping) or response.get("code") != "0":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX cancel-algos 顶层响应失败")
+        rows = response.get("data")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX cancel-algos 响应必须包含一条记录")
+        row = rows[0]
+        if str(row.get("algoId") or "") != algo_id or row.get("sCode") != "0":
+            raise CcxtConnectorError(
+                CcxtErrorClass.EXCHANGE,
+                str(row.get("sMsg") or "OKX cancel-algos 返回的 algo 身份不匹配"),
+            )
+        return {"algo_id": algo_id, "instrument": market.instrument, "cancel_request_accepted": "true"}
+
+    @staticmethod
+    def _validate_okx_oco_price_type(value: str, is_contract: bool, label: str) -> str:
+        allowed = ("last", "mark", "index") if is_contract else ("last",)
+        if value not in allowed:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                f"OKX {label}触发价格类型必须为 {'/'.join(allowed)}",
+            )
+        return value
+
     def validate_edit_order(
         self,
         order_id: str,

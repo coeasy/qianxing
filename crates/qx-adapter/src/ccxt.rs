@@ -8,10 +8,11 @@ use crate::io_budget::{write_all_within, write_all_within_cancellable, Cancellab
 use crate::order_lifecycle::OrderLifecycle;
 use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
-    ExactDecimal, Fill, FillFee, MarginMode, Money, Order, OrderPolicy, OrderStatus, PositionMode,
-    PositionSide, Price, Quantity, QxError, QxResult, SCALE,
+    ConditionalOrderKind, ExactDecimal, Fill, FillFee, Fnv1a, MarginMode, Money, Order,
+    OrderGroupExecution, OrderGroupKind, OrderGroupLegRole, OrderGroupState, OrderPolicy,
+    OrderStatus, PositionMode, PositionSide, Price, Quantity, QxError, QxResult, Side, SCALE,
 };
-use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
+use qx_zhenlu::{Venue, VenueEvent, VenueOrderGroupSubmission, VenueOrderSnapshot};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1279,6 +1280,121 @@ impl CcxtProcessVenue {
     }
 }
 
+fn okx_algo_client_order_id(group_id: &str) -> String {
+    let mut hash = Fnv1a::new();
+    hash.write_text(group_id);
+    format!("QX{:016X}", hash.finish())
+}
+
+fn okx_oco_worker_request(group: &OrderGroupState) -> QxResult<Value> {
+    group
+        .validate_persisted()
+        .map_err(QxError::BusinessViolation)?;
+    if group.intent.kind != OrderGroupKind::Oco
+        || group.intent.execution != OrderGroupExecution::NativeRequired
+        || group.legs.len() != 2
+    {
+        return Err(QxError::BusinessViolation(
+            "OKX CCXT 当前仅接受 NativeRequired 的双腿 OCO 订单组".into(),
+        ));
+    }
+    let take_profit = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 缺少止盈腿".into()))?;
+    let stop_loss = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 缺少止损腿".into()))?;
+    let first = &take_profit.order;
+    if first.instrument.venue.as_str() != "OKX"
+        || stop_loss.order.instrument != first.instrument
+        || stop_loss.order.account_id != first.account_id
+        || stop_loss.order.side != first.side
+        || stop_loss.order.policy.unwrap_or_default() != first.policy.unwrap_or_default()
+    {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 子腿必须属于同一 OKX 标的、账户、方向和执行策略".into(),
+        ));
+    }
+    let exact = first
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 必须使用精确数量".into()))?;
+    if exact.quote_budget.is_some() || !exact.quantity.is_positive() {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 只接受正的 Base/Contract 数量，不接受 QuoteBudget".into(),
+        ));
+    }
+    let policy = first.policy.unwrap_or_default();
+    validate_ccxt_hedge_direction(first, policy)?;
+    let tp_amounts = take_profit
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 止盈腿缺少精确订单金额".into()))?;
+    let sl_amounts = stop_loss
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 止损腿缺少精确订单金额".into()))?;
+    if tp_amounts.quantity != exact.quantity || sl_amounts.quantity != exact.quantity {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 两条保护腿数量必须与组数量一致".into(),
+        ));
+    }
+    let tp = tp_amounts
+        .conditional
+        .filter(|intent| intent.kind == ConditionalOrderKind::TakeProfit)
+        .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
+    let (tp_trigger, tp_price_type) =
+        tp.ok_or_else(|| QxError::BusinessViolation("OKX OCO 止盈腿缺少精确触发价".into()))?;
+    let sl = sl_amounts
+        .conditional
+        .filter(|intent| intent.kind == ConditionalOrderKind::StopLoss)
+        .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
+    let (sl_trigger, sl_price_type) =
+        sl.ok_or_else(|| QxError::BusinessViolation("OKX OCO 止损腿缺少精确触发价".into()))?;
+    let margin_mode = match policy.margin_mode {
+        MarginMode::Cash => None,
+        MarginMode::Cross => Some("cross"),
+        MarginMode::Isolated => Some("isolated"),
+    };
+    let position_mode = match policy.position_mode {
+        PositionMode::OneWay => "one_way",
+        PositionMode::Hedge => "hedge",
+    };
+    let position_side = match policy.position_side {
+        PositionSide::Net => "net",
+        PositionSide::Long => "long",
+        PositionSide::Short => "short",
+    };
+    let price_type = |value: Option<qx_core::TriggerPriceType>| match value
+        .unwrap_or(qx_core::TriggerPriceType::Last)
+    {
+        qx_core::TriggerPriceType::Last => "last",
+        qx_core::TriggerPriceType::Mark => "mark",
+        qx_core::TriggerPriceType::Index => "index",
+    };
+    Ok(json!({
+        "op": "create_order_group",
+        "kind": "oco",
+        "instrument": first.instrument.to_string(),
+        "side": if first.side == Side::Buy { "buy" } else { "sell" },
+        "amount_exact": exact.quantity.to_string(),
+        "take_profit_trigger_exact": tp_trigger.to_string(),
+        "take_profit_order_price_exact": tp_amounts.limit_price.map(|price| price.to_string()),
+        "take_profit_price_type": price_type(tp_price_type),
+        "stop_loss_trigger_exact": sl_trigger.to_string(),
+        "stop_loss_order_price_exact": sl_amounts.limit_price.map(|price| price.to_string()),
+        "stop_loss_price_type": price_type(sl_price_type),
+        "algo_client_order_id": okx_algo_client_order_id(&group.intent.group_id),
+        "risk_margin_mode": margin_mode,
+        "risk_position_mode": position_mode,
+        "risk_position_side": position_side,
+        "risk_reduce_only": policy.reduce_only,
+    }))
+}
+
 impl Venue for CcxtProcessVenue {
     fn id(&self) -> &str {
         &self.id
@@ -1286,6 +1402,80 @@ impl Venue for CcxtProcessVenue {
 
     fn capabilities(&self) -> &'static qx_zhenlu::venue_capabilities::VenueCapabilities {
         &qx_zhenlu::venue_capabilities::CCXT_PROCESS_VENUE_CAPABILITIES
+    }
+
+    fn validate_order_group(&mut self, group: &OrderGroupState) -> QxResult<()> {
+        if !self.id.eq_ignore_ascii_case("OKX") {
+            return Err(QxError::BusinessViolation(
+                "CCXT 原生订单组目前只实现 OKX OCO".into(),
+            ));
+        }
+        if !self.connected {
+            return Err(QxError::VenueState("CCXT Worker 未连接".into()));
+        }
+        okx_oco_worker_request(group).map(|_| ())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &OrderGroupState,
+        ts: u64,
+    ) -> QxResult<VenueOrderGroupSubmission> {
+        self.validate_order_group(group)?;
+        let expected_client_id = okx_algo_client_order_id(&group.intent.group_id);
+        let response = self.call_or_reconcile(okx_oco_worker_request(group)?)?;
+        if let Some(rejection) = response.get("preflight_rejected") {
+            let class = rejection
+                .get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = rejection
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("OKX OCO 下单预检失败");
+            let message = format!("OKX OCO 下单前预检 [{class}] {message}");
+            return Err(match class {
+                "invalid" | "unsupported" => QxError::BusinessViolation(message),
+                "retryable" => QxError::Transient(message),
+                "rate_limited" => QxError::ResourceExhausted(message),
+                _ => QxError::ReconcileRequired(message),
+            });
+        }
+        let result = response.get("order_group").ok_or_else(|| {
+            QxError::ReconcileRequired("CCXT OKX OCO 响应缺少 order_group".into())
+        })?;
+        let algo_id = result
+            .get("algo_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+            .ok_or_else(|| QxError::ReconcileRequired("OKX OCO 响应缺少有效 algo_id".into()))?;
+        let expected_instrument = group
+            .legs
+            .first()
+            .map(|leg| leg.order.instrument.to_string())
+            .ok_or_else(|| QxError::BusinessViolation("OKX OCO 不包含子腿".into()))?;
+        if result.get("algo_client_order_id").and_then(Value::as_str)
+            != Some(expected_client_id.as_str())
+            || result.get("instrument").and_then(Value::as_str)
+                != Some(expected_instrument.as_str())
+            || result.get("order_type").and_then(Value::as_str) != Some("oco")
+        {
+            return Err(QxError::ReconcileRequired(
+                "OKX OCO 返回的 algo client ID、标的或订单组类型与提交不匹配".into(),
+            ));
+        }
+        Ok(VenueOrderGroupSubmission {
+            venue_group_id: Some(algo_id.to_string()),
+            events: group
+                .legs
+                .iter()
+                .map(|leg| VenueEvent::Accepted {
+                    client_order_id: leg.order.client_id,
+                    venue_order_id: algo_id.to_string(),
+                    ts,
+                })
+                .collect(),
+        })
     }
 
     fn validate_instrument_spec(&mut self, spec: &qx_core::TradingInstrumentSpec) -> QxResult<()> {

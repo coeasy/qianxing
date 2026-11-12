@@ -1,7 +1,9 @@
 use super::*;
 use qx_core::{
     ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts, InstrumentId,
-    MarginMode, OrderPolicy, PositionMode, PositionSide, Quantity, Side, TriggerPriceType,
+    MarginMode, Order, OrderGroupExecution, OrderGroupIntent, OrderGroupKind, OrderGroupLegIntent,
+    OrderGroupLegRole, OrderPolicy, OrderStatus, PositionMode, PositionSide, Quantity, Side,
+    TriggerPriceType,
 };
 use std::sync::{Arc, Mutex};
 
@@ -71,6 +73,90 @@ fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
     // 不写字段时仍按默认 30 秒，不受下界改动影响。
     assert_eq!(read("{}").unwrap(), 30_000);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs() {
+    let instrument = InstrumentId::parse("BTC/USDT.OKX").unwrap();
+    let leg = |client_id: u64,
+               role: OrderGroupLegRole,
+               kind: ConditionalOrderKind,
+               trigger: &str,
+               price: Option<&str>| OrderGroupLegIntent {
+        role,
+        order: Order {
+            client_id,
+            instrument: instrument.clone(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                reduce_only: true,
+                ..OrderPolicy::default()
+            }),
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("0.5").unwrap(),
+                limit_price: price.map(|value| ExactDecimal::parse(value).unwrap()),
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: Some(TriggerPriceType::Mark),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        },
+    };
+    let group = qx_core::OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            "protective-btc-group-1",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                leg(
+                    9101,
+                    OrderGroupLegRole::TakeProfit,
+                    ConditionalOrderKind::TakeProfit,
+                    "110.5",
+                    Some("110.4"),
+                ),
+                leg(
+                    9102,
+                    OrderGroupLegRole::StopLoss,
+                    ConditionalOrderKind::StopLoss,
+                    "90.25",
+                    None,
+                ),
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let request = okx_oco_worker_request(&group).unwrap();
+    assert_eq!(request["op"], "create_order_group");
+    assert_eq!(request["kind"], "oco");
+    assert_eq!(request["instrument"], "BTC/USDT.OKX");
+    assert_eq!(request["amount_exact"], "0.5");
+    assert_eq!(request["take_profit_trigger_exact"], "110.5");
+    assert_eq!(request["take_profit_order_price_exact"], "110.4");
+    assert_eq!(request["take_profit_price_type"], "mark");
+    assert_eq!(request["stop_loss_trigger_exact"], "90.25");
+    assert_eq!(request["stop_loss_order_price_exact"], Value::Null);
+    assert_eq!(request["stop_loss_price_type"], "mark");
+    assert_eq!(
+        request["algo_client_order_id"],
+        okx_algo_client_order_id("protective-btc-group-1")
+    );
 }
 
 struct FakeRpc {
@@ -887,12 +973,16 @@ fn ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill() {
     );
     venue.submit(order(), 10).unwrap();
     let events = venue.sync_order(7, 11).unwrap();
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, VenueEvent::Fill(_))));
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Fill(_)))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Cancelled { .. }))
+    );
     assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
     assert_eq!(venue.snapshot()[0].status, OrderStatus::Cancelled);
 }
@@ -910,12 +1000,16 @@ fn ccxt_partial_fill_during_cancel_pending_keeps_cancel_until_remote_cancel() {
     venue.orders.get_mut(&7).unwrap().status = OrderStatus::CancelPending;
 
     let events = venue.sync_order(7, 11).unwrap();
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, VenueEvent::Fill(_))));
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Fill(_)))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Cancelled { .. }))
+    );
     assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
     assert_eq!(venue.snapshot()[0].status, OrderStatus::CancelPending);
 }
@@ -965,9 +1059,11 @@ fn ccxt_order_policy_is_translated_before_create_order() {
     );
     venue.submit(requested, 10).unwrap();
     let calls = calls.lock().unwrap();
-    assert!(calls
-        .iter()
-        .any(|call| call["op"] == "fetch_contract_settings"));
+    assert!(
+        calls
+            .iter()
+            .any(|call| call["op"] == "fetch_contract_settings")
+    );
     assert!(!calls.iter().any(|call| call["op"] == "set_leverage"));
     assert!(!calls.iter().any(|call| call["op"] == "set_margin_mode"));
     assert!(!calls.iter().any(|call| call["op"] == "set_position_mode"));
@@ -1130,10 +1226,12 @@ fn ccxt_reconciler_keeps_amendment_pending_when_remote_terms_do_not_match() {
     let mut venue = CcxtProcessVenue::new("binance", Box::new(UnchangedRpc));
     venue.restore_order(current.clone(), "remote-7").unwrap();
 
-    assert!(venue
-        .reconcile_amendment(&current, &amended, 30)
-        .unwrap()
-        .is_none());
+    assert!(
+        venue
+            .reconcile_amendment(&current, &amended, 30)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(venue.orders.get(&7), Some(&current));
 }
 

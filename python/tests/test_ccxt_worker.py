@@ -24,6 +24,61 @@ from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
+        class OkxAlgoExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "trade/order-algo" and method == "POST":
+                    return {"code": "0", "data": [{"algoId": "123456", "algoClOrdId": params["algoClOrdId"], "sCode": "0"}]}
+                if path == "trade/order-algo" and method == "GET":
+                    return {"code": "0", "data": [{
+                        "algoId": params["algoId"],
+                        "algoClOrdId": "QXGROUPABC123",
+                        "instId": "BTCUSDT",
+                        "ordType": "oco",
+                        "state": "live",
+                        "ordIdList": [],
+                    }]}
+                if path == "trade/cancel-algos":
+                    return {"code": "0", "data": [{"algoId": params[0]["algoId"], "sCode": "0"}]}
+                raise AssertionError((path, method))
+
+        exchange = OkxAlgoExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange))
+        request = {
+            "op": "create_order_group",
+            "kind": "oco",
+            "instrument": "BTC/USDT.OKX",
+            "side": "sell",
+            "amount_exact": "0.5",
+            "take_profit_trigger_exact": "110",
+            "take_profit_order_price_exact": "109.5",
+            "take_profit_price_type": "last",
+            "stop_loss_trigger_exact": "90",
+            "stop_loss_order_price_exact": None,
+            "stop_loss_price_type": "last",
+            "algo_client_order_id": "QXGROUPABC123",
+        }
+        submitted = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertTrue(submitted["ok"], submitted)
+        self.assertEqual(submitted["result"]["order_group"]["algo_id"], "123456")
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.OKX", "algo_id": "123456"
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        self.assertEqual(fetched["result"]["order_group"]["state"], "live")
+        cancelled = json.loads(worker.handle_line(json.dumps({
+            "op": "cancel_order_group", "kind": "oco", "instrument": "BTC/USDT.OKX", "algo_id": "123456"
+        })))
+        self.assertTrue(cancelled["ok"], cancelled)
+        self.assertEqual(cancelled["result"]["order_group"]["cancel_request_accepted"], "true")
+
     def test_jsonl_conditional_submit_preserves_exact_decimal_wire_objects(self):
         class FeatureExchange(FakeExchange):
             def feature_value(self, symbol, operation, feature):

@@ -318,6 +318,59 @@ class CcxtJsonWorker:
                 params=dict(request.get("params", {})),
             )
             return {"order": _order_wire(order)}
+        if operation == "create_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只接受原生 OCO 订单组",
+                )
+            group = self.client.create_okx_oco_order_group(
+                str(request["instrument"]),
+                side=str(request["side"]),
+                amount_exact=str(request["amount_exact"]),
+                take_profit_trigger_exact=str(request["take_profit_trigger_exact"]),
+                take_profit_order_price_exact=None
+                if request.get("take_profit_order_price_exact") is None
+                else str(request["take_profit_order_price_exact"]),
+                take_profit_price_type=str(request["take_profit_price_type"]),
+                stop_loss_trigger_exact=str(request["stop_loss_trigger_exact"]),
+                stop_loss_order_price_exact=None
+                if request.get("stop_loss_order_price_exact") is None
+                else str(request["stop_loss_order_price_exact"]),
+                stop_loss_price_type=str(request["stop_loss_price_type"]),
+                algo_client_order_id=str(request["algo_client_order_id"]),
+                risk_margin_mode=None
+                if request.get("risk_margin_mode") is None
+                else str(request["risk_margin_mode"]),
+                risk_position_mode=str(request.get("risk_position_mode", "one_way")),
+                risk_position_side=str(request.get("risk_position_side", "net")),
+                risk_reduce_only=request.get("risk_reduce_only", False),
+            )
+            return {"order_group": group}
+        if operation == "fetch_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只查询原生 OCO 订单组",
+                )
+            group = self.client.fetch_okx_oco_order_group(
+                str(request["instrument"]),
+                algo_id=None if request.get("algo_id") is None else str(request["algo_id"]),
+                algo_client_order_id=None
+                if request.get("algo_client_order_id") is None
+                else str(request["algo_client_order_id"]),
+            )
+            return {"order_group": group}
+        if operation == "cancel_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只撤销原生 OCO 订单组",
+                )
+            group = self.client.cancel_okx_oco_order_group(
+                str(request["instrument"]), algo_id=str(request["algo_id"])
+            )
+            return {"order_group": group}
         if operation == "edit_order":
             order = self.client.edit_order(
                 str(request["order_id"]),

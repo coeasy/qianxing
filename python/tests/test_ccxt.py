@@ -368,6 +368,61 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(request[6]["triggerPriceType"], "mark")
         self.assertEqual(order.order_id, "order-1")
 
+    def test_okx_native_oco_uses_algo_resource_for_submit_query_and_cancel(self):
+        class OkxAlgoExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "trade/order-algo" and method == "POST":
+                    return {"code": "0", "data": [{"algoId": "123456", "algoClOrdId": params["algoClOrdId"], "sCode": "0"}]}
+                if path == "trade/order-algo" and method == "GET":
+                    return {"code": "0", "data": [{
+                        "algoId": params["algoId"],
+                        "algoClOrdId": "QXGROUPABC123",
+                        "instId": "BTCUSDT",
+                        "ordType": "oco",
+                        "state": "live",
+                        "actualSide": "",
+                        "actualSz": "0",
+                        "actualPx": "",
+                        "ordIdList": [],
+                    }]}
+                if path == "trade/cancel-algos":
+                    return {"code": "0", "data": [{"algoId": params[0]["algoId"], "sCode": "0"}]}
+                raise AssertionError((path, method))
+
+        exchange = OkxAlgoExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange)
+        submitted = client.create_okx_oco_order_group(
+            "BTC/USDT.OKX",
+            side="sell",
+            amount_exact="0.5",
+            take_profit_trigger_exact="110",
+            take_profit_order_price_exact="109.5",
+            take_profit_price_type="last",
+            stop_loss_trigger_exact="90",
+            stop_loss_order_price_exact=None,
+            stop_loss_price_type="last",
+            algo_client_order_id="QXGROUPABC123",
+        )
+        self.assertEqual(submitted["algo_id"], "123456")
+        order_request = exchange.calls[-1]
+        self.assertEqual(order_request[1:4], ("trade/order-algo", "private", "POST"))
+        self.assertEqual(order_request[4]["ordType"], "oco")
+        self.assertEqual(order_request[4]["tpOrdPx"], "109.5")
+        self.assertEqual(order_request[4]["slOrdPx"], "-1")
+        snapshot = client.fetch_okx_oco_order_group("BTC/USDT.OKX", algo_id="123456")
+        self.assertEqual(snapshot["state"], "live")
+        self.assertEqual(snapshot["order_ids"], [])
+        cancelled = client.cancel_okx_oco_order_group("BTC/USDT.OKX", algo_id="123456")
+        self.assertEqual(cancelled["cancel_request_accepted"], "true")
+        self.assertEqual(exchange.calls[-1][1:4], ("trade/cancel-algos", "private", "POST"))
+
     def test_error_classification_and_retryability_delegate_to_rust(self):
         examples = {
             "DDoSProtection": CcxtErrorClass.RATE_LIMITED,
