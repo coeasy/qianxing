@@ -661,6 +661,7 @@ fn hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeepi
             .iter()
             .map(|envelope| match &envelope.event {
                 ExecutionEvent::Accepted { .. } => "accepted",
+                ExecutionEvent::Rejected { .. } => "rejected",
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
                 ExecutionEvent::CancelPending { .. } => "cancel-pending",

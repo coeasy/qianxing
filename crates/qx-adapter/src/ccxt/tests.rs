@@ -412,6 +412,40 @@ fn order() -> Order {
 }
 
 #[test]
+fn ccxt_rejected_remote_order_emits_a_replayable_rejection_fact() {
+    struct RejectedRpc;
+    impl CcxtRpc for RejectedRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "remote-rejected", "status": "open", "filled_raw": 0}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {"order_id": "remote-rejected", "status": "rejected", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(RejectedRpc));
+    venue.submit(order(), 10).unwrap();
+    let events = venue.sync_order(7, 11).unwrap();
+    assert!(matches!(
+        events.as_slice(),
+        [VenueEvent::Rejected {
+            client_order_id: 7,
+            reason,
+            ts: 11
+        }] if reason == "CCXT 订单被交易所拒绝"
+    ));
+    assert_eq!(venue.snapshot()[0].status, OrderStatus::Rejected);
+}
+
+#[test]
 fn ccxt_process_venue_submits_and_syncs_fill_without_custom_exchange_protocol() {
     let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
     struct CapturingRpc(Arc<Mutex<Vec<Value>>>);

@@ -88,6 +88,17 @@ impl EventAppender for PortState {
                     order.status = OrderStatus::Accepted;
                 }
             }
+            ExecutionEvent::Rejected {
+                client_order_id, ..
+            } => {
+                if let Some(order) = self
+                    .orders
+                    .iter_mut()
+                    .find(|order| order.client_id == *client_order_id)
+                {
+                    order.status = OrderStatus::Rejected;
+                }
+            }
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
                 if let Some(order) = self
                     .orders

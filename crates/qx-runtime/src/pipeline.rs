@@ -106,6 +106,10 @@ pub enum RuntimeExternalEvent {
         client_order_id: u64,
         venue_order_id: Option<String>,
     },
+    Rejected {
+        client_order_id: u64,
+        reason: String,
+    },
     Fill {
         fill: Fill,
     },
@@ -293,6 +297,7 @@ fn venue_event_source_kind(event: &RuntimeExternalEvent) -> &'static str {
         RuntimeExternalEvent::FundingRateSnapshot { .. } => event_source_kind::VENUE_FUNDING_RATE,
         RuntimeExternalEvent::AccountCashflow { .. } => event_source_kind::VENUE_CASHFLOW,
         RuntimeExternalEvent::Accepted { .. } => event_source_kind::VENUE_ORDER_ACCEPTED,
+        RuntimeExternalEvent::Rejected { .. } => event_source_kind::VENUE_ORDER_REJECTED,
         RuntimeExternalEvent::Fill { .. } | RuntimeExternalEvent::FillWithSpec { .. } => {
             event_source_kind::VENUE_ORDER_FILL
         }

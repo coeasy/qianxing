@@ -186,6 +186,7 @@ pub(super) fn enrich_runtime_event_context(
         | RuntimeExternalEvent::MarketOrderBook { .. }
         | RuntimeExternalEvent::FundingRateSnapshot { .. }
         | RuntimeExternalEvent::Accepted { .. }
+        | RuntimeExternalEvent::Rejected { .. }
         | RuntimeExternalEvent::CancelPending { .. }
         | RuntimeExternalEvent::Cancelled { .. }
         | RuntimeExternalEvent::ReconcileRequired { .. } => {}

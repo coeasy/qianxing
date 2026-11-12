@@ -20,6 +20,10 @@ pub enum ExecutionEvent {
         client_order_id: u64,
         venue_order_id: String,
     },
+    Rejected {
+        client_order_id: u64,
+        reason: String,
+    },
     Fill(Box<Fill>),
     FeeAdjustment {
         account_id: String,
@@ -247,6 +251,20 @@ pub fn validate_submit_events(order: &Order, events: &[ExecutionEvent]) -> Resul
                     return Err("Accepted 缺少 venue_order_id".into());
                 }
             }
+            ExecutionEvent::Rejected {
+                client_order_id,
+                reason,
+            } => {
+                if *client_order_id != order.client_id {
+                    return Err(format!(
+                        "Rejected client_order_id 不匹配: expected={} actual={}",
+                        order.client_id, client_order_id
+                    ));
+                }
+                if reason.trim().is_empty() {
+                    return Err("Rejected 缺少拒单原因".into());
+                }
+            }
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
                 validate_fill_for_order(order, fill)?;
                 if let Some(budget) = order.quote_budget_decimal() {
@@ -309,6 +327,9 @@ pub fn validate_cancel_events(
             ExecutionEvent::Cancelled {
                 client_order_id: actual,
             } if *actual == client_order_id => cancellation_seen = true,
+            ExecutionEvent::Rejected { .. } => {
+                return Err("撤单接口不能返回订单拒绝事实".into());
+            }
             ExecutionEvent::ReconcileRequired {
                 client_order_id: actual,
             } if *actual == client_order_id => {}

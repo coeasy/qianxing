@@ -186,6 +186,7 @@ pub mod event_source_kind {
     pub const VENUE_FUNDING_RATE: &str = "venue_funding_rate";
     pub const VENUE_CASHFLOW: &str = "venue_cashflow";
     pub const VENUE_ORDER_ACCEPTED: &str = "venue_order_accepted";
+    pub const VENUE_ORDER_REJECTED: &str = "venue_order_rejected";
     pub const VENUE_ORDER_FILL: &str = "venue_order_fill";
     pub const VENUE_FEE_ADJUSTMENT: &str = "venue_fee_adjustment";
     pub const VENUE_ORDER_CANCELLED: &str = "venue_order_cancelled";

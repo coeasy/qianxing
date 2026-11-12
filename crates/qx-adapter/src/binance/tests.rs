@@ -1063,6 +1063,17 @@ fn binance_submit_events_reach_live_pipeline_and_ledger() {
                 },
                 ts,
             ),
+            VenueEvent::Rejected {
+                client_order_id,
+                reason,
+                ts,
+            } => (
+                qx_runtime::RuntimeExternalEvent::Rejected {
+                    client_order_id,
+                    reason,
+                },
+                ts,
+            ),
             VenueEvent::Fill(fill) => {
                 let ts = fill.ts;
                 (qx_runtime::RuntimeExternalEvent::Fill { fill: *fill }, ts)

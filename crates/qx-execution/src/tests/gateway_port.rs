@@ -146,6 +146,7 @@ struct NativeGroupPortVenue {
     preflight_calls: usize,
     group_submit_calls: usize,
     group_status: Option<qx_core::OrderGroupStatus>,
+    group_facts: Option<Vec<ExecutionEvent>>,
 }
 
 impl VenuePort for NativeGroupPortVenue {
@@ -178,7 +179,9 @@ impl VenuePort for NativeGroupPortVenue {
         Ok(OrderGroupSubmission {
             venue_group_id: Some("exchange-list-42".into()),
             group_status: self.group_status,
-            events: if self.group_status.is_some() {
+            events: if let Some(events) = &self.group_facts {
+                events.clone()
+            } else if self.group_status.is_some() {
                 Vec::new()
             } else {
                 group
@@ -225,6 +228,7 @@ fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc()
         preflight_calls: 0,
         group_submit_calls: 0,
         group_status: None,
+        group_facts: None,
     };
     let mut pipeline = PortState::default();
     let mut source_seq = 0;
@@ -271,6 +275,68 @@ fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc()
 }
 
 #[test]
+fn native_oco_rejection_fact_preserves_live_peer_and_requires_group_cancel() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-rejected-leg-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+        group_status: None,
+        group_facts: Some(vec![
+            ExecutionEvent::Rejected {
+                client_order_id: 7001,
+                reason: "filter failure".into(),
+            },
+            ExecutionEvent::Accepted {
+                client_order_id: 7002,
+                venue_order_id: "exchange-7002".into(),
+            },
+        ]),
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 2);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert_eq!(pipeline.orders[0].status, OrderStatus::Rejected);
+    assert_eq!(pipeline.orders[1].status, OrderStatus::Accepted);
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(
+        restored.status,
+        qx_core::OrderGroupStatus::PeerCancelRequired
+    );
+    assert_eq!(restored.legs[0].order.status, OrderStatus::Rejected);
+    assert_eq!(restored.legs[1].order.status, OrderStatus::Accepted);
+    assert_eq!(
+        restored.legs[1].venue_order_id.as_deref(),
+        Some("exchange-7002")
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn native_group_resource_can_be_active_before_child_orders_exist() {
     let test_root = std::env::current_dir()
         .unwrap()
@@ -289,6 +355,7 @@ fn native_group_resource_can_be_active_before_child_orders_exist() {
         preflight_calls: 0,
         group_submit_calls: 0,
         group_status: Some(qx_core::OrderGroupStatus::Active),
+        group_facts: None,
     };
     let mut pipeline = PortState::default();
     let mut source_seq = 0;

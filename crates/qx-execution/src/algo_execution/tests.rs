@@ -44,6 +44,11 @@ impl EventAppender for MemoryOms {
             } => {
                 self.find_mut(client_order_id)?.status = OrderStatus::Accepted;
             }
+            ExecutionEvent::Rejected {
+                client_order_id, ..
+            } => {
+                self.find_mut(client_order_id)?.status = OrderStatus::Rejected;
+            }
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
                 let order = self.find_mut(fill.order_id)?;
                 order.filled = Quantity::from_raw(order.filled.raw() + fill.qty.raw());

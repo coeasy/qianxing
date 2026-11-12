@@ -288,6 +288,11 @@ pub enum VenueEvent {
         venue_order_id: String,
         ts: u64,
     },
+    Rejected {
+        client_order_id: u64,
+        reason: String,
+        ts: u64,
+    },
     Fill(Box<Fill>),
     FeeAdjustment {
         account_id: String,

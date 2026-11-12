@@ -47,7 +47,19 @@ impl CcxtProcessVenue {
                 .is_some_and(|ordering| ordering.is_eq());
         match remote_status.as_str() {
             "rejected" if filled_is_zero => {
-                return Err(QxError::Permanent("CCXT 订单被交易所拒绝".into()));
+                if order.status.is_terminal() && order.status != OrderStatus::Rejected {
+                    return Err(QxError::ReconcileRequired(
+                        "CCXT 远端拒单与本地其他终态冲突".into(),
+                    ));
+                }
+                if let Some(local) = self.orders.get_mut(&client_order_id) {
+                    local.status = OrderStatus::Rejected;
+                }
+                return Ok(vec![VenueEvent::Rejected {
+                    client_order_id,
+                    reason: "CCXT 订单被交易所拒绝".into(),
+                    ts,
+                }]);
             }
             "rejected" => {
                 return Err(QxError::ReconcileRequired(

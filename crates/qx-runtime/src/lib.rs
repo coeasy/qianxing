@@ -181,6 +181,13 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                         client_order_id,
                         venue_order_id: Some(venue_order_id),
                     },
+                    qx_execution::ExecutionEvent::Rejected {
+                        client_order_id,
+                        reason,
+                    } => RuntimeExternalEvent::Rejected {
+                        client_order_id,
+                        reason,
+                    },
                     qx_execution::ExecutionEvent::Fill(fill) => {
                         RuntimeExternalEvent::Fill { fill: *fill }
                     }

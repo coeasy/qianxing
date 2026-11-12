@@ -148,6 +148,14 @@ fn venue_events_to_application(events: Vec<VenueEvent>) -> Vec<ExecutionEvent> {
                 client_order_id,
                 venue_order_id,
             },
+            VenueEvent::Rejected {
+                client_order_id,
+                reason,
+                ..
+            } => ExecutionEvent::Rejected {
+                client_order_id,
+                reason,
+            },
             VenueEvent::Fill(fill) => ExecutionEvent::Fill(fill),
             VenueEvent::FeeAdjustment {
                 account_id,
@@ -978,6 +986,18 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                         snapshot,
                         venue_order_id,
                     )?;
+                } else if store.load(&group.intent.group_id)?.is_some_and(|current| {
+                    current.status == qx_core::OrderGroupStatus::ReconcileRequired
+                }) {
+                    // A complete response can transiently look unresolved while its legs are
+                    // reduced one at a time (for example Rejected before peer Accepted).
+                    // Reapply each known venue fact through the barrier-aware reducer so the
+                    // final group state reflects the whole response instead of a leg-order race.
+                    store.reconcile_order_snapshot(
+                        &group.intent.group_id,
+                        snapshot,
+                        venue_order_id,
+                    )?;
                 } else {
                     store.apply_order_snapshot(&group.intent.group_id, snapshot, venue_order_id)?;
                 }
@@ -1309,6 +1329,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                 *client_order_id != target.client_order_id
             }
             ExecutionEvent::Accepted { .. }
+            | ExecutionEvent::Rejected { .. }
             | ExecutionEvent::OrderAmendmentPending { .. }
             | ExecutionEvent::OrderAmended { .. }
             | ExecutionEvent::MarketQuote { .. } => true,
@@ -2182,6 +2203,12 @@ fn fact_tag(fact: &ExecutionEvent) -> String {
         ExecutionEvent::Accepted {
             client_order_id, ..
         } => format!("accepted:{client_order_id}"),
+        ExecutionEvent::Rejected {
+            client_order_id,
+            reason,
+        } => {
+            format!("rejected:{client_order_id}:{reason}")
+        }
         ExecutionEvent::CancelPending { client_order_id } => {
             format!("cancel-pending:{client_order_id}")
         }
@@ -2242,6 +2269,9 @@ fn fact_tag(fact: &ExecutionEvent) -> String {
 fn execution_event_client_order_id(event: &ExecutionEvent) -> Option<u64> {
     match event {
         ExecutionEvent::Accepted {
+            client_order_id, ..
+        }
+        | ExecutionEvent::Rejected {
             client_order_id, ..
         }
         | ExecutionEvent::CancelPending { client_order_id }
@@ -2330,6 +2360,18 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 },
                 ts,
                 format!("{worker_id}:accepted:{client_order_id}"),
+            ),
+            VenueEvent::Rejected {
+                client_order_id,
+                reason,
+                ts,
+            } => (
+                ExecutionEvent::Rejected {
+                    client_order_id,
+                    reason,
+                },
+                ts,
+                format!("{worker_id}:rejected:{client_order_id}"),
             ),
             VenueEvent::Fill(fill) => {
                 let fill = *fill;

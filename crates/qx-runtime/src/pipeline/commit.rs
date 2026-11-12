@@ -538,6 +538,21 @@ impl LiveEventPipeline {
                 },
                 Priority::FEEDBACK,
             ),
+            RuntimeExternalEvent::Rejected {
+                client_order_id,
+                reason,
+            } => {
+                if reason.trim().is_empty() {
+                    return Err(QxError::ReconcileRequired("Venue 拒单事实缺少原因".into()));
+                }
+                (
+                    EventKind::Rejected {
+                        client_order_id: *client_order_id,
+                        reason: reason.clone(),
+                    },
+                    Priority::FEEDBACK,
+                )
+            }
             RuntimeExternalEvent::Fill { fill } => {
                 let mut fill = fill.clone();
                 self.normalize_fill_account(&mut fill)?;
@@ -745,6 +760,11 @@ impl LiveEventPipeline {
                 client_order_id, ..
             } => {
                 self.apply_accepted(client_order_id)?;
+            }
+            RuntimeExternalEvent::Rejected {
+                client_order_id, ..
+            } => {
+                self.apply_rejected(client_order_id)?;
             }
             RuntimeExternalEvent::Fill { fill } => {
                 let mut fill = fill;

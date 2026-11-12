@@ -227,11 +227,11 @@ fn paper_ccxt_and_binance_share_submit_cancel_port_contract() {
             responses: Mutex::new(vec![
                 HttpResponse {
                     status: 200,
-                    body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-40","status":"CANCELED","transactTime":100,"fills":[]}"#.into(),
+                    body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-40","status":"CANCELED","executedQty":"0","transactTime":100,"fills":[]}"#.into(),
                 },
                 HttpResponse {
                     status: 200,
-                    body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-40","status":"NEW","transactTime":100,"fills":[]}"#.into(),
+                    body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-40","status":"NEW","executedQty":"0","transactTime":100,"fills":[]}"#.into(),
                 },
             ]),
         });
@@ -444,6 +444,7 @@ fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
             .iter()
             .map(|event| match &event.event {
                 ExecutionEvent::Accepted { .. } => "accepted",
+                ExecutionEvent::Rejected { .. } => "rejected",
                 ExecutionEvent::Fill(_) => "fill",
                 ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
                 ExecutionEvent::CancelPending { .. } => "cancel-pending",
