@@ -7712,11 +7712,11 @@ def control_plane_honesty_check() -> None:
     )
     harness = (ROOT / "crates/qx-cli/tests/unit/mod.rs").read_text(encoding="utf-8")
     check(
-        harness.count("assert_binary_fresh(&binary);") == 2
+        harness.count("assert_binary_fresh(&binary);") == 3
         and "fn assert_binary_fresh(" in harness,
-        "子进程用例的两条 binary 取用分支都过新鲜度守卫（V11 S6）",
-        "守卫只装在 option_env! 取得到值的那条分支上：`cargo test --bin` 走的是回落分支且不重链 "
-        "qx-cli.exe，过期 binary 会让子进程断言对着旧行为静默变绿",
+        "子进程用例的三条 binary 取用分支都过新鲜度守卫（V11 S6）",
+        "显式 QX_CLI_TEST_BINARY、option_env! 与自动回落三条分支都必须检查 binary 新鲜度；"
+        "过期 binary 会让子进程断言对着旧行为静默变绿",
     )
 
 
