@@ -497,15 +497,20 @@ class AppClient(_HttpJsonClient):
         after: int | None = None,
         before: int | None = None,
         client_order_id: int | None = None,
+        exchange_order_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Read one account's report, optionally filtering the event page by client order ID."""
+        """Read one account report, optionally filtering events by order identity."""
         if not isinstance(account_id, str) or not account_id.strip():
             raise ValueError("account_id must be non-empty")
         if not isinstance(venue_id, str) or not venue_id.strip():
             raise ValueError("venue_id must be non-empty")
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
+        if exchange_order_id is not None and (
+            not isinstance(exchange_order_id, str) or not exchange_order_id.strip()
+        ):
+            raise ValueError("exchange_order_id must be a non-empty string")
         for name, value in (
             ("after", after),
             ("before", before),
@@ -525,6 +530,8 @@ class AppClient(_HttpJsonClient):
             query.append(("before", str(before)))
         if client_order_id is not None:
             query.append(("client_order_id", str(client_order_id)))
+        if exchange_order_id is not None:
+            query.append(("exchange_order_id", exchange_order_id))
         query.append(("limit", str(limit)))
         path = _ACCOUNT_READ_PATHS["activity"] + "?" + urlencode(query)
         return self._request_json(path, method="GET")
@@ -537,6 +544,7 @@ class AppClient(_HttpJsonClient):
         after: int | None = None,
         before: int | None = None,
         client_order_id: int | None = None,
+        exchange_order_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
@@ -546,6 +554,7 @@ class AppClient(_HttpJsonClient):
             after=after,
             before=before,
             client_order_id=client_order_id,
+            exchange_order_id=exchange_order_id,
             limit=limit,
         )
 

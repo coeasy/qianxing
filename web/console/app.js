@@ -111,6 +111,7 @@ const state = {
   activityAccountId: null,
   activityVenueId: null,
   activityClientOrderId: null,
+  activityExchangeOrderId: null,
   activityAfter: null,
   activityBefore: null,
   activityPage: null,
@@ -379,13 +380,14 @@ function orderGroupDetailNode(record) {
   return details;
 }
 
-function focusAccountActivityForOrder(order) {
+function focusAccountActivityForOrder(order, exchangeOrderId = null) {
   const instrument = order?.instrument ?? {};
   const venue = instrument.venue?.venue ?? instrument.venue;
   if (!order?.client_id || !order.account_id || !venue) return;
   $("account-activity-account-id").value = String(order.account_id);
   $("account-activity-venue-id").value = String(venue);
   $("account-activity-client-order-id").value = String(order.client_id);
+  $("account-activity-exchange-order-id").value = exchangeOrderId ? String(exchangeOrderId) : "";
   $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
   $("account-activity-load").click();
 }
@@ -604,13 +606,15 @@ async function refreshAccountActivity() {
   const selectedAccount = $("account-activity-account-id").value.trim();
   const selectedVenue = $("account-activity-venue-id").value.trim();
   const selectedClientOrderId = $("account-activity-client-order-id").value.trim();
-  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId) {
+  const selectedExchangeOrderId = $("account-activity-exchange-order-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId) {
     state.activityAfter = null;
     state.activityBefore = null;
   }
   state.activityAccountId = selectedAccount || null;
   state.activityVenueId = selectedVenue || null;
   state.activityClientOrderId = selectedClientOrderId || null;
+  state.activityExchangeOrderId = selectedExchangeOrderId || null;
   state.activitySelectionDirty = false;
   if (!state.activityAccountId || !state.activityVenueId) {
     state.activityPage = null;
@@ -628,6 +632,7 @@ async function refreshAccountActivity() {
   if (state.activityAfter !== null) query.set("after", String(state.activityAfter));
   if (state.activityBefore !== null) query.set("before", String(state.activityBefore));
   if (state.activityClientOrderId !== null) query.set("client_order_id", state.activityClientOrderId);
+  if (state.activityExchangeOrderId !== null) query.set("exchange_order_id", state.activityExchangeOrderId);
   const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
   if (!response.ok) {
     state.activityPage = null;
@@ -721,8 +726,8 @@ function fillTable(tableId, response) {
         if (order.client_id && order.account_id && order.instrument?.venue) {
           const lookup = el("button", "查看账户事件", "ghost order-group-event-link");
           lookup.type = "button";
-          lookup.title = `按 client_order_id ${order.client_id} 查询账户事件`;
-          lookup.addEventListener("click", () => focusAccountActivityForOrder(order));
+          lookup.title = `按客户端和交易所订单号查询账户事件`;
+          lookup.addEventListener("click", () => focusAccountActivityForOrder(order, leg.venue_order_id));
           line.append(lookup);
         }
         legsCell.append(line);
@@ -4084,6 +4089,7 @@ function disconnect() {
   state.activityAccountId = null;
   state.activityVenueId = null;
   state.activityClientOrderId = null;
+  state.activityExchangeOrderId = null;
   state.defaultAccountId = null;
   state.defaultVenueId = null;
   state.activityAfter = null;
@@ -4117,6 +4123,7 @@ function disconnect() {
   $("account-activity-account-id").value = "";
   $("account-activity-venue-id").value = "";
   $("account-activity-client-order-id").value = "";
+  $("account-activity-exchange-order-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {

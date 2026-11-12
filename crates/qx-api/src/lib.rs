@@ -2875,7 +2875,13 @@ fn non_empty_or_system(value: String) -> String {
 fn parse_account_activity_options(
     query: &str,
 ) -> Result<AccountActivityReportReadOptionsV1, AppError> {
-    for key in ["after", "before", "limit", "client_order_id"] {
+    for key in [
+        "after",
+        "before",
+        "limit",
+        "client_order_id",
+        "exchange_order_id",
+    ] {
         let occurrences = query
             .split('&')
             .filter(|part| part.split('=').next() == Some(key))
@@ -2916,6 +2922,8 @@ fn parse_account_activity_options(
         after: parse_cursor("after")?,
         before: parse_cursor("before")?,
         client_order_id: parse_cursor("client_order_id")?,
+        exchange_order_id: query_param(query, "exchange_order_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
         limit,
     })
 }
@@ -3551,6 +3559,26 @@ mod tests {
             "okx-order-9001"
         );
 
+        let exchange_order_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&exchange_order_id=okx-order-9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(
+            exchange_order_trace.status, 200,
+            "{}",
+            exchange_order_trace.body
+        );
+        let exchange_order_trace: serde_json::Value =
+            serde_json::from_str(&exchange_order_trace.body).unwrap();
+        assert_eq!(
+            exchange_order_trace["events"]["exchange_order_id"],
+            "okx-order-9001"
+        );
+        assert_eq!(exchange_order_trace["events"]["available_total"], 1);
+        assert_eq!(exchange_order_trace["events"]["rows"][0]["seq"], 4);
+
         for (query, expected_status) in [
             ("after=1&before=2", 400),
             ("limit=0", 400),
@@ -3558,6 +3586,8 @@ mod tests {
             ("limit=2&limit=3", 400),
             ("client_order_id=nope", 400),
             ("client_order_id=9&client_order_id=10", 400),
+            ("exchange_order_id=", 400),
+            ("exchange_order_id=one&exchange_order_id=two", 400),
             ("after=999", 409),
         ] {
             let response = service.handle(

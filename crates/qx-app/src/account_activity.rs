@@ -4,7 +4,7 @@ use crate::{AppError, AppErrorCategory};
 use qx_core::{Event, EventKind, EventMetadata};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 pub const ACCOUNT_ACTIVITY_REPORT_SCHEMA_VERSION_V1: u32 = 1;
 pub const MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1: usize = 300;
@@ -20,6 +20,9 @@ pub struct AccountActivityReportReadOptionsV1 {
     pub before: Option<u64>,
     #[serde(default)]
     pub client_order_id: Option<u64>,
+    /// Exact opaque venue-assigned order identity (case-sensitive).
+    #[serde(default)]
+    pub exchange_order_id: Option<String>,
     #[serde(default = "default_event_limit")]
     pub limit: usize,
 }
@@ -30,6 +33,7 @@ impl Default for AccountActivityReportReadOptionsV1 {
             after: None,
             before: None,
             client_order_id: None,
+            exchange_order_id: None,
             limit: DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1,
         }
     }
@@ -71,10 +75,12 @@ pub struct AccountActivityRowsV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountActivityEventPageV1 {
-    /// Number of rows available after applying the optional client order filter.
+    /// Number of rows available after applying the optional order identity filters.
     pub available_total: u64,
     #[serde(default)]
     pub client_order_id: Option<u64>,
+    #[serde(default)]
+    pub exchange_order_id: Option<String>,
     pub oldest_seq: Option<u64>,
     pub latest_seq: Option<u64>,
     pub requested_after: Option<u64>,
@@ -284,6 +290,7 @@ pub fn read_account_activity_report_v1(
         events: AccountActivityEventPageV1 {
             available_total: selected_page.total,
             client_order_id: options.client_order_id,
+            exchange_order_id: options.exchange_order_id.clone(),
             oldest_seq: selected_page.oldest_seq,
             latest_seq: selected_page.latest_seq,
             requested_after: options.after,
@@ -334,6 +341,13 @@ fn validate_options(options: &AccountActivityReportReadOptionsV1) -> Result<(), 
     if options.after.is_some() && options.before.is_some() {
         return Err(invalid("账户活动 after 与 before 不能同时提供"));
     }
+    if options
+        .exchange_order_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("账户活动 exchange_order_id 不能为空"));
+    }
     Ok(())
 }
 
@@ -369,10 +383,32 @@ fn select_event_page<'a>(
     let mut total = 0_u64;
     let mut oldest_matching = None;
     let mut latest_matching = None;
+    // Venue IDs are usually present on acknowledgement/fill events only. Join them back to
+    // the local order identity so a venue-order search also returns later fee/ledger facts.
+    let exchange_order_client_ids = options.exchange_order_id.as_deref().map(|expected| {
+        events
+            .iter()
+            .filter_map(|event| {
+                let (client_order_id, exchange_order_id) = order_ids_for_event(event);
+                (exchange_order_id.as_deref() == Some(expected))
+                    .then_some(client_order_id)
+                    .flatten()
+            })
+            .collect::<HashSet<_>>()
+    });
     let is_match = |event: &Event| {
+        let (client_order_id, exchange_order_id) = order_ids_for_event(event);
         options
             .client_order_id
-            .is_none_or(|client_order_id| order_ids_for_event(event).0 == Some(client_order_id))
+            .is_none_or(|expected| client_order_id == Some(expected))
+            && options.exchange_order_id.as_deref().is_none_or(|expected| {
+                exchange_order_id.as_deref() == Some(expected)
+                    || client_order_id.is_some_and(|client_order_id| {
+                        exchange_order_client_ids
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(&client_order_id))
+                    })
+            })
     };
     if let Some(after) = options.after {
         if after > latest {
@@ -618,6 +654,7 @@ mod tests {
                 after: Some(1),
                 before: None,
                 client_order_id: None,
+                exchange_order_id: None,
                 limit: 2,
             },
             200,
@@ -641,6 +678,7 @@ mod tests {
                 after: None,
                 before: Some(3),
                 client_order_id: None,
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -744,6 +782,7 @@ mod tests {
                 after: Some(0),
                 before: None,
                 client_order_id: Some(77),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -762,6 +801,7 @@ mod tests {
                 after: Some(1),
                 before: None,
                 client_order_id: Some(77),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -777,6 +817,7 @@ mod tests {
                 after: None,
                 before: Some(2),
                 client_order_id: Some(77),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -792,6 +833,7 @@ mod tests {
                 after: None,
                 before: Some(1),
                 client_order_id: Some(77),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -808,6 +850,7 @@ mod tests {
                 after: Some(3),
                 before: None,
                 client_order_id: Some(77),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -826,6 +869,7 @@ mod tests {
                 after: Some(0),
                 before: None,
                 client_order_id: Some(999),
+                exchange_order_id: None,
                 limit: 1,
             },
             200,
@@ -833,6 +877,34 @@ mod tests {
         .unwrap();
         assert!(unmatched.events.rows.is_empty());
         assert_eq!(unmatched.events.available_total, 0);
+
+        let venue_order = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: None,
+                before: None,
+                client_order_id: None,
+                exchange_order_id: Some("remote-77".into()),
+                limit: 10,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(venue_order.events.available_total, 5);
+        assert_eq!(
+            venue_order.events.exchange_order_id.as_deref(),
+            Some("remote-77")
+        );
+        assert_eq!(
+            venue_order
+                .events
+                .rows
+                .iter()
+                .map(|row| row.seq)
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4, 5]
+        );
     }
 
     #[test]
@@ -859,6 +931,7 @@ mod tests {
                     after: Some(5),
                     before: Some(4),
                     client_order_id: None,
+                    exchange_order_id: None,
                     limit: 2,
                 },
                 200
@@ -875,6 +948,7 @@ mod tests {
                     after: Some(6),
                     before: None,
                     client_order_id: None,
+                    exchange_order_id: None,
                     limit: 2,
                 },
                 200
@@ -891,6 +965,7 @@ mod tests {
                     after: None,
                     before: None,
                     client_order_id: None,
+                    exchange_order_id: None,
                     limit: MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1 + 1,
                 },
                 200
