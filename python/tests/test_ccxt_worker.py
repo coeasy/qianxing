@@ -24,6 +24,46 @@ from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_jsonl_bitget_uta_oco_submit_uses_strategy_order_endpoint(self):
+        class BitgetUtaExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def private_uta_post_v3_trade_place_strategy_order(self, params):
+                self.calls.append(("private_uta_post_v3_trade_place_strategy_order", params))
+                return {"code": "00000", "data": {"orderId": "123456789"}}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(
+                    exchange_id="bitget",
+                    options={"defaultType": "spot", "uta": True},
+                ),
+                exchange=exchange,
+            )
+        )
+        request = {
+            "op": "create_order_group",
+            "kind": "oco",
+            "instrument": "BTC/USDT.BITGET",
+            "side": "sell",
+            "amount_exact": "0.5",
+            "take_profit_limit_price_exact": "110",
+            "stop_loss_trigger_exact": "90",
+            "stop_loss_order_price_exact": None,
+        }
+
+        result = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["order_group"]["strategy_order_id"], "123456789")
+        method, params = exchange.calls[-1]
+        self.assertEqual(method, "private_uta_post_v3_trade_place_strategy_order")
+        self.assertEqual(params["ocoParams"]["ocoLimitPrice"], "110")
+
     def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
         class OkxAlgoExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

@@ -2793,6 +2793,96 @@ class CcxtExchangeClient:
             "state": snapshot["state"],
         }
 
+    def create_bitget_uta_oco_order_group(
+        self,
+        instrument: str,
+        *,
+        side: str,
+        amount_exact: str,
+        take_profit_limit_price_exact: str,
+        stop_loss_trigger_exact: str,
+        stop_loss_order_price_exact: str | None,
+    ) -> dict[str, str]:
+        """Place a Bitget UTA Spot OCO (resting limit TP plus conditional SL)."""
+        options = self.config.options or {}
+        if self.config.exchange_id.lower() != "bitget" or options.get("uta") is not True:
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "Bitget 原生 OCO 仅支持显式配置的 UTA 账户",
+            )
+        if side not in ("buy", "sell"):
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OCO side 必须为 buy 或 sell")
+        market = self.resolve_market(instrument)
+        if market.contract or market.market_type != "spot":
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "Bitget UTA 原生 OCO 当前只支持 Spot，不支持 Margin 或 Futures",
+            )
+
+        amount_text = _exact_decimal_wire_text(amount_exact, field="OCO amount")
+        if Fraction(amount_text) <= 0:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "OCO amount 必须为正")
+        self._require_exact_exchange_precision_text(
+            "amount_to_precision", market.symbol, amount_text, field="OCO amount", known_step=None
+        )
+
+        def price_text(value: str, label: str) -> str:
+            result = _exact_decimal_wire_text(value, field=label)
+            if Fraction(result) <= 0:
+                raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{label} 必须为正")
+            self._require_exact_exchange_precision_text(
+                "price_to_precision", market.symbol, result, field=label, known_step=None
+            )
+            return result
+
+        limit_price = price_text(take_profit_limit_price_exact, "OCO 限价止盈价")
+        trigger_price = price_text(stop_loss_trigger_exact, "OCO 止损触发价")
+        if (side == "sell" and Fraction(limit_price) <= Fraction(trigger_price)) or (
+            side == "buy" and Fraction(limit_price) >= Fraction(trigger_price)
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "Bitget OCO 限价止盈价与条件止损触发价顺序不正确",
+            )
+        conditional_order_type = "market" if stop_loss_order_price_exact is None else "limit"
+        oco_params: dict[str, str] = {
+            "ocoLimitPrice": limit_price,
+            "ocoTriggerPrice": trigger_price,
+            "ocoOrderType": conditional_order_type,
+        }
+        if stop_loss_order_price_exact is not None:
+            oco_params["ocoOrderPrice"] = price_text(
+                stop_loss_order_price_exact, "OCO 止损执行价"
+            )
+        response = self._call(
+            "private_uta_post_v3_trade_place_strategy_order",
+            {
+                "category": "SPOT",
+                "symbol": market.market_id,
+                "type": "oco",
+                "side": side,
+                "qty": amount_text,
+                "ocoParams": oco_params,
+            },
+        )
+        if not isinstance(response, Mapping) or response.get("code") != "00000":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "Bitget UTA strategy-order 顶层响应失败")
+        data = response.get("data")
+        order_id = str(data.get("orderId") or "").strip() if isinstance(data, Mapping) else ""
+        if not order_id:
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNKNOWN,
+                "Bitget UTA OCO 已请求但响应缺少策略订单 ID，必须对账且禁止重发",
+            )
+        return {
+            "strategy_order_id": order_id,
+            "instrument": market.instrument,
+            "order_type": "oco",
+            # There is no OCO clientOid in Bitget's contract. Acknowledge the resource
+            # identity, but let the reconciler query its authoritative state before activation.
+            "state": "submitting",
+        }
+
     def fetch_okx_oco_order_group(
         self,
         instrument: str,

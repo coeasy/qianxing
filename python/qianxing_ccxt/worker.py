@@ -324,6 +324,21 @@ class CcxtJsonWorker:
                     CcxtErrorClass.UNSUPPORTED,
                     "CCXT worker 当前只接受原生 OCO 订单组",
                 )
+            if (
+                self.client.config.exchange_id.lower() == "bitget"
+                and bool((self.client.config.options or {}).get("uta", False))
+            ):
+                group = self.client.create_bitget_uta_oco_order_group(
+                    str(request["instrument"]),
+                    side=str(request["side"]),
+                    amount_exact=str(request["amount_exact"]),
+                    take_profit_limit_price_exact=str(request["take_profit_limit_price_exact"]),
+                    stop_loss_trigger_exact=str(request["stop_loss_trigger_exact"]),
+                    stop_loss_order_price_exact=None
+                    if request.get("stop_loss_order_price_exact") is None
+                    else str(request["stop_loss_order_price_exact"]),
+                )
+                return {"order_group": group}
             group = self.client.create_okx_oco_order_group(
                 str(request["instrument"]),
                 side=str(request["side"]),

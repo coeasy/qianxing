@@ -426,6 +426,79 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(cancelled["cancel_request_accepted"], "true")
         self.assertEqual(exchange.calls[-1][1:4], ("trade/cancel-algos", "private", "POST"))
 
+    def test_bitget_uta_oco_uses_strategy_endpoint_without_client_oid(self):
+        class BitgetUtaExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def private_uta_post_v3_trade_place_strategy_order(self, params):
+                self.calls.append(("private_uta_post_v3_trade_place_strategy_order", params))
+                return {"code": "00000", "data": {"orderId": "123456789"}}
+
+        exchange = BitgetUtaExchange()
+        client = CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}),
+            exchange=exchange,
+        )
+        submitted = client.create_bitget_uta_oco_order_group(
+            "BTC/USDT.BITGET",
+            side="sell",
+            amount_exact="0.5",
+            take_profit_limit_price_exact="110",
+            stop_loss_trigger_exact="90",
+            stop_loss_order_price_exact=None,
+        )
+
+        self.assertEqual(submitted["strategy_order_id"], "123456789")
+        self.assertEqual(submitted["state"], "submitting")
+        method, params = exchange.calls[-1]
+        self.assertEqual(method, "private_uta_post_v3_trade_place_strategy_order")
+        self.assertEqual(params["category"], "SPOT")
+        self.assertEqual(params["type"], "oco")
+        self.assertEqual(params["qty"], "0.5")
+        self.assertEqual(
+            params["ocoParams"],
+            {
+                "ocoLimitPrice": "110",
+                "ocoTriggerPrice": "90",
+                "ocoOrderType": "market",
+            },
+        )
+        self.assertNotIn("clientOid", params)
+
+    def test_bitget_uta_oco_rejects_unsupported_account_and_price_relationships(self):
+        exchange = FakeExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="bitget"), exchange=exchange)
+        with self.assertRaises(CcxtConnectorError):
+            client.create_bitget_uta_oco_order_group(
+                "BTC/USDT.BITGET",
+                side="sell",
+                amount_exact="0.5",
+                take_profit_limit_price_exact="110",
+                stop_loss_trigger_exact="90",
+                stop_loss_order_price_exact=None,
+            )
+
+        uta = CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"uta": True}), exchange=exchange
+        )
+        with self.assertRaises(CcxtConnectorError):
+            uta.create_bitget_uta_oco_order_group(
+                "BTC/USDT.BITGET",
+                side="sell",
+                amount_exact="0.5",
+                take_profit_limit_price_exact="80",
+                stop_loss_trigger_exact="90",
+                stop_loss_order_price_exact=None,
+            )
+        self.assertFalse(
+            any(call[0] == "private_uta_post_v3_trade_place_strategy_order" for call in exchange.calls),
+            "invalid requests must fail before submitting an OCO",
+        )
+
     def test_error_classification_and_retryability_delegate_to_rust(self):
         examples = {
             "DDoSProtection": CcxtErrorClass.RATE_LIMITED,

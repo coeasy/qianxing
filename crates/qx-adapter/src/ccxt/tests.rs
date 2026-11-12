@@ -165,6 +165,97 @@ fn okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs() {
     assert!(submission.events.is_empty());
 }
 
+#[test]
+fn bitget_uta_oco_group_request_is_limit_tp_plus_market_trigger_sl() {
+    let instrument = InstrumentId::parse("BTC/USDT.BITGET").unwrap();
+    let take_profit = Order {
+        client_id: 9201,
+        instrument: instrument.clone(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: Some(OrderPolicy::default()),
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.5").unwrap(),
+            limit_price: Some(ExactDecimal::parse("110").unwrap()),
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: None,
+        }),
+    };
+    let stop_loss = Order {
+        client_id: 9202,
+        instrument,
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: Some(OrderPolicy::default()),
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.5").unwrap(),
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(ConditionalOrderIntent {
+                kind: ConditionalOrderKind::StopLoss,
+                trigger_price: Some(ExactDecimal::parse("90").unwrap()),
+                trigger_price_type: Some(TriggerPriceType::Last),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    };
+    let group = qx_core::OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            "bitget-protective-btc-1",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit,
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss,
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let request = bitget_uta_oco_worker_request(&group).unwrap();
+    assert_eq!(request["op"], "create_order_group");
+    assert_eq!(request["instrument"], "BTC/USDT.BITGET");
+    assert_eq!(request["amount_exact"], "0.5");
+    assert_eq!(request["take_profit_limit_price_exact"], "110");
+    assert_eq!(request["stop_loss_trigger_exact"], "90");
+    assert_eq!(request["stop_loss_order_price_exact"], Value::Null);
+
+    let mut venue = CcxtProcessVenue::new("bitget", Box::new(FakeRpc { calls: Vec::new() }));
+    let submission = venue.submit_order_group(&group, 123).unwrap();
+    assert_eq!(submission.venue_group_id.as_deref(), Some("987654321"));
+    assert_eq!(
+        submission.group_status,
+        Some(qx_core::OrderGroupStatus::ReconcileRequired),
+        "Bitget OCO must not become active until the strategy resource is re-queried"
+    );
+    assert!(submission.events.is_empty());
+}
+
 struct FakeRpc {
     calls: Vec<Value>,
 }
@@ -291,11 +382,12 @@ impl CcxtRpc for FakeRpc {
             })),
             Some("create_order_group") => Ok(json!({
                 "order_group": {
-                    "algo_id": "123456",
-                    "algo_client_order_id": request["algo_client_order_id"],
+                    "algo_id": if request["instrument"] == "BTC/USDT.BITGET" { "" } else { "123456" },
+                    "algo_client_order_id": request.get("algo_client_order_id"),
+                    "strategy_order_id": if request["instrument"] == "BTC/USDT.BITGET" { "987654321" } else { "" },
                     "instrument": request["instrument"],
                     "order_type": "oco",
-                    "state": "live"
+                    "state": if request["instrument"] == "BTC/USDT.BITGET" { "submitting" } else { "live" }
                 }
             })),
             _ => Ok(json!({})),
