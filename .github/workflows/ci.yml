@@ -187,6 +187,7 @@ jobs:
       - name: Measure frozen real-data backtest under Linux resource quotas
         shell: bash
         run: |
+          mkdir -p benchmarks/results
           image=ubuntu:24.04
           docker pull "$image"
           image_id=$(docker image inspect --format='{{.Id}}' "$image")
