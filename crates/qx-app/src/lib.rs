@@ -272,7 +272,8 @@ pub use report_read::{
     PROVIDER_DEPTH_BACKTEST_REPORT_SCHEMA_VERSION_V1, RESEARCH_RUN_REPORT_SCHEMA_VERSION,
 };
 pub use run_handle::{
-    RunEvent, RunEventKind, RunHandle, RunObservation, RunStatus, DEFAULT_WAIT_TIMEOUT,
+    event_id as run_event_id, RunEvent, RunEventKind, RunHandle, RunObservation, RunStatus,
+    DEFAULT_WAIT_TIMEOUT,
 };
 pub use spec::market_spec::{
     backtest_margin_model_from_market, backtest_market_spec_binding, market_spec_from_value,

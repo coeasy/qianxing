@@ -55,6 +55,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录 {} 格式损坏: {error}", path.display()),
             )
         })?;
+        let mut events_upgraded = false;
         if !matches!(snapshot.schema_version, 1 | SNAPSHOT_VERSION)
             || !super::valid_run_route_id(&snapshot.run_id)
             || path.file_stem().and_then(|name| name.to_str()) != Some(snapshot.run_id.as_str())
@@ -64,12 +65,21 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录身份或 schema 无效: {}", path.display()),
             ));
         }
-        if snapshot
+        let invalid_event = snapshot
             .events
-            .iter()
+            .iter_mut()
             .enumerate()
-            .any(|(index, event)| event.run_id != snapshot.run_id || event.seq != index as u64 + 1)
-        {
+            .any(|(index, event)| {
+                let seq = index as u64 + 1;
+                if event.event_id.is_empty() {
+                    event.event_id = qx_app::run_event_id(&snapshot.run_id, seq);
+                    events_upgraded = true;
+                }
+                event.run_id != snapshot.run_id
+                    || event.seq != seq
+                    || event.event_id != qx_app::run_event_id(&snapshot.run_id, seq)
+            });
+        if invalid_event {
             return Err(AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("运行记录事件身份或序号无效: {}", path.display()),
@@ -99,12 +109,16 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 .with_correlation_id(run_id.clone())
                 .to_json(),
             );
+            let seq = snapshot.events.len() as u64 + 1;
             snapshot.events.push(RunEvent {
-                seq: snapshot.events.len() as u64 + 1,
+                seq,
+                event_id: qx_app::run_event_id(&run_id, seq),
                 run_id: run_id.clone(),
                 kind: qx_app::RunEventKind::Failed,
                 status: RunStatus::Failed,
             });
+            write_snapshot(root, &snapshot, false)?;
+        } else if events_upgraded {
             write_snapshot(root, &snapshot, false)?;
         }
         let run_id = snapshot.run_id.clone();
@@ -337,12 +351,14 @@ mod tests {
             entry.events = vec![
                 RunEvent {
                     seq: 1,
+                    event_id: qx_app::run_event_id("persisted-success", 1),
                     run_id: "persisted-success".into(),
                     kind: qx_app::RunEventKind::Started,
                     status: RunStatus::Running,
                 },
                 RunEvent {
                     seq: 2,
+                    event_id: qx_app::run_event_id("persisted-success", 2),
                     run_id: "persisted-success".into(),
                     kind: qx_app::RunEventKind::Succeeded,
                     status: RunStatus::Succeeded,
@@ -351,6 +367,16 @@ mod tests {
             save(&root, entry).unwrap();
         }
         drop(registry);
+
+        // v2 snapshots written before event_id existed remain readable. The
+        // loader fills deterministic IDs and republishes the upgraded record.
+        let path = root.join("persisted-success.json");
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for event in legacy["events"].as_array_mut().unwrap() {
+            event.as_object_mut().unwrap().remove("event_id");
+        }
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
 
         let reopened = AppRunRegistry::open(root.clone());
         let response = reopened.status("persisted-success");
@@ -362,6 +388,10 @@ mod tests {
         let events = reopened.events("persisted-success", 1);
         let events: serde_json::Value = serde_json::from_str(&events.body).unwrap();
         assert_eq!(events[0]["seq"], 2);
+        assert_eq!(events[0]["event_id"], "persisted-success:2");
+        let upgraded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(upgraded["events"][0]["event_id"], "persisted-success:1");
         std::fs::remove_dir_all(root).unwrap();
     }
 

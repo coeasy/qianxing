@@ -13,6 +13,22 @@ from qianxing.app import AsyncCoreClient, AsyncRunHandle, AppClient, PaperClient
 
 
 class AsyncSdkTests(unittest.TestCase):
+    def test_run_event_model_derives_stable_id_for_legacy_payloads(self):
+        event = client_local.RunEvent.from_dict(
+            {"seq": 3, "run_id": "api-run", "kind": "started", "status": "running"}
+        )
+        self.assertEqual(event.event_id, "api-run:3")
+        current = client_local.RunEvent.from_dict(
+            {
+                "seq": 4,
+                "run_id": "api-run",
+                "kind": "succeeded",
+                "status": "succeeded",
+                "event_id": "api-run:4",
+            }
+        )
+        self.assertEqual(current.event_id, "api-run:4")
+
     def test_async_core_methods_delegate_to_the_native_contract(self):
         client = AsyncCoreClient()
         spec = {"schema_version": 1, "request_id": "local-async"}

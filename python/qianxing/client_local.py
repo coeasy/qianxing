@@ -156,9 +156,12 @@ class RunEvent:
     run_id: str
     kind: Literal["started", "cancellation_requested", "succeeded", "cancelled", "failed"]
     status: Literal["running", "cancelling", "succeeded", "cancelled", "failed"]
+    event_id: str = ""
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunEvent":
+        if "event_id" not in value:
+            value = {**value, "event_id": f"{value['run_id']}:{value['seq']}"}
         return cls(**value)
 
 class AsyncRunHandle(Generic[_ResultT]):

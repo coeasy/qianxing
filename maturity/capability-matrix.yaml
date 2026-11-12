@@ -103,8 +103,8 @@ domains:
   - name: web_api
     capability_id: qx.domain.web_api
     level: implemented-unverified
-    evidence: [crates/qx-api, web/console, deploy/README.md]
-    limitations: ["路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"]
+    evidence: [crates/qx-api, web/console, deploy/README.md, crates/qx-app/src/run_handle.rs, crates/qx-api/src/app_runs/persistence.rs, python/qianxing/client_local.py]
+    limitations: ["Run 生命周期事件现有确定性 event_id=run_id:seq，贯通 Rust/Python/HTTP；旧持久化快照缺 ID 时读取升级。它仍是生命周期事件快照，不是逐事件事务日志，且不含订单/成交事实", "路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"]
     next_gate: "落方案 §5.x 的逐操作可追溯验收与 Web/桌面 E2E"
 
   - name: release
