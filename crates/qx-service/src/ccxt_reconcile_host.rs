@@ -24,6 +24,96 @@ use qx_runtime::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+/// Persist CCXT private-stream order facts into matching native OCO group snapshots.
+/// The stream reducer must append the order facts to EventLog first; this function only
+/// derives the group read model from that canonical local state and never calls the venue.
+pub(crate) fn sync_ccxt_order_groups_from_user_stream(
+    pipeline_root: &std::path::Path,
+    pipeline: &qx_runtime::LiveEventPipeline,
+    account_id: &str,
+    venue_id: &str,
+) -> Result<usize, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
+    let orders = pipeline
+        .orders()
+        .into_iter()
+        .map(|order| (order.client_id, order))
+        .collect::<BTreeMap<_, _>>();
+    let mut updates = 0_usize;
+    for group_id in store.group_ids()? {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
+        };
+        if group.intent.kind != qx_core::OrderGroupKind::Oco
+            || group.venue_group_id.is_none()
+            || group.legs.iter().any(|leg| {
+                leg.order.account_id != account_id
+                    || !leg
+                        .order
+                        .instrument
+                        .venue
+                        .as_str()
+                        .eq_ignore_ascii_case(venue_id)
+            })
+            || matches!(
+                group.status,
+                qx_core::OrderGroupStatus::Planned
+                    | qx_core::OrderGroupStatus::Filled
+                    | qx_core::OrderGroupStatus::Cancelled
+                    | qx_core::OrderGroupStatus::Rejected
+            )
+        {
+            continue;
+        }
+        let snapshots = group
+            .legs
+            .iter()
+            .filter_map(|leg| orders.get(&leg.order.client_id))
+            .collect::<Vec<_>>();
+        // Never partially clear a group barrier from a stream batch. The REST reconciler
+        // owns incomplete/unknown child sets after reconnect or a missed private event.
+        if group.status == qx_core::OrderGroupStatus::ReconcileRequired
+            && (snapshots.len() != group.legs.len()
+                || snapshots
+                    .iter()
+                    .any(|snapshot| snapshot.status == qx_core::OrderStatus::Unknown))
+        {
+            continue;
+        }
+        for snapshot in snapshots {
+            if snapshot.status == qx_core::OrderStatus::Unknown {
+                continue;
+            }
+            let venue_order_id = pipeline.venue_order_id(snapshot.client_id);
+            let current_group = store
+                .load(&group_id)?
+                .ok_or_else(|| format!("CCXT 用户流同步时订单组消失 group_id={group_id}"))?;
+            let current_leg = current_group
+                .legs
+                .iter()
+                .find(|leg| leg.order.client_id == snapshot.client_id)
+                .ok_or_else(|| "CCXT 用户流订单快照无法映射到订单组子腿".to_string())?;
+            let reconciling = current_group.status == qx_core::OrderGroupStatus::ReconcileRequired;
+            if !reconciling
+                && current_leg.order == *snapshot
+                && (venue_order_id.is_none()
+                    || current_leg.venue_order_id.as_deref() == venue_order_id.as_deref())
+            {
+                continue;
+            }
+            if reconciling {
+                store.reconcile_order_snapshot(&group_id, snapshot, venue_order_id)?;
+            } else {
+                store.apply_order_snapshot(&group_id, snapshot, venue_order_id)?;
+            }
+            updates = updates.saturating_add(1);
+        }
+    }
+    Ok(updates)
+}
+
 pub struct CcxtReconcileWorkerInput {
     pub context: WorkerContext,
     pub worker: WorkerConfig,
@@ -1429,7 +1519,52 @@ fn runtime_timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod native_order_group_reconcile_tests {
-    use super::{OkxOcoObservation, classify_okx_oco_observation, okx_algo_client_order_id};
+    use super::{
+        classify_okx_oco_observation, okx_algo_client_order_id,
+        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+    };
+
+    fn protection_order(
+        client_id: u64,
+        account_id: &str,
+        venue_id: &str,
+        kind: qx_core::ConditionalOrderKind,
+        trigger: &str,
+    ) -> qx_core::Order {
+        use qx_core::{
+            ConditionalOrderIntent, ExactDecimal, ExactOrderAmounts, InstrumentId, Order,
+            OrderStatus, Quantity, Side, TriggerPriceType,
+        };
+
+        Order {
+            client_id,
+            instrument: InstrumentId::parse(&format!("BTC/USDT.{venue_id}")).unwrap(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: account_id.to_owned(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("0.01").unwrap(),
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: Some(TriggerPriceType::Mark),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        }
+    }
 
     #[test]
     fn okx_oco_observation_requires_consistent_child_and_fill_facts() {
@@ -1485,5 +1620,138 @@ mod native_order_group_reconcile_tests {
         assert!(first.bytes().all(|byte| byte.is_ascii_alphanumeric()));
         assert_eq!(first, okx_algo_client_order_id("protect-btc-1"));
         assert_ne!(first, okx_algo_client_order_id("protect-btc-2"));
+    }
+
+    #[test]
+    fn ccxt_user_stream_syncs_only_matching_native_oco_group_facts() {
+        use qx_core::{
+            ConditionalOrderKind, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+            OrderGroupLegIntent, OrderGroupLegRole, OrderGroupStatus, OrderStatus,
+        };
+        use qx_runtime::{LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent};
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-ccxt-user-stream-oco-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        let account_id = "main";
+        let venue_id = "OKX";
+        let tp = protection_order(
+            101,
+            account_id,
+            venue_id,
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let sl = protection_order(
+            102,
+            account_id,
+            venue_id,
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let intent = OrderGroupIntent::new(
+            "oco-stream-test",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: tp.clone(),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: sl.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut store = FileOrderGroupStore::new(root.join("order-groups")).unwrap();
+        store
+            .create(&qx_core::OrderGroupState::from_intent(intent).unwrap())
+            .unwrap();
+        assert!(store.begin_submission("oco-stream-test").unwrap());
+        let mut submitted_tp = tp.clone();
+        submitted_tp.status = OrderStatus::Submitted;
+        let mut submitted_sl = sl.clone();
+        submitted_sl.status = OrderStatus::Submitted;
+        store
+            .apply_order_snapshot("oco-stream-test", &submitted_tp, None)
+            .unwrap();
+        store
+            .apply_order_snapshot("oco-stream-test", &submitted_sl, None)
+            .unwrap();
+        store
+            .record_venue_group_id("oco-stream-test", "algo-77".into())
+            .unwrap();
+        store.activate_native_group("oco-stream-test").unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(&root, "account-main", "USDT").unwrap();
+        let mut source_seq = 0;
+        for (order, remote_id) in [(tp, "201"), (sl, "202")] {
+            pipeline.register_order(order.clone(), 1).unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::Accepted {
+                        client_order_id: order.client_id,
+                        venue_order_id: Some(remote_id.into()),
+                    },
+                    2,
+                    2,
+                    source_seq,
+                    format!("ccxt-accepted-{}", order.client_id),
+                ))
+                .unwrap();
+        }
+
+        assert_eq!(
+            sync_ccxt_order_groups_from_user_stream(&root, &pipeline, account_id, venue_id)
+                .unwrap(),
+            2
+        );
+        let synced = store.load("oco-stream-test").unwrap().unwrap();
+        assert_eq!(synced.status, OrderGroupStatus::Active);
+        for leg in synced.legs {
+            assert!(matches!(
+                leg.order.status,
+                OrderStatus::Accepted | OrderStatus::Working
+            ));
+            assert_eq!(
+                leg.venue_order_id.as_deref(),
+                Some(if leg.order.client_id == 101 {
+                    "201"
+                } else {
+                    "202"
+                })
+            );
+        }
+        assert_eq!(
+            sync_ccxt_order_groups_from_user_stream(&root, &pipeline, account_id, venue_id)
+                .unwrap(),
+            0,
+            "replaying the same stream projection must be idempotent"
+        );
+        assert_eq!(
+            sync_ccxt_order_groups_from_user_stream(&root, &pipeline, "other-account", venue_id)
+                .unwrap(),
+            0,
+            "a different account stream must not write this OCO group"
+        );
+        assert_eq!(
+            sync_ccxt_order_groups_from_user_stream(&root, &pipeline, account_id, "BITGET")
+                .unwrap(),
+            0,
+            "a different venue stream must not write this OCO group"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

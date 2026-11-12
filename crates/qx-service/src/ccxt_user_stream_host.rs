@@ -1,5 +1,6 @@
 //! CCXT Pro account order stream lifecycle and EventLog reduction.
 
+use crate::ccxt_reconcile_host::sync_ccxt_order_groups_from_user_stream;
 use crate::ccxt_stream_retry::{
     ccxt_idle_poll_delay, ccxt_watch_reply_is_idle, CcxtReconnectBudget,
 };
@@ -61,7 +62,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
     // Reply before 4/5 of the driver's read window so empty but healthy accounts stay cancellable.
     let watch_idle_ms = qx_adapter::ccxt_idle_window_ms(client.timeout_ms());
-    let mut venue = CcxtProcessVenue::new(venue_id, Box::new(client));
+    let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
     let mut source_seq = pipeline
         .log()
         .events()
@@ -260,10 +261,24 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             };
             reduced = reduced.saturating_add(reduced_events);
         }
+        let order_group_updates = if matched > 0 {
+            let account_id = worker
+                .account_id
+                .as_deref()
+                .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
+            sync_ccxt_order_groups_from_user_stream(
+                &pipeline_storage.root,
+                &pipeline,
+                account_id,
+                &venue_id,
+            )?
+        } else {
+            0
+        };
         context.mark(
             ServiceStatus::Ready,
             format!(
-                "ccxt pro orders matched={matched} reduced={reduced} reconcile_errors={reconcile_errors}"
+                "ccxt pro orders matched={matched} reduced={reduced} order_group_updates={order_group_updates} reconcile_errors={reconcile_errors}"
             ),
             Some(received_ts),
         )?;
