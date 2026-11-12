@@ -6,6 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import platform
+import shutil
 import statistics
 import sys
 import tempfile
@@ -14,6 +17,7 @@ from pathlib import Path
 from hardware import hardware_fingerprint
 from process_metrics import run_measured
 from run_baseline import find_binary, percentile, resource_summary
+from runtime_limits import runtime_limits
 from source_fingerprint import MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA, measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,10 +29,34 @@ def main() -> int:
     parser.add_argument("--bars", required=True, type=Path)
     parser.add_argument("--spec-template", required=True, type=Path)
     parser.add_argument("--repeats", type=int, default=7)
+    parser.add_argument(
+        "--cpu-affinity-count",
+        type=int,
+        default=0,
+        help="pin every measured CLI process to this many allowed Linux CPUs (0 leaves affinity unchanged)",
+    )
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     if args.repeats < 2:
         parser.error("--repeats must be at least 2")
+    benchmark_affinity: list[int] | None = None
+    command_prefix: list[str] = []
+    if args.cpu_affinity_count:
+        if args.cpu_affinity_count < 1 or platform.system() != "Linux":
+            parser.error("--cpu-affinity-count requires a positive count on Linux")
+        try:
+            allowed_cpus = sorted(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            parser.error("the current Linux process does not expose CPU affinity")
+        if args.cpu_affinity_count > len(allowed_cpus):
+            parser.error(
+                f"requested {args.cpu_affinity_count} CPUs, but only {len(allowed_cpus)} are allowed"
+            )
+        taskset = shutil.which("taskset")
+        if taskset is None:
+            parser.error("taskset is required to enforce --cpu-affinity-count")
+        benchmark_affinity = allowed_cpus[: args.cpu_affinity_count]
+        command_prefix = [taskset, "--cpu-list", ",".join(map(str, benchmark_affinity))]
     binary = find_binary(args.binary)
     frame = args.bars.resolve()
     bars_count = len(json.loads(frame.read_text(encoding="utf-8"))["ts"])
@@ -48,7 +76,7 @@ def main() -> int:
             spec_path = workdir / f"spec-{index}.json"
             spec_path.write_text(json.dumps(spec, separators=(",", ":")), encoding="utf-8")
             measured = run_measured(
-                [str(binary), "app", "backtest", str(spec_path)], cwd=ROOT
+                [*command_prefix, str(binary), "app", "backtest", str(spec_path)], cwd=ROOT
             )
             if measured.return_code != 0:
                 raise RuntimeError(measured.stderr.strip() or measured.stdout.strip())
@@ -66,6 +94,25 @@ def main() -> int:
     if not deterministic:
         raise RuntimeError(f"real-data result hash changed across repeats: {hashes}")
     p50 = percentile([sample.elapsed_ms for sample in samples], 0.50)
+    observed_limits = runtime_limits()
+    limitations = [
+        "This measures qx-cli with this declared BacktestSpec and frozen data only; it is not a same-semantics competitor comparison.",
+        "Fill model, fee schedule, and inline market rules come from the spec template and are not claimed to be a current Binance exchangeInfo snapshot.",
+        "The result hash is deterministic execution evidence, not evidence of strategy profitability.",
+    ]
+    if platform.system() == "Linux":
+        if observed_limits["cgroup_cpu_limit_count"] is None:
+            limitations.append(
+                "No effective cgroup CPU quota was observable; CPU affinity constrains eligible CPUs but does not establish a CPU-time quota."
+            )
+        if observed_limits["cgroup_memory_limit_bytes"] is None:
+            limitations.append(
+                "No effective cgroup memory limit was observable; host/container RAM totals must not be treated as the benchmark memory budget."
+            )
+    if all(sample.peak_tree_rss_bytes is None for sample in samples):
+        limitations.append(
+            "Process-tree RSS was unavailable in this environment; peak RSS covers the measured CLI process only."
+        )
     report = {
         "schema_version": 1,
         "scenario": "qx-cli app backtest with frozen public 180d BTCUSDT 15m data",
@@ -88,6 +135,15 @@ def main() -> int:
         "p95_ms": round(percentile([sample.elapsed_ms for sample in samples], 0.95), 3),
         "mean_ms": round(statistics.fmean(sample.elapsed_ms for sample in samples), 3),
         "resources": resource_summary(samples),
+        "runtime_context": {
+            "container_runtime": os.environ.get("CONTAINER_RUNTIME"),
+            "container_image": os.environ.get("CONTAINER_IMAGE"),
+            "benchmark_cpu_affinity": benchmark_affinity,
+            "benchmark_cpu_affinity_count": len(benchmark_affinity)
+            if benchmark_affinity is not None
+            else None,
+            **observed_limits,
+        },
         "samples": [
             {
                 "elapsed_ms": round(sample.elapsed_ms, 3),
@@ -100,11 +156,7 @@ def main() -> int:
             }
             for sample in samples
         ],
-        "limitations": [
-            "This measures qx-cli with this declared BacktestSpec and frozen data only; it is not a same-semantics competitor comparison.",
-            "Fill model, fee schedule, and inline market rules come from the spec template and are not claimed to be a current Binance exchangeInfo snapshot.",
-            "The result hash is deterministic execution evidence, not evidence of strategy profitability.",
-        ],
+        "limitations": limitations,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

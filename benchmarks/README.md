@@ -166,6 +166,20 @@ python benchmarks/run_real_data_backtest.py \
 Binance `exchangeInfo` 的冻结快照，也不是策略收益判断。不同产品的对比仍须先统一信号、手续费、滑点、
 撮合粒度、产物范围和结果正确性，不能把本数据直接解释成竞品领先证据。
 
+Linux 容器基准可用 `--cpu-affinity-count 4` 将每次 CLI 进程限制到当前允许的 4 个逻辑 CPU；报告会同时记录实际 affinity、cgroup v2 控制器、CPU quota/cpuset 与内存上限/当前用量。字段为空或控制器列表为空表示运行环境没有提供该限制，不能用 Podman VM 的声明配置替代实际限制。示例：
+
+```bash
+CONTAINER_RUNTIME=podman CONTAINER_IMAGE=mirror.gcr.io/library/rust:1.98.1-bookworm \
+  python3 benchmarks/run_real_data_backtest.py \
+  --binary target/release/qx-cli \
+  --bars maturity/fixtures/binance-btcusdt-spot-15m-180d-2026-11-11.json \
+  --spec-template benchmarks/fixtures/binance-btcusdt-spot-15m-backtest.json \
+  --repeats 7 --cpu-affinity-count 4 \
+  --out maturity/evidence/binance-btcusdt-spot-15m-180d-linux-cpu4.json
+```
+
+CPU affinity只固定本进程可运行的 CPU 集合；如果 cgroup quota、CPU set 或内存限制不可见，该记录仍不能作为固定整机资源的跨平台/跨竞品比较。容器需挂载仓库工作区，并使用本次提交构建的 Release 二进制。
+
 ## Crypto Paper worker 端到端
 
 ```bash
