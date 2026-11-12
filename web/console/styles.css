@@ -81,6 +81,22 @@ button {
 button.ghost { background: transparent; color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.order-group-details { margin-top: 6px; }
+.order-group-details summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.order-group-facts {
+  max-height: 22rem;
+  max-width: min(72vw, 70rem);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .pill {
   padding: 3px 10px;
   border-radius: 999px;

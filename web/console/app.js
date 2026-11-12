@@ -365,6 +365,20 @@ function el(tag, text, cls) {
   return node;
 }
 
+function orderGroupDetailNode(record) {
+  const details = document.createElement("details");
+  details.className = "order-group-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "查看完整订单组事实";
+  const facts = document.createElement("pre");
+  facts.className = "order-group-facts";
+  // This is the persisted domain snapshot, not the exchange's raw HTTP request/response.
+  // Use textContent so account-controlled IDs and venue strings can never become markup.
+  facts.textContent = JSON.stringify(record, null, 2);
+  details.append(summary, facts);
+  return details;
+}
+
 function rows(container, pairs) {
   container.replaceChildren();
   for (const [k, v] of pairs) {
@@ -683,9 +697,20 @@ function fillTable(tableId, response) {
       const intent = record.intent ?? {};
       const legs = Array.isArray(record.legs) ? record.legs : [];
       const firstOrder = legs[0]?.order ?? {};
-      const intentText = `${intent.group_id ?? "—"} · ${intent.kind ?? "—"} · ${firstOrder.account_id ?? "—"} / ${firstOrder.instrument?.venue ?? "—"}`;
-      const legsText = legs.map(leg => `${leg.role ?? "—"}: ${leg.order?.status ?? "—"} · 成交 ${leg.order?.filled?.raw ?? leg.order?.filled ?? "—"}${leg.venue_order_id ? ` · ${leg.venue_order_id}` : ""}`).join("\n") || "—";
-      for (const value of [intentText, record.status, record.venue_group_id, legsText]) tr.append(el("td", cellText("order_group", value)));
+      const intentText = `${intent.group_id ?? "—"} · ${intent.kind ?? "—"} · ${intent.execution ?? "—"} · ${firstOrder.account_id ?? "—"} / ${instrumentText(firstOrder.instrument)}`;
+      const legsText = legs.map(leg => {
+        const order = leg.order ?? {};
+        const exact = order.exact_amounts ?? {};
+        const requested = exact.quote_budget !== undefined && exact.quote_budget !== null
+          ? `quote_budget ${exact.quote_budget}`
+          : exact.quantity ?? order.qty?.raw ?? order.qty ?? "—";
+        const filled = exact.filled ?? order.filled?.raw ?? order.filled ?? "—";
+        return `${leg.role ?? "—"}: client=${order.client_id ?? "—"} · ${order.side ?? "—"} ${instrumentText(order.instrument)} · ${order.status ?? "—"} · 成交 ${filled}/${requested} · venue_order=${leg.venue_order_id ?? "—"}`;
+      }).join("\n") || "—";
+      const intentCell = el("td");
+      intentCell.append(el("div", intentText), orderGroupDetailNode(record));
+      tr.append(intentCell);
+      for (const value of [record.status, record.venue_group_id, legsText]) tr.append(el("td", cellText("order_group", value)));
       tbody.append(tr);
       continue;
     }
