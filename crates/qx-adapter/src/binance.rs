@@ -2510,88 +2510,7 @@ impl Venue for BinanceSpotVenue {
         ts: u64,
     ) -> QxResult<VenueOrderGroupSubmission> {
         self.validate_order_group(group)?;
-        let take_profit = group
-            .legs
-            .iter()
-            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
-            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止盈腿".into()))?;
-        let stop_loss = group
-            .legs
-            .iter()
-            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
-            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止损腿".into()))?;
-        let take_profit_trigger = take_profit
-            .order
-            .exact_amounts
-            .and_then(|amounts| amounts.conditional)
-            .and_then(|intent| intent.trigger_price)
-            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止盈腿缺少触发价".into()))?;
-        let stop_loss_trigger = stop_loss
-            .order
-            .exact_amounts
-            .and_then(|amounts| amounts.conditional)
-            .and_then(|intent| intent.trigger_price)
-            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止损腿缺少触发价".into()))?;
-        let (above, below) = if take_profit_trigger
-            .checked_cmp(stop_loss_trigger)
-            .is_some_and(|ordering| ordering.is_gt())
-        {
-            (take_profit, stop_loss)
-        } else {
-            (stop_loss, take_profit)
-        };
-        let list_client_order_id = binance_group_client_order_id(&group.intent.group_id);
-        let mut parameters = BTreeMap::new();
-        let symbol = take_profit.order.instrument.symbol().to_ascii_uppercase();
-        parameters.insert("symbol".into(), symbol);
-        parameters.insert(
-            "side".into(),
-            match take_profit.order.side {
-                Side::Buy => "BUY".into(),
-                Side::Sell => "SELL".into(),
-            },
-        );
-        parameters.insert(
-            "quantity".into(),
-            take_profit.order.quantity_decimal().to_string(),
-        );
-        parameters.insert("listClientOrderId".into(), list_client_order_id.clone());
-        parameters.insert(
-            "aboveClientOrderId".into(),
-            client_order_id(above.order.client_id),
-        );
-        parameters.insert(
-            "belowClientOrderId".into(),
-            client_order_id(below.order.client_id),
-        );
-        parameters.insert("newOrderRespType".into(), "FULL".into());
-        for (prefix, leg) in [("above", above), ("below", below)] {
-            let conditional = leg
-                .order
-                .exact_amounts
-                .and_then(|amounts| amounts.conditional)
-                .ok_or_else(|| QxError::BusinessViolation("Binance OCO 条件腿意图缺失".into()))?;
-            let kind = match (conditional.kind, leg.order.limit_price_decimal().is_some()) {
-                (qx_core::ConditionalOrderKind::TakeProfit, true) => "TAKE_PROFIT_LIMIT",
-                (qx_core::ConditionalOrderKind::TakeProfit, false) => "TAKE_PROFIT",
-                (qx_core::ConditionalOrderKind::StopLoss, true) => "STOP_LOSS_LIMIT",
-                (qx_core::ConditionalOrderKind::StopLoss, false) => "STOP_LOSS",
-                _ => {
-                    return Err(QxError::BusinessViolation(
-                        "Binance Spot OCO 仅支持止盈/止损条件腿".into(),
-                    ))
-                }
-            };
-            parameters.insert(format!("{prefix}Type"), kind.into());
-            parameters.insert(
-                format!("{prefix}StopPrice"),
-                conditional.trigger_price.unwrap().to_string(),
-            );
-            if let Some(price) = leg.order.limit_price_decimal() {
-                parameters.insert(format!("{prefix}Price"), price.to_string());
-                parameters.insert(format!("{prefix}TimeInForce"), "GTC".into());
-            }
-        }
+        let (list_client_order_id, parameters) = binance_oco_order_list_parameters(group)?;
         let response = self.request("POST", "/api/v3/orderList/oco", parameters, ts)?;
         let wire: BinanceOrderListWire = match parse_success(response, "OCO order list") {
             Ok(wire) => wire,
@@ -3095,6 +3014,109 @@ fn binance_group_client_order_id(group_id: &str) -> String {
             (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
         });
     format!("qxg-{hash:016x}")
+}
+
+fn binance_oco_order_list_parameters(
+    group: &OrderGroupState,
+) -> QxResult<(String, BTreeMap<String, String>)> {
+    let take_profit = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+        .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止盈腿".into()))?;
+    let stop_loss = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+        .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止损腿".into()))?;
+    let take_profit_trigger = take_profit
+        .order
+        .exact_amounts
+        .and_then(|amounts| amounts.conditional)
+        .and_then(|intent| intent.trigger_price)
+        .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止盈腿缺少触发价".into()))?;
+    let stop_loss_trigger = stop_loss
+        .order
+        .exact_amounts
+        .and_then(|amounts| amounts.conditional)
+        .and_then(|intent| intent.trigger_price)
+        .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止损腿缺少触发价".into()))?;
+    let relation = take_profit_trigger
+        .checked_cmp(stop_loss_trigger)
+        .ok_or_else(|| QxError::BusinessViolation("Binance OCO 触发价比较失败".into()))?;
+    let valid_relation = match take_profit.order.side {
+        Side::Sell => relation.is_gt(),
+        Side::Buy => relation.is_lt(),
+    };
+    if !valid_relation {
+        return Err(QxError::BusinessViolation(
+            "Binance Spot OCO 止盈触发价必须高于止损价（Sell）或低于止损价（Buy）".into(),
+        ));
+    }
+    let (above, below) = if relation.is_gt() {
+        (take_profit, stop_loss)
+    } else {
+        (stop_loss, take_profit)
+    };
+    let list_client_order_id = binance_group_client_order_id(&group.intent.group_id);
+    let mut parameters = BTreeMap::new();
+    validate_binance_instrument(&take_profit.order.instrument)?;
+    parameters.insert(
+        "symbol".into(),
+        take_profit.order.instrument.symbol().to_ascii_uppercase(),
+    );
+    parameters.insert(
+        "side".into(),
+        match take_profit.order.side {
+            Side::Buy => "BUY".into(),
+            Side::Sell => "SELL".into(),
+        },
+    );
+    parameters.insert(
+        "quantity".into(),
+        take_profit.order.quantity_decimal().to_string(),
+    );
+    parameters.insert("listClientOrderId".into(), list_client_order_id.clone());
+    parameters.insert(
+        "aboveClientOrderId".into(),
+        client_order_id(above.order.client_id),
+    );
+    parameters.insert(
+        "belowClientOrderId".into(),
+        client_order_id(below.order.client_id),
+    );
+    parameters.insert("newOrderRespType".into(), "FULL".into());
+    for (prefix, leg) in [("above", above), ("below", below)] {
+        let conditional = leg
+            .order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 条件腿意图缺失".into()))?;
+        let kind = match (conditional.kind, leg.order.limit_price_decimal().is_some()) {
+            (qx_core::ConditionalOrderKind::TakeProfit, true) => "TAKE_PROFIT_LIMIT",
+            (qx_core::ConditionalOrderKind::TakeProfit, false) => "TAKE_PROFIT",
+            (qx_core::ConditionalOrderKind::StopLoss, true) => "STOP_LOSS_LIMIT",
+            (qx_core::ConditionalOrderKind::StopLoss, false) => "STOP_LOSS",
+            _ => {
+                return Err(QxError::BusinessViolation(
+                    "Binance Spot OCO 仅支持止盈/止损条件腿".into(),
+                ))
+            }
+        };
+        parameters.insert(format!("{prefix}Type"), kind.into());
+        parameters.insert(
+            format!("{prefix}StopPrice"),
+            conditional
+                .trigger_price
+                .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少触发价".into()))?
+                .to_string(),
+        );
+        if let Some(price) = leg.order.limit_price_decimal() {
+            parameters.insert(format!("{prefix}Price"), price.to_string());
+            parameters.insert(format!("{prefix}TimeInForce"), "GTC".into());
+        }
+    }
+    Ok((list_client_order_id, parameters))
 }
 
 fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {
