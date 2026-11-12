@@ -233,8 +233,8 @@ pub fn read_account_activity_report_v1(
         }
         previous_seq = Some(event.seq);
     }
-    let (event_rows, available_total, oldest_seq, latest_seq, has_older, has_newer) =
-        select_event_page(events, options)?;
+    let selected_page = select_event_page(events, options)?;
+    let event_rows = selected_page.rows;
     let first_seq = event_rows.first().map(|event| event.seq);
     let last_seq = event_rows.last().map(|event| event.seq);
     let page_rows = event_rows
@@ -282,17 +282,17 @@ pub fn read_account_activity_report_v1(
         fills: fills.clone(),
         transfers: transfers.clone(),
         events: AccountActivityEventPageV1 {
-            available_total,
+            available_total: selected_page.total,
             client_order_id: options.client_order_id,
-            oldest_seq,
-            latest_seq,
+            oldest_seq: selected_page.oldest_seq,
+            latest_seq: selected_page.latest_seq,
             requested_after: options.after,
             requested_before: options.before,
             limit: options.limit,
-            has_older,
-            has_newer,
-            previous_before: has_older.then_some(page_oldest).flatten(),
-            next_after: if has_newer {
+            has_older: selected_page.has_older,
+            has_newer: selected_page.has_newer,
+            previous_before: selected_page.has_older.then_some(page_oldest).flatten(),
+            next_after: if selected_page.has_newer {
                 page_newest.or_else(|| options.before.map(|before| before.saturating_sub(1)))
             } else {
                 None
@@ -337,17 +337,33 @@ fn validate_options(options: &AccountActivityReportReadOptionsV1) -> Result<(), 
     Ok(())
 }
 
+struct SelectedEventPage<'a> {
+    rows: Vec<&'a Event>,
+    total: u64,
+    oldest_seq: Option<u64>,
+    latest_seq: Option<u64>,
+    has_older: bool,
+    has_newer: bool,
+}
+
 fn select_event_page<'a>(
     events: &'a [Event],
     options: &AccountActivityReportReadOptionsV1,
-) -> Result<(Vec<&'a Event>, u64, Option<u64>, Option<u64>, bool, bool), AppError> {
+) -> Result<SelectedEventPage<'a>, AppError> {
     let Some(oldest) = events.first().map(|event| event.seq) else {
         if options.after.is_some_and(|after| after > 0)
             || options.before.is_some_and(|before| before > 0)
         {
             return Err(conflict("账户事件游标超出当前空 EventLog"));
         }
-        return Ok((Vec::new(), 0, None, None, false, false));
+        return Ok(SelectedEventPage {
+            rows: Vec::new(),
+            total: 0,
+            oldest_seq: None,
+            latest_seq: None,
+            has_older: false,
+            has_newer: false,
+        });
     };
     let latest = events.last().map(|event| event.seq).unwrap_or_default();
     let mut total = 0_u64;
@@ -385,14 +401,14 @@ fn select_event_page<'a>(
                 .iter()
                 .any(|event| event.seq < first.seq && is_match(event))
         });
-        return Ok((
-            page,
+        return Ok(SelectedEventPage {
+            rows: page,
             total,
-            oldest_matching,
-            latest_matching,
+            oldest_seq: oldest_matching,
+            latest_seq: latest_matching,
             has_older,
             has_newer,
-        ));
+        });
     }
     if let Some(before) = options.before {
         if before > latest.saturating_add(1) {
@@ -418,14 +434,14 @@ fn select_event_page<'a>(
             .filter(|event| is_match(event) && event.seq < before)
             .count()
             > options.limit;
-        return Ok((
-            page.into_iter().collect(),
+        return Ok(SelectedEventPage {
+            rows: page.into_iter().collect(),
             total,
-            oldest_matching,
-            latest_matching,
+            oldest_seq: oldest_matching,
+            latest_seq: latest_matching,
             has_older,
             has_newer,
-        ));
+        });
     }
     let mut page = VecDeque::with_capacity(options.limit);
     for event in events.iter().filter(|event| is_match(event)) {
@@ -438,14 +454,14 @@ fn select_event_page<'a>(
         page.push_back(event);
     }
     let has_older = total > options.limit as u64;
-    Ok((
-        page.into_iter().collect(),
+    Ok(SelectedEventPage {
+        rows: page.into_iter().collect(),
         total,
-        oldest_matching,
-        latest_matching,
+        oldest_seq: oldest_matching,
+        latest_seq: latest_matching,
         has_older,
-        false,
-    ))
+        has_newer: false,
+    })
 }
 
 fn snapshot_rows(
