@@ -125,7 +125,7 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
     )?;
     let effective_spec_path = if use_public_default_fees && spec_path.is_none() {
         let path = generated_market_spec_path(&runtime, instrument)?;
-        crate::run_ccxt_market_spec(ccxt_config_path, instrument, &path)?;
+        crate::run_ccxt_market_spec_with_client(&mut client, instrument, &path)?;
         Some(path)
     } else {
         spec_path.map(Path::to_path_buf)

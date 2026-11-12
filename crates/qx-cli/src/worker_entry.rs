@@ -492,6 +492,14 @@ pub(crate) fn run_ccxt_market_spec(
 ) -> Result<(), String> {
     let python = python_interpreter();
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)?;
+    run_ccxt_market_spec_with_client(&mut client, instrument, output_path)
+}
+
+pub(crate) fn run_ccxt_market_spec_with_client(
+    client: &mut CcxtProcessClient,
+    instrument: &str,
+    output_path: &Path,
+) -> Result<(), String> {
     let result = client
         .call(serde_json::json!({
             "op": "resolve_market",

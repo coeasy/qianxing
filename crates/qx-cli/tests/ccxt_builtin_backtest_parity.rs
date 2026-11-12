@@ -344,11 +344,14 @@ fn ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest() {
             "minimum_notional": "0"
         }
     });
+    let worker_process_log = case.join("worker-processes.txt");
     let worker = format!(
-        "import json, sys\nFRAME = json.loads({frame_payload})\nMARKET = json.loads({market_payload})\nfor line in sys.stdin:\n request = json.loads(line)\n op = request.get('op')\n result = {{'frame': FRAME}} if op == 'fetch_ohlcv' else {{'market': MARKET}} if op == 'resolve_market' else {{'tiers': []}} if op == 'fetch_leverage_tiers' else {{}}\n print(json.dumps({{'ok': True, 'result': result}}, separators=(',', ':')), flush=True)\n",
+        "import json, os, sys\nFRAME = json.loads({frame_payload})\nMARKET = json.loads({market_payload})\nPROCESS_LOG = {process_log}\nfor line in sys.stdin:\n request = json.loads(line)\n with open(PROCESS_LOG, 'a', encoding='utf-8') as log:\n  log.write(str(os.getpid()) + '\\n')\n op = request.get('op')\n result = {{'frame': FRAME}} if op == 'fetch_ohlcv' else {{'market': MARKET}} if op == 'resolve_market' else {{'tiers': []}} if op == 'fetch_leverage_tiers' else {{}}\n print(json.dumps({{'ok': True, 'result': result}}, separators=(',', ':')), flush=True)\n",
         frame_payload = serde_json::to_string(&frame_payload).expect("encode fixture for worker"),
         market_payload = serde_json::to_string(&market_payload.to_string())
             .expect("encode market fixture"),
+        process_log = serde_json::to_string(&worker_process_log.to_string_lossy())
+            .expect("encode process log path"),
     );
     std::fs::write(package.join("worker.py"), worker).expect("write deterministic worker");
 
@@ -444,5 +447,15 @@ fn ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest() {
     assert_eq!(
         summary["execution_costs"]["source"],
         format!("cost-rules-file:{cost_rules_path}")
+    );
+    let worker_processes =
+        std::fs::read_to_string(&worker_process_log).expect("read worker process identities");
+    let unique_processes = worker_processes
+        .lines()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique_processes.len(),
+        1,
+        "OHLCV and market metadata queries must share one CCXT worker process"
     );
 }
