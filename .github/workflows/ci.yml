@@ -499,6 +499,9 @@ jobs:
           --notes "Native macOS proc_pidinfo verifies microsecond process-start precision, the real ps fallback reports one-second precision, and both paths reject stale process identities"
           -- python3 tools/accept_project_run_identity.py
           maturity/evidence/project-run-identity-macos.json
+      - name: Fetch Rust dependencies for macOS focused acceptance
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: cargo fetch --locked
       - name: macOS backtest metrics and report contract (R17)
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
         run: >-
@@ -540,24 +543,29 @@ jobs:
           set -euo pipefail
           wheel="$(find dist -maxdepth 1 -type f -name 'qianxing-*.whl' -print -quit)"
           test -n "$wheel"
+          python3 -m unittest tools.test_accept_clean_install
           cargo fetch --locked
           python3 tools/record_strategy_acceptance.py \
             --acceptance-id R01-AC01 \
             --input tools/accept_clean_install.py \
+            --input tools/test_accept_clean_install.py \
             --input python/tests/test_app_use_cases.py \
             --notes "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution" \
             -- python3 tools/accept_clean_install.py \
             --python "$(command -v python)" \
             --work-dir "${RUNNER_TEMP}/qx-clean-install-r01" \
+            --cli-root "${RUNNER_TEMP}/qx-clean-install-shared-cli" \
             --wheel "$wheel"
           python3 tools/record_strategy_acceptance.py \
             --acceptance-id R20-AC01 \
             --input tools/accept_clean_install.py \
+            --input tools/test_accept_clean_install.py \
             --input docs/installation.md \
             --notes "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart" \
             -- python3 tools/accept_clean_install.py \
             --python "$(command -v python)" \
             --work-dir "${RUNNER_TEMP}/qx-clean-install-r20" \
+            --cli-root "${RUNNER_TEMP}/qx-clean-install-shared-cli" \
             --wheel "$wheel"
       - name: Upload Linux clean-install acceptance evidence
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'

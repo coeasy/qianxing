@@ -18249,6 +18249,195 @@
         }
       ],
       "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "741168f9-5d94-4587-a08e-73ed5ed9c6a6",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-12T22:34:24.997196Z",
+      "source_revision": "326f5962735d604bbb790c5e31bd0adebf4414a0",
+      "source_tree_sha256": "729502368ecc317d799d6c743aba954c57f3be634ccf0ca8d4d0ad416723b29c",
+      "source_manifest": "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r01",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "7038f2d8482e74da3a574e8135cd3e48cf429454e991325220140f51c3ba7675"
+        },
+        {
+          "path": "python/tests/test_app_use_cases.py",
+          "sha256": "f04e5da2c35bf7c3501161585f086c752a9b7a6afd3b8fb7d58601ce518ab08b"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.log",
+          "sha256": "7ea54925db749aa173c312e22a50432e67bf791ffd30c806e71a9fea6ed44b82"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.source-tree.json",
+          "sha256": "2cc81383c0c1d49edfc81a4acc52213c839c6a1750ee2c647329fc94d59c2293"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution"
+    },
+    {
+      "run_id": "1801b783-6442-4e8c-a487-0764af4f5af6",
+      "acceptance_id": "R20-AC01",
+      "recorded_at_utc": "2026-11-12T22:34:28.716298Z",
+      "source_revision": "326f5962735d604bbb790c5e31bd0adebf4414a0",
+      "source_tree_sha256": "729502368ecc317d799d6c743aba954c57f3be634ccf0ca8d4d0ad416723b29c",
+      "source_manifest": "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r20",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "7038f2d8482e74da3a574e8135cd3e48cf429454e991325220140f51c3ba7675"
+        },
+        {
+          "path": "docs/installation.md",
+          "sha256": "8c810035020148f63083b2c9594d4239db2e0f339360534d48c111291746aa4a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.log",
+          "sha256": "91187ab49fd4014049249637e604251db478a241952b38f4ac09425a99d9a2d3"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.source-tree.json",
+          "sha256": "2cc81383c0c1d49edfc81a4acc52213c839c6a1750ee2c647329fc94d59c2293"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
+    },
+    {
+      "run_id": "e4278ef6-c870-4a6b-84fb-88c8bbf35fba",
+      "acceptance_id": "R07-AC01",
+      "recorded_at_utc": "2026-11-12T22:25:30.519626Z",
+      "source_revision": "326f5962735d604bbb790c5e31bd0adebf4414a0",
+      "source_tree_sha256": "2d354f3a0c93a3f3b4bcafe7bd1e25a418fea37273a6b8a1f0788bc42b6dde7a",
+      "source_manifest": "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_project_run_identity.py",
+        "maturity/evidence/project-run-identity-macos.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_project_run_identity.py",
+          "sha256": "08c6f66ceecb65312e28ac64f60a463a5691624108396d871e235129651f477d"
+        },
+        {
+          "path": "python/qianxing/project_runs.py",
+          "sha256": "7c4fd6967a5c3b7d544eacad40fa37cd810cda0e555e96bb388fcb87fa8c3b2e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.log",
+          "sha256": "473e61ab5566e80547f028259ab19571c2d1b70aaa2cc8aa781217aa6b01134b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.source-tree.json",
+          "sha256": "abd79ebd7b50a3f26dc3619622f7de9ae10239e966a3a3820e1e4c935b6ab8a3"
+        }
+      ],
+      "notes": "Native macOS proc_pidinfo verifies microsecond process-start precision, the real ps fallback reports one-second precision, and both paths reject stale process identities"
+    },
+    {
+      "run_id": "ec39de8a-b28e-4538-b8cc-387c98eabd48",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-12T22:25:32.542897Z",
+      "source_revision": "326f5962735d604bbb790c5e31bd0adebf4414a0",
+      "source_tree_sha256": "83bad93845baa73d835be3ba61616c0340cd35c8e5e7af62c5e9892a7c93592e",
+      "source_manifest": "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "7b9164d571574783c0f732e0190f2d9bfbc446cdf99820eef62de0079c5b61d9"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "089fbe40585a2c9557a3549b9b074bf2591de2e2038fe04ac5047be5bdec1fff"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "dc08a552ed25301b11f49775c004c61b8001f8b574b29696468c6fb012c34fc9"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "75daf5f23a11d7b60b70cdcf2d72412f84948b9ba39639f4cca2584a192b60c8"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "28b9c70480d13c3bd8974d72cf5edc53bd7a506e159b6efb0551d063ba5d8406"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.log",
+          "sha256": "e7972c33d4a50638b15d3bf72384bf5850161e8a8d167e63ecee3bd6449ad6b7"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.source-tree.json",
+          "sha256": "68652074c08976c12a6aa9be0820d9748fec32648af7792afbae79c086a95ffa"
+        }
+      ],
+      "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

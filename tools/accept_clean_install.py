@@ -38,11 +38,30 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Com
     return result
 
 
+def ensure_cli_install(repo: Path, cli_root: Path, env: dict[str, str]) -> Path:
+    cli_bin = cli_root / "bin"
+    cli_name = "qx-cli.exe" if os.name == "nt" else "qx-cli"
+    cli = cli_bin / cli_name
+    if not cli.is_file():
+        run(
+            [
+                "cargo", "install", "--path", str(repo / "crates/qx-cli"), "--locked", "--offline",
+                "--root", str(cli_root), "--force",
+            ],
+            cwd=repo,
+            env=env,
+        )
+    if not cli.is_file():
+        raise RuntimeError(f"cargo install did not produce {cli}")
+    return cli
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", required=True, help="Python interpreter with pip and maturin")
     parser.add_argument("--work-dir", required=True, help="New directory outside the source tree")
     parser.add_argument("--wheel", help="Use an already-built wheel instead of building one")
+    parser.add_argument("--cli-root", help="Reuse a qx-cli cargo-install root shared by related acceptance runs")
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
@@ -105,22 +124,11 @@ def main() -> int:
         env=env,
     )
 
-    cli_root = work / "installed-cli"
-    run(
-        [
-            "cargo", "install", "--path", str(repo / "crates/qx-cli"), "--locked", "--offline",
-            "--root", str(cli_root), "--force",
-        ],
-        cwd=repo,
-        env=env,
-    )
-    cli_bin = cli_root / "bin"
+    cli_root = Path(args.cli_root).resolve() if args.cli_root else work / "installed-cli"
+    cli = ensure_cli_install(repo, cli_root, env)
+    cli_bin = cli.parent
     cli_env = env.copy()
     cli_env["PATH"] = str(cli_bin) + os.pathsep + str(scripts) + os.pathsep + cli_env.get("PATH", "")
-    cli_name = "qx-cli.exe" if os.name == "nt" else "qx-cli"
-    cli = cli_bin / cli_name
-    if not cli.is_file():
-        raise RuntimeError(f"cargo install did not produce {cli}")
 
     identity = run([str(cli), "version"], cwd=work, env=cli_env).stdout.strip()
     run([str(cli), "help"], cwd=work, env=cli_env)

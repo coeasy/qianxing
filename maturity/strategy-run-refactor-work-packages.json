@@ -5,9 +5,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman Python 3.12.16 clean wheel/CLI acceptance and hosted Ubuntu Python 3.12 acceptance both pass in PR CI #423 at 3e92babb; uploaded clean-install artifact awaits evidence review."
+        "Linux Python 3.12 clean wheel/CLI acceptance is reviewed and source-bound; Windows clean wheel plus CLI acceptance is still needed to close the cross-platform install contract."
       ],
-      "next_action": "Review clean-install-acceptance-linux-py312 from PR CI #423 and bind its acceptance record to this work package.",
+      "next_action": "Add a clean Windows wheel/CLI acceptance and bind its source manifest; retain the Linux acceptance as the release baseline.",
       "code_paths": [
         "python/tests/test_app_use_cases.py",
         "tools/accept_clean_install.py"
@@ -23,7 +23,9 @@
         "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.source-tree.json",
         "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.log",
         "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.log",
+        "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.source-tree.json"
       ]
     },
     {
@@ -151,9 +153,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows and Debian 12 Linux process identity acceptance pass, including stable live identity, stale start rejection, and reaped-child detection. Native macOS proc_pidinfo and real ps fallback acceptance remain pending."
+        "Native macOS proc_pidinfo and real ps fallback acceptance now pass; bind a fresh full hosted macOS matrix after CI dependency-cache repair to ensure the platform suite reaches all focused checks."
       ],
-      "next_action": "Run and review the native macOS proc_pidinfo and ps fallback acceptance, then update R07 if both native paths reject stale owners.",
+      "next_action": "Re-run hosted macOS acceptance after the cargo fetch fix and preserve the native identity acceptance evidence.",
       "code_paths": [
         "python/qianxing/project_runs.py",
         "python/tests/test_project_runs.py",
@@ -174,7 +176,9 @@
         "maturity/evidence/r07-project-run-identity-disk-full-human-review-2026-11-05.json",
         "maturity/evidence/project-run-identity-linux.json",
         "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.log",
-        "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json"
+        "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json",
+        "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.log",
+        "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.source-tree.json"
       ]
     },
     {
@@ -692,9 +696,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "The current hosted PR CI run 43307120811 failed in the macOS Python 3.12 suite before R17-AC01: test_app_use_cases assumed the repository target/ parent existed. The fixture now creates that parent, and 45 local test_app_use_cases tests plus an absent-target checkout probe pass; a hosted rerun is required. Historical macOS R17-AC01 evidence remains bound at source revision 5614625e4ee079c034ef3c2a523c78f01eec6c0a."
+        "Latest hosted macOS Python 3.12 R17 command failed before executing its contract because the offline Cargo index lacked serde. The workflow now fetches locked Rust dependencies before focused macOS checks; hosted rerun is required."
       ],
-      "next_action": "Push the temporary-directory fixture repair, then bind the new hosted macOS R17-AC01 result and source manifest after the macOS Python suite and focused report checks both pass.",
+      "next_action": "Push the macOS cargo fetch workflow repair and bind a passing macOS R17 run plus source manifest.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -762,7 +766,9 @@
         "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json",
         "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
         "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.log",
-        "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json"
+        "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json",
+        "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.log",
+        "maturity/acceptance-artifacts/ec39de8a-b28e-4538-b8cc-387c98eabd48.source-tree.json"
       ]
     },
     {
@@ -811,9 +817,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux Debian 12 Podman and hosted macOS Python 3.12 PR CI #423 pass qx-cli behavior/ownership and parity acceptance; uploaded macOS acceptance evidence awaits review."
+        "Linux acceptance passes, but the latest macOS Python 3.12 job failed during the earlier R17 step because serde was missing from the offline Cargo index, so the macOS R19 checks did not run."
       ],
-      "next_action": "Review the macOS R19-AC01 acceptance logs and source manifests from PR CI #423, then bind the reviewed evidence.",
+      "next_action": "Re-run the macOS matrix after cargo fetch --locked and bind the R19 acceptance logs and source manifests.",
       "code_paths": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "python/qianxing/client_trading.py",
@@ -1232,9 +1238,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu Python 3.12 PR CI #423 pass clean wheel/CLI acceptance; the uploaded clean-install artifact awaits review."
+        "Linux Python 3.12 validates package imports, schemas, documented examples, quickstart, and CLI install; Windows documented quickstart acceptance remains unbound."
       ],
-      "next_action": "Review clean-install-acceptance-linux-py312 from PR CI #423 and bind the reviewed clean-install evidence.",
+      "next_action": "Add a clean Windows quickstart acceptance, then re-evaluate whether the documented install paths are release-ready on both supported desktop platforms.",
       "code_paths": [
         "tools/accept_clean_install.py",
         "crates/qx-cli/src/init_project.rs",
@@ -1252,7 +1258,9 @@
         "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.source-tree.json",
         "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.log",
         "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.log",
+        "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.source-tree.json"
       ]
     },
     {
