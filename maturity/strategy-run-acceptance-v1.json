@@ -217,6 +217,19 @@
       ]
     },
     {
+      "acceptance_id": "R11-AC02",
+      "work_package": "R11",
+      "status": "planned",
+      "acceptance_criteria": [
+        "On hosted Linux, terminate a child process after every PreparedEvaluation atomic replacement boundary, then recover a complete digest-valid old or new journal without losing the durable decision."
+      ],
+      "required_artifacts": [
+        "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs",
+        "maturity/acceptance-artifacts/<run-id>.log",
+        "maturity/acceptance-artifacts/<run-id>.source-tree.json"
+      ]
+    },
+    {
       "acceptance_id": "R12-AC01",
       "work_package": "R12",
       "status": "planned",

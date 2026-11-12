@@ -69,6 +69,15 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo test --workspace
+      - name: PreparedEvaluation atomic journal crash boundaries (R11)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R11-AC02
+          --input crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs
+          --notes "Hosted Linux process exits after every PreparedEvaluation atomic replacement boundary; recovery returns a complete digest-valid old or new journal"
+          -- cargo test -p qx-cli --bin qx-cli
+          workers::strategy_worker::execution_updates::prepared_evaluation::crash_recovery_tests::save_crash_boundaries_recover_a_valid_record
+          -- --exact --nocapture
       - name: Linux strategy host capability dispatch (R08)
         run: >-
           python3 tools/record_strategy_acceptance.py

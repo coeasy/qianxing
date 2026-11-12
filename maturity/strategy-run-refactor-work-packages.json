@@ -374,13 +374,14 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass six-boundary worker recovery across file, SQLite, and PostgreSQL with persisted cursor assertions. Separate atomic journal-boundary acceptance remains open; hosted artifacts still need comparison/review."
+        "Debian 12 Podman and hosted Ubuntu PR CI pass six-boundary worker recovery across file, SQLite, and PostgreSQL with persisted cursor assertions. Separate atomic journal-boundary acceptance R11-AC02 is now registered in the hosted Rust core job; its result and artifact review remain open."
       ],
-      "next_action": "Review strategy-storage-recovery-linux from PR CI #423 against the Podman results, then complete the separate atomic journal-boundary evidence review.",
+      "next_action": "Review the current hosted Linux R11-AC02 atomic journal crash-boundary record and the R11/R21 durable recovery artifacts against the Podman results.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs",
+        "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs",
         "benchmarks/run_strategy_worker_crash_recovery.py",
         "python/tests/test_worker_crash_recovery_psql_path.py"
       ],
@@ -395,6 +396,8 @@
         "maturity/evidence/strategy-worker-crash-recovery-linux-file.json",
         "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json",
         "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json",
+        "maturity/strategy-run-acceptance-v1.json",
+        ".github/workflows/ci.yml",
         "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.log",
         "maturity/acceptance-artifacts/256dd094-fcf8-41cb-8141-97ce3afea6e1.source-tree.json",
         "maturity/acceptance-artifacts/487eb955-4fc1-4919-b74b-121817cf1459.log",
