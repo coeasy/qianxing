@@ -455,7 +455,10 @@ fn select_event_page<'a>(
         }
         let mut page = Vec::with_capacity(options.limit);
         let mut has_newer = false;
-        for event in events.iter().filter(|event| is_match(event)) {
+        for event in events.iter() {
+            if !is_match(event) {
+                continue;
+            }
             total += 1;
             oldest_matching.get_or_insert(event.seq);
             latest_matching = Some(event.seq);
@@ -468,11 +471,10 @@ fn select_event_page<'a>(
                 has_newer = true;
             }
         }
-        let has_older = page.first().is_some_and(|first| {
-            events
-                .iter()
-                .any(|event| event.seq < first.seq && is_match(event))
-        });
+        let has_older = page
+            .first()
+            .zip(oldest_matching)
+            .is_some_and(|(first, oldest)| oldest < first.seq);
         return Ok(SelectedEventPage {
             rows: page,
             total,
@@ -488,24 +490,25 @@ fn select_event_page<'a>(
         }
         let mut page = VecDeque::with_capacity(options.limit);
         let mut has_newer = false;
-        for event in events.iter().filter(|event| is_match(event)) {
+        let mut matching_before = 0_u64;
+        for event in events.iter() {
+            if !is_match(event) {
+                continue;
+            }
             total += 1;
             oldest_matching.get_or_insert(event.seq);
             latest_matching = Some(event.seq);
             if event.seq >= before {
                 has_newer = true;
             } else {
+                matching_before += 1;
                 if page.len() == options.limit {
                     page.pop_front();
                 }
                 page.push_back(event);
             }
         }
-        let has_older = events
-            .iter()
-            .filter(|event| is_match(event) && event.seq < before)
-            .count()
-            > options.limit;
+        let has_older = matching_before > options.limit as u64;
         return Ok(SelectedEventPage {
             rows: page.into_iter().collect(),
             total,
@@ -516,7 +519,10 @@ fn select_event_page<'a>(
         });
     }
     let mut page = VecDeque::with_capacity(options.limit);
-    for event in events.iter().filter(|event| is_match(event)) {
+    for event in events.iter() {
+        if !is_match(event) {
+            continue;
+        }
         total += 1;
         oldest_matching.get_or_insert(event.seq);
         latest_matching = Some(event.seq);
