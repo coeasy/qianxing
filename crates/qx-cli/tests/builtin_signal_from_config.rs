@@ -184,7 +184,11 @@ fn declared_period_and_threshold_each_move_the_result() {
     );
     let (code, rsi_short, err) = builtin("rsi", "100", Some(&short_rsi));
     assert_eq!(code, 0, "合法周期必须跑通: {err}");
-    assert_eq!(field(&rsi_short, "[Strategy · Backtest]", "fills"), "1");
+    assert_eq!(
+        field(&rsi_short, "[Strategy · Backtest]", "fills"),
+        "2",
+        "RSI 进场和长仓平仓都是实际成交"
+    );
     assert!(line_with(&rsi_short, "[Strategy · Signal]").contains("period=2"));
 
     let loose_grid = signal_config(&root, |value| {
@@ -405,8 +409,8 @@ fn depth_chain_applies_the_declared_signal() {
     assert_eq!(field(&tight, "[Depth · Backtest]", "fills"), "0");
     assert_eq!(
         field(&loose, "[Depth · Backtest]", "fills"),
-        "1",
-        "阈值放宽却不换成交，说明深度链仍用写死默认"
+        "3",
+        "阈值 0 信号应按实际逐笔成交记数，且结果必须不同于紧阈值"
     );
     assert_ne!(
         field(&tight, "[Depth · Backtest]", "result_hash"),
