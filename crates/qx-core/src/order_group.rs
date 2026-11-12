@@ -235,6 +235,10 @@ impl OrderGroupState {
         Ok(())
     }
 
+    pub fn require_reconciliation(&mut self) {
+        self.status = OrderGroupStatus::ReconcileRequired;
+    }
+
     pub fn validate_persisted(&self) -> Result<(), String> {
         if self.schema_version != ORDER_GROUP_SCHEMA_VERSION {
             return Err(format!(
@@ -297,6 +301,27 @@ impl OrderGroupState {
         {
             self.status = OrderGroupStatus::ReconcileRequired;
         }
+        Ok(())
+    }
+
+    /// Persist a known per-leg fact while another leg still keeps the group
+    /// behind its reconciliation barrier. This does not resolve the barrier;
+    /// only `reconcile_order_snapshot` may do that after an authoritative query.
+    pub fn record_snapshot_during_reconciliation(
+        &mut self,
+        snapshot: Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String> {
+        if self.status != OrderGroupStatus::ReconcileRequired {
+            return Err("订单组当前不处于待对账状态".into());
+        }
+        let previous = self.clone();
+        self.status = OrderGroupStatus::Submitting;
+        if let Err(error) = self.apply_order_snapshot(snapshot, venue_order_id) {
+            *self = previous;
+            return Err(error);
+        }
+        self.status = OrderGroupStatus::ReconcileRequired;
         Ok(())
     }
 
@@ -607,6 +632,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        group
+            .record_snapshot_during_reconciliation(
+                snapshot(&group, 2, OrderStatus::PartiallyFilled, "0.001"),
+                Some("venue-2".into()),
+            )
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        assert_eq!(group.legs[1].venue_order_id.as_deref(), Some("venue-2"));
         group
             .reconcile_order_snapshot(snapshot(&group, 1, OrderStatus::Filled, "0.01"), None)
             .unwrap();

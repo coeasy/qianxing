@@ -1,4 +1,373 @@
 use super::*;
+use qx_zhenlu::venue_capabilities::{VenueMarketScope, VenueOrderType};
+use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+const NATIVE_GROUP_TEST_CAPABILITIES: qx_zhenlu::venue_capabilities::VenueCapabilities =
+    qx_zhenlu::venue_capabilities::VenueCapabilities {
+        market_scope: VenueMarketScope::InstrumentVenue,
+        exact_orders: true,
+        order_types: &[
+            VenueOrderType::Market,
+            VenueOrderType::Limit,
+            VenueOrderType::StopLoss,
+            VenueOrderType::TakeProfit,
+        ],
+        ..qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    };
+
+struct NoNativeGroupVenue {
+    submit_calls: usize,
+}
+
+impl VenuePort for NoNativeGroupVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        self.submit_calls += 1;
+        Ok(Vec::new())
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+struct AllowGroupRisk;
+
+impl RiskPort for AllowGroupRisk {
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Allow)
+    }
+}
+
+fn protective_leg(client_id: u64, kind: qx_core::ConditionalOrderKind, trigger: &str) -> Order {
+    Order {
+        client_id,
+        instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "port-main".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity: qx_core::ExactDecimal::parse("0.01").unwrap(),
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(qx_core::ConditionalOrderIntent {
+                kind,
+                trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                trigger_price_type: Some(qx_core::TriggerPriceType::Mark),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    }
+}
+
+fn native_oco_intent() -> qx_core::OrderGroupIntent {
+    qx_core::OrderGroupIntent::new(
+        "no-native-group",
+        qx_core::OrderGroupKind::Oco,
+        qx_core::OrderGroupExecution::NativeRequired,
+        vec![
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::TakeProfit,
+                order: protective_leg(7001, qx_core::ConditionalOrderKind::TakeProfit, "70000"),
+            },
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::StopLoss,
+                order: protective_leg(7002, qx_core::ConditionalOrderKind::StopLoss, "60000"),
+            },
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn venue_without_native_group_support_fails_before_store_or_oms_side_effects() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NoNativeGroupVenue { submit_calls: 0 };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap_err();
+
+    assert!(error.contains("未声明原生 OCO/Bracket"), "{error}");
+    assert_eq!(venue.submit_calls, 0);
+    assert!(pipeline.orders.is_empty());
+    assert!(pipeline.events.is_empty());
+    assert!(store.group_ids().unwrap().is_empty());
+    assert_eq!(source_seq, 0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+struct NativeGroupPortVenue {
+    preflight_calls: usize,
+    group_submit_calls: usize,
+}
+
+impl VenuePort for NativeGroupPortVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        self.preflight_calls += 1;
+        Ok(())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.group_submit_calls += 1;
+        Ok(group
+            .legs
+            .iter()
+            .map(|leg| ExecutionEvent::Accepted {
+                client_order_id: leg.order.client_id,
+                venue_order_id: format!("exchange-{}", leg.order.client_id),
+            })
+            .collect())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("native OCO must use one group RPC, never individual child submits")
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-accepted-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let intent = native_oco_intent();
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent.clone(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 2);
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert_eq!(pipeline.orders.len(), 2);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Accepted));
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+    assert!(restored.legs.iter().all(|leg| leg.venue_order_id.as_deref()
+        == Some(format!("exchange-{}", leg.order.client_id).as_str())));
+
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker-restarted",
+        101,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent, &AllowGroupRisk)
+    .unwrap_err();
+    assert!(error.contains("已在 OMS 中"), "{error}");
+    assert_eq!(venue.group_submit_calls, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+struct UnknownNativeGroupPortVenue {
+    group_submit_calls: usize,
+}
+
+impl VenuePort for UnknownNativeGroupPortVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.group_submit_calls += 1;
+        Err("timeout after exchange accepted request".into())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("ambiguous native group must never fall back to separate child submits")
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn unknown_native_group_result_reconciles_every_leg_and_never_retries_rpc() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-unknown-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = UnknownNativeGroupPortVenue {
+        group_submit_calls: 0,
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let intent = native_oco_intent();
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent.clone(), &AllowGroupRisk)
+    .unwrap_err();
+
+    assert!(error.contains("结果未知"), "{error}");
+    assert_eq!(venue.group_submit_calls, 1);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Unknown));
+    let reconciled = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(
+        reconciled.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+    assert!(reconciled
+        .legs
+        .iter()
+        .all(|leg| leg.order.status == OrderStatus::Unknown));
+
+    let retry_error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker-restarted",
+        101,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent, &AllowGroupRisk)
+    .unwrap_err();
+    assert!(retry_error.contains("已在 OMS 中"), "{retry_error}");
+    assert_eq!(venue.group_submit_calls, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 fn amend_command(order: &Order, command_id: u64) -> ControlCommand {
     ControlCommand {

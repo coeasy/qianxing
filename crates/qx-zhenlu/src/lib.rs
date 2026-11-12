@@ -401,6 +401,22 @@ pub trait Venue {
     ) -> QxResult<()> {
         Ok(())
     }
+    /// Check native OCO/Bracket support and request shape before OMS registration.
+    fn validate_order_group(&mut self, _group: &OrderGroupState) -> QxResult<()> {
+        Err(QxError::BusinessViolation(
+            "Venue 未声明原生 OCO/Bracket 订单组能力".into(),
+        ))
+    }
+    /// Submit one native order group and return canonical facts for every child leg.
+    fn submit_order_group(
+        &mut self,
+        _group: &OrderGroupState,
+        _ts: u64,
+    ) -> QxResult<Vec<VenueEvent>> {
+        Err(QxError::BusinessViolation(
+            "Venue 未实现原生 OCO/Bracket 订单组提交".into(),
+        ))
+    }
     /// Reject execution while the connector is disconnected or still recovering.
     /// Adapters with richer synchronization state should override this check.
     fn execution_readiness(&self) -> QxResult<()> {
@@ -1393,12 +1409,24 @@ pub trait OrderGroupStore {
     fn create(&mut self, group: &OrderGroupState) -> Result<(), String>;
     /// Atomically claim the only venue submit attempt; returns false after restart/replay.
     fn begin_submission(&mut self, group_id: &str) -> Result<bool, String>;
+    fn require_reconciliation(&mut self, group_id: &str) -> Result<(), String>;
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
         snapshot: &Order,
         venue_order_id: Option<String>,
     ) -> Result<(), String>;
+    /// Record a returned per-leg venue fact without clearing a group-level
+    /// reconciliation barrier raised by a different leg.
+    fn record_order_snapshot_during_reconciliation(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String> {
+        let _ = (group_id, snapshot, venue_order_id);
+        Err("订单组存储不支持待对账期间记录子腿事实".into())
+    }
     fn reconcile_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1508,6 +1536,21 @@ impl OrderGroupStore for FileOrderGroupStore {
         Ok(true)
     }
 
+    fn require_reconciliation(&mut self, group_id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待对账订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待对账订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.require_reconciliation();
+        self.save_locked(&group)
+    }
+
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1525,6 +1568,26 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组文件名与组内标识不一致".into());
         }
         group.apply_order_snapshot(snapshot.clone(), venue_order_id)?;
+        self.save_locked(&group)
+    }
+
+    fn record_order_snapshot_during_reconciliation(
+        &mut self,
+        group_id: &str,
+        snapshot: &Order,
+        venue_order_id: Option<String>,
+    ) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取订单组状态失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析订单组状态失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.record_snapshot_during_reconciliation(snapshot.clone(), venue_order_id)?;
         self.save_locked(&group)
     }
 

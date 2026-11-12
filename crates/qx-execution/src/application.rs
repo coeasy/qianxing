@@ -150,6 +150,20 @@ pub trait VenuePort {
     fn validate_submit_capabilities(&self, order: &Order) -> Result<(), String> {
         self.capabilities().validate_submit(order, self.venue_id())
     }
+    /// Native groups are a separate venue capability; ordinary conditional orders do not imply OCO.
+    fn validate_submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        Err("Venue 未声明原生 OCO/Bracket 订单组能力".into())
+    }
+    fn submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        Err("Venue 未实现原生 OCO/Bracket 订单组提交".into())
+    }
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String>;
     fn cancel_order(
         &mut self,

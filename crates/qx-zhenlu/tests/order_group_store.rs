@@ -99,10 +99,21 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
             Some("exchange-order-701".into()),
         )
         .unwrap();
+    store.require_reconciliation("persisted-oco").unwrap();
+    store
+        .record_order_snapshot_during_reconciliation(
+            "persisted-oco",
+            &accepted,
+            Some("exchange-order-701".into()),
+        )
+        .unwrap();
 
     let reopened = FileOrderGroupStore::new(&root).unwrap();
     let restored = reopened.load("persisted-oco").unwrap().unwrap();
-    assert_eq!(restored.status, qx_core::OrderGroupStatus::Submitting);
+    assert_eq!(
+        restored.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
     assert_eq!(restored.legs[0].order.status, OrderStatus::Accepted);
     assert_eq!(
         restored.legs[0].venue_order_id.as_deref(),

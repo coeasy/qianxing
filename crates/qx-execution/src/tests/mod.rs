@@ -45,7 +45,7 @@ impl OrderStore for PortState {
 
     fn register_order(
         &mut self,
-        order: Order,
+        mut order: Order,
         _ts: u64,
         _correlation_id: Option<String>,
     ) -> Result<(), String> {
@@ -55,6 +55,9 @@ impl OrderStore for PortState {
             .any(|existing| existing.client_id == order.client_id)
         {
             return Err("duplicate order".into());
+        }
+        if order.status == OrderStatus::PendingSubmit {
+            order.status = OrderStatus::Submitted;
         }
         self.orders.push(order);
         Ok(())
