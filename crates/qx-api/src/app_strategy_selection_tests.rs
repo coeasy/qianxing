@@ -201,10 +201,10 @@ fn product_capability_query_filters_declared_venue_product_and_account_scopes() 
     let result: Value = serde_json::from_str(&bitget_uta.body).unwrap();
     assert_eq!(result["match_count"], 1);
     assert_eq!(
-        result["matches"][0]["scope"]["account_models"][0],
-        "classic"
+        result["matches"][0]["scope"]["account_models"],
+        json!(["uta"]),
+        "请求按 UTA 收窄后，结果只应展示实际匹配的账户模型"
     );
-    assert_eq!(result["matches"][0]["scope"]["account_models"][1], "uta");
 
     let private_balance = service.handle(
         "POST",
