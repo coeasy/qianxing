@@ -48,6 +48,7 @@ const API_PATHS = {
   appMultiMarketExperiment: "/app/run-multi-market-experiment/start",
   appMultiMarketDepthExperiment: "/app/run-multi-market-depth-experiment/start",
   appRunStatus: "/app/runs/{run_id}",
+  appRunEvents: "/app/runs/{run_id}/events",
   appRunCancel: "/app/runs/{run_id}/cancel",
   events: "/events",
   eventsLive: "/events/live",
@@ -122,6 +123,8 @@ const state = {
   commandSeq: 1,
   lastCommand: null,
   activeResearchRunId: null,
+  activeResearchRunEventSeq: 0,
+  activeResearchRunEvents: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -3487,6 +3490,9 @@ async function runExtendedResearch() {
       return;
     }
     state.activeResearchRunId = runId;
+    state.activeResearchRunEventSeq = 0;
+    state.activeResearchRunEvents = [];
+    renderExtendedResearchEvents(true, runId, null);
     $("extended-research-query").disabled = false;
     $("extended-research-cancel").disabled = false;
     await pollExtendedResearchRun(runId, output);
@@ -3509,20 +3515,116 @@ async function pollExtendedResearchRun(runId, output) {
       return;
     }
     const document = response.body || {};
-    output.textContent = JSON.stringify({ run_id: runId, ...document }, null, 2);
+    const eventsPath = API_PATHS.appRunEvents.replace("{run_id}", encodeURIComponent(runId))
+      + `?after_seq=${state.activeResearchRunEventSeq}`;
+    const eventsResponse = await getJson(eventsPath);
+    let eventsError = null;
+    if (eventsResponse.ok) {
+      try {
+        const page = mergeRunEventPage(
+          runId,
+          state.activeResearchRunEventSeq,
+          state.activeResearchRunEvents,
+          eventsResponse.body,
+        );
+        state.activeResearchRunEventSeq = page.cursor;
+        state.activeResearchRunEvents = page.events;
+        eventsError = terminalRunEventError(document.status, page.events);
+      } catch (error) {
+        eventsError = error.message;
+      }
+    } else {
+      eventsError = `HTTP ${eventsResponse.status}: ${JSON.stringify(eventsResponse.body)}`;
+    }
+    renderExtendedResearchEvents(
+      !["succeeded", "failed", "cancelled"].includes(document.status),
+      runId,
+      eventsError,
+    );
+    output.textContent = JSON.stringify({
+      run_id: runId,
+      ...document,
+      event_cursor: state.activeResearchRunEventSeq,
+      events: state.activeResearchRunEvents,
+      events_error: eventsError,
+    }, null, 2);
     if (["succeeded", "failed", "cancelled"].includes(document.status)) {
       if (document.status === "succeeded") renderResearchReport(document.result);
       else clearResearchReport();
-      state.activeResearchRunId = null;
-      $("extended-research-run").disabled = false;
-      $("extended-research-query").disabled = true;
+      $("extended-research-run").disabled = Boolean(eventsError);
       $("extended-research-cancel").disabled = true;
+      if (eventsError) {
+        // A terminal result is final, but an event read can fail transiently. Keep the
+        // run identity available so the operator can retry the cursor without rerunning.
+        $("extended-research-query").disabled = false;
+      } else {
+        state.activeResearchRunId = null;
+        $("extended-research-query").disabled = true;
+      }
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, EXTENDED_RESEARCH_POLL_MS));
   }
   if (state.activeResearchRunId === runId) {
     output.textContent = `任务 ${runId} 仍在运行；轮询已到 30 分钟上限，可继续查询或取消。`;
+  }
+}
+
+function mergeRunEventPage(runId, cursor, existing, page) {
+  if (!Array.isArray(page)) throw new Error("运行事件响应必须是数组");
+  const events = existing.slice();
+  let nextCursor = cursor;
+  for (const event of page) {
+    const expectedSeq = nextCursor + 1;
+    if (event?.run_id !== runId) {
+      throw new Error(`运行事件 run_id 不匹配：期望 ${runId}，收到 ${event?.run_id}`);
+    }
+    if (event.seq !== expectedSeq) {
+      throw new Error(`运行事件序号断档：期望 ${expectedSeq}，收到 ${event?.seq}`);
+    }
+    const expectedId = `${runId}:${expectedSeq}`;
+    if (event.event_id !== expectedId) {
+      throw new Error(`运行事件身份不匹配：期望 ${expectedId}`);
+    }
+    events.push(event);
+    nextCursor = expectedSeq;
+  }
+  return { cursor: nextCursor, events };
+}
+
+function terminalRunEventError(status, events) {
+  const terminalKinds = {
+    succeeded: "succeeded",
+    failed: "failed",
+    cancelled: "cancelled",
+  };
+  const expectedKind = terminalKinds[status];
+  if (!expectedKind) return null;
+  const terminal = events.at(-1);
+  if (!terminal || terminal.kind !== expectedKind || terminal.status !== status) {
+    return `运行状态为 ${status}，但事件流没有对应的终态事件`;
+  }
+  return null;
+}
+
+function renderExtendedResearchEvents(active, runId, error) {
+  const meta = $("extended-research-events-meta");
+  if (!meta) return;
+  const events = state.activeResearchRunEvents;
+  meta.textContent = error
+    ? `${runId} · 事件流暂不可用：${error}`
+    : `${runId} · 已读取 ${events.length} 条 · 游标 ${state.activeResearchRunEventSeq}${active ? " · 运行中" : ""}`;
+  const body = $("extended-research-events-table")?.querySelector("tbody");
+  if (!body) return;
+  body.replaceChildren();
+  for (const event of events) {
+    const row = document.createElement("tr");
+    for (const value of [event.seq, event.kind, event.status, event.event_id]) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value ?? "");
+      row.appendChild(cell);
+    }
+    body.appendChild(row);
   }
 }
 
