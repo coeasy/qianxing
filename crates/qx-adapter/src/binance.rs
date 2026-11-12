@@ -2765,9 +2765,12 @@ impl Venue for BinanceSpotVenue {
 
         let mut events = Vec::new();
         for leg in &group.legs {
-            let report = reports
-                .remove(&leg.order.client_id)
-                .expect("validated OCO response contains every child");
+            let Some(report) = reports.remove(&leg.order.client_id) else {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 响应在归并时缺少子单".into(),
+                ));
+            };
             let venue_order_id = report.order_id.to_string();
             let mut accepted = leg.order.clone();
             accepted.status = OrderStatus::Accepted;
