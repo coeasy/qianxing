@@ -567,11 +567,62 @@ jobs:
             --work-dir "${RUNNER_TEMP}/qx-clean-install-r20" \
             --cli-root "${RUNNER_TEMP}/qx-clean-install-shared-cli" \
             --wheel "$wheel"
+      - name: Clean Windows wheel and CLI acceptance (R01 + R20)
+        if: matrix.os == 'windows-latest' && matrix.python == '3.12'
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist -Filter 'qianxing-*.whl' | Select-Object -First 1
+          if ($null -eq $wheel) { throw 'No qianxing wheel was downloaded.' }
+
+          python -m unittest tools.test_accept_clean_install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fetch --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $python = (Get-Command python).Source
+          $sharedCli = Join-Path $env:RUNNER_TEMP 'qx-clean-install-shared-cli'
+          $r01Work = Join-Path $env:RUNNER_TEMP 'qx-clean-install-r01'
+          python tools/record_strategy_acceptance.py `
+            --acceptance-id R01-AC01 `
+            --input tools/accept_clean_install.py `
+            --input tools/test_accept_clean_install.py `
+            --input python/tests/test_app_use_cases.py `
+            --notes 'Clean Windows Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution' `
+            -- python tools/accept_clean_install.py `
+            --python $python `
+            --work-dir $r01Work `
+            --cli-root $sharedCli `
+            --wheel $wheel.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $r20Work = Join-Path $env:RUNNER_TEMP 'qx-clean-install-r20'
+          python tools/record_strategy_acceptance.py `
+            --acceptance-id R20-AC01 `
+            --input tools/accept_clean_install.py `
+            --input tools/test_accept_clean_install.py `
+            --input docs/installation.md `
+            --notes 'Clean Windows Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart' `
+            -- python tools/accept_clean_install.py `
+            --python $python `
+            --work-dir $r20Work `
+            --cli-root $sharedCli `
+            --wheel $wheel.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload Linux clean-install acceptance evidence
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: clean-install-acceptance-linux-py312
+          path: |
+            maturity/strategy-run-acceptance-v1.json
+            maturity/acceptance-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows clean-install acceptance evidence
+        if: always() && matrix.os == 'windows-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-install-acceptance-windows-py312
           path: |
             maturity/strategy-run-acceptance-v1.json
             maturity/acceptance-artifacts/
