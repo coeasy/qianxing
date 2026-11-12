@@ -1526,7 +1526,7 @@ impl OrderGroupStore for FileOrderGroupStore {
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
         }
-        if group.repair_legacy_rejected_oco_status() {
+        if group.repair_legacy_rejected_status() {
             self.save_locked(&group)?;
         }
         Ok(Some(group))

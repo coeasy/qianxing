@@ -378,11 +378,10 @@ impl OrderGroupState {
         Ok(())
     }
 
-    /// Repair legacy OCO snapshots where an earlier reducer marked the whole
-    /// group rejected while its peer could still be live or unresolved.
-    pub fn repair_legacy_rejected_oco_status(&mut self) -> bool {
+    /// Repair legacy snapshots where an earlier reducer marked the whole group
+    /// rejected while one or more child orders could still be live or unresolved.
+    pub fn repair_legacy_rejected_status(&mut self) -> bool {
         if self.status != OrderGroupStatus::Rejected
-            || self.intent.kind != OrderGroupKind::Oco
             || self.legs.iter().all(|leg| leg.order.status.is_terminal())
         {
             return false;
@@ -571,25 +570,22 @@ impl OrderGroupState {
             .iter()
             .any(|leg| leg.order.status == OrderStatus::Rejected)
         {
-            if self.intent.kind == OrderGroupKind::Oco {
-                if self.legs.iter().any(|leg| {
-                    matches!(
-                        leg.order.status,
-                        OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
-                    )
-                }) {
-                    // A rejected OCO leg does not make its still-live peer safe.
-                    // Keep the group routable to the audited group-cancel path.
-                    self.status = OrderGroupStatus::PeerCancelRequired;
-                } else if self.legs.iter().all(|leg| leg.order.status.is_terminal()) {
-                    self.status = OrderGroupStatus::Rejected;
-                } else {
-                    // Submitted/CancelPending peers need an authoritative snapshot
-                    // before the group can be treated as rejected or canceled.
-                    self.status = OrderGroupStatus::ReconcileRequired;
-                }
-            } else {
+            let active_peer = self.legs.iter().any(|leg| {
+                matches!(
+                    leg.order.status,
+                    OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+                )
+            });
+            if self.intent.kind == OrderGroupKind::Oco && active_peer {
+                // A rejected OCO leg does not make its still-live peer safe.
+                // Keep the group routable to the audited group-cancel path.
+                self.status = OrderGroupStatus::PeerCancelRequired;
+            } else if self.legs.iter().all(|leg| leg.order.status.is_terminal()) {
                 self.status = OrderGroupStatus::Rejected;
+            } else {
+                // A rejected leg does not settle a bracket or an OCO whose peer
+                // is still submitting/canceling; preserve the barrier for query.
+                self.status = OrderGroupStatus::ReconcileRequired;
             }
         } else if self.legs.iter().any(|leg| {
             matches!(
@@ -695,6 +691,35 @@ mod tests {
                     OrderGroupLegIntent {
                         role: OrderGroupLegRole::StopLoss,
                         order: protection_order(2, ConditionalOrderKind::StopLoss),
+                    },
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn bracket_state() -> OrderGroupState {
+        let mut entry = protection_order(801, ConditionalOrderKind::TakeProfit);
+        entry.side = Side::Buy;
+        entry.exact_amounts.as_mut().unwrap().conditional = None;
+        OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "bracket-1",
+                OrderGroupKind::Bracket,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::Entry,
+                        order: entry,
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: protection_order(802, ConditionalOrderKind::TakeProfit),
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: protection_order(803, ConditionalOrderKind::StopLoss),
                     },
                 ],
             )
@@ -884,6 +909,30 @@ mod tests {
 
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
         assert_eq!(group.legs[1].order.status, OrderStatus::Submitted);
+    }
+
+    #[test]
+    fn bracket_rejected_leg_does_not_hide_active_protection_peers() {
+        let mut group = bracket_state();
+        for id in [801, 802, 803] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+
+        group
+            .apply_order_snapshot(snapshot(&group, 801, OrderStatus::Rejected, "0"), None)
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        assert_eq!(group.legs[1].order.status, OrderStatus::Working);
+        assert_eq!(group.legs[2].order.status, OrderStatus::Working);
     }
 
     #[test]
