@@ -6,7 +6,7 @@
 //! 交易所、调度器那两侧什么都没有。现在提交入口按 `CommandKind::executed()` 裁决，
 //! 但判定式本身是一行手写的 `matches!`，它会腐坏，所以本文件钉住两侧：
 //!
-//! - **行为侧**：全部变体逐个过真实提交入口 —— 五颗受理、其余以 `Invalid` 拒绝，且拒绝时
+//! - **行为侧**：全部变体逐个过真实提交入口 —— 六颗受理、其余以 `Invalid` 拒绝，且拒绝时
 //!   既不写审计也不留待办（"拒绝"必须是真的没受理，而不是受理后再标失败）。
 //! - **源码侧**：`executed()` 为真的名字必须出现在生产派发者文件里；为假的名字在**任何**
 //!   生产源码里都不许以 `CommandKind::<名字>` 的形式出现。于是"加了派发者却忘了改判定式"
@@ -178,6 +178,7 @@ fn control_plane_accepts_only_the_kinds_that_have_an_executor() {
         accepted,
         [
             "SubmitOrder",
+            "SubmitOrderGroup",
             "AmendOrder",
             "PauseStrategy",
             "ResumeStrategy",
@@ -264,8 +265,8 @@ fn command_kind_all_enumerates_every_variant_in_the_source() {
 
 /// 接口文档那两行名单必须与 `executed()` 说的同一件事。
 ///
-/// 判据按行取，不按全文子串：八颗的名字在文档里到处出现（`SubmitOrder` 更是贯穿全篇），
-/// 数子串等于不判。只认这两行前缀，且要求八颗里被点到的那些**恰好**等于该档的名单，
+/// 判据按行取，不按全文子串：命令名字在文档里到处出现（`SubmitOrder` 更是贯穿全篇），
+/// 数子串等于不判。只认这两行前缀，且要求变体里被点到的那些**恰好**等于该档的名单，
 /// 于是"给一颗改了档位而文档没跟着改"与"同一颗写进两行"都会红在那颗名字上。
 #[test]
 fn control_plane_acceptance_kinds_are_listed_in_the_ops_doc() {

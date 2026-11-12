@@ -18,6 +18,7 @@ pub enum Permission {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum CommandKind {
     SubmitOrder,
+    SubmitOrderGroup,
     AmendOrder,
     PauseStrategy,
     ResumeStrategy,
@@ -32,7 +33,10 @@ impl CommandKind {
     fn required_permission(&self) -> Permission {
         match self {
             Self::RetryJob => Permission::Research,
-            Self::SubmitOrder | Self::AmendOrder | Self::ReconcileAccount => Permission::Trading,
+            Self::SubmitOrder
+            | Self::SubmitOrderGroup
+            | Self::AmendOrder
+            | Self::ReconcileAccount => Permission::Trading,
             Self::PauseStrategy | Self::ResumeStrategy | Self::CancelOrder => Permission::Trading,
             Self::ChangeRiskLimit | Self::SwitchVenue => Permission::Admin,
         }
@@ -45,6 +49,7 @@ impl CommandKind {
         matches!(
             self,
             Self::SubmitOrder
+                | Self::SubmitOrderGroup
                 | Self::AmendOrder
                 | Self::CancelOrder
                 | Self::PauseStrategy
@@ -53,8 +58,9 @@ impl CommandKind {
     }
 
     /// 全部变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
-    pub const ALL: [CommandKind; 9] = [
+    pub const ALL: [CommandKind; 10] = [
         Self::SubmitOrder,
+        Self::SubmitOrderGroup,
         Self::AmendOrder,
         Self::PauseStrategy,
         Self::ResumeStrategy,
@@ -342,6 +348,36 @@ pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
         ));
     }
     Ok(order)
+}
+
+/// Parse and bind an atomic OCO/Bracket intent to an audited control command.
+pub fn order_group_from_submit_command(
+    command: &ControlCommand,
+) -> QxResult<qx_core::OrderGroupIntent> {
+    command.validate().map_err(|error| {
+        QxError::BusinessViolation(format!("SubmitOrderGroup 控制命令非法: {error:?}"))
+    })?;
+    if command.kind != CommandKind::SubmitOrderGroup {
+        return Err(QxError::BusinessViolation(
+            "控制命令不是 SubmitOrderGroup".into(),
+        ));
+    }
+    if command.payload.len() != 1 || !command.payload.contains_key("order_group_json") {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrderGroup payload 必须且只能包含 order_group_json".into(),
+        ));
+    }
+    let group: qx_core::OrderGroupIntent =
+        serde_json::from_str(&command.payload["order_group_json"]).map_err(|error| {
+            QxError::BusinessViolation(format!("order_group_json 非法: {error}"))
+        })?;
+    group.validate().map_err(QxError::BusinessViolation)?;
+    if command.target != group.group_id {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrderGroup target 与 group_id 不一致".into(),
+        ));
+    }
+    Ok(group)
 }
 
 /// 控制面终态命令的保留上界。`commands` / `requests` / `audit` 三格只追加不退场，长跑进程
@@ -753,6 +789,73 @@ fn has_permission(actual: Permission, required: Permission) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn protection_order(
+        client_id: u64,
+        kind: qx_core::ConditionalOrderKind,
+        trigger: &str,
+    ) -> Order {
+        Order {
+            client_id,
+            instrument: qx_core::InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: qx_core::Side::Sell,
+            qty: qx_core::Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: qx_core::Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(qx_core::ExactOrderAmounts {
+                quantity: qx_core::ExactDecimal::parse("0.01").unwrap(),
+                limit_price: None,
+                filled: qx_core::ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: qx_core::ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(qx_core::ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: Some(qx_core::TriggerPriceType::Last),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        }
+    }
+
+    #[test]
+    fn submit_order_group_command_binds_audited_target_and_group_payload() {
+        let group = qx_core::OrderGroupIntent::new(
+            "main-btc-protection",
+            qx_core::OrderGroupKind::Oco,
+            qx_core::OrderGroupExecution::NativeRequired,
+            vec![
+                qx_core::OrderGroupLegIntent {
+                    role: qx_core::OrderGroupLegRole::TakeProfit,
+                    order: protection_order(71, qx_core::ConditionalOrderKind::TakeProfit, "70000"),
+                },
+                qx_core::OrderGroupLegIntent {
+                    role: qx_core::OrderGroupLegRole::StopLoss,
+                    order: protection_order(72, qx_core::ConditionalOrderKind::StopLoss, "60000"),
+                },
+            ],
+        )
+        .unwrap();
+        let mut command = command(Permission::Trading);
+        command.kind = CommandKind::SubmitOrderGroup;
+        command.target = group.group_id.clone();
+        command.payload = BTreeMap::from([(
+            "order_group_json".into(),
+            serde_json::to_string(&group).unwrap(),
+        )]);
+
+        assert_eq!(order_group_from_submit_command(&command).unwrap(), group);
+        let mut mismatched = command;
+        mismatched.target = "another-group".into();
+        assert!(order_group_from_submit_command(&mismatched).is_err());
+    }
 
     fn amend_command(order: &Order) -> ControlCommand {
         let mut value = command(Permission::Trading);

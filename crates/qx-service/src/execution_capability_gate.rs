@@ -497,6 +497,78 @@ pub fn require_and_record_submit_command_execution_capability(
     Ok(decision)
 }
 
+/// Evaluate and durably record every child leg of a native order-group command before the
+/// Binance connector is created. Each fact binds the command, group ID, immutable leg terms,
+/// market-rule fingerprint, and the generated capability catalog used for admission.
+pub fn require_and_record_submit_order_group_execution_capability(
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+    runtime_environment: &str,
+    runtime_config_path: &Path,
+    connector: ExecutionConnectorProfile<'_>,
+    pipeline: &mut LiveEventPipeline,
+    now: u64,
+) -> Result<(), String> {
+    if command.kind != CommandKind::SubmitOrderGroup {
+        return Err("execution capability decision 只接受 SubmitOrderGroup".into());
+    }
+    let group = qx_control::order_group_from_submit_command(command)
+        .map_err(|error| format!("SubmitOrderGroup 载荷非法: {error:?}"))?;
+    let expected_account = worker.account_id.as_deref().unwrap_or_default();
+    let expected_venue = match connector {
+        ExecutionConnectorProfile::BinanceSpot => "BINANCE",
+        ExecutionConnectorProfile::Ccxt { .. } => worker.venue_id.as_deref().unwrap_or_default(),
+    };
+    for leg in &group.legs {
+        let order = &leg.order;
+        if order.account_id != expected_account
+            || !order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(expected_venue)
+        {
+            return Err(format!(
+                "订单组 {:?} 腿与执行 worker 账户或交易所不一致",
+                leg.role
+            ));
+        }
+        let resolved = resolve_order_execution_capability(
+            order,
+            worker,
+            runtime_environment,
+            runtime_config_path,
+            "submit",
+            connector,
+        )?;
+        require_resolved_decision(order, worker, &resolved.decision)?;
+        let fact = execution_decision_fact(
+            order,
+            &resolved,
+            ExecutionCapabilityDecisionKind::Submit,
+            Some(command.command_id),
+            Some(group.group_id.clone()),
+        )?;
+        if let Some(previous) = pipeline.execution_capability_decision(order.client_id) {
+            if previous.kind != ExecutionCapabilityDecisionKind::Submit
+                || previous.command_id != Some(command.command_id)
+                || previous.order_group_id.as_deref() != Some(group.group_id.as_str())
+                || !same_preflight_binding(previous, &fact)
+            {
+                return Err(format!(
+                    "client_order_id={} 已绑定其他订单组或不同执行能力快照，拒绝重放",
+                    order.client_id
+                ));
+            }
+        } else {
+            pipeline
+                .record_execution_capability_decision(fact, now)
+                .map_err(|error| format!("持久化订单组执行能力证据失败: {error:?}"))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn require_submit_command_execution_capability(
     command: &ControlCommand,
     worker: &WorkerConfig,

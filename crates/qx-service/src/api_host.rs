@@ -167,7 +167,10 @@ pub fn build_configured_api_service(
             move |command, granted, ts| {
                 if matches!(
                     &command.kind,
-                    CommandKind::SubmitOrder | CommandKind::AmendOrder | CommandKind::CancelOrder
+                    CommandKind::SubmitOrder
+                        | CommandKind::SubmitOrderGroup
+                        | CommandKind::AmendOrder
+                        | CommandKind::CancelOrder
                 ) {
                     validate_control_payload(&command)?;
                 }

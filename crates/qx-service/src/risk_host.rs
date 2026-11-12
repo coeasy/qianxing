@@ -143,6 +143,105 @@ pub fn execute_submit_order_with_worker_risk<V: qx_zhenlu::Venue>(
     )
 }
 
+/// Submit one native OCO/Bracket intent through the same account admission lock, fresh balance,
+/// frozen market spec, risk port, EventLog, and execution gateway as a single order.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_submit_order_group_with_worker_risk<V: qx_zhenlu::Venue>(
+    command: &qx_control::ControlCommand,
+    worker: &WorkerConfig,
+    root: &Path,
+    venue: V,
+    pipeline: &mut LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    runtime_config_path: Option<&Path>,
+    group_store: &mut dyn qx_zhenlu::OrderGroupStore,
+) -> Result<String, String> {
+    let group = qx_control::order_group_from_submit_command(command)
+        .map_err(|error| format!("SubmitOrderGroup 载荷非法: {error:?}"))?;
+    let first = group
+        .legs
+        .first()
+        .ok_or_else(|| "SubmitOrderGroup 不包含子腿".to_string())?;
+    let account_id = worker
+        .account_id
+        .as_deref()
+        .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
+    if group.legs.iter().any(|leg| {
+        leg.order.account_id != account_id
+            || !leg
+                .order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(worker.venue_id.as_deref().unwrap_or_default())
+    }) {
+        return Err("SubmitOrderGroup 子腿与 worker 账户或交易所拓扑不匹配".into());
+    }
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock = worker_account_admission_lock(root, &log_name)?;
+    pipeline
+        .refresh()
+        .map_err(|error| format!("刷新订单组风控 EventLog 失败: {error:?}"))?;
+    require_no_unresolved_live_order_operations(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        pipeline,
+        None,
+    )?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    require_fresh_live_balance_snapshot(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        pipeline,
+        timestamp,
+    )?;
+    let Some((risk, position)) =
+        worker_risk_context(worker, &first.order, pipeline, None, runtime_config_path)?
+    else {
+        return Err(format!(
+            "FAIL_CLOSED: worker {} 缺少风控配置（instrument_spec_path），拒绝提交订单组",
+            worker.id
+        ));
+    };
+    let spec = risk.instrument_spec.as_ref().ok_or_else(|| {
+        format!(
+            "FAIL_CLOSED: worker {} 缺少冻结 market spec，拒绝提交订单组",
+            worker.id
+        )
+    })?;
+    let mut venue = venue;
+    venue
+        .validate_instrument_spec(spec)
+        .map_err(|error| format!("FAIL_CLOSED: 订单组 market spec 校验失败: {error:?}"))?;
+    for leg in &group.legs {
+        venue
+            .validate_order_constraints(spec, &leg.order)
+            .map_err(|error| {
+                format!(
+                    "FAIL_CLOSED: 订单组 {:?} 腿不满足交易所过滤器: {error:?}",
+                    leg.role
+                )
+            })?;
+    }
+    let risk_port = qx_execution::RiskContextPort {
+        risk: &risk,
+        position: &position,
+    };
+    let mut venue_port = qx_execution::VenuePortAdapter::new(venue);
+    qx_execution::ExecutionGateway::new(&mut venue_port, pipeline, &worker.id, now, source_seq)
+        .with_instrument_spec(spec.clone())
+        .with_order_group_store(group_store)
+        .submit_order_group(group, &risk_port)
+        .map(|result| result.message)
+}
+
 /// Market orders with exact strategy quantities capture their fresh exact risk price in the
 /// durable order fact. That price is risk metadata only and is not passed to the venue as a
 /// limit price.

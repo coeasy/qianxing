@@ -6,7 +6,8 @@ use crate::{
 };
 use qx_api::{ApiService, ControlSubmitError};
 use qx_control::{
-    amend_order_target_from_command, cancel_order_target_from_command, CommandKind, ControlError,
+    amend_order_target_from_command, cancel_order_target_from_command,
+    order_group_from_submit_command, CommandKind, ControlError,
 };
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerRole};
@@ -69,6 +70,22 @@ pub(super) fn build_configured_api_service_inner(
             ))
         })
         .collect::<Vec<_>>();
+    let order_group_routes = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Execution)
+        .filter_map(|worker| {
+            let venue_id = worker.venue_id.as_deref()?;
+            if VenueFamily::parse_option(Some(venue_id)) == Some(VenueFamily::Binance) {
+                Some((
+                    worker.account_id.as_deref()?.to_owned(),
+                    venue_id.to_owned(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
 
     qx_service::api_host::build_configured_api_service(
         config,
@@ -102,6 +119,34 @@ pub(super) fn build_configured_api_service_inner(
                             "SubmitOrder 载荷非法: {error:?}"
                         )))
                     })
+            }
+            CommandKind::SubmitOrderGroup => {
+                let group = order_group_from_submit_command(command).map_err(|error| {
+                    ControlSubmitError::Rejected(ControlError::Invalid(format!(
+                        "SubmitOrderGroup 载荷非法: {error:?}"
+                    )))
+                })?;
+                let first = group.legs.first().ok_or_else(|| {
+                    ControlSubmitError::Rejected(ControlError::Invalid(
+                        "SubmitOrderGroup 不包含子腿".into(),
+                    ))
+                })?;
+                let account_id = &first.order.account_id;
+                let venue_id = first.order.instrument.venue.as_str();
+                if !VenueFamily::parse_option(Some(venue_id))
+                    .is_some_and(|family| family == VenueFamily::Binance)
+                    || !order_group_routes
+                        .iter()
+                        .any(|(route_account, route_venue)| {
+                            route_account == account_id
+                                && route_venue.eq_ignore_ascii_case(venue_id)
+                        })
+                {
+                    return Err(ControlSubmitError::Rejected(ControlError::Invalid(
+                        "SubmitOrderGroup 当前只路由到已启用的 Binance Execution worker".into(),
+                    )));
+                }
+                Ok(())
             }
             CommandKind::CancelOrder => {
                 let target = cancel_order_target_from_command(command).map_err(|error| {

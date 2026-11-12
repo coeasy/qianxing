@@ -5,13 +5,16 @@ use crate::configured_backends::ControlStateBackend;
 use crate::execution_capability_gate::{
     require_active_orders_execution_capability,
     require_and_record_submit_command_execution_capability,
+    require_and_record_submit_order_group_execution_capability,
     require_cancel_order_execution_capability, require_order_execution_capability,
     require_submit_command_execution_capability, ExecutionConnectorProfile,
 };
 use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
-use crate::risk_host::execute_submit_order_with_worker_risk;
+use crate::risk_host::{
+    execute_submit_order_group_with_worker_risk, execute_submit_order_with_worker_risk,
+};
 use crate::spread_recovery_host::{
     command_is_final, is_fail_closed_rejection, is_retryable_spread_submission,
     open_spread_group_store, pending_spread_recovery_groups_for_account,
@@ -28,6 +31,7 @@ use qx_runtime::{
     ServiceStatus, WorkerConfig, WorkerContext, WorkerRole,
 };
 use qx_storage::{ControlCommandQueueBackend, StorageError};
+use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -53,6 +57,30 @@ pub fn binance_submit_matches_worker(command: &ControlCommand, worker: &WorkerCo
         .unwrap_or(false)
 }
 
+pub fn binance_submit_order_group_matches_worker(
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+) -> bool {
+    if command.kind != CommandKind::SubmitOrderGroup {
+        return false;
+    }
+    let Ok(group) = qx_control::order_group_from_submit_command(command) else {
+        return false;
+    };
+    let expected_account = worker.account_id.as_deref().unwrap_or_default();
+    let expected_venue = worker.venue_id.as_deref().unwrap_or("BINANCE");
+    group.legs.iter().all(|leg| {
+        leg.order.account_id == expected_account
+            && leg.order.instrument.venue.is_binance()
+            && leg
+                .order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(expected_venue)
+    })
+}
+
 pub fn binance_cancel_matches_worker(command: &ControlCommand, worker: &WorkerConfig) -> bool {
     if command.kind != CommandKind::CancelOrder {
         return false;
@@ -73,6 +101,7 @@ fn binance_execution_command_matches_worker(
 ) -> bool {
     match &command.kind {
         CommandKind::SubmitOrder => binance_submit_matches_worker(command, worker),
+        CommandKind::SubmitOrderGroup => binance_submit_order_group_matches_worker(command, worker),
         CommandKind::CancelOrder => binance_cancel_matches_worker(command, worker),
         _ => false,
     }
@@ -328,8 +357,9 @@ where
         }
 
         for command in control.pending().filter(|command| {
-            matches!(&command.kind, CommandKind::SubmitOrder)
-                && binance_submit_matches_worker(command, worker)
+            (matches!(&command.kind, CommandKind::SubmitOrder)
+                && binance_submit_matches_worker(command, worker))
+                || binance_submit_order_group_matches_worker(command, worker)
         }) {
             queue
                 .enqueue_command(command.clone(), lease_now)
@@ -371,6 +401,18 @@ where
                     &mut metrics,
                     create_venue,
                     *dedicated_spread_recovery,
+                )?
+            } else if command.kind == CommandKind::SubmitOrderGroup {
+                execute_binance_queued_order_group(
+                    worker,
+                    pipeline_storage,
+                    &settlement_currency,
+                    &runtime_config.environment,
+                    runtime_config_path,
+                    now,
+                    &command,
+                    &mut metrics,
+                    create_venue,
                 )?
             } else {
                 if let Err(reason) = require_worker_risk_spec(worker, &command, runtime_config_path)
@@ -543,6 +585,125 @@ where
     } else {
         drop(venue);
     }
+    metrics.absorb(&pipeline);
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_binance_queued_order_group<F>(
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    settlement_currency: &str,
+    runtime_environment: &str,
+    runtime_config_path: &Path,
+    now: u64,
+    command: &ControlCommand,
+    metrics: &mut PipelineMetricsReporter,
+    create_venue: &mut F,
+) -> Result<Result<String, String>, String>
+where
+    F: FnMut(&WorkerConfig) -> Result<BinanceSpotVenue, String>,
+{
+    qx_control::order_group_from_submit_command(command)
+        .map_err(|error| format!("SubmitOrderGroup 载荷非法: {error:?}"))?;
+    if !binance_submit_order_group_matches_worker(command, worker) {
+        return Ok(Err(
+            "SubmitOrderGroup 账户或交易所与 Binance worker 拓扑不匹配".into(),
+        ));
+    }
+    let log_name = required_account_event_log(worker)?;
+    let mut pipeline = pipeline_storage
+        .open(log_name, settlement_currency.to_owned())
+        .map_err(|error| format!("打开 Binance 订单组 EventLog 失败: {error}"))?;
+    let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut grouped_order_ids = std::collections::BTreeSet::new();
+    let mut active_groups = Vec::new();
+    for id in group_store.group_ids()? {
+        let Some(existing) = group_store.load(&id)? else {
+            continue;
+        };
+        if matches!(
+            existing.status,
+            qx_core::OrderGroupStatus::Filled
+                | qx_core::OrderGroupStatus::Cancelled
+                | qx_core::OrderGroupStatus::Rejected
+        ) {
+            continue;
+        }
+        let belongs_to_worker = existing.legs.iter().all(|leg| {
+            leg.order.account_id == worker.account_id.as_deref().unwrap_or_default()
+                && leg.order.instrument.venue.is_binance()
+        });
+        if !belongs_to_worker {
+            continue;
+        }
+        for leg in &existing.legs {
+            grouped_order_ids.insert(leg.order.client_id);
+        }
+        active_groups.push(existing);
+    }
+    if let Some(unresolved) = active_groups.iter().find(|group| {
+        group.status == qx_core::OrderGroupStatus::ReconcileRequired
+            || group.venue_group_id.is_none()
+    }) {
+        return Ok(Err(format!(
+            "账户订单组 {} 缺少确认的 Binance 列表身份或仍待对账，先恢复后再提交新组",
+            unresolved.intent.group_id
+        )));
+    }
+    let active_orders = pipeline.orders();
+    let ungrouped_active = active_orders
+        .iter()
+        .filter(|order| !grouped_order_ids.contains(&order.client_id))
+        .collect::<Vec<_>>();
+    if let Err(error) = require_active_orders_execution_capability(
+        ungrouped_active.into_iter(),
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        ExecutionConnectorProfile::BinanceSpot,
+        false,
+        &mut pipeline,
+        now,
+    ) {
+        return Ok(Err(error));
+    }
+
+    if let Err(error) = require_and_record_submit_order_group_execution_capability(
+        command,
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        ExecutionConnectorProfile::BinanceSpot,
+        &mut pipeline,
+        now,
+    ) {
+        metrics.absorb(&pipeline);
+        return Ok(Err(error));
+    }
+
+    let mut venue = create_venue(worker)?;
+    venue
+        .restore_orders(pipeline.orders())
+        .map_err(|error| format!("恢复 Binance 订单组子单状态失败: {error:?}"))?;
+    let source_seq = pipeline
+        .log()
+        .events()
+        .last()
+        .map(|event| event.source_seq)
+        .unwrap_or(0);
+    let mut source_seq = source_seq;
+    let result = execute_submit_order_group_with_worker_risk(
+        command,
+        worker,
+        &pipeline_storage.root,
+        venue,
+        &mut pipeline,
+        now,
+        &mut source_seq,
+        Some(runtime_config_path),
+        &mut group_store,
+    );
     metrics.absorb(&pipeline);
     Ok(result)
 }

@@ -515,8 +515,8 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 
 控制命令的受理面按 `kind` 分档（V13 R2 #188），本构建里两档的名单是：
 
-- 有派发者的控制命令：`SubmitOrder`、`AmendOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`。`AmendOrder` 和 `CancelOrder` 路由到匹配账户/交易所的 CCXT Execution worker；Paper 和 Binance Direct 暂不接收改单命令。改单仅在 CCXT 交易所原生 editOrder 能力、订单形态和精度预检通过后执行；结果未知时保留持久 pending 并禁止重发。
-- 有派发者、能被受理的：`SubmitOrder`、`AmendOrder`、`CancelOrder`、`PauseStrategy`、`ResumeStrategy`。
+- 有派发者的控制命令：`SubmitOrder`、`SubmitOrderGroup`、`AmendOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`。`SubmitOrderGroup` 当前只路由到 Binance Spot Execution worker，并复用实时余额、冻结规格、账户风控、OMS/EventLog 与能力目录证据；缺少 OCO 条件单准入或存在未对账订单组时 fail-closed。`AmendOrder` 和 `CancelOrder` 路由到匹配账户/交易所的 CCXT Execution worker；Paper 和 Binance Direct 暂不接收改单命令。改单仅在 CCXT 交易所原生 editOrder 能力、订单形态和精度预检通过后执行；结果未知时保留持久 pending 并禁止重发。
+- 有派发者、能被受理的：`SubmitOrder`、`SubmitOrderGroup`、`AmendOrder`、`CancelOrder`、`PauseStrategy`、`ResumeStrategy`。
 - 没有派发者、提交即以 400 拒绝的：`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
 
 这条闸门只在提交入口判，不进存档校验：队列与审计里已经落盘的历史命令重启后仍然读得回来，
