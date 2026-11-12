@@ -530,11 +530,9 @@ fn binance_oco_cancel_calls_native_list_endpoint_and_validates_both_children() {
     assert_eq!(requests[0].method, "DELETE");
     assert!(requests[0].path.starts_with("/api/v3/orderList?"));
     assert!(requests[0].path.contains("orderListId=123456"));
-    assert!(
-        requests[0]
-            .path
-            .contains(&format!("listClientOrderId={list_client_id}"))
-    );
+    assert!(requests[0]
+        .path
+        .contains(&format!("listClientOrderId={list_client_id}")));
     assert!(requests[0].path.contains("symbol=BTCUSDT"));
 }
 

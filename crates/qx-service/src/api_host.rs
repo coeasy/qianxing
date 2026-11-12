@@ -809,11 +809,9 @@ mod tests {
         assert_eq!(response.status, 200, "{}", response.body);
         let metrics_response = service.handle("GET", "/metrics", "", 100_000);
         assert_eq!(metrics_response.status, 200, "{}", metrics_response.body);
-        assert!(
-            metrics_response
-                .body
-                .contains("qx_order_group_metrics_available 1\n")
-        );
+        assert!(metrics_response
+            .body
+            .contains("qx_order_group_metrics_available 1\n"));
         let body: serde_json::Value =
             serde_json::from_str(&response.body).expect("readiness JSON is valid");
         let gateway = body["readiness_layers"]["O"]["exchange_gateways"]["gateways"]

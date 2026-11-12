@@ -161,7 +161,10 @@ fn okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs() {
     let mut venue = CcxtProcessVenue::new("okx", Box::new(FakeRpc { calls: Vec::new() }));
     let submission = venue.submit_order_group(&group, 123).unwrap();
     assert_eq!(submission.venue_group_id.as_deref(), Some("123456"));
-    assert_eq!(submission.group_status, Some(qx_core::OrderGroupStatus::Active));
+    assert_eq!(
+        submission.group_status,
+        Some(qx_core::OrderGroupStatus::Active)
+    );
     assert!(submission.events.is_empty());
 }
 
@@ -1114,16 +1117,12 @@ fn ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill() {
     );
     venue.submit(order(), 10).unwrap();
     let events = venue.sync_order(7, 11).unwrap();
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Fill(_)))
-    );
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Cancelled { .. }))
-    );
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Fill(_))));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
     assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
     assert_eq!(venue.snapshot()[0].status, OrderStatus::Cancelled);
 }
@@ -1141,16 +1140,12 @@ fn ccxt_partial_fill_during_cancel_pending_keeps_cancel_until_remote_cancel() {
     venue.orders.get_mut(&7).unwrap().status = OrderStatus::CancelPending;
 
     let events = venue.sync_order(7, 11).unwrap();
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Fill(_)))
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Cancelled { .. }))
-    );
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Fill(_))));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
     assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
     assert_eq!(venue.snapshot()[0].status, OrderStatus::CancelPending);
 }
@@ -1200,11 +1195,9 @@ fn ccxt_order_policy_is_translated_before_create_order() {
     );
     venue.submit(requested, 10).unwrap();
     let calls = calls.lock().unwrap();
-    assert!(
-        calls
-            .iter()
-            .any(|call| call["op"] == "fetch_contract_settings")
-    );
+    assert!(calls
+        .iter()
+        .any(|call| call["op"] == "fetch_contract_settings"));
     assert!(!calls.iter().any(|call| call["op"] == "set_leverage"));
     assert!(!calls.iter().any(|call| call["op"] == "set_margin_mode"));
     assert!(!calls.iter().any(|call| call["op"] == "set_position_mode"));
@@ -1367,12 +1360,10 @@ fn ccxt_reconciler_keeps_amendment_pending_when_remote_terms_do_not_match() {
     let mut venue = CcxtProcessVenue::new("binance", Box::new(UnchangedRpc));
     venue.restore_order(current.clone(), "remote-7").unwrap();
 
-    assert!(
-        venue
-            .reconcile_amendment(&current, &amended, 30)
-            .unwrap()
-            .is_none()
-    );
+    assert!(venue
+        .reconcile_amendment(&current, &amended, 30)
+        .unwrap()
+        .is_none());
     assert_eq!(venue.orders.get(&7), Some(&current));
 }
 

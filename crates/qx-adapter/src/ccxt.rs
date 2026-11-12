@@ -1486,7 +1486,8 @@ fn bitget_uta_oco_worker_request(group: &OrderGroupState) -> QxResult<Value> {
         .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
     let (stop_loss_trigger, stop_loss_price_type) =
         sl.ok_or_else(|| QxError::BusinessViolation("Bitget OCO 止损腿缺少触发价".into()))?;
-    if stop_loss_price_type.is_some_and(|price_type| price_type != qx_core::TriggerPriceType::Last) {
+    if stop_loss_price_type.is_some_and(|price_type| price_type != qx_core::TriggerPriceType::Last)
+    {
         return Err(QxError::BusinessViolation(
             "Bitget UTA Spot OCO 当前只支持 market 触发价".into(),
         ));
@@ -1568,7 +1569,8 @@ impl Venue for CcxtProcessVenue {
                 .first()
                 .map(|leg| leg.order.instrument.to_string())
                 .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 不包含子腿".into()))?;
-            if result.get("instrument").and_then(Value::as_str) != Some(expected_instrument.as_str())
+            if result.get("instrument").and_then(Value::as_str)
+                != Some(expected_instrument.as_str())
                 || result.get("order_type").and_then(Value::as_str) != Some("oco")
             {
                 return Err(QxError::ReconcileRequired(

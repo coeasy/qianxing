@@ -7,19 +7,19 @@ use crate::ccxt_reconcile::{
 };
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::execution_capability_gate::{
-    AccountQueryPurpose, ExecutionConnectorProfile, require_account_query_execution_capability,
+    require_account_query_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::market_bridges::venue_balance_fact_identity;
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
-use crate::reconcile_report::{ReconcileReportInput, persist_reconcile_report};
+use crate::reconcile_report::{persist_reconcile_report, ReconcileReportInput};
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_adapter::{CcxtProcessClient, CcxtProcessVenue};
 use qx_core::{EventKind, VenueFamily};
-use qx_execution::{EventLogReconcilePort, ingest_venue_events, ingest_venue_events_with_spec};
+use qx_execution::{ingest_venue_events, ingest_venue_events_with_spec, EventLogReconcilePort};
 use qx_runtime::{
-    RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig, WorkerContext,
-    WorkerRole, account_worker_settlement_currency, required_account_event_log,
+    account_worker_settlement_currency, required_account_event_log, RuntimeConfig,
+    RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig, WorkerContext, WorkerRole,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -202,14 +202,7 @@ fn reconcile_ccxt_native_order_groups(
             .and_then(|response| response.get("order_group").cloned());
         let Some(remote) = fetched else {
             mark_ccxt_group_query_failed(
-                &group,
-                is_bitget,
-                worker,
-                &mut store,
-                pipeline,
-                now,
-                source_seq,
-                issues,
+                &group, is_bitget, worker, &mut store, pipeline, now, source_seq, issues,
             )?;
             continue;
         };
@@ -2223,10 +2216,10 @@ fn runtime_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod native_order_group_reconcile_tests {
     use super::{
-        OkxOcoObservation, bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
+        bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
         bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
         mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
-        sync_ccxt_order_groups_from_user_stream,
+        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
     };
 
     #[test]
@@ -2379,12 +2372,10 @@ mod native_order_group_reconcile_tests {
             .unwrap()
             .unwrap();
         assert_eq!(restored.status, OrderGroupStatus::ReconcileRequired);
-        assert!(
-            restored
-                .legs
-                .iter()
-                .all(|leg| leg.order.status == OrderStatus::Unknown)
-        );
+        assert!(restored
+            .legs
+            .iter()
+            .all(|leg| leg.order.status == OrderStatus::Unknown));
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0]["reason"], "OKX 原生 OCO 查询失败或响应未知");
         std::fs::remove_dir_all(root).unwrap();
@@ -2458,30 +2449,24 @@ mod native_order_group_reconcile_tests {
             })),
             Ok(OkxOcoObservation::Triggered(ids)) if ids.len() == 1
         ));
-        assert!(
-            classify_okx_oco_observation(&serde_json::json!({
-                "state": "effective",
-                "order_ids": [],
-                "actual_size": "0.01"
-            }))
-            .is_err()
-        );
-        assert!(
-            classify_okx_oco_observation(&serde_json::json!({
-                "state": "canceled",
-                "order_ids": [],
-                "actual_size": "0.001"
-            }))
-            .is_err()
-        );
-        assert!(
-            classify_okx_oco_observation(&serde_json::json!({
-                "state": "live",
-                "order_ids": ["bad-id"],
-                "actual_size": "0"
-            }))
-            .is_err()
-        );
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "effective",
+            "order_ids": [],
+            "actual_size": "0.01"
+        }))
+        .is_err());
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "canceled",
+            "order_ids": [],
+            "actual_size": "0.001"
+        }))
+        .is_err());
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "live",
+            "order_ids": ["bad-id"],
+            "actual_size": "0"
+        }))
+        .is_err());
     }
 
     #[test]
@@ -2491,8 +2476,7 @@ mod native_order_group_reconcile_tests {
             OrderGroupLegIntent, OrderGroupLegRole, OrderGroupStatus, OrderStatus,
         };
         use qx_runtime::{
-            LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig,
-            WorkerRole,
+            LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig, WorkerRole,
         };
         use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
 
@@ -2620,10 +2604,7 @@ mod native_order_group_reconcile_tests {
             2
         );
         assert_eq!(issues.len(), 1);
-        assert_eq!(
-            issues[0]["reason"],
-            "OKX 原生 OCO 查询失败或响应未知"
-        );
+        assert_eq!(issues[0]["reason"], "OKX 原生 OCO 查询失败或响应未知");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2915,18 +2896,14 @@ mod native_order_group_reconcile_tests {
         );
         let reconciled = store.load("bitget-rejected-no-child").unwrap().unwrap();
         assert_eq!(reconciled.status, OrderGroupStatus::Rejected);
-        assert!(
-            reconciled
-                .legs
-                .iter()
-                .all(|leg| leg.order.status == OrderStatus::Rejected)
-        );
-        assert!(
-            pipeline
-                .orders()
-                .iter()
-                .all(|order| order.status == OrderStatus::Rejected)
-        );
+        assert!(reconciled
+            .legs
+            .iter()
+            .all(|leg| leg.order.status == OrderStatus::Rejected));
+        assert!(pipeline
+            .orders()
+            .iter()
+            .all(|order| order.status == OrderStatus::Rejected));
         assert!(issues.is_empty());
     }
 

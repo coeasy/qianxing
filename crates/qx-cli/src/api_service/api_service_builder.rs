@@ -6,9 +6,8 @@ use crate::{
 };
 use qx_api::{ApiService, ControlSubmitError};
 use qx_control::{
-    CommandKind, ControlError, amend_order_target_from_command,
-    cancel_order_group_target_from_command, cancel_order_target_from_command,
-    order_group_from_submit_command,
+    amend_order_target_from_command, cancel_order_group_target_from_command,
+    cancel_order_target_from_command, order_group_from_submit_command, CommandKind, ControlError,
 };
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerRole};

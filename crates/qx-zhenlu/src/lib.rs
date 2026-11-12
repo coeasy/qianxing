@@ -1603,8 +1603,8 @@ impl OrderGroupStore for FileOrderGroupStore {
     fn activate_native_group(&mut self, group_id: &str) -> Result<(), String> {
         let _lock = self.lock()?;
         let path = self.path_for(group_id)?;
-        let payload = std::fs::read(&path)
-            .map_err(|error| format!("读取待激活订单组失败: {error}"))?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待激活订单组失败: {error}"))?;
         let mut group: OrderGroupState = serde_json::from_slice(&payload)
             .map_err(|error| format!("解析待激活订单组失败: {error}"))?;
         group.validate_persisted()?;
@@ -1618,8 +1618,8 @@ impl OrderGroupStore for FileOrderGroupStore {
     fn begin_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
         let _lock = self.lock()?;
         let path = self.path_for(group_id)?;
-        let payload = std::fs::read(&path)
-            .map_err(|error| format!("读取待撤销订单组失败: {error}"))?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待撤销订单组失败: {error}"))?;
         let mut group: OrderGroupState = serde_json::from_slice(&payload)
             .map_err(|error| format!("解析待撤销订单组失败: {error}"))?;
         group.validate_persisted()?;
@@ -1633,8 +1633,8 @@ impl OrderGroupStore for FileOrderGroupStore {
     fn complete_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
         let _lock = self.lock()?;
         let path = self.path_for(group_id)?;
-        let payload = std::fs::read(&path)
-            .map_err(|error| format!("读取待确认撤销订单组失败: {error}"))?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待确认撤销订单组失败: {error}"))?;
         let mut group: OrderGroupState = serde_json::from_slice(&payload)
             .map_err(|error| format!("解析待确认撤销订单组失败: {error}"))?;
         group.validate_persisted()?;

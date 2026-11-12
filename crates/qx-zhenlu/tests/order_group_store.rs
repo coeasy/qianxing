@@ -155,11 +155,9 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
         restored.venue_group_id.as_deref(),
         Some("exchange-list-9001")
     );
-    assert!(
-        store
-            .record_venue_group_id("persisted-oco", "conflicting-list".into())
-            .is_err()
-    );
+    assert!(store
+        .record_venue_group_id("persisted-oco", "conflicting-list".into())
+        .is_err());
     assert_eq!(reopened.group_ids().unwrap(), vec!["persisted-oco"]);
 
     let mut changed = oco_state("persisted-oco");
@@ -235,11 +233,7 @@ fn native_group_cancel_fence_survives_store_reopen() {
         .complete_native_cancel("cancel-fenced-oco")
         .unwrap();
     assert_eq!(
-        reopened
-            .load("cancel-fenced-oco")
-            .unwrap()
-            .unwrap()
-            .status,
+        reopened.load("cancel-fenced-oco").unwrap().unwrap().status,
         qx_core::OrderGroupStatus::Cancelled
     );
 

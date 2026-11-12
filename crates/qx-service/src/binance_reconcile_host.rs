@@ -2,7 +2,7 @@
 
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::execution_capability_gate::{
-    AccountQueryPurpose, ExecutionConnectorProfile, require_account_query_execution_capability,
+    require_account_query_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::market_bridges::venue_balance_fact_identity;
 use crate::pipeline::PipelineStorage;
@@ -14,8 +14,9 @@ use qx_core::{
 };
 use qx_execution::EventLogReconcilePort;
 use qx_runtime::{
-    LiveEventPipeline, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus,
-    WorkerConfig, WorkerContext, account_worker_settlement_currency, required_account_event_log,
+    account_worker_settlement_currency, required_account_event_log, LiveEventPipeline,
+    RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus, WorkerConfig,
+    WorkerContext,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

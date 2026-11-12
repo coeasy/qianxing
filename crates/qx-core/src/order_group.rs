@@ -147,9 +147,7 @@ impl OrderGroupIntent {
             && take_profit.limit_price_decimal().is_some()
             && stop_loss_kind == Some(ConditionalOrderKind::StopLoss);
         if !conditional_pair && !limit_take_profit_pair {
-            return Err(
-                "订单组止盈/止损腿必须是对应条件单，或 OCO 限价止盈加条件止损".into(),
-            );
+            return Err("订单组止盈/止损腿必须是对应条件单，或 OCO 限价止盈加条件止损".into());
         }
         let mut client_ids = BTreeSet::new();
         for leg in &self.legs {
@@ -307,8 +305,10 @@ impl OrderGroupState {
             return Err("订单组当前没有待确认的原生撤销".into());
         }
         if self.legs.iter().any(|leg| {
-            !matches!(leg.order.status, OrderStatus::Cancelled | OrderStatus::Expired)
-                || leg.order.filled.raw() != 0
+            !matches!(
+                leg.order.status,
+                OrderStatus::Cancelled | OrderStatus::Expired
+            ) || leg.order.filled.raw() != 0
                 || leg
                     .order
                     .exact_amounts
@@ -795,9 +795,7 @@ mod tests {
             .apply_order_snapshot(snapshot(&group, 1, OrderStatus::CancelPending, "0"), None)
             .unwrap();
         let cancelled = snapshot(&group, 1, OrderStatus::Cancelled, "0");
-        group
-            .apply_order_snapshot(cancelled.clone(), None)
-            .unwrap();
+        group.apply_order_snapshot(cancelled.clone(), None).unwrap();
         group.apply_order_snapshot(cancelled, None).unwrap();
         assert!(group
             .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Cancelled, "0.001"), None)
@@ -1048,11 +1046,9 @@ mod tests {
             .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Unknown, "0"), None)
             .unwrap();
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
-        assert!(
-            group
-                .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Accepted, "0"), None)
-                .is_err()
-        );
+        assert!(group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Accepted, "0"), None)
+            .is_err());
         group
             .reconcile_order_snapshot(
                 snapshot(&group, 1, OrderStatus::Accepted, "0"),

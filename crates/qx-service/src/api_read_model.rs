@@ -5,14 +5,14 @@ use qx_api::ReconcileReportSnapshot;
 use qx_core::{EventKind, ExactDecimal, InstrumentId, LedgerEntry, LedgerEntryKind, PositionSide};
 use qx_protocol::{AccountSnapshot, EquityDiagnostic, EquityUnavailableReason};
 use qx_runtime::{
-    LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole, account_event_log_name,
-    owns_account_event_log, settlement_currency_for_log, worker_account_event_log,
+    account_event_log_name, owns_account_event_log, settlement_currency_for_log,
+    worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::pipeline::{PipelineStorage, event_log_exists};
+use crate::pipeline::{event_log_exists, PipelineStorage};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1157,11 +1157,9 @@ mod tests {
             r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260230"}}}"#,
         )
         .expect("replace calendar mapping with an invalid day");
-        assert!(
-            configured_account_trading_day(&config, "main", "paper")
-                .unwrap_err()
-                .contains("不是有效 YYYYMMDD")
-        );
+        assert!(configured_account_trading_day(&config, "main", "paper")
+            .unwrap_err()
+            .contains("不是有效 YYYYMMDD"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
