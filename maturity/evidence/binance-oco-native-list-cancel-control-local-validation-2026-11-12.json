@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_kind": "binance_oco_native_list_cancel_control_local_validation",
-  "generated_at_utc": "2026-11-12T04:31:00Z",
+  "generated_at_utc": "2026-11-12T04:32:04Z",
   "source": {
-    "git_head": "66eeefd2",
+    "git_head": "e82c2fd6",
     "worktree_dirty": true,
     "dirty_paths_related_to_this_evidence": [
       "crates/qx-adapter/src/binance.rs",
@@ -15,19 +15,30 @@
       "maturity/capability-matrix.yaml"
     ]
   },
-  "environment": {
-    "os": "Windows 11",
-    "rustc": "1.98.1",
-    "dependency_resolution": "offline, locked"
-  },
+  "environments": [
+    {
+      "os": "Windows 11",
+      "rustc": "1.98.1",
+      "dependency_resolution": "offline, locked"
+    },
+    {
+      "os": "Linux",
+      "container_runtime": "Podman",
+      "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+      "rustc": "1.98.1",
+      "dependency_resolution": "offline, locked, with the host Cargo mirror configuration and cached registries mounted"
+    }
+  ],
   "commands": [
     {
       "argv": ["cargo", "check", "--offline", "--locked", "-j2", "-p", "qx-adapter", "-p", "qx-service", "-p", "qx-cli"],
+      "environment": "Windows 11",
       "exit_code": 0,
       "result": "passed"
     },
     {
       "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-adapter", "--lib"],
+      "environment": "Windows 11",
       "exit_code": 0,
       "selected_tests": 104,
       "passed": 104,
@@ -35,11 +46,27 @@
       "result": "passed"
     },
     {
-      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-service", "cancel_order_group_routes_only_to_the_matching_binance_account"],
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-adapter", "binance_oco_cancel_request_targets_the_durable_list_and_client_identity", "--lib"],
+      "environment": "Linux on Podman",
       "exit_code": 0,
       "selected_tests": 1,
       "passed": 1,
       "failed": 0,
+      "result": "passed; validates request mapping only, no network request"
+    },
+    {
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-service", "cancel_order_group_routes_only_to_the_matching_binance_account"],
+      "environment": "Linux on Podman",
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "check", "--offline", "--locked", "-j2", "-p", "qx-adapter", "-p", "qx-service", "-p", "qx-cli"],
+      "environment": "Linux on Podman",
+      "exit_code": 0,
       "result": "passed"
     },
     {
@@ -51,19 +78,11 @@
       "argv": ["git", "diff", "--check"],
       "exit_code": 0,
       "result": "passed"
-    },
-    {
-      "argv": ["podman run", "mirror.gcr.io/library/rust:1.98.1-bookworm", "cargo test --offline --locked ..."],
-      "environment": "Linux container on Podman",
-      "exit_code": "blocked",
-      "blocker": "Container lacked a complete offline Cargo registry/index cache; online index resolution did not finish during the bounded run",
-      "result": "not_run_to_completion"
     }
   ],
   "scope_limitations": [
-    "Local tests validate adapter request mapping, existing adapter behavior, and worker routing. They do not exercise Binance's response to DELETE /api/v3/orderList or perform a venue request.",
+    "Local checks validate request mapping, worker routing, and compilation. They do not exercise Binance's response to DELETE /api/v3/orderList.",
     "No Binance API request was made. Testnet permissions, native list cancellation, cancellation races, and restart recovery remain unverified.",
-    "Linux Podman verification of this exact worktree did not complete because Cargo dependencies were unavailable offline and online index resolution stalled.",
     "This is local code evidence only and is not sandbox or production acceptance evidence."
   ]
 }
