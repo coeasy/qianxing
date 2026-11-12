@@ -643,11 +643,13 @@ where
         active_groups.push(existing);
     }
     if let Some(unresolved) = active_groups.iter().find(|group| {
-        group.status == qx_core::OrderGroupStatus::ReconcileRequired
+        group.status == qx_core::OrderGroupStatus::Submitting
+            || group.status == qx_core::OrderGroupStatus::ReconcileRequired
+            || group.status == qx_core::OrderGroupStatus::PeerCancelRequired
             || group.venue_group_id.is_none()
     }) {
         return Ok(Err(format!(
-            "账户订单组 {} 缺少确认的 Binance 列表身份或仍待对账，先恢复后再提交新组",
+            "账户订单组 {} 缺少确认的 Binance 列表身份、仍待对账或对手腿尚未终结，先恢复后再提交新组",
             unresolved.intent.group_id
         )));
     }

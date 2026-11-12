@@ -799,6 +799,28 @@ struct BinanceOrderListWire {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+struct BinanceOrderListLookupWire {
+    #[serde(rename = "orderListId", default)]
+    order_list_id: i64,
+    #[serde(rename = "contingencyType", default)]
+    contingency_type: String,
+    #[serde(rename = "listClientOrderId", default)]
+    list_client_order_id: String,
+    #[serde(default)]
+    symbol: String,
+    #[serde(default)]
+    orders: Vec<BinanceOrderListChildWire>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct BinanceOrderListChildWire {
+    #[serde(rename = "orderId", default)]
+    order_id: u64,
+    #[serde(rename = "clientOrderId", default)]
+    client_order_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct BinanceSnapshotWire {
     symbol: String,
     #[serde(rename = "orderId")]
@@ -1346,6 +1368,80 @@ impl BinanceSpotVenue {
                 })
             })
             .collect()
+    }
+
+    /// Recover a native OCO list identity from Binance after a worker restart.
+    /// The returned child IDs are checked against the durable local intent before
+    /// callers are allowed to clear a missing-list-identity barrier.
+    pub fn recover_order_group_identity(
+        &mut self,
+        group: &OrderGroupState,
+    ) -> QxResult<(String, BTreeMap<u64, String>)> {
+        if group.intent.kind != OrderGroupKind::Oco
+            || group.intent.execution != OrderGroupExecution::NativeRequired
+        {
+            return Err(QxError::BusinessViolation(
+                "Binance 仅支持恢复原生 OCO 订单组身份".into(),
+            ));
+        }
+        let (expected_list_client_id, _) = binance_oco_order_list_parameters(group)?;
+        let mut parameters = BTreeMap::new();
+        parameters.insert("origClientOrderId".into(), expected_list_client_id.clone());
+        let response = self.request_readonly_params_with_weight(
+            "/api/v3/orderList",
+            parameters,
+            self.last_event_ts,
+            4,
+        )?;
+        let wire: BinanceOrderListLookupWire = parse_success(response, "OCO order list lookup")?;
+        let expected_symbol = group
+            .legs
+            .first()
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 订单组为空".into()))?
+            .order
+            .instrument
+            .symbol()
+            .to_ascii_uppercase();
+        if wire.order_list_id < 0
+            || wire.contingency_type != "OCO"
+            || wire.list_client_order_id != expected_list_client_id
+            || !wire.symbol.eq_ignore_ascii_case(&expected_symbol)
+            || wire.orders.len() != group.legs.len()
+        {
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 列表查询结果与本地订单组身份不匹配".into(),
+            ));
+        }
+        let expected_client_ids = group
+            .legs
+            .iter()
+            .map(|leg| (client_order_id(leg.order.client_id), leg.order.client_id))
+            .collect::<BTreeMap<_, _>>();
+        let mut child_order_ids = BTreeMap::new();
+        let mut seen_client_ids = BTreeSet::new();
+        for child in wire.orders {
+            let Some(client_id) = expected_client_ids.get(&child.client_order_id).copied() else {
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表包含非本地意图中的子单".into(),
+                ));
+            };
+            if child.order_id == 0
+                || !seen_client_ids.insert(client_id)
+                || child_order_ids
+                    .insert(client_id, child.order_id.to_string())
+                    .is_some()
+            {
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表子单 ID 缺失或重复".into(),
+                ));
+            }
+        }
+        if seen_client_ids.len() != group.legs.len() {
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 列表未覆盖全部本地子腿".into(),
+            ));
+        }
+        Ok((wire.order_list_id.to_string(), child_order_ids))
     }
 
     /// Recover missing fills for one order from Binance `myTrades`. The complete remote history

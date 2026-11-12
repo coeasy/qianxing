@@ -80,7 +80,7 @@ where
                 .fetch_remote_snapshot()
                 .map_err(|error| format!("读取 Binance 订单对账快照失败: {error:?}"))?;
             let received_ts = runtime_timestamp_ms();
-            let trade_recovery_issues = append_missing_reconciled_fills(
+            let mut trade_recovery_issues = append_missing_reconciled_fills(
                 &mut pipeline,
                 &mut venue,
                 &worker.id,
@@ -98,6 +98,12 @@ where
             venue
                 .refresh_orders(pipeline.orders())
                 .map_err(|error| format!("刷新已对账订单状态失败: {error:?}"))?;
+            trade_recovery_issues.extend(sync_binance_order_groups(
+                &pipeline_storage.root,
+                &pipeline,
+                &worker,
+                &mut venue,
+            )?);
             let issues = venue
                 .reconcile_remote(&remote_orders)
                 .map_err(|error| format!("Binance 订单对账失败: {error:?}"))?;
@@ -239,6 +245,135 @@ where
         result
     })?;
     metrics.publish(false, runtime_timestamp_ms());
+    Ok(())
+}
+
+fn sync_binance_order_groups(
+    pipeline_root: &std::path::Path,
+    pipeline: &LiveEventPipeline,
+    worker: &WorkerConfig,
+    venue: &mut BinanceSpotVenue,
+) -> Result<Vec<serde_json::Value>, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let Some(account_id) = worker.account_id.as_deref() else {
+        return Err(format!("worker {} 缺少 account_id", worker.id));
+    };
+    let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
+    let orders = pipeline
+        .orders()
+        .into_iter()
+        .map(|order| (order.client_id, order))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut issues = Vec::new();
+    for group_id in store.group_ids()? {
+        let Some(mut group) = store.load(&group_id)? else {
+            continue;
+        };
+        if group.legs.iter().any(|leg| {
+            leg.order.account_id != account_id || !leg.order.instrument.venue.is_binance()
+        }) || matches!(
+            group.status,
+            qx_core::OrderGroupStatus::Planned
+                | qx_core::OrderGroupStatus::Filled
+                | qx_core::OrderGroupStatus::Cancelled
+                | qx_core::OrderGroupStatus::Rejected
+        ) {
+            continue;
+        }
+        if group.venue_group_id.is_none() {
+            let (venue_group_id, recovered_child_ids) = venue
+                .recover_order_group_identity(&group)
+                .map_err(|error| {
+                    format!("恢复 Binance OCO 列表身份失败 group_id={group_id}: {error:?}")
+                })?;
+            store.record_venue_group_id(&group_id, venue_group_id)?;
+            group = store
+                .load(&group_id)?
+                .ok_or_else(|| format!("持久化后重新读取订单组失败 group_id={group_id}"))?;
+            sync_order_group_snapshots(
+                &mut store,
+                &group,
+                &orders,
+                venue,
+                Some(&recovered_child_ids),
+            )?;
+        } else {
+            sync_order_group_snapshots(&mut store, &group, &orders, venue, None)?;
+        }
+        if let Some(current) = store.load(&group_id)? {
+            if matches!(
+                current.status,
+                qx_core::OrderGroupStatus::Submitting
+                    | qx_core::OrderGroupStatus::ReconcileRequired
+                    | qx_core::OrderGroupStatus::PeerCancelRequired
+            ) {
+                issues.push(serde_json::json!({
+                    "kind": "order_group_pending",
+                    "action": "reconcile_required",
+                    "group_id": group_id,
+                    "status": format!("{:?}", current.status),
+                    "reason": "Binance OCO 列表或子腿仍未达到可确认终态",
+                }));
+            }
+        }
+    }
+    Ok(issues)
+}
+
+fn sync_order_group_snapshots(
+    store: &mut qx_zhenlu::FileOrderGroupStore,
+    group: &qx_core::OrderGroupState,
+    orders: &std::collections::BTreeMap<u64, qx_core::Order>,
+    venue: &BinanceSpotVenue,
+    recovered_child_ids: Option<&std::collections::BTreeMap<u64, String>>,
+) -> Result<(), String> {
+    use qx_zhenlu::OrderGroupStore;
+
+    let snapshots = group
+        .legs
+        .iter()
+        .filter_map(|leg| orders.get(&leg.order.client_id))
+        .collect::<Vec<_>>();
+    // Resolve a group barrier only from a complete set of fresh, known child facts.
+    if group.status == qx_core::OrderGroupStatus::ReconcileRequired
+        && (snapshots.len() != group.legs.len()
+            || snapshots
+                .iter()
+                .any(|snapshot| snapshot.status == OrderStatus::Unknown))
+    {
+        return Ok(());
+    }
+    for snapshot in snapshots {
+        if snapshot.status == OrderStatus::Unknown {
+            continue;
+        }
+        let venue_order_id = venue
+            .venue_order_id(snapshot.client_id)
+            .map(str::to_string)
+            .or_else(|| recovered_child_ids.and_then(|ids| ids.get(&snapshot.client_id).cloned()));
+        let current_group = store
+            .load(&group.intent.group_id)?
+            .ok_or_else(|| format!("同步时订单组消失 group_id={}", group.intent.group_id))?;
+        let current_leg = current_group
+            .legs
+            .iter()
+            .find(|leg| leg.order.client_id == snapshot.client_id)
+            .ok_or_else(|| "订单组同步快照无法映射到子腿".to_string())?;
+        let is_reconciling = current_group.status == qx_core::OrderGroupStatus::ReconcileRequired;
+        if !is_reconciling
+            && current_leg.order == *snapshot
+            && (venue_order_id.is_none()
+                || current_leg.venue_order_id.as_deref() == venue_order_id.as_deref())
+        {
+            continue;
+        }
+        if is_reconciling {
+            store.reconcile_order_snapshot(&group.intent.group_id, snapshot, venue_order_id)?;
+        } else {
+            store.apply_order_snapshot(&group.intent.group_id, snapshot, venue_order_id)?;
+        }
+    }
     Ok(())
 }
 

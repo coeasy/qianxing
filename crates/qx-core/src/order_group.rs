@@ -429,10 +429,22 @@ impl OrderGroupState {
                     .legs
                     .iter()
                     .find(|leg| leg.order.client_id != filled_leg.order.client_id);
-                if peer.is_some_and(|leg| leg.order.status == OrderStatus::Cancelled)
-                    && filled_leg.order.status == OrderStatus::Filled
+                if peer.is_some_and(|leg| {
+                    matches!(
+                        leg.order.status,
+                        OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired
+                    )
+                }) && filled_leg.order.status == OrderStatus::Filled
                 {
                     self.status = OrderGroupStatus::Filled;
+                } else if peer.is_some_and(|leg| {
+                    matches!(
+                        leg.order.status,
+                        OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired
+                    )
+                }) && filled_leg.order.status == OrderStatus::Expired
+                {
+                    self.status = OrderGroupStatus::PartiallyFilled;
                 } else {
                     self.status = OrderGroupStatus::PeerCancelRequired;
                 }
@@ -445,11 +457,12 @@ impl OrderGroupState {
             .all(|leg| leg.order.status == OrderStatus::Filled)
         {
             self.status = OrderGroupStatus::Filled;
-        } else if self
-            .legs
-            .iter()
-            .all(|leg| leg.order.status == OrderStatus::Cancelled)
-        {
+        } else if self.legs.iter().all(|leg| {
+            matches!(
+                leg.order.status,
+                OrderStatus::Cancelled | OrderStatus::Expired
+            )
+        }) {
             self.status = OrderGroupStatus::Cancelled;
         } else if self
             .legs
@@ -457,6 +470,21 @@ impl OrderGroupState {
             .any(|leg| leg.order.status == OrderStatus::Rejected)
         {
             self.status = OrderGroupStatus::Rejected;
+        } else if self.legs.iter().any(|leg| {
+            matches!(
+                leg.order.status,
+                OrderStatus::Accepted | OrderStatus::Working
+            )
+        }) && self.legs.iter().all(|leg| {
+            matches!(
+                leg.order.status,
+                OrderStatus::Accepted
+                    | OrderStatus::Working
+                    | OrderStatus::Cancelled
+                    | OrderStatus::Expired
+            )
+        }) {
+            self.status = OrderGroupStatus::Active;
         } else if self
             .legs
             .iter()
@@ -611,6 +639,68 @@ mod tests {
             .unwrap();
         assert_eq!(group.status, OrderGroupStatus::Filled);
         group.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn oco_peer_expiry_resolves_partial_execution_and_empty_expiry() {
+        let mut one_live = oco_state();
+        for id in [1, 2] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                one_live
+                    .apply_order_snapshot(snapshot(&one_live, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        one_live
+            .apply_order_snapshot(snapshot(&one_live, 2, OrderStatus::Expired, "0"), None)
+            .unwrap();
+        assert_eq!(one_live.status, OrderGroupStatus::Active);
+
+        let mut partial = oco_state();
+        for id in [1, 2] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                partial
+                    .apply_order_snapshot(snapshot(&partial, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        partial
+            .apply_order_snapshot(
+                snapshot(&partial, 1, OrderStatus::PartiallyFilled, "0.004"),
+                None,
+            )
+            .unwrap();
+        partial
+            .apply_order_snapshot(snapshot(&partial, 2, OrderStatus::Expired, "0"), None)
+            .unwrap();
+        assert_eq!(partial.status, OrderGroupStatus::PeerCancelRequired);
+        partial
+            .apply_order_snapshot(snapshot(&partial, 1, OrderStatus::Expired, "0.004"), None)
+            .unwrap();
+        assert_eq!(partial.status, OrderGroupStatus::PartiallyFilled);
+
+        let mut empty = oco_state();
+        for id in [1, 2] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+                OrderStatus::Expired,
+            ] {
+                empty
+                    .apply_order_snapshot(snapshot(&empty, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        assert_eq!(empty.status, OrderGroupStatus::Cancelled);
     }
 
     #[test]
