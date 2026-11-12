@@ -22622,6 +22622,7 @@ CONSOLE_SERDE_SOURCES = {
     "orderRow": ("crates/qx-protocol/src/wire.rs", "OrderSnapshot"),
     "orderGroupRow": ("crates/qx-core/src/order_group.rs", "OrderGroupState"),
     "eventRow": ("crates/qx-core/src/event.rs", "Event"),
+    "accountActivityEventRow": ("crates/qx-app/src/account_activity.rs", "AccountActivityEventRowV1"),
     "envelope": ("crates/qx-protocol/src/lib.rs", "ProjectionEnvelope<T>"),
 }
 # 快照那两层不是 serde：写侧是 `AccountSnapshot::to_json` 里那一条手写的 format! 字面量，

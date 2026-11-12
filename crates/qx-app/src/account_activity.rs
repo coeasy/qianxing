@@ -1,7 +1,7 @@
 //! Bounded, identity-scoped account activity projections.
 
 use crate::{AppError, AppErrorCategory};
-use qx_core::Event;
+use qx_core::{Event, EventKind, EventMetadata};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -80,7 +80,82 @@ pub struct AccountActivityEventPageV1 {
     pub previous_before: Option<u64>,
     /// Pass this value as `after` to read the following page.
     pub next_after: Option<u64>,
-    pub rows: Vec<Value>,
+    pub rows: Vec<AccountActivityEventRowV1>,
+}
+
+/// Account-scoped event row with stable identity and order/run pivots for lifecycle tracing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountActivityEventRowV1 {
+    pub event_id: String,
+    pub seq: u64,
+    pub ts: u64,
+    pub prio: u8,
+    pub kind: EventKind,
+    pub receive_time: u64,
+    pub engine_time: u64,
+    pub source_seq: u64,
+    pub correlation_id: String,
+    pub metadata: EventMetadata,
+    pub client_order_id: Option<u64>,
+    pub exchange_order_id: Option<String>,
+    pub run_id: String,
+    pub strategy_id: String,
+}
+
+impl AccountActivityEventRowV1 {
+    fn from_event(account_id: &str, venue_id: &str, event: &Event) -> Self {
+        let (client_order_id, exchange_order_id) = match &event.kind {
+            EventKind::OrderSubmitted { order }
+            | EventKind::OrderAmended { order, .. }
+            | EventKind::OrderAmendmentPending { order, .. } => (Some(order.client_id), None),
+            EventKind::Submit { client_order_id }
+            | EventKind::Accepted {
+                client_order_id, ..
+            }
+            | EventKind::Rejected {
+                client_order_id, ..
+            }
+            | EventKind::CancelPending { client_order_id }
+            | EventKind::Cancelled { client_order_id }
+            | EventKind::ReconcileRequired { client_order_id } => (Some(*client_order_id), None),
+            EventKind::Filled { fill } => (Some(fill.order_id), fill.venue_order_id.clone()),
+            EventKind::FeeAdjustment { order_id, .. } => (Some(*order_id), None),
+            EventKind::OrderStatusReconciled {
+                client_order_id,
+                venue_order_id,
+                ..
+            } => (Some(*client_order_id), venue_order_id.clone()),
+            _ => (None, None),
+        };
+        let exchange_order_id = exchange_order_id.or_else(|| match &event.kind {
+            EventKind::Accepted { venue_order_id, .. } => venue_order_id.clone(),
+            _ => None,
+        });
+        let context = &event.metadata.context;
+        Self {
+            event_id: format!(
+                "account-event:v1:{}:{}:{}:{}:{}",
+                account_id.len(),
+                account_id,
+                venue_id.len(),
+                venue_id,
+                event.seq
+            ),
+            seq: event.seq,
+            ts: event.ts,
+            prio: event.prio,
+            kind: event.kind.clone(),
+            receive_time: event.receive_time,
+            engine_time: event.engine_time,
+            source_seq: event.source_seq,
+            correlation_id: event.correlation_id.clone(),
+            metadata: event.metadata.clone(),
+            client_order_id,
+            exchange_order_id,
+            run_id: context.run_id.clone(),
+            strategy_id: context.strategy_id.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,9 +219,10 @@ pub fn read_account_activity_report_v1(
     let last_seq = event_rows.last().map(|event| event.seq);
     let page_rows = event_rows
         .iter()
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| invariant(format!("账户事件序列化失败: {error}")))?;
+        .map(|event| {
+            AccountActivityEventRowV1::from_event(&identity.account_id, &identity.venue_id, event)
+        })
+        .collect::<Vec<_>>();
 
     let balances = object_fields(
         snapshot,
@@ -468,9 +544,44 @@ mod tests {
             200,
         )
         .unwrap();
-        assert_eq!(previous.events.rows[0]["seq"], 2);
+        assert_eq!(previous.events.rows[0].seq, 2);
         assert!(previous.events.has_older);
         assert!(previous.events.has_newer);
+    }
+
+    #[test]
+    fn account_event_rows_expose_stable_order_and_run_trace_keys() {
+        let mut accepted = Event::new(
+            8,
+            120,
+            1,
+            EventKind::Accepted {
+                client_order_id: 42,
+                venue_order_id: Some("venue-9001".into()),
+            },
+        );
+        accepted.correlation_id = "corr-abc".into();
+        accepted.metadata.context.run_id = "run-7".into();
+        accepted.metadata.context.strategy_id = "momentum".into();
+
+        let report = read_account_activity_report_v1(
+            &snapshot(),
+            &[accepted.clone()],
+            &AccountActivityReportReadOptionsV1::default(),
+            200,
+        )
+        .unwrap();
+        let row = &report.events.rows[0];
+        assert_eq!(row.event_id, "account-event:v1:7:primary:3:OKX:8");
+        assert_eq!(row.client_order_id, Some(42));
+        assert_eq!(row.exchange_order_id.as_deref(), Some("venue-9001"));
+        assert_eq!(row.run_id, "run-7");
+        assert_eq!(row.strategy_id, "momentum");
+        assert_eq!(row.correlation_id, "corr-abc");
+        assert_eq!(
+            serde_json::to_value(row).unwrap()["kind"]["Accepted"]["venue_order_id"],
+            "venue-9001"
+        );
     }
 
     #[test]

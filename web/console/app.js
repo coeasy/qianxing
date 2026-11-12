@@ -265,6 +265,7 @@ const RESPONSE_FIELDS = {
   positionRow: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw", "exact_amounts"],
   balances: ["cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw"],
   eventRow: ["seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata"],
+  accountActivityEventRow: ["event_id", "seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata", "client_order_id", "exchange_order_id", "run_id", "strategy_id"],
   envelope: ["schema_version", "kind", "tenant_id", "run_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "cursor", "state_hash", "source", "lineage", "data"],
 };
 
@@ -276,7 +277,7 @@ const TABLE_SPECS = {
   "order-groups-table": { roster: "orderGroupRow", columns: ["intent", "status", "venue_group_id", "legs"] },
   "positions-table": { roster: "positionRow", columns: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
   "events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
-  "account-activity-events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
+  "account-activity-events-table": { roster: "accountActivityEventRow", columns: ["event_id", "seq", "kind", "ts", "client_order_id", "exchange_order_id", "run_id", "strategy_id", "correlation_id"] },
 };
 
 // 价格是定点数而 0 不是合法价格（`wire.rs` 的 PositionSnapshot 交代过这条纪律），
