@@ -129,21 +129,27 @@ impl OrderGroupIntent {
                 return Err("Bracket 入场腿不能是条件保护单".into());
             }
         }
-        for (order, expected) in [
-            (take_profit, ConditionalOrderKind::TakeProfit),
-            (stop_loss, ConditionalOrderKind::StopLoss),
-        ] {
-            if order
-                .exact_amounts
-                .and_then(|amounts| amounts.conditional)
-                .map(|conditional| conditional.kind)
-                != Some(expected)
-            {
-                return Err(format!(
-                    "订单组 {:?} 腿必须显式携带对应条件单意图",
-                    expected
-                ));
-            }
+        let take_profit_kind = take_profit
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .map(|conditional| conditional.kind);
+        let stop_loss_kind = stop_loss
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .map(|conditional| conditional.kind);
+        let conditional_pair = take_profit_kind == Some(ConditionalOrderKind::TakeProfit)
+            && stop_loss_kind == Some(ConditionalOrderKind::StopLoss);
+        // Some native OCO contracts (Bitget UTA Spot/Margin) pair a resting TP limit
+        // with a conditional SL. Preserve that resource shape in the shared intent;
+        // venue adapters still decide whether their own product supports it.
+        let limit_take_profit_pair = self.kind == OrderGroupKind::Oco
+            && take_profit_kind.is_none()
+            && take_profit.limit_price_decimal().is_some()
+            && stop_loss_kind == Some(ConditionalOrderKind::StopLoss);
+        if !conditional_pair && !limit_take_profit_pair {
+            return Err(
+                "订单组止盈/止损腿必须是对应条件单，或 OCO 限价止盈加条件止损".into(),
+            );
         }
         let mut client_ids = BTreeSet::new();
         for leg in &self.legs {
@@ -674,6 +680,31 @@ mod tests {
         assert_eq!(group.status, OrderGroupStatus::Active);
         assert_eq!(group.venue_group_id.as_deref(), Some("okx-algo-123"));
         assert!(group.legs.iter().all(|leg| leg.venue_order_id.is_none()));
+    }
+
+    #[test]
+    fn oco_accepts_native_limit_take_profit_with_conditional_stop_loss() {
+        let mut take_profit = protection_order(1, ConditionalOrderKind::TakeProfit);
+        let amounts = take_profit.exact_amounts.as_mut().unwrap();
+        amounts.conditional = None;
+        amounts.limit_price = Some(ExactDecimal::parse("70000").unwrap());
+        let intent = OrderGroupIntent::new(
+            "oco-limit-trigger",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit,
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: protection_order(2, ConditionalOrderKind::StopLoss),
+                },
+            ],
+        );
+
+        assert!(intent.is_ok());
     }
 
     #[test]
