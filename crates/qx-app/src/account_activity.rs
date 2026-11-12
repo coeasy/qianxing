@@ -905,6 +905,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2, 3, 4, 5]
         );
+        let venue_order_next_page = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: Some(3),
+                before: None,
+                client_order_id: None,
+                exchange_order_id: Some("remote-77".into()),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(venue_order_next_page.events.rows[0].seq, 4);
+        assert!(venue_order_next_page.events.has_older);
+        assert!(venue_order_next_page.events.has_newer);
     }
 
     #[test]

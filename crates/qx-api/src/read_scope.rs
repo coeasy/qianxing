@@ -46,7 +46,7 @@ pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/
 /// 带键读面认的两把收窄键。
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
 /// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page,
-/// optionally narrowed to one client order's lifecycle facts.
+/// optionally narrowed by client or venue order identity.
 const ACCOUNT_ACTIVITY_PARAMS: [&str; 7] = [
     "account_id",
     "venue_id",
