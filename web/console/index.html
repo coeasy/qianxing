@@ -478,15 +478,16 @@
         <label>kind
           <select id="cmd-kind">
             <option value="SubmitOrder">SubmitOrder</option>
+            <option value="SubmitOrderGroup">SubmitOrderGroup</option>
             <option value="AmendOrder">AmendOrder</option>
             <option value="PauseStrategy">PauseStrategy</option>
             <option value="ResumeStrategy">ResumeStrategy</option>
             <option value="ChangeRiskLimit">ChangeRiskLimit</option>
             <option value="CancelOrder">CancelOrder</option>
-            <option value="CancelOrderGroup">CancelOrderGroup</option>
             <option value="ReconcileAccount">ReconcileAccount</option>
             <option value="RetryJob">RetryJob</option>
             <option value="SwitchVenue">SwitchVenue</option>
+            <option value="CancelOrderGroup">CancelOrderGroup</option>
           </select>
         </label>
         <label>permission
@@ -506,6 +507,8 @@
         <label>reason（必填） <input id="cmd-reason" type="text" placeholder="为什么下这条命令" /></label>
         <label>request_id <input id="cmd-request" type="text" placeholder="留空则自动生成" /></label>
         <label class="check"><input id="cmd-dry-run" type="checkbox" /> dry_run（只受理不执行）</label>
+        <label for="cmd-payload-json">payload JSON（提交订单/订单组时填写对应 order_json 或 order_group_json）</label>
+        <textarea id="cmd-payload-json" rows="7" spellcheck="false" placeholder='{"order_group_json":"{... 序列化后的 OrderGroupIntent ...}"}'></textarea>
         <button id="cmd-submit" type="submit">提交控制命令</button>
       </form>
       <div class="rows" id="control-rows"><span class="muted">未提交</span></div>
@@ -513,7 +516,7 @@
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
         本构建里 <code>SubmitOrder</code> / <code>SubmitOrderGroup</code> / <code>AmendOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code> / <code>CancelOrderGroup</code>
-        有派发者；组撤销只路由到 Binance OCO，改单只路由到匹配账户和交易所的 CCXT 执行 worker，单笔撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
+        有派发者；原生组提交/撤销按 Binance、OKX、Bitget UTA Spot OCO 能力路由，改单只路由到匹配账户和交易所的 CCXT 执行 worker，单笔撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
         <strong>受理那一步就被拒</strong>（<code>400</code>），
         不会被记成 <code>Accepted</code>。
       </p>

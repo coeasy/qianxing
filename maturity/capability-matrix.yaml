@@ -220,7 +220,7 @@ venues:
     sandbox: unsupported
     precision: implemented-unverified
     evidence: [crates/qx-adapter/src/ccxt.rs, crates/qx-adapter/src/ccxt/tests.rs, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "OKX 原生 OCO 已接通提交、查询、取消、触发子腿恢复与订单组/OMS 对账；能力按下方 OKX Spot/Perpetual OCO scopes 分列，但仍为 implemented-unverified，未通过 OKX Sandbox；未知或并发成交保留 ReconcileRequired，不自动重放", "条件单形态虽已列入下方逐产品 execution_scopes，但除单独声明的 OCO 形态外全部仍为 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行", "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+    limitations: ["运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型", "OKX 原生 OCO 已接通提交、查询、取消、触发子腿恢复与订单组/OMS 对账；能力按下方 OKX Spot/Perpetual OCO scopes 分列，但仍为 implemented-unverified，未通过 OKX Sandbox；未知或并发成交保留 ReconcileRequired，不自动重放", "Bitget UTA Spot OCO 已接服务提交、撤销及 live/cancelled 状态恢复；触发后的保护腿仍保留 ReconcileRequired，且未完成授权 Sandbox 验收", "条件单形态虽已列入下方逐产品 execution_scopes，但除单独声明的 OCO 形态外全部仍为 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行", "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收", "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收", "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
     account_query_scopes:
       - venue: BINANCE
         product: spot
@@ -568,7 +568,7 @@ venues:
       - venue: BITGET
         product: spot
         account_mode: cash
-        account_models: [classic, uta]
+        account_models: [classic]
         margin_modes: [cash]
         position_modes: [not_applicable]
         order_shapes:
@@ -615,6 +615,62 @@ venues:
         maturity_refs: [ccxt_rest]
         status: implemented-unverified
         evidence: [crates/qx-adapter/src/ccxt.rs, python/examples/ccxt-bitget-spot.example.json, python/examples/ccxt-bitget-uta-spot.example.json]
+      - venue: BITGET
+        product: spot
+        account_mode: cash
+        account_models: [uta]
+        margin_modes: [cash]
+        position_modes: [not_applicable]
+        order_shapes:
+          - order_type: market
+            quantity_unit: base
+            side: buy
+          - order_type: market
+            quantity_unit: base
+            side: sell
+          - order_type: limit
+            quantity_unit: base
+            side: buy
+          - order_type: limit
+            quantity_unit: base
+            side: sell
+          - order_type: market
+            quantity_unit: quote
+            side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: buy
+          - order_type: trigger
+            quantity_unit: base
+            side: sell
+          - order_type: stop_loss
+            quantity_unit: base
+            side: buy
+          - order_type: stop_loss
+            quantity_unit: base
+            side: sell
+          - order_type: take_profit
+            quantity_unit: base
+            side: buy
+          - order_type: take_profit
+            quantity_unit: base
+            side: sell
+          - order_type: trailing
+            quantity_unit: base
+            side: buy
+          - order_type: trailing
+            quantity_unit: base
+            side: sell
+          - order_type: oco
+            quantity_unit: base
+            side: buy
+          - order_type: oco
+            quantity_unit: base
+            side: sell
+        operations: [submit, cancel, amend, query]
+        maturity_refs: [ccxt_rest]
+        status: implemented-unverified
+        evidence: [crates/qx-adapter/src/ccxt.rs, crates/qx-service/src/ccxt_execution_host.rs, crates/qx-service/src/ccxt_reconcile_host.rs, python/qianxing_ccxt/__init__.py, python/qianxing_ccxt/worker.py, python/examples/ccxt-bitget-uta-spot.example.json]
       - venue: BITGET
         product: perpetual
         account_mode: one_way

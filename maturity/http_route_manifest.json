@@ -18,6 +18,10 @@
     },
     {
       "method": "GET",
+      "path": "/account/order-groups"
+    },
+    {
+      "method": "GET",
       "path": "/account/orders"
     },
     {

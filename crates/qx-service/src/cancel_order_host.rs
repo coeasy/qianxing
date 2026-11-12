@@ -81,7 +81,7 @@ pub fn prepare_cancel_order(
     if worker.account_id.as_deref() != Some(target.account_id.as_str())
         || !target.venue_id.eq_ignore_ascii_case(expected_venue)
         || worker.venue_id.as_deref().is_some_and(|venue| {
-            if expected_venue.eq_ignore_ascii_case("BINANCE") {
+            if VenueFamily::parse(expected_venue) == VenueFamily::Binance {
                 VenueFamily::parse(venue) != VenueFamily::Binance
             } else {
                 !venue.eq_ignore_ascii_case(expected_venue)

@@ -1761,11 +1761,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     ),
     "qx-zhenlu::evaluate_order_with_rules": "同上：门面腿，证明 RiskContext 与规范实现逐字段一致",
     "qx-risk::rule_count": "用例取证：配置化的两条规则确实落进同一个闸门（qx-cli/tests/unit/backtest_entries.rs）",
-    # 跨 crate 用例推进多腿组状态的唯一入口；生产的"同一腿至多提交一次"住在网关 client_id 台账。
-    "qx-zhenlu::begin_submission": (
-        "qx-execution/qx-cli 用例用它把 SpreadOrderGroup 推到 Submitting；"
-        "生产由 qx-execution/src/lib.rs:434-471 的 client_id 台账 + spread_group_barrier 保证"
-    ),
     # V13 R22 #222：`TEST_PATH` 补齐单文件 `src/tests.rs` 形态后放出来的零读者（8 条）。
     # 共同形状：生产链路走 JSON/字符串入口（`BarFrame::from_json` / `apply_corporate_actions_json`），
     # 这些类型化的程序化入口只有库内用例读者；删面等于把「程序化装配能力」这个缺口藏起来。
@@ -5032,6 +5027,7 @@ ENUM_VARIANT_LINE = re.compile(r"^([A-Z][A-Za-z0-9]*)\s*,?\s*$")
 # 本清单只收"线格式生产者"一种理由，因此每条都要能被"该枚举确实 derive 了 Deserialize"
 # 独立复核（见下面第三条判据），否则允许清单就成了任意 widened 的口子。
 LINE_FORMAT_VARIANTS: dict[str, str] = {
+    "OrderGroupExecution::SyntheticRiskAcknowledged": "qx-core/src/order_group.rs 声明为可反序列化的兼容意图；当前交易所适配器只接受 NativeRequired，故该值只能从线格式读入并在预检中拒绝执行",
     "CorporateActionType::Split": "qx-data/src/corporate_action.rs 带 serde rename_all=snake_case，"
                                   "线格式 \"split\" 即生产者；A 股侧落 unsupported 臂显式拒",
     "CorporateActionType::Merge": "同上，线格式 \"merge\"",
@@ -10514,6 +10510,7 @@ VENUE_FAMILY_DEFINITION = "crates/qx-core/src/venue.rs"
 VENUE_ID_DEFINITION = "crates/qx-core/src/identity.rs"
 # 允许读取家族判定的消费者文件集合：少一个 = 有人把判定搬回本地，多一个 = 另起第二份。
 VENUE_FAMILY_CONSUMERS = (
+    "crates/qx-service/src/cancel_order_host.rs",
     "crates/qx-cli/src/api_algo_execution.rs",
     "crates/qx-cli/src/api_service/api_service_builder.rs",
     "crates/qx-cli/src/live_check.rs",
@@ -12229,12 +12226,12 @@ def bounded_growth_and_reap_check() -> None:
         and "fn forget_orders(&mut self, evicted: &BTreeSet<u64>)" in binance
         and "fn forget_orders(&mut self, evicted: &BTreeSet<u64>)" in ccxt
         # 退场只能由封顶驱动：每处订单写入点都紧跟着一次封顶 + 一次级联。
-        and binance.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") == 3
-        and binance.count("self.forget_orders(&evicted);") == 3
+        and binance.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") == 4
+        and binance.count("self.forget_orders(&evicted);") == 4
         and ccxt.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") == 2
         and ccxt.count("self.forget_orders(&evicted);") == 2
         # 两个适配器都留着「订单已退场」的出口，退场不会把回报静默吞掉。
-        and 'QxError::ReconcileRequired("Binance 成交对应订单不存在".into())' in binance
+        and '"Binance 用户回报对应未知本地订单 {}"' in binance
         and "CCXT 本地订单不存在" in ccxt
         # 运行期台账没有共用这把封顶，仍只增不减。
         and not DEDUP_EVICTION.search(pipeline_code)
@@ -22051,7 +22048,7 @@ ADAPTER_ROOT_FILE = "crates/qx-adapter/src/lib.rs"
 VENUE_CACHE_SITES = (
     (
         "crates/qx-adapter/src/binance.rs",
-        3,
+        4,
         (
             "self.venue_order_ids.retain(|client_id,_|!evicted.contains(client_id))",
             "self.seen_fill_keys.retain(|key|!evicted.contains(&key.0))",
@@ -22162,9 +22159,12 @@ def io_budget_and_venue_cache_check() -> None:
         "封顶就成了摆设；漏掉一个 growth 点，那个点灌进来的历史就绕过封顶常驻）",
     )
     binance_body = production_text((ROOT / BINANCE_FILE).read_text(encoding="utf-8"))
+    bind_remote_order = binance_body.split("fn bind_remote_order(", 1)[1].split(
+        "fn ingest_fill_wire(", 1
+    )[0]
     check(
-        binance_body.count("Binance 用户回报对应未知本地订单") == 1
-        and binance_body.count("if !self.orders.contains_key(&client_order_id) {") == 1,
+        "if !self.orders.contains_key(&client_order_id) {" in bind_remote_order
+        and "Binance 用户回报对应未知本地订单" in bind_remote_order,
         "已退场订单的回报仍按分歧升级对账，不被缓存策略静默收下（V11 N9）",
         "封顶一旦同时删掉 bind_remote_order 的未知订单闸门，退场就从一个内存问题变成"
         "『柜台回报认不到本地订单时没人报警』——那条回报会被当成可忽略的账户事件丢掉",
@@ -22620,6 +22620,7 @@ CONSOLE_INDEX_HTML = "web/console/index.html"
 CONSOLE_SERDE_SOURCES = {
     "positionRow": ("crates/qx-protocol/src/wire.rs", "PositionSnapshot"),
     "orderRow": ("crates/qx-protocol/src/wire.rs", "OrderSnapshot"),
+    "orderGroupRow": ("crates/qx-core/src/order_group.rs", "OrderGroupState"),
     "eventRow": ("crates/qx-core/src/event.rs", "Event"),
     "envelope": ("crates/qx-protocol/src/lib.rs", "ProjectionEnvelope<T>"),
 }
@@ -22876,13 +22877,14 @@ def web_console_field_wiring_check() -> None:
     rosters = js_string_arrays(app, "const RESPONSE_FIELDS =")
     check(
         set(rosters) == set(CONSOLE_SERDE_SOURCES) | set(CONSOLE_SNAPSHOT_ROSTERS) | {"balances"},
-        "名册的条目集合就是承诺的七个形状（少一格就少一份接线核对）",
+        "名册的条目集合就是承诺的全部形状（少一格就少一份接线核对）",
         f"读到 {sorted(rosters)}",
     )
     specs = js_table_specs(app)
     check(
         set(specs) == {
             "orders-table",
+            "order-groups-table",
             "positions-table",
             "events-table",
             "account-activity-events-table",
@@ -23900,7 +23902,7 @@ READ_SCOPE_CASES = (
     "snapshot_diff_returns_only_the_documented_non_200_codes",
 )
 READ_SCOPE_PROJECTION = "const PROJECTION_SCOPED_ROUTES: [&str; 8] = ["
-READ_SCOPE_MODEL_FILTER = "const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = ["
+READ_SCOPE_MODEL_FILTER = "const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = ["
 READ_SCOPE_KEYLESS = "const KEYLESS_READ_ROUTES: [&str; 2] = ["
 READ_SCOPE_LEDGER_PARAMS = "const LEDGER_FILTER_PARAMS: [&str; 1] = ["
 READ_SCOPE_REPORT_PARAMS = "const REPORT_FILTER_PARAMS: [&str; 2] = ["
@@ -23958,7 +23960,7 @@ def read_face_scope_check() -> None:
     groups = [set(projection), set(keyless), set(filtered)]
     check(
         len(projection) == 8
-        and len(filtered) == 2
+        and len(filtered) == 3
         and len(keyless) == 2
         and len(set(projection) | set(keyless) | set(filtered)) == len(projection) + len(filtered) + len(keyless)
         and len(live) == len(projection) + len(filtered) + len(keyless),

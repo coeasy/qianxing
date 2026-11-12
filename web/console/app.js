@@ -957,15 +957,33 @@ function controlCommandFromForm() {
   if (["CancelOrder", "CancelOrderGroup"].includes(kind)) {
     payload.account_id = $("cmd-account").value.trim();
     payload.venue_id = $("cmd-venue").value.trim();
+  } else {
+    const payloadText = $("cmd-payload-json").value.trim();
+    if (payloadText) {
+      let value;
+      try {
+        value = JSON.parse(payloadText);
+      } catch (error) {
+        throw new Error(`payload JSON 格式错误：${error.message}`);
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("payload JSON 顶层必须是对象");
+      }
+      if (kind === "SubmitOrderGroup") payload.order_group_json = JSON.stringify(value);
+      else if (kind === "SubmitOrder" || kind === "AmendOrder") payload.order_json = JSON.stringify(value);
+      else Object.assign(payload, value);
+    } else if (["SubmitOrder", "SubmitOrderGroup", "AmendOrder"].includes(kind)) {
+      throw new Error("该命令需要填写订单或订单组 JSON");
+    }
   }
   const command = {
     command_id: state.commandSeq,
     request_id: requestId,
     operator_id: $("cmd-operator").value.trim(),
     reason: $("cmd-reason").value.trim(),
-    kind,
+    kind: kind,
     target: $("cmd-target").value.trim(),
-    payload,
+    payload: payload,
     permission: $("cmd-permission").value,
     dry_run: $("cmd-dry-run").checked,
   };
@@ -976,14 +994,18 @@ function controlCommandFromForm() {
 async function submitCommand(event) {
   if (event) event.preventDefault();
   if (!state.base || !isLoopbackControlTarget(state.base)) return;
-  const command = controlCommandFromForm();
-  const result = await postJson(API_PATHS.controlCommands, command);
-  // 阶段①受理：202 是"收下并落了审计"，不是"已经执行"。4xx/5xx 各有自己的语义，
-  // 页面照实印出来，不把任何一种折成"成功"。
-  state.lastCommand = { command, result, phases: [describeAccepted(result)] };
-  renderControl();
-  // 受理之后立刻回读审计，把②③两阶段推进一格。
-  await refreshReadModels();
+  try {
+    const command = controlCommandFromForm();
+    const result = await postJson(API_PATHS.controlCommands, command);
+    // 阶段①受理：202 是"收下并落了审计"，不是"已经执行"。4xx/5xx 各有自己的语义，
+    // 页面照实印出来，不把任何一种折成"成功"。
+    state.lastCommand = { command, result, phases: [describeAccepted(result)] };
+    renderControl();
+    // 受理之后立刻回读审计，把②③两阶段推进一格。
+    await refreshReadModels();
+  } catch (error) {
+    $("control-rows").textContent = `命令未受理：${error && error.message ? error.message : error}`;
+  }
 }
 
 // ---- 研究面板：校验 → 回测 → 复核 ----

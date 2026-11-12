@@ -7,23 +7,22 @@ use crate::cancel_order_host::{
 use crate::ccxt_market_host::{exact_json_decimal_or_raw, raw_json_i128};
 use crate::configured_backends::ControlStateBackend;
 use crate::execution_capability_gate::{
-    AccountQueryPurpose, ExecutionConnectorProfile, require_account_query_execution_capability,
-    require_active_orders_execution_capability,
+    require_account_query_execution_capability, require_active_orders_execution_capability,
     require_and_record_submit_command_execution_capability,
     require_and_record_submit_order_group_execution_capability,
     require_cancel_order_execution_capability, require_order_execution_capability,
-    require_submit_command_execution_capability,
+    require_submit_command_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::risk_host::execute_submit_order_group_with_worker_risk;
 use crate::spread_recovery_host::{
-    SpreadRecoveryContext, command_is_final, is_fail_closed_rejection,
-    is_retryable_spread_submission, open_spread_group_store,
-    pending_spread_recovery_groups_for_account, recover_spread_groups_for_venue,
-    recovery_order_validator, spread_recovery_poll_delay, sync_in_flight_spread_orders,
-    sync_spread_group_after_order, sync_spread_groups_after_cancel,
+    command_is_final, is_fail_closed_rejection, is_retryable_spread_submission,
+    open_spread_group_store, pending_spread_recovery_groups_for_account,
+    recover_spread_groups_for_venue, recovery_order_validator, spread_recovery_poll_delay,
+    sync_in_flight_spread_orders, sync_spread_group_after_order, sync_spread_groups_after_cancel,
+    SpreadRecoveryContext,
 };
 use crate::worker_host::run_polling_worker;
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
@@ -31,9 +30,9 @@ use qx_adapter::{CcxtProcessClient, CcxtProcessVenue};
 use qx_control::{CommandKind, CommandStatus, ControlCommand};
 use qx_core::{ExactDecimal, Price, Quantity, VenueFamily};
 use qx_runtime::{
-    RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus, WorkerConfig,
-    WorkerContext, WorkerRole, account_worker_settlement_currency, lease_clock,
-    required_account_event_log,
+    account_worker_settlement_currency, lease_clock, required_account_event_log, RuntimeConfig,
+    RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus, WorkerConfig, WorkerContext,
+    WorkerRole,
 };
 use qx_storage::{ControlCommandQueueBackend, StorageError};
 use qx_zhenlu::Venue;
@@ -976,13 +975,11 @@ fn execute_ccxt_queued_order_group(
             "SubmitOrderGroup 账户或交易所与 CCXT worker 拓扑不匹配".into(),
         ));
     }
-    if !worker
-        .venue_id
-        .as_deref()
-        .is_some_and(|venue| venue.eq_ignore_ascii_case("OKX"))
+    let venue_id = worker.venue_id.as_deref().unwrap_or_default();
+    if !(venue_id.eq_ignore_ascii_case("OKX") || venue_id.eq_ignore_ascii_case("BITGET"))
         || group.kind != qx_core::OrderGroupKind::Oco
     {
-        return Ok(Err("CCXT 订单组当前只支持 OKX 原生 OCO".into()));
+        return Ok(Err("CCXT 原生订单组当前只支持 OKX 与 Bitget UTA OCO".into()));
     }
 
     let log_name = required_account_event_log(worker)?;
@@ -1016,7 +1013,7 @@ fn execute_ccxt_queued_order_group(
             ) || existing.venue_group_id.is_none()
             {
                 return Ok(Err(format!(
-                    "账户订单组 {} 缺少确认的 OKX algo 身份或仍待对账，先恢复后再提交新组",
+                    "账户订单组 {} 缺少确认的交易所组身份或仍待对账，先恢复后再提交新组",
                     existing.intent.group_id
                 )));
             }
@@ -1127,10 +1124,12 @@ fn execute_ccxt_queued_cancel_order_group(
 
     let target = qx_control::cancel_order_group_target_from_command(command)
         .map_err(|error| format!("CancelOrderGroup 载荷非法: {error:?}"))?;
-    if !ccxt_cancel_order_group_matches_worker(command, worker)
-        || !target.venue_id.eq_ignore_ascii_case("OKX")
-    {
-        return Ok(Err("CancelOrderGroup 与 OKX CCXT worker 拓扑不匹配".into()));
+    let is_okx = target.venue_id.eq_ignore_ascii_case("OKX");
+    let is_bitget = target.venue_id.eq_ignore_ascii_case("BITGET");
+    if !ccxt_cancel_order_group_matches_worker(command, worker) || !(is_okx || is_bitget) {
+        return Ok(Err(
+            "CancelOrderGroup 与受支持的 CCXT OCO worker 拓扑不匹配".into(),
+        ));
     }
     let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
     let Some(group) = group_store.load(&target.group_id)? else {
@@ -1147,7 +1146,9 @@ fn execute_ccxt_queued_cancel_order_group(
                     .eq_ignore_ascii_case(&target.venue_id)
         })
     {
-        return Ok(Err("CancelOrderGroup 只接受匹配账户的 OKX OCO".into()));
+        return Ok(Err(
+            "CancelOrderGroup 只接受匹配账户的 OKX/Bitget OCO".into()
+        ));
     }
     if group.status == qx_core::OrderGroupStatus::Cancelled {
         return Ok(Ok("ALREADY_CANCELLED".into()));
@@ -1170,13 +1171,13 @@ fn execute_ccxt_queued_cancel_order_group(
                 .is_some_and(|amounts| amounts.filled.is_positive())
     }) {
         return Ok(Err(
-            "OKX OCO 已生成子订单或存在成交，必须先按子单事实对账".into()
+            "原生 OCO 已生成子订单或存在成交，必须先按子单事实对账".into()
         ));
     }
     let log_name = required_account_event_log(worker)?;
     let mut pipeline = pipeline_storage
         .open(log_name, settlement_currency.to_owned())
-        .map_err(|error| format!("打开 OKX OCO 撤销 EventLog 失败: {error}"))?;
+        .map_err(|error| format!("打开原生 OCO 撤销 EventLog 失败: {error}"))?;
     for leg in &group.legs {
         if let Err(reason) = require_cancel_order_execution_capability(
             &leg.order,
@@ -1198,23 +1199,27 @@ fn execute_ccxt_queued_cancel_order_group(
             config_path: Path::new(ccxt_config_path),
         },
     )?;
-    let algo_id = group
+    let venue_group_id = group
         .venue_group_id
         .clone()
-        .ok_or_else(|| format!("订单组 {} 缺少已确认的 OKX algoId", group.intent.group_id))?;
+        .ok_or_else(|| format!("订单组 {} 缺少已确认的交易所组 ID", group.intent.group_id))?;
     let client = CcxtProcessClient::spawn(python, ccxt_config_path, None)
-        .map_err(|error| format!("启动 OKX OCO 撤销 Worker 失败: {error}"))?;
+        .map_err(|error| format!("启动 CCXT OCO 撤销 Worker 失败: {error}"))?;
     let mut venue = CcxtProcessVenue::new(
         worker.venue_id.as_deref().unwrap_or("OKX"),
         Box::new(client),
     );
     let instrument = group.legs[0].order.instrument.to_string();
-    let fetch_request = serde_json::json!({
+    let mut fetch_request = serde_json::json!({
         "op": "fetch_order_group",
         "kind": "oco",
         "instrument": instrument.clone(),
-        "algo_id": algo_id,
     });
+    if is_okx {
+        fetch_request["algo_id"] = serde_json::Value::String(venue_group_id.clone());
+    } else {
+        fetch_request["strategy_order_id"] = serde_json::Value::String(venue_group_id.clone());
+    }
     let before_cancel = venue
         .stream_call(fetch_request.clone())
         .ok()
@@ -1222,54 +1227,69 @@ fn execute_ccxt_queued_cancel_order_group(
     let Some(before_cancel) = before_cancel else {
         require_ccxt_group_reconciliation(&group, worker, &mut group_store, &mut pipeline, now)?;
         metrics.absorb(&pipeline);
-        return Ok(Err("OKX OCO 撤销前查询失败，订单组已围栏待对账".into()));
+        return Ok(Err("原生 OCO 撤销前查询失败，订单组已围栏待对账".into()));
     };
     let before_state = before_cancel
         .get("state")
         .and_then(serde_json::Value::as_str);
-    if before_state == Some("live") && okx_group_is_untriggered(&before_cancel) {
+    let before_is_untriggered = if is_okx {
+        before_state == Some("live") && okx_group_is_untriggered(&before_cancel)
+    } else {
+        before_state == Some("live") && bitget_group_has_no_child_exposure(&before_cancel)
+    };
+    let already_cancelled = before_state == Some("canceled")
+        && if is_okx {
+            okx_group_is_untriggered(&before_cancel)
+        } else {
+            bitget_group_cancel_is_confirmed(&group, &before_cancel)
+        };
+    if before_is_untriggered {
         if group.status == qx_core::OrderGroupStatus::Active {
             group_store.begin_native_cancel(&group.intent.group_id)?;
         }
-    } else if !(group.status == qx_core::OrderGroupStatus::CancelPending
-        && before_state == Some("canceled")
-        && okx_group_is_untriggered(&before_cancel))
+    } else if !(group.status == qx_core::OrderGroupStatus::CancelPending && already_cancelled) {
+        require_ccxt_group_reconciliation(&group, worker, &mut group_store, &mut pipeline, now)?;
+        metrics.absorb(&pipeline);
+        return Ok(Err(format!(
+            "原生 OCO 撤销前状态 {:?} 或已有成交/子单，已围栏待对账",
+            before_state
+        )));
+    }
+    if let Err(reason) =
+        mark_native_group_cancel_pending(&group, worker, &mut group_store, &mut pipeline, now)
     {
         require_ccxt_group_reconciliation(&group, worker, &mut group_store, &mut pipeline, now)?;
         metrics.absorb(&pipeline);
         return Ok(Err(format!(
-            "OKX OCO 撤销前状态 {:?} 或已有成交/子单，已围栏待对账",
-            before_state
+            "原生 OCO 子腿无法持久化撤单中状态，订单组已围栏待对账: {reason}"
         )));
     }
-    if let Err(reason) = mark_native_group_cancel_pending(
-        &group,
-        worker,
-        &mut group_store,
-        &mut pipeline,
-        now,
-    ) {
-        require_ccxt_group_reconciliation(&group, worker, &mut group_store, &mut pipeline, now)?;
-        metrics.absorb(&pipeline);
-        return Ok(Err(format!(
-            "OKX OCO 子腿无法持久化撤单中状态，订单组已围栏待对账: {reason}"
-        )));
-    }
-    let fact = if before_state == Some("canceled") {
+    let fact = if already_cancelled {
         before_cancel
     } else {
-        let cancel_result = venue.stream_call(serde_json::json!({
+        let mut cancel_request = serde_json::json!({
             "op": "cancel_order_group",
             "kind": "oco",
             "instrument": instrument.clone(),
-            "algo_id": algo_id,
-        }));
+        });
+        if is_okx {
+            cancel_request["algo_id"] = serde_json::Value::String(venue_group_id.clone());
+        } else {
+            cancel_request["strategy_order_id"] = serde_json::Value::String(venue_group_id.clone());
+        }
+        let cancel_result = venue.stream_call(cancel_request);
         let ack_valid = cancel_result.as_ref().is_ok_and(|response| {
             response
                 .get("order_group")
-                .and_then(|group| group.get("algo_id"))
+                .and_then(|group| {
+                    group.get(if is_okx {
+                        "algo_id"
+                    } else {
+                        "strategy_order_id"
+                    })
+                })
                 .and_then(serde_json::Value::as_str)
-                == Some(algo_id.as_str())
+                == Some(venue_group_id.as_str())
                 && response
                     .get("order_group")
                     .and_then(|group| group.get("cancel_request_accepted"))
@@ -1280,7 +1300,7 @@ fn execute_ccxt_queued_cancel_order_group(
             venue.stream_call(fetch_request)
         } else {
             Err(qx_core::QxError::ReconcileRequired(
-                "OKX cancel-algos 响应未知或身份不匹配".into(),
+                "原生 OCO 撤销响应未知或身份不匹配".into(),
             ))
         };
         match query_result
@@ -1303,12 +1323,16 @@ fn execute_ccxt_queued_cancel_order_group(
     };
     let confirmed_cancel = fact.get("state").and_then(serde_json::Value::as_str)
         == Some("canceled")
-        && okx_group_is_untriggered(&fact);
+        && if is_okx {
+            okx_group_is_untriggered(&fact)
+        } else {
+            bitget_group_cancel_is_confirmed(&group, &fact)
+        };
     if !confirmed_cancel {
         require_ccxt_group_reconciliation(&group, worker, &mut group_store, &mut pipeline, now)?;
         metrics.absorb(&pipeline);
         return Ok(Err(format!(
-            "OKX OCO 撤销后状态 {:?} 或成交/子单信息不符合未触发撤销，已待对账",
+            "原生 OCO 撤销后状态 {:?} 或成交/子单信息不符合未触发撤销，已待对账",
             fact.get("state").and_then(serde_json::Value::as_str)
         )));
     }
@@ -1329,21 +1353,50 @@ fn execute_ccxt_queued_cancel_order_group(
                 now,
                 now,
                 source_seq,
-                format!("{}:okx-oco-cancel:{}", worker.id, leg.order.client_id),
+                format!("{}:native-oco-cancel:{}", worker.id, leg.order.client_id),
             ))
-            .map_err(|error| format!("写入 OKX OCO 撤销事实失败: {error:?}"))?;
+            .map_err(|error| format!("写入原生 OCO 撤销事实失败: {error:?}"))?;
     }
     let orders = pipeline.orders();
     for leg in &group.legs {
         let snapshot = orders
             .iter()
             .find(|order| order.client_id == leg.order.client_id)
-            .ok_or_else(|| format!("OKX OCO 腿 {} 撤销后不在 EventLog", leg.order.client_id))?;
+            .ok_or_else(|| format!("原生 OCO 腿 {} 撤销后不在 EventLog", leg.order.client_id))?;
         group_store.apply_order_snapshot(&group.intent.group_id, snapshot, None)?;
     }
     group_store.complete_native_cancel(&group.intent.group_id)?;
     metrics.absorb(&pipeline);
-    Ok(Ok("OKX_OCO_CANCELLED".into()))
+    Ok(Ok(if is_okx {
+        "OKX_OCO_CANCELLED"
+    } else {
+        "BITGET_OCO_CANCELLED"
+    }
+    .into()))
+}
+
+fn bitget_group_has_no_child_exposure(group: &serde_json::Value) -> bool {
+    group
+        .get("order_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(Vec::is_empty)
+        && group
+            .get("sub_orders")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty)
+}
+
+fn bitget_group_cancel_is_confirmed(
+    order_group: &qx_core::OrderGroupState,
+    remote: &serde_json::Value,
+) -> bool {
+    let Some(children) = remote
+        .get("sub_orders")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    crate::ccxt_reconcile_host::bitget_cancel_children_are_unfilled(order_group, children)
 }
 
 fn mark_native_group_cancel_pending(
@@ -1370,7 +1423,10 @@ fn mark_native_group_cancel_pending(
         if current.status == qx_core::OrderStatus::CancelPending {
             continue;
         }
-        if !current.status.can_transition_to(qx_core::OrderStatus::CancelPending) {
+        if !current
+            .status
+            .can_transition_to(qx_core::OrderStatus::CancelPending)
+        {
             return Err(format!(
                 "订单组子腿 {} 当前状态 {:?} 不能开始撤销",
                 leg.order.client_id, current.status
@@ -1385,7 +1441,10 @@ fn mark_native_group_cancel_pending(
                 now,
                 now,
                 source_seq,
-                format!("{}:okx-oco-cancel-pending:{}", worker.id, leg.order.client_id),
+                format!(
+                    "{}:okx-oco-cancel-pending:{}",
+                    worker.id, leg.order.client_id
+                ),
             ))
             .map_err(|error| format!("写入 OKX OCO 撤单中事实失败: {error:?}"))?;
     }
@@ -1691,18 +1750,16 @@ mod exact_ticker_reference_tests {
             exact_ticker_reference_price(&ticker, 105_000).unwrap(),
             ExactDecimal::parse("0.0000000009").unwrap()
         );
-        assert!(
-            exact_ticker_reference_price(&ticker, 131_000)
-                .unwrap_err()
-                .contains("已过期")
-        );
+        assert!(exact_ticker_reference_price(&ticker, 131_000)
+            .unwrap_err()
+            .contains("已过期"));
     }
 }
 
 #[cfg(test)]
 mod cancel_route_tests {
     use super::{
-        ccxt_amend_matches_worker, ccxt_cancel_matches_worker,
+        bitget_group_has_no_child_exposure, ccxt_amend_matches_worker, ccxt_cancel_matches_worker,
         ccxt_cancel_order_group_matches_worker, ccxt_submit_order_group_matches_worker,
     };
     use qx_control::{CommandKind, ControlCommand, Permission};
@@ -1886,17 +1943,27 @@ mod cancel_route_tests {
             &order_group_submit("other", "OKX"),
             &worker("main", "okx")
         ));
-        assert!(!ccxt_submit_order_group_matches_worker(
+        assert!(ccxt_submit_order_group_matches_worker(
             &order_group_submit("main", "BITGET"),
-            &worker("main", "okx")
+            &worker("main", "bitget")
         ));
         assert!(ccxt_cancel_order_group_matches_worker(
             &cancel_group("main", "OKX"),
             &worker("main", "okx")
         ));
-        assert!(!ccxt_cancel_order_group_matches_worker(
+        assert!(ccxt_cancel_order_group_matches_worker(
             &cancel_group("main", "BITGET"),
-            &worker("main", "okx")
+            &worker("main", "bitget")
         ));
+    }
+
+    #[test]
+    fn bitget_oco_cancel_requires_complete_zero_fill_child_facts() {
+        assert!(bitget_group_has_no_child_exposure(&serde_json::json!({
+            "order_ids": [], "sub_orders": []
+        })));
+        assert!(!bitget_group_has_no_child_exposure(&serde_json::json!({
+            "order_ids": ["1"], "sub_orders": []
+        })));
     }
 }

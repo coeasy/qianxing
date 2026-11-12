@@ -96,6 +96,42 @@ class CcxtWorkerTest(unittest.TestCase):
             "private_uta_post_v3_trade_cancel_strategy_order", {"orderId": "123456789"}
         ))
 
+    def test_jsonl_bitget_uta_oco_query_recovers_cancelled_history_and_child_facts(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                self.calls.append(("unfilled", params))
+                return {"code": "00000", "data": []}
+
+            def private_uta_get_v3_trade_history_strategy_orders(self, params):
+                self.calls.append(("history", params))
+                return {"code": "00000", "data": {"list": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "status": "cancelled",
+                }], "cursor": 0}}
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                return {"code": "00000", "data": {"list": [{
+                    "subOrderId": "987654321", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "qty": "0.5", "cumExecQty": "0", "price": "110",
+                    "avgPrice": "0", "status": "cancelled",
+                }]}}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        group = fetched["result"]["order_group"]
+        self.assertEqual(group["state"], "canceled")
+        self.assertEqual(group["order_ids"], ["987654321"])
+        self.assertEqual(group["sub_orders"][0]["cum_exec_qty"], "0")
+        self.assertEqual(exchange.calls[-1][1:4], ("v3/trade/strategy-sub-orders", "uta", "GET"))
+
     def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
         class OkxAlgoExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

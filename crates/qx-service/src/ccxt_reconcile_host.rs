@@ -176,13 +176,22 @@ fn reconcile_ccxt_native_order_groups(
         {
             continue;
         }
+        let is_bitget = worker
+            .venue_id
+            .as_deref()
+            .is_some_and(|venue| venue.eq_ignore_ascii_case("BITGET"));
         let client_id = okx_algo_client_order_id(&group.intent.group_id);
         let mut request = serde_json::json!({
             "op": "fetch_order_group",
             "kind": "oco",
             "instrument": group.legs[0].order.instrument.to_string(),
         });
-        if let Some(algo_id) = group.venue_group_id.as_deref() {
+        if is_bitget {
+            if let Some(strategy_order_id) = group.venue_group_id.as_deref() {
+                request["strategy_order_id"] =
+                    serde_json::Value::String(strategy_order_id.to_owned());
+            }
+        } else if let Some(algo_id) = group.venue_group_id.as_deref() {
             request["algo_id"] = serde_json::Value::String(algo_id.to_owned());
         } else {
             request["algo_client_order_id"] = serde_json::Value::String(client_id.clone());
@@ -200,6 +209,12 @@ fn reconcile_ccxt_native_order_groups(
             );
             continue;
         };
+        if is_bitget {
+            updates = updates.saturating_add(reconcile_bitget_uta_oco_observation(
+                &group, &remote, worker, &mut store, pipeline, now, source_seq, issues,
+            )?);
+            continue;
+        }
         let remote_algo_id = remote
             .get("algo_id")
             .and_then(serde_json::Value::as_str)
@@ -244,15 +259,9 @@ fn reconcile_ccxt_native_order_groups(
         let observation = match classify_okx_oco_observation(&remote) {
             Ok(observation) => observation,
             Err(reason) => {
-            mark_ccxt_group_unresolved(
-                &group,
-                worker,
-                &mut store,
-                pipeline,
-                now,
-                source_seq,
-                reason,
-            )?;
+                mark_ccxt_group_unresolved(
+                    &group, worker, &mut store, pipeline, now, source_seq, reason,
+                )?;
                 push_ccxt_group_issue(issues, &group, "native_order_group_fact_incomplete", reason);
                 continue;
             }
@@ -291,10 +300,7 @@ fn reconcile_ccxt_native_order_groups(
                                     now,
                                     now,
                                     *source_seq,
-                                    format!(
-                                        "{}:okx-oco-live:{}",
-                                        worker.id, leg.order.client_id
-                                    ),
+                                    format!("{}:okx-oco-live:{}", worker.id, leg.order.client_id),
                                 ))
                                 .map_err(|error| {
                                     format!("归约 OKX OCO live 子腿事实失败: {error:?}")
@@ -336,12 +342,7 @@ fn reconcile_ccxt_native_order_groups(
             }
             OkxOcoObservation::Cancelled => {
                 updates = updates.saturating_add(reconcile_ccxt_cancelled_native_group(
-                    &group,
-                    worker,
-                    &mut store,
-                    pipeline,
-                    now,
-                    source_seq,
+                    &group, worker, &mut store, pipeline, now, source_seq,
                 )?);
             }
             OkxOcoObservation::Triggered(order_ids) => {
@@ -387,6 +388,230 @@ fn okx_algo_client_order_id(group_id: &str) -> String {
     format!("QX{:016X}", hash.finish())
 }
 
+fn reconcile_bitget_uta_oco_observation(
+    group: &qx_core::OrderGroupState,
+    remote: &serde_json::Value,
+    worker: &WorkerConfig,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    let remote_id = remote
+        .get("strategy_order_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let expected_id = group.venue_group_id.as_deref().unwrap_or_default();
+    let instrument = group
+        .legs
+        .first()
+        .map(|leg| leg.order.instrument.to_string())
+        .unwrap_or_default();
+    let Some(children) = remote
+        .get("sub_orders")
+        .and_then(serde_json::Value::as_array)
+    else {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "Bitget OCO 查询缺少子单列表",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_fact_incomplete",
+            "Bitget UTA OCO 查询缺少子单列表",
+        );
+        return Ok(0);
+    };
+    if expected_id.is_empty()
+        || !expected_id.bytes().all(|byte| byte.is_ascii_digit())
+        || remote_id != expected_id
+        || remote.get("instrument").and_then(serde_json::Value::as_str) != Some(instrument.as_str())
+        || remote.get("order_type").and_then(serde_json::Value::as_str) != Some("oco")
+    {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "Bitget OCO 策略单身份或子单事实与持久订单组不匹配",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_identity_mismatch",
+            "Bitget UTA OCO 查询身份与本地订单组不匹配",
+        );
+        return Ok(0);
+    }
+    match remote.get("state").and_then(serde_json::Value::as_str) {
+        Some("live") if children.is_empty() => {
+            if group.status == qx_core::OrderGroupStatus::Submitting {
+                store.activate_native_group(&group.intent.group_id)?;
+                return Ok(1);
+            }
+            if group.status != qx_core::OrderGroupStatus::ReconcileRequired {
+                return Ok(0);
+            }
+            let mut snapshots = Vec::new();
+            for leg in &group.legs {
+                let current = pipeline
+                    .orders()
+                    .into_iter()
+                    .find(|order| order.client_id == leg.order.client_id)
+                    .ok_or_else(|| {
+                        format!("Bitget OCO 子腿 {} 不在 EventLog", leg.order.client_id)
+                    })?;
+                let snapshot = if matches!(
+                    current.status,
+                    qx_core::OrderStatus::Accepted | qx_core::OrderStatus::Working
+                ) {
+                    current
+                } else if current
+                    .status
+                    .can_transition_to(qx_core::OrderStatus::Accepted)
+                {
+                    *source_seq = source_seq.saturating_add(1);
+                    pipeline
+                        .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                            qx_runtime::RuntimeExternalEvent::Accepted {
+                                client_order_id: leg.order.client_id,
+                                venue_order_id: None,
+                            },
+                            now,
+                            now,
+                            *source_seq,
+                            format!("{}:bitget-oco-live:{}", worker.id, leg.order.client_id),
+                        ))
+                        .map_err(|error| format!("归约 Bitget OCO live 子腿事实失败: {error:?}"))?;
+                    pipeline
+                        .orders()
+                        .into_iter()
+                        .find(|order| order.client_id == leg.order.client_id)
+                        .ok_or_else(|| {
+                            format!("Bitget OCO live 子腿 {} 归约后缺失", leg.order.client_id)
+                        })?
+                } else {
+                    mark_ccxt_group_unresolved(
+                        group,
+                        worker,
+                        store,
+                        pipeline,
+                        now,
+                        source_seq,
+                        "Bitget OCO 仍 live，但本地子腿不能恢复为 accepted",
+                    )?;
+                    push_ccxt_group_issue(
+                        issues,
+                        group,
+                        "native_order_group_state_unresolved",
+                        "Bitget UTA OCO 仍 live，但本地子腿状态无法恢复",
+                    );
+                    return Ok(0);
+                };
+                snapshots.push((snapshot, None));
+            }
+            store_ccxt_group_snapshots(&group.intent.group_id, snapshots, true, store)?;
+            Ok(group.legs.len())
+        }
+        Some("canceled") => {
+            if !bitget_cancel_children_are_unfilled(group, children) {
+                mark_ccxt_group_unresolved(
+                    group,
+                    worker,
+                    store,
+                    pipeline,
+                    now,
+                    source_seq,
+                    "Bitget OCO 已取消，但子单列表不足以证明没有成交",
+                )?;
+                push_ccxt_group_issue(
+                    issues,
+                    group,
+                    "native_order_group_fact_incomplete",
+                    "Bitget UTA OCO 撤销缺少完整的零成交子单事实",
+                );
+                return Ok(0);
+            }
+            reconcile_ccxt_cancelled_native_group(group, worker, store, pipeline, now, source_seq)
+        }
+        Some(state) => {
+            mark_ccxt_group_unresolved(
+                group,
+                worker,
+                store,
+                pipeline,
+                now,
+                source_seq,
+                "Bitget OCO 已触发/失败，子单腿角色或成交事实仍需精确归属",
+            )?;
+            push_ccxt_group_issue(
+                issues,
+                group,
+                "native_order_group_state_unresolved",
+                &format!("Bitget UTA OCO 状态 {state:?} 暂不能安全归约"),
+            );
+            Ok(0)
+        }
+        None => {
+            mark_ccxt_group_unresolved(
+                group,
+                worker,
+                store,
+                pipeline,
+                now,
+                source_seq,
+                "Bitget OCO 查询缺少策略状态",
+            )?;
+            push_ccxt_group_issue(
+                issues,
+                group,
+                "native_order_group_fact_incomplete",
+                "Bitget UTA OCO 查询缺少策略状态",
+            );
+            Ok(0)
+        }
+    }
+}
+
+pub(crate) fn bitget_cancel_children_are_unfilled(
+    group: &qx_core::OrderGroupState,
+    children: &[serde_json::Value],
+) -> bool {
+    !children.is_empty()
+        && children.iter().all(|child| {
+            let child_side = child.get("side").and_then(serde_json::Value::as_str);
+            let child_qty = child
+                .get("qty")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| qx_core::ExactDecimal::parse(value).ok());
+            let matches_leg = group.legs.iter().any(|leg| {
+                let side = match leg.order.side {
+                    qx_core::Side::Buy => "buy",
+                    qx_core::Side::Sell => "sell",
+                };
+                child_side == Some(side) && child_qty == Some(leg.order.quantity_decimal())
+            });
+            matches!(
+                child.get("status").and_then(serde_json::Value::as_str),
+                Some("cancelled" | "canceled" | "failed")
+            ) && matches_leg
+                && child
+                    .get("cum_exec_qty")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|value| qx_core::ExactDecimal::parse(value).ok())
+                    .is_some_and(qx_core::ExactDecimal::is_zero)
+        })
+}
+
 enum OkxOcoObservation {
     Live,
     Cancelled,
@@ -422,9 +647,7 @@ fn classify_okx_oco_observation(
         return Err("OKX OCO 查询 actualSz 为负数");
     }
     match state {
-        "live" if order_ids.is_empty() && actual_size.is_zero() => {
-            Ok(OkxOcoObservation::Live)
-        }
+        "live" if order_ids.is_empty() && actual_size.is_zero() => Ok(OkxOcoObservation::Live),
         "canceled" if order_ids.is_empty() && actual_size.is_zero() => {
             Ok(OkxOcoObservation::Cancelled)
         }
@@ -473,11 +696,7 @@ fn store_ccxt_group_snapshots(
     let final_index = snapshots.len() - 1;
     for (index, (snapshot, remote_id)) in snapshots.into_iter().enumerate() {
         if reconciling && index < final_index {
-            store.record_order_snapshot_during_reconciliation(
-                group_id,
-                &snapshot,
-                remote_id,
-            )?;
+            store.record_order_snapshot_during_reconciliation(group_id, &snapshot, remote_id)?;
         } else if reconciling {
             store.reconcile_order_snapshot(group_id, &snapshot, remote_id)?;
         } else {
@@ -553,7 +772,10 @@ fn reconcile_ccxt_cancelled_native_group(
     if group.legs.iter().any(|leg| {
         leg.venue_order_id.is_some()
             || leg.order.filled.raw() != 0
-            || leg.order.exact_amounts.is_some_and(|amounts| amounts.filled.is_positive())
+            || leg
+                .order
+                .exact_amounts
+                .is_some_and(|amounts| amounts.filled.is_positive())
     }) {
         return Ok(0);
     };
@@ -594,7 +816,9 @@ fn reconcile_ccxt_cancelled_native_group(
             ));
         }
         if current.status != qx_core::OrderStatus::CancelPending
-            && current.status.can_transition_to(qx_core::OrderStatus::CancelPending)
+            && current
+                .status
+                .can_transition_to(qx_core::OrderStatus::CancelPending)
         {
             *source_seq = (*source_seq).saturating_add(1);
             pipeline
@@ -605,7 +829,10 @@ fn reconcile_ccxt_cancelled_native_group(
                     now,
                     now,
                     *source_seq,
-                    format!("{}:okx-oco-cancel-pending:{}", worker.id, leg.order.client_id),
+                    format!(
+                        "{}:okx-oco-cancel-pending:{}",
+                        worker.id, leg.order.client_id
+                    ),
                 ))
                 .map_err(|error| format!("归约 OKX OCO CancelPending 失败: {error:?}"))?;
         }
@@ -628,12 +855,7 @@ fn reconcile_ccxt_cancelled_native_group(
             .ok_or_else(|| format!("OKX OCO 撤销后子腿 {} 不在 EventLog", leg.order.client_id))?;
         snapshots.push((snapshot, None));
     }
-    store_ccxt_group_snapshots(
-        &group.intent.group_id,
-        snapshots,
-        reconciling,
-        store,
-    )?;
+    store_ccxt_group_snapshots(&group.intent.group_id, snapshots, reconciling, store)?;
     let current = store.load(&group.intent.group_id)?;
     if current.is_some_and(|current| current.status == qx_core::OrderGroupStatus::CancelPending) {
         store.complete_native_cancel(&group.intent.group_id)?;
@@ -680,7 +902,10 @@ fn reconcile_ccxt_triggered_native_group(
         );
         return Ok(0);
     };
-    let role = match remote.get("actual_side").and_then(serde_json::Value::as_str) {
+    let role = match remote
+        .get("actual_side")
+        .and_then(serde_json::Value::as_str)
+    {
         Some("tp") => qx_core::OrderGroupLegRole::TakeProfit,
         Some("sl") => qx_core::OrderGroupLegRole::StopLoss,
         _ => {
@@ -814,12 +1039,7 @@ fn reconcile_ccxt_triggered_native_group(
         )?;
         if let Some(spec) = spec {
             updates += ingest_venue_events_with_spec(
-                pipeline,
-                events,
-                &worker.id,
-                now,
-                source_seq,
-                &spec,
+                pipeline, events, &worker.id, now, source_seq, &spec,
             )?;
         } else {
             updates += ingest_venue_events(pipeline, events, &worker.id, now, source_seq)?;
@@ -849,14 +1069,15 @@ fn reconcile_ccxt_triggered_native_group(
                     status: triggered_order.status,
                     venue_order_id: Some(remote_id.clone()),
                     filled_raw: triggered_order.filled.raw(),
-                    filled_exact: triggered_order
-                        .exact_amounts
-                        .map(|amounts| amounts.filled),
+                    filled_exact: triggered_order.exact_amounts.map(|amounts| amounts.filled),
                 },
                 now,
                 now,
                 *source_seq,
-                format!("{}:okx-oco-child-id:{}", worker.id, triggered_order.client_id),
+                format!(
+                    "{}:okx-oco-child-id:{}",
+                    worker.id, triggered_order.client_id
+                ),
             ))
             .map_err(|error| format!("持久化 OKX OCO 子腿远端身份失败: {error:?}"))?;
     }
@@ -880,7 +1101,10 @@ fn reconcile_ccxt_triggered_native_group(
                     now,
                     now,
                     *source_seq,
-                    format!("{}:okx-oco-peer-cancel-pending:{}", worker.id, peer_order.client_id),
+                    format!(
+                        "{}:okx-oco-peer-cancel-pending:{}",
+                        worker.id, peer_order.client_id
+                    ),
                 ))
                 .map_err(|error| format!("归约 OKX OCO 对侧 CancelPending 失败: {error:?}"))?;
         }
@@ -893,7 +1117,10 @@ fn reconcile_ccxt_triggered_native_group(
                 now,
                 now,
                 *source_seq,
-                format!("{}:okx-oco-peer-cancelled:{}", worker.id, peer_order.client_id),
+                format!(
+                    "{}:okx-oco-peer-cancelled:{}",
+                    worker.id, peer_order.client_id
+                ),
             ))
             .map_err(|error| format!("归约 OKX OCO 对侧 Cancelled 失败: {error:?}"))?;
     }
@@ -1253,10 +1480,7 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
             let recovered_remote_ids = pipeline
                 .orders()
                 .into_iter()
-                .filter_map(|order| {
-                    pipeline
-                        .venue_order_id(order.client_id)
-                })
+                .filter_map(|order| pipeline.venue_order_id(order.client_id))
                 .collect::<BTreeSet<_>>();
             open_order_issues.retain(|issue| {
                 !issue
@@ -1520,8 +1744,8 @@ fn runtime_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod native_order_group_reconcile_tests {
     use super::{
-        classify_okx_oco_observation, okx_algo_client_order_id,
-        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+        bitget_cancel_children_are_unfilled, classify_okx_oco_observation,
+        okx_algo_client_order_id, sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
     };
 
     fn protection_order(
@@ -1620,6 +1844,76 @@ mod native_order_group_reconcile_tests {
         assert!(first.bytes().all(|byte| byte.is_ascii_alphanumeric()));
         assert_eq!(first, okx_algo_client_order_id("protect-btc-1"));
         assert_ne!(first, okx_algo_client_order_id("protect-btc-2"));
+    }
+
+    #[test]
+    fn bitget_oco_cancel_requires_child_cancel_facts_and_zero_fills() {
+        use qx_core::{
+            ConditionalOrderKind, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+            OrderGroupLegIntent, OrderGroupLegRole, OrderGroupState,
+        };
+        let group = OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "bitget-cancel-check",
+                OrderGroupKind::Oco,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: protection_order(
+                            31,
+                            "account",
+                            "BITGET",
+                            ConditionalOrderKind::TakeProfit,
+                            "70000",
+                        ),
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: protection_order(
+                            32,
+                            "account",
+                            "BITGET",
+                            ConditionalOrderKind::StopLoss,
+                            "60000",
+                        ),
+                    },
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(bitget_cancel_children_are_unfilled(
+            &group,
+            &[serde_json::json!({
+                "side": "sell", "qty": "0.01", "status": "cancelled", "cum_exec_qty": "0"
+            })]
+        ));
+        assert!(!bitget_cancel_children_are_unfilled(&group, &[]));
+        assert!(!bitget_cancel_children_are_unfilled(
+            &group,
+            &[serde_json::json!({
+                "side": "sell", "qty": "0.01", "status": "filled", "cum_exec_qty": "0.01"
+            })]
+        ));
+        assert!(!bitget_cancel_children_are_unfilled(
+            &group,
+            &[serde_json::json!({
+                "side": "buy", "qty": "0.01", "status": "cancelled", "cum_exec_qty": "0"
+            })]
+        ));
+        assert!(!bitget_cancel_children_are_unfilled(
+            &group,
+            &[serde_json::json!({
+                "side": "sell", "qty": "0.001", "status": "cancelled", "cum_exec_qty": "0"
+            })]
+        ));
+        assert!(!bitget_cancel_children_are_unfilled(
+            &group,
+            &[serde_json::json!({
+                "side": "sell", "qty": "0.01", "status": "cancelled", "cum_exec_qty": "unknown"
+            })]
+        ));
     }
 
     #[test]

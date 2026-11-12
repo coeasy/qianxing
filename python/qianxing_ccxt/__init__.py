@@ -2964,15 +2964,43 @@ class CcxtExchangeClient:
         market = self.resolve_market(instrument)
         if market.contract or market.market_type != "spot":
             raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget UTA OCO 当前只支持 Spot")
-        response = self._call("private_uta_get_v3_trade_unfilled_strategy_orders", {"category": "SPOT", "type": "oco"})
+        params = {"category": "SPOT", "type": "oco"}
+        response = self._call("private_uta_get_v3_trade_unfilled_strategy_orders", params)
         if not isinstance(response, Mapping) or response.get("code") != "00000":
-            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "Bitget UTA OCO 查询响应失败")
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "Bitget UTA OCO 未成交查询响应失败")
         rows = response.get("data")
         if not isinstance(rows, list):
-            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 查询缺少 data 列表")
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 未成交查询缺少 data 列表")
         matches = [row for row in rows if isinstance(row, Mapping) and str(row.get("orderId") or "") == strategy_order_id]
+        if not matches:
+            # History has cursor pagination but no orderId filter. Bound the scan and detect
+            # repeated cursors so an exchange response cannot create an unbounded worker loop.
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            for _ in range(20):
+                history_params = {**params, "limit": "100"}
+                if cursor is not None:
+                    history_params["cursor"] = cursor
+                history = self._call("private_uta_get_v3_trade_history_strategy_orders", history_params)
+                if not isinstance(history, Mapping) or history.get("code") != "00000":
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 历史查询响应失败")
+                data = history.get("data")
+                page = data.get("list") if isinstance(data, Mapping) else None
+                if not isinstance(page, list):
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 历史查询缺少 data.list")
+                matches.extend(row for row in page if isinstance(row, Mapping)
+                               and str(row.get("orderId") or "") == strategy_order_id)
+                if matches:
+                    break
+                next_cursor = data.get("cursor")
+                if next_cursor in (None, "", 0, "0"):
+                    break
+                cursor = str(next_cursor)
+                if cursor in seen_cursors:
+                    raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 历史游标重复")
+                seen_cursors.add(cursor)
         if len(matches) != 1:
-            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget 未决 OCO 查询未返回唯一匹配策略单")
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 未返回唯一匹配策略单")
         row = matches[0]
         if str(row.get("category") or "").upper() != "SPOT" or str(row.get("symbol") or "") != market.market_id:
             raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 查询身份与目标市场不匹配")
@@ -2982,9 +3010,45 @@ class CcxtExchangeClient:
         # The unfilled endpoint is authoritative only for the still-pending group; it does not
         # identify which generated child order is the TP or SL leg after a trigger.
         active = state == "live"
+        child_rows: list[Any] = []
+        if not active:
+            child_response = self._call("request", "v3/trade/strategy-sub-orders", "uta", "GET", {
+                "orderId": strategy_order_id, "limit": "100",
+            })
+            if not isinstance(child_response, Mapping) or child_response.get("code") != "00000":
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单查询响应失败")
+            child_data = child_response.get("data")
+            child_rows = child_data.get("list") if isinstance(child_data, Mapping) else None
+            if not isinstance(child_rows, list):
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单查询缺少 data.list")
+        children = []
+        for child in child_rows:
+            if not isinstance(child, Mapping):
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单包含非法记录")
+            child_id = str(child.get("subOrderId") or "")
+            if not child_id or not child_id.isascii() or not child_id.isdigit():
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单 ID 非法")
+            if str(child.get("category") or "").upper() != "SPOT" or str(child.get("symbol") or "") != market.market_id:
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单市场身份不匹配")
+            child_side = str(child.get("side") or "").lower()
+            strategy_side = str(row.get("side") or "").lower()
+            if child_side not in ("buy", "sell") or (strategy_side and child_side != strategy_side):
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单方向与策略单不匹配")
+            try:
+                qty = Fraction(_exact_decimal_wire_text(str(child.get("qty")), field="Bitget OCO child qty"))
+                filled = Fraction(_exact_decimal_wire_text(str(child.get("cumExecQty")), field="Bitget OCO child cumExecQty"))
+            except (CcxtConnectorError, ValueError, ZeroDivisionError) as error:
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单数量精度非法") from error
+            if qty <= 0 or filled < 0 or filled > qty:
+                raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 子单累计成交超出数量")
+            children.append({"order_id": child_id, "status": str(child.get("status") or "").lower(),
+                             "qty": str(child.get("qty")), "cum_exec_qty": str(child.get("cumExecQty")),
+                             "side": child_side, "price": str(child.get("price") or ""),
+                             "avg_price": str(child.get("avgPrice") or "")})
         return {"strategy_order_id": strategy_order_id, "instrument": market.instrument,
-                "order_type": "oco", "state": state, "order_ids": [],
-                "actual_size": "0" if active else None, "status": raw_status}
+                "order_type": "oco", "state": state,
+                "order_ids": [item["order_id"] for item in children],
+                "actual_size": "0" if active else None, "status": raw_status, "sub_orders": children}
 
     def cancel_bitget_uta_oco_order_group(self, instrument: str, *, strategy_order_id: str) -> dict[str, str]:
         if self.config.exchange_id.lower() != "bitget" or (self.config.options or {}).get("uta") is not True:
