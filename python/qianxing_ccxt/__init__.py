@@ -404,6 +404,8 @@ class CcxtMarket:
     market_order_max_qty_raw: int | None
     max_leverage: int | None
     maintenance_margin_bps: int | None
+    maker_fee_rate: str | None
+    taker_fee_rate: str | None
     # Decimal strings retain exchange precision beyond the legacy 1e-9 raw grid.
     # Exact Spot request formatting consumes these rules; Rust keeps live order admission
     # closed until risk, fill, and ledger paths are all scale-aware.
@@ -983,6 +985,22 @@ class CcxtExchangeClient:
             except CcxtConnectorError:
                 max_leverage = None
         maintenance_margin_bps = self._maintenance_margin_bps(market)
+        maker_fee_rate = _exact_decimal_text(
+            market.get("maker"), field="market.maker", allow_negative=True
+        )
+        taker_fee_rate = _exact_decimal_text(
+            market.get("taker"), field="market.taker", allow_negative=True
+        )
+        if market.get("maker") is not None and maker_fee_rate is None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "CCXT market.maker 手续费率不是可冻结的精确十进制",
+            )
+        if market.get("taker") is not None and taker_fee_rate is None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "CCXT market.taker 手续费率不是可冻结的精确十进制",
+            )
         precision_mode = getattr(self.exchange, "precisionMode", None)
         tick_size_mode = getattr(self.exchange, "TICK_SIZE", 4)
         decimal_places_mode = getattr(self.exchange, "DECIMAL_PLACES", 2)
@@ -1081,6 +1099,8 @@ class CcxtExchangeClient:
             market_order_max_qty_raw=market_max_qty_raw,
             max_leverage=max_leverage,
             maintenance_margin_bps=maintenance_margin_bps,
+            maker_fee_rate=maker_fee_rate,
+            taker_fee_rate=taker_fee_rate,
             exact_rules=exact_rules,
         )
 

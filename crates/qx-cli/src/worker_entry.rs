@@ -498,7 +498,7 @@ pub(crate) fn run_ccxt_market_spec(
             "instrument": instrument,
         }))
         .map_err(|error| format!("CCXT market spec 查询失败: {error}"))?;
-    let mut market = result
+    let market = result
         .get("market")
         .cloned()
         .ok_or_else(|| "CCXT market spec 响应缺少 market".to_string())?;
@@ -515,34 +515,77 @@ pub(crate) fn run_ccxt_market_spec(
         }
         Err(error) => return Err(format!("CCXT leverage tiers 查询失败: {error}")),
     };
-    if let Some(object) = market.as_object_mut() {
-        object.insert("leverage_tiers".into(), tiers);
-        let role = match object
-            .get("market_type")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-        {
-            "spot" | "margin" => "crypto_spot",
-            "swap" | "perpetual" | "future" | "futures" => "future",
-            _ => "unknown",
-        };
-        object.insert(
-            "dataset_instrument_role".into(),
-            serde_json::Value::String(role.into()),
-        );
-    }
-    std::fs::write(
+    let captured_at_unix_ms = unix_timestamp_ms()?;
+    let market = freeze_market_metadata(market, tiers, captured_at_unix_ms)?;
+    let payload = serde_json::to_vec_pretty(&market)
+        .map_err(|error| format!("编码 market spec 失败: {error}"))?;
+    qx_app::artifact_store::sink::publish_bytes(
         output_path,
-        serde_json::to_string_pretty(&market)
-            .map_err(|error| format!("编码 market spec 失败: {error}"))?,
+        &payload,
+        qx_app::artifact_store::sink::PublishMode::Idempotent,
     )
-    .map_err(|error| format!("写入 market spec 失败 {}: {error}", output_path.display()))?;
+    .map_err(|error| {
+        format!(
+            "发布冻结 market spec {} 失败: {error}",
+            output_path.display()
+        )
+    })?;
     println!(
         "[CCXT · MarketSpec] instrument={} output={} ✓",
         instrument,
         output_path.display()
     );
     Ok(())
+}
+
+fn unix_timestamp_ms() -> Result<u64, String> {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("读取系统 UTC 时间失败: {error}"))?;
+    u64::try_from(elapsed.as_millis()).map_err(|_| "系统 UTC 毫秒时间戳溢出".into())
+}
+
+fn freeze_market_metadata(
+    mut market: serde_json::Value,
+    tiers: serde_json::Value,
+    captured_at_unix_ms: u64,
+) -> Result<serde_json::Value, String> {
+    let object = market
+        .as_object_mut()
+        .ok_or_else(|| "CCXT market metadata 必须是 JSON object".to_string())?;
+    object.insert("leverage_tiers".into(), tiers);
+    let role = match object
+        .get("market_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "spot" | "margin" => "crypto_spot",
+        "swap" | "perpetual" | "future" | "futures" => "future",
+        _ => "unknown",
+    };
+    object.insert(
+        "dataset_instrument_role".into(),
+        serde_json::Value::String(role.into()),
+    );
+    let maker_rate = object
+        .get("maker_fee_rate")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let taker_rate = object
+        .get("taker_fee_rate")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    object.insert(
+        "fee_snapshot".into(),
+        serde_json::json!({
+            "source": "ccxt_market_metadata_default",
+            "captured_at_unix_ms": captured_at_unix_ms,
+            "account_specific": false,
+            "maker_rate": maker_rate,
+            "taker_rate": taker_rate,
+        }),
+    );
+    Ok(market)
 }
 
 #[cfg(test)]
@@ -580,6 +623,34 @@ mod tests {
             .contains("固定长度档位"));
         assert!(timeframe_interval_ms("0m").is_err());
         assert!(timeframe_interval_ms("18446744073709551615w").is_err());
+    }
+
+    #[test]
+    fn ccxt_market_snapshot_freezes_default_fees_with_scope_and_capture_time() {
+        let market = freeze_market_metadata(
+            serde_json::json!({
+                "instrument": "BTCUSDT.BINANCE",
+                "market_type": "spot",
+                "maker_fee_rate": "0.0008",
+                "taker_fee_rate": "0.001"
+            }),
+            serde_json::json!([]),
+            1_800_000_000_000,
+        )
+        .unwrap();
+        assert_eq!(market["dataset_instrument_role"], "crypto_spot");
+        assert_eq!(
+            market["fee_snapshot"]["source"],
+            "ccxt_market_metadata_default"
+        );
+        assert_eq!(market["fee_snapshot"]["account_specific"], false);
+        assert_eq!(
+            market["fee_snapshot"]["captured_at_unix_ms"],
+            1_800_000_000_000u64
+        );
+        assert_eq!(market["fee_snapshot"]["maker_rate"], "0.0008");
+        assert_eq!(market["fee_snapshot"]["taker_rate"], "0.001");
+        assert_eq!(market["leverage_tiers"], serde_json::json!([]));
     }
 
     #[test]

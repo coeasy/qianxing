@@ -184,6 +184,8 @@ cargo run -p qx-cli -- ccxt-market-spec `
 
 按相同方式为每个标的生成单市场规格，并把每份输出 JSON 对象按对应 `InstrumentId` 放入 `markets` map；同时让 CCXT 配置的 `instruments` 覆盖这些标的。不同产品类型、杠杆档位或账户设置应使用匹配的 CCXT 配置。`docs/examples/crypto-market-spec-set-v1.example.json` 展示集合结构，但其中的数值仅供阅读，不能直接作为交易所当前规则使用。完成集合后先运行 `cargo run -p qx-cli -- runtime-check <runtime.json>`；该命令只校验配置/文件引用，不连接交易所。随后逐个运行下方只读私有探针，再由操作者在 Sandbox 验证订单生命周期。
 
+`ccxt-market-spec` 会将规则写成不可变快照；请为每次新抓取使用新输出路径，已有快照只允许完全相同的字节复用。若 CCXT 公共市场元数据提供 `maker` / `taker`，快照会保留精确费率字符串，并记录采集时间、元数据来源和 `account_specific: false`。字段缺失时保留 `null`；它不代表账户等级费率，也不会自动写入回测 `fee_schedule`。请按账户实际费率审核并显式配置回测成本，不能将公共默认费率视为账户费率。
+
 ## Run one venue at a time
 
 ## Binance / OKX / Bitget 多市场合约样例

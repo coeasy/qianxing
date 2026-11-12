@@ -524,6 +524,17 @@ class CcxtTest(unittest.TestCase):
         market = self.client.resolve_market("BTC/USDT.BINANCE")
         self.assertEqual(market.contract_size_raw, 1_000_000_000)
 
+    def test_resolved_market_preserves_exact_exchange_default_fee_rates(self):
+        self.exchange.markets["BTC/USDT"]["maker"] = "0.0008"
+        self.exchange.markets["BTC/USDT"]["taker"] = "0.001"
+        market = self.client.resolve_market("BTC/USDT.BINANCE")
+        self.assertEqual(market.maker_fee_rate, "0.0008")
+        self.assertEqual(market.taker_fee_rate, "0.001")
+
+        self.exchange.markets["BTC/USDT"]["maker"] = object()
+        with self.assertRaisesRegex(CcxtConnectorError, "maker 手续费率"):
+            self.client.resolve_market("BTC/USDT.BINANCE")
+
     def test_low_price_spot_market_preserves_nine_decimal_ticks_and_lot_steps(self):
         market = self.client.resolve_market("PEPEUSDT.BINANCE")
         self.assertEqual(market.price_tick_raw, 1)
