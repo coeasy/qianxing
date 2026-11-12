@@ -178,3 +178,38 @@ test("an order snapshot links to account events with its client ID and default a
   assert.equal(elements.get("account-activity-exchange-order-id").value, "");
   assert.equal(elements.get("account-activity-load").clicks, 1);
 });
+
+test("an account event correlation link clears intersecting filters and loads the exact trace key", () => {
+  const focusStart = source.indexOf("function focusAccountActivityForCorrelation(");
+  const focusEnd = source.indexOf("\nfunction rows(", focusStart);
+  assert.notEqual(focusStart, -1, "missing correlation-to-account-activity action");
+  assert.notEqual(focusEnd, -1, "missing correlation action boundary");
+  const elements = new Map([
+    ["account-activity-account-id", { value: "account-1" }],
+    ["account-activity-venue-id", { value: "OKX" }],
+    ["account-activity-client-order-id", { value: "123" }],
+    ["account-activity-exchange-order-id", { value: "remote-123" }],
+    ["account-activity-run-id", { value: "run-1" }],
+    ["account-activity-strategy-id", { value: "strategy-1" }],
+    ["account-activity-correlation-id", { value: "" }],
+    ["card-account-activity", { scrollIntoView() {} }],
+    ["account-activity-load", { clicks: 0, click() { this.clicks += 1; } }],
+  ]);
+  const context = {
+    state: { defaultAccountId: "account-1", defaultVenueId: "OKX" },
+    $(id) { return elements.get(id); },
+  };
+  vm.runInNewContext(
+    `${source.slice(focusStart, focusEnd)}\nglobalThis.focusAccountActivityForCorrelation = focusAccountActivityForCorrelation;`,
+    context,
+  );
+  context.focusAccountActivityForCorrelation("corr-77");
+  assert.equal(elements.get("account-activity-correlation-id").value, "corr-77");
+  for (const id of [
+    "account-activity-client-order-id",
+    "account-activity-exchange-order-id",
+    "account-activity-run-id",
+    "account-activity-strategy-id",
+  ]) assert.equal(elements.get(id).value, "");
+  assert.equal(elements.get("account-activity-load").clicks, 1);
+});

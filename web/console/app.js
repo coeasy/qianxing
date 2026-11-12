@@ -398,6 +398,24 @@ function focusAccountActivityForOrder(order, exchangeOrderId = null) {
   $("account-activity-load").click();
 }
 
+function focusAccountActivityForCorrelation(correlationId) {
+  if (typeof correlationId !== "string" || !correlationId.trim()) return;
+  const accountId = $("account-activity-account-id").value.trim() || state.defaultAccountId;
+  const venueId = $("account-activity-venue-id").value.trim() || state.defaultVenueId;
+  if (!accountId || !venueId) return;
+  $("account-activity-account-id").value = String(accountId);
+  $("account-activity-venue-id").value = String(venueId);
+  for (const id of [
+    "account-activity-client-order-id",
+    "account-activity-exchange-order-id",
+    "account-activity-run-id",
+    "account-activity-strategy-id",
+  ]) $(id).value = "";
+  $("account-activity-correlation-id").value = correlationId;
+  $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("account-activity-load").click();
+}
+
 function rows(container, pairs) {
   container.replaceChildren();
   for (const [k, v] of pairs) {
@@ -774,6 +792,14 @@ function fillTable(tableId, response) {
         lookup.type = "button";
         lookup.title = "按客户端订单号查询账户活动事件";
         lookup.addEventListener("click", () => focusAccountActivityForOrder(record));
+        td.append(lookup);
+      }
+      if (tableId === "account-activity-events-table" && key === "correlation_id"
+          && typeof record.correlation_id === "string" && record.correlation_id.trim()) {
+        const lookup = el("button", "查看关联事件", "ghost correlation-event-link");
+        lookup.type = "button";
+        lookup.title = "按此 correlation_id 精确查看账户保留日志中的关联事件";
+        lookup.addEventListener("click", () => focusAccountActivityForCorrelation(record.correlation_id));
         td.append(lookup);
       }
       tr.append(td);
