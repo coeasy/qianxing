@@ -112,6 +112,8 @@ const state = {
   activityVenueId: null,
   activityClientOrderId: null,
   activityExchangeOrderId: null,
+  activityRunId: null,
+  activityStrategyId: null,
   activityAfter: null,
   activityBefore: null,
   activityPage: null,
@@ -607,7 +609,9 @@ async function refreshAccountActivity() {
   const selectedVenue = $("account-activity-venue-id").value.trim();
   const selectedClientOrderId = $("account-activity-client-order-id").value.trim();
   const selectedExchangeOrderId = $("account-activity-exchange-order-id").value.trim();
-  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId) {
+  const selectedRunId = $("account-activity-run-id").value.trim();
+  const selectedStrategyId = $("account-activity-strategy-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId || state.activityRunId !== selectedRunId || state.activityStrategyId !== selectedStrategyId) {
     state.activityAfter = null;
     state.activityBefore = null;
   }
@@ -615,6 +619,8 @@ async function refreshAccountActivity() {
   state.activityVenueId = selectedVenue || null;
   state.activityClientOrderId = selectedClientOrderId || null;
   state.activityExchangeOrderId = selectedExchangeOrderId || null;
+  state.activityRunId = selectedRunId || null;
+  state.activityStrategyId = selectedStrategyId || null;
   state.activitySelectionDirty = false;
   if (!state.activityAccountId || !state.activityVenueId) {
     state.activityPage = null;
@@ -633,6 +639,8 @@ async function refreshAccountActivity() {
   if (state.activityBefore !== null) query.set("before", String(state.activityBefore));
   if (state.activityClientOrderId !== null) query.set("client_order_id", state.activityClientOrderId);
   if (state.activityExchangeOrderId !== null) query.set("exchange_order_id", state.activityExchangeOrderId);
+  if (state.activityRunId !== null) query.set("run_id", state.activityRunId);
+  if (state.activityStrategyId !== null) query.set("strategy_id", state.activityStrategyId);
   const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
   if (!response.ok) {
     state.activityPage = null;
@@ -657,7 +665,7 @@ async function refreshAccountActivity() {
     ["余额字段完整度", ["equity", "available", "margin", "fees", "funding"].map((key) => `${key}:${completeness[`${key}_reported`] === true ? "有" : "无"}`).join(" · ")],
     ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
     ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
-    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
+    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""}${eventPage.exchange_order_id ? ` · exchange_order_id=${eventPage.exchange_order_id}` : ""}${eventPage.run_id ? ` · run_id=${eventPage.run_id}` : ""}${eventPage.strategy_id ? ` · strategy_id=${eventPage.strategy_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
   ]);
   fillTable("account-activity-events-table", {
     ok: true,
@@ -4090,6 +4098,8 @@ function disconnect() {
   state.activityVenueId = null;
   state.activityClientOrderId = null;
   state.activityExchangeOrderId = null;
+  state.activityRunId = null;
+  state.activityStrategyId = null;
   state.defaultAccountId = null;
   state.defaultVenueId = null;
   state.activityAfter = null;
@@ -4124,6 +4134,8 @@ function disconnect() {
   $("account-activity-venue-id").value = "";
   $("account-activity-client-order-id").value = "";
   $("account-activity-exchange-order-id").value = "";
+  $("account-activity-run-id").value = "";
+  $("account-activity-strategy-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {

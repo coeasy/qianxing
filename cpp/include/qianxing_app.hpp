@@ -404,7 +404,9 @@ public:
         std::string_view account_id, std::string_view venue_id,
         std::optional<std::uint64_t> after = std::nullopt,
         std::optional<std::uint64_t> before = std::nullopt,
-        std::uint32_t limit = 50) const {
+        std::uint32_t limit = 50,
+        std::optional<std::string_view> run_id = std::nullopt,
+        std::optional<std::string_view> strategy_id = std::nullopt) const {
         if (account_id.empty() || venue_id.empty()) {
             return {400, R"({"error":"account_id and venue_id are required"})"};
         }
@@ -414,6 +416,9 @@ public:
         if (limit == 0 || limit > 300) {
             return {400, R"({"error":"limit must be between 1 and 300"})"};
         }
+        if ((run_id && run_id->empty()) || (strategy_id && strategy_id->empty())) {
+            return {400, R"({"error":"run_id and strategy_id must be non-empty"})"};
+        }
         std::string path(routes::kAccountActivity);
         path += "?account_id=" + routes::encode_query_component(account_id);
         path += "&venue_id=" + routes::encode_query_component(venue_id);
@@ -422,6 +427,12 @@ public:
         }
         if (before) {
             path += "&before=" + std::to_string(*before);
+        }
+        if (run_id) {
+            path += "&run_id=" + routes::encode_query_component(*run_id);
+        }
+        if (strategy_id) {
+            path += "&strategy_id=" + routes::encode_query_component(*strategy_id);
         }
         path += "&limit=" + std::to_string(limit);
         return get(path);

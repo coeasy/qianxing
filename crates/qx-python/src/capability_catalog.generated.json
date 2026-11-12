@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "4ce7558a0b61bf735ce18433cfa1fdf41d88bc5ee6e20636306b967f48ae64c7",
+    "maturity/capability-matrix.yaml": "d381c6d606cd64a5b89d4d7c9b6978c657480e1426a945784fe26c5e912f6a1f",
     "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -586,7 +586,7 @@
             "crates/qx-runtime/tests/event_log_backend_switch.rs 六条用例全是行为：两个方向都拒绝且不动磁盘（拒绝后旧历史摘要逐字可读、不建出 segments/ 目录）、read_face_open_is_refused_too 要求读面同样拒绝、the_gate_does_not_fire_on_a_fresh_root_or_an_unrelated_log_name 守住首次启动与同目录别的日志名、the_database_gate_sees_both_file_backends 要求数据库那侧看得见两套文件形状、same_backend_open_still_recovers_the_crash_gap 确认拒绝路径没把恢复逻辑一起带走 (V13 R2 第十八遍",
             "crates/qx-cli/tests/unit/account_event_log_identity.rs 的 switching_event_log_backend_refuses_to_start_an_account_from_an_empty_book 走真实编排链：只改 storage.event_log_segment_events 一个字段即被拒，换成 storage.backend: sqlite 同样被拒且报错点名 .json 而不是先报 feature 未启用（闸门与 feature 检查的先后由此钉住）；调用点现由 qx-service::pipeline::PipelineStorage 提供，CLI runtime_wiring 只保留兼容委托 (V13 R2 第十八遍 #226)",
             "crates/qx-runtime/src/runtime_config/schema.rs documents the compatibility switch between flat and segmented EventLog storage, its fail-closed history guard, and the measured warm-append versus reopen costs; deploy/README.md documents the history-preserving switch requirement",
-            "crates/qx-api/src/read_scope.rs classifies /account/ledger, /account/order-groups, and /reconcile/reports as MODEL_FILTER_ROUTES with per-route accepted account keys; crates/qx-api/src/lib.rs applies those filters to every returned row; crates/qx-cli/tests/unit/api_read_route_query_contract.rs model_filter_routes_honor_the_account_scope covers both accounts, while the venue-only and invalid-key cases verify each route accepts only keys represented by its model (V13 R31 follow-up)",
+            "crates/qx-api/src/read_scope.rs classifies /account/ledger and /reconcile/reports as MODEL_FILTER_ROUTES with per-route accepted account keys; crates/qx-api/src/lib.rs applies those filters to every returned row; crates/qx-cli/tests/unit/api_read_route_query_contract.rs model_filter_routes_honor_the_account_scope covers both accounts, while the venue-only and invalid-key cases verify each route accepts only keys represented by its model (V13 R31 follow-up)",
             "`crates/qx-core/src/identity.rs` makes the InstrumentId symbol private; `new`, `parse`, and Serde `Deserialize` use the same ASCII grammar and length cap, with path-shaped constructor/deserialization cases. `crates/qx-strategy/src/lib.rs` validates bare and account-qualified `account_id|instrument` context keys by parsing the instrument component. A compatibility scan of 19 JSON identities in the deploy and maturity directories found no rejected symbols.",
             "crates/qx-service/src/configured_backends.rs implements JobQueueBackend for ConfiguredJobQueue and routes production convenience methods through the shared contract; behavioral trait-object regression test covers file backend dispatch",
             "maturity/evidence/rust-event-log-file-backend-append-comparison-2026-11-07.json flat-versus-segmented append storage microbenchmark with hardware, Rust version and source SHA-256 fingerprints",
@@ -1648,7 +1648,7 @@
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/control_command_executor_coverage.rs enumerates all eleven CommandKind variants through the real control submission gate (seven accepted, four rejected without audit or pending work), checks the executed list against production dispatch sources in both directions, checks CommandKind::ALL against declaration order, and aligns deploy/README.md acceptance/rejection lists (V13 R2",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
-            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿、订单组与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
+            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
             "crates/qx-cli/tests/unit/api_read_route_query_contract.rs 五条：文档写的收窄键必须与实现真读的键一一对应（双向），两张端点表的非 200 名单与 400 文案按**该行**取数而不是整篇 README 数子串（V13 R2",
             "deploy/README.md 第 856 行（现第 858 行）那条幽灵路由改成真形状 `GET /account/snapshot?account_id=&venue_id=`，「### 端点表按张核对」里新增第 303 行点名本判据与它住的文件；改后该文档实测 103,477 字节、1078 行、CR 与 LF 计数相等（无 bareCR）(V13 R2 第二十二遍",
@@ -1799,8 +1799,8 @@
           "python/qianxing/client_local.py"
         ],
         "limitations": [
-          "Run 生命周期事件现有确定性 event_id=run_id:seq，贯通 Rust/Python/HTTP；旧持久化快照缺 ID 时读取升级。账户活动 EventLog 行派生 account/venue/seq 稳定 event_id，展示客户端/交易所订单号与 run/strategy 上下文，并可按 client_order_id 服务端过滤和游标分页；这是账户事件页投影，不是跨进程统一事务事件流，也不能证明每个生产者都填充上下文",
-          "该读模型仍不提供事件到订单详情的钻取、统一 trace/span/指标告警或逐事件持久化恢复；Run 生命周期快照仍不含订单/成交事实",
+          "Run 生命周期事件现有确定性 event_id=run_id:seq，贯通 Rust/Python/HTTP；旧持久化快照缺 ID 时读取升级。账户活动 EventLog 行派生 account/venue/seq 稳定 event_id，展示客户端/交易所订单号与 run/strategy 上下文，并可按 client_order_id、exchange_order_id、run_id、strategy_id 组合精确服务端过滤和游标分页；旧事件缺少的上下文不会被推断。这是账户事件页投影，不是跨进程统一事务事件流，也不能证明每个生产者都填充上下文",
+          "该读模型仍不提供统一 trace/span/指标告警或逐事件持久化恢复；Run 生命周期快照仍不含订单/成交事实",
           "路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"
         ],
         "next_gate": "落方案 §5.x 的逐操作可追溯验收与 Web/桌面 E2E"
@@ -2302,7 +2302,7 @@
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/control_command_executor_coverage.rs enumerates all eleven CommandKind variants through the real control submission gate (seven accepted, four rejected without audit or pending work), checks the executed list against production dispatch sources in both directions, checks CommandKind::ALL against declaration order, and aligns deploy/README.md acceptance/rejection lists (V13 R2",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
-            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿、订单组与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
+            "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
             "crates/qx-cli/tests/unit/api_read_route_query_contract.rs 五条：文档写的收窄键必须与实现真读的键一一对应（双向），两张端点表的非 200 名单与 400 文案按**该行**取数而不是整篇 README 数子串（V13 R2",
             "deploy/README.md 第 856 行（现第 858 行）那条幽灵路由改成真形状 `GET /account/snapshot?account_id=&venue_id=`，「### 端点表按张核对」里新增第 303 行点名本判据与它住的文件；改后该文档实测 103,477 字节、1078 行、CR 与 LF 计数相等（无 bareCR）(V13 R2 第二十二遍",

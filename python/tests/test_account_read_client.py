@@ -70,6 +70,8 @@ class AccountReadClientTest(unittest.TestCase):
                 after=42,
                 client_order_id=9001,
                 exchange_order_id="venue/订单 7",
+                run_id="run/4",
+                strategy_id="mean reversion",
                 limit=100,
             )
 
@@ -84,6 +86,8 @@ class AccountReadClientTest(unittest.TestCase):
                 "after": ["42"],
                 "client_order_id": ["9001"],
                 "exchange_order_id": ["venue/订单 7"],
+                "run_id": ["run/4"],
+                "strategy_id": ["mean reversion"],
                 "limit": ["100"],
             },
         )
@@ -98,6 +102,8 @@ class AccountReadClientTest(unittest.TestCase):
             {"account_id": "account-1", "venue_id": "okx", "client_order_id": True},
             {"account_id": "account-1", "venue_id": "okx", "exchange_order_id": "  "},
             {"account_id": "account-1", "venue_id": "okx", "exchange_order_id": 12},
+            {"account_id": "account-1", "venue_id": "okx", "run_id": " "},
+            {"account_id": "account-1", "venue_id": "okx", "strategy_id": 10},
             {"account_id": "account-1", "venue_id": "okx", "after": 1, "before": 2},
             {"account_id": "account-1", "venue_id": "okx", "limit": 301},
         )

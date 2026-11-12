@@ -2881,6 +2881,8 @@ fn parse_account_activity_options(
         "limit",
         "client_order_id",
         "exchange_order_id",
+        "run_id",
+        "strategy_id",
     ] {
         let occurrences = query
             .split('&')
@@ -2923,6 +2925,10 @@ fn parse_account_activity_options(
         before: parse_cursor("before")?,
         client_order_id: parse_cursor("client_order_id")?,
         exchange_order_id: query_param(query, "exchange_order_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        run_id: query_param(query, "run_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        strategy_id: query_param(query, "strategy_id")
             .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
         limit,
     })
@@ -3491,7 +3497,12 @@ mod tests {
                     balances: Vec::new(),
                 }
             };
-            source.append(Event::new(seq, seq, 0, kind));
+            let mut event = Event::new(seq, seq, 0, kind);
+            if seq == 4 {
+                event.metadata.context.run_id = "run-paper-4".into();
+                event.metadata.context.strategy_id = "strategy-momentum".into();
+            }
+            source.append(event);
         }
         assert_eq!(
             state
@@ -3579,6 +3590,19 @@ mod tests {
         assert_eq!(exchange_order_trace["events"]["available_total"], 1);
         assert_eq!(exchange_order_trace["events"]["rows"][0]["seq"], 4);
 
+        let run_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&run_id=run-paper-4&strategy_id=strategy-momentum&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(run_trace.status, 200, "{}", run_trace.body);
+        let run_trace: serde_json::Value = serde_json::from_str(&run_trace.body).unwrap();
+        assert_eq!(run_trace["events"]["run_id"], "run-paper-4");
+        assert_eq!(run_trace["events"]["strategy_id"], "strategy-momentum");
+        assert_eq!(run_trace["events"]["available_total"], 1);
+        assert_eq!(run_trace["events"]["rows"][0]["client_order_id"], 9001);
+
         for (query, expected_status) in [
             ("after=1&before=2", 400),
             ("limit=0", 400),
@@ -3588,6 +3612,10 @@ mod tests {
             ("client_order_id=9&client_order_id=10", 400),
             ("exchange_order_id=", 400),
             ("exchange_order_id=one&exchange_order_id=two", 400),
+            ("run_id=", 400),
+            ("run_id=one&run_id=two", 400),
+            ("strategy_id=%20", 400),
+            ("strategy_id=one&strategy_id=two", 400),
             ("after=999", 409),
         ] {
             let response = service.handle(

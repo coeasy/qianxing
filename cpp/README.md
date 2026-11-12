@@ -9,7 +9,7 @@
 
 `include/qianxing_app.hpp` 提供共享应用 API 的轻量 C++17 客户端，可调用数据校验、Bar/多腿 Bar/Tick/OrderBook、多账户批量回测与 OKX/Binance/Bitget 联合账户回测、单账户活动查询、产物复核、运行对比、参数实验，以及 Paper/Live 控制命令。联合账户回测会保留各账户独立账簿并汇总结果，不跨账户净额；Tick/OrderBook 与多腿 JSON 可携带标准化产品规格和适用的订单策略。客户端把版本化请求交给相同的 Rust 路由，不在 C++ 重做撮合、风险或账簿。HTTP transport 由集成方实现，并负责 TLS、鉴权、超时和连接复用；Live 控制要求服务启用 Operator 授权。
 
-`AppClient::get_account_activity(account_id, venue_id, after, before, limit)` 返回单账户活动报告 JSON。账户与 venue 必须同时给出；`after`/`before` 是互斥排他游标；事件页覆盖该账户保留的投影日志，不表示交易所完整历史。C++ client 会对 query 参数做百分号编码，并在发送前拒绝两种游标同时使用或越界的 `limit`。
+`AppClient::get_account_activity(account_id, venue_id, after, before, limit, run_id, strategy_id)` 返回单账户活动报告 JSON。账户与 venue 必须同时给出；`after`/`before` 是互斥排他游标；事件页覆盖该账户保留的投影日志，不表示交易所完整历史。可选 `run_id`/`strategy_id` 按事件上下文精确筛选，也可与订单身份筛选组合。C++ client 会对 query 参数做百分号编码，并在发送前拒绝两种游标同时使用、空过滤值或越界的 `limit`。
 
 长任务可调用 `start_backtest`、`start_depth_backtest`、`start_depth_experiment`、`start_multi_account_backtest`、`start_multi_account_joint_backtest`、`start_multi_account_depth_backtest`、`start_multi_market_backtest`、`start_multi_leg_backtest`、`start_experiment`、`start_multi_leg_experiment` 或 `start_multi_market_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；终态结果由服务持久化并跨重启保留，重启时仍未完成的任务标记为失败；注册表最多保留 1024 项，同时最多运行 64 个有持久化观察器的任务，满额时服务会在启动前拒绝新任务。run_id 只接受字母、数字、`-`、`_`、`.`。`run_multi_market_experiment` 与 `start_multi_market_experiment` 提交由 Rust 展开的有界多市场策略参数网格。
 

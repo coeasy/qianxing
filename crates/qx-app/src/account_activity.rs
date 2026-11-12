@@ -23,6 +23,12 @@ pub struct AccountActivityReportReadOptionsV1 {
     /// Exact opaque venue-assigned order identity (case-sensitive).
     #[serde(default)]
     pub exchange_order_id: Option<String>,
+    /// Exact strategy run identity; only events carrying this context match.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// Exact strategy identity; can be combined with `run_id` or order filters.
+    #[serde(default)]
+    pub strategy_id: Option<String>,
     #[serde(default = "default_event_limit")]
     pub limit: usize,
 }
@@ -34,6 +40,8 @@ impl Default for AccountActivityReportReadOptionsV1 {
             before: None,
             client_order_id: None,
             exchange_order_id: None,
+            run_id: None,
+            strategy_id: None,
             limit: DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1,
         }
     }
@@ -75,12 +83,16 @@ pub struct AccountActivityRowsV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountActivityEventPageV1 {
-    /// Number of rows available after applying the optional order identity filters.
+    /// Number of rows available after applying the optional order/run/strategy filters.
     pub available_total: u64,
     #[serde(default)]
     pub client_order_id: Option<u64>,
     #[serde(default)]
     pub exchange_order_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub strategy_id: Option<String>,
     pub oldest_seq: Option<u64>,
     pub latest_seq: Option<u64>,
     pub requested_after: Option<u64>,
@@ -291,6 +303,8 @@ pub fn read_account_activity_report_v1(
             available_total: selected_page.total,
             client_order_id: options.client_order_id,
             exchange_order_id: options.exchange_order_id.clone(),
+            run_id: options.run_id.clone(),
+            strategy_id: options.strategy_id.clone(),
             oldest_seq: selected_page.oldest_seq,
             latest_seq: selected_page.latest_seq,
             requested_after: options.after,
@@ -348,6 +362,20 @@ fn validate_options(options: &AccountActivityReportReadOptionsV1) -> Result<(), 
     {
         return Err(invalid("账户活动 exchange_order_id 不能为空"));
     }
+    if options
+        .run_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("账户活动 run_id 不能为空"));
+    }
+    if options
+        .strategy_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("账户活动 strategy_id 不能为空"));
+    }
     Ok(())
 }
 
@@ -401,6 +429,14 @@ fn select_event_page<'a>(
         options
             .client_order_id
             .is_none_or(|expected| client_order_id == Some(expected))
+            && options
+                .run_id
+                .as_deref()
+                .is_none_or(|expected| event.metadata.context.run_id == expected)
+            && options
+                .strategy_id
+                .as_deref()
+                .is_none_or(|expected| event.metadata.context.strategy_id == expected)
             && options.exchange_order_id.as_deref().is_none_or(|expected| {
                 exchange_order_id.as_deref() == Some(expected)
                     || client_order_id.is_some_and(|client_order_id| {
@@ -640,8 +676,67 @@ mod tests {
 
     fn events() -> Vec<Event> {
         (1..=5)
-            .map(|seq| Event::new(seq, seq, 0, EventKind::Settle))
+            .map(|seq| {
+                let mut event = Event::new(seq, seq, 0, EventKind::Settle);
+                if seq % 2 == 0 {
+                    event.metadata.context.run_id = "run-1".into();
+                    event.metadata.context.strategy_id = "strategy-a".into();
+                } else if seq == 3 {
+                    event.metadata.context.run_id = "run-2".into();
+                    event.metadata.context.strategy_id = "strategy-b".into();
+                }
+                event
+            })
             .collect()
+    }
+
+    #[test]
+    fn run_and_strategy_filters_are_exact_and_compose_with_order_filters() {
+        let mut events = events();
+        for index in [1, 3] {
+            events[index].kind = EventKind::Accepted {
+                client_order_id: 77,
+                venue_order_id: None,
+            };
+        }
+        let report = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                run_id: Some("run-1".into()),
+                strategy_id: Some("strategy-a".into()),
+                client_order_id: Some(77),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(report.events.available_total, 2);
+        assert_eq!(report.events.run_id.as_deref(), Some("run-1"));
+        assert_eq!(report.events.strategy_id.as_deref(), Some("strategy-a"));
+        assert_eq!(
+            report
+                .events
+                .rows
+                .iter()
+                .map(|row| row.seq)
+                .collect::<Vec<_>>(),
+            [2, 4]
+        );
+
+        let empty = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                run_id: Some("run-1".into()),
+                strategy_id: Some("strategy-b".into()),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
+            200,
+        )
+        .unwrap();
+        assert!(empty.events.rows.is_empty());
+        assert_eq!(empty.events.available_total, 0);
     }
 
     #[test]
@@ -655,6 +750,8 @@ mod tests {
                 before: None,
                 client_order_id: None,
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 2,
             },
             200,
@@ -679,6 +776,8 @@ mod tests {
                 before: Some(3),
                 client_order_id: None,
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -783,6 +882,8 @@ mod tests {
                 before: None,
                 client_order_id: Some(77),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -802,6 +903,8 @@ mod tests {
                 before: None,
                 client_order_id: Some(77),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -818,6 +921,8 @@ mod tests {
                 before: Some(2),
                 client_order_id: Some(77),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -834,6 +939,8 @@ mod tests {
                 before: Some(1),
                 client_order_id: Some(77),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -851,6 +958,8 @@ mod tests {
                 before: None,
                 client_order_id: Some(77),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -870,6 +979,8 @@ mod tests {
                 before: None,
                 client_order_id: Some(999),
                 exchange_order_id: None,
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -886,6 +997,8 @@ mod tests {
                 before: None,
                 client_order_id: None,
                 exchange_order_id: Some("remote-77".into()),
+                run_id: None,
+                strategy_id: None,
                 limit: 10,
             },
             200,
@@ -913,6 +1026,8 @@ mod tests {
                 before: None,
                 client_order_id: None,
                 exchange_order_id: Some("remote-77".into()),
+                run_id: None,
+                strategy_id: None,
                 limit: 1,
             },
             200,
@@ -939,6 +1054,23 @@ mod tests {
             .category(),
             AppErrorCategory::InvalidInput
         );
+        for options in [
+            AccountActivityReportReadOptionsV1 {
+                run_id: Some("  ".into()),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
+            AccountActivityReportReadOptionsV1 {
+                strategy_id: Some("".into()),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
+        ] {
+            assert_eq!(
+                read_account_activity_report_v1(&snapshot(), &events, &options, 200)
+                    .unwrap_err()
+                    .category(),
+                AppErrorCategory::InvalidInput
+            );
+        }
         assert_eq!(
             read_account_activity_report_v1(
                 &snapshot(),
@@ -948,6 +1080,8 @@ mod tests {
                     before: Some(4),
                     client_order_id: None,
                     exchange_order_id: None,
+                    run_id: None,
+                    strategy_id: None,
                     limit: 2,
                 },
                 200
@@ -965,6 +1099,8 @@ mod tests {
                     before: None,
                     client_order_id: None,
                     exchange_order_id: None,
+                    run_id: None,
+                    strategy_id: None,
                     limit: 2,
                 },
                 200
@@ -982,6 +1118,8 @@ mod tests {
                     before: None,
                     client_order_id: None,
                     exchange_order_id: None,
+                    run_id: None,
+                    strategy_id: None,
                     limit: MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1 + 1,
                 },
                 200

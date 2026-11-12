@@ -631,12 +631,13 @@ client = AppClient("https://127.0.0.1:8443", headers={"Authorization": "Bearer â
 positions = client.get_account_positions(account_id="okx-demo", venue_id="okx")
 orders = client.get_account_orders(account_id="binance-demo", venue_id="binance")
 activity = client.get_account_activity(
-    account_id="binance-demo", venue_id="binance", limit=50
+    account_id="binance-demo", venue_id="binance",
+    run_id="run-2026-11-12", strategy_id="momentum-btc", limit=50
 )
 portfolio = client.get_account_portfolio("crypto-demo", reporting_currency="USDT")
 ```
 
-The account activity report combines one scoped snapshot with bounded position/order/fill/transfer rows and a retained account-event page. Use `after` or `before` to page that account's projection log; it does not claim to cover the venue's complete history. Portfolio reporting preserves native per-currency totals and does not imply cross-account margin netting or joint buying power. The read endpoints use the runtime's configured authentication policy; keep API credentials outside strategy files.
+The account activity report combines one scoped snapshot with bounded position/order/fill/transfer rows and a retained account-event page. Use `run_id` and `strategy_id` to filter events by their exact recorded strategy context; they can be combined with client or venue order IDs. Use `after` or `before` to page that account's projection log; it does not claim to cover the venue's complete history or synthesize context missing from older events. Portfolio reporting preserves native per-currency totals and does not imply cross-account margin netting or joint buying power. The read endpoints use the runtime's configured authentication policy; keep API credentials outside strategy files.
 
 Amounts and quantities use the engine's fixed-point `*_raw` units. Install optional integrations only when needed, for example `pip install 'qianxing[ccxt]'` or `pip install 'qianxing[a-share]'`.
 
