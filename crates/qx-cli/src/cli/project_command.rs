@@ -31,8 +31,14 @@ pub(super) fn dispatch_quickstart(
     force: bool,
     profile: crate::cli_args::QuickstartProfile,
     strategy: Option<String>,
+    days: Option<u32>,
+    timeframe: Option<String>,
+    instrument: Option<String>,
+    exchange: Option<String>,
 ) {
-    quickstart::run(project, html, force, profile, strategy);
+    quickstart::run(
+        project, html, force, profile, strategy, days, timeframe, instrument, exchange,
+    );
 }
 
 pub(super) fn dispatch_guide(args: crate::guide_args::GuideArgs) {

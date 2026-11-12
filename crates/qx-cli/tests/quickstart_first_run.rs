@@ -297,7 +297,7 @@ fn ashare_profile_runs_the_full_offline_quickstart_chain() {
 
 /// 只有已经实现完整首跑链的 profile 才能通过 quickstart 参数校验。
 #[test]
-fn unsupported_quickstart_profile_is_rejected_before_writing() {
+fn unknown_quickstart_profile_is_rejected_before_writing() {
     let base = temp_base("unsupported-profile");
     let project = base.join("project");
     let (code, stdout, stderr) = run(
@@ -306,16 +306,59 @@ fn unsupported_quickstart_profile_is_rejected_before_writing() {
             "quickstart",
             &project.to_string_lossy(),
             "--profile",
-            "ccxt",
+            "not-a-profile",
         ],
     );
     assert_eq!(code, 2, "未实现完整首跑链的 profile 必须拒绝");
     assert!(
-        stderr.contains("invalid value 'ccxt'") || stderr.contains("invalid value `ccxt`"),
+        stderr.contains("not-a-profile"),
         "拒绝信息应由 profile 枚举指出可用值: {stderr}"
     );
     assert!(stdout.is_empty(), "参数拒绝前不应开始 quickstart: {stdout}");
     assert!(!project.exists(), "不支持的 profile 不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn ccxt_quickstart_rejects_invalid_window_before_writing() {
+    let base = temp_base("ccxt-invalid-window");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ccxt",
+            "--days",
+            "0",
+        ],
+    );
+    assert_eq!(code, 2, "非法窗口必须 fail closed");
+    assert!(
+        !stdout.contains("quickstart 使用"),
+        "参数拒绝前不得开始 quickstart: {stdout}"
+    );
+    assert!(stderr.contains("--days 必须在 1 到 365 之间"), "{stderr}");
+    assert!(!project.exists(), "非法窗口不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn ccxt_only_options_are_rejected_for_offline_quickstart_before_writing() {
+    let base = temp_base("ccxt-option-on-builtin");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &["quickstart", &project.to_string_lossy(), "--days", "7"],
+    );
+    assert_eq!(code, 2, "不能静默忽略 CCXT 专属选项");
+    assert!(
+        !stdout.contains("quickstart 使用"),
+        "配置错误前不得开始 quickstart: {stdout}"
+    );
+    assert!(stderr.contains("仅适用于 --profile ccxt"), "{stderr}");
+    assert!(!project.exists(), "profile 不匹配时不得创建项目目录");
     let _ = std::fs::remove_dir_all(base);
 }
 
@@ -382,7 +425,7 @@ fn second_run_without_force_stops_at_the_first_step() {
     );
     assert!(
         stderr.replace('\\', "/").contains(&format!(
-            "重跑整条链条：{names} quickstart {}",
+            "确认覆盖项目文件后从头重跑：{names} quickstart {} --force",
             project.display().to_string().replace('\\', "/")
         )),
         "必须给出重跑整条链条的写法: {stderr}"

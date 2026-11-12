@@ -18,6 +18,7 @@ use super::{
 pub(crate) enum QuickstartProfile {
     Builtin,
     Ashare,
+    Ccxt,
 }
 
 impl QuickstartProfile {
@@ -25,6 +26,7 @@ impl QuickstartProfile {
         match self {
             Self::Builtin => "builtin",
             Self::Ashare => "ashare",
+            Self::Ccxt => "ccxt",
         }
     }
 }
@@ -55,7 +57,7 @@ pub(crate) enum Command {
     #[command(name = "quickstart")]
     Quickstart {
         project: Option<PathBuf>,
-        /// 首跑场景；ashare 使用仓库内的 A 股样例数据离线回测。
+        /// 首跑场景；ashare 使用本地 A 股样例，ccxt 使用真实公开行情只读回测。
         #[arg(long, value_enum, default_value_t = QuickstartProfile::Builtin)]
         profile: QuickstartProfile,
         /// 额外生成自包含 HTML 报告与三张 SVG 图表。
@@ -66,6 +68,18 @@ pub(crate) enum Command {
         /// 选择一个内置单标的策略（如 sma_cross、macd、rsi、bollinger）。
         #[arg(long)]
         strategy: Option<String>,
+        /// CCXT 公共行情窗口天数（1 到 365）。
+        #[arg(long)]
+        days: Option<u32>,
+        /// CCXT 行情周期，如 1h 或 15m。
+        #[arg(long)]
+        timeframe: Option<String>,
+        /// CCXT 永续合约标的（必须含结算币和交易所后缀），默认 BTC/USDT:USDT.OKX。
+        #[arg(long)]
+        instrument: Option<String>,
+        /// 公共行情交易所：okx、binance 或 bitget。
+        #[arg(long)]
+        exchange: Option<String>,
     },
     #[command(name = "guide")]
     Guide(super::guide_args::GuideArgs),

@@ -21,7 +21,9 @@ pub(crate) struct CcxtBuiltinBacktestInput<'a> {
     pub(crate) use_public_default_fees: bool,
 }
 
-pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> Result<(), String> {
+pub(crate) fn run_ccxt_builtin_backtest(
+    input: CcxtBuiltinBacktestInput<'_>,
+) -> Result<qx_app::ccxt_backtest_snapshot::CcxtBacktestSnapshot, String> {
     let CcxtBuiltinBacktestInput {
         ccxt_config_path,
         strategy_name,
@@ -179,7 +181,8 @@ pub(crate) fn run_ccxt_builtin_backtest(input: CcxtBuiltinBacktestInput<'_>) -> 
         &runtime_path,
         kind,
         runtime,
-    )
+    )?;
+    Ok(snapshot)
 }
 
 fn generated_market_spec_path(

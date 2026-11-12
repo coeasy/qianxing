@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "29553fd116e09a0f5253fd9bfeefca566e052a799fc44b6622eed9efeeb565ba",
+    "maturity/capability-matrix.yaml": "4ce7558a0b61bf735ce18433cfa1fdf41d88bc5ee6e20636306b967f48ae64c7",
     "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -173,7 +173,7 @@
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
       "evidence_path_count": 112,
-      "limitation_count": 5
+      "limitation_count": 6
     },
     {
       "id": "qx.domain.accounts_and_strategies",
@@ -1173,7 +1173,8 @@
           "ccxt-market-spec 现冻结 CCXT 公共市场元数据公开提供的 maker/taker 默认费率精确字符串及采集时间，并标记 account_specific=false；缺失费率保留 null。ccxt-builtin --use-public-default-fees 可将其无损映射到整数 bp 并冻结为 ExecutionCostRules；该值不代表用户账户费率，不能覆盖非整数 bp 费率，仍没有历史生效期和账户等级/API 费率来源",
           "ccxt-fetch-ohlcv 默认生成不可变 BarFrame 与 DatasetManifestV2 质量/来源清单；页内或跨页重复时间戳、小数时间戳会 fail closed，避免静默覆盖或截断。它不提供上游历史修订账本；实时订阅与统一启动预检仍未贯通",
           "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明",
-          "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"
+          "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified",
+          "quickstart --profile ccxt 已接入公开只读行情和确定窗口，但当前环境对 OKX/Binance/Bitget 公共 API 均网络不可达；真实行情快启仍无成功端到端证据，CCXT 与连接器能力保持 implemented-unverified"
         ],
         "next_gate": "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
       },

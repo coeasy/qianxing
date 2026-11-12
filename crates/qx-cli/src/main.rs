@@ -177,6 +177,7 @@ pub(crate) use multi_leg::*;
 pub(crate) use panic_boundary::*;
 pub(crate) use path_resolution::*;
 pub(crate) use plan_commands::*;
+pub(crate) use project_manifest::*;
 #[cfg(test)]
 pub(crate) use qx_runtime::{
     read_capped_worker_line, record_stderr_tail, stderr_tail_note, STDERR_TAIL_LINES,

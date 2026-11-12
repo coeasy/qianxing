@@ -24,16 +24,7 @@ pub fn worker_report_spec(
     let orders = pipeline.orders();
     let mut resolved: Option<TradingInstrumentSpec> = None;
     for event in events {
-        let client_order_id = match event {
-            VenueEvent::Accepted {
-                client_order_id, ..
-            }
-            | VenueEvent::Cancelled {
-                client_order_id, ..
-            } => *client_order_id,
-            VenueEvent::Fill(fill) => fill.order_id,
-            VenueEvent::FeeAdjustment { order_id, .. } => *order_id,
-        };
+        let client_order_id = report_client_order_id(event);
         let order = orders
             .iter()
             .find(|order| order.client_id == client_order_id)
@@ -60,6 +51,22 @@ pub fn worker_report_spec(
         }
     }
     Ok(resolved)
+}
+
+fn report_client_order_id(event: &VenueEvent) -> u64 {
+    match event {
+        VenueEvent::Accepted {
+            client_order_id, ..
+        }
+        | VenueEvent::Rejected {
+            client_order_id, ..
+        }
+        | VenueEvent::Cancelled {
+            client_order_id, ..
+        } => *client_order_id,
+        VenueEvent::Fill(fill) => fill.order_id,
+        VenueEvent::FeeAdjustment { order_id, .. } => *order_id,
+    }
 }
 
 /// Load the frozen market spec configured for a worker and verify its instrument identity.
@@ -783,5 +790,15 @@ mod tests {
         )
         .is_err());
         std::fs::remove_dir_all(runtime_path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn rejected_venue_report_keeps_its_client_order_identity() {
+        let event = VenueEvent::Rejected {
+            client_order_id: 9_001,
+            reason: "exchange rejected order".into(),
+            ts: 123,
+        };
+        assert_eq!(report_client_order_id(&event), 9_001);
     }
 }

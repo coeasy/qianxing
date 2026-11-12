@@ -30,14 +30,19 @@ cargo install --path crates/qx-cli --locked     # 完全离线的机器再加 --
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
+qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 成本冻结 → 回测 → HTML 报告
 ```
 
 `quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
 
-`--profile` 当前支持 `builtin`（默认）与 `ashare`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
-完成一笔本地回测；不会连接外部行情源或发送订单。CCXT 的 sandbox 首跑仍需用户提供凭据并完成外部验收。
-`builtin` 支持 `--strategy` 选择单标的内置策略，默认 `macd`；用 `qx-cli builtin-strategies` 查看完整清单。
+`--profile` 支持 `builtin`（默认）、`ashare` 与 `ccxt`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
+完成一笔本地回测；不会连接外部行情源或发送订单。`ccxt` 首跑默认从 OKX 获取最近 30 天 BTC/USDT 永续 1h 公共 K 线，
+使用市场公开默认费率并冻结成本文件，生成可复核的回测报告；它不读取密钥、不启用执行 worker，也不提交订单。
+支持 `okx`、`binance` 和 `bitget` 公共行情，可用 `--exchange`、`--instrument`、`--days`、`--timeframe` 调整，窗口上限为 365 天且最多获取 100000 根 Bar。
+策略默认 `ema_cross`，也可用 `--strategy` 选择单标的内置策略；用 `qx-cli builtin-strategies` 查看完整清单。
+此真实行情 quickstart 需要安装 `qianxing[ccxt]` 对应的 CCXT 依赖并可访问所选交易所的公共行情 API。单独的 CCXT sandbox/实盘下单仍需凭据、权限和逐交易所外部验收。
+若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
 双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
 
 ```bash

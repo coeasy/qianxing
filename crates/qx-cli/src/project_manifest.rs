@@ -141,3 +141,49 @@ pub(crate) fn write_init_project_manifest(
         .map_err(|error| format!("写入项目清单失败 {}: {error}", path.display()))?;
     Ok(Some((path, readout.fingerprint)))
 }
+
+/// Bind a real CCXT quickstart project to the exact fetched dataset and strategy run.
+pub(crate) fn write_ccxt_quickstart_project_manifest(
+    runtime_path: &Path,
+    root: &Path,
+    dataset_manifest_path: &Path,
+    strategy_name: &str,
+) -> Result<(PathBuf, String), String> {
+    let config = crate::read_runtime_config(runtime_path)?;
+    let dataset_payload = std::fs::read_to_string(dataset_manifest_path).map_err(|error| {
+        format!(
+            "读取真实行情 DatasetManifestV2 失败 {}: {error}",
+            dataset_manifest_path.display()
+        )
+    })?;
+    let dataset = qx_data::DatasetManifestV2::from_json(&dataset_payload)?;
+    let project = ProjectManifest {
+        schema_version: qx_spec::PROJECT_MANIFEST_SCHEMA_VERSION,
+        project_id: format!(
+            "qx-{}",
+            config.fingerprint()?.chars().take(16).collect::<String>()
+        ),
+        profile: "crypto-paper".into(),
+        runtime: runtime_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "运行时配置文件名无效，无法生成 ProjectManifest".to_string())?
+            .into(),
+        artifact_root: config.storage.data_dir.clone(),
+        datasets: vec![DatasetRef {
+            dataset_id: dataset.dataset.dataset_id,
+            version: dataset.dataset.version,
+        }],
+        strategies: vec![StrategyRef {
+            strategy_id: format!("strategy-{strategy_name}"),
+            language: "rust".into(),
+            source: strategy_name.into(),
+        }],
+    };
+    let payload = project.to_json()?;
+    let readout = qx_spec::describe("project", &payload)?;
+    let path = root.join("qianxing.project.json");
+    std::fs::write(&path, payload)
+        .map_err(|error| format!("写入项目清单失败 {}: {error}", path.display()))?;
+    Ok((path, readout.fingerprint))
+}
