@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "bff7288b60f0c9b501001d7fb6112093d2664f4e3bfed0e1a2c876ffe6113f7b",
+    "maturity/capability-matrix.yaml": "5c9f0f094bf76a1c0129e6a75855ef139d8012cbe381baa75ef17c9dfa07cd75",
     "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -173,7 +173,7 @@
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
       "evidence_path_count": 112,
-      "limitation_count": 3
+      "limitation_count": 4
     },
     {
       "id": "qx.domain.accounts_and_strategies",
@@ -1164,11 +1164,13 @@
           "crates/qx-adapter",
           "crates/qx-service/src/provider_registry.rs",
           "crates/qx-cli/src/app_commands.rs",
+          "crates/qx-cli/src/worker_entry.rs",
           "crates/qx-cli/tests/command_surface.rs",
           "maturity/capabilities.yaml"
         ],
         "limitations": [
           "Rust/Python 高层 Bar BacktestSpec 现要求冻结 TradingInstrumentSpec 同时显式提供固定 MakerTakerFeeSchedule，并校验标的/结算币种/有效期、订单 tick/step/最小数量/quote 最小名义金额及成交 tick/lot；费用尚不由 Provider/Venue 自动解析，不含分层费率、返佣、税费或按时间生效的规则",
+          "ccxt-fetch-ohlcv 现在默认生成不可变 BarFrame 与 DatasetManifestV2 质量/来源清单，但不自动下载并冻结市场规则和费率；历史修订账本、实时订阅与统一启动预检仍未贯通",
           "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明",
           "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"
         ],

@@ -16,6 +16,7 @@ pub(super) fn dispatch_fetch_ohlcv(
     end_ms: u64,
     output: PathBuf,
     timeframe: String,
+    manifest: Option<PathBuf>,
 ) {
     if let Err(error) = run_ccxt_fetch_ohlcv(
         &ccxt_config,
@@ -24,6 +25,7 @@ pub(super) fn dispatch_fetch_ohlcv(
         start_ms,
         end_ms,
         &output,
+        manifest.as_deref(),
     ) {
         eprintln!("[qx-cli · CLI] CCXT OHLCV 下载失败: {error}");
         std::process::exit(2);

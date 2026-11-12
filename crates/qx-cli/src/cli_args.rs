@@ -247,6 +247,9 @@ pub(crate) enum Command {
         output: PathBuf,
         #[arg(default_value = "1m")]
         timeframe: String,
+        /// Optional DatasetManifestV2 destination (defaults beside the BarFrame).
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     #[command(name = "outbox-relay")]
     OutboxRelay {

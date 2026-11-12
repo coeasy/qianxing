@@ -225,7 +225,7 @@ cargo run --release -p qx-cli -- supervise .\deploy\qianxing.runtime.multi-venue
 
 该命令会持续读取行情并按策略信号提交 Sandbox/Demo 委托；首次运行只用 Sandbox/Demo Key，并确认账户是可清空的小额测试账户。策略样例使用 `one_way` + `position_side: net`；要测试双向持仓，需让交易所账户预先处于 Hedge 模式，并为每条意图显式选择 `position_mode: hedge` 与 `position_side: long/short`。代码支持这类参数，但本地离线验收不证明具体 Sandbox 当前已接受杠杆、持仓模式或委托参数。
 
-`ccxt-fetch-ohlcv` 可分别取回每家交易所的历史 Bar 做离线研究；实时拓扑则为各交易所配置独立 MarketData Worker。自定义 Python/JSONL 策略通过输入的 `bars` 读取主市场，通过 `market_bars[完整 InstrumentId]` 读取配置的对冲市场，运行时会拒绝未来时间和两边最新 Bar 未对齐的输入。多腿策略仍须把两家账户的保证金和风险分别计算，跨交易所没有原子成交保证。
+`ccxt-fetch-ohlcv` 可分别取回每家交易所的历史 Bar 做离线研究；现在会默认在 BarFrame 旁生成 `<文件名>.manifest.json`，记录来源、内容哈希、时间轴重复/乱序/缺口和 interval。可以用 `--manifest <路径>` 指定清单位置；已有同名数据只接受字节完全一致的幂等复用，内容不同须换数据集路径。固定长度的 s/m/h/d/w 档位可生成精确间隔，日历月等可变长度档位会在联网前拒绝。实时拓扑则为各交易所配置独立 MarketData Worker。自定义 Python/JSONL 策略通过输入的 `bars` 读取主市场，通过 `market_bars[完整 InstrumentId]` 读取配置的对冲市场，运行时会拒绝未来时间和两边最新 Bar 未对齐的输入。多腿策略仍须把两家账户的保证金和风险分别计算，跨交易所没有原子成交保证。
 
 ```powershell
 python -m qianxing_ccxt.private_probe --config .\examples\ccxt-binance-spot.example.json

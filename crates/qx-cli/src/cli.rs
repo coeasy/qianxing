@@ -178,6 +178,7 @@ pub(crate) fn run() {
             end_ms,
             output,
             timeframe,
+            manifest,
         } => market_data_command::dispatch_fetch_ohlcv(
             ccxt_config,
             instrument,
@@ -185,6 +186,7 @@ pub(crate) fn run() {
             end_ms,
             output,
             timeframe,
+            manifest,
         ),
         Command::OutboxRelay {
             root,

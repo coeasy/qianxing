@@ -294,8 +294,8 @@ pub(crate) fn print_cli_help() {
   ccxt-worker <runtime.json> <worker-id> <ccxt-config.json> [--once]
       运行 CCXT 执行 worker。
       执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情角色不受影响。
-  ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe]
-      下载一段 CCXT OHLCV 并写成标准 BarFrame 文件。
+  ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe] [--manifest <file>]
+      下载 CCXT OHLCV，冻结 BarFrame 并生成质量清单；默认清单路径为同目录 <output-stem>.manifest.json。
   outbox-relay <data-root> <nats-url> <subject-prefix> [limit]
       把文件 outbox 中的事件转发到 NATS（需 --features nats 构建）。
   outbox-relay-postgres <runtime.json> <nats-url> <subject-prefix> [limit]
