@@ -278,7 +278,7 @@ const RESPONSE_FIELDS = {
 // `columns` 逐个对齐——门禁 web_console_check 双向核对这两处，所以"后端从来没有这一列"
 // 与"页面多开了一列表头"都在门禁变红，而不是等用户看到一列永久的 —。
 const TABLE_SPECS = {
-  "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw"] },
+  "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw", "client_order_id"] },
   "order-groups-table": { roster: "orderGroupRow", columns: ["intent", "status", "venue_group_id", "legs"] },
   "positions-table": { roster: "positionRow", columns: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
   "events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
@@ -385,11 +385,13 @@ function orderGroupDetailNode(record) {
 
 function focusAccountActivityForOrder(order, exchangeOrderId = null) {
   const instrument = order?.instrument ?? {};
-  const venue = instrument.venue?.venue ?? instrument.venue;
-  if (!order?.client_id || !order.account_id || !venue) return;
-  $("account-activity-account-id").value = String(order.account_id);
+  const venue = instrument.venue?.venue ?? instrument.venue ?? state.defaultVenueId;
+  const accountId = order?.account_id ?? state.defaultAccountId;
+  const clientOrderId = order?.client_id ?? order?.client_order_id;
+  if (!clientOrderId || !accountId || !venue) return;
+  $("account-activity-account-id").value = String(accountId);
   $("account-activity-venue-id").value = String(venue);
-  $("account-activity-client-order-id").value = String(order.client_id);
+  $("account-activity-client-order-id").value = String(clientOrderId);
   $("account-activity-exchange-order-id").value = exchangeOrderId ? String(exchangeOrderId) : "";
   $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
   $("account-activity-load").click();
@@ -760,7 +762,15 @@ function fillTable(tableId, response) {
         : spec.roster === "positionRow"
           ? positionAmountText(key, record)
           : cellText(key, record ? record[key] : null);
-      tr.append(el("td", text));
+      const td = el("td", text);
+      if (tableId === "orders-table" && key === "client_order_id" && record.client_order_id && state.defaultAccountId && state.defaultVenueId) {
+        const lookup = el("button", "查看账户事件", "ghost order-event-link");
+        lookup.type = "button";
+        lookup.title = "按客户端订单号查询账户活动事件";
+        lookup.addEventListener("click", () => focusAccountActivityForOrder(record));
+        td.append(lookup);
+      }
+      tr.append(td);
     }
     tbody.append(tr);
   }

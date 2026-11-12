@@ -131,3 +131,33 @@ test("a stale account activity response cannot replace the latest selection", as
   await oldRequest;
   assert.equal(context.state.activityPage.available_total, 1);
 });
+
+test("an order snapshot links to account events with its client ID and default account scope", () => {
+  const focusStart = source.indexOf("function focusAccountActivityForOrder(");
+  const focusEnd = source.indexOf("\nfunction rows(", focusStart);
+  assert.notEqual(focusStart, -1, "missing order-to-account-activity action");
+  assert.notEqual(focusEnd, -1, "missing order-to-account-activity boundary");
+  const elements = new Map([
+    ["account-activity-account-id", { value: "" }],
+    ["account-activity-venue-id", { value: "" }],
+    ["account-activity-client-order-id", { value: "" }],
+    ["account-activity-exchange-order-id", { value: "" }],
+    ["card-account-activity", { scrollIntoView() {} }],
+    ["account-activity-load", { clicks: 0, click() { this.clicks += 1; } }],
+  ]);
+  const context = {
+    state: { defaultAccountId: "account-1", defaultVenueId: "OKX" },
+    $(id) { return elements.get(id); },
+  };
+  vm.runInNewContext(
+    `${source.slice(focusStart, focusEnd)}\nglobalThis.focusAccountActivityForOrder = focusAccountActivityForOrder;`,
+    context,
+  );
+  context.focusAccountActivityForOrder({ client_order_id: 823 });
+  assert.equal(elements.get("account-activity-account-id").value, "account-1");
+  assert.equal(elements.get("account-activity-venue-id").value, "OKX");
+  assert.equal(elements.get("account-activity-client-order-id").value, "823");
+  // The snapshot's order_id is local; don't guess that it's an exchange order ID.
+  assert.equal(elements.get("account-activity-exchange-order-id").value, "");
+  assert.equal(elements.get("account-activity-load").clicks, 1);
+});
