@@ -224,6 +224,9 @@ fn model_filter_routes_honor_the_account_scope() {
         venue_groups[0]["intent"]["group_id"].as_str(),
         Some("shadow-oco")
     );
+    let uppercase_venue_groups =
+        array_body(&service.handle("GET", "/account/order-groups?venue_id=BINANCE", "", 3));
+    assert_eq!(uppercase_venue_groups, venue_groups);
     let disjoint = array_body(&service.handle(
         "GET",
         "/account/order-groups?account_id=main&venue_id=binance",
@@ -276,6 +279,11 @@ fn reconcile_reports_narrow_by_venue_alone() {
 
     let by_venue = array_body(&service.handle("GET", "/reconcile/reports?venue_id=okx", "", 1));
     assert_eq!(by_venue.len(), 2, "只给 venue 也要能收窄: {by_venue:?}");
+    assert_eq!(
+        array_body(&service.handle("GET", "/reconcile/reports?venue_id=OKX", "", 1)),
+        by_venue,
+        "venue ID 的查询大小写不应改变同一报告范围"
+    );
     for report in &by_venue {
         assert_eq!(report["venue_id"].as_str(), Some("okx"));
     }

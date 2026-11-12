@@ -147,9 +147,9 @@ pub(crate) fn scope_keeps_account(scope: Option<&ScopeFilter>, account_id: &str)
         .is_none_or(|wanted| wanted == account_id.trim())
 }
 
-/// 把收窄套在 `venue_id` 那一列上：没点名就全收。比较口径同 `scope_keeps_account`。
+/// 把收窄套在 `venue_id` 那一列上：没点名就全收。VenueId 按大写规范化，查询比较也忽略大小写。
 pub(crate) fn scope_keeps_venue(scope: Option<&ScopeFilter>, venue_id: &str) -> bool {
     scope
         .and_then(|filter| filter.venue_id.as_deref())
-        .is_none_or(|wanted| wanted == venue_id.trim())
+        .is_none_or(|wanted| wanted.eq_ignore_ascii_case(venue_id.trim()))
 }
