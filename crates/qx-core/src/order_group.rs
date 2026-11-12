@@ -552,6 +552,12 @@ impl OrderGroupState {
         if self.status == OrderGroupStatus::ReconcileRequired {
             return Err("需先完成对账才能继续更新订单组".into());
         }
+        if venue_order_id
+            .as_deref()
+            .is_some_and(|id| id.trim().is_empty())
+        {
+            return Err("venue_order_id 不能为空".into());
+        }
         let leg = self
             .legs
             .iter_mut()
@@ -591,9 +597,6 @@ impl OrderGroupState {
         }
         leg.order = snapshot;
         if let Some(id) = venue_order_id {
-            if id.trim().is_empty() {
-                return Err("venue_order_id 不能为空".into());
-            }
             leg.venue_order_id = Some(id);
         }
         self.recompute_status();
@@ -979,6 +982,18 @@ mod tests {
         assert!(group
             .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Cancelled, "0.001"), None)
             .is_err());
+    }
+
+    #[test]
+    fn empty_venue_order_id_rejects_snapshot_without_mutating_group() {
+        let mut group = oco_state();
+        let before = group.clone();
+        let update = snapshot(&group, 1, OrderStatus::Accepted, "0");
+
+        assert!(group
+            .apply_order_snapshot(update, Some(" \t".into()))
+            .is_err());
+        assert_eq!(group, before);
     }
 
     fn snapshot(
