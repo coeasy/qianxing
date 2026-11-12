@@ -7,11 +7,14 @@ use super::venue_cache::evict_stale_terminal_orders;
 use super::{HttpRequest, HttpResponse, HttpTransport, TlsWebSocketUserStream, WebSocketPoll};
 use qx_core::{
     retry, DecimalRounding, ExactDecimal, ExactFillAmounts, ExactFillFee, Fill, FillFee,
-    InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
-    TradingInstrumentSpec, TradingProduct, SCALE,
+    InstrumentId, Money, Order, OrderGroupExecution, OrderGroupKind, OrderGroupLegRole,
+    OrderGroupState, OrderStatus, Price, Quantity, QxError, QxResult, Side, TradingInstrumentSpec,
+    TradingProduct, SCALE,
 };
 use qx_guanxing::QuoteTick;
-use qx_zhenlu::{ConnectorState, RateLimiter, Venue, VenueEvent, VenueOrderSnapshot};
+use qx_zhenlu::{
+    ConnectorState, RateLimiter, Venue, VenueEvent, VenueOrderGroupSubmission, VenueOrderSnapshot,
+};
 use ring::hmac;
 use serde::Deserialize;
 use serde_json::Value;
@@ -783,6 +786,16 @@ struct BinanceOrderWire {
     status: String,
     #[serde(default)]
     fills: Vec<BinanceFillWire>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct BinanceOrderListWire {
+    #[serde(rename = "orderListId", default)]
+    order_list_id: i64,
+    #[serde(rename = "listClientOrderId", default)]
+    list_client_order_id: String,
+    #[serde(rename = "orderReports", default)]
+    order_reports: Vec<BinanceOrderWire>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -2387,6 +2400,318 @@ impl Venue for BinanceSpotVenue {
         &qx_zhenlu::venue_capabilities::BINANCE_SPOT_VENUE_CAPABILITIES
     }
 
+    fn validate_order_group(&mut self, group: &OrderGroupState) -> QxResult<()> {
+        group
+            .validate_persisted()
+            .map_err(QxError::BusinessViolation)?;
+        self.execution_readiness()?;
+        if group.intent.kind != OrderGroupKind::Oco
+            || group.intent.execution != OrderGroupExecution::NativeRequired
+        {
+            return Err(QxError::BusinessViolation(
+                "Binance Spot 当前只支持显式 NativeRequired 的 OCO 订单组".into(),
+            ));
+        }
+        let take_profit = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止盈腿".into()))?;
+        let stop_loss = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止损腿".into()))?;
+        let symbol = take_profit.order.instrument.symbol().to_ascii_uppercase();
+        validate_binance_instrument(&take_profit.order.instrument)?;
+        if take_profit.order.instrument != stop_loss.order.instrument
+            || !take_profit.order.instrument.venue.is_binance()
+            || take_profit.order.side != stop_loss.order.side
+        {
+            return Err(QxError::BusinessViolation(
+                "Binance OCO 子腿必须属于同一 Binance Spot 标的并使用同一方向".into(),
+            ));
+        }
+        if group.legs.iter().any(|leg| {
+            self.orders.contains_key(&leg.order.client_id)
+                || self.venue_order_ids.contains_key(&leg.order.client_id)
+        }) {
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 子腿已存在于连接器本地状态，先对账再提交".into(),
+            ));
+        }
+        let rules = self.current_spot_market_rules(&symbol)?;
+        if rules.status != "TRADING" {
+            return Err(QxError::VenueState(format!(
+                "Binance Spot {symbol} 当前状态为 {}",
+                rules.status
+            )));
+        }
+        let quantity = take_profit.order.quantity_decimal();
+        validate_binance_exact_qty_filter(
+            quantity,
+            rules.exact_qty_step,
+            rules.exact_min_qty,
+            rules.exact_max_qty,
+            "LOT_SIZE",
+        )?;
+        let take_profit_trigger = take_profit
+            .order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .and_then(|intent| intent.trigger_price)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止盈腿缺少触发价".into()))?;
+        let stop_loss_trigger = stop_loss
+            .order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .and_then(|intent| intent.trigger_price)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止损腿缺少触发价".into()))?;
+        validate_binance_exact_price_filter(
+            take_profit_trigger,
+            rules.exact_price_tick,
+            rules.exact_min_price,
+            rules.exact_max_price,
+        )?;
+        validate_binance_exact_price_filter(
+            stop_loss_trigger,
+            rules.exact_price_tick,
+            rules.exact_min_price,
+            rules.exact_max_price,
+        )?;
+        for leg in [take_profit, stop_loss] {
+            if let Some(price) = leg.order.limit_price_decimal() {
+                validate_binance_exact_price_filter(
+                    price,
+                    rules.exact_price_tick,
+                    rules.exact_min_price,
+                    rules.exact_max_price,
+                )?;
+            }
+        }
+        let relation = take_profit_trigger
+            .checked_cmp(stop_loss_trigger)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 触发价比较失败".into()))?;
+        let valid_relation = match take_profit.order.side {
+            Side::Sell => relation.is_gt(),
+            Side::Buy => relation.is_lt(),
+        };
+        if !valid_relation {
+            return Err(QxError::BusinessViolation(
+                "Binance Spot OCO 止盈触发价必须高于止损价（Sell）或低于止损价（Buy）".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &OrderGroupState,
+        ts: u64,
+    ) -> QxResult<VenueOrderGroupSubmission> {
+        self.validate_order_group(group)?;
+        let take_profit = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止盈腿".into()))?;
+        let stop_loss = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 缺少止损腿".into()))?;
+        let take_profit_trigger = take_profit
+            .order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .and_then(|intent| intent.trigger_price)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止盈腿缺少触发价".into()))?;
+        let stop_loss_trigger = stop_loss
+            .order
+            .exact_amounts
+            .and_then(|amounts| amounts.conditional)
+            .and_then(|intent| intent.trigger_price)
+            .ok_or_else(|| QxError::BusinessViolation("Binance OCO 止损腿缺少触发价".into()))?;
+        let (above, below) = if take_profit_trigger
+            .checked_cmp(stop_loss_trigger)
+            .is_some_and(|ordering| ordering.is_gt())
+        {
+            (take_profit, stop_loss)
+        } else {
+            (stop_loss, take_profit)
+        };
+        let list_client_order_id = binance_group_client_order_id(&group.intent.group_id);
+        let mut parameters = BTreeMap::new();
+        let symbol = take_profit.order.instrument.symbol().to_ascii_uppercase();
+        parameters.insert("symbol".into(), symbol);
+        parameters.insert(
+            "side".into(),
+            match take_profit.order.side {
+                Side::Buy => "BUY".into(),
+                Side::Sell => "SELL".into(),
+            },
+        );
+        parameters.insert(
+            "quantity".into(),
+            take_profit.order.quantity_decimal().to_string(),
+        );
+        parameters.insert("listClientOrderId".into(), list_client_order_id.clone());
+        parameters.insert(
+            "aboveClientOrderId".into(),
+            client_order_id(above.order.client_id),
+        );
+        parameters.insert(
+            "belowClientOrderId".into(),
+            client_order_id(below.order.client_id),
+        );
+        parameters.insert("newOrderRespType".into(), "FULL".into());
+        for (prefix, leg) in [("above", above), ("below", below)] {
+            let conditional = leg
+                .order
+                .exact_amounts
+                .and_then(|amounts| amounts.conditional)
+                .ok_or_else(|| QxError::BusinessViolation("Binance OCO 条件腿意图缺失".into()))?;
+            let kind = match (conditional.kind, leg.order.limit_price_decimal().is_some()) {
+                (qx_core::ConditionalOrderKind::TakeProfit, true) => "TAKE_PROFIT_LIMIT",
+                (qx_core::ConditionalOrderKind::TakeProfit, false) => "TAKE_PROFIT",
+                (qx_core::ConditionalOrderKind::StopLoss, true) => "STOP_LOSS_LIMIT",
+                (qx_core::ConditionalOrderKind::StopLoss, false) => "STOP_LOSS",
+                _ => {
+                    return Err(QxError::BusinessViolation(
+                        "Binance Spot OCO 仅支持止盈/止损条件腿".into(),
+                    ))
+                }
+            };
+            parameters.insert(format!("{prefix}Type"), kind.into());
+            parameters.insert(
+                format!("{prefix}StopPrice"),
+                conditional.trigger_price.unwrap().to_string(),
+            );
+            if let Some(price) = leg.order.limit_price_decimal() {
+                parameters.insert(format!("{prefix}Price"), price.to_string());
+                parameters.insert(format!("{prefix}TimeInForce"), "GTC".into());
+            }
+        }
+        let response = self.request("POST", "/api/v3/orderList/oco", parameters, ts)?;
+        let wire: BinanceOrderListWire = match parse_success(response, "OCO order list") {
+            Ok(wire) => wire,
+            Err(error) => {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(format!(
+                    "Binance OCO 请求已发出但回报无法解析: {error:?}"
+                )));
+            }
+        };
+        if wire.order_list_id < 0
+            || wire.list_client_order_id != list_client_order_id
+            || wire.order_reports.len() != 2
+        {
+            self.state = ConnectorState::ReconcileRequired;
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 响应缺少或篡改订单列表 ID/子单回报".into(),
+            ));
+        }
+        let mut reports = BTreeMap::new();
+        for report in wire.order_reports {
+            let Some(client_id) = parse_client_order_id(&report.client_order_id) else {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 子单回报 clientOrderId 无法映射".into(),
+                ));
+            };
+            if report.order_id == 0
+                || !group
+                    .legs
+                    .iter()
+                    .any(|leg| leg.order.client_id == client_id)
+                || reports.insert(client_id, report).is_some()
+            {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 子单回报与提交意图不匹配".into(),
+                ));
+            }
+        }
+        if group
+            .legs
+            .iter()
+            .any(|leg| !reports.contains_key(&leg.order.client_id))
+        {
+            self.state = ConnectorState::ReconcileRequired;
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 响应未覆盖全部子单".into(),
+            ));
+        }
+
+        let mut events = Vec::new();
+        for leg in &group.legs {
+            let report = reports
+                .remove(&leg.order.client_id)
+                .expect("validated OCO response contains every child");
+            let venue_order_id = report.order_id.to_string();
+            let mut accepted = leg.order.clone();
+            accepted.status = OrderStatus::Accepted;
+            self.orders.insert(leg.order.client_id, accepted);
+            self.venue_order_ids
+                .insert(leg.order.client_id, venue_order_id.clone());
+            events.push(VenueEvent::Accepted {
+                client_order_id: leg.order.client_id,
+                venue_order_id: venue_order_id.clone(),
+                ts,
+            });
+            let event_count_before_fills = events.len();
+            for fill in report.fills {
+                if let Some(event) =
+                    self.ingest_fill_wire(leg.order.client_id, &venue_order_id, fill)?
+                {
+                    events.push(event);
+                }
+            }
+            match report.status.as_str() {
+                "NEW" => {}
+                "PARTIALLY_FILLED" if events.len() > event_count_before_fills => {}
+                "PARTIALLY_FILLED" => {
+                    self.state = ConnectorState::ReconcileRequired;
+                    return Err(QxError::ReconcileRequired(format!(
+                        "Binance OCO 子单 {} 报告 PARTIALLY_FILLED 但未返回成交事实",
+                        leg.order.client_id
+                    )));
+                }
+                "FILLED" => {
+                    if events.len() == event_count_before_fills {
+                        self.state = ConnectorState::ReconcileRequired;
+                        return Err(QxError::ReconcileRequired(format!(
+                            "Binance OCO 子单 {} 报告 FILLED 但未返回成交事实",
+                            leg.order.client_id
+                        )));
+                    }
+                    self.mark_remote_filled(leg.order.client_id)?;
+                }
+                "CANCELED" => {
+                    if self.mark_cancelled(leg.order.client_id)? {
+                        events.push(VenueEvent::Cancelled {
+                            client_order_id: leg.order.client_id,
+                            ts,
+                        });
+                    }
+                }
+                status => {
+                    self.state = ConnectorState::ReconcileRequired;
+                    return Err(QxError::ReconcileRequired(format!(
+                        "Binance OCO 子单 {} 进入未预期状态 {status}",
+                        leg.order.client_id
+                    )));
+                }
+            }
+        }
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
+        Ok(VenueOrderGroupSubmission {
+            venue_group_id: Some(wire.order_list_id.to_string()),
+            events,
+        })
+    }
+
     fn validate_instrument_spec(&mut self, spec: &TradingInstrumentSpec) -> QxResult<()> {
         spec.validate()?;
         self.execution_readiness()?;
@@ -2759,6 +3084,17 @@ impl Venue for BinanceSpotVenue {
 
 fn client_order_id(id: u64) -> String {
     format!("qx-{id}")
+}
+
+fn binance_group_client_order_id(group_id: &str) -> String {
+    // Stable non-cryptographic identifier constrained to Binance's client ID alphabet/length.
+    let hash = group_id
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    format!("qxg-{hash:016x}")
 }
 
 fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {

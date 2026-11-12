@@ -786,7 +786,6 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         self.venue.validate_submit_order_group(&group)?;
         for leg in &group.legs {
             self.validate_order(&leg.order)?;
-            self.venue.validate_submit_capabilities(&leg.order)?;
             match risk
                 .evaluate_order(&leg.order)
                 .map_err(|error| format!("订单组账户级风控执行失败: {error}"))?

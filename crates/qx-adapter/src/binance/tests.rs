@@ -1,7 +1,9 @@
 use super::*;
 use qx_core::{
-    ExactDecimal, ExactOrderAmounts, ExactTradingRules, InstrumentId, QxError,
-    TradingInstrumentSpec, TradingProduct, SCALE,
+    ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
+    ExactTradingRules, InstrumentId, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+    OrderGroupLegIntent, OrderGroupLegRole, QxError, Side, TradingInstrumentSpec, TradingProduct,
+    TriggerPriceType, SCALE,
 };
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -361,13 +363,151 @@ fn order() -> Order {
     }
 }
 
+fn oco_protection_order(
+    client_id: u64,
+    kind: ConditionalOrderKind,
+    trigger: &str,
+    limit: &str,
+) -> Order {
+    Order {
+        client_id,
+        instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "spot-a".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.01").unwrap(),
+            limit_price: Some(ExactDecimal::parse(limit).unwrap()),
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(ConditionalOrderIntent {
+                kind,
+                trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                trigger_price_type: Some(TriggerPriceType::Last),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    }
+}
+
+fn native_oco_group(
+    take_profit_trigger: &str,
+    stop_loss_trigger: &str,
+) -> qx_core::OrderGroupState {
+    OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            "protect-btc-spot-1",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: oco_protection_order(
+                        701,
+                        ConditionalOrderKind::TakeProfit,
+                        take_profit_trigger,
+                        "70100",
+                    ),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: oco_protection_order(
+                        702,
+                        ConditionalOrderKind::StopLoss,
+                        stop_loss_trigger,
+                        "59900",
+                    ),
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn binance_spot_native_oco_submits_one_order_list_and_maps_all_remote_ids() {
+    let group = native_oco_group("70000", "60000");
+    let list_client_order_id = binance_group_client_order_id(&group.intent.group_id);
+    let response = format!(
+        r#"{{"orderListId":1234,"listClientOrderId":"{list_client_order_id}","orderReports":[{{"orderId":8801,"clientOrderId":"qx-701","status":"NEW","fills":[]}},{{"orderId":8802,"clientOrderId":"qx-702","status":"NEW","fills":[]}}]}}"#
+    );
+    let (mut venue, transport) = venue_with_responses(&[&response, BTCUSDT_EXCHANGE_INFO]);
+
+    venue.validate_order_group(&group).unwrap();
+    let submission = venue.submit_order_group(&group, 42).unwrap();
+
+    assert_eq!(submission.venue_group_id.as_deref(), Some("1234"));
+    assert_eq!(submission.events.len(), 2);
+    assert!(matches!(
+        submission.events.as_slice(),
+        [
+            VenueEvent::Accepted { client_order_id: 701, venue_order_id, .. },
+            VenueEvent::Accepted { client_order_id: 702, venue_order_id: second, .. }
+        ] if venue_order_id == "8801" && second == "8802"
+    ));
+    assert_eq!(
+        venue.venue_order_ids.get(&701).map(String::as_str),
+        Some("8801")
+    );
+    assert_eq!(
+        venue.venue_order_ids.get(&702).map(String::as_str),
+        Some("8802")
+    );
+    let requests = transport.requests.lock().unwrap();
+    let oco_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.path == "/api/v3/orderList/oco")
+        .collect();
+    assert_eq!(oco_requests.len(), 1);
+    let body = &oco_requests[0].body;
+    assert!(body.contains("aboveType=TAKE_PROFIT_LIMIT"));
+    assert!(body.contains("aboveStopPrice=70000"));
+    assert!(body.contains("abovePrice=70100"));
+    assert!(body.contains("belowType=STOP_LOSS_LIMIT"));
+    assert!(body.contains("belowStopPrice=60000"));
+    assert!(body.contains("belowPrice=59900"));
+    assert!(body.contains(&format!("listClientOrderId={list_client_order_id}")));
+}
+
+#[test]
+fn binance_spot_oco_rejects_wrong_trigger_order_before_order_list_write() {
+    let group = native_oco_group("60000", "70000");
+    let (mut venue, transport) = venue_with_responses(&[BTCUSDT_EXCHANGE_INFO]);
+
+    let error = venue.validate_order_group(&group).unwrap_err();
+
+    assert!(matches!(error, QxError::BusinessViolation(_)));
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].path.starts_with("/api/v3/exchangeInfo"));
+}
+
 fn venue(response: &str) -> (BinanceSpotVenue, Arc<MockTransport>) {
+    venue_with_responses(&[response])
+}
+
+fn venue_with_responses(responses: &[&str]) -> (BinanceSpotVenue, Arc<MockTransport>) {
     let transport = Arc::new(MockTransport {
         requests: Mutex::new(Vec::new()),
-        responses: Mutex::new(vec![HttpResponse {
-            status: 200,
-            body: response.into(),
-        }]),
+        responses: Mutex::new(
+            responses
+                .iter()
+                .map(|response| HttpResponse {
+                    status: 200,
+                    body: (*response).into(),
+                })
+                .collect(),
+        ),
     });
     let auth = BinanceSpotAuth::with_clock("key", b"secret", || 1_700_000_000_000).unwrap();
     (
