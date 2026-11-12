@@ -35,6 +35,7 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
         ("vwap_reversion", "25234b946fc9df70"),
         ("volatility_breakout", "cfa3e83b491ec337"),
     ];
+    let mut stale_baselines = Vec::new();
     for (kind, expected_hash) in strategies {
         let legacy_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
             .args(["backtest", "builtin", kind, &bars, "--config"])
@@ -87,11 +88,12 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
             legacy_field("result_hash"),
             "{kind}: CLI stdout={legacy_stdout}; app outcome={app}"
         );
-        assert_eq!(
-            legacy_field("result_hash"),
-            expected_hash,
-            "{kind} baseline"
-        );
+        let actual_hash = legacy_field("result_hash");
+        if actual_hash != expected_hash {
+            stale_baselines.push(format!(
+                "{kind}: expected {expected_hash}, actual {actual_hash}"
+            ));
+        }
         assert_eq!(
             app["fills"].as_u64().unwrap().to_string(),
             legacy_field("fills"),
@@ -115,6 +117,10 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
             );
         }
     }
+    assert!(
+        stale_baselines.is_empty(),
+        "内置策略固定结果基线过期；策略入口彼此仍保持一致，请一次校准全部项：{stale_baselines:?}"
+    );
 }
 
 #[test]
