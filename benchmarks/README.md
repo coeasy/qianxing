@@ -1,6 +1,6 @@
 # Qianxing Benchmarks
 
-性能基线与复现入口。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
+性能基线与复现入口。CI 的短期回归门对独立进程负载采用 7 次重复；中位数用于阻断回归，尾延迟只记录、不以 7 个样本的近似最大值阻断发布。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
 `benchmarks/results/baseline.json`。
 
 ## PreparedEvaluation 持久化批次与崩溃恢复
