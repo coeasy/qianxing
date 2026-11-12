@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -112,6 +113,29 @@ class AccountReadClientTest(unittest.TestCase):
                 with self.subTest(query=query), self.assertRaises(ValueError):
                     self.client.get_account_activity(**query)
         request.assert_not_called()
+
+    def test_async_activity_forwards_run_and_strategy_filters(self):
+        report = {"schema_version": 1, "events": {"rows": []}}
+        with patch.object(self.client, "_request_json", return_value=report) as request:
+            result = asyncio.run(
+                self.client.async_get_account_activity(
+                    account_id="account-1",
+                    venue_id="okx",
+                    run_id="run-1",
+                    strategy_id="strategy-a",
+                )
+            )
+        self.assertEqual(result, report)
+        self.assertEqual(
+            parse_qs(urlsplit(request.call_args.args[0]).query),
+            {
+                "account_id": ["account-1"],
+                "venue_id": ["okx"],
+                "run_id": ["run-1"],
+                "strategy_id": ["strategy-a"],
+                "limit": ["50"],
+            },
+        )
 
     def test_account_list_rejects_unexpected_response_shape(self):
         with patch.object(self.client, "_request_json_value", return_value={"rows": []}):

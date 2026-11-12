@@ -129,8 +129,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Web console syntax contract
-        run: node --check web/console/app.js
+      - name: Web console syntax and interaction contracts
+        run: |
+          node --check web/console/app.js
+          node --test web/console/*.test.js
 
   architecture-shards:
     name: Architecture invariants (${{ matrix.shard }}/4)
