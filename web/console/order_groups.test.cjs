@@ -62,9 +62,19 @@ test("order group table exposes group and child identities, including quote-budg
       this.tagName = tagName;
       this.children = [];
       this.textContent = "";
+      this.listeners = {};
     }
     append(...children) { this.children.push(...children); }
+    addEventListener(kind, callback) { this.listeners[kind] = callback; }
+    click() { this.listeners.click?.(); }
   }
+  const controls = {
+    "account-activity-account-id": { value: "" },
+    "account-activity-venue-id": { value: "" },
+    "account-activity-client-order-id": { value: "" },
+    "account-activity-load": { clicks: 0, click() { this.clicks += 1; } },
+    "card-account-activity": { scrolls: [], scrollIntoView(options) { this.scrolls.push(options); } },
+  };
   const context = {
     document: { createElement: (tagName) => new Node(tagName) },
     TABLE_SPECS: {
@@ -73,7 +83,7 @@ test("order group table exposes group and child identities, including quote-budg
         columns: ["intent", "status", "venue_group_id", "legs"],
       },
     },
-    $: () => root,
+    $: (id) => id === "order-groups-table" ? root : controls[id],
     errorOf: () => null,
     missingFields: () => [],
     shapeText: (value) => value.join(", "),
@@ -120,6 +130,17 @@ test("order group table exposes group and child identities, including quote-budg
   assert.match(row.children[0].children[0].textContent, /group-1.*BTCUSDT\.BINANCE/);
   assert.equal(row.children[1].textContent, "ReconcileRequired");
   assert.equal(row.children[2].textContent, "venue-group-1");
-  assert.match(row.children[3].textContent, /client=17.*quote_budget 100.*venue_order=venue-order-1/);
+  const legLine = row.children[3].children[0];
+  assert.match(legLine.textContent, /client=17.*quote_budget 100.*venue_order=venue-order-1/);
+  assert.equal(legLine.children[0].textContent, "查看账户事件");
+  legLine.children[0].click();
+  assert.equal(controls["account-activity-account-id"].value, "main");
+  assert.equal(controls["account-activity-venue-id"].value, "BINANCE");
+  assert.equal(controls["account-activity-client-order-id"].value, "17");
+  assert.equal(controls["account-activity-load"].clicks, 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(controls["card-account-activity"].scrolls)),
+    [{ behavior: "smooth", block: "start" }],
+  );
   assert.equal(row.children[0].children[1].children[1].textContent, JSON.stringify(record, null, 2));
 });

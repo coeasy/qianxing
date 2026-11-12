@@ -379,6 +379,17 @@ function orderGroupDetailNode(record) {
   return details;
 }
 
+function focusAccountActivityForOrder(order) {
+  const instrument = order?.instrument ?? {};
+  const venue = instrument.venue?.venue ?? instrument.venue;
+  if (!order?.client_id || !order.account_id || !venue) return;
+  $("account-activity-account-id").value = String(order.account_id);
+  $("account-activity-venue-id").value = String(venue);
+  $("account-activity-client-order-id").value = String(order.client_id);
+  $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("account-activity-load").click();
+}
+
 function rows(container, pairs) {
   container.replaceChildren();
   for (const [k, v] of pairs) {
@@ -698,19 +709,30 @@ function fillTable(tableId, response) {
       const legs = Array.isArray(record.legs) ? record.legs : [];
       const firstOrder = legs[0]?.order ?? {};
       const intentText = `${intent.group_id ?? "—"} · ${intent.kind ?? "—"} · ${intent.execution ?? "—"} · ${firstOrder.account_id ?? "—"} / ${instrumentText(firstOrder.instrument)}`;
-      const legsText = legs.map(leg => {
+      const legsCell = el("td");
+      for (const leg of legs) {
         const order = leg.order ?? {};
         const exact = order.exact_amounts ?? {};
         const requested = exact.quote_budget !== undefined && exact.quote_budget !== null
           ? `quote_budget ${exact.quote_budget}`
           : exact.quantity ?? order.qty?.raw ?? order.qty ?? "—";
         const filled = exact.filled ?? order.filled?.raw ?? order.filled ?? "—";
-        return `${leg.role ?? "—"}: client=${order.client_id ?? "—"} · ${order.side ?? "—"} ${instrumentText(order.instrument)} · ${order.status ?? "—"} · 成交 ${filled}/${requested} · venue_order=${leg.venue_order_id ?? "—"}`;
-      }).join("\n") || "—";
+        const line = el("div", `${leg.role ?? "—"}: client=${order.client_id ?? "—"} · ${order.side ?? "—"} ${instrumentText(order.instrument)} · ${order.status ?? "—"} · 成交 ${filled}/${requested} · venue_order=${leg.venue_order_id ?? "—"}`, "order-group-leg");
+        if (order.client_id && order.account_id && order.instrument?.venue) {
+          const lookup = el("button", "查看账户事件", "ghost order-group-event-link");
+          lookup.type = "button";
+          lookup.title = `按 client_order_id ${order.client_id} 查询账户事件`;
+          lookup.addEventListener("click", () => focusAccountActivityForOrder(order));
+          line.append(lookup);
+        }
+        legsCell.append(line);
+      }
+      if (legs.length === 0) legsCell.textContent = "—";
       const intentCell = el("td");
       intentCell.append(el("div", intentText), orderGroupDetailNode(record));
       tr.append(intentCell);
-      for (const value of [record.status, record.venue_group_id, legsText]) tr.append(el("td", cellText("order_group", value)));
+      for (const value of [record.status, record.venue_group_id]) tr.append(el("td", cellText("order_group", value)));
+      tr.append(legsCell);
       tbody.append(tr);
       continue;
     }

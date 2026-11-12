@@ -83,6 +83,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .order-group-details { margin-top: 6px; }
 .order-group-details summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.order-group-leg { margin: 2px 0; white-space: pre-wrap; }
+.order-group-event-link { margin-left: 6px; padding: 2px 7px; font-size: 11px; }
 .order-group-facts {
   max-height: 22rem;
   max-width: min(72vw, 70rem);
