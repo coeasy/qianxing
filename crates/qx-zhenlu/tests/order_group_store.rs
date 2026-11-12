@@ -216,3 +216,44 @@ fn native_group_cancel_fence_survives_store_reopen() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn loading_legacy_rejected_oco_repairs_status_when_a_peer_is_still_live() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qianxing-legacy-rejected-oco-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut legacy = oco_state("legacy-rejected-oco");
+    legacy.status = qx_core::OrderGroupStatus::Rejected;
+    legacy.venue_group_id = Some("okx-algo-legacy".into());
+    legacy.legs[0].order.status = OrderStatus::Rejected;
+    legacy.legs[1].order.status = OrderStatus::Working;
+    legacy.legs[1].venue_order_id = Some("okx-child-live".into());
+    store.create(&legacy).unwrap();
+
+    let repaired = store.load("legacy-rejected-oco").unwrap().unwrap();
+    assert_eq!(
+        repaired.status,
+        qx_core::OrderGroupStatus::PeerCancelRequired
+    );
+    assert_eq!(repaired.legs[0].order.status, OrderStatus::Rejected);
+    assert_eq!(repaired.legs[1].order.status, OrderStatus::Working);
+    let persisted: OrderGroupState =
+        serde_json::from_slice(&std::fs::read(root.join("legacy-rejected-oco.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        persisted.status,
+        qx_core::OrderGroupStatus::PeerCancelRequired
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

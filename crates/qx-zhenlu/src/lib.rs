@@ -1520,11 +1520,14 @@ impl OrderGroupStore for FileOrderGroupStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("读取订单组状态失败: {error}")),
         };
-        let group: OrderGroupState = serde_json::from_str(&payload)
+        let mut group: OrderGroupState = serde_json::from_str(&payload)
             .map_err(|error| format!("解析订单组状态失败: {error}"))?;
         group.validate_persisted()?;
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
+        }
+        if group.repair_legacy_rejected_oco_status() {
+            self.save_locked(&group)?;
         }
         Ok(Some(group))
     }

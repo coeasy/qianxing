@@ -378,6 +378,20 @@ impl OrderGroupState {
         Ok(())
     }
 
+    /// Repair legacy OCO snapshots where an earlier reducer marked the whole
+    /// group rejected while its peer could still be live or unresolved.
+    pub fn repair_legacy_rejected_oco_status(&mut self) -> bool {
+        if self.status != OrderGroupStatus::Rejected
+            || self.intent.kind != OrderGroupKind::Oco
+            || self.legs.iter().all(|leg| leg.order.status.is_terminal())
+        {
+            return false;
+        }
+        self.status = OrderGroupStatus::Submitting;
+        self.recompute_status();
+        true
+    }
+
     /// Applies a confirmed venue query after an Unknown result. Reconciliation is
     /// allowed to clear the group barrier only when every leg is known and OCO
     /// fills do not imply a double execution.
@@ -557,7 +571,26 @@ impl OrderGroupState {
             .iter()
             .any(|leg| leg.order.status == OrderStatus::Rejected)
         {
-            self.status = OrderGroupStatus::Rejected;
+            if self.intent.kind == OrderGroupKind::Oco {
+                if self.legs.iter().any(|leg| {
+                    matches!(
+                        leg.order.status,
+                        OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+                    )
+                }) {
+                    // A rejected OCO leg does not make its still-live peer safe.
+                    // Keep the group routable to the audited group-cancel path.
+                    self.status = OrderGroupStatus::PeerCancelRequired;
+                } else if self.legs.iter().all(|leg| leg.order.status.is_terminal()) {
+                    self.status = OrderGroupStatus::Rejected;
+                } else {
+                    // Submitted/CancelPending peers need an authoritative snapshot
+                    // before the group can be treated as rejected or canceled.
+                    self.status = OrderGroupStatus::ReconcileRequired;
+                }
+            } else {
+                self.status = OrderGroupStatus::Rejected;
+            }
         } else if self.legs.iter().any(|leg| {
             matches!(
                 leg.order.status,
@@ -803,6 +836,54 @@ mod tests {
             .unwrap();
         assert_eq!(group.status, OrderGroupStatus::Filled);
         group.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn oco_rejected_leg_keeps_live_peer_in_cancel_or_reconciliation_path() {
+        let mut group = oco_state();
+        for id in [1, 2] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+
+        group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Rejected, "0"), None)
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::PeerCancelRequired);
+        assert_eq!(group.legs[1].order.status, OrderStatus::Working);
+
+        group
+            .apply_order_snapshot(snapshot(&group, 2, OrderStatus::CancelPending, "0"), None)
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        group
+            .reconcile_order_snapshot(snapshot(&group, 2, OrderStatus::Cancelled, "0"), None)
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::Rejected);
+        group.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn oco_rejected_leg_with_unconfirmed_peer_requires_reconciliation() {
+        let mut group = oco_state();
+        for id in [1, 2] {
+            group
+                .apply_order_snapshot(snapshot(&group, id, OrderStatus::Submitted, "0"), None)
+                .unwrap();
+        }
+        group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Rejected, "0"), None)
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        assert_eq!(group.legs[1].order.status, OrderStatus::Submitted);
     }
 
     #[test]
