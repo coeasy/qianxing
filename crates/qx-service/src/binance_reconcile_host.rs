@@ -321,6 +321,50 @@ fn sync_binance_order_groups(
     Ok(issues)
 }
 
+/// Persist Binance OCO child state from the already-reduced private stream pipeline.
+/// This deliberately does not make REST calls or attempt to recover a missing list id;
+/// those cases remain behind the normal reconciliation barrier.
+pub(crate) fn sync_binance_order_groups_from_user_stream(
+    pipeline_root: &std::path::Path,
+    pipeline: &LiveEventPipeline,
+    worker: &WorkerConfig,
+    venue: &BinanceSpotVenue,
+) -> Result<(), String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let Some(account_id) = worker.account_id.as_deref() else {
+        return Err(format!("worker {} 缺少 account_id", worker.id));
+    };
+    let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
+    let orders = pipeline
+        .orders()
+        .into_iter()
+        .map(|order| (order.client_id, order))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for group_id in store.group_ids()? {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
+        };
+        if group.intent.kind != qx_core::OrderGroupKind::Oco
+            || group.venue_group_id.is_none()
+            || group.legs.iter().any(|leg| {
+                leg.order.account_id != account_id || !leg.order.instrument.venue.is_binance()
+            })
+            || matches!(
+                group.status,
+                qx_core::OrderGroupStatus::Planned
+                    | qx_core::OrderGroupStatus::Filled
+                    | qx_core::OrderGroupStatus::Cancelled
+                    | qx_core::OrderGroupStatus::Rejected
+            )
+        {
+            continue;
+        }
+        sync_order_group_snapshots(&mut store, &group, &orders, venue, None)?;
+    }
+    Ok(())
+}
+
 /// Immediately reconcile an OCO after Binance reports a child cancellation. Binance's
 /// documented cancel behavior cancels the entire order list when one child is cancelled.
 pub(crate) fn reconcile_binance_order_group_after_cancel(

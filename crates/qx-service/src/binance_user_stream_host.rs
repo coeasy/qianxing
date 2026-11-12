@@ -1,5 +1,6 @@
 //! Binance private user-stream worker lifecycle.
 
+use crate::binance_reconcile_host::sync_binance_order_groups_from_user_stream;
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
@@ -138,6 +139,14 @@ where
                 &mut source_seq,
             )?,
         };
+        if event_count != 0 && has_binance_order_list_id(payload) {
+            sync_binance_order_groups_from_user_stream(
+                &pipeline_storage.root,
+                &pipeline,
+                &event_worker,
+                &venue,
+            )?;
+        }
         event_context.heartbeat(received_ts)?;
         if let Ok(mut metrics) = event_metrics.lock() {
             metrics.observe_gateway_port_business_status(
@@ -196,4 +205,11 @@ fn runtime_timestamp_ms() -> u64 {
         .unwrap_or_default()
         .as_millis()
         .min(u64::MAX as u128) as u64
+}
+
+fn has_binance_order_list_id(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| value.get("g").and_then(serde_json::Value::as_i64))
+        .is_some_and(|order_list_id| order_list_id >= 0)
 }
