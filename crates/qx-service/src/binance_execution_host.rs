@@ -424,6 +424,7 @@ where
                     &mut metrics,
                     create_venue,
                     *dedicated_spread_recovery,
+                    None,
                 )?
             } else if command.kind == CommandKind::CancelOrderGroup {
                 execute_binance_queued_cancel_order_group(
@@ -853,6 +854,7 @@ where
         metrics,
         create_venue,
         dedicated_spread_recovery,
+        Some(&group),
     )
 }
 
@@ -868,6 +870,7 @@ fn execute_binance_queued_cancel<F>(
     metrics: &mut PipelineMetricsReporter,
     create_venue: &mut F,
     dedicated_spread_recovery: bool,
+    cancel_group: Option<&qx_core::OrderGroupState>,
 ) -> Result<Result<String, String>, String>
 where
     F: FnMut(&WorkerConfig) -> Result<BinanceSpotVenue, String>,
@@ -944,6 +947,11 @@ where
     venue
         .restore_trade_ids(restored_trade_ids)
         .map_err(|error| format!("恢复 Binance 撤单成交去重 ID 失败: {error:?}"))?;
+    if let Some(group) = cancel_group {
+        venue
+            .arm_order_group_cancel(group, prepared.target.client_order_id)
+            .map_err(|error| format!("准备 Binance 原生 OCO 列表撤销失败: {error:?}"))?;
+    }
     let mut venue = GatewayExecutionProbeVenue::new(venue, metrics);
     let mut source_seq = 0_u64;
     let mut result = execute_prepared_cancel_order(

@@ -515,7 +515,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 
 控制命令的受理面按 `kind` 分档（V13 R2 #188），本构建里两档的名单是：
 
-- 有派发者的控制命令：`SubmitOrder`、`SubmitOrderGroup`、`AmendOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`、`CancelOrderGroup`。`SubmitOrderGroup` 与 `CancelOrderGroup` 当前只路由到 Binance Spot Execution worker；组撤销命令的 `venue_id` 必须与 worker 账户域名称一致（例如 `binance-testnet`），而订单标的仍使用规范 VenueId `BINANCE`。组撤销只接受已有列表身份且状态已确认的 OCO，并复用子单撤单、成交竞态恢复与整组对账。`AmendOrder` 路由到匹配账户/交易所的 CCXT Execution worker，`CancelOrder` 路由到 Binance/CCXT Execution worker；Paper 和 Binance Direct 暂不接收改单命令。改单仅在 CCXT 交易所原生 editOrder 能力、订单形态和精度预检通过后执行；结果未知时保留持久 pending 并禁止重发。
+- 有派发者的控制命令：`SubmitOrder`、`SubmitOrderGroup`、`AmendOrder`、`PauseStrategy`、`ResumeStrategy`、`CancelOrder`、`CancelOrderGroup`。`SubmitOrderGroup` 与 `CancelOrderGroup` 当前只路由到 Binance Spot Execution worker；组撤销命令的 `venue_id` 必须与 worker 账户域名称一致（例如 `binance-testnet`），而订单标的仍使用规范 VenueId `BINANCE`。组撤销只接受已有列表身份且状态已确认的 OCO，使用 Binance `DELETE /api/v3/orderList` 原生接口；响应需确认列表身份和双腿终态，随后恢复成交竞态并执行整组对账。`AmendOrder` 路由到匹配账户/交易所的 CCXT Execution worker，`CancelOrder` 路由到 Binance/CCXT Execution worker；Paper 和 Binance Direct 暂不接收改单命令。改单仅在 CCXT 交易所原生 editOrder 能力、订单形态和精度预检通过后执行；结果未知时保留持久 pending 并禁止重发。
 - 有派发者、能被受理的：`SubmitOrder`、`SubmitOrderGroup`、`AmendOrder`、`CancelOrder`、`CancelOrderGroup`、`PauseStrategy`、`ResumeStrategy`。
 - 没有派发者、提交即以 400 拒绝的：`ChangeRiskLimit`、`ReconcileAccount`、`RetryJob`、`SwitchVenue`。
 

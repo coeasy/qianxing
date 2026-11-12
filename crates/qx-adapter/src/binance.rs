@@ -794,10 +794,28 @@ struct BinanceOrderWire {
 struct BinanceOrderListWire {
     #[serde(rename = "orderListId", default)]
     order_list_id: i64,
+    #[serde(rename = "contingencyType", default)]
+    contingency_type: String,
+    #[serde(rename = "listStatusType", default)]
+    list_status_type: String,
+    #[serde(rename = "listOrderStatus", default)]
+    list_order_status: String,
     #[serde(rename = "listClientOrderId", default)]
     list_client_order_id: String,
+    #[serde(default)]
+    symbol: String,
     #[serde(rename = "orderReports", default)]
     order_reports: Vec<BinanceOrderWire>,
+}
+
+#[derive(Clone, Debug)]
+struct BinanceOrderListCancelContext {
+    order_list_id: i64,
+    list_client_order_id: String,
+    symbol: String,
+    parameters: BTreeMap<String, String>,
+    active_client_order_id: u64,
+    child_client_order_ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -957,6 +975,7 @@ pub struct BinanceSpotVenue {
     market_data: BinanceSpotMarketData,
     balances: BTreeMap<String, BinanceBalance>,
     reconcile_symbols: BTreeSet<String>,
+    pending_order_list_cancel: Option<BinanceOrderListCancelContext>,
     last_event_ts: u64,
     reconnects: u64,
 }
@@ -998,6 +1017,7 @@ impl BinanceSpotVenue {
             ),
             balances: BTreeMap::new(),
             reconcile_symbols: BTreeSet::new(),
+            pending_order_list_cancel: None,
             transport,
             host,
             port,
@@ -1035,6 +1055,60 @@ impl BinanceSpotVenue {
             normalized.insert(symbol);
         }
         self.reconcile_symbols = normalized;
+        Ok(())
+    }
+
+    /// Route the next cancellation of `active_client_order_id` through Binance's native
+    /// order-list endpoint. The context is one-shot and tied to the durable OCO identity so
+    /// it cannot silently broaden a single-order cancellation into a list cancellation.
+    pub fn arm_order_group_cancel(
+        &mut self,
+        group: &OrderGroupState,
+        active_client_order_id: u64,
+    ) -> QxResult<()> {
+        if self.pending_order_list_cancel.is_some() {
+            return Err(QxError::Invariant(
+                "Binance OCO 列表撤销上下文尚未消费".into(),
+            ));
+        }
+        let (order_list_id, list_client_order_id, symbol, parameters) =
+            binance_oco_order_list_cancel_parameters(group)?;
+        let child_client_order_ids = group
+            .legs
+            .iter()
+            .map(|leg| client_order_id(leg.order.client_id))
+            .collect::<BTreeSet<_>>();
+        if group.intent.kind != OrderGroupKind::Oco
+            || group.intent.execution != OrderGroupExecution::NativeRequired
+            || group.legs.len() != 2
+            || child_client_order_ids.len() != 2
+            || !parameters.contains_key("orderListId")
+            || !parameters.contains_key("listClientOrderId")
+            || !group
+                .legs
+                .iter()
+                .any(|leg| leg.order.client_id == active_client_order_id)
+            || group.legs.iter().any(|leg| {
+                !leg.order.instrument.symbol().eq_ignore_ascii_case(&symbol)
+                    || !leg.order.instrument.venue.is_binance()
+                    || self.orders.get(&leg.order.client_id).is_none_or(|order| {
+                        order.account_id != leg.order.account_id
+                            || order.instrument != leg.order.instrument
+                    })
+            })
+        {
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 撤销身份与已恢复子单不一致".into(),
+            ));
+        }
+        self.pending_order_list_cancel = Some(BinanceOrderListCancelContext {
+            order_list_id,
+            list_client_order_id,
+            symbol,
+            parameters,
+            active_client_order_id,
+            child_client_order_ids,
+        });
         Ok(())
     }
 
@@ -3096,8 +3170,79 @@ impl Venue for BinanceSpotVenue {
             order.instrument.symbol().to_ascii_uppercase(),
         );
         parameters.insert("origClientOrderId".into(), client_order_id(local_id));
-        let response = self.request("DELETE", "/api/v3/order", parameters, ts)?;
-        let wire: BinanceOrderWire = parse_success(response, "cancel order")?;
+        let wire: BinanceOrderWire = if let Some(context) = self.pending_order_list_cancel.take() {
+            if context.active_client_order_id != local_id {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表撤销上下文与撤销子单不一致".into(),
+                ));
+            }
+            let response = self.request(
+                "DELETE",
+                "/api/v3/orderList",
+                context.parameters.clone(),
+                ts,
+            )?;
+            let wire: BinanceOrderListWire = match parse_success(response, "cancel OCO order list")
+            {
+                Ok(wire) => wire,
+                Err(error) => {
+                    self.state = ConnectorState::ReconcileRequired;
+                    return Err(QxError::ReconcileRequired(format!(
+                        "Binance OCO 列表撤销回报无法解析: {error:?}"
+                    )));
+                }
+            };
+            if wire.order_list_id != context.order_list_id
+                || wire.contingency_type != "OCO"
+                || wire.list_status_type != "ALL_DONE"
+                || wire.list_order_status != "ALL_DONE"
+                || wire.list_client_order_id != context.list_client_order_id
+                || !wire.symbol.eq_ignore_ascii_case(&context.symbol)
+                || wire.order_reports.len() != context.child_client_order_ids.len()
+            {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表撤销响应身份、终态或子单数量不匹配".into(),
+                ));
+            }
+            let mut reports = BTreeMap::new();
+            for report in wire.order_reports {
+                if report.order_id == 0
+                    || !context
+                        .child_client_order_ids
+                        .contains(&report.client_order_id)
+                    || !matches!(
+                        report.status.as_str(),
+                        "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED"
+                    )
+                    || reports
+                        .insert(report.client_order_id.clone(), report)
+                        .is_some()
+                {
+                    self.state = ConnectorState::ReconcileRequired;
+                    return Err(QxError::ReconcileRequired(
+                        "Binance OCO 列表撤销响应包含未知、重复或非终态子单".into(),
+                    ));
+                }
+            }
+            if reports.len() != context.child_client_order_ids.len() {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表撤销响应未覆盖全部子单".into(),
+                ));
+            }
+            let Some(report) = reports.remove(&client_order_id(local_id)) else {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(
+                    "Binance OCO 列表撤销响应缺少目标子单".into(),
+                ));
+            };
+            report
+        } else {
+            let response = self.request("DELETE", "/api/v3/order", parameters, ts)?;
+            parse_success(response, "cancel order")?
+        };
         if wire.client_order_id != client_order_id(local_id) || wire.order_id == 0 {
             self.state = ConnectorState::ReconcileRequired;
             return Err(QxError::ReconcileRequired(
@@ -3302,6 +3447,47 @@ fn binance_oco_order_list_parameters(
         }
     }
     Ok((list_client_order_id, parameters))
+}
+
+fn binance_oco_order_list_cancel_parameters(
+    group: &OrderGroupState,
+) -> QxResult<(i64, String, String, BTreeMap<String, String>)> {
+    if group.intent.kind != OrderGroupKind::Oco
+        || group.intent.execution != OrderGroupExecution::NativeRequired
+        || group.legs.len() != 2
+    {
+        return Err(QxError::BusinessViolation(
+            "Binance 列表撤销仅支持已持久化的原生双腿 OCO".into(),
+        ));
+    }
+    let order_list_id = group
+        .venue_group_id
+        .as_deref()
+        .ok_or_else(|| QxError::ReconcileRequired("Binance OCO 缺少 orderListId".into()))?
+        .parse::<i64>()
+        .map_err(|_| QxError::ReconcileRequired("Binance OCO orderListId 非法".into()))?;
+    if order_list_id < 0 {
+        return Err(QxError::ReconcileRequired(
+            "Binance OCO orderListId 必须为非负整数".into(),
+        ));
+    }
+    let first = &group.legs[0].order.instrument;
+    validate_binance_instrument(first)?;
+    let symbol = first.symbol().to_ascii_uppercase();
+    for leg in &group.legs[1..] {
+        validate_binance_instrument(&leg.order.instrument)?;
+        if !leg.order.instrument.symbol().eq_ignore_ascii_case(&symbol) {
+            return Err(QxError::ReconcileRequired(
+                "Binance OCO 子腿 symbol 不一致".into(),
+            ));
+        }
+    }
+    let list_client_order_id = binance_group_client_order_id(&group.intent.group_id);
+    let mut parameters = BTreeMap::new();
+    parameters.insert("symbol".into(), symbol.clone());
+    parameters.insert("orderListId".into(), order_list_id.to_string());
+    parameters.insert("listClientOrderId".into(), list_client_order_id.clone());
+    Ok((order_list_id, list_client_order_id, symbol, parameters))
 }
 
 fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {

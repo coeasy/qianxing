@@ -456,6 +456,26 @@ fn binance_oco_request_mapping_uses_role_and_price_order_without_network_io() {
     assert!(binance_oco_order_list_parameters(&native_oco_group("60000", "70000")).is_err());
 }
 
+#[test]
+fn binance_oco_cancel_request_targets_the_durable_list_and_client_identity() {
+    let mut group = native_oco_group("70000", "60000");
+    group.venue_group_id = Some("123456".into());
+
+    let (order_list_id, list_client_id, symbol, parameters) =
+        binance_oco_order_list_cancel_parameters(&group).unwrap();
+
+    assert_eq!(order_list_id, 123456);
+    assert_eq!(
+        list_client_id,
+        binance_group_client_order_id(&group.intent.group_id)
+    );
+    assert_eq!(symbol, "BTCUSDT");
+    assert_eq!(parameters["symbol"], "BTCUSDT");
+    assert_eq!(parameters["orderListId"], "123456");
+    assert_eq!(parameters["listClientOrderId"], list_client_id);
+    assert!(binance_oco_order_list_cancel_parameters(&native_oco_group("70000", "60000")).is_err());
+}
+
 fn venue(response: &str) -> (BinanceSpotVenue, Arc<MockTransport>) {
     let transport = Arc::new(MockTransport {
         requests: Mutex::new(Vec::new()),
@@ -1196,7 +1216,7 @@ fn user_event_is_idempotent_and_cancel_is_mapped() {
             .is_empty());
     *transport.responses.lock().unwrap() = vec![HttpResponse {
         status: 200,
-        body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-7","status":"CANCELED"}"#
+        body: r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-7","status":"CANCELED","executedQty":"0.5"}"#
             .into(),
     }];
     let canceled = venue.cancel(7, 1_700_000_000_100).unwrap();
