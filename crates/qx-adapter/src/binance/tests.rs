@@ -476,6 +476,68 @@ fn binance_oco_cancel_request_targets_the_durable_list_and_client_identity() {
     assert!(binance_oco_order_list_cancel_parameters(&native_oco_group("70000", "60000")).is_err());
 }
 
+#[test]
+fn binance_oco_cancel_calls_native_list_endpoint_and_validates_both_children() {
+    let mut group = native_oco_group("70000", "60000");
+    group.venue_group_id = Some("123456".into());
+    let list_client_id = binance_group_client_order_id(&group.intent.group_id);
+    let response = serde_json::json!({
+        "orderListId": 123456,
+        "contingencyType": "OCO",
+        "listStatusType": "ALL_DONE",
+        "listOrderStatus": "ALL_DONE",
+        "listClientOrderId": list_client_id,
+        "symbol": "BTCUSDT",
+        "orderReports": [
+            {
+                "symbol": "BTCUSDT",
+                "orderId": 701001,
+                "clientOrderId": "qx-701",
+                "status": "CANCELED",
+                "executedQty": "0"
+            },
+            {
+                "symbol": "BTCUSDT",
+                "orderId": 702001,
+                "clientOrderId": "qx-702",
+                "status": "CANCELED",
+                "executedQty": "0"
+            }
+        ]
+    })
+    .to_string();
+    let (mut venue, transport) = venue(&response);
+    let mut take_profit = group.legs[0].order.clone();
+    take_profit.status = OrderStatus::Working;
+    let mut stop_loss = group.legs[1].order.clone();
+    stop_loss.status = OrderStatus::Working;
+    venue.restore_orders([take_profit, stop_loss]).unwrap();
+    venue.venue_order_ids.insert(701, "701001".into());
+    venue.venue_order_ids.insert(702, "702001".into());
+    venue.arm_order_group_cancel(&group, 701).unwrap();
+
+    let events = venue.cancel(701, 1_700_000_000_000).unwrap();
+
+    assert!(matches!(
+        events.as_slice(),
+        [VenueEvent::Cancelled {
+            client_order_id: 701,
+            ..
+        }]
+    ));
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, "DELETE");
+    assert!(requests[0].path.starts_with("/api/v3/orderList?"));
+    assert!(requests[0].path.contains("orderListId=123456"));
+    assert!(
+        requests[0]
+            .path
+            .contains(&format!("listClientOrderId={list_client_id}"))
+    );
+    assert!(requests[0].path.contains("symbol=BTCUSDT"));
+}
+
 fn venue(response: &str) -> (BinanceSpotVenue, Arc<MockTransport>) {
     let transport = Arc::new(MockTransport {
         requests: Mutex::new(Vec::new()),
