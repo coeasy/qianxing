@@ -27,6 +27,7 @@ test("account activity filters run and strategy context through the HTTP query",
   ]);
   const context = {
     state: {
+      activityRequestSeq: 0,
       activityAccountId: null,
       activityVenueId: null,
       activityClientOrderId: null,
@@ -68,4 +69,65 @@ test("account activity filters run and strategy context through the HTTP query",
   assert.equal(query.get("run_id"), "run/4");
   assert.equal(query.get("strategy_id"), "mean reversion");
   assert.equal(context.state.activityPage.available_total, 0);
+});
+
+test("a stale account activity response cannot replace the latest selection", async () => {
+  const elements = new Map([
+    ["account-activity-account-id", { value: "account-old" }],
+    ["account-activity-venue-id", { value: "OKX" }],
+    ["account-activity-client-order-id", { value: "" }],
+    ["account-activity-exchange-order-id", { value: "" }],
+    ["account-activity-run-id", { value: "" }],
+    ["account-activity-strategy-id", { value: "" }],
+    ["account-activity-meta", {}],
+    ["account-activity-prev", { disabled: false }],
+    ["account-activity-next", { disabled: false }],
+  ]);
+  const pending = [];
+  const context = {
+    state: {
+      activityRequestSeq: 0,
+      activityAccountId: null,
+      activityVenueId: null,
+      activityClientOrderId: null,
+      activityExchangeOrderId: null,
+      activityRunId: null,
+      activityStrategyId: null,
+      activityAfter: null,
+      activityBefore: null,
+      activitySelectionDirty: false,
+    },
+    API_PATHS: { accountActivity: "/account/activity" },
+    URLSearchParams,
+    $(id) { return elements.get(id); },
+    rows() {},
+    fillTable() {},
+    tsText() { return "—"; },
+    cellText() { return "—"; },
+    getJson() {
+      return new Promise((resolve) => pending.push(resolve));
+    },
+  };
+  vm.runInNewContext(
+    `${source.slice(from, to)}\nglobalThis.refreshAccountActivity = refreshAccountActivity;`,
+    context,
+  );
+
+  const oldRequest = context.refreshAccountActivity();
+  elements.get("account-activity-account-id").value = "account-new";
+  const newRequest = context.refreshAccountActivity();
+  const result = (accountId) => ({
+    ok: true,
+    status: 200,
+    body: {
+      identity: { account_id: accountId, venue_id: "OKX" },
+      events: { rows: [], available_total: accountId === "account-new" ? 1 : 99, has_older: false, has_newer: false },
+      completeness: {},
+    },
+  });
+  pending[1](result("account-new"));
+  await newRequest;
+  pending[0](result("account-old"));
+  await oldRequest;
+  assert.equal(context.state.activityPage.available_total, 1);
 });

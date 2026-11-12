@@ -117,6 +117,7 @@ const state = {
   activityAfter: null,
   activityBefore: null,
   activityPage: null,
+  activityRequestSeq: 0,
   activitySelectionDirty: false,
   events: [],
   wsFramesSeen: 0,
@@ -604,6 +605,7 @@ async function refreshBalances() {
 }
 
 async function refreshAccountActivity() {
+  const requestSeq = ++state.activityRequestSeq;
   const meta = $("account-activity-meta");
   const selectedAccount = $("account-activity-account-id").value.trim();
   const selectedVenue = $("account-activity-venue-id").value.trim();
@@ -642,6 +644,9 @@ async function refreshAccountActivity() {
   if (state.activityRunId !== null) query.set("run_id", state.activityRunId);
   if (state.activityStrategyId !== null) query.set("strategy_id", state.activityStrategyId);
   const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
+  // A slow response for an earlier account/filter selection must not overwrite the
+  // latest page. Disconnect also advances the sequence to invalidate in-flight reads.
+  if (requestSeq !== state.activityRequestSeq) return;
   if (!response.ok) {
     state.activityPage = null;
     rows(meta, [["状态", `HTTP ${response.status}${errorOf(response.body) ? ` ${errorOf(response.body)}` : ""}`]]);
@@ -4090,6 +4095,7 @@ function connect() {
 
 function disconnect() {
   state.connected = false;
+  state.activityRequestSeq += 1;
   state.base = "";
   state.viaBff = false;
   state.cursor = null;
