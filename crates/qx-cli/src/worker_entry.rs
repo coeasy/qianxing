@@ -407,8 +407,14 @@ fn publish_ccxt_frame_with_manifest(
     }
     static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let output_parent = frame_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(output_parent)
+        .map_err(|error| format!("创建 CCXT 数据输出目录失败: {error}"))?;
     let temporary_root =
-        std::env::temp_dir().join(format!("qx-ccxt-bars-{}-{nonce}", std::process::id()));
+        output_parent.join(format!(".qx-ccxt-bars-{}-{nonce}", std::process::id()));
     std::fs::create_dir(&temporary_root)
         .map_err(|error| format!("创建 CCXT 临时数据目录失败: {error}"))?;
     let result = (|| {
@@ -435,6 +441,12 @@ fn publish_ccxt_frame_with_manifest(
             .map_err(|error| format!("CCXT OHLCV 质量验证失败: {error}"))?;
         let manifest_bytes = std::fs::read(&temporary_manifest)
             .map_err(|error| format!("读取 CCXT 临时质量清单失败: {error}"))?;
+        // Check both immutable destinations before publishing either file. This prevents a
+        // known conflict on one sidecar from leaving its matching BarFrame behind (or vice
+        // versa). Each final rename remains atomic; cross-process pair transactions are not
+        // claimed here.
+        ensure_immutable_target(frame_path, frame_json)?;
+        ensure_immutable_target(manifest_path, &manifest_bytes)?;
         qx_app::artifact_store::sink::publish_bytes(
             frame_path,
             frame_json,
@@ -456,6 +468,21 @@ fn publish_ccxt_frame_with_manifest(
     })();
     let _ = std::fs::remove_dir_all(&temporary_root);
     result
+}
+
+fn ensure_immutable_target(path: &Path, payload: &[u8]) -> Result<(), String> {
+    match std::fs::read(path) {
+        Ok(existing) if existing == payload => Ok(()),
+        Ok(_) => Err(format!(
+            "同一数据集产物路径已存在不同内容: {}",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "检查已有数据集产物 {} 失败: {error}",
+            path.display()
+        )),
+    }
 }
 
 pub(crate) fn run_ccxt_market_spec(
@@ -630,6 +657,59 @@ mod tests {
         )
         .is_err());
         assert_eq!(std::fs::read(&frame_path).unwrap(), payload);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ccxt_manifest_conflict_does_not_leave_a_partial_bar_frame() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target/qx-cli-test-tmp")
+            .join(format!(
+                "ccxt-manifest-conflict-{}-{nonce}",
+                std::process::id()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let frame_path = root.join("bars.json");
+        let manifest_path = default_dataset_manifest_path(&frame_path);
+        std::fs::write(&manifest_path, b"different existing manifest").unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "ccxt:binance:BTC/USDT:1m",
+            "ts": [60_000, 120_000],
+            "open_raw": [10, 11],
+            "high_raw": [12, 13],
+            "low_raw": [9, 10],
+            "close_raw": [11, 12],
+            "volume_raw": [100, 101]
+        }))
+        .unwrap();
+
+        let error = publish_ccxt_frame_with_manifest(
+            &payload,
+            "BTCUSDT.BINANCE",
+            "ccxt:binance:BTC/USDT:1m",
+            "1m",
+            60_000,
+            120_000,
+            &frame_path,
+            &manifest_path,
+            60_000,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("不同内容"));
+        assert!(!frame_path.exists());
+        assert_eq!(
+            std::fs::read(&manifest_path).unwrap(),
+            b"different existing manifest"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
