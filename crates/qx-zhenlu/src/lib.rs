@@ -1502,17 +1502,10 @@ impl FileOrderGroupStore {
     fn save_locked(&self, group: &OrderGroupState) -> Result<(), String> {
         group.validate_persisted()?;
         let path = self.path_for(&group.intent.group_id)?;
-        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
         let payload = serde_json::to_vec_pretty(group)
             .map_err(|error| format!("序列化订单组失败: {error}"))?;
-        std::fs::write(&temporary, payload)
-            .map_err(|error| format!("写入订单组临时文件失败: {error}"))?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path)
-                .map_err(|replacement| format!("替换订单组状态失败: {error}; {replacement}"))?;
-        }
-        Ok(())
+        qx_core::atomic_file::write_atomic_file(&path, &payload)
+            .map_err(|error| format!("原子发布订单组状态 {} 失败: {error}", path.display()))
     }
 }
 

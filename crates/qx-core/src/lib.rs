@@ -14,6 +14,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod atomic_file;
 pub mod benchmark;
 pub mod clock;
 pub mod contract;

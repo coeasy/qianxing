@@ -1164,7 +1164,9 @@ def cli_backtest_module_check() -> None:
             and (
                 symbol != "run_ccxt_builtin_backtest"
                 or "use super::*;"
-                not in (CRATES / CLI_BACKTESTS_DIR / "ccxt_builtin.rs").read_text(encoding="utf-8")
+                not in production_text(
+                    (CRATES / CLI_BACKTESTS_DIR / "ccxt_builtin.rs").read_text(encoding="utf-8")
+                )
             )
             and (
                 symbol != "run_strategy_backtest"
@@ -9752,21 +9754,25 @@ def backtest_baseline_check() -> None:
         "基线正文不出现绝对路径 / 盘符 / 家目录（一台机器的细节不是可移植基线）",
         f"正文里出现 {leaked}",
     )
-    ccxt_backtest = (ROOT / "crates/qx-cli/src/backtests/ccxt_builtin.rs").read_text(
-        encoding="utf-8"
+    ccxt_backtest = production_text(
+        (ROOT / "crates/qx-cli/src/backtests/ccxt_builtin.rs").read_text(encoding="utf-8")
     )
     worker_start = ccxt_backtest.find("CcxtProcessClient::spawn(")
-    runtime_read = ccxt_backtest.find("let runtime = read_runtime_config(&runtime_path)?;")
+    runtime_read = re.search(
+        r"let\s+(?:mut\s+)?runtime\s*=\s*read_runtime_config\(&runtime_path\)\?;",
+        ccxt_backtest,
+    )
+    runtime_read_at = runtime_read.start() if runtime_read else -1
     timeframe_check = ccxt_backtest.find("let interval_ms = crate::timeframe_to_ms(timeframe)?;")
     check(
-        runtime_read >= 0
-        and worker_start > runtime_read
+        runtime_read_at >= 0
+        and worker_start > runtime_read_at
         and timeframe_check >= 0
         and worker_start > timeframe_check
         and ccxt_backtest.count("read_runtime_config(") == 1
         and "run_builtin_backtest_with_runtime_snapshot(" in ccxt_backtest,
         "CCXT 回测在启动外部 worker 前校验周期与 runtime，数据根目录和执行复用同一快照",
-        f"周期校验 {timeframe_check} / runtime 读取 {runtime_read} / worker 启动 {worker_start} / 快照传递={'有' if 'run_builtin_backtest_with_runtime_snapshot(' in ccxt_backtest else '无'}",
+        f"周期校验 {timeframe_check} / runtime 读取 {runtime_read_at} / worker 启动 {worker_start} / 快照传递={'有' if 'run_builtin_backtest_with_runtime_snapshot(' in ccxt_backtest else '无'}",
     )
 
 
@@ -20563,7 +20569,10 @@ def cli_project_command_module_check() -> None:
         and 'profile.as_deref() == Some("")' in module
         and 'PathBuf::from("qianxing.runtime.json")' in module
         and "run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())" in module
-        and "quickstart::run(project, html, force, profile, strategy)" in module
+        and re.search(
+            r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*instrument,\s*exchange,\s*\)",
+            module,
+        ) is not None
         and "guide::run(args)" in module
         and "std::process::exit(2)" in module,
         "Init, Quickstart, and Guide CLI routes have one project command adapter owner",
