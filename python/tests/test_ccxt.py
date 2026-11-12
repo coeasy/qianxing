@@ -987,6 +987,36 @@ class CcxtTest(unittest.TestCase):
         fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
         self.assertEqual(len(fetch_calls), 2)
 
+    def test_ohlcv_duplicate_timestamps_fail_closed_instead_of_silently_overwriting(self):
+        class DuplicateTimestampExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [
+                    [1000, 100, 101, 99, 100, 1],
+                    [1000, 100, 101, 99, 100, 1],
+                ]
+
+        exchange = DuplicateTimestampExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaisesRegex(CcxtConnectorError, "duplicate timestamp 1000") as raised:
+            client.fetch_ohlcv("BTCUSDT.BINANCE", start_ms=1000, end_ms=1100, limit=2)
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.EXCHANGE)
+        self.assertIn("refusing ambiguous history", str(raised.exception))
+
+    def test_ohlcv_fractional_timestamps_are_rejected_without_truncation(self):
+        class FractionalTimestampExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [[1000.5, 100, 101, 99, 100, 1]]
+
+        exchange = FractionalTimestampExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaisesRegex(CcxtConnectorError, "timestamp is not an exact integer") as raised:
+            client.fetch_ohlcv("BTCUSDT.BINANCE", start_ms=1000, end_ms=1100, limit=2)
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.EXCHANGE)
+
     def test_ohlcv_keeps_sub_nano_source_precision_for_small_tokens(self):
         class TinyTokenExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
@@ -1026,11 +1056,11 @@ class CcxtTest(unittest.TestCase):
         fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
         self.assertEqual(len(fetch_calls), 2)
 
-    def test_ohlcv_full_page_that_repeats_the_cursor_fails_closed(self):
+    def test_ohlcv_nonempty_page_that_repeats_the_cursor_fails_closed(self):
         class RepeatingExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
                 self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
-                return [[since, 100, 101, 99, 100, 1]] * limit
+                return [[since, 100, 101, 99, 100, 1]]
 
         exchange = RepeatingExchange()
         client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)

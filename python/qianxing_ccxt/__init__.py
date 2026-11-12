@@ -1466,13 +1466,25 @@ class CcxtExchangeClient:
             for row in batch:
                 if not isinstance(row, Sequence) or len(row) < 6:
                     raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT OHLCV 行格式非法")
-                timestamp = int(row[0])
+                try:
+                    timestamp = native.decimal_to_integer_exact(str(row[0]))
+                except (TypeError, ValueError, OverflowError) as error:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.EXCHANGE,
+                        f"CCXT OHLCV timestamp is not an exact integer: {row[0]!r}",
+                        cause=error,
+                    ) from error
                 if timestamp > end_ms:
                     reached_end = True
                     continue
                 if timestamp < start_ms:
                     continue
-                if timestamp not in rows and len(rows) >= MAX_OHLCV_ROWS:
+                if timestamp in rows:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.EXCHANGE,
+                        f"CCXT OHLCV response contains duplicate timestamp {timestamp}; refusing ambiguous history",
+                    )
+                if len(rows) >= MAX_OHLCV_ROWS:
                     raise CcxtConnectorError(
                         CcxtErrorClass.INVALID,
                         f"OHLCV query exceeds the {MAX_OHLCV_ROWS}-row safety limit",
