@@ -22,6 +22,7 @@ test("account activity filters run and strategy context through the HTTP query",
     ["account-activity-exchange-order-id", { value: "" }],
     ["account-activity-run-id", { value: "run/4" }],
     ["account-activity-strategy-id", { value: "mean reversion" }],
+    ["account-activity-correlation-id", { value: "corr-123" }],
     ["account-activity-meta", {}],
     ["account-activity-prev", { disabled: false }],
     ["account-activity-next", { disabled: false }],
@@ -35,6 +36,7 @@ test("account activity filters run and strategy context through the HTTP query",
       activityExchangeOrderId: null,
       activityRunId: null,
       activityStrategyId: null,
+      activityCorrelationId: null,
       activityAfter: null,
       activityBefore: null,
       activitySelectionDirty: false,
@@ -78,6 +80,7 @@ test("account activity filters run and strategy context through the HTTP query",
   assert.equal(query.get("venue_id"), "OKX");
   assert.equal(query.get("run_id"), "run/4");
   assert.equal(query.get("strategy_id"), "mean reversion");
+  assert.equal(query.get("correlation_id"), "corr-123");
   assert.equal(context.state.activityPage.available_total, 0);
   assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /3\/4 correlation/);
   assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /2\/4 非账户 run/);
@@ -91,6 +94,7 @@ test("a stale account activity response cannot replace the latest selection", as
     ["account-activity-exchange-order-id", { value: "" }],
     ["account-activity-run-id", { value: "" }],
     ["account-activity-strategy-id", { value: "" }],
+    ["account-activity-correlation-id", { value: "" }],
     ["account-activity-meta", {}],
     ["account-activity-prev", { disabled: false }],
     ["account-activity-next", { disabled: false }],
@@ -105,6 +109,7 @@ test("a stale account activity response cannot replace the latest selection", as
       activityExchangeOrderId: null,
       activityRunId: null,
       activityStrategyId: null,
+      activityCorrelationId: null,
       activityAfter: null,
       activityBefore: null,
       activitySelectionDirty: false,

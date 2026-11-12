@@ -73,6 +73,7 @@ class AccountReadClientTest(unittest.TestCase):
                 exchange_order_id="venue/订单 7",
                 run_id="run/4",
                 strategy_id="mean reversion",
+                correlation_id="order-submit/4",
                 limit=100,
             )
 
@@ -89,6 +90,7 @@ class AccountReadClientTest(unittest.TestCase):
                 "exchange_order_id": ["venue/订单 7"],
                 "run_id": ["run/4"],
                 "strategy_id": ["mean reversion"],
+                "correlation_id": ["order-submit/4"],
                 "limit": ["100"],
             },
         )
@@ -105,6 +107,7 @@ class AccountReadClientTest(unittest.TestCase):
             {"account_id": "account-1", "venue_id": "okx", "exchange_order_id": 12},
             {"account_id": "account-1", "venue_id": "okx", "run_id": " "},
             {"account_id": "account-1", "venue_id": "okx", "strategy_id": 10},
+            {"account_id": "account-1", "venue_id": "okx", "correlation_id": " "},
             {"account_id": "account-1", "venue_id": "okx", "after": 1, "before": 2},
             {"account_id": "account-1", "venue_id": "okx", "limit": 301},
         )
@@ -123,6 +126,7 @@ class AccountReadClientTest(unittest.TestCase):
                     venue_id="okx",
                     run_id="run-1",
                     strategy_id="strategy-a",
+                    correlation_id="corr-1",
                 )
             )
         self.assertEqual(result, report)
@@ -133,6 +137,7 @@ class AccountReadClientTest(unittest.TestCase):
                 "venue_id": ["okx"],
                 "run_id": ["run-1"],
                 "strategy_id": ["strategy-a"],
+                "correlation_id": ["corr-1"],
                 "limit": ["50"],
             },
         )

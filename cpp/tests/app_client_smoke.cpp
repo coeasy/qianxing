@@ -179,14 +179,14 @@ int main() {
            "/account/activity?account_id=account%201&venue_id=binance%2Fspot&after=42&limit=100");
     const auto filtered_activity = client.get_account_activity(
         "account 1", "binance/spot", std::nullopt, std::nullopt, 50,
-        "run/4", "mean reversion");
+        "run/4", "mean reversion", "order-submit/4");
     assert(filtered_activity.ok());
     assert(observed_path ==
-           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&limit=50");
+           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&correlation_id=order-submit%2F4&limit=50");
     const auto invalid_activity = client.get_account_activity("account-1", "okx", 1, 2, 50);
     assert(invalid_activity.status == 400);
     assert(observed_path ==
-           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&limit=50");
+           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&correlation_id=order-submit%2F4&limit=50");
     const auto invalid_run_filter = client.get_account_activity(
         "account-1", "okx", std::nullopt, std::nullopt, 50, "");
     assert(invalid_run_filter.status == 400);

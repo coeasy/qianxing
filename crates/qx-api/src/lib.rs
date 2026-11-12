@@ -2883,6 +2883,7 @@ fn parse_account_activity_options(
         "exchange_order_id",
         "run_id",
         "strategy_id",
+        "correlation_id",
     ] {
         let occurrences = query
             .split('&')
@@ -2929,6 +2930,8 @@ fn parse_account_activity_options(
         run_id: query_param(query, "run_id")
             .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
         strategy_id: query_param(query, "strategy_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        correlation_id: query_param(query, "correlation_id")
             .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
         limit,
     })
@@ -3499,6 +3502,7 @@ mod tests {
             };
             let mut event = Event::new(seq, seq, 0, kind);
             if seq == 4 {
+                event.correlation_id = "order-submit-9001".into();
                 event.metadata.context.run_id = "run-paper-4".into();
                 event.metadata.context.strategy_id = "strategy-momentum".into();
             }
@@ -3603,6 +3607,25 @@ mod tests {
         assert_eq!(run_trace["events"]["available_total"], 1);
         assert_eq!(run_trace["events"]["rows"][0]["client_order_id"], 9001);
 
+        let correlation_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&correlation_id=order-submit-9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(correlation_trace.status, 200, "{}", correlation_trace.body);
+        let correlation_trace: serde_json::Value =
+            serde_json::from_str(&correlation_trace.body).unwrap();
+        assert_eq!(
+            correlation_trace["events"]["correlation_id"],
+            "order-submit-9001"
+        );
+        assert_eq!(correlation_trace["events"]["available_total"], 1);
+        assert_eq!(
+            correlation_trace["events"]["rows"][0]["correlation_id"],
+            "order-submit-9001"
+        );
+
         for (query, expected_status) in [
             ("after=1&before=2", 400),
             ("limit=0", 400),
@@ -3616,6 +3639,8 @@ mod tests {
             ("run_id=one&run_id=two", 400),
             ("strategy_id=%20", 400),
             ("strategy_id=one&strategy_id=two", 400),
+            ("correlation_id=", 400),
+            ("correlation_id=one&correlation_id=two", 400),
             ("after=999", 409),
         ] {
             let response = service.handle(

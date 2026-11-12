@@ -114,6 +114,7 @@ const state = {
   activityExchangeOrderId: null,
   activityRunId: null,
   activityStrategyId: null,
+  activityCorrelationId: null,
   activityAfter: null,
   activityBefore: null,
   activityPage: null,
@@ -615,7 +616,8 @@ async function refreshAccountActivity() {
   const selectedExchangeOrderId = $("account-activity-exchange-order-id").value.trim();
   const selectedRunId = $("account-activity-run-id").value.trim();
   const selectedStrategyId = $("account-activity-strategy-id").value.trim();
-  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId || state.activityRunId !== selectedRunId || state.activityStrategyId !== selectedStrategyId) {
+  const selectedCorrelationId = $("account-activity-correlation-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId || state.activityRunId !== selectedRunId || state.activityStrategyId !== selectedStrategyId || state.activityCorrelationId !== selectedCorrelationId) {
     state.activityAfter = null;
     state.activityBefore = null;
   }
@@ -625,6 +627,7 @@ async function refreshAccountActivity() {
   state.activityExchangeOrderId = selectedExchangeOrderId || null;
   state.activityRunId = selectedRunId || null;
   state.activityStrategyId = selectedStrategyId || null;
+  state.activityCorrelationId = selectedCorrelationId || null;
   state.activitySelectionDirty = false;
   if (!state.activityAccountId || !state.activityVenueId) {
     state.activityPage = null;
@@ -645,6 +648,7 @@ async function refreshAccountActivity() {
   if (state.activityExchangeOrderId !== null) query.set("exchange_order_id", state.activityExchangeOrderId);
   if (state.activityRunId !== null) query.set("run_id", state.activityRunId);
   if (state.activityStrategyId !== null) query.set("strategy_id", state.activityStrategyId);
+  if (state.activityCorrelationId !== null) query.set("correlation_id", state.activityCorrelationId);
   const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
   // A slow response for an earlier account/filter selection must not overwrite the
   // latest page. Disconnect also advances the sequence to invalidate in-flight reads.
@@ -674,7 +678,7 @@ async function refreshAccountActivity() {
     ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
     ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
     ["事件上下文覆盖", contextCoverage ? `${contextCoverage.with_correlation_id ?? 0}/${contextCoverage.total_events ?? 0} correlation · ${contextCoverage.with_non_account_run_id ?? 0}/${contextCoverage.total_events ?? 0} 非账户 run · ${contextCoverage.with_strategy_id ?? 0}/${contextCoverage.total_events ?? 0} strategy · ${contextCoverage.with_client_order_id ?? 0}/${contextCoverage.total_events ?? 0} client order · ${contextCoverage.with_exchange_order_id ?? 0}/${contextCoverage.total_events ?? 0} exchange order` : "旧版报告未提供"],
-    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""}${eventPage.exchange_order_id ? ` · exchange_order_id=${eventPage.exchange_order_id}` : ""}${eventPage.run_id ? ` · run_id=${eventPage.run_id}` : ""}${eventPage.strategy_id ? ` · strategy_id=${eventPage.strategy_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
+    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""}${eventPage.exchange_order_id ? ` · exchange_order_id=${eventPage.exchange_order_id}` : ""}${eventPage.run_id ? ` · run_id=${eventPage.run_id}` : ""}${eventPage.strategy_id ? ` · strategy_id=${eventPage.strategy_id}` : ""}${eventPage.correlation_id ? ` · correlation_id=${eventPage.correlation_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
   ]);
   fillTable("account-activity-events-table", {
     ok: true,
@@ -4118,6 +4122,7 @@ function disconnect() {
   state.activityExchangeOrderId = null;
   state.activityRunId = null;
   state.activityStrategyId = null;
+  state.activityCorrelationId = null;
   state.defaultAccountId = null;
   state.defaultVenueId = null;
   state.activityAfter = null;
@@ -4154,6 +4159,7 @@ function disconnect() {
   $("account-activity-exchange-order-id").value = "";
   $("account-activity-run-id").value = "";
   $("account-activity-strategy-id").value = "";
+  $("account-activity-correlation-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {

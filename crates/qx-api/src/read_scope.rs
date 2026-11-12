@@ -47,7 +47,7 @@ pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
 /// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page,
 /// optionally narrowed by client/venue order identity or exact strategy context.
-const ACCOUNT_ACTIVITY_PARAMS: [&str; 9] = [
+const ACCOUNT_ACTIVITY_PARAMS: [&str; 10] = [
     "account_id",
     "venue_id",
     "after",
@@ -57,6 +57,7 @@ const ACCOUNT_ACTIVITY_PARAMS: [&str; 9] = [
     "exchange_order_id",
     "run_id",
     "strategy_id",
+    "correlation_id",
 ];
 /// `/events` 与 `/events/live` 在收窄键之外还认游标。
 const EVENT_SCOPED_PARAMS: [&str; 3] = ["account_id", "venue_id", "after"];

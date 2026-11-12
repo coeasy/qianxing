@@ -500,9 +500,10 @@ class AppClient(_HttpJsonClient):
         exchange_order_id: str | None = None,
         run_id: str | None = None,
         strategy_id: str | None = None,
+        correlation_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Read one account report, optionally filtering events by order or strategy identity."""
+        """Read one account report, optionally filtering events by order or trace identity."""
         if not isinstance(account_id, str) or not account_id.strip():
             raise ValueError("account_id must be non-empty")
         if not isinstance(venue_id, str) or not venue_id.strip():
@@ -513,7 +514,11 @@ class AppClient(_HttpJsonClient):
             not isinstance(exchange_order_id, str) or not exchange_order_id.strip()
         ):
             raise ValueError("exchange_order_id must be a non-empty string")
-        for name, value in (("run_id", run_id), ("strategy_id", strategy_id)):
+        for name, value in (
+            ("run_id", run_id),
+            ("strategy_id", strategy_id),
+            ("correlation_id", correlation_id),
+        ):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{name} must be a non-empty string")
         for name, value in (
@@ -541,6 +546,8 @@ class AppClient(_HttpJsonClient):
             query.append(("run_id", run_id))
         if strategy_id is not None:
             query.append(("strategy_id", strategy_id))
+        if correlation_id is not None:
+            query.append(("correlation_id", correlation_id))
         query.append(("limit", str(limit)))
         path = _ACCOUNT_READ_PATHS["activity"] + "?" + urlencode(query)
         return self._request_json(path, method="GET")
@@ -556,6 +563,7 @@ class AppClient(_HttpJsonClient):
         exchange_order_id: str | None = None,
         run_id: str | None = None,
         strategy_id: str | None = None,
+        correlation_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
@@ -568,6 +576,7 @@ class AppClient(_HttpJsonClient):
             exchange_order_id=exchange_order_id,
             run_id=run_id,
             strategy_id=strategy_id,
+            correlation_id=correlation_id,
             limit=limit,
         )
 
