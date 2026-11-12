@@ -282,7 +282,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /strategies/deployment-nodes`、`POST /strategies/deployment-nodes` | 节点状态数组 / 接收节点快照的结果 | GET 返回已登记节点观察；POST 接收节点快照；带查询串返回 `deployment_node_query_not_supported` |
 | `GET /strategies/deployments/operations`、`POST /strategies/deployments/operations` | 操作记录 / 持久化操作受理结果 | GET 需 `operation_id`；POST 创建 pause/resume/rollback/stop 等部署操作，访问策略启用时需 Admin |
 | `POST /strategies/deployments/revisions` | 持久化部署修订结果 | 创建不可变策略修订并绑定来源身份；访问策略启用时需 Admin |
-| `GET /metrics` | Prometheus 文本 | 见下「指标出口」：API 自身四条指标逐行印出，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
+| `GET /metrics` | Prometheus 文本 | 见下「指标出口」：API 自身指标、`worker-metrics/<worker_id>.prom` 聚合及持久订单组状态计数 |
 | `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
 | `GET /schema/account-snapshot-v2` | JSON Schema | 历史兼容快照契约，公布的就是仓库里的 `schemas/account-snapshot-v2.json`（编译期 `include_str!` 取用） |
 | `GET /schema/account-snapshot-v3` | JSON Schema | v3 历史快照契约；读侧仍兼容 v1-v5 |
@@ -637,6 +637,10 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
   `pipeline_metrics_publish_per_worker_process_only`。这条登记、`crates/qx-runtime/src/lib.rs` 的
   公开面说明与上面那份带标签的样本形态，由判据 `pipeline_metrics_publication_and_docs_move_together`
   与生产读者清单双向钉住（V13 §9.15 #178 立案 → §9.27 接线）。
+- `/metrics` 另从 `storage.data_dir/order-groups` 现读订单组状态，按 `account × venue × status` 输出
+  `qx_order_group_status` gauge；不会导出 group/order ID。`qx_order_group_metrics_available 1` 表示快照读取成功，
+  即使目录尚未创建也代表当前有效空集合；持久目录损坏或读取失败时输出 `..._available 0` 且不输出状态计数，
+  不把未知读数误报成 0。它反映持久读模型当前状态，不是交易所实时连接或订单延迟指标。
 - 哪些入口的写入**不在**这族样本里，现在是机器清点而不是手工名单：`crates/qx-cli/tests/unit/pipeline_metrics_open_sites.rs` 扫生产源码里每一处 `open_account_pipeline(` 与 `open_runtime_pipeline(` 站点（本轮实测 14 处），按函数分两类点名：paper 的两条 worker 循环（1 + 3 处站点，并账次数必须与站点数**逐函数相等**——少一次是漏计、多一次是双计）与 8 项豁免（1 处统一入口向下一层的内部委托、5 处按请求或装配期打开的只读站点、`run_paper_pipeline_once` 与 `run_paper_submit_order` 这两个一次性验收入口）。豁免项必须在 `pipeline_metrics_report.rs` 的模块文档里逐名点名，新增站点不登记就红。因此 `paper-submit-order` 的口径要说清：它写入的事实照旧进 EventLog，但**不在这族计数里**——它以 `paper-execution` 的名义领取租约，把计数并进 worker 只会让那份按进程累计的量更假（V13 §9.28）。
 - 逐行这条口径由判据 `prometheus_exposition_is_line_separated_at_both_ends` 两头各扫一次：真驱动一次
   `/metrics` 按行解析，再把生产源码里"看起来是样本模板"的行扫一遍。变异验证见 `logs/s151_*.txt`

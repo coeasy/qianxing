@@ -73,6 +73,7 @@ pub fn build_configured_api_service(
     let readiness_store = control_store.clone();
     let metrics_dir = crate::worker_metrics::worker_metrics_dir(config);
     let gateway_metrics_dir = metrics_dir.clone();
+    let order_group_metrics_root = Path::new(&config.storage.data_dir).to_path_buf();
     let metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let metrics_now_ms = now_ms;
     let gateway_config = config.clone();
@@ -134,11 +135,15 @@ pub fn build_configured_api_service(
             move |operation_id| deployment_store.operation(operation_id),
         )
         .with_worker_metrics_provider(move || {
-            crate::worker_metrics::read_worker_metrics(
+            let mut metrics = crate::worker_metrics::read_worker_metrics(
                 &metrics_dir,
                 metrics_now_ms(),
                 metrics_stale_after_ms,
-            )
+            );
+            metrics.push_str(&crate::api_read_model::order_group_metrics_prometheus(
+                &order_group_metrics_root,
+            ));
+            metrics
         })
         .with_readiness_provider(move || {
             let mut readiness = readiness_provider(readiness_store.clone());
@@ -802,6 +807,13 @@ mod tests {
         .expect("assemble configured API service");
         let response = service.handle("GET", "/ready", "", 100_000);
         assert_eq!(response.status, 200, "{}", response.body);
+        let metrics_response = service.handle("GET", "/metrics", "", 100_000);
+        assert_eq!(metrics_response.status, 200, "{}", metrics_response.body);
+        assert!(
+            metrics_response
+                .body
+                .contains("qx_order_group_metrics_available 1\n")
+        );
         let body: serde_json::Value =
             serde_json::from_str(&response.body).expect("readiness JSON is valid");
         let gateway = body["readiness_layers"]["O"]["exchange_gateways"]["gateways"]

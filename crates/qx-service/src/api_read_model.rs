@@ -289,6 +289,62 @@ fn load_order_groups(root: &Path) -> Result<Vec<qx_core::OrderGroupState>, Strin
         .collect()
 }
 
+/// Render the current durable order-group lifecycle counts for the API `/metrics` provider.
+/// A corrupt/unreadable store is explicitly unavailable, never represented as zero groups.
+pub fn order_group_metrics_prometheus(root: &Path) -> String {
+    use crate::worker_metrics::prometheus_label;
+
+    let mut output = String::from(
+        "# HELP qx_order_group_metrics_available Whether durable order-group metrics were read successfully.\n\
+# TYPE qx_order_group_metrics_available gauge\n\
+# HELP qx_order_group_status Current durable order groups by account, venue, and lifecycle status.\n\
+# TYPE qx_order_group_status gauge\n",
+    );
+    let groups = match load_order_groups(root) {
+        Ok(groups) => groups,
+        Err(_) => {
+            output.push_str("qx_order_group_metrics_available 0\n");
+            return output;
+        }
+    };
+    let mut counts = BTreeMap::<(String, String, &'static str), u64>::new();
+    for group in groups {
+        let Some(leg) = group.legs.first() else {
+            output.push_str("qx_order_group_metrics_available 0\n");
+            return output;
+        };
+        let status = match group.status {
+            qx_core::OrderGroupStatus::Planned => "planned",
+            qx_core::OrderGroupStatus::Submitting => "submitting",
+            qx_core::OrderGroupStatus::Active => "active",
+            qx_core::OrderGroupStatus::CancelPending => "cancel_pending",
+            qx_core::OrderGroupStatus::PartiallyFilled => "partially_filled",
+            qx_core::OrderGroupStatus::PeerCancelRequired => "peer_cancel_required",
+            qx_core::OrderGroupStatus::ReconcileRequired => "reconcile_required",
+            qx_core::OrderGroupStatus::Filled => "filled",
+            qx_core::OrderGroupStatus::Cancelled => "cancelled",
+            qx_core::OrderGroupStatus::Rejected => "rejected",
+        };
+        let key = (
+            leg.order.account_id.clone(),
+            leg.order.instrument.venue.to_string(),
+            status,
+        );
+        let count = counts.entry(key).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    output.push_str("qx_order_group_metrics_available 1\n");
+    for ((account, venue, status), count) in counts {
+        output.push_str(&format!(
+            "qx_order_group_status{{account=\"{}\",venue=\"{}\",status=\"{status}\"}} {count}\n",
+            prometheus_label(&account),
+            prometheus_label(&venue),
+        ));
+    }
+    output
+}
+
 /// Load and validate the latest persisted reconciliation report per worker.
 pub fn load_reconcile_reports(root: &Path) -> Result<Vec<ReconcileReportSnapshot>, String> {
     qx_runtime::load_reconcile_reports(root)
@@ -948,7 +1004,8 @@ mod tests {
     use super::{
         apply_reconcile_reports, configured_account_trading_day, default_account_event_log,
         load_api_account_snapshots_with_market_specs, load_api_query_models,
-        load_reconcile_reports, project_position_unrealized_pnl, query_api_models,
+        load_reconcile_reports, order_group_metrics_prometheus, project_position_unrealized_pnl,
+        query_api_models,
     };
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
@@ -1254,6 +1311,111 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("订单组"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn order_group_metrics_count_durable_states_and_fail_closed_on_corrupt_storage() {
+        let root = temp_root("order-group-metrics");
+        let group_instrument = InstrumentId::parse("BTC/USDT.OKX").expect("valid instrument");
+        let protective_order = |client_id, kind, trigger| Order {
+            client_id,
+            instrument: group_instrument.clone(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("1").expect("quantity"),
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(ExactDecimal::parse(trigger).expect("trigger")),
+                    trigger_price_type: None,
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        };
+        let group = qx_core::OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "metrics-oco",
+                OrderGroupKind::Oco,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: protective_order(7201, ConditionalOrderKind::TakeProfit, "110"),
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: protective_order(7202, ConditionalOrderKind::StopLoss, "90"),
+                    },
+                ],
+            )
+            .expect("valid OCO intent"),
+        )
+        .expect("valid order group");
+        let mut store = qx_zhenlu::FileOrderGroupStore::new(root.join("order-groups"))
+            .expect("order-group store");
+        qx_zhenlu::OrderGroupStore::create(&mut store, &group).expect("persist OCO");
+        assert!(qx_zhenlu::OrderGroupStore::begin_submission(&mut store, "metrics-oco").unwrap());
+        qx_zhenlu::OrderGroupStore::record_venue_group_id(
+            &mut store,
+            "metrics-oco",
+            "12345".into(),
+        )
+        .unwrap();
+        qx_zhenlu::OrderGroupStore::activate_native_group(&mut store, "metrics-oco").unwrap();
+        let unresolved = qx_core::OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "metrics-reconcile",
+                OrderGroupKind::Oco,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: protective_order(7211, ConditionalOrderKind::TakeProfit, "120"),
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: protective_order(7212, ConditionalOrderKind::StopLoss, "80"),
+                    },
+                ],
+            )
+            .expect("valid unresolved OCO intent"),
+        )
+        .expect("valid unresolved order group");
+        qx_zhenlu::OrderGroupStore::create(&mut store, &unresolved)
+            .expect("persist unresolved OCO");
+        assert!(
+            qx_zhenlu::OrderGroupStore::begin_submission(&mut store, "metrics-reconcile").unwrap()
+        );
+        qx_zhenlu::OrderGroupStore::require_reconciliation(&mut store, "metrics-reconcile")
+            .unwrap();
+
+        let metrics = order_group_metrics_prometheus(&root);
+        assert!(metrics.contains("qx_order_group_metrics_available 1\n"));
+        assert!(metrics.contains(
+            "qx_order_group_status{account=\"main\",venue=\"OKX\",status=\"active\"} 1\n"
+        ));
+        assert!(metrics.contains(
+            "qx_order_group_status{account=\"main\",venue=\"OKX\",status=\"reconcile_required\"} 1\n"
+        ));
+
+        std::fs::write(root.join("order-groups/corrupt.json"), r#"{"broken":true}"#).unwrap();
+        let unavailable = order_group_metrics_prometheus(&root);
+        assert!(unavailable.contains("qx_order_group_metrics_available 0\n"));
+        assert!(!unavailable.contains("qx_order_group_status{"));
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "evidence_id": "order-group-prometheus-metrics-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "API Prometheus exposition of durable order-group lifecycle counts",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "5ed2aed3"
+  },
+  "verification": [
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service order_group_metrics_count_durable_states_and_fail_closed_on_corrupt_storage -- --nocapture",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "the durable active OCO is counted by account, venue, and status",
+        "the durable ReconcileRequired OCO is separately visible",
+        "corrupt order-group storage produces metrics_available=0 without a zero-count status sample"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service ready_response_exposes_account_scoped_gateway_port_health -- --nocapture",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "the configured API /metrics route includes the order-group metrics availability gauge"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service",
+      "result": "passed",
+      "passed": 126,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "passed": 373,
+      "failed": 0,
+      "assertions": [
+        "all four architecture shards passed",
+        "the aggregate covers 373 named checks without duplicates"
+      ]
+    }
+  ],
+  "limitations": [
+    "Metrics are derived from the local durable order-group store at scrape time; they do not measure exchange connectivity, venue latency, or remote state freshness.",
+    "No Binance, OKX, or Bitget API request was made, and no connector maturity status changed."
+  ]
+}
