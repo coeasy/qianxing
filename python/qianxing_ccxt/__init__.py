@@ -2955,6 +2955,51 @@ class CcxtExchangeClient:
             "stop_loss_order_price": str(row.get("slOrdPx") or ""),
         }
 
+    def fetch_bitget_uta_oco_order_group(self, instrument: str, *, strategy_order_id: str) -> dict[str, Any]:
+        """Fetch a Bitget UTA OCO resource without guessing generated child-leg roles."""
+        if self.config.exchange_id.lower() != "bitget" or (self.config.options or {}).get("uta") is not True:
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget OCO 查询仅支持显式配置的 UTA")
+        if not strategy_order_id or not strategy_order_id.isascii() or not strategy_order_id.isdigit():
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "Bitget strategy_order_id 必须为数字字符串")
+        market = self.resolve_market(instrument)
+        if market.contract or market.market_type != "spot":
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget UTA OCO 当前只支持 Spot")
+        response = self._call("private_uta_get_v3_trade_unfilled_strategy_orders", {"category": "SPOT", "type": "oco"})
+        if not isinstance(response, Mapping) or response.get("code") != "00000":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "Bitget UTA OCO 查询响应失败")
+        rows = response.get("data")
+        if not isinstance(rows, list):
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 查询缺少 data 列表")
+        matches = [row for row in rows if isinstance(row, Mapping) and str(row.get("orderId") or "") == strategy_order_id]
+        if len(matches) != 1:
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget 未决 OCO 查询未返回唯一匹配策略单")
+        row = matches[0]
+        if str(row.get("category") or "").upper() != "SPOT" or str(row.get("symbol") or "") != market.market_id:
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget OCO 查询身份与目标市场不匹配")
+        raw_status = str(row.get("status") or "").lower()
+        state = {"pending": "live", "submitting": "submitting", "success": "triggered",
+                 "cancelled": "canceled", "canceled": "canceled", "failed": "rejected"}.get(raw_status, "unknown")
+        # The unfilled endpoint is authoritative only for the still-pending group; it does not
+        # identify which generated child order is the TP or SL leg after a trigger.
+        active = state == "live"
+        return {"strategy_order_id": strategy_order_id, "instrument": market.instrument,
+                "order_type": "oco", "state": state, "order_ids": [],
+                "actual_size": "0" if active else None, "status": raw_status}
+
+    def cancel_bitget_uta_oco_order_group(self, instrument: str, *, strategy_order_id: str) -> dict[str, str]:
+        if self.config.exchange_id.lower() != "bitget" or (self.config.options or {}).get("uta") is not True:
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget OCO 撤销仅支持显式配置的 UTA")
+        if not strategy_order_id or not strategy_order_id.isascii() or not strategy_order_id.isdigit():
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "Bitget strategy_order_id 必须为数字字符串")
+        market = self.resolve_market(instrument)
+        if market.contract or market.market_type != "spot":
+            raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, "Bitget UTA OCO 当前只支持 Spot")
+        response = self._call("private_uta_post_v3_trade_cancel_strategy_order", {"orderId": strategy_order_id})
+        if not isinstance(response, Mapping) or response.get("code") != "00000":
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "Bitget UTA OCO 撤销响应未知")
+        return {"strategy_order_id": strategy_order_id, "instrument": market.instrument,
+                "cancel_request_accepted": "true"}
+
     def cancel_okx_oco_order_group(self, instrument: str, *, algo_id: str) -> dict[str, str]:
         """Cancel an untriggered OKX OCO as one algo resource and validate its ack identity."""
         if self.config.exchange_id.lower() != "okx":

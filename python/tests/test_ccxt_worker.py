@@ -64,6 +64,38 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(method, "private_uta_post_v3_trade_place_strategy_order")
         self.assertEqual(params["ocoParams"]["ocoLimitPrice"], "110")
 
+    def test_jsonl_bitget_uta_oco_query_and_cancel_use_strategy_identity(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                self.calls.append(("private_uta_get_v3_trade_unfilled_strategy_orders", params))
+                return {"code": "00000", "data": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT", "status": "pending"
+                }]}
+
+            def private_uta_post_v3_trade_cancel_strategy_order(self, params):
+                self.calls.append(("private_uta_post_v3_trade_cancel_strategy_order", params))
+                return {"code": "00000", "data": None}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        self.assertEqual(fetched["result"]["order_group"]["state"], "live")
+        cancelled = json.loads(worker.handle_line(json.dumps({
+            "op": "cancel_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(cancelled["ok"], cancelled)
+        self.assertEqual(cancelled["result"]["order_group"]["cancel_request_accepted"], "true")
+        self.assertEqual(exchange.calls[-1], (
+            "private_uta_post_v3_trade_cancel_strategy_order", {"orderId": "123456789"}
+        ))
+
     def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
         class OkxAlgoExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

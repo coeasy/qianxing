@@ -368,13 +368,18 @@ class CcxtJsonWorker:
                     CcxtErrorClass.UNSUPPORTED,
                     "CCXT worker 当前只查询原生 OCO 订单组",
                 )
-            group = self.client.fetch_okx_oco_order_group(
-                str(request["instrument"]),
-                algo_id=None if request.get("algo_id") is None else str(request["algo_id"]),
-                algo_client_order_id=None
-                if request.get("algo_client_order_id") is None
-                else str(request["algo_client_order_id"]),
-            )
+            if self.client.config.exchange_id.lower() == "bitget" and bool((self.client.config.options or {}).get("uta", False)):
+                group = self.client.fetch_bitget_uta_oco_order_group(
+                    str(request["instrument"]), strategy_order_id=str(request["strategy_order_id"])
+                )
+            else:
+                group = self.client.fetch_okx_oco_order_group(
+                    str(request["instrument"]),
+                    algo_id=None if request.get("algo_id") is None else str(request["algo_id"]),
+                    algo_client_order_id=None
+                    if request.get("algo_client_order_id") is None
+                    else str(request["algo_client_order_id"]),
+                )
             return {"order_group": group}
         if operation == "cancel_order_group":
             if request.get("kind") != "oco":
@@ -382,9 +387,14 @@ class CcxtJsonWorker:
                     CcxtErrorClass.UNSUPPORTED,
                     "CCXT worker 当前只撤销原生 OCO 订单组",
                 )
-            group = self.client.cancel_okx_oco_order_group(
-                str(request["instrument"]), algo_id=str(request["algo_id"])
-            )
+            if self.client.config.exchange_id.lower() == "bitget" and bool((self.client.config.options or {}).get("uta", False)):
+                group = self.client.cancel_bitget_uta_oco_order_group(
+                    str(request["instrument"]), strategy_order_id=str(request["strategy_order_id"])
+                )
+            else:
+                group = self.client.cancel_okx_oco_order_group(
+                    str(request["instrument"]), algo_id=str(request["algo_id"])
+                )
             return {"order_group": group}
         if operation == "edit_order":
             order = self.client.edit_order(
