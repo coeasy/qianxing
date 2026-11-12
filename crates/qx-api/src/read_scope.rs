@@ -24,22 +24,23 @@ pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 8] = [
 
 /// 现读模型的按账户收窄读面（V13 R31）：一条一格，写清这条入口认哪几把收窄键。
 ///
-/// 读的还是整份现读模型，`?account_id=`（对账报告还认 `?venue_id=`）只在结果集上过滤，
+/// 读的还是整份现读模型，`?account_id=` 与 `?venue_id=` 只在结果集上过滤，
 /// 不落到"某一份账户投影"。所以键形状合法但没有匹配条目时回 `200 []`，而不是投影那族的
 /// `404 account_projection_not_found`——两族的差别是刻意的：投影是 `(account_id, venue_id)`
-/// 键控的一份独立副本，没有这份副本就是"这个账户不在这份部署里"；账簿与对账报告是整本台账
-/// 加一轮对账结果，过滤不出条目只说明这一轮没有事实。
+/// 键控的一份独立副本，没有这份副本就是"这个账户不在这份部署里"；账簿、订单组和对账报告
+/// 是整本持久读模型，过滤不出条目只说明当前没有事实。
 ///
 /// 账簿那一格只认一把键不是取巧：`LedgerEntry` 没有 venue 字段，给它配第二把收窄键只会让
 /// 调用方以为按 venue 读过一遍。
-pub(crate) const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = [
+pub(crate) const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = [
     ("/account/ledger", &LEDGER_FILTER_PARAMS),
     ("/reconcile/reports", &REPORT_FILTER_PARAMS),
+    ("/account/order-groups", &REPORT_FILTER_PARAMS),
 ];
 
 /// 反过来：这两条读的是整份现读模型，且数据本身没有账户归属列（`JobRun` 是作业级、
 /// `AuditRecord` 是操作员级），没有任何收窄键。带查询串进来必须回 400 而不是照常 200——
-/// 按账户读请走 `/account/snapshot` 一族或 `MODEL_FILTER_ROUTES` 那两条（V13 R2 #205 / R31）。
+/// 按账户读请走 `/account/snapshot` 一族或 `MODEL_FILTER_ROUTES` 中的账户过滤入口（V13 R2 #205 / R31）。
 pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
 
 /// 带键读面认的两把收窄键。

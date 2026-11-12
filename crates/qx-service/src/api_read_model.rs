@@ -266,7 +266,27 @@ pub fn load_api_query_models(
         job_runs,
         ledger_entries,
         reconcile_reports: load_reconcile_reports(root)?,
+        order_groups: load_order_groups(root)?,
     })
+}
+
+fn load_order_groups(root: &Path) -> Result<Vec<qx_core::OrderGroupState>, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let groups_root = root.join("order-groups");
+    if !groups_root.exists() {
+        return Ok(Vec::new());
+    }
+    let store = FileOrderGroupStore::new(groups_root)?;
+    store
+        .group_ids()?
+        .into_iter()
+        .map(|group_id| {
+            store
+                .load(&group_id)?
+                .ok_or_else(|| format!("订单组索引包含已消失的组: {group_id}"))
+        })
+        .collect()
 }
 
 /// Load and validate the latest persisted reconciliation report per worker.

@@ -47,7 +47,7 @@ use qx_app::{
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{
     DecimalRounding, Event, EventKind, EventLog, ExactDecimal, Fnv1a, InstrumentId, LedgerEntry,
-    TradingInstrumentSpec, TradingProduct, SCALE,
+    OrderGroupState, TradingInstrumentSpec, TradingProduct, SCALE,
 };
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
@@ -1042,12 +1042,13 @@ type ControlSubmitter = Arc<
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
 
-/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
+/// `/scheduler/runs`、`/account/ledger`、`/account/order-groups`、`/reconcile/reports` 只读端点共用的一份现读结果。对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
 #[derive(Default, Clone)]
 pub struct ApiQueryModels {
     pub job_runs: Vec<JobRun>,
     pub ledger_entries: Vec<LedgerEntry>,
     pub reconcile_reports: Vec<ReconcileReportSnapshot>,
+    pub order_groups: Vec<OrderGroupState>,
 }
 
 type QueryModelsProvider = Arc<dyn Fn() -> Result<ApiQueryModels, String> + Send + Sync>;
@@ -1307,6 +1308,7 @@ impl ApiService {
                 job_runs: state.job_runs.clone(),
                 ledger_entries: state.ledger_entries.clone(),
                 reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+                order_groups: Vec::new(),
             });
         };
         let models = provider()?;
@@ -2302,6 +2304,29 @@ qx_control_retired_audit_records_total {}\n",
                     .unwrap_or_default();
                 serialized_json_response(200, &orders)
             }
+            ("GET", "/account/order-groups") => match ScopeFilter::from_query(query) {
+                Err(error) => read_error_response(&error),
+                Ok(scope) => match self.query_models() {
+                    Ok(models) => {
+                        let groups: Vec<_> = models
+                            .order_groups
+                            .into_iter()
+                            .filter(|group| {
+                                let Some(leg) = group.legs.first() else {
+                                    return false;
+                                };
+                                scope_keeps_account(scope.as_ref(), &leg.order.account_id)
+                                    && scope_keeps_venue(
+                                        scope.as_ref(),
+                                        &leg.order.instrument.venue.to_string(),
+                                    )
+                            })
+                            .collect();
+                        serialized_json_response(200, &groups)
+                    }
+                    Err(error) => ApiResponse::json(503, error_json(&error)),
+                },
+            },
             ("GET", "/account/positions") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
@@ -3394,6 +3419,28 @@ mod tests {
         assert_eq!(service.handle("GET", "/control/audit", "", 4).status, 200);
         assert_eq!(service.handle("GET", "/scheduler/runs", "", 5).status, 200);
         assert_eq!(service.handle("GET", "/account/ledger", "", 6).status, 200);
+        assert_eq!(
+            service
+                .handle(
+                    "GET",
+                    "/account/order-groups?account_id=main&venue_id=paper",
+                    "",
+                    7
+                )
+                .status,
+            200
+        );
+        assert_eq!(
+            service
+                .handle(
+                    "GET",
+                    "/account/order-groups?account_id=main&unexpected=1",
+                    "",
+                    8
+                )
+                .status,
+            400
+        );
         assert_eq!(
             service.handle("GET", "/reconcile/reports", "", 7).status,
             200

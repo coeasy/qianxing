@@ -16,6 +16,7 @@ const API_PATHS = {
   accountActivity: "/account/activity",
   balances: "/account/balances",
   orders: "/account/orders",
+  orderGroups: "/account/order-groups",
   positions: "/account/positions",
   ledger: "/account/ledger",
   reconcileReports: "/reconcile/reports",
@@ -257,6 +258,7 @@ const RESPONSE_FIELDS = {
   snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
   snapshotHeader: ["snapshot_id", "account_id", "portfolio_id", "venue_id", "trading_day", "as_of", "event_seq", "state_hash"],
   orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status", "exact_amounts"],
+  orderGroupRow: ["schema_version", "intent", "status", "venue_group_id", "legs"],
   positionRow: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw", "exact_amounts"],
   balances: ["cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw"],
   eventRow: ["seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata"],
@@ -268,6 +270,7 @@ const RESPONSE_FIELDS = {
 // 与"页面多开了一列表头"都在门禁变红，而不是等用户看到一列永久的 —。
 const TABLE_SPECS = {
   "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw"] },
+  "order-groups-table": { roster: "orderGroupRow", columns: ["intent", "status", "venue_group_id", "legs"] },
   "positions-table": { roster: "positionRow", columns: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
   "events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
   "account-activity-events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
@@ -668,6 +671,16 @@ function fillTable(tableId, response) {
   }
   for (const record of records) {
     const tr = el("tr");
+    if (tableId === "order-groups-table") {
+      const intent = record.intent ?? {};
+      const legs = Array.isArray(record.legs) ? record.legs : [];
+      const firstOrder = legs[0]?.order ?? {};
+      const intentText = `${intent.group_id ?? "—"} · ${intent.kind ?? "—"} · ${firstOrder.account_id ?? "—"} / ${firstOrder.instrument?.venue ?? "—"}`;
+      const legsText = legs.map(leg => `${leg.role ?? "—"}: ${leg.order?.status ?? "—"} · 成交 ${leg.order?.filled?.raw ?? leg.order?.filled ?? "—"}${leg.venue_order_id ? ` · ${leg.venue_order_id}` : ""}`).join("\n") || "—";
+      for (const value of [intentText, record.status, record.venue_group_id, legsText]) tr.append(el("td", cellText("order_group", value)));
+      tbody.append(tr);
+      continue;
+    }
     for (const key of spec.columns) {
       const text = spec.roster === "orderRow"
         ? orderAmountText(key, record)
@@ -681,8 +694,9 @@ function fillTable(tableId, response) {
 }
 
 async function refreshTables() {
-  const [orders, positions] = await Promise.all([getJson(API_PATHS.orders), getJson(API_PATHS.positions)]);
+  const [orders, orderGroups, positions] = await Promise.all([getJson(API_PATHS.orders), getJson(API_PATHS.orderGroups), getJson(API_PATHS.positions)]);
   fillTable("orders-table", orders);
+  fillTable("order-groups-table", orderGroups);
   // 持仓列取的是 `PositionSnapshot` 真的发出来的字段。后端从来没有 `side` / `cost_raw` /
   // `market_value_raw`（wire.rs），而页面此前照着它们开了三列——那三列永久是 —。
   // 市值也不在页面里现算：那是「各处手抄折算」要防的事，属于后端估值单点。
