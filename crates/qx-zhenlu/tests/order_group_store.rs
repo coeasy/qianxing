@@ -64,6 +64,35 @@ fn oco_state(group_id: &str) -> OrderGroupState {
     .unwrap()
 }
 
+fn bracket_state(group_id: &str) -> OrderGroupState {
+    let mut entry = protection_order(711, ConditionalOrderKind::TakeProfit);
+    entry.side = Side::Buy;
+    entry.exact_amounts.as_mut().unwrap().conditional = None;
+    OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            group_id,
+            OrderGroupKind::Bracket,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::Entry,
+                    order: entry,
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: protection_order(712, ConditionalOrderKind::TakeProfit),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: protection_order(713, ConditionalOrderKind::StopLoss),
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
     let test_root = std::env::current_dir()
@@ -253,6 +282,46 @@ fn loading_legacy_rejected_oco_repairs_status_when_a_peer_is_still_live() {
     assert_eq!(
         persisted.status,
         qx_core::OrderGroupStatus::PeerCancelRequired
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn loading_legacy_rejected_bracket_preserves_live_protection_for_reconciliation() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qianxing-legacy-rejected-bracket-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut legacy = bracket_state("legacy-rejected-bracket");
+    legacy.status = qx_core::OrderGroupStatus::Rejected;
+    legacy.legs[0].order.status = OrderStatus::Rejected;
+    legacy.legs[1].order.status = OrderStatus::Working;
+    legacy.legs[1].venue_order_id = Some("venue-tp-live".into());
+    legacy.legs[2].order.status = OrderStatus::Submitted;
+    store.create(&legacy).unwrap();
+
+    let repaired = store.load("legacy-rejected-bracket").unwrap().unwrap();
+    assert_eq!(
+        repaired.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+    assert_eq!(repaired.legs[1].order.status, OrderStatus::Working);
+    let persisted: OrderGroupState =
+        serde_json::from_slice(&std::fs::read(root.join("legacy-rejected-bracket.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        persisted.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
     );
 
     std::fs::remove_dir_all(root).unwrap();
