@@ -6,8 +6,9 @@ use crate::{
 };
 use qx_api::{ApiService, ControlSubmitError};
 use qx_control::{
-    amend_order_target_from_command, cancel_order_group_target_from_command,
-    cancel_order_target_from_command, order_group_from_submit_command, CommandKind, ControlError,
+    CommandKind, ControlError, amend_order_target_from_command,
+    cancel_order_group_target_from_command, cancel_order_target_from_command,
+    order_group_from_submit_command,
 };
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerRole};
@@ -76,7 +77,10 @@ pub(super) fn build_configured_api_service_inner(
         .filter(|worker| worker.enabled && worker.role == WorkerRole::Execution)
         .filter_map(|worker| {
             let venue_id = worker.venue_id.as_deref()?;
-            if VenueFamily::parse_option(Some(venue_id)) == Some(VenueFamily::Binance) {
+            if matches!(
+                VenueFamily::parse_option(Some(venue_id)),
+                Some(VenueFamily::Binance | VenueFamily::Other)
+            ) {
                 Some((
                     worker.account_id.as_deref()?.to_owned(),
                     venue_id.to_owned(),
@@ -133,17 +137,17 @@ pub(super) fn build_configured_api_service_inner(
                 })?;
                 let account_id = &first.order.account_id;
                 let venue_id = first.order.instrument.venue.as_str();
-                if !VenueFamily::parse_option(Some(venue_id))
-                    .is_some_and(|family| family == VenueFamily::Binance)
-                    || !order_group_routes
-                        .iter()
-                        .any(|(route_account, route_venue)| {
-                            route_account == account_id
-                                && route_venue.eq_ignore_ascii_case(venue_id)
-                        })
+                if !matches!(
+                    VenueFamily::parse_option(Some(venue_id)),
+                    Some(VenueFamily::Binance | VenueFamily::Other)
+                ) || !order_group_routes
+                    .iter()
+                    .any(|(route_account, route_venue)| {
+                        route_account == account_id && route_venue.eq_ignore_ascii_case(venue_id)
+                    })
                 {
                     return Err(ControlSubmitError::Rejected(ControlError::Invalid(
-                        "SubmitOrderGroup 当前只路由到已启用的 Binance Execution worker".into(),
+                        "SubmitOrderGroup 未匹配到已启用的 Binance 或 CCXT Execution worker".into(),
                     )));
                 }
                 Ok(())
@@ -170,19 +174,19 @@ pub(super) fn build_configured_api_service_inner(
                         "CancelOrderGroup 载荷非法: {error:?}"
                     )))
                 })?;
-                if !VenueFamily::parse_option(Some(&target.venue_id))
-                    .is_some_and(|family| family == VenueFamily::Binance)
-                    || !order_group_routes.iter().any(|(account_id, venue_id)| {
-                        cancel_order_group_route_matches(
-                            account_id,
-                            venue_id,
-                            &target.account_id,
-                            &target.venue_id,
-                        )
-                    })
-                {
+                if !matches!(
+                    VenueFamily::parse_option(Some(&target.venue_id)),
+                    Some(VenueFamily::Binance | VenueFamily::Other)
+                ) || !order_group_routes.iter().any(|(account_id, venue_id)| {
+                    cancel_order_group_route_matches(
+                        account_id,
+                        venue_id,
+                        &target.account_id,
+                        &target.venue_id,
+                    )
+                }) {
                     return Err(ControlSubmitError::Rejected(ControlError::Invalid(
-                        "CancelOrderGroup 当前只路由到已启用的 Binance Execution worker".into(),
+                        "CancelOrderGroup 未匹配到已启用的 Binance 或 CCXT Execution worker".into(),
                     )));
                 }
                 Ok(())

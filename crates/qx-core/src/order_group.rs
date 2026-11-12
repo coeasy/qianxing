@@ -179,6 +179,7 @@ pub enum OrderGroupStatus {
     Planned,
     Submitting,
     Active,
+    CancelPending,
     PartiallyFilled,
     PeerCancelRequired,
     ReconcileRequired,
@@ -256,8 +257,10 @@ impl OrderGroupState {
             return Err("原生组激活前必须先保存 venue_group_id".into());
         }
         if self.legs.iter().any(|leg| {
-            !matches!(leg.order.status, OrderStatus::PendingSubmit | OrderStatus::Submitted)
-                || leg.order.filled.raw() != 0
+            !matches!(
+                leg.order.status,
+                OrderStatus::PendingSubmit | OrderStatus::Submitted
+            ) || leg.order.filled.raw() != 0
                 || leg
                     .order
                     .exact_amounts
@@ -267,6 +270,48 @@ impl OrderGroupState {
             return Err("原生组激活只允许尚未生成子订单的未成交腿".into());
         }
         self.status = OrderGroupStatus::Active;
+        Ok(())
+    }
+
+    /// Durably fence cancellation of a native group resource before the venue RPC.
+    /// Only an untriggered group with no child order IDs can use this operation.
+    pub fn begin_native_cancel(&mut self) -> Result<(), String> {
+        if self.status != OrderGroupStatus::Active {
+            return Err(format!("订单组 {:?} 当前不能发起原生组撤销", self.status));
+        }
+        if self.venue_group_id.as_deref().is_none_or(str::is_empty) {
+            return Err("原生组撤销前必须有 venue_group_id".into());
+        }
+        if self.legs.iter().any(|leg| {
+            leg.venue_order_id.is_some()
+                || leg.order.filled.raw() != 0
+                || leg
+                    .order
+                    .exact_amounts
+                    .is_some_and(|amounts| amounts.filled.is_positive())
+        }) {
+            return Err("原生组已有子订单身份或成交，必须先按子单事实对账".into());
+        }
+        self.status = OrderGroupStatus::CancelPending;
+        Ok(())
+    }
+
+    pub fn complete_native_cancel(&mut self) -> Result<(), String> {
+        if self.status != OrderGroupStatus::CancelPending {
+            return Err("订单组当前没有待确认的原生撤销".into());
+        }
+        if self.legs.iter().any(|leg| {
+            !matches!(leg.order.status, OrderStatus::Cancelled | OrderStatus::Expired)
+                || leg.order.filled.raw() != 0
+                || leg
+                    .order
+                    .exact_amounts
+                    .is_some_and(|amounts| amounts.filled.is_positive())
+                || leg.venue_order_id.is_some()
+        }) {
+            return Err("原生 OCO 撤销未确认所有无成交子腿均已终止".into());
+        }
+        self.status = OrderGroupStatus::Cancelled;
         Ok(())
     }
 
@@ -432,7 +477,10 @@ impl OrderGroupState {
     }
 
     fn recompute_status(&mut self) {
-        if self.status == OrderGroupStatus::ReconcileRequired {
+        if matches!(
+            self.status,
+            OrderGroupStatus::ReconcileRequired | OrderGroupStatus::CancelPending
+        ) {
             return;
         }
         if self.intent.kind == OrderGroupKind::Oco {
@@ -623,6 +671,26 @@ mod tests {
         assert!(group.legs.iter().all(|leg| leg.venue_order_id.is_none()));
     }
 
+    #[test]
+    fn native_group_cancel_is_fenced_and_requires_an_untriggered_resource() {
+        let mut group = oco_state();
+        group.begin_submission().unwrap();
+        group.record_venue_group_id("okx-algo-123".into()).unwrap();
+        group.activate_native_group().unwrap();
+        group.begin_native_cancel().unwrap();
+        assert_eq!(group.status, OrderGroupStatus::CancelPending);
+        assert!(group.begin_native_cancel().is_err());
+
+        let mut triggered = oco_state();
+        triggered.begin_submission().unwrap();
+        triggered
+            .record_venue_group_id("okx-algo-456".into())
+            .unwrap();
+        triggered.activate_native_group().unwrap();
+        triggered.legs[0].venue_order_id = Some("child-order-1".into());
+        assert!(triggered.begin_native_cancel().is_err());
+    }
+
     fn snapshot(
         state: &OrderGroupState,
         client_id: u64,
@@ -795,9 +863,11 @@ mod tests {
             .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Unknown, "0"), None)
             .unwrap();
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
-        assert!(group
-            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Accepted, "0"), None)
-            .is_err());
+        assert!(
+            group
+                .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Accepted, "0"), None)
+                .is_err()
+        );
         group
             .reconcile_order_snapshot(
                 snapshot(&group, 1, OrderStatus::Accepted, "0"),

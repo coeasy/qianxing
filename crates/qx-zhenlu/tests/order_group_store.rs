@@ -126,9 +126,11 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
         restored.venue_group_id.as_deref(),
         Some("exchange-list-9001")
     );
-    assert!(store
-        .record_venue_group_id("persisted-oco", "conflicting-list".into())
-        .is_err());
+    assert!(
+        store
+            .record_venue_group_id("persisted-oco", "conflicting-list".into())
+            .is_err()
+    );
     assert_eq!(reopened.group_ids().unwrap(), vec!["persisted-oco"]);
 
     let mut changed = oco_state("persisted-oco");
@@ -143,6 +145,74 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
         .trigger_price = Some(ExactDecimal::parse("71000").unwrap());
     changed.legs[0].order = changed.intent.legs[0].order.clone();
     assert!(store.create(&changed).is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_group_cancel_fence_survives_store_reopen() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qianxing-native-group-cancel-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let group = oco_state("cancel-fenced-oco");
+    store.create(&group).unwrap();
+    assert!(store.begin_submission("cancel-fenced-oco").unwrap());
+    for leg in &group.legs {
+        let mut submitted = leg.order.clone();
+        submitted.status = OrderStatus::Submitted;
+        store
+            .apply_order_snapshot("cancel-fenced-oco", &submitted, None)
+            .unwrap();
+    }
+    store
+        .record_venue_group_id("cancel-fenced-oco", "okx-algo-123".into())
+        .unwrap();
+    store.activate_native_group("cancel-fenced-oco").unwrap();
+    store.begin_native_cancel("cancel-fenced-oco").unwrap();
+
+    let mut reopened = FileOrderGroupStore::new(&root).unwrap();
+    let restored = reopened.load("cancel-fenced-oco").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::CancelPending);
+    assert_eq!(restored.venue_group_id.as_deref(), Some("okx-algo-123"));
+    assert!(restored.legs.iter().all(|leg| leg.venue_order_id.is_none()));
+    assert!(store.begin_native_cancel("cancel-fenced-oco").is_err());
+
+    for leg in &restored.legs {
+        let mut cancel_pending = leg.order.clone();
+        cancel_pending.status = OrderStatus::CancelPending;
+        reopened
+            .apply_order_snapshot("cancel-fenced-oco", &cancel_pending, None)
+            .unwrap();
+    }
+    let cancelling = reopened.load("cancel-fenced-oco").unwrap().unwrap();
+    for leg in &cancelling.legs {
+        let mut cancelled = leg.order.clone();
+        cancelled.status = OrderStatus::Cancelled;
+        reopened
+            .apply_order_snapshot("cancel-fenced-oco", &cancelled, None)
+            .unwrap();
+    }
+    reopened
+        .complete_native_cancel("cancel-fenced-oco")
+        .unwrap();
+    assert_eq!(
+        reopened
+            .load("cancel-fenced-oco")
+            .unwrap()
+            .unwrap()
+            .status,
+        qx_core::OrderGroupStatus::Cancelled
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

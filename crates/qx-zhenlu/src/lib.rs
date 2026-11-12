@@ -1431,6 +1431,14 @@ pub trait OrderGroupStore {
         let _ = group_id;
         Err("订单组存储不支持激活无子订单的原生组资源".into())
     }
+    fn begin_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
+        let _ = group_id;
+        Err("订单组存储不支持原生组撤销围栏".into())
+    }
+    fn complete_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
+        let _ = group_id;
+        Err("订单组存储不支持确认原生组撤销".into())
+    }
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1603,6 +1611,36 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组文件名与组内标识不一致".into());
         }
         group.activate_native_group()?;
+        self.save_locked(&group)
+    }
+
+    fn begin_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload = std::fs::read(&path)
+            .map_err(|error| format!("读取待撤销订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待撤销订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.begin_native_cancel()?;
+        self.save_locked(&group)
+    }
+
+    fn complete_native_cancel(&mut self, group_id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload = std::fs::read(&path)
+            .map_err(|error| format!("读取待确认撤销订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待确认撤销订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.complete_native_cancel()?;
         self.save_locked(&group)
     }
 

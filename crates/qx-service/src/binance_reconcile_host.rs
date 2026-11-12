@@ -2,7 +2,7 @@
 
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::execution_capability_gate::{
-    require_account_query_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
+    AccountQueryPurpose, ExecutionConnectorProfile, require_account_query_execution_capability,
 };
 use crate::market_bridges::venue_balance_fact_identity;
 use crate::pipeline::PipelineStorage;
@@ -14,9 +14,8 @@ use qx_core::{
 };
 use qx_execution::EventLogReconcilePort;
 use qx_runtime::{
-    account_worker_settlement_currency, required_account_event_log, LiveEventPipeline,
-    RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus, WorkerConfig,
-    WorkerContext,
+    LiveEventPipeline, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent, ServiceStatus,
+    WorkerConfig, WorkerContext, account_worker_settlement_currency, required_account_event_log,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -305,6 +304,7 @@ fn sync_binance_order_groups(
             if matches!(
                 current.status,
                 qx_core::OrderGroupStatus::Submitting
+                    | qx_core::OrderGroupStatus::CancelPending
                     | qx_core::OrderGroupStatus::ReconcileRequired
                     | qx_core::OrderGroupStatus::PeerCancelRequired
             ) {
@@ -468,6 +468,7 @@ pub(crate) fn reconcile_binance_order_group_after_cancel(
             current_group.status,
             qx_core::OrderGroupStatus::Active
                 | qx_core::OrderGroupStatus::Submitting
+                | qx_core::OrderGroupStatus::CancelPending
                 | qx_core::OrderGroupStatus::ReconcileRequired
                 | qx_core::OrderGroupStatus::PeerCancelRequired
         ) {
