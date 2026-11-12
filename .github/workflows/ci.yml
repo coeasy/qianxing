@@ -614,6 +614,8 @@ jobs:
         run: cargo clippy -p qx-cli --no-default-features --features "${{ matrix.features }}" --all-targets -- -D warnings
       - name: Check feature build
         run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
+      - name: Build qx-cli binary for process behavior tests
+        run: cargo build -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Test feature build
         run: cargo test -p qx-cli --no-default-features --features "${{ matrix.features }}"
 

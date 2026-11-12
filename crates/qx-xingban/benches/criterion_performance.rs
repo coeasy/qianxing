@@ -107,14 +107,14 @@ fn bench_l2_queue_position_depth_lookup(c: &mut Criterion) {
                 || {
                     let mut matcher = OrderBookMatchingEngine::with_model(model)
                         .expect("valid queue-position model");
-                    for index in 0..depth {
+                    for (index, bid) in snapshot.bids.iter().take(depth).enumerate() {
                         matcher
                             .submit(Order {
                                 client_id: index as u64 + 1,
                                 instrument: instrument.clone(),
                                 side: Side::Buy,
                                 qty: Quantity::from_i64(1),
-                                limit: Some(snapshot.bids[index].price),
+                                limit: Some(bid.price),
                                 status: OrderStatus::PendingSubmit,
                                 filled: Quantity::ZERO,
                                 account_id: "criterion-queue".into(),
