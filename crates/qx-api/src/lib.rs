@@ -2875,7 +2875,7 @@ fn non_empty_or_system(value: String) -> String {
 fn parse_account_activity_options(
     query: &str,
 ) -> Result<AccountActivityReportReadOptionsV1, AppError> {
-    for key in ["after", "before", "limit"] {
+    for key in ["after", "before", "limit", "client_order_id"] {
         let occurrences = query
             .split('&')
             .filter(|part| part.split('=').next() == Some(key))
@@ -2915,6 +2915,7 @@ fn parse_account_activity_options(
     Ok(AccountActivityReportReadOptionsV1 {
         after: parse_cursor("after")?,
         before: parse_cursor("before")?,
+        client_order_id: parse_cursor("client_order_id")?,
         limit,
     })
 }
@@ -3470,16 +3471,19 @@ mod tests {
             .unwrap();
         let mut source = EventLog::new();
         for seq in 0..5 {
-            source.append(Event::new(
-                seq,
-                seq,
-                0,
+            let kind = if seq == 4 {
+                EventKind::Accepted {
+                    client_order_id: 9001,
+                    venue_order_id: Some("okx-order-9001".into()),
+                }
+            } else {
                 EventKind::AccountBalanceSnapshot {
                     account_id: "primary".into(),
                     venue_id: "OKX".into(),
                     balances: Vec::new(),
-                },
-            ));
+                }
+            };
+            source.append(Event::new(seq, seq, 0, kind));
         }
         assert_eq!(
             state
@@ -3530,11 +3534,30 @@ mod tests {
         assert_eq!(previous["events"]["rows"][0]["seq"], 1);
         assert_eq!(previous["events"]["has_newer"], true);
 
+        let order_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&client_order_id=9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(order_trace.status, 200, "{}", order_trace.body);
+        let order_trace: serde_json::Value = serde_json::from_str(&order_trace.body).unwrap();
+        assert_eq!(order_trace["events"]["client_order_id"], 9001);
+        assert_eq!(order_trace["events"]["available_total"], 1);
+        assert_eq!(order_trace["events"]["rows"][0]["seq"], 4);
+        assert_eq!(order_trace["events"]["rows"][0]["client_order_id"], 9001);
+        assert_eq!(
+            order_trace["events"]["rows"][0]["exchange_order_id"],
+            "okx-order-9001"
+        );
+
         for (query, expected_status) in [
             ("after=1&before=2", 400),
             ("limit=0", 400),
             ("limit=301", 400),
             ("limit=2&limit=3", 400),
+            ("client_order_id=nope", 400),
+            ("client_order_id=9&client_order_id=10", 400),
             ("after=999", 409),
         ] {
             let response = service.handle(

@@ -4,6 +4,7 @@ use crate::{AppError, AppErrorCategory};
 use qx_core::{Event, EventKind, EventMetadata};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::VecDeque;
 
 pub const ACCOUNT_ACTIVITY_REPORT_SCHEMA_VERSION_V1: u32 = 1;
 pub const MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1: usize = 300;
@@ -17,6 +18,8 @@ pub struct AccountActivityReportReadOptionsV1 {
     pub after: Option<u64>,
     #[serde(default)]
     pub before: Option<u64>,
+    #[serde(default)]
+    pub client_order_id: Option<u64>,
     #[serde(default = "default_event_limit")]
     pub limit: usize,
 }
@@ -26,6 +29,7 @@ impl Default for AccountActivityReportReadOptionsV1 {
         Self {
             after: None,
             before: None,
+            client_order_id: None,
             limit: DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1,
         }
     }
@@ -67,8 +71,10 @@ pub struct AccountActivityRowsV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountActivityEventPageV1 {
-    /// Number of rows currently available in this account projection's EventLog.
+    /// Number of rows available after applying the optional client order filter.
     pub available_total: u64,
+    #[serde(default)]
+    pub client_order_id: Option<u64>,
     pub oldest_seq: Option<u64>,
     pub latest_seq: Option<u64>,
     pub requested_after: Option<u64>,
@@ -86,6 +92,7 @@ pub struct AccountActivityEventPageV1 {
 /// Account-scoped event row with stable identity and order/run pivots for lifecycle tracing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountActivityEventRowV1 {
+    #[serde(default)]
     pub event_id: String,
     pub seq: u64,
     pub ts: u64,
@@ -98,39 +105,15 @@ pub struct AccountActivityEventRowV1 {
     pub metadata: EventMetadata,
     pub client_order_id: Option<u64>,
     pub exchange_order_id: Option<String>,
+    #[serde(default)]
     pub run_id: String,
+    #[serde(default)]
     pub strategy_id: String,
 }
 
 impl AccountActivityEventRowV1 {
     fn from_event(account_id: &str, venue_id: &str, event: &Event) -> Self {
-        let (client_order_id, exchange_order_id) = match &event.kind {
-            EventKind::OrderSubmitted { order }
-            | EventKind::OrderAmended { order, .. }
-            | EventKind::OrderAmendmentPending { order, .. } => (Some(order.client_id), None),
-            EventKind::Submit { client_order_id }
-            | EventKind::Accepted {
-                client_order_id, ..
-            }
-            | EventKind::Rejected {
-                client_order_id, ..
-            }
-            | EventKind::CancelPending { client_order_id }
-            | EventKind::Cancelled { client_order_id }
-            | EventKind::ReconcileRequired { client_order_id } => (Some(*client_order_id), None),
-            EventKind::Filled { fill } => (Some(fill.order_id), fill.venue_order_id.clone()),
-            EventKind::FeeAdjustment { order_id, .. } => (Some(*order_id), None),
-            EventKind::OrderStatusReconciled {
-                client_order_id,
-                venue_order_id,
-                ..
-            } => (Some(*client_order_id), venue_order_id.clone()),
-            _ => (None, None),
-        };
-        let exchange_order_id = exchange_order_id.or_else(|| match &event.kind {
-            EventKind::Accepted { venue_order_id, .. } => venue_order_id.clone(),
-            _ => None,
-        });
+        let (client_order_id, exchange_order_id) = order_ids_for_event(event);
         let context = &event.metadata.context;
         Self {
             event_id: format!(
@@ -156,6 +139,42 @@ impl AccountActivityEventRowV1 {
             strategy_id: context.strategy_id.clone(),
         }
     }
+}
+
+fn order_ids_for_event(event: &Event) -> (Option<u64>, Option<String>) {
+    let (client_order_id, exchange_order_id) = match &event.kind {
+        EventKind::OrderSubmitted { order }
+        | EventKind::OrderAmended { order, .. }
+        | EventKind::OrderAmendmentPending { order, .. } => (Some(order.client_id), None),
+        EventKind::OrderRiskDecision { decision } => (Some(decision.client_order_id), None),
+        EventKind::ExecutionCapabilityDecision { decision } => {
+            (Some(decision.client_order_id), None)
+        }
+        EventKind::Submit { client_order_id }
+        | EventKind::Accepted {
+            client_order_id, ..
+        }
+        | EventKind::Rejected {
+            client_order_id, ..
+        }
+        | EventKind::CancelPending { client_order_id }
+        | EventKind::Cancelled { client_order_id }
+        | EventKind::ReconcileRequired { client_order_id } => (Some(*client_order_id), None),
+        EventKind::Filled { fill } => (Some(fill.order_id), fill.venue_order_id.clone()),
+        EventKind::FeeAdjustment { order_id, .. } => (Some(*order_id), None),
+        EventKind::LedgerApplied { entry } => (entry.order_id, None),
+        EventKind::OrderStatusReconciled {
+            client_order_id,
+            venue_order_id,
+            ..
+        } => (Some(*client_order_id), venue_order_id.clone()),
+        _ => (None, None),
+    };
+    let exchange_order_id = exchange_order_id.or_else(|| match &event.kind {
+        EventKind::Accepted { venue_order_id, .. } => venue_order_id.clone(),
+        _ => None,
+    });
+    (client_order_id, exchange_order_id)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +233,8 @@ pub fn read_account_activity_report_v1(
         }
         previous_seq = Some(event.seq);
     }
-    let (event_rows, has_older, has_newer) = select_event_page(events, options)?;
+    let (event_rows, available_total, oldest_seq, latest_seq, has_older, has_newer) =
+        select_event_page(events, options)?;
     let first_seq = event_rows.first().map(|event| event.seq);
     let last_seq = event_rows.last().map(|event| event.seq);
     let page_rows = event_rows
@@ -262,16 +282,21 @@ pub fn read_account_activity_report_v1(
         fills: fills.clone(),
         transfers: transfers.clone(),
         events: AccountActivityEventPageV1 {
-            available_total: events.len() as u64,
-            oldest_seq: events.first().map(|event| event.seq),
-            latest_seq: events.last().map(|event| event.seq),
+            available_total,
+            client_order_id: options.client_order_id,
+            oldest_seq,
+            latest_seq,
             requested_after: options.after,
             requested_before: options.before,
             limit: options.limit,
             has_older,
             has_newer,
             previous_before: has_older.then_some(page_oldest).flatten(),
-            next_after: has_newer.then_some(page_newest).flatten(),
+            next_after: if has_newer {
+                page_newest.or_else(|| options.before.map(|before| before.saturating_sub(1)))
+            } else {
+                None
+            },
             rows: page_rows,
         },
         reconciliation: Value::Object(
@@ -315,16 +340,24 @@ fn validate_options(options: &AccountActivityReportReadOptionsV1) -> Result<(), 
 fn select_event_page<'a>(
     events: &'a [Event],
     options: &AccountActivityReportReadOptionsV1,
-) -> Result<(Vec<&'a Event>, bool, bool), AppError> {
+) -> Result<(Vec<&'a Event>, u64, Option<u64>, Option<u64>, bool, bool), AppError> {
     let Some(oldest) = events.first().map(|event| event.seq) else {
         if options.after.is_some_and(|after| after > 0)
             || options.before.is_some_and(|before| before > 0)
         {
             return Err(conflict("账户事件游标超出当前空 EventLog"));
         }
-        return Ok((Vec::new(), false, false));
+        return Ok((Vec::new(), 0, None, None, false, false));
     };
     let latest = events.last().map(|event| event.seq).unwrap_or_default();
+    let mut total = 0_u64;
+    let mut oldest_matching = None;
+    let mut latest_matching = None;
+    let is_match = |event: &Event| {
+        options
+            .client_order_id
+            .is_none_or(|client_order_id| order_ids_for_event(event).0 == Some(client_order_id))
+    };
     if let Some(after) = options.after {
         if after > latest {
             return Err(conflict("账户事件 after 游标超前于当前 EventLog"));
@@ -332,36 +365,87 @@ fn select_event_page<'a>(
         if after.saturating_add(1) < oldest {
             return Err(conflict("账户事件 after 游标早于当前保留 EventLog"));
         }
-        let matching = events
-            .iter()
-            .filter(|event| event.seq > after)
-            .collect::<Vec<_>>();
-        let has_newer = matching.len() > options.limit;
-        let page: Vec<&Event> = matching.iter().take(options.limit).copied().collect();
-        let has_older = page
-            .first()
-            .is_some_and(|first| events.iter().any(|event| event.seq < first.seq));
-        return Ok((page, has_older, has_newer));
+        let mut page = Vec::with_capacity(options.limit);
+        let mut has_newer = false;
+        for event in events.iter().filter(|event| is_match(event)) {
+            total += 1;
+            oldest_matching.get_or_insert(event.seq);
+            latest_matching = Some(event.seq);
+            if event.seq <= after {
+                continue;
+            }
+            if page.len() < options.limit {
+                page.push(event);
+            } else {
+                has_newer = true;
+            }
+        }
+        let has_older = page.first().is_some_and(|first| {
+            events
+                .iter()
+                .any(|event| event.seq < first.seq && is_match(event))
+        });
+        return Ok((
+            page,
+            total,
+            oldest_matching,
+            latest_matching,
+            has_older,
+            has_newer,
+        ));
     }
     if let Some(before) = options.before {
         if before > latest.saturating_add(1) {
             return Err(conflict("账户事件 before 游标超前于当前 EventLog"));
         }
-        let matching = events
+        let mut page = VecDeque::with_capacity(options.limit);
+        let mut has_newer = false;
+        for event in events.iter().filter(|event| is_match(event)) {
+            total += 1;
+            oldest_matching.get_or_insert(event.seq);
+            latest_matching = Some(event.seq);
+            if event.seq >= before {
+                has_newer = true;
+            } else {
+                if page.len() == options.limit {
+                    page.pop_front();
+                }
+                page.push_back(event);
+            }
+        }
+        let has_older = events
             .iter()
-            .filter(|event| event.seq < before)
-            .collect::<Vec<_>>();
-        let start = matching.len().saturating_sub(options.limit);
-        let page = matching[start..].to_vec();
-        let has_older = start > 0;
-        let has_newer = page
-            .last()
-            .is_some_and(|last| events.iter().any(|event| event.seq > last.seq));
-        return Ok((page, has_older, has_newer));
+            .filter(|event| is_match(event) && event.seq < before)
+            .count()
+            > options.limit;
+        return Ok((
+            page.into_iter().collect(),
+            total,
+            oldest_matching,
+            latest_matching,
+            has_older,
+            has_newer,
+        ));
     }
-    let start = events.len().saturating_sub(options.limit);
-    let page = events[start..].iter().collect::<Vec<_>>();
-    Ok((page, start > 0, false))
+    let mut page = VecDeque::with_capacity(options.limit);
+    for event in events.iter().filter(|event| is_match(event)) {
+        total += 1;
+        oldest_matching.get_or_insert(event.seq);
+        latest_matching = Some(event.seq);
+        if page.len() == options.limit {
+            page.pop_front();
+        }
+        page.push_back(event);
+    }
+    let has_older = total > options.limit as u64;
+    Ok((
+        page.into_iter().collect(),
+        total,
+        oldest_matching,
+        latest_matching,
+        has_older,
+        false,
+    ))
 }
 
 fn snapshot_rows(
@@ -517,6 +601,7 @@ mod tests {
             &AccountActivityReportReadOptionsV1 {
                 after: Some(1),
                 before: None,
+                client_order_id: None,
                 limit: 2,
             },
             200,
@@ -539,6 +624,7 @@ mod tests {
             &AccountActivityReportReadOptionsV1 {
                 after: None,
                 before: Some(3),
+                client_order_id: None,
                 limit: 1,
             },
             200,
@@ -585,6 +671,155 @@ mod tests {
     }
 
     #[test]
+    fn account_activity_filters_by_client_order_before_cursor_pagination() {
+        let mut events = events();
+        events[0].kind = EventKind::Accepted {
+            client_order_id: 77,
+            venue_order_id: Some("remote-77".into()),
+        };
+        events[1].kind = EventKind::OrderRiskDecision {
+            decision: qx_core::OrderRiskDecisionFact {
+                client_order_id: 77,
+                instrument: qx_core::InstrumentId::parse("BTC/USDT.OKX").unwrap(),
+                strategy_id: Some("momentum".into()),
+                signal_id: None,
+                intent_id: None,
+                allowed: true,
+                violations: Vec::new(),
+                projected_position_raw: None,
+                projected_margin_raw: None,
+                reference_price_raw: None,
+                rule_set_version: "test".into(),
+            },
+        };
+        events[2].kind = EventKind::Filled {
+            fill: qx_core::Fill {
+                order_id: 77,
+                venue_order_id: Some("remote-77".into()),
+                ..qx_core::Fill::default()
+            },
+        };
+        events[3].kind = EventKind::LedgerApplied {
+            entry: qx_core::LedgerEntry {
+                id: 1,
+                account_id: "primary".into(),
+                currency: "USDT".into(),
+                kind: qx_core::LedgerEntryKind::TradePosition,
+                amount: qx_core::Money::ZERO,
+                instrument: None,
+                quantity: qx_core::Quantity::ZERO,
+                price: None,
+                order_id: Some(77),
+                ts: 4,
+                multiplier: 1,
+                position_side: None,
+                leverage: None,
+                exact_amounts: None,
+            },
+        };
+        events[4].kind = EventKind::Cancelled {
+            client_order_id: 77,
+        };
+
+        let first = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: Some(0),
+                before: None,
+                client_order_id: Some(77),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(first.events.available_total, 5);
+        assert_eq!(first.events.client_order_id, Some(77));
+        assert_eq!(first.events.rows[0].seq, 1);
+        assert_eq!(first.events.next_after, Some(1));
+        assert!(first.events.has_newer);
+
+        let next = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: Some(1),
+                before: None,
+                client_order_id: Some(77),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(next.events.rows[0].seq, 2);
+        assert!(next.events.has_older);
+
+        let previous = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: None,
+                before: Some(2),
+                client_order_id: Some(77),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(previous.events.rows[0].seq, 1);
+        assert!(previous.events.has_newer);
+
+        let before_first = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: None,
+                before: Some(1),
+                client_order_id: Some(77),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert!(before_first.events.rows.is_empty());
+        assert!(before_first.events.has_newer);
+        assert_eq!(before_first.events.next_after, Some(0));
+
+        let ledger = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: Some(3),
+                before: None,
+                client_order_id: Some(77),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert_eq!(ledger.events.rows[0].seq, 4);
+        assert!(matches!(
+            &ledger.events.rows[0].kind,
+            EventKind::LedgerApplied { .. }
+        ));
+
+        let unmatched = read_account_activity_report_v1(
+            &snapshot(),
+            &events,
+            &AccountActivityReportReadOptionsV1 {
+                after: Some(0),
+                before: None,
+                client_order_id: Some(999),
+                limit: 1,
+            },
+            200,
+        )
+        .unwrap();
+        assert!(unmatched.events.rows.is_empty());
+        assert_eq!(unmatched.events.available_total, 0);
+    }
+
+    #[test]
     fn report_rejects_wrong_identity_cursor_conflicts_and_unbounded_limits() {
         let events = events();
         let mut wrong = snapshot();
@@ -607,6 +842,7 @@ mod tests {
                 &AccountActivityReportReadOptionsV1 {
                     after: Some(5),
                     before: Some(4),
+                    client_order_id: None,
                     limit: 2,
                 },
                 200
@@ -622,6 +858,7 @@ mod tests {
                 &AccountActivityReportReadOptionsV1 {
                     after: Some(6),
                     before: None,
+                    client_order_id: None,
                     limit: 2,
                 },
                 200
@@ -637,6 +874,7 @@ mod tests {
                 &AccountActivityReportReadOptionsV1 {
                     after: None,
                     before: None,
+                    client_order_id: None,
                     limit: MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1 + 1,
                 },
                 200

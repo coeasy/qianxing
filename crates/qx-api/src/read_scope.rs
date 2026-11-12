@@ -45,8 +45,16 @@ pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/
 
 /// 带键读面认的两把收窄键。
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
-/// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page.
-const ACCOUNT_ACTIVITY_PARAMS: [&str; 5] = ["account_id", "venue_id", "after", "before", "limit"];
+/// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page,
+/// optionally narrowed to one client order's lifecycle facts.
+const ACCOUNT_ACTIVITY_PARAMS: [&str; 6] = [
+    "account_id",
+    "venue_id",
+    "after",
+    "before",
+    "limit",
+    "client_order_id",
+];
 /// `/events` 与 `/events/live` 在收窄键之外还认游标。
 const EVENT_SCOPED_PARAMS: [&str; 3] = ["account_id", "venue_id", "after"];
 /// `/account/snapshot/diff` 的定位符是基线哈希，不是收窄键。

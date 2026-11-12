@@ -496,16 +496,21 @@ class AppClient(_HttpJsonClient):
         venue_id: str,
         after: int | None = None,
         before: int | None = None,
+        client_order_id: int | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Read one account's bounded activity report and retained event-log page."""
+        """Read one account's report, optionally filtering the event page by client order ID."""
         if not isinstance(account_id, str) or not account_id.strip():
             raise ValueError("account_id must be non-empty")
         if not isinstance(venue_id, str) or not venue_id.strip():
             raise ValueError("venue_id must be non-empty")
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
-        for name, value in (("after", after), ("before", before)):
+        for name, value in (
+            ("after", after),
+            ("before", before),
+            ("client_order_id", client_order_id),
+        ):
             if value is not None and (
                 isinstance(value, bool) or not isinstance(value, int) or value < 0
             ):
@@ -518,6 +523,8 @@ class AppClient(_HttpJsonClient):
             query.append(("after", str(after)))
         if before is not None:
             query.append(("before", str(before)))
+        if client_order_id is not None:
+            query.append(("client_order_id", str(client_order_id)))
         query.append(("limit", str(limit)))
         path = _ACCOUNT_READ_PATHS["activity"] + "?" + urlencode(query)
         return self._request_json(path, method="GET")
@@ -529,6 +536,7 @@ class AppClient(_HttpJsonClient):
         venue_id: str,
         after: int | None = None,
         before: int | None = None,
+        client_order_id: int | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
@@ -537,6 +545,7 @@ class AppClient(_HttpJsonClient):
             venue_id=venue_id,
             after=after,
             before=before,
+            client_order_id=client_order_id,
             limit=limit,
         )
 

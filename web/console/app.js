@@ -110,6 +110,7 @@ const state = {
   defaultVenueId: null,
   activityAccountId: null,
   activityVenueId: null,
+  activityClientOrderId: null,
   activityAfter: null,
   activityBefore: null,
   activityPage: null,
@@ -577,12 +578,14 @@ async function refreshAccountActivity() {
   const meta = $("account-activity-meta");
   const selectedAccount = $("account-activity-account-id").value.trim();
   const selectedVenue = $("account-activity-venue-id").value.trim();
-  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue) {
+  const selectedClientOrderId = $("account-activity-client-order-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId) {
     state.activityAfter = null;
     state.activityBefore = null;
   }
   state.activityAccountId = selectedAccount || null;
   state.activityVenueId = selectedVenue || null;
+  state.activityClientOrderId = selectedClientOrderId || null;
   state.activitySelectionDirty = false;
   if (!state.activityAccountId || !state.activityVenueId) {
     state.activityPage = null;
@@ -599,6 +602,7 @@ async function refreshAccountActivity() {
   });
   if (state.activityAfter !== null) query.set("after", String(state.activityAfter));
   if (state.activityBefore !== null) query.set("before", String(state.activityBefore));
+  if (state.activityClientOrderId !== null) query.set("client_order_id", state.activityClientOrderId);
   const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
   if (!response.ok) {
     state.activityPage = null;
@@ -623,7 +627,7 @@ async function refreshAccountActivity() {
     ["余额字段完整度", ["equity", "available", "margin", "fees", "funding"].map((key) => `${key}:${completeness[`${key}_reported`] === true ? "有" : "无"}`).join(" · ")],
     ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
     ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
-    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
+    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
   ]);
   fillTable("account-activity-events-table", {
     ok: true,
@@ -4032,6 +4036,7 @@ function disconnect() {
   state.baselineSeq = null;
   state.activityAccountId = null;
   state.activityVenueId = null;
+  state.activityClientOrderId = null;
   state.defaultAccountId = null;
   state.defaultVenueId = null;
   state.activityAfter = null;
@@ -4064,6 +4069,7 @@ function disconnect() {
   $("account-activity-next").disabled = true;
   $("account-activity-account-id").value = "";
   $("account-activity-venue-id").value = "";
+  $("account-activity-client-order-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {

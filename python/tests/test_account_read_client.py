@@ -61,13 +61,14 @@ class AccountReadClientTest(unittest.TestCase):
             {"portfolio_id": ["demo portfolio"], "reporting_currency": ["USDT"]},
         )
 
-    def test_activity_report_requires_scope_and_encodes_one_cursor_page(self):
+    def test_activity_report_encodes_order_filter_and_one_cursor_page(self):
         report = {"schema_version": 1, "events": {"rows": []}}
         with patch.object(self.client, "_request_json", return_value=report) as request:
             result = self.client.get_account_activity(
                 account_id="account 1",
                 venue_id="binance/spot",
                 after=42,
+                client_order_id=9001,
                 limit=100,
             )
 
@@ -80,6 +81,7 @@ class AccountReadClientTest(unittest.TestCase):
                 "account_id": ["account 1"],
                 "venue_id": ["binance/spot"],
                 "after": ["42"],
+                "client_order_id": ["9001"],
                 "limit": ["100"],
             },
         )
@@ -90,6 +92,8 @@ class AccountReadClientTest(unittest.TestCase):
             {"account_id": "account-1", "venue_id": ""},
             {"account_id": "account-1", "venue_id": "okx", "after": -1},
             {"account_id": "account-1", "venue_id": "okx", "after": True},
+            {"account_id": "account-1", "venue_id": "okx", "client_order_id": -1},
+            {"account_id": "account-1", "venue_id": "okx", "client_order_id": True},
             {"account_id": "account-1", "venue_id": "okx", "after": 1, "before": 2},
             {"account_id": "account-1", "venue_id": "okx", "limit": 301},
         )
