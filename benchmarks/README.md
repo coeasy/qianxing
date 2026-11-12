@@ -86,6 +86,12 @@ python tools/record_strategy_acceptance.py `
 
 当前可复核负载的统一资源表见[容量与资源画像](../docs/容量与资源画像-2026-10-23.md)；表中数字按证据路径区分合成研究负载、异步 API 压测与未测产品 profile，不构成通用最低配置承诺。
 
+### Linux 资源封顶的真实行情回测
+
+CI 的 `Blocking registered performance regressions` job 在 Ubuntu 24.04 容器中运行固定的 180 天 BTCUSDT 15m 行情回测，并将容器限制为 2 vCPU 与 8 GiB 内存。脚本采集 cgroup v2 配额、镜像身份、结果哈希、p50/p95、吞吐与 RSS；job 会在上传报告前断言实际可见的 CPU/内存上限正好符合配置，任何配额不可见或结果不稳定都会使该步骤失败。报告作为 `performance-baseline` artifact 中的 `linux-resource-bounded-real-data.json` 保存。
+
+该样本建立资源受限 Linux 的可重复基线，仍只测牵星自己的确定 workload。它没有与竞品运行在同一容器和撮合口径，因此不能证明竞品领先；策略和成本结果也仍取决于冻结 spec 的模型假设。
+
 ## Targets（延续 V5 口径）
 
 - kernel event throughput

@@ -184,6 +184,42 @@ jobs:
           key: performance-${{ runner.os }}-${{ runner.arch }}
       - name: Build release CLI
         run: cargo build --release -p qx-cli
+      - name: Measure frozen real-data backtest under Linux resource quotas
+        shell: bash
+        run: |
+          image=ubuntu:24.04
+          docker pull "$image"
+          image_id=$(docker image inspect --format='{{.Id}}' "$image")
+          docker run --rm \
+            --cpus=2 \
+            --memory=8g \
+            --memory-swap=8g \
+            --env CONTAINER_RUNTIME=docker \
+            --env "CONTAINER_IMAGE=$image@$image_id" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --workdir /workspace \
+            "$image" \
+            bash -euc '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-psutil ca-certificates
+              python3 benchmarks/run_real_data_backtest.py \
+                --binary target/release/qx-cli \
+                --bars maturity/fixtures/binance-btcusdt-spot-15m-180d-2026-11-11.json \
+                --spec-template benchmarks/fixtures/binance-btcusdt-spot-15m-backtest.json \
+                --repeats 7 \
+                --out benchmarks/results/linux-resource-bounded-real-data.json
+            '
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("benchmarks/results/linux-resource-bounded-real-data.json").read_text())
+          context = report["runtime_context"]
+          assert context["cgroup_cpu_limit_count"] == 2.0, context
+          assert context["cgroup_memory_limit_bytes"] == 8 * 1024**3, context
+          assert report["deterministic_across_repeats"] is True, report
+          print("Observed 2 CPU quota, 8 GiB memory quota, and stable real-data results.")
+          PY
       - name: Measure end-to-end and kernel performance
         run: |
           python3 benchmarks/run_baseline.py \
@@ -268,6 +304,7 @@ jobs:
             benchmarks/results/rust-micro.json
             benchmarks/results/ashare-rules-on.json
             benchmarks/results/crypto-paper-e2e.json
+            benchmarks/results/linux-resource-bounded-real-data.json
           if-no-files-found: error
           retention-days: 30
 
