@@ -201,23 +201,16 @@ fn reconcile_ccxt_native_order_groups(
             .ok()
             .and_then(|response| response.get("order_group").cloned());
         let Some(remote) = fetched else {
-            if is_bitget {
-                mark_ccxt_group_unresolved(
-                    &group,
-                    worker,
-                    &mut store,
-                    pipeline,
-                    now,
-                    source_seq,
-                    "Bitget OCO 策略/子单查询结果未知",
-                )?;
-            }
-            push_ccxt_group_issue(
-                issues,
+            mark_ccxt_group_query_failed(
                 &group,
-                "native_order_group_query_unknown",
-                "OKX 原生 OCO 查询失败或响应未知",
-            );
+                is_bitget,
+                worker,
+                &mut store,
+                pipeline,
+                now,
+                source_seq,
+                issues,
+            )?;
             continue;
         };
         if is_bitget {
@@ -400,6 +393,31 @@ fn reconcile_ccxt_native_order_groups(
         }
     }
     Ok(updates)
+}
+
+fn mark_ccxt_group_query_failed(
+    group: &qx_core::OrderGroupState,
+    is_bitget: bool,
+    worker: &WorkerConfig,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<(), String> {
+    let (venue_name, reason) = if is_bitget {
+        ("Bitget", "Bitget OCO 策略/子单查询结果未知")
+    } else {
+        ("OKX", "OKX 原生 OCO 查询失败或响应未知")
+    };
+    mark_ccxt_group_unresolved(group, worker, store, pipeline, now, source_seq, reason)?;
+    push_ccxt_group_issue(
+        issues,
+        group,
+        "native_order_group_query_unknown",
+        &format!("{venue_name} 原生 OCO 查询失败或响应未知"),
+    );
+    Ok(())
 }
 
 fn okx_algo_client_order_id(group_id: &str) -> String {
@@ -2207,7 +2225,8 @@ mod native_order_group_reconcile_tests {
     use super::{
         OkxOcoObservation, bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
         bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
-        okx_algo_client_order_id, sync_ccxt_order_groups_from_user_stream,
+        mark_ccxt_group_query_failed, okx_algo_client_order_id,
+        sync_ccxt_order_groups_from_user_stream,
     };
 
     fn protection_order(
@@ -2302,6 +2321,149 @@ mod native_order_group_reconcile_tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn okx_oco_query_failure_persists_reconciliation_barrier_and_unknown_order_facts() {
+        use qx_core::{
+            ConditionalOrderKind, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+            OrderGroupLegIntent, OrderGroupLegRole, OrderGroupStatus, OrderStatus,
+        };
+        use qx_runtime::{
+            LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent, WorkerConfig,
+            WorkerRole,
+        };
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-okx-query-unknown-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        let take_profit = protection_order(
+            81,
+            "account",
+            "OKX",
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let stop_loss = protection_order(
+            82,
+            "account",
+            "OKX",
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let intent = OrderGroupIntent::new(
+            "okx-query-unknown",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit.clone(),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut store = FileOrderGroupStore::new(root.join("order-groups")).unwrap();
+        store
+            .create(&qx_core::OrderGroupState::from_intent(intent).unwrap())
+            .unwrap();
+        assert!(store.begin_submission("okx-query-unknown").unwrap());
+        store
+            .record_venue_group_id("okx-query-unknown", "99887766".into())
+            .unwrap();
+        store.activate_native_group("okx-query-unknown").unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(&root, "account", "USDT").unwrap();
+        let mut source_seq = 0_u64;
+        for order in [&take_profit, &stop_loss] {
+            pipeline.register_order(order.clone(), 10).unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::Accepted {
+                        client_order_id: order.client_id,
+                        venue_order_id: None,
+                    },
+                    10,
+                    10,
+                    source_seq,
+                    format!("accepted:{}", order.client_id),
+                ))
+                .unwrap();
+        }
+        let group = store.load("okx-query-unknown").unwrap().unwrap();
+        assert_eq!(group.status, OrderGroupStatus::Active);
+        let worker = WorkerConfig {
+            id: "okx-reconciler".into(),
+            role: WorkerRole::Reconciler,
+            enabled: true,
+            account_id: Some("account".into()),
+            venue_id: Some("OKX".into()),
+            endpoint: None,
+            symbols: vec![],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        let mut issues = Vec::new();
+        mark_ccxt_group_query_failed(
+            &group,
+            false,
+            &worker,
+            &mut store,
+            &mut pipeline,
+            20,
+            &mut source_seq,
+            &mut issues,
+        )
+        .unwrap();
+
+        let restored = FileOrderGroupStore::new(root.join("order-groups"))
+            .unwrap()
+            .load("okx-query-unknown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.status, OrderGroupStatus::ReconcileRequired);
+        assert!(restored
+            .legs
+            .iter()
+            .all(|leg| leg.order.status == OrderStatus::Unknown));
+        assert_eq!(
+            pipeline
+                .log()
+                .events()
+                .iter()
+                .filter(|event| matches!(
+                    &event.kind,
+                    qx_core::EventKind::ReconcileRequired { client_order_id }
+                        if [81, 82].contains(client_order_id)
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0]["reason"],
+            "OKX 原生 OCO 查询失败或响应未知"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
