@@ -368,6 +368,21 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(request[6]["triggerPriceType"], "mark")
         self.assertEqual(order.order_id, "order-1")
 
+    def test_bracket_shortcut_fails_closed_until_durable_group_execution_exists(self):
+        with self.assertRaises(CcxtConnectorError) as raised:
+            self.client.create_bracket_order(
+                "BTC/USDT.BINANCE",
+                side="buy",
+                order_type="market",
+                amount_exact="0.01",
+                amount_unit="base",
+                stop_loss_trigger_exact="60000",
+                take_profit_trigger_exact="70000",
+            )
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.UNSUPPORTED)
+        self.assertFalse(any(call[0] == "create_order" for call in self.exchange.calls))
+
     def test_okx_native_oco_uses_algo_resource_for_submit_query_and_cancel(self):
         class OkxAlgoExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

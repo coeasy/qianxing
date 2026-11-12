@@ -24,6 +24,18 @@ from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_jsonl_bracket_shortcut_fails_closed_before_exchange_call(self):
+        exchange = FakeExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+
+        result = json.loads(worker.handle_line(json.dumps({"op": "create_bracket_order"})))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["class"], "unsupported")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
     def test_jsonl_bitget_uta_oco_submit_uses_strategy_order_endpoint(self):
         class BitgetUtaExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

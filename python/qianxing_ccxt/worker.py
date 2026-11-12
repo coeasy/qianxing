@@ -283,41 +283,10 @@ class CcxtJsonWorker:
             )
             return {"order": _order_wire(order)}
         if operation == "create_bracket_order":
-            order = self.client.create_bracket_order(
-                str(request["instrument"]),
-                side=str(request["side"]),
-                order_type=str(request["order_type"]),
-                amount_exact=str(request["amount_exact"]),
-                amount_unit=str(request["amount_unit"]),
-                stop_loss_trigger_exact=None
-                if request.get("stop_loss_trigger_exact") is None
-                else str(request["stop_loss_trigger_exact"]),
-                stop_loss_limit_exact=None
-                if request.get("stop_loss_limit_exact") is None
-                else str(request["stop_loss_limit_exact"]),
-                stop_loss_price_type=None
-                if request.get("stop_loss_price_type") is None
-                else str(request["stop_loss_price_type"]),
-                take_profit_trigger_exact=None
-                if request.get("take_profit_trigger_exact") is None
-                else str(request["take_profit_trigger_exact"]),
-                take_profit_limit_exact=None
-                if request.get("take_profit_limit_exact") is None
-                else str(request["take_profit_limit_exact"]),
-                take_profit_price_type=None
-                if request.get("take_profit_price_type") is None
-                else str(request["take_profit_price_type"]),
-                price_exact=None
-                if request.get("price_exact") is None
-                else str(request["price_exact"]),
-                risk_leverage=request.get("risk_leverage"),
-                risk_margin_mode=request.get("risk_margin_mode"),
-                client_order_id=None
-                if request.get("client_order_id") is None
-                else str(request["client_order_id"]),
-                params=dict(request.get("params", {})),
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "Bracket 暂不可提交：该请求尚未接入 Rust 持久订单组与 OMS 对账",
             )
-            return {"order": _order_wire(order)}
         if operation == "create_order_group":
             if request.get("kind") != "oco":
                 raise CcxtConnectorError(

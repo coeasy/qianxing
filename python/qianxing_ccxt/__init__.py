@@ -2576,101 +2576,33 @@ class CcxtExchangeClient:
         client_order_id: str | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> CcxtOrder:
-        """Submit an entry with exchange-attached protective exits in one request."""
-        if stop_loss_trigger_exact is None and take_profit_trigger_exact is None:
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "Bracket 订单至少需要止损或止盈触发价"
-            )
-        if stop_loss_trigger_exact is None and stop_loss_limit_exact is not None:
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "止损限价必须同时提供止损触发价"
-            )
-        if take_profit_trigger_exact is None and take_profit_limit_exact is not None:
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "止盈限价必须同时提供止盈触发价"
-            )
-        if stop_loss_trigger_exact is None and stop_loss_price_type is not None:
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "止损 price type 必须同时提供止损触发价"
-            )
-        if take_profit_trigger_exact is None and take_profit_price_type is not None:
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "止盈 price type 必须同时提供止盈触发价"
-            )
-        market = self.resolve_market(instrument)
-        call_params = dict(params or {})
-        bracket_reduce_only = call_params.get("reduceOnly")
-        if bracket_reduce_only is not None and (
-            not isinstance(bracket_reduce_only, bool) or bracket_reduce_only
-        ):
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID,
-                "Bracket 入场单不能设置 reduceOnly；止损/止盈由附属保护单负责平仓",
-            )
-        if {"stopLoss", "takeProfit"}.intersection(call_params):
-            raise CcxtConnectorError(
-                CcxtErrorClass.INVALID, "params 不能覆盖结构化 bracket 字段"
-            )
-        for label, trigger, limit, price_type in (
-            ("stopLoss", stop_loss_trigger_exact, stop_loss_limit_exact, stop_loss_price_type),
-            (
-                "takeProfit",
-                take_profit_trigger_exact,
-                take_profit_limit_exact,
-                take_profit_price_type,
-            ),
-        ):
-            if trigger is None:
-                continue
-            self._require_order_feature(market.symbol, label)
-            trigger_text = _exact_decimal_wire_text(trigger, field=f"{label}.triggerPrice")
-            if Fraction(trigger_text) <= 0:
-                raise CcxtConnectorError(
-                    CcxtErrorClass.INVALID, f"{label} trigger price 必须为正"
-                )
-            self._require_exact_exchange_precision_text(
-                "price_to_precision",
-                market.symbol,
-                trigger_text,
-                field=f"{label} trigger price",
-                known_step=None,
-            )
-            exit_params: dict[str, str] = {"triggerPrice": trigger_text}
-            if price_type is not None:
-                if price_type not in ("last", "mark", "index"):
-                    raise CcxtConnectorError(
-                        CcxtErrorClass.INVALID,
-                        f"{label} price type 必须为 last、mark 或 index",
-                    )
-                self._require_order_feature(market.symbol, f"{label}.priceType")
-                exit_params["priceType"] = price_type
-            if limit is not None:
-                self._require_order_feature(market.symbol, f"{label}.price")
-                limit_text = _exact_decimal_wire_text(limit, field=f"{label}.price")
-                if Fraction(limit_text) <= 0:
-                    raise CcxtConnectorError(
-                        CcxtErrorClass.INVALID, f"{label} limit price 必须为正"
-                    )
-                self._require_exact_exchange_precision_text(
-                    "price_to_precision",
-                    market.symbol,
-                    limit_text,
-                    field=f"{label} limit price",
-                    known_step=None,
-                )
-                exit_params["price"] = limit_text
-            call_params[label] = exit_params
-        return self.create_order(
+        """Reject the legacy shortcut until Bracket has a durable OMS path.
+
+        CCXT may accept attached take-profit/stop-loss parameters on the entry order,
+        but this shortcut has no Rust order-group identity or restart reconciliation.
+        Returning the entry order alone could falsely imply that both protections exist.
+        """
+        del (
             instrument,
-            side=side,
-            order_type=order_type,
-            amount_exact=amount_exact,
-            amount_unit=amount_unit,
-            price_exact=price_exact,
-            risk_leverage=risk_leverage,
-            risk_margin_mode=risk_margin_mode,
-            client_order_id=client_order_id,
-            params=call_params,
+            side,
+            order_type,
+            amount_exact,
+            amount_unit,
+            stop_loss_trigger_exact,
+            stop_loss_limit_exact,
+            stop_loss_price_type,
+            take_profit_trigger_exact,
+            take_profit_limit_exact,
+            take_profit_price_type,
+            price_exact,
+            risk_leverage,
+            risk_margin_mode,
+            client_order_id,
+            params,
+        )
+        raise CcxtConnectorError(
+            CcxtErrorClass.UNSUPPORTED,
+            "Bracket 暂不可提交：需要先接入 Rust 持久订单组、OMS 与重启对账；请使用已接通的原生 OCO 订单组（仅限受支持的交易所产品）",
         )
 
     def create_okx_oco_order_group(
