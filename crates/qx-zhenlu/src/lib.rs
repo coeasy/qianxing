@@ -1520,11 +1520,17 @@ impl OrderGroupStore for FileOrderGroupStore {
         };
         let mut group: OrderGroupState = serde_json::from_str(&payload)
             .map_err(|error| format!("解析订单组状态失败: {error}"))?;
-        group.validate_persisted()?;
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
         }
-        if group.repair_legacy_rejected_status() {
+        // Older reducers could persist a terminal Bracket even when both
+        // protection orders filled, or a protection filled beyond the known
+        // entry quantity. Repair before validation so startup fails closed
+        // without making that legacy snapshot unreadable.
+        let repaired_bracket = group.repair_bracket_fill_conflict();
+        let repaired_rejected = group.repair_legacy_rejected_status();
+        group.validate_persisted()?;
+        if repaired_bracket || repaired_rejected {
             self.save_locked(&group)?;
         }
         Ok(Some(group))

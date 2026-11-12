@@ -375,7 +375,51 @@ impl OrderGroupState {
                 ));
             }
         }
+        if self.has_bracket_fill_conflict() && self.status != OrderGroupStatus::ReconcileRequired {
+            return Err("Bracket 保护腿成交事实冲突，但订单组未设置待对账屏障".into());
+        }
         Ok(())
+    }
+
+    fn has_bracket_fill_conflict(&self) -> bool {
+        if self.intent.kind != OrderGroupKind::Bracket {
+            return false;
+        }
+        let entry = self
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::Entry);
+        let protections: Vec<_> = self
+            .legs
+            .iter()
+            .filter(|leg| {
+                matches!(
+                    leg.role,
+                    OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+                ) && order_has_fill(&leg.order)
+            })
+            .collect();
+        if protections.len() > 1 {
+            return true;
+        }
+        let (Some(entry), Some(protection)) = (entry, protections.first()) else {
+            return false;
+        };
+        protection
+            .order
+            .filled_decimal()
+            .checked_cmp(entry.order.filled_decimal())
+            .is_none_or(std::cmp::Ordering::is_gt)
+    }
+
+    /// Recover persisted bracket snapshots whose protective fill facts are unsafe to treat as
+    /// terminal. The event reducer uses the same predicate for newly observed venue snapshots.
+    pub fn repair_bracket_fill_conflict(&mut self) -> bool {
+        if self.has_bracket_fill_conflict() && self.status != OrderGroupStatus::ReconcileRequired {
+            self.status = OrderGroupStatus::ReconcileRequired;
+            return true;
+        }
+        false
     }
 
     /// Repair legacy snapshots where an earlier reducer marked the whole group
@@ -552,6 +596,10 @@ impl OrderGroupState {
                 return;
             }
         }
+        if self.has_bracket_fill_conflict() {
+            self.status = OrderGroupStatus::ReconcileRequired;
+            return;
+        }
         if self
             .legs
             .iter()
@@ -631,6 +679,13 @@ fn same_order_quantity(left: &Order, right: &Order) -> bool {
         (None, None) => left.qty == right.qty,
         _ => false,
     }
+}
+
+fn order_has_fill(order: &Order) -> bool {
+    order.filled.raw() > 0
+        || order
+            .exact_amounts
+            .is_some_and(|amounts| amounts.filled.is_positive())
 }
 
 #[cfg(test)]
@@ -931,6 +986,69 @@ mod tests {
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
         assert_eq!(group.legs[1].order.status, OrderStatus::Working);
         assert_eq!(group.legs[2].order.status, OrderStatus::Working);
+    }
+
+    #[test]
+    fn bracket_dual_protection_fills_require_reconciliation() {
+        let mut group = bracket_state();
+        for id in [801, 802, 803] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        group
+            .apply_order_snapshot(snapshot(&group, 801, OrderStatus::Filled, "0.01"), None)
+            .unwrap();
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 802, OrderStatus::Filled, "0.01"),
+                Some("venue-tp".into()),
+            )
+            .unwrap();
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 803, OrderStatus::PartiallyFilled, "0.001"),
+                Some("venue-sl".into()),
+            )
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+    }
+
+    #[test]
+    fn bracket_protection_fill_cannot_exceed_confirmed_entry_quantity() {
+        let mut group = bracket_state();
+        for id in [801, 802, 803] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 801, OrderStatus::PartiallyFilled, "0.004"),
+                None,
+            )
+            .unwrap();
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 802, OrderStatus::PartiallyFilled, "0.005"),
+                Some("venue-tp".into()),
+            )
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
     }
 
     #[test]

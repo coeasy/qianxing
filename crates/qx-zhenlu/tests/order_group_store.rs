@@ -320,3 +320,50 @@ fn loading_legacy_rejected_bracket_preserves_live_protection_for_reconciliation(
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn loading_legacy_filled_bracket_with_dual_protection_fills_repairs_to_reconciliation() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qianxing-legacy-dual-filled-bracket-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = FileOrderGroupStore::new(&root).unwrap();
+    let mut legacy = bracket_state("legacy-dual-filled-bracket");
+    legacy.status = qx_core::OrderGroupStatus::Filled;
+    for leg in &mut legacy.legs {
+        leg.order.status = OrderStatus::Filled;
+        leg.order.exact_amounts.as_mut().unwrap().filled = ExactDecimal::parse("0.01").unwrap();
+    }
+    // An older reducer accepted all three Filled child states as a successful
+    // Bracket. Seed that historical snapshot directly so the load migration
+    // must place it behind the reconciliation barrier.
+    std::fs::write(
+        root.join("legacy-dual-filled-bracket.json"),
+        serde_json::to_vec_pretty(&legacy).unwrap(),
+    )
+    .unwrap();
+
+    let repaired = store.load("legacy-dual-filled-bracket").unwrap().unwrap();
+    assert_eq!(
+        repaired.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+    let persisted: OrderGroupState = serde_json::from_slice(
+        &std::fs::read(root.join("legacy-dual-filled-bracket.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        persisted.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
