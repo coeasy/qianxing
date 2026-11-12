@@ -5,14 +5,14 @@ use qx_api::ReconcileReportSnapshot;
 use qx_core::{EventKind, ExactDecimal, InstrumentId, LedgerEntry, LedgerEntryKind, PositionSide};
 use qx_protocol::{AccountSnapshot, EquityDiagnostic, EquityUnavailableReason};
 use qx_runtime::{
-    account_event_log_name, owns_account_event_log, settlement_currency_for_log,
-    worker_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
+    LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole, account_event_log_name,
+    owns_account_event_log, settlement_currency_for_log, worker_account_event_log,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::pipeline::{event_log_exists, PipelineStorage};
+use crate::pipeline::{PipelineStorage, event_log_exists};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -274,8 +274,15 @@ fn load_order_groups(root: &Path) -> Result<Vec<qx_core::OrderGroupState>, Strin
     use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
 
     let groups_root = root.join("order-groups");
-    if !groups_root.exists() {
-        return Ok(Vec::new());
+    match groups_root.try_exists() {
+        Ok(false) => return Ok(Vec::new()),
+        Ok(true) => {}
+        Err(error) => {
+            return Err(format!(
+                "检查订单组存储目录 {} 失败: {error}",
+                groups_root.display()
+            ));
+        }
     }
     let store = FileOrderGroupStore::new(groups_root)?;
     store
@@ -1150,9 +1157,11 @@ mod tests {
             r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260230"}}}"#,
         )
         .expect("replace calendar mapping with an invalid day");
-        assert!(configured_account_trading_day(&config, "main", "paper")
-            .unwrap_err()
-            .contains("不是有效 YYYYMMDD"));
+        assert!(
+            configured_account_trading_day(&config, "main", "paper")
+                .unwrap_err()
+                .contains("不是有效 YYYYMMDD")
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1417,6 +1426,17 @@ mod tests {
         assert!(unavailable.contains("qx_order_group_metrics_available 0\n"));
         assert!(!unavailable.contains("qx_order_group_status{"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn order_group_metrics_do_not_treat_unqueryable_storage_as_empty() {
+        let root = Path::new("invalid\0order-group-metrics-root");
+
+        let metrics = order_group_metrics_prometheus(root);
+
+        assert!(metrics.contains("qx_order_group_metrics_available 0\n"));
+        assert!(!metrics.contains("qx_order_group_metrics_available 1\n"));
+        assert!(!metrics.contains("qx_order_group_status{"));
     }
 
     #[test]
