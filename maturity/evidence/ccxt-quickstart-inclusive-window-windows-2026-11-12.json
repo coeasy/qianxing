@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-quickstart-inclusive-window-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "CCXT public quickstart inclusive end-time Bar window calculation",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "9eb342ba"
+  },
+  "verification": [
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-cli ccxt_window_",
+      "result": "passed",
+      "passed": 3,
+      "failed": 0,
+      "assertions": [
+        "3d 1h requests cover exactly 72 bars across 3 days without an extra inclusive-end bar",
+        "1d 7m requests round up to 206 bars and cover at least one day",
+        "unbounded, excessive, and calendar-month periods remain rejected"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-cli ccxt_quickstart_rejects_invalid_window_before_writing",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "rustfmt --edition 2024 --check crates/qx-cli/src/quickstart.rs",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "No public exchange request was made; this verifies only deterministic request-window calculation.",
+    "A timeframe that does not divide a day rounds up to the smallest whole candle count covering the requested duration."
+  ]
+}

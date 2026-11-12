@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    cli_args, run_ccxt_builtin_backtest, run_doctor, run_init_with_profile, run_report, run_status,
-    run_unified_backtest, write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
+    CcxtBuiltinBacktestInput, cli_args, run_ccxt_builtin_backtest, run_doctor,
+    run_init_with_profile, run_report, run_status, run_unified_backtest,
+    write_ccxt_quickstart_project_manifest,
 };
 
 /// 不带参数时的项目目录名。默认值不取 `.`：那会把整份产物摊进使用者的当前目录，
@@ -411,10 +412,13 @@ fn quickstart_ccxt_window(days: u32, timeframe: &str) -> Result<CcxtQuickstartWi
         return Err("当前真实行情 quickstart 只接受固定长度周期，例如 15m 或 1h".into());
     }
     let interval_ms = crate::timeframe_to_ms(timeframe)?;
-    let requested_bars = u64::from(days)
+    let window_ms = u64::from(days)
         .checked_mul(86_400_000)
-        .ok_or_else(|| "回测窗口超出范围".to_string())?
-        / interval_ms;
+        .ok_or_else(|| "回测窗口超出范围".to_string())?;
+    // fetch_ohlcv's end_ms is inclusive. Count the candles that cover the requested
+    // duration, then derive the first candle open from that count; subtracting the
+    // whole window directly adds one extra candle whenever the window divides evenly.
+    let requested_bars = window_ms / interval_ms + u64::from(window_ms % interval_ms != 0);
     if requested_bars == 0 || requested_bars > 100_000 {
         return Err(
             "此 quickstart 最多获取 100000 根 Bar；请缩短天数或使用更大的 timeframe".into(),
@@ -429,9 +433,12 @@ fn quickstart_ccxt_window(days: u32, timeframe: &str) -> Result<CcxtQuickstartWi
         .checked_mul(interval_ms)
         .and_then(|aligned| aligned.checked_sub(interval_ms))
         .ok_or_else(|| "系统 UTC 时间早于有效回测窗口".to_string())?;
-    let window_ms = u64::from(days) * 86_400_000;
+    let bar_span_ms = requested_bars
+        .checked_sub(1)
+        .and_then(|count| count.checked_mul(interval_ms))
+        .ok_or_else(|| "回测 Bar 数量超出范围".to_string())?;
     let start_ms = end_ms
-        .checked_sub(window_ms)
+        .checked_sub(bar_span_ms)
         .ok_or_else(|| "回测开始时间超出可表示范围".to_string())?;
     Ok(CcxtQuickstartWindow { start_ms, end_ms })
 }
@@ -468,10 +475,18 @@ mod tests {
     use super::quickstart_ccxt_window;
 
     #[test]
-    fn ccxt_window_uses_closed_bar_boundaries_and_exact_days() {
+    fn ccxt_window_uses_closed_bars_without_an_inclusive_endpoint_extra_bar() {
         let window = quickstart_ccxt_window(3, "1h").unwrap();
         assert_eq!(window.end_ms % 3_600_000, 0);
-        assert_eq!(window.end_ms - window.start_ms, 3 * 86_400_000);
+        assert_eq!((window.end_ms - window.start_ms) / 3_600_000 + 1, 72);
+        assert_eq!(window.end_ms - window.start_ms + 3_600_000, 3 * 86_400_000);
+    }
+
+    #[test]
+    fn ccxt_window_rounds_up_non_dividing_timeframes_to_cover_requested_days() {
+        let window = quickstart_ccxt_window(1, "7m").unwrap();
+        assert_eq!((window.end_ms - window.start_ms) / 420_000 + 1, 206);
+        assert!(window.end_ms - window.start_ms + 420_000 >= 86_400_000);
     }
 
     #[test]
