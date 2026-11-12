@@ -442,8 +442,10 @@ impl OrderGroupState {
                         leg.order.status,
                         OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired
                     )
-                }) && filled_leg.order.status == OrderStatus::Expired
-                {
+                }) && matches!(
+                    filled_leg.order.status,
+                    OrderStatus::Cancelled | OrderStatus::Expired
+                ) {
                     self.status = OrderGroupStatus::PartiallyFilled;
                 } else {
                     self.status = OrderGroupStatus::PeerCancelRequired;
@@ -686,6 +688,50 @@ mod tests {
             .apply_order_snapshot(snapshot(&partial, 1, OrderStatus::Expired, "0.004"), None)
             .unwrap();
         assert_eq!(partial.status, OrderGroupStatus::PartiallyFilled);
+
+        let mut cancelled_partial = oco_state();
+        for id in [1, 2] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                cancelled_partial
+                    .apply_order_snapshot(snapshot(&cancelled_partial, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        cancelled_partial
+            .apply_order_snapshot(
+                snapshot(&cancelled_partial, 1, OrderStatus::PartiallyFilled, "0.004"),
+                None,
+            )
+            .unwrap();
+        cancelled_partial
+            .apply_order_snapshot(
+                snapshot(&cancelled_partial, 2, OrderStatus::CancelPending, "0"),
+                None,
+            )
+            .unwrap();
+        cancelled_partial
+            .apply_order_snapshot(
+                snapshot(&cancelled_partial, 2, OrderStatus::Cancelled, "0"),
+                None,
+            )
+            .unwrap();
+        cancelled_partial
+            .apply_order_snapshot(
+                snapshot(&cancelled_partial, 1, OrderStatus::CancelPending, "0.004"),
+                None,
+            )
+            .unwrap();
+        cancelled_partial
+            .apply_order_snapshot(
+                snapshot(&cancelled_partial, 1, OrderStatus::Cancelled, "0.004"),
+                None,
+            )
+            .unwrap();
+        assert_eq!(cancelled_partial.status, OrderGroupStatus::PartiallyFilled);
 
         let mut empty = oco_state();
         for id in [1, 2] {

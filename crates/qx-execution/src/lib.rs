@@ -1137,6 +1137,14 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             ));
         }
         let event_count = facts.len();
+        let has_cancelled = facts.iter().any(|fact| {
+            matches!(
+                fact,
+                ExecutionEvent::Cancelled {
+                    client_order_id: id
+                } if *id == client_order_id
+            )
+        });
         let has_reconcile = facts
             .iter()
             .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
@@ -1147,6 +1155,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         }
         if has_reconcile {
             return Err("Venue 返回撤单待对账事实，禁止重复撤单".into());
+        }
+        if !has_cancelled {
+            return Err(format!(
+                "订单 {client_order_id} 在撤单竞态中已全部成交，成交事实已入账"
+            ));
         }
         Ok(PortExecutionResult {
             message: format!("CANCELLED venue_events={event_count}"),

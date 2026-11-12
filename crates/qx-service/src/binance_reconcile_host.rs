@@ -321,6 +321,134 @@ fn sync_binance_order_groups(
     Ok(issues)
 }
 
+/// Immediately reconcile an OCO after Binance reports a child cancellation. Binance's
+/// documented cancel behavior cancels the entire order list when one child is cancelled.
+pub(crate) fn reconcile_binance_order_group_after_cancel(
+    pipeline_root: &std::path::Path,
+    pipeline: &mut LiveEventPipeline,
+    worker: &WorkerConfig,
+    venue: &mut BinanceSpotVenue,
+    cancelled_client_order_id: u64,
+    received_ts: u64,
+) -> Result<Vec<serde_json::Value>, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
+    let mut matching_group = None;
+    for group_id in store.group_ids()? {
+        if let Some(group) = store.load(&group_id)? {
+            if group.intent.kind == qx_core::OrderGroupKind::Oco
+                && group.status != qx_core::OrderGroupStatus::Planned
+                && group.legs.iter().any(|leg| {
+                    leg.order.client_id == cancelled_client_order_id
+                        && leg.order.account_id == worker.account_id.as_deref().unwrap_or_default()
+                        && leg.order.instrument.venue.is_binance()
+                })
+            {
+                matching_group = Some(group);
+                break;
+            }
+        }
+    }
+    let Some(mut group) = matching_group else {
+        return Ok(Vec::new());
+    };
+    let group_id = group.intent.group_id.clone();
+    let recovered_child_ids = if group.venue_group_id.is_none() {
+        let (venue_group_id, child_ids) =
+            venue
+                .recover_order_group_identity(&group)
+                .map_err(|error| {
+                    format!("撤单后恢复 Binance OCO 列表身份失败 group_id={group_id}: {error:?}")
+                })?;
+        store.record_venue_group_id(&group_id, venue_group_id)?;
+        group = store
+            .load(&group_id)?
+            .ok_or_else(|| format!("撤单后订单组快照消失 group_id={group_id}"))?;
+        Some(child_ids)
+    } else {
+        None
+    };
+    let group_order_ids = group
+        .legs
+        .iter()
+        .map(|leg| leg.order.client_id)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let symbols = resolve_reconcile_symbols(worker)?;
+    venue
+        .set_reconcile_symbols(symbols.iter())
+        .map_err(|error| format!("设置 Binance OCO 撤单后对账 symbol 失败: {error:?}"))?;
+    venue
+        .refresh_orders(pipeline.orders())
+        .map_err(|error| format!("恢复 Binance OCO 撤单后 connector 状态失败: {error:?}"))?;
+    let remote_orders = venue
+        .fetch_remote_snapshot()
+        .map_err(|error| format!("读取 Binance OCO 撤单后订单快照失败: {error:?}"))?;
+    let group_orders = remote_orders
+        .into_iter()
+        .filter(|snapshot| group_order_ids.contains(&snapshot.client_order_id))
+        .collect::<Vec<_>>();
+    let mut issues =
+        append_missing_reconciled_fills(pipeline, venue, &worker.id, &group_orders, received_ts);
+    let venue_id = worker
+        .venue_id
+        .as_deref()
+        .ok_or_else(|| format!("worker {} 缺少 venue_id", worker.id))?;
+    append_reconciled_order_statuses(
+        pipeline,
+        &worker.id,
+        venue_id,
+        &group_orders,
+        venue,
+        received_ts,
+    )?;
+    venue
+        .refresh_orders(pipeline.orders())
+        .map_err(|error| format!("刷新 Binance OCO 撤单后订单状态失败: {error:?}"))?;
+    let orders = pipeline
+        .orders()
+        .into_iter()
+        .map(|order| (order.client_id, order))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    sync_order_group_snapshots(
+        &mut store,
+        &group,
+        &orders,
+        venue,
+        recovered_child_ids.as_ref(),
+    )?;
+    let current_group = store.load(&group_id)?;
+    if let Some(current_group) = current_group {
+        if matches!(
+            current_group.status,
+            qx_core::OrderGroupStatus::Active
+                | qx_core::OrderGroupStatus::Submitting
+                | qx_core::OrderGroupStatus::ReconcileRequired
+                | qx_core::OrderGroupStatus::PeerCancelRequired
+        ) {
+            issues.push(serde_json::json!({
+                "kind": "order_group_pending",
+                "action": "reconcile_required",
+                "group_id": group_id,
+                "status": format!("{:?}", current_group.status),
+                "reason": "Binance OCO 子单撤销后订单组仍未收敛",
+            }));
+        }
+    }
+    issues.retain(|issue| {
+        issue
+            .get("group_id")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|issue_group_id| issue_group_id == group_id)
+            && issue
+                .get("client_order_id")
+                .and_then(serde_json::Value::as_u64)
+                .is_none_or(|client_order_id| group_order_ids.contains(&client_order_id))
+    });
+    Ok(issues)
+}
+
 fn sync_order_group_snapshots(
     store: &mut qx_zhenlu::FileOrderGroupStore,
     group: &qx_core::OrderGroupState,

@@ -15,6 +15,10 @@ impl<'a, V> GatewayExecutionProbeVenue<'a, V> {
         Self { venue, metrics }
     }
 
+    pub(crate) fn into_inner(self) -> V {
+        self.venue
+    }
+
     fn observe(&mut self, status: GatewayBusinessHealthStatus, observed_ts_ms: u64) {
         self.metrics.observe_gateway_port_business_status(
             ExchangeGatewayPort::VenueExecution,

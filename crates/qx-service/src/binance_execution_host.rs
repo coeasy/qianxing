@@ -3,11 +3,11 @@
 use crate::cancel_order_host::{execute_prepared_cancel_order, prepare_cancel_order};
 use crate::configured_backends::ControlStateBackend;
 use crate::execution_capability_gate::{
-    require_active_orders_execution_capability,
+    require_account_query_execution_capability, require_active_orders_execution_capability,
     require_and_record_submit_command_execution_capability,
     require_and_record_submit_order_group_execution_capability,
     require_cancel_order_execution_capability, require_order_execution_capability,
-    require_submit_command_execution_capability, ExecutionConnectorProfile,
+    require_submit_command_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
 use crate::pipeline::PipelineStorage;
@@ -749,13 +749,49 @@ where
         runtime_config_path,
         ExecutionConnectorProfile::BinanceSpot,
     )?;
+    let group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut is_oco_child = false;
+    for group_id in group_store.group_ids()? {
+        if group_store.load(&group_id)?.is_some_and(|group| {
+            group.intent.kind == qx_core::OrderGroupKind::Oco
+                && group.legs.iter().any(|leg| {
+                    leg.order.client_id == prepared.target.client_order_id
+                        && leg.order.account_id == prepared.target.account_id
+                        && leg.order.instrument.venue.is_binance()
+                })
+        }) {
+            is_oco_child = true;
+            break;
+        }
+    }
+    if is_oco_child {
+        require_account_query_execution_capability(
+            worker,
+            runtime_environment,
+            AccountQueryPurpose::Reconcile,
+            ExecutionConnectorProfile::BinanceSpot,
+        )?;
+    }
     let mut venue = create_venue(worker)?;
+    let restored_orders = prepared.pipeline.orders();
     venue
-        .restore_orders(prepared.pipeline.orders())
+        .restore_orders(restored_orders.clone())
         .map_err(|error| format!("恢复 Binance 撤单订单状态失败: {error:?}"))?;
+    let restored_trade_ids = restored_orders
+        .iter()
+        .map(|order| {
+            prepared
+                .pipeline
+                .fee_trade_ids_for_order(order.client_id)
+                .map(|trade_ids| (order.client_id, trade_ids))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    venue
+        .restore_trade_ids(restored_trade_ids)
+        .map_err(|error| format!("恢复 Binance 撤单成交去重 ID 失败: {error:?}"))?;
     let mut venue = GatewayExecutionProbeVenue::new(venue, metrics);
     let mut source_seq = 0_u64;
-    let result = execute_prepared_cancel_order(
+    let mut result = execute_prepared_cancel_order(
         command,
         worker,
         pipeline_storage,
@@ -764,12 +800,36 @@ where
         now,
         &mut source_seq,
     );
-    let latest_pipeline = pipeline_storage
+    let mut venue = venue.into_inner();
+    let mut latest_pipeline = pipeline_storage
         .open(
             required_account_event_log(worker)?,
             settlement_currency.to_owned(),
         )
         .map_err(|error| format!("刷新 Binance 撤单 EventLog 失败: {error}"))?;
+    let group_issues = crate::binance_reconcile_host::reconcile_binance_order_group_after_cancel(
+        &pipeline_storage.root,
+        &mut latest_pipeline,
+        worker,
+        &mut venue,
+        prepared.target.client_order_id,
+        now,
+    )?;
+    if !group_issues.is_empty() {
+        let summaries = group_issues
+            .iter()
+            .filter_map(|issue| {
+                issue
+                    .get("group_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        result = Err(format!(
+            "Binance OCO 撤单请求已处理，但订单组仍需对账 group_ids=[{summaries}]"
+        ));
+    }
     sync_spread_groups_after_cancel(
         &pipeline_storage.root,
         &latest_pipeline,
@@ -778,6 +838,7 @@ where
     if !dedicated_spread_recovery {
         let validator =
             recovery_order_validator(worker, &prepared.pipeline, Some(runtime_config_path));
+        let venue = GatewayExecutionProbeVenue::new(venue, metrics);
         let (_, recovery) = recover_spread_groups_for_venue(
             SpreadRecoveryContext {
                 root: &pipeline_storage.root,

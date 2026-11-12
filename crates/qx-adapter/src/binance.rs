@@ -784,6 +784,8 @@ struct BinanceOrderWire {
     client_order_id: String,
     #[serde(default)]
     status: String,
+    #[serde(rename = "executedQty", default)]
+    executed_qty: String,
     #[serde(default)]
     fills: Vec<BinanceFillWire>,
 }
@@ -945,6 +947,7 @@ pub struct BinanceSpotVenue {
     /// 退场即升级对账：被退订单再收到回报会落到「成交对应订单不存在」→ ReconcileRequired。
     orders: BTreeMap<u64, Order>,
     venue_order_ids: BTreeMap<u64, String>,
+    recorded_trade_ids: BTreeMap<u64, BTreeSet<String>>,
     seen_fill_keys: BTreeSet<BinanceSeenFillKey>,
     rate_limiter: RateLimiter,
     market_rules: BTreeMap<String, BinanceSpotMarketRules>,
@@ -1002,6 +1005,7 @@ impl BinanceSpotVenue {
             state: ConnectorState::Live,
             orders: BTreeMap::new(),
             venue_order_ids: BTreeMap::new(),
+            recorded_trade_ids: BTreeMap::new(),
             seen_fill_keys: BTreeSet::new(),
             rate_limiter: RateLimiter::new(6_000, 6_000, 0),
             market_rules: BTreeMap::new(),
@@ -1058,6 +1062,31 @@ impl BinanceSpotVenue {
         }
         let evicted = evict_stale_terminal_orders(&mut self.orders);
         self.forget_orders(&evicted);
+        Ok(())
+    }
+
+    /// Restore EventLog trade identities so cancel-time race recovery can emit only fills
+    /// that are missing from the durable ledger.
+    pub fn restore_trade_ids<I>(&mut self, trade_ids: I) -> QxResult<()>
+    where
+        I: IntoIterator<Item = (u64, BTreeSet<String>)>,
+    {
+        for (client_order_id, ids) in trade_ids {
+            if !self.orders.contains_key(&client_order_id) {
+                return Err(QxError::ReconcileRequired(format!(
+                    "恢复 Binance 成交 ID 时订单不存在 client_order_id={client_order_id}"
+                )));
+            }
+            if ids.iter().any(|id| id.trim().is_empty()) {
+                return Err(QxError::ReconcileRequired(format!(
+                    "恢复 Binance 成交 ID 含空值 client_order_id={client_order_id}"
+                )));
+            }
+            self.recorded_trade_ids
+                .entry(client_order_id)
+                .or_default()
+                .extend(ids);
+        }
         Ok(())
     }
 
@@ -1661,6 +1690,8 @@ impl BinanceSpotVenue {
             return;
         }
         self.venue_order_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.recorded_trade_ids
             .retain(|client_id, _| !evicted.contains(client_id));
         self.seen_fill_keys.retain(|key| !evicted.contains(&key.0));
     }
@@ -3067,17 +3098,75 @@ impl Venue for BinanceSpotVenue {
         parameters.insert("origClientOrderId".into(), client_order_id(local_id));
         let response = self.request("DELETE", "/api/v3/order", parameters, ts)?;
         let wire: BinanceOrderWire = parse_success(response, "cancel order")?;
-        if wire.client_order_id != client_order_id(local_id) || wire.status != "CANCELED" {
+        if wire.client_order_id != client_order_id(local_id) || wire.order_id == 0 {
             self.state = ConnectorState::ReconcileRequired;
             return Err(QxError::ReconcileRequired(
-                "Binance 撤单响应与本地订单不一致".into(),
+                "Binance 撤单响应订单身份与本地订单不一致".into(),
             ));
         }
-        self.mark_cancelled(local_id)?;
-        Ok(vec![VenueEvent::Cancelled {
-            client_order_id: local_id,
-            ts,
-        }])
+        let remote_filled = parse_exact_decimal(&wire.executed_qty, "cancel executedQty")?;
+        let local_filled = self
+            .orders
+            .get(&local_id)
+            .and_then(|order| order.exact_amounts.map(|amounts| amounts.filled))
+            .unwrap_or_else(|| {
+                self.orders
+                    .get(&local_id)
+                    .and_then(|order| ExactDecimal::from_parts(order.filled.raw(), 9).ok())
+                    .unwrap_or(ExactDecimal::ZERO)
+            });
+        if remote_filled
+            .checked_cmp(local_filled)
+            .is_none_or(|ordering| ordering.is_lt())
+        {
+            self.state = ConnectorState::ReconcileRequired;
+            return Err(QxError::ReconcileRequired(
+                "Binance 撤单响应累计成交小于本地成交".into(),
+            ));
+        }
+        let recorded_trade_ids = self
+            .recorded_trade_ids
+            .get(&local_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut events = Vec::new();
+        if remote_filled
+            .checked_cmp(local_filled)
+            .is_some_and(|ordering| ordering.is_gt())
+        {
+            match self.fetch_missing_order_fills(local_id, remote_filled, &recorded_trade_ids) {
+                Ok(fills) => events.extend(
+                    fills
+                        .into_iter()
+                        .map(|(_, fill)| VenueEvent::Fill(Box::new(fill))),
+                ),
+                Err(error) => {
+                    self.state = ConnectorState::ReconcileRequired;
+                    return Err(QxError::ReconcileRequired(format!(
+                        "Binance 撤单竞态成交回补失败: {error:?}"
+                    )));
+                }
+            }
+        }
+        match wire.status.as_str() {
+            "CANCELED" => {
+                self.mark_cancelled(local_id)?;
+                events.push(VenueEvent::Cancelled {
+                    client_order_id: local_id,
+                    ts,
+                });
+            }
+            "FILLED" => {
+                self.mark_remote_filled(local_id)?;
+            }
+            other => {
+                self.state = ConnectorState::ReconcileRequired;
+                return Err(QxError::ReconcileRequired(format!(
+                    "Binance 撤单后订单状态为 {other}，结果待对账"
+                )));
+            }
+        }
+        Ok(events)
     }
 
     fn snapshot(&self) -> Vec<VenueOrderSnapshot> {

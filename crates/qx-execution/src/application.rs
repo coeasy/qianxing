@@ -290,8 +290,8 @@ pub fn validate_submit_events(order: &Order, events: &[ExecutionEvent]) -> Resul
     Ok(())
 }
 
-/// 校验 Venue 返回的撤单事实。撤单接口不能把其他订单的成交、接收或撤单
-/// 事实写入当前订单；结果未知时只能返回 `ReconcileRequired`。
+/// 校验 Venue 返回的撤单事实。撤单竞态中，成交事实必须排在 Cancelled 前面；
+/// 撤单接口不能把其他订单的成交、接收或撤单事实写入当前订单。
 pub fn validate_cancel_events(
     client_order_id: u64,
     events: &[ExecutionEvent],
@@ -299,23 +299,36 @@ pub fn validate_cancel_events(
     if events.is_empty() {
         return Err("Venue cancel 未返回执行事实".into());
     }
+    let mut cancellation_seen = false;
     for event in events {
         match event {
+            ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. }
+                if fill.order_id == client_order_id && !cancellation_seen => {}
+            ExecutionEvent::FeeAdjustment { order_id, .. } if *order_id == client_order_id => {}
             ExecutionEvent::Cancelled {
                 client_order_id: actual,
-            }
-            | ExecutionEvent::ReconcileRequired {
+            } if *actual == client_order_id => cancellation_seen = true,
+            ExecutionEvent::ReconcileRequired {
                 client_order_id: actual,
             } if *actual == client_order_id => {}
             ExecutionEvent::Cancelled {
-                client_order_id: actual,
-            }
-            | ExecutionEvent::ReconcileRequired {
                 client_order_id: actual,
             } => {
                 return Err(format!(
                     "撤单事实 client_order_id 不匹配: expected={} actual={}",
                     client_order_id, actual
+                ));
+            }
+            ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
+                return Err(format!(
+                    "撤单竞态成交顺序或 order_id 不匹配: expected={} actual={}",
+                    client_order_id, fill.order_id
+                ));
+            }
+            ExecutionEvent::FeeAdjustment { order_id, .. } => {
+                return Err(format!(
+                    "撤单费用 order_id 不匹配: expected={} actual={}",
+                    client_order_id, order_id
                 ));
             }
             ExecutionEvent::OrderAmendmentPending { .. } | ExecutionEvent::OrderAmended { .. } => {
@@ -484,6 +497,46 @@ mod tests {
             }]
         )
         .is_ok());
+        assert!(validate_cancel_events(
+            order.client_id,
+            &[
+                ExecutionEvent::Fill(Box::new(Fill {
+                    order_id: order.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ..Fill::default()
+                })),
+                ExecutionEvent::Cancelled {
+                    client_order_id: order.client_id,
+                },
+            ]
+        )
+        .is_ok());
+        assert!(validate_cancel_events(
+            order.client_id,
+            &[
+                ExecutionEvent::Cancelled {
+                    client_order_id: order.client_id,
+                },
+                ExecutionEvent::Fill(Box::new(Fill {
+                    order_id: order.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ..Fill::default()
+                })),
+            ]
+        )
+        .is_err());
+        assert!(validate_cancel_events(
+            order.client_id,
+            &[ExecutionEvent::Fill(Box::new(Fill {
+                order_id: order.client_id + 1,
+                qty: Quantity::from_i64(1),
+                price: Price::from_i64(100),
+                ..Fill::default()
+            }))]
+        )
+        .is_err());
         assert!(validate_cancel_events(
             order.client_id,
             &[ExecutionEvent::Accepted {
