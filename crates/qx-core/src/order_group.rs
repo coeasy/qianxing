@@ -224,6 +224,17 @@ impl OrderGroupState {
         })
     }
 
+    /// Durably fence the one allowed submit attempt. Once a group reached
+    /// `Submitting`, a restarted worker must reconcile it instead of replaying
+    /// the venue side effect.
+    pub fn begin_submission(&mut self) -> Result<(), String> {
+        if self.status != OrderGroupStatus::Planned {
+            return Err(format!("订单组 {:?} 不允许再次启动提交", self.status));
+        }
+        self.status = OrderGroupStatus::Submitting;
+        Ok(())
+    }
+
     pub fn validate_persisted(&self) -> Result<(), String> {
         if self.schema_version != ORDER_GROUP_SCHEMA_VERSION {
             return Err(format!(

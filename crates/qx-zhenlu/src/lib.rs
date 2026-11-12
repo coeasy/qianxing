@@ -1391,6 +1391,8 @@ pub trait SpreadOrderGroupStore {
 pub trait OrderGroupStore {
     fn load(&self, group_id: &str) -> Result<Option<OrderGroupState>, String>;
     fn create(&mut self, group: &OrderGroupState) -> Result<(), String>;
+    /// Atomically claim the only venue submit attempt; returns false after restart/replay.
+    fn begin_submission(&mut self, group_id: &str) -> Result<bool, String>;
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1486,6 +1488,24 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组 ID 已被不同意图占用".into());
         }
         self.save_locked(group)
+    }
+
+    fn begin_submission(&mut self, group_id: &str) -> Result<bool, String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取订单组提交意图失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析订单组提交意图失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        if group.begin_submission().is_err() {
+            return Ok(false);
+        }
+        self.save_locked(&group)?;
+        Ok(true)
     }
 
     fn apply_order_snapshot(

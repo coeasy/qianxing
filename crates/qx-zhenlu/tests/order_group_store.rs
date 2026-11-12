@@ -82,6 +82,8 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
     let group = oco_state("persisted-oco");
     store.create(&group).unwrap();
     store.create(&group).unwrap();
+    assert!(store.begin_submission("persisted-oco").unwrap());
+    assert!(!store.begin_submission("persisted-oco").unwrap());
 
     let mut submitted = group.legs[0].order.clone();
     submitted.status = OrderStatus::Submitted;
@@ -100,6 +102,7 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
 
     let reopened = FileOrderGroupStore::new(&root).unwrap();
     let restored = reopened.load("persisted-oco").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Submitting);
     assert_eq!(restored.legs[0].order.status, OrderStatus::Accepted);
     assert_eq!(
         restored.legs[0].venue_order_id.as_deref(),
