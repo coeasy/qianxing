@@ -1298,7 +1298,7 @@ impl ApiService {
         self
     }
 
-    /// 取三份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
+    /// 取四份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
     /// 启动时装进 `state` 的那份。回填是为了让 `QueryPort` 的 trait 读点与 HTTP 端点
     /// 说同一份数据，而不是各念一份（V11 S3）。
     fn query_models(&self) -> Result<ApiQueryModels, String> {

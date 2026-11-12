@@ -7,8 +7,9 @@ const KEYLESS_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
 
 /// 与 `read_scope::MODEL_FILTER_ROUTES` 逐格相等：路由名 + 它真认的收窄键。接线判据那条会用
 /// 源码取数把它核回来，这里这一格是文档侧的承诺。
-const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = [
+const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = [
     ("/account/ledger", &["account_id"]),
+    ("/account/order-groups", &["account_id", "venue_id"]),
     ("/reconcile/reports", &["account_id", "venue_id"]),
 ];
 
@@ -37,7 +38,7 @@ fn semantics_row(route: &str) -> String {
     panic!("「非 200 口径」那张表里没有 {route} 这一行：这张表的口径需要重新核对")
 }
 
-/// 两份现读模型：账簿三条、对账报告三条，两个账户各带不同 venue。
+/// 三类现读模型：账簿、对账报告与订单组；跨账户与跨 venue 过滤都必须生效。
 ///
 /// 收窄是否真的生效只能靠"跨账户互不可见"证明：单账户用例过滤前后条数一样，看不出有没有
 /// 真的按键筛过。
@@ -88,7 +89,79 @@ fn scoped_service() -> ApiService {
     state
         .reconcile_reports
         .insert("w3".into(), report("w3", "shadow", "okx"));
-    ApiService::new(state)
+    let groups = [
+        protective_group("main-oco", 7100, "main", "BTC/USDT.OKX"),
+        protective_group("shadow-oco", 7200, "shadow", "BTC/USDT.BINANCE"),
+    ];
+    let models = qx_api::ApiQueryModels {
+        job_runs: Vec::new(),
+        ledger_entries: state.ledger_entries.clone(),
+        reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+        order_groups: groups.into(),
+    };
+    ApiService::new(state).with_query_models_provider(move || Ok(models.clone()))
+}
+
+fn protective_group(
+    group_id: &str,
+    first_client_id: u64,
+    account_id: &str,
+    instrument: &str,
+) -> qx_core::OrderGroupState {
+    let instrument = InstrumentId::parse(instrument).unwrap();
+    let protective_order = |client_id, kind, trigger| qx_core::Order {
+        client_id,
+        instrument: instrument.clone(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: account_id.into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity: qx_core::ExactDecimal::parse("1").unwrap(),
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(qx_core::ConditionalOrderIntent {
+                kind,
+                trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                trigger_price_type: None,
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    };
+    let intent = qx_core::OrderGroupIntent::new(
+        group_id,
+        qx_core::OrderGroupKind::Oco,
+        qx_core::OrderGroupExecution::NativeRequired,
+        vec![
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::TakeProfit,
+                order: protective_order(
+                    first_client_id,
+                    qx_core::ConditionalOrderKind::TakeProfit,
+                    "110",
+                ),
+            },
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::StopLoss,
+                order: protective_order(
+                    first_client_id + 1,
+                    qx_core::ConditionalOrderKind::StopLoss,
+                    "90",
+                ),
+            },
+        ],
+    )
+    .unwrap();
+    qx_core::OrderGroupState::from_intent(intent).unwrap()
 }
 
 fn array_body(response: &qx_api::ApiResponse) -> Vec<serde_json::Value> {
@@ -130,10 +203,34 @@ fn keyless_read_routes_refuse_a_query_they_cannot_honor() {
     }
 }
 
-/// R31 行为判据：两条模型过滤读面的收窄键真的在结果集上生效，而且跨账户互不可见。
+/// 模型过滤读面的收窄键真的在结果集上生效，而且跨账户互不可见。
 #[test]
 fn model_filter_routes_honor_the_account_scope() {
     let service = scoped_service();
+
+    let all_groups = array_body(&service.handle("GET", "/account/order-groups", "", 1));
+    assert_eq!(all_groups.len(), 2, "无键订单组读面返回全部持久组");
+    let main_groups =
+        array_body(&service.handle("GET", "/account/order-groups?account_id=main", "", 2));
+    assert_eq!(main_groups.len(), 1);
+    assert_eq!(
+        main_groups[0]["intent"]["group_id"].as_str(),
+        Some("main-oco")
+    );
+    let venue_groups =
+        array_body(&service.handle("GET", "/account/order-groups?venue_id=binance", "", 3));
+    assert_eq!(venue_groups.len(), 1);
+    assert_eq!(
+        venue_groups[0]["intent"]["group_id"].as_str(),
+        Some("shadow-oco")
+    );
+    let disjoint = array_body(&service.handle(
+        "GET",
+        "/account/order-groups?account_id=main&venue_id=binance",
+        "",
+        4,
+    ));
+    assert!(disjoint.is_empty(), "账户与 venue 必须同时匹配");
 
     let all = array_body(&service.handle("GET", "/account/ledger", "", 1));
     assert_eq!(all.len(), 3, "不带键的账簿读面照旧读整份现读模型");
@@ -514,7 +611,11 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
     };
     let filter_set = set(&filter);
     assert_eq!(scoped.len(), 8, "带键投影读面含七条兼容入口和账户活动报告");
-    assert_eq!(filter.len(), 2, "模型过滤读面是两条：账簿流水与对账报告");
+    assert_eq!(
+        filter.len(),
+        3,
+        "模型过滤读面是三条：账簿流水、订单组与对账报告"
+    );
     assert_eq!(
         set(&keyless),
         set(&KEYLESS_ROUTES

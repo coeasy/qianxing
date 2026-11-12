@@ -973,7 +973,7 @@ impl Event {
                 operation_id,
                 order,
             } => {
-                h.write_u64(22);
+                h.write_u64(24);
                 h.write_text(operation_id);
                 h.write_u64(order.client_id);
                 h.write_text(&order.instrument.to_string());
@@ -1068,7 +1068,7 @@ impl Event {
                 operation_id,
                 order,
             } => {
-                h.write_u64(23);
+                h.write_u64(25);
                 h.write_text(operation_id);
                 h.write_text(&serde_json::to_string(order).unwrap_or_default());
             }

@@ -305,6 +305,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /account/balances` | `{cash_raw, equity_raw, available_raw, margin_raw, equity_diagnostic}` | `cash_raw` 是按币种聚合的 map（没有快照时是 `{}`），另三格是标量；未算出的钱保持 `null`，不印成 `0`（V11 Q70） |
 | `GET /account/portfolio?portfolio_id=<id>` | 多账户组合 JSON | 按币种返回现金、交易所上报的未实现盈亏和权益；可选折算字段标明 FX 状态与精确十进制值；不做跨账户保证金净额 |
 | `GET /account/ledger[?account_id=]` | 数组 | 读模型来自 `storage.data_dir`，非实时推送；`?account_id=` 在结果集上按账户过滤，过滤不出条目时是空数组而不是 `404`（V13 R31） |
+| `GET /account/order-groups[?account_id=&venue_id=]` | 订单组数组 | 从持久订单组读模型读取；两把键可同时提供并按 AND 过滤。没有匹配组时返回空数组，读模型不可用时返回 `503` |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 数组 | 同上，`ReconcileReportSnapshot` 还带 `venue_id`，所以这把键也认；两把都认时是 AND（V13 R31） |
 | `GET /scheduler/runs`、`/control/audit` | 数组 | 读模型同上，非实时推送；Scheduler 返回活动运行与最多 4,096 条终态保留窗口，`/control/audit` 返回整份现读模型；两条都**没有收窄键**，带任何查询串一律 `400`（V13 R2 #205） |
 | `GET /events?after=<seq>` | `Event` 数组，每格 `{seq, ts, prio, kind, receive_time, engine_time, source_seq, correlation_id, metadata}` | 快照式读取；游标越界 → `409 event_cursor_requires_snapshot` |
@@ -369,7 +370,7 @@ API 运行时若要从账户 EventLog 生成 v5 快照，必须在 `api.account_
 投影存在但还没发布快照时**仍是**文档承诺的 200 空数组 / `null`（快照入口则是 `404
 snapshot_not_found`）：一个账户刚挂上投影、还没算出第一份快照，与这个账户根本不在这份部署里，
 是两件事，合成一个码就读不回来了。`/account/snapshot/diff` 不在这七条里——它的定位符是
-`base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。反过来，那四条整体现读端点里只有两条**没有收窄键**：`/scheduler/runs` 与 `/control/audit` 带任何查询串一律 `400`（第一张表原先在 `/account/ledger` 那一格写着 `[?…]`，而那条臂从头到尾没读过 `query`，递来 `?account_id=shadow` 只会把默认账户的流水念成 shadow 的流水，V13 R2 第十三遍 #205）。`/account/ledger` 与 `/reconcile/reports` 则反过来**真能收窄**——#205 的口径对它们当时只是暂时正确（两条臂确实都没读 `query`），而数据模型一直在：`LedgerEntry` 带 `account_id`，`ReconcileReportSnapshot` 还多带 `venue_id`，只有 `JobRun` 与 `AuditRecord` 两格什么账户列都没有。R31 把这两条臂接上 `read_scope::ScopeFilter::from_query`，键形状合法但过滤不出条目时回 `200` 空数组，而不是投影那族的 `404 account_projection_not_found`：它读的还是整份现读模型，收窄只发生在结果集上，跟「这份部署里没有这个账户的投影」不是一回事，两条通道各说各话才不会把「空流水」读成「这个账户不存在」；账簿那一格只认 `account_id` 不是取巧，`LedgerEntry` 没有 `venue_id` 字段，递 `?venue_id=` 照样 `400` 并点名被拒的那把键。
+`base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。反过来，那四条整体现读端点里只有两条**没有收窄键**：`/scheduler/runs` 与 `/control/audit` 带任何查询串一律 `400`（第一张表原先在 `/account/ledger` 那一格写着 `[?…]`，而那条臂从头到尾没读过 `query`，递来 `?account_id=shadow` 只会把默认账户的流水念成 shadow 的流水，V13 R2 第十三遍 #205）。`/account/ledger`、`/account/order-groups` 与 `/reconcile/reports` 则反过来**真能收窄**——#205 的口径对它们当时只是暂时正确（两条臂确实都没读 `query`），而数据模型一直在：`LedgerEntry` 带 `account_id`，`ReconcileReportSnapshot` 还多带 `venue_id`，只有 `JobRun` 与 `AuditRecord` 两格什么账户列都没有。R31 把账簿与对账两条臂接上 `read_scope::ScopeFilter::from_query`；订单组读面也使用同一收窄规则，键形状合法但过滤不出条目时回 `200` 空数组，而不是投影那族的 `404 account_projection_not_found`：它读的还是整份现读模型，收窄只发生在结果集上，跟「这份部署里没有这个账户的投影」不是一回事，两条通道各说各话才不会把「空流水」读成「这个账户不存在」；账簿那一格只认 `account_id` 不是取巧，`LedgerEntry` 没有 `venue_id` 字段，递 `?venue_id=` 照样 `400` 并点名被拒的那把键。
 
 账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建中，Paper 输入完整时有算点的是 `equity_raw`、`available_raw`、
 `margin_raw`、`fees_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`；**账户级无生产者字段**：`frozen_raw`、
@@ -437,6 +438,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 键形状非法或名单外的查询键；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/portfolio?portfolio_id=` | 多账户组合的逐币种现金、未实现盈亏、权益与估值状态；未配置的组合不存在 | 400 缺少或非法 portfolio_id、或参数名不合法；404 `portfolio_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/ledger[?account_id=]` | 每次请求现读账户日志，启动之后落盘的读得到；`?account_id=` 在结果集上按账户过滤 | 400 带了这条入口不认的查询键（`LedgerEntry` 没有 venue_id 字段，`?venue_id=` 就落在这支，正文点名被拒的那把键）或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/order-groups[?account_id=&venue_id=]` | 读取持久订单组；按首条子腿的账户与 venue 收窄，过滤不出条目时返回 200 空数组 | 400 查询键不合法或为空；503 订单组读模型损坏/不可用；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 每次请求现读对账报告，启动之后落盘的读得到；两把收窄键都认时是 AND | 400 带了这条入口不认的查询键或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /scheduler/runs` | 每次请求现读调度记录，返回所有活动运行与最多 4,096 条终态运行；更早终态以 `scheduler.state_path` 中的作业级 retention anchor 留下日期水位与摘要 | 400 带任何查询串——这条入口没有收窄键（`JobRun` 没有账户列），正文点名被拒的那把键（V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -718,7 +720,7 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 
 仓库自带一个控制台，落在 `web/console/{index.html,app.js,styles.css}`。它的**读面板**只调用
 上表的 `GET` 读面端点（`/health`、`/ready`、`/account/snapshot`、`/account/balances`、
-`/account/orders`、`/account/positions`、`/account/ledger`、`/reconcile/reports`、
+`/account/orders`、`/account/order-groups`、`/account/positions`、`/account/ledger`、`/reconcile/reports`、
 `/scheduler/runs`、`/control/audit`、`/events`、`/events/live`）并接 WebSocket 增量。
 
 它的**写面只有一条**（阶段四 M3' 控制面）：`POST /control/commands`。它**不直接下单**——
