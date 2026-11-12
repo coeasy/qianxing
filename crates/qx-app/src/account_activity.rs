@@ -201,6 +201,10 @@ pub struct AccountActivityCompletenessV1 {
     /// The report describes the projection's retained log and does not infer venue history
     /// before that log's first row.
     pub event_history_scope: String,
+    /// Counts over the complete retained account EventLog, independent of page filters.
+    /// `with_non_account_run_id` excludes the runtime's synthetic `account:<id>` scope.
+    #[serde(default)]
+    pub event_context_coverage: AccountActivityEventContextCoverageV1,
     pub equity_reported: bool,
     pub available_reported: bool,
     pub margin_reported: bool,
@@ -213,6 +217,39 @@ pub struct AccountActivityCompletenessV1 {
     pub orders_truncated: bool,
     pub fills_truncated: bool,
     pub transfers_truncated: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountActivityEventContextCoverageV1 {
+    pub total_events: u64,
+    pub with_correlation_id: u64,
+    pub with_non_account_run_id: u64,
+    pub with_strategy_id: u64,
+    pub with_client_order_id: u64,
+    pub with_exchange_order_id: u64,
+}
+
+impl AccountActivityEventContextCoverageV1 {
+    fn observe(&mut self, event: &Event) {
+        self.total_events = self.total_events.saturating_add(1);
+        if !event.correlation_id.trim().is_empty() {
+            self.with_correlation_id = self.with_correlation_id.saturating_add(1);
+        }
+        let context = &event.metadata.context;
+        if !context.run_id.trim().is_empty() && !context.run_id.starts_with("account:") {
+            self.with_non_account_run_id = self.with_non_account_run_id.saturating_add(1);
+        }
+        if !context.strategy_id.trim().is_empty() {
+            self.with_strategy_id = self.with_strategy_id.saturating_add(1);
+        }
+        let (client_order_id, exchange_order_id) = order_ids_for_event(event);
+        if client_order_id.is_some() {
+            self.with_client_order_id = self.with_client_order_id.saturating_add(1);
+        }
+        if exchange_order_id.is_some() {
+            self.with_exchange_order_id = self.with_exchange_order_id.saturating_add(1);
+        }
+    }
 }
 
 /// Build one account activity page from a canonical account snapshot and its scoped event log.
@@ -245,11 +282,13 @@ pub fn read_account_activity_report_v1(
     };
 
     let mut previous_seq = None;
+    let mut event_context_coverage = AccountActivityEventContextCoverageV1::default();
     for event in events {
         if previous_seq.is_some_and(|previous| event.seq <= previous) {
             return Err(invariant("账户投影 EventLog 序号不是严格递增"));
         }
         previous_seq = Some(event.seq);
+        event_context_coverage.observe(event);
     }
     let selected_page = select_event_page(events, options)?;
     let event_rows = selected_page.rows;
@@ -329,6 +368,7 @@ pub fn read_account_activity_report_v1(
         completeness: AccountActivityCompletenessV1 {
             snapshot_available: true,
             event_history_scope: "retained_account_projection_event_log".into(),
+            event_context_coverage,
             equity_reported: has_non_null(snapshot, "equity_raw"),
             available_reported: has_non_null(snapshot, "available_raw"),
             margin_reported: has_non_null(snapshot, "margin_raw"),
@@ -823,9 +863,90 @@ mod tests {
         assert_eq!(row.run_id, "run-7");
         assert_eq!(row.strategy_id, "momentum");
         assert_eq!(row.correlation_id, "corr-abc");
+        assert_eq!(report.completeness.event_context_coverage.total_events, 1);
+        assert_eq!(
+            report
+                .completeness
+                .event_context_coverage
+                .with_correlation_id,
+            1
+        );
+        assert_eq!(
+            report
+                .completeness
+                .event_context_coverage
+                .with_non_account_run_id,
+            1
+        );
+        assert_eq!(
+            report.completeness.event_context_coverage.with_strategy_id,
+            1
+        );
+        assert_eq!(
+            report
+                .completeness
+                .event_context_coverage
+                .with_client_order_id,
+            1
+        );
+        assert_eq!(
+            report
+                .completeness
+                .event_context_coverage
+                .with_exchange_order_id,
+            1
+        );
         assert_eq!(
             serde_json::to_value(row).unwrap()["kind"]["Accepted"]["venue_order_id"],
             "venue-9001"
+        );
+    }
+
+    #[test]
+    fn account_scope_is_not_counted_as_a_strategy_run_context() {
+        let mut event = Event::new(1, 10, 0, EventKind::Settle);
+        event.metadata.context.run_id = "account:primary".into();
+        event.metadata.context.strategy_id = "external-account-state".into();
+        let report = read_account_activity_report_v1(
+            &snapshot(),
+            &[event],
+            &AccountActivityReportReadOptionsV1::default(),
+            200,
+        )
+        .unwrap();
+        assert_eq!(report.completeness.event_context_coverage.total_events, 1);
+        assert_eq!(
+            report
+                .completeness
+                .event_context_coverage
+                .with_non_account_run_id,
+            0
+        );
+        // This reports field presence only; it does not assert this sentinel is a strategy.
+        assert_eq!(
+            report.completeness.event_context_coverage.with_strategy_id,
+            1
+        );
+    }
+
+    #[test]
+    fn context_coverage_remains_optional_for_older_v1_reports() {
+        let report = read_account_activity_report_v1(
+            &snapshot(),
+            &[],
+            &AccountActivityReportReadOptionsV1::default(),
+            200,
+        )
+        .unwrap();
+        let mut completeness = serde_json::to_value(report.completeness).unwrap();
+        completeness
+            .as_object_mut()
+            .unwrap()
+            .remove("event_context_coverage");
+        let decoded: AccountActivityCompletenessV1 = serde_json::from_value(completeness).unwrap();
+        assert_eq!(
+            decoded.event_context_coverage,
+            AccountActivityEventContextCoverageV1::default()
         );
     }
 

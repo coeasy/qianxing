@@ -106,6 +106,7 @@
       "properties": {
         "snapshot_available": { "type": "boolean" },
         "event_history_scope": { "const": "retained_account_projection_event_log" },
+        "event_context_coverage": { "$ref": "#/$defs/eventContextCoverage" },
         "equity_reported": { "type": "boolean" },
         "available_reported": { "type": "boolean" },
         "margin_reported": { "type": "boolean" },
@@ -122,6 +123,26 @@
     }
   },
   "$defs": {
+    "eventContextCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_events",
+        "with_correlation_id",
+        "with_non_account_run_id",
+        "with_strategy_id",
+        "with_client_order_id",
+        "with_exchange_order_id"
+      ],
+      "properties": {
+        "total_events": { "type": "integer", "minimum": 0 },
+        "with_correlation_id": { "type": "integer", "minimum": 0 },
+        "with_non_account_run_id": { "type": "integer", "minimum": 0 },
+        "with_strategy_id": { "type": "integer", "minimum": 0 },
+        "with_client_order_id": { "type": "integer", "minimum": 0 },
+        "with_exchange_order_id": { "type": "integer", "minimum": 0 }
+      }
+    },
     "nullableUnsigned": {
       "oneOf": [
         { "type": "integer", "minimum": 0 },
