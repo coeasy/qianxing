@@ -84,8 +84,8 @@ mod tests;
 
 pub use account_activity::{
     read_account_activity_report_v1, AccountActivityCompletenessV1, AccountActivityEventPageV1,
-    AccountActivityIdentityV1, AccountActivityReportReadOptionsV1, AccountActivityReportV1,
-    AccountActivityRowsV1, ACCOUNT_ACTIVITY_REPORT_SCHEMA_VERSION_V1,
+    AccountActivityEventRowV1, AccountActivityIdentityV1, AccountActivityReportReadOptionsV1,
+    AccountActivityReportV1, AccountActivityRowsV1, ACCOUNT_ACTIVITY_REPORT_SCHEMA_VERSION_V1,
     DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1, MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1,
     MAX_ACCOUNT_ACTIVITY_SNAPSHOT_ROWS_V1,
 };

@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "09a02533414cf09199b53d4ab40e98ed509841b5174e1b0c4a2168f7fce06afd",
+    "maturity/capability-matrix.yaml": "039d11afbd7546ee79b367ce28d66a2f28abb2668daff6c80d601a33903a7a88",
     "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -211,7 +211,7 @@
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
       "evidence_path_count": 83,
-      "limitation_count": 2
+      "limitation_count": 3
     },
     {
       "id": "qx.domain.release",
@@ -1793,11 +1793,13 @@
           "web/console",
           "deploy/README.md",
           "crates/qx-app/src/run_handle.rs",
+          "crates/qx-app/src/account_activity.rs",
           "crates/qx-api/src/app_runs/persistence.rs",
           "python/qianxing/client_local.py"
         ],
         "limitations": [
-          "Run 生命周期事件现有确定性 event_id=run_id:seq，贯通 Rust/Python/HTTP；旧持久化快照缺 ID 时读取升级。它仍是生命周期事件快照，不是逐事件事务日志，且不含订单/成交事实",
+          "Run 生命周期事件现有确定性 event_id=run_id:seq，贯通 Rust/Python/HTTP；旧持久化快照缺 ID 时读取升级。账户活动 EventLog 行现派生 account/venue/seq 稳定 event_id，展示客户端/交易所订单号与 run/strategy 上下文；这是账户事件页投影，不是跨进程统一事务事件流，也不能证明每个生产者都填充上下文",
+          "该读模型目前不提供订单过滤/钻取、统一 trace/span/指标告警或逐事件持久化恢复；Run 生命周期快照仍不含订单/成交事实",
           "路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"
         ],
         "next_gate": "落方案 §5.x 的逐操作可追溯验收与 Web/桌面 E2E"
