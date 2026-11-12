@@ -7,8 +7,8 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "061ca0c910d9818cf2cab3aa8b3afaf315952a4dc2d6876aaf427f0b6f05ec10",
-    "maturity/capabilities.yaml": "5683e652be095376857b1b89119c61cde998a7dee7b8c3759852797fdf1f4b91",
+    "maturity/capability-matrix.yaml": "feb6eb3553adc4109a20c3a7c3eff1a9821980bb69927dacbb87d4c3d9804154",
+    "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -59,11 +59,13 @@
     "operations": [
       "amend",
       "cancel",
+      "query",
       "submit"
     ],
     "order_types": [
       "limit",
       "market",
+      "oco",
       "stop_loss",
       "take_profit",
       "trailing",
@@ -170,7 +172,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 110,
+      "evidence_path_count": 112,
       "limitation_count": 3
     },
     {
@@ -289,8 +291,8 @@
       ],
       "execution_scope_count": 1,
       "account_query_scope_count": 1,
-      "evidence_path_count": 15,
-      "limitation_count": 3
+      "evidence_path_count": 17,
+      "limitation_count": 4
     },
     {
       "id": "qx.venue.ccxt_process",
@@ -321,7 +323,7 @@
       "execution_scope_count": 8,
       "account_query_scope_count": 6,
       "evidence_path_count": 34,
-      "limitation_count": 6
+      "limitation_count": 7
     },
     {
       "id": "qx.provider.ccxt_bar",
@@ -1247,6 +1249,8 @@
             ".github/workflows/ci.yml venue-acceptance job",
             "crates/qx-app/src/execution_capability_preflight.rs cancel capability evaluation requires a distinct cancel operation on the exact declared scope",
             "crates/qx-service/src/execution_capability_gate.rs Binance queued cancellation is denied before connector startup unless its scope declares cancel; covered by execution_capability_gate tests",
+            "maturity/evidence/binance-oco-native-list-cancel-control-local-validation-2026-11-12.json Binance Spot OCO group cancellation uses DELETE /api/v3/orderList, validates list/child identities, and continues OMS fill recovery; local checks passed but no venue request was made",
+            "maturity/evidence/binance-oco-group-cancel-control-local-validation-2026-11-12.json control parser, Live workflow gate, exact worker routing, and Windows compilation passed; Linux Podman verification did not complete, and no Binance request was made",
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
             "crates/qx-adapter/src/binance.rs BinanceStreamPoll/BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
@@ -1638,7 +1642,7 @@
             "crates/qx-orchestrator/src/tests.rs worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker drives that single source from a consumer: `\" Paper \"` still routes to paper-worker, while `paper-proxy` makes plan_workers fail instead of sending a credential-bearing worker to local paper matching (V13 R1-A3)",
             "crates/qx-cli/src/venue_runtime/worker_runtime.rs worker_settlement_currency and settlement_currency_among_workers now both fall back to crates/qx-core/src/identity.rs DEFAULT_SETTLEMENT_CURRENCY, so a worker that omits `settlement_currency` and the account log whose writers all omit it answer with the same word as the backtest assembly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
-            "crates/qx-cli/tests/unit/control_command_executor_coverage.rs 四条用例：八颗 CommandKind 逐个过真实提交入口（四受理、四以 Invalid 拒绝且拒绝时既不写审计也不留待办）、`executed()` 名单与生产派发者文件双向对齐、`CommandKind::ALL` 与源码里的变体清点数量与顺序都相等、deploy/README.md 那两行受理/拒绝名单与 `executed()` 双向对齐（V13 R2 第十一遍",
+            "crates/qx-cli/tests/unit/control_command_executor_coverage.rs enumerates all eleven CommandKind variants through the real control submission gate (seven accepted, four rejected without audit or pending work), checks the executed list against production dispatch sources in both directions, checks CommandKind::ALL against declaration order, and aligns deploy/README.md acceptance/rejection lists (V13 R2",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
             "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
@@ -2286,7 +2290,7 @@
             "crates/qx-orchestrator/src/tests.rs worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker drives that single source from a consumer: `\" Paper \"` still routes to paper-worker, while `paper-proxy` makes plan_workers fail instead of sending a credential-bearing worker to local paper matching (V13 R1-A3)",
             "crates/qx-cli/src/venue_runtime/worker_runtime.rs worker_settlement_currency and settlement_currency_among_workers now both fall back to crates/qx-core/src/identity.rs DEFAULT_SETTLEMENT_CURRENCY, so a worker that omits `settlement_currency` and the account log whose writers all omit it answer with the same word as the backtest assembly (V13 R1-A4)",
             "crates/qx-cli/tests/unit/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)",
-            "crates/qx-cli/tests/unit/control_command_executor_coverage.rs 四条用例：八颗 CommandKind 逐个过真实提交入口（四受理、四以 Invalid 拒绝且拒绝时既不写审计也不留待办）、`executed()` 名单与生产派发者文件双向对齐、`CommandKind::ALL` 与源码里的变体清点数量与顺序都相等、deploy/README.md 那两行受理/拒绝名单与 `executed()` 双向对齐（V13 R2 第十一遍",
+            "crates/qx-cli/tests/unit/control_command_executor_coverage.rs enumerates all eleven CommandKind variants through the real control submission gate (seven accepted, four rejected without audit or pending work), checks the executed list against production dispatch sources in both directions, checks CommandKind::ALL against declaration order, and aligns deploy/README.md acceptance/rejection lists (V13 R2",
             "crates/qx-api/src/lib.rs `missing_projection_response` 把「带键读法遇到这份部署里没有的投影」收成一次判定，七个读面共用；`qx_api_command_enqueue_failures_total` 是「已受理的控制命令写执行队列失败」唯一的出口，失败不回滚受理也不静默吞掉（V13 R2 第十二遍",
             "crates/qx-api/src/read_scope.rs 将无账户归属列的 `/scheduler/runs` 与 `/control/audit` 收入 `KEYLESS_READ_ROUTES`；账簿与对账报告进入 `MODEL_FILTER_ROUTES`，按各自真实列接受 `account_id` / `venue_id` 过滤，跨账户行为由 `api_read_route_query_contract.rs` 覆盖（V13 R31）",
             "crates/qx-api/src/lib.rs `/account/snapshot/diff` 那条永不返回的 `404 snapshot_not_found` 分支随两张端点表的口径一起收掉：`publish_snapshot` 同批写 `snapshot` 与 `snapshot_history`，基准查得到就一定有当前快照，留着它等于要文档去解释一条取不到的码（V13 R2",
@@ -2354,6 +2358,7 @@
         "limitations": [
           "运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证",
           "余额、订单和成交历史私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified",
+          "订单组级撤销命令只路由到精确匹配的 Binance worker 账户域，操作范围是已有列表身份的 Spot OCO；使用 `DELETE /api/v3/orderList` 并校验双腿终态，再对账恢复竞态成交；没有 Testnet 结果，仍是 implemented-unverified",
           "只覆盖现货；衍生品与多市场未声明"
         ],
         "account_query_scopes": [
@@ -2411,19 +2416,32 @@
                 "order_type": "limit",
                 "quantity_unit": "base",
                 "side": "sell"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "base",
+                "side": "buy"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "base",
+                "side": "sell"
               }
             ],
             "operations": [
               "submit",
-              "cancel"
+              "cancel",
+              "query"
             ],
             "maturity_refs": [
               "binance_direct"
             ],
             "status": "implemented-unverified",
             "evidence": [
-              "crates/qx-adapter/src/binance/tests.rs",
-              "python/examples/ccxt-binance-spot.example.json"
+              "crates/qx-adapter/src/binance.rs",
+              "crates/qx-service/src/binance_execution_host.rs",
+              "crates/qx-service/src/binance_reconcile_host.rs",
+              "crates/qx-adapter/src/binance/tests.rs"
             ]
           }
         ]
@@ -2444,6 +2462,7 @@
           ],
           "operations": [
             "cancel",
+            "query",
             "submit"
           ],
           "order_shapes": [
@@ -2466,6 +2485,16 @@
               "order_type": "market",
               "quantity_unit": "base",
               "side": "sell"
+            },
+            {
+              "order_type": "oco",
+              "quantity_unit": "base",
+              "side": "buy"
+            },
+            {
+              "order_type": "oco",
+              "quantity_unit": "base",
+              "side": "sell"
             }
           ],
           "maturity_refs": [
@@ -2473,8 +2502,10 @@
           ],
           "status": "implemented-unverified",
           "evidence": [
-            "crates/qx-adapter/src/binance/tests.rs",
-            "python/examples/ccxt-binance-spot.example.json"
+            "crates/qx-adapter/src/binance.rs",
+            "crates/qx-service/src/binance_execution_host.rs",
+            "crates/qx-service/src/binance_reconcile_host.rs",
+            "crates/qx-adapter/src/binance/tests.rs"
           ]
         }
       ],
@@ -2522,6 +2553,8 @@
             ".github/workflows/ci.yml venue-acceptance job",
             "crates/qx-app/src/execution_capability_preflight.rs cancel capability evaluation requires a distinct cancel operation on the exact declared scope",
             "crates/qx-service/src/execution_capability_gate.rs Binance queued cancellation is denied before connector startup unless its scope declares cancel; covered by execution_capability_gate tests",
+            "maturity/evidence/binance-oco-native-list-cancel-control-local-validation-2026-11-12.json Binance Spot OCO group cancellation uses DELETE /api/v3/orderList, validates list/child identities, and continues OMS fill recovery; local checks passed but no venue request was made",
+            "maturity/evidence/binance-oco-group-cancel-control-local-validation-2026-11-12.json control parser, Live workflow gate, exact worker routing, and Windows compilation passed; Linux Podman verification did not complete, and no Binance request was made",
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
             "crates/qx-adapter/src/binance.rs BinanceStreamPoll/BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
@@ -2566,7 +2599,8 @@
         ],
         "limitations": [
           "运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型",
-          "条件单形态虽已列入下方逐产品 execution_scopes，但全部仍是 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行",
+          "OKX 原生 OCO 已接通提交、查询、取消、触发子腿恢复与订单组/OMS 对账；能力按下方 OKX Spot/Perpetual OCO scopes 分列，但仍为 implemented-unverified，未通过 OKX Sandbox；未知或并发成交保留 ReconcileRequired，不自动重放",
+          "条件单形态虽已列入下方逐产品 execution_scopes，但除单独声明的 OCO 形态外全部仍为 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行",
           "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收",
           "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收",
           "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保",
@@ -2793,14 +2827,17 @@
             "operations": [
               "submit",
               "cancel",
-              "amend"
+              "amend",
+              "query"
             ],
             "maturity_refs": [
               "ccxt_rest"
             ],
             "status": "implemented-unverified",
             "evidence": [
+              "crates/qx-adapter/src/binance.rs",
               "crates/qx-adapter/src/ccxt/tests.rs",
+              "crates/qx-service/src/binance_reconcile_host.rs",
               "python/examples/ccxt-binance-spot.example.json"
             ]
           },
@@ -3057,12 +3094,23 @@
                 "order_type": "trailing",
                 "quantity_unit": "base",
                 "side": "sell"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "base",
+                "side": "buy"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "base",
+                "side": "sell"
               }
             ],
             "operations": [
               "submit",
               "cancel",
-              "amend"
+              "amend",
+              "query"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3070,6 +3118,8 @@
             "status": "implemented-unverified",
             "evidence": [
               "crates/qx-adapter/src/ccxt.rs",
+              "crates/qx-service/src/ccxt_execution_host.rs",
+              "crates/qx-service/src/ccxt_reconcile_host.rs",
               "python/examples/ccxt-okx-spot.example.json"
             ]
           },
@@ -3147,12 +3197,23 @@
                 "order_type": "trailing",
                 "quantity_unit": "contracts",
                 "side": "sell"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "contracts",
+                "side": "buy"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "contracts",
+                "side": "sell"
               }
             ],
             "operations": [
               "submit",
               "cancel",
-              "amend"
+              "amend",
+              "query"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3160,6 +3221,8 @@
             "status": "implemented-unverified",
             "evidence": [
               "crates/qx-adapter/src/ccxt.rs",
+              "crates/qx-service/src/ccxt_execution_host.rs",
+              "crates/qx-service/src/ccxt_reconcile_host.rs",
               "deploy/qianxing.runtime.ccxt.example.json",
               "python/examples/ccxt-okx-swap.example.json"
             ]
@@ -3238,12 +3301,23 @@
                 "order_type": "trailing",
                 "quantity_unit": "contracts",
                 "side": "sell"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "contracts",
+                "side": "buy"
+              },
+              {
+                "order_type": "oco",
+                "quantity_unit": "contracts",
+                "side": "sell"
               }
             ],
             "operations": [
               "submit",
               "cancel",
-              "amend"
+              "amend",
+              "query"
             ],
             "maturity_refs": [
               "ccxt_rest"
@@ -3251,6 +3325,8 @@
             "status": "implemented-unverified",
             "evidence": [
               "crates/qx-adapter/src/ccxt.rs",
+              "crates/qx-service/src/ccxt_execution_host.rs",
+              "crates/qx-service/src/ccxt_reconcile_host.rs",
               "deploy/qianxing.runtime.ccxt.example.json",
               "python/examples/ccxt-okx-swap.example.json"
             ]
@@ -3462,6 +3538,7 @@
           "operations": [
             "amend",
             "cancel",
+            "query",
             "submit"
           ],
           "order_shapes": [
@@ -3531,7 +3608,9 @@
           ],
           "status": "implemented-unverified",
           "evidence": [
+            "crates/qx-adapter/src/binance.rs",
             "crates/qx-adapter/src/ccxt/tests.rs",
+            "crates/qx-service/src/binance_reconcile_host.rs",
             "python/examples/ccxt-binance-spot.example.json"
           ]
         },
@@ -3731,6 +3810,7 @@
           "operations": [
             "amend",
             "cancel",
+            "query",
             "submit"
           ],
           "order_shapes": [
@@ -3751,6 +3831,16 @@
             },
             {
               "order_type": "market",
+              "quantity_unit": "base",
+              "side": "sell"
+            },
+            {
+              "order_type": "oco",
+              "quantity_unit": "base",
+              "side": "buy"
+            },
+            {
+              "order_type": "oco",
               "quantity_unit": "base",
               "side": "sell"
             },
@@ -3801,6 +3891,8 @@
           "status": "implemented-unverified",
           "evidence": [
             "crates/qx-adapter/src/ccxt.rs",
+            "crates/qx-service/src/ccxt_execution_host.rs",
+            "crates/qx-service/src/ccxt_reconcile_host.rs",
             "python/examples/ccxt-okx-spot.example.json"
           ]
         },
@@ -3821,6 +3913,7 @@
           "operations": [
             "amend",
             "cancel",
+            "query",
             "submit"
           ],
           "order_shapes": [
@@ -3841,6 +3934,16 @@
             },
             {
               "order_type": "market",
+              "quantity_unit": "contracts",
+              "side": "sell"
+            },
+            {
+              "order_type": "oco",
+              "quantity_unit": "contracts",
+              "side": "buy"
+            },
+            {
+              "order_type": "oco",
               "quantity_unit": "contracts",
               "side": "sell"
             },
@@ -3891,6 +3994,8 @@
           "status": "implemented-unverified",
           "evidence": [
             "crates/qx-adapter/src/ccxt.rs",
+            "crates/qx-service/src/ccxt_execution_host.rs",
+            "crates/qx-service/src/ccxt_reconcile_host.rs",
             "deploy/qianxing.runtime.ccxt.example.json",
             "python/examples/ccxt-okx-swap.example.json"
           ]
@@ -3912,6 +4017,7 @@
           "operations": [
             "amend",
             "cancel",
+            "query",
             "submit"
           ],
           "order_shapes": [
@@ -3932,6 +4038,16 @@
             },
             {
               "order_type": "market",
+              "quantity_unit": "contracts",
+              "side": "sell"
+            },
+            {
+              "order_type": "oco",
+              "quantity_unit": "contracts",
+              "side": "buy"
+            },
+            {
+              "order_type": "oco",
               "quantity_unit": "contracts",
               "side": "sell"
             },
@@ -3982,6 +4098,8 @@
           "status": "implemented-unverified",
           "evidence": [
             "crates/qx-adapter/src/ccxt.rs",
+            "crates/qx-service/src/ccxt_execution_host.rs",
+            "crates/qx-service/src/ccxt_reconcile_host.rs",
             "deploy/qianxing.runtime.ccxt.example.json",
             "python/examples/ccxt-okx-swap.example.json"
           ]

@@ -47,6 +47,783 @@ fn ccxt_reconcile_call(
     }
 }
 
+fn reconcile_ccxt_native_order_groups(
+    venue: &mut CcxtProcessVenue,
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    runtime_config_path: &std::path::Path,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let mut store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut updates = 0_usize;
+    let group_ids = store.group_ids()?;
+    for group_id in group_ids {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
+        };
+        if group.intent.kind != qx_core::OrderGroupKind::Oco
+            || group.legs.iter().any(|leg| {
+                leg.order.account_id != worker.account_id.as_deref().unwrap_or_default()
+                    || !leg
+                        .order
+                        .instrument
+                        .venue
+                        .as_str()
+                        .eq_ignore_ascii_case(worker.venue_id.as_deref().unwrap_or_default())
+            })
+            || matches!(
+                group.status,
+                qx_core::OrderGroupStatus::Planned
+                    | qx_core::OrderGroupStatus::Filled
+                    | qx_core::OrderGroupStatus::Cancelled
+                    | qx_core::OrderGroupStatus::Rejected
+            )
+        {
+            continue;
+        }
+        let client_id = okx_algo_client_order_id(&group.intent.group_id);
+        let mut request = serde_json::json!({
+            "op": "fetch_order_group",
+            "kind": "oco",
+            "instrument": group.legs[0].order.instrument.to_string(),
+        });
+        if let Some(algo_id) = group.venue_group_id.as_deref() {
+            request["algo_id"] = serde_json::Value::String(algo_id.to_owned());
+        } else {
+            request["algo_client_order_id"] = serde_json::Value::String(client_id.clone());
+        }
+        let fetched = venue
+            .stream_call(request)
+            .ok()
+            .and_then(|response| response.get("order_group").cloned());
+        let Some(remote) = fetched else {
+            push_ccxt_group_issue(
+                issues,
+                &group,
+                "native_order_group_query_unknown",
+                "OKX 原生 OCO 查询失败或响应未知",
+            );
+            continue;
+        };
+        let remote_algo_id = remote
+            .get("algo_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let remote_client_id = remote
+            .get("algo_client_order_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let instrument = group.legs[0].order.instrument.to_string();
+        if remote_algo_id.is_empty()
+            || !remote_algo_id.bytes().all(|byte| byte.is_ascii_digit())
+            || (!remote_client_id.is_empty() && remote_client_id != client_id)
+            || (group.venue_group_id.is_none() && remote_client_id != client_id)
+            || remote.get("instrument").and_then(serde_json::Value::as_str)
+                != Some(instrument.as_str())
+            || remote.get("order_type").and_then(serde_json::Value::as_str) != Some("oco")
+            || group
+                .venue_group_id
+                .as_deref()
+                .is_some_and(|known| known != remote_algo_id)
+        {
+            mark_ccxt_group_unresolved(
+                &group,
+                worker,
+                &mut store,
+                pipeline,
+                now,
+                source_seq,
+                "OKX OCO 查询返回的 algo/client/instrument 身份不匹配",
+            )?;
+            push_ccxt_group_issue(
+                issues,
+                &group,
+                "native_order_group_identity_mismatch",
+                "OKX 原生 OCO 查询身份与本地订单组不匹配",
+            );
+            continue;
+        }
+        if group.venue_group_id.is_none() {
+            store.record_venue_group_id(&group.intent.group_id, remote_algo_id.to_owned())?;
+        }
+        let observation = match classify_okx_oco_observation(&remote) {
+            Ok(observation) => observation,
+            Err(reason) => {
+            mark_ccxt_group_unresolved(
+                &group,
+                worker,
+                &mut store,
+                pipeline,
+                now,
+                source_seq,
+                reason,
+            )?;
+                push_ccxt_group_issue(issues, &group, "native_order_group_fact_incomplete", reason);
+                continue;
+            }
+        };
+        match observation {
+            OkxOcoObservation::Live => {
+                if group.status == qx_core::OrderGroupStatus::Submitting {
+                    store.activate_native_group(&group.intent.group_id)?;
+                } else if group.status == qx_core::OrderGroupStatus::ReconcileRequired {
+                    let mut snapshots = Vec::new();
+                    let mut complete = true;
+                    for leg in &group.legs {
+                        let Some(current) = pipeline
+                            .orders()
+                            .into_iter()
+                            .find(|order| order.client_id == leg.order.client_id)
+                        else {
+                            complete = false;
+                            break;
+                        };
+                        let snapshot = if current.status == qx_core::OrderStatus::Accepted
+                            || current.status == qx_core::OrderStatus::Working
+                        {
+                            current
+                        } else if current
+                            .status
+                            .can_transition_to(qx_core::OrderStatus::Accepted)
+                        {
+                            *source_seq = (*source_seq).saturating_add(1);
+                            pipeline
+                                .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                                    qx_runtime::RuntimeExternalEvent::Accepted {
+                                        client_order_id: leg.order.client_id,
+                                        venue_order_id: None,
+                                    },
+                                    now,
+                                    now,
+                                    *source_seq,
+                                    format!(
+                                        "{}:okx-oco-live:{}",
+                                        worker.id, leg.order.client_id
+                                    ),
+                                ))
+                                .map_err(|error| {
+                                    format!("归约 OKX OCO live 子腿事实失败: {error:?}")
+                                })?;
+                            let Some(snapshot) = pipeline
+                                .orders()
+                                .into_iter()
+                                .find(|order| order.client_id == leg.order.client_id)
+                            else {
+                                complete = false;
+                                break;
+                            };
+                            updates = updates.saturating_add(1);
+                            snapshot
+                        } else {
+                            mark_ccxt_group_unresolved(
+                                &group,
+                                worker,
+                                &mut store,
+                                pipeline,
+                                now,
+                                source_seq,
+                                "已确认 OCO 仍 live，但子腿状态不能收敛到 accepted",
+                            )?;
+                            complete = false;
+                            break;
+                        };
+                        snapshots.push((snapshot, None));
+                    }
+                    if complete && snapshots.len() == group.legs.len() {
+                        store_ccxt_group_snapshots(
+                            &group.intent.group_id,
+                            snapshots,
+                            true,
+                            &mut store,
+                        )?;
+                    }
+                }
+            }
+            OkxOcoObservation::Cancelled => {
+                updates = updates.saturating_add(reconcile_ccxt_cancelled_native_group(
+                    &group,
+                    worker,
+                    &mut store,
+                    pipeline,
+                    now,
+                    source_seq,
+                )?);
+            }
+            OkxOcoObservation::Triggered(order_ids) => {
+                updates = updates.saturating_add(reconcile_ccxt_triggered_native_group(
+                    &group,
+                    &remote,
+                    &order_ids,
+                    venue,
+                    worker,
+                    runtime_config_path,
+                    &mut store,
+                    pipeline,
+                    now,
+                    source_seq,
+                    issues,
+                )?);
+            }
+            OkxOcoObservation::Unresolved(state) => {
+                mark_ccxt_group_unresolved(
+                    &group,
+                    worker,
+                    &mut store,
+                    pipeline,
+                    now,
+                    source_seq,
+                    &format!("OKX OCO 状态 {state:?} 尚不能安全归约"),
+                )?;
+                push_ccxt_group_issue(
+                    issues,
+                    &group,
+                    "native_order_group_state_unresolved",
+                    &format!("OKX OCO 状态 {state:?} 尚不能安全归约"),
+                );
+            }
+        }
+    }
+    Ok(updates)
+}
+
+fn okx_algo_client_order_id(group_id: &str) -> String {
+    let mut hash = qx_core::Fnv1a::new();
+    hash.write_text(group_id);
+    format!("QX{:016X}", hash.finish())
+}
+
+enum OkxOcoObservation {
+    Live,
+    Cancelled,
+    Triggered(Vec<serde_json::Value>),
+    Unresolved(String),
+}
+
+fn classify_okx_oco_observation(
+    remote: &serde_json::Value,
+) -> Result<OkxOcoObservation, &'static str> {
+    let state = remote
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("OKX OCO 查询缺少 state")?;
+    let order_ids = remote
+        .get("order_ids")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .ok_or("OKX OCO 查询缺少 ordIdList")?;
+    if order_ids.iter().any(|order_id| {
+        !order_id
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+    }) {
+        return Err("OKX OCO 查询 ordIdList 含非法子单 ID");
+    }
+    let actual_size = remote
+        .get("actual_size")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| qx_core::ExactDecimal::parse(text).ok())
+        .ok_or("OKX OCO 查询 actualSz 缺失或精度非法")?;
+    if actual_size.is_negative() {
+        return Err("OKX OCO 查询 actualSz 为负数");
+    }
+    match state {
+        "live" if order_ids.is_empty() && actual_size.is_zero() => {
+            Ok(OkxOcoObservation::Live)
+        }
+        "canceled" if order_ids.is_empty() && actual_size.is_zero() => {
+            Ok(OkxOcoObservation::Cancelled)
+        }
+        "effective" | "partially_effective"
+            if order_ids.len() == 1 && actual_size.is_positive() =>
+        {
+            Ok(OkxOcoObservation::Triggered(order_ids))
+        }
+        "live" | "canceled" | "effective" | "partially_effective" => {
+            Err("OKX OCO state 与 ordIdList/actualSz 不一致")
+        }
+        _ => Ok(OkxOcoObservation::Unresolved(state.to_owned())),
+    }
+}
+
+fn push_ccxt_group_issue(
+    issues: &mut Vec<serde_json::Value>,
+    group: &qx_core::OrderGroupState,
+    code: &str,
+    message: &str,
+) {
+    issues.push(serde_json::json!({
+        "kind": code,
+        "source": "ccxt.reconcile.order_groups",
+        "reason": message,
+        "observed": true,
+        "group_id": group.intent.group_id,
+        "venue_group_id": group.venue_group_id,
+        "account_id": group.legs.first().map(|leg| leg.order.account_id.as_str()),
+        "venue_id": group.legs.first().map(|leg| leg.order.instrument.venue.as_str()),
+        "client_order_id": null,
+        "venue_id": group.legs.first().map(|leg| leg.order.instrument.venue.as_str()),
+        "instrument": group.legs.first().map(|leg| leg.order.instrument.to_string()),
+    }));
+}
+
+fn store_ccxt_group_snapshots(
+    group_id: &str,
+    snapshots: Vec<(qx_core::Order, Option<String>)>,
+    reconciling: bool,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+) -> Result<(), String> {
+    if snapshots.is_empty() {
+        return Err("订单组对账没有可持久化的子腿事实".into());
+    }
+    let final_index = snapshots.len() - 1;
+    for (index, (snapshot, remote_id)) in snapshots.into_iter().enumerate() {
+        if reconciling && index < final_index {
+            store.record_order_snapshot_during_reconciliation(
+                group_id,
+                &snapshot,
+                remote_id,
+            )?;
+        } else if reconciling {
+            store.reconcile_order_snapshot(group_id, &snapshot, remote_id)?;
+        } else {
+            store.apply_order_snapshot(group_id, &snapshot, remote_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn mark_ccxt_group_unresolved(
+    group: &qx_core::OrderGroupState,
+    worker: &WorkerConfig,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    reason: &str,
+) -> Result<(), String> {
+    store.require_reconciliation(&group.intent.group_id)?;
+    for leg in &group.legs {
+        let Some(current) = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+        else {
+            continue;
+        };
+        if current.status.is_terminal() || current.status == qx_core::OrderStatus::Unknown {
+            continue;
+        }
+        *source_seq = (*source_seq).saturating_add(1);
+        pipeline
+            .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                qx_runtime::RuntimeExternalEvent::ReconcileRequired {
+                    client_order_id: leg.order.client_id,
+                },
+                now,
+                now,
+                *source_seq,
+                format!(
+                    "{}:okx-oco-unknown:{}:{}",
+                    worker.id, leg.order.client_id, reason
+                ),
+            ))
+            .map_err(|error| format!("写入 OKX OCO ReconcileRequired 失败: {error:?}"))?;
+    }
+    let snapshots = pipeline.orders();
+    for leg in &group.legs {
+        if let Some(snapshot) = snapshots
+            .iter()
+            .find(|order| order.client_id == leg.order.client_id)
+        {
+            if snapshot.status == qx_core::OrderStatus::Unknown {
+                store.record_order_snapshot_during_reconciliation(
+                    &group.intent.group_id,
+                    snapshot,
+                    None,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_ccxt_cancelled_native_group(
+    group: &qx_core::OrderGroupState,
+    worker: &WorkerConfig,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+) -> Result<usize, String> {
+    if group.legs.iter().any(|leg| {
+        leg.venue_order_id.is_some()
+            || leg.order.filled.raw() != 0
+            || leg.order.exact_amounts.is_some_and(|amounts| amounts.filled.is_positive())
+    }) {
+        return Ok(0);
+    };
+    if group.status == qx_core::OrderGroupStatus::Active {
+        store.begin_native_cancel(&group.intent.group_id)?;
+    } else if group.status != qx_core::OrderGroupStatus::CancelPending
+        && group.status != qx_core::OrderGroupStatus::ReconcileRequired
+    {
+        store.require_reconciliation(&group.intent.group_id)?;
+    }
+    let reconciling = store
+        .load(&group.intent.group_id)?
+        .is_some_and(|current| current.status == qx_core::OrderGroupStatus::ReconcileRequired);
+    let mut snapshots = Vec::new();
+    for leg in &group.legs {
+        let current = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+            .ok_or_else(|| format!("OKX OCO 撤销子腿 {} 不在 EventLog", leg.order.client_id))?;
+        if current.status == qx_core::OrderStatus::Cancelled
+            || current.status == qx_core::OrderStatus::Expired
+        {
+            snapshots.push((current, leg.venue_order_id.clone()));
+            continue;
+        }
+        if current.status == qx_core::OrderStatus::Filled
+            || current.status == qx_core::OrderStatus::Rejected
+            || current.filled.raw() != 0
+            || current
+                .exact_amounts
+                .is_some_and(|amounts| amounts.filled.is_positive())
+        {
+            store.require_reconciliation(&group.intent.group_id)?;
+            return Err(format!(
+                "OKX OCO 已撤销但子腿 {} 本地已有成交/拒绝事实",
+                current.client_id
+            ));
+        }
+        if current.status != qx_core::OrderStatus::CancelPending
+            && current.status.can_transition_to(qx_core::OrderStatus::CancelPending)
+        {
+            *source_seq = (*source_seq).saturating_add(1);
+            pipeline
+                .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                    qx_runtime::RuntimeExternalEvent::CancelPending {
+                        client_order_id: leg.order.client_id,
+                    },
+                    now,
+                    now,
+                    *source_seq,
+                    format!("{}:okx-oco-cancel-pending:{}", worker.id, leg.order.client_id),
+                ))
+                .map_err(|error| format!("归约 OKX OCO CancelPending 失败: {error:?}"))?;
+        }
+        *source_seq = (*source_seq).saturating_add(1);
+        pipeline
+            .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                qx_runtime::RuntimeExternalEvent::Cancelled {
+                    client_order_id: leg.order.client_id,
+                },
+                now,
+                now,
+                *source_seq,
+                format!("{}:okx-oco-cancelled:{}", worker.id, leg.order.client_id),
+            ))
+            .map_err(|error| format!("归约 OKX OCO Cancelled 失败: {error:?}"))?;
+        let snapshot = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+            .ok_or_else(|| format!("OKX OCO 撤销后子腿 {} 不在 EventLog", leg.order.client_id))?;
+        snapshots.push((snapshot, None));
+    }
+    store_ccxt_group_snapshots(
+        &group.intent.group_id,
+        snapshots,
+        reconciling,
+        store,
+    )?;
+    let current = store.load(&group.intent.group_id)?;
+    if current.is_some_and(|current| current.status == qx_core::OrderGroupStatus::CancelPending) {
+        store.complete_native_cancel(&group.intent.group_id)?;
+    }
+    Ok(group.legs.len())
+}
+
+fn reconcile_ccxt_triggered_native_group(
+    group: &qx_core::OrderGroupState,
+    remote: &serde_json::Value,
+    order_ids: &[serde_json::Value],
+    venue: &mut CcxtProcessVenue,
+    worker: &WorkerConfig,
+    runtime_config_path: &std::path::Path,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    let mut updates = 0_usize;
+    let Some(remote_id) = order_ids
+        .first()
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .filter(|id| id.bytes().all(|byte| byte.is_ascii_digit()))
+        .filter(|_| order_ids.len() == 1)
+    else {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "OKX OCO 触发后子单 ID 数量/格式不匹配",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_trigger_children_ambiguous",
+            "OKX OCO 触发后的子单身份无法唯一归属",
+        );
+        return Ok(0);
+    };
+    let role = match remote.get("actual_side").and_then(serde_json::Value::as_str) {
+        Some("tp") => qx_core::OrderGroupLegRole::TakeProfit,
+        Some("sl") => qx_core::OrderGroupLegRole::StopLoss,
+        _ => {
+            mark_ccxt_group_unresolved(
+                group,
+                worker,
+                store,
+                pipeline,
+                now,
+                source_seq,
+                "OKX OCO 触发事实缺少 actualSide",
+            )?;
+            push_ccxt_group_issue(
+                issues,
+                group,
+                "native_order_group_trigger_side_unknown",
+                "OKX OCO 触发事实缺少 tp/sl 子腿身份",
+            );
+            return Ok(0);
+        }
+    };
+    let Some(triggered_leg) = group.legs.iter().find(|leg| leg.role == role) else {
+        return Err("OKX OCO 持久组缺少 actualSide 对应的保护腿".into());
+    };
+    let Some(peer_leg) = group.legs.iter().find(|leg| leg.role != role) else {
+        return Err("OKX OCO 持久组缺少对侧保护腿".into());
+    };
+    if peer_leg.order.filled.raw() != 0
+        || peer_leg
+            .order
+            .exact_amounts
+            .is_some_and(|amounts| amounts.filled.is_positive())
+    {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "OKX OCO 对侧腿已有成交，触发结果存在并发成交风险",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_peer_fill_conflict",
+            "OKX OCO 对侧腿已有成交，必须人工/账户级对账",
+        );
+        return Ok(0);
+    }
+    if matches!(
+        group.status,
+        qx_core::OrderGroupStatus::Submitting
+            | qx_core::OrderGroupStatus::CancelPending
+            | qx_core::OrderGroupStatus::Active
+            | qx_core::OrderGroupStatus::PeerCancelRequired
+    ) {
+        store.require_reconciliation(&group.intent.group_id)?;
+    }
+    let mut triggered_order = pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == triggered_leg.order.client_id)
+        .ok_or_else(|| "OKX OCO 触发子腿不在 EventLog".to_string())?;
+    let known_remote_id = pipeline.venue_order_id(triggered_order.client_id);
+    if known_remote_id
+        .as_deref()
+        .is_some_and(|known| known != remote_id)
+    {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "OKX OCO 触发子腿远端 ID 与 EventLog 冲突",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_child_identity_mismatch",
+            "OKX OCO 触发子腿远端 ID 与 EventLog 冲突",
+        );
+        return Ok(0);
+    }
+    if triggered_order.status.is_terminal() && known_remote_id.is_none() {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "本地触发子腿已终态但缺少远端订单 ID",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_child_identity_missing",
+            "本地触发子腿已终态但 EventLog 缺少远端订单 ID",
+        );
+        return Ok(0);
+    }
+    if !triggered_order.status.is_terminal() {
+        let fee_baseline = pipeline
+            .fee_baseline_for_order(triggered_order.client_id)
+            .map_err(|error| format!("读取 OKX OCO 手续费基线失败: {error}"))?;
+        let exact_fee_baseline = pipeline
+            .exact_fee_baseline_for_order(triggered_order.client_id)
+            .map_err(|error| format!("读取 OKX OCO 精确手续费基线失败: {error}"))?;
+        let trade_ids = pipeline
+            .fee_trade_ids_for_order(triggered_order.client_id)
+            .map_err(|error| format!("读取 OKX OCO 成交去重状态失败: {error}"))?;
+        venue
+            .restore_order_with_exact_fee_state(
+                triggered_order.clone(),
+                remote_id.clone(),
+                fee_baseline,
+                exact_fee_baseline,
+                trade_ids,
+            )
+            .map_err(|error| format!("恢复 OKX OCO 触发子腿失败: {error:?}"))?;
+        let events = venue
+            .sync_order(triggered_order.client_id, now)
+            .map_err(|error| format!("查询 OKX OCO 触发子腿失败: {error:?}"))?;
+        let spec = load_worker_market_spec_for_instrument(
+            worker,
+            &triggered_order.instrument,
+            Some(runtime_config_path),
+        )?;
+        if let Some(spec) = spec {
+            updates += ingest_venue_events_with_spec(
+                pipeline,
+                events,
+                &worker.id,
+                now,
+                source_seq,
+                &spec,
+            )?;
+        } else {
+            updates += ingest_venue_events(pipeline, events, &worker.id, now, source_seq)?;
+        }
+    }
+    triggered_order = pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == triggered_leg.order.client_id)
+        .ok_or_else(|| "OKX OCO 触发子腿归约后消失".to_string())?;
+    if pipeline.venue_order_id(triggered_order.client_id).is_none()
+        && !matches!(
+            triggered_order.status,
+            qx_core::OrderStatus::PendingSubmit
+                | qx_core::OrderStatus::Submitted
+                | qx_core::OrderStatus::CancelPending
+                | qx_core::OrderStatus::Unknown
+        )
+    {
+        *source_seq = (*source_seq).saturating_add(1);
+        pipeline
+            .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                qx_runtime::RuntimeExternalEvent::OrderStatusReconciled {
+                    client_order_id: triggered_order.client_id,
+                    account_id: triggered_order.account_id.clone(),
+                    venue_id: triggered_order.instrument.venue.as_str().to_owned(),
+                    status: triggered_order.status,
+                    venue_order_id: Some(remote_id.clone()),
+                    filled_raw: triggered_order.filled.raw(),
+                    filled_exact: triggered_order
+                        .exact_amounts
+                        .map(|amounts| amounts.filled),
+                },
+                now,
+                now,
+                *source_seq,
+                format!("{}:okx-oco-child-id:{}", worker.id, triggered_order.client_id),
+            ))
+            .map_err(|error| format!("持久化 OKX OCO 子腿远端身份失败: {error:?}"))?;
+    }
+    let peer_order = pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == peer_leg.order.client_id)
+        .ok_or_else(|| "OKX OCO 对侧子腿不在 EventLog".to_string())?;
+    if !peer_order.status.is_terminal() {
+        if peer_order.status != qx_core::OrderStatus::CancelPending
+            && peer_order
+                .status
+                .can_transition_to(qx_core::OrderStatus::CancelPending)
+        {
+            *source_seq = (*source_seq).saturating_add(1);
+            pipeline
+                .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                    qx_runtime::RuntimeExternalEvent::CancelPending {
+                        client_order_id: peer_order.client_id,
+                    },
+                    now,
+                    now,
+                    *source_seq,
+                    format!("{}:okx-oco-peer-cancel-pending:{}", worker.id, peer_order.client_id),
+                ))
+                .map_err(|error| format!("归约 OKX OCO 对侧 CancelPending 失败: {error:?}"))?;
+        }
+        *source_seq = (*source_seq).saturating_add(1);
+        pipeline
+            .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                qx_runtime::RuntimeExternalEvent::Cancelled {
+                    client_order_id: peer_order.client_id,
+                },
+                now,
+                now,
+                *source_seq,
+                format!("{}:okx-oco-peer-cancelled:{}", worker.id, peer_order.client_id),
+            ))
+            .map_err(|error| format!("归约 OKX OCO 对侧 Cancelled 失败: {error:?}"))?;
+    }
+    let peer_snapshot = pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == peer_leg.order.client_id)
+        .ok_or_else(|| "OKX OCO 对侧子腿归约后消失".to_string())?;
+    let group_reconciling = store
+        .load(&group.intent.group_id)?
+        .is_some_and(|current| current.status == qx_core::OrderGroupStatus::ReconcileRequired);
+    store_ccxt_group_snapshots(
+        &group.intent.group_id,
+        vec![(triggered_order, Some(remote_id)), (peer_snapshot, None)],
+        group_reconciling,
+        store,
+    )?;
+    Ok(updates.saturating_add(2))
+}
+
 pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), String> {
     let CcxtReconcileWorkerInput {
         context,
@@ -372,13 +1149,37 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
             let shutdown_context = context.clone();
             let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client))
                 .with_shutdown_check(move || shutdown_context.should_stop());
-            let orders = local_orders;
+            let mut updates = 0_usize;
+            updates += reconcile_ccxt_native_order_groups(
+                &mut venue,
+                &worker,
+                &pipeline_storage,
+                &runtime_config_path,
+                &mut pipeline,
+                received_ts,
+                &mut source_seq,
+                &mut local_order_issues,
+            )?;
+            let recovered_remote_ids = pipeline
+                .orders()
+                .into_iter()
+                .filter_map(|order| {
+                    pipeline
+                        .venue_order_id(order.client_id)
+                })
+                .collect::<BTreeSet<_>>();
+            open_order_issues.retain(|issue| {
+                !issue
+                    .get("remote_order_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|remote_id| recovered_remote_ids.contains(remote_id))
+            });
+            let orders = pipeline.orders();
             let pending_amendment_ids = orders
                 .iter()
                 .filter(|order| pipeline.pending_amendment(order.client_id).is_some())
                 .map(|order| order.client_id)
                 .collect::<BTreeSet<_>>();
-            let mut updates = 0_usize;
             for order in orders.into_iter().filter(|order| {
                 !order.status.is_terminal() || pending_amendment_ids.contains(&order.client_id)
             }) {
@@ -624,4 +1425,65 @@ fn runtime_timestamp_ms() -> u64 {
         .unwrap_or_default()
         .as_millis()
         .min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod native_order_group_reconcile_tests {
+    use super::{OkxOcoObservation, classify_okx_oco_observation, okx_algo_client_order_id};
+
+    #[test]
+    fn okx_oco_observation_requires_consistent_child_and_fill_facts() {
+        assert!(matches!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "live",
+                "order_ids": [],
+                "actual_size": "0"
+            })),
+            Ok(OkxOcoObservation::Live)
+        ));
+        assert!(matches!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "canceled",
+                "order_ids": [],
+                "actual_size": "0"
+            })),
+            Ok(OkxOcoObservation::Cancelled)
+        ));
+        assert!(matches!(
+            classify_okx_oco_observation(&serde_json::json!({
+                "state": "effective",
+                "order_ids": ["1884789786215137280"],
+                "actual_size": "0.01"
+            })),
+            Ok(OkxOcoObservation::Triggered(ids)) if ids.len() == 1
+        ));
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "effective",
+            "order_ids": [],
+            "actual_size": "0.01"
+        }))
+        .is_err());
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "canceled",
+            "order_ids": [],
+            "actual_size": "0.001"
+        }))
+        .is_err());
+        assert!(classify_okx_oco_observation(&serde_json::json!({
+            "state": "live",
+            "order_ids": ["bad-id"],
+            "actual_size": "0"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn okx_algo_client_id_matches_the_submit_identity_shape() {
+        let first = okx_algo_client_order_id("protect-btc-1");
+        assert!(first.starts_with("QX"));
+        assert_eq!(first.len(), 18);
+        assert!(first.bytes().all(|byte| byte.is_ascii_alphanumeric()));
+        assert_eq!(first, okx_algo_client_order_id("protect-btc-1"));
+        assert_ne!(first, okx_algo_client_order_id("protect-btc-2"));
+    }
 }

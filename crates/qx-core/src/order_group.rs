@@ -449,7 +449,12 @@ impl OrderGroupState {
                 return Err("订单组子腿 venue_order_id 与已确认 ID 冲突".into());
             }
         }
-        if !leg.order.status.can_transition_to(snapshot.status)
+        let repeated_terminal_snapshot = leg.order.status.is_terminal()
+            && leg.order.status == snapshot.status
+            && leg.order.filled.raw() == snapshot.filled.raw()
+            && leg.order.exact_amounts.map(|amounts| amounts.filled)
+                == snapshot.exact_amounts.map(|amounts| amounts.filled);
+        if (!repeated_terminal_snapshot && !leg.order.status.can_transition_to(snapshot.status))
             || snapshot.filled.raw() < leg.order.filled.raw()
             || snapshot
                 .exact_amounts
@@ -689,6 +694,25 @@ mod tests {
         triggered.activate_native_group().unwrap();
         triggered.legs[0].venue_order_id = Some("child-order-1".into());
         assert!(triggered.begin_native_cancel().is_err());
+    }
+
+    #[test]
+    fn repeated_terminal_leg_snapshot_is_idempotent_but_cannot_change_fills() {
+        let mut group = oco_state();
+        group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Submitted, "0"), None)
+            .unwrap();
+        group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::CancelPending, "0"), None)
+            .unwrap();
+        let cancelled = snapshot(&group, 1, OrderStatus::Cancelled, "0");
+        group
+            .apply_order_snapshot(cancelled.clone(), None)
+            .unwrap();
+        group.apply_order_snapshot(cancelled, None).unwrap();
+        assert!(group
+            .apply_order_snapshot(snapshot(&group, 1, OrderStatus::Cancelled, "0.001"), None)
+            .is_err());
     }
 
     fn snapshot(

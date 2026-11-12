@@ -68,7 +68,7 @@ MATURITY_STAGES = (
     "sandbox_tested",
     "production_approved",
 )
-EXECUTION_OPERATIONS = {"submit", "cancel", "amend"}
+EXECUTION_OPERATIONS = {"submit", "cancel", "amend", "query"}
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
@@ -180,6 +180,7 @@ def execution_scopes_for_row(
                 "stop_loss",
                 "take_profit",
                 "trailing",
+                "oco",
             } or quantity_unit not in {
                 "base",
                 "contracts",

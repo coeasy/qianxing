@@ -27980,7 +27980,7 @@ def capability_crosswalk_check() -> None:
                 or len(position_modes) != len(set(position_modes))
                 or not isinstance(operations, list)
                 or not operations
-                or any(not isinstance(value, str) or value not in {"submit", "cancel", "amend"} for value in operations)
+                or any(not isinstance(value, str) or value not in {"submit", "cancel", "amend", "query"} for value in operations)
                 or len(operations) != len(set(operations))
                 or not isinstance(order_shapes, list)
                 or not order_shapes
@@ -28009,6 +28009,7 @@ def capability_crosswalk_check() -> None:
                         "stop_loss",
                         "take_profit",
                         "trailing",
+                        "oco",
                     }
                     or shape.get("quantity_unit") not in {"base", "contracts", "quote"}
                     or shape.get("side") not in {"buy", "sell"}
