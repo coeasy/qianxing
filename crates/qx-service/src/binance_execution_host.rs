@@ -25,7 +25,7 @@ use crate::spread_recovery_host::{
 use crate::worker_host::run_polling_worker;
 use qx_adapter::BinanceSpotVenue;
 use qx_control::{CommandKind, CommandStatus, ControlCommand};
-use qx_core::{VenueFamily, VenueId};
+use qx_core::VenueFamily;
 use qx_runtime::{
     account_worker_settlement_currency, lease_clock, required_account_event_log, RuntimeConfig,
     ServiceStatus, WorkerConfig, WorkerContext, WorkerRole,
@@ -89,10 +89,30 @@ pub fn binance_cancel_matches_worker(command: &ControlCommand, worker: &WorkerCo
         return false;
     };
     let expected_account = worker.account_id.as_deref().unwrap_or_default();
-    let expected_venue = worker.venue_id.as_deref().unwrap_or("BINANCE");
     target.account_id == expected_account
-        && VenueId::new(target.venue_id).is_binance()
-        && VenueId::new(expected_venue).is_binance()
+        && VenueFamily::parse_option(Some(&target.venue_id)) == Some(VenueFamily::Binance)
+        && worker
+            .venue_id
+            .as_deref()
+            .is_some_and(|worker_venue| worker_venue.eq_ignore_ascii_case(&target.venue_id))
+}
+
+pub fn binance_cancel_order_group_matches_worker(
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+) -> bool {
+    if command.kind != CommandKind::CancelOrderGroup {
+        return false;
+    }
+    let Ok(target) = qx_control::cancel_order_group_target_from_command(command) else {
+        return false;
+    };
+    target.account_id == worker.account_id.as_deref().unwrap_or_default()
+        && VenueFamily::parse_option(Some(&target.venue_id)) == Some(VenueFamily::Binance)
+        && worker
+            .venue_id
+            .as_deref()
+            .is_some_and(|worker_venue| worker_venue.eq_ignore_ascii_case(&target.venue_id))
 }
 
 fn binance_execution_command_matches_worker(
@@ -103,6 +123,7 @@ fn binance_execution_command_matches_worker(
         CommandKind::SubmitOrder => binance_submit_matches_worker(command, worker),
         CommandKind::SubmitOrderGroup => binance_submit_order_group_matches_worker(command, worker),
         CommandKind::CancelOrder => binance_cancel_matches_worker(command, worker),
+        CommandKind::CancelOrderGroup => binance_cancel_order_group_matches_worker(command, worker),
         _ => false,
     }
 }
@@ -360,6 +381,8 @@ where
             (matches!(&command.kind, CommandKind::SubmitOrder)
                 && binance_submit_matches_worker(command, worker))
                 || binance_submit_order_group_matches_worker(command, worker)
+                || binance_cancel_matches_worker(command, worker)
+                || binance_cancel_order_group_matches_worker(command, worker)
         }) {
             queue
                 .enqueue_command(command.clone(), lease_now)
@@ -391,6 +414,19 @@ where
                 Ok("DRY_RUN_VALIDATED".into())
             } else if command.kind == CommandKind::CancelOrder {
                 execute_binance_queued_cancel(
+                    worker,
+                    pipeline_storage,
+                    &settlement_currency,
+                    &runtime_config.environment,
+                    runtime_config_path,
+                    now,
+                    &command,
+                    &mut metrics,
+                    create_venue,
+                    *dedicated_spread_recovery,
+                )?
+            } else if command.kind == CommandKind::CancelOrderGroup {
+                execute_binance_queued_cancel_order_group(
                     worker,
                     pipeline_storage,
                     &settlement_currency,
@@ -711,6 +747,116 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+fn execute_binance_queued_cancel_order_group<F>(
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    settlement_currency: &str,
+    runtime_environment: &str,
+    runtime_config_path: &Path,
+    now: u64,
+    command: &ControlCommand,
+    metrics: &mut PipelineMetricsReporter,
+    create_venue: &mut F,
+    dedicated_spread_recovery: bool,
+) -> Result<Result<String, String>, String>
+where
+    F: FnMut(&WorkerConfig) -> Result<BinanceSpotVenue, String>,
+{
+    use qx_zhenlu::OrderGroupStore;
+
+    let target = qx_control::cancel_order_group_target_from_command(command)
+        .map_err(|error| format!("CancelOrderGroup 载荷非法: {error:?}"))?;
+    if !binance_cancel_order_group_matches_worker(command, worker) {
+        return Ok(Err(
+            "CancelOrderGroup 账户或交易所与 Binance worker 拓扑不匹配".into(),
+        ));
+    }
+    let store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let Some(group) = store.load(&target.group_id)? else {
+        return Ok(Err(format!(
+            "CancelOrderGroup 找不到持久订单组 {}",
+            target.group_id
+        )));
+    };
+    if group.intent.kind != qx_core::OrderGroupKind::Oco
+        || group.legs.iter().any(|leg| {
+            leg.order.account_id != target.account_id || !leg.order.instrument.venue.is_binance()
+        })
+    {
+        return Ok(Err(
+            "CancelOrderGroup 只接受与路由账户/交易所完全匹配的 Binance OCO 组".into(),
+        ));
+    }
+    if group.status == qx_core::OrderGroupStatus::Cancelled {
+        return Ok(Ok("ALREADY_CANCELLED".into()));
+    }
+    if group.status == qx_core::OrderGroupStatus::PartiallyFilled
+        && group.legs.iter().all(|leg| leg.order.status.is_terminal())
+    {
+        return Ok(Ok("ALREADY_SETTLED_PARTIAL".into()));
+    }
+    if !matches!(
+        group.status,
+        qx_core::OrderGroupStatus::Active | qx_core::OrderGroupStatus::PeerCancelRequired
+    ) || group.venue_group_id.is_none()
+    {
+        return Ok(Err(format!(
+            "订单组 {} 状态 {:?} 或缺少已确认列表身份，拒绝撤销并要求先对账",
+            target.group_id, group.status
+        )));
+    }
+    if group.legs.iter().any(|leg| {
+        matches!(
+            leg.order.status,
+            qx_core::OrderStatus::CancelPending | qx_core::OrderStatus::Unknown
+        )
+    }) {
+        return Ok(Err(format!(
+            "订单组 {} 有子腿处于撤销待确认或 Unknown，必须先对账",
+            target.group_id
+        )));
+    }
+    let Some(active_leg) = group.legs.iter().find(|leg| {
+        matches!(
+            leg.order.status,
+            qx_core::OrderStatus::Accepted
+                | qx_core::OrderStatus::Working
+                | qx_core::OrderStatus::PartiallyFilled
+        )
+    }) else {
+        return Ok(Err(format!(
+            "订单组 {} 没有可撤销的活动子腿，当前状态 {:?}",
+            target.group_id, group.status
+        )));
+    };
+
+    // Binance documents that cancelling either OCO child cancels the whole order list.
+    // Reuse the audited single-order OMS cancellation and subsequent full-list reconciliation
+    // so fills racing with the cancellation are still committed before group state is reduced.
+    let mut child_command = command.clone();
+    child_command.kind = CommandKind::CancelOrder;
+    child_command.target = active_leg.order.client_id.to_string();
+    child_command.payload = [
+        ("account_id".to_string(), target.account_id),
+        ("venue_id".to_string(), target.venue_id),
+    ]
+    .into_iter()
+    .collect();
+    execute_binance_queued_cancel(
+        worker,
+        pipeline_storage,
+        settlement_currency,
+        runtime_environment,
+        runtime_config_path,
+        now,
+        &child_command,
+        metrics,
+        create_venue,
+        dedicated_spread_recovery,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn execute_binance_queued_cancel<F>(
     worker: &WorkerConfig,
     pipeline_storage: &PipelineStorage,
@@ -726,8 +872,17 @@ fn execute_binance_queued_cancel<F>(
 where
     F: FnMut(&WorkerConfig) -> Result<BinanceSpotVenue, String>,
 {
+    if !binance_cancel_matches_worker(command, worker) {
+        return Ok(Err(
+            "CancelOrder 账户或执行 worker Venue 与 Binance worker 不匹配".into(),
+        ));
+    }
+    let mut execution_command = command.clone();
+    execution_command
+        .payload
+        .insert("venue_id".into(), "BINANCE".into());
     let mut prepared = prepare_cancel_order(
-        command,
+        &execution_command,
         worker,
         "BINANCE",
         pipeline_storage,
@@ -792,7 +947,7 @@ where
     let mut venue = GatewayExecutionProbeVenue::new(venue, metrics);
     let mut source_seq = 0_u64;
     let mut result = execute_prepared_cancel_order(
-        command,
+        &execution_command,
         worker,
         pipeline_storage,
         &mut prepared,
@@ -892,4 +1047,81 @@ fn runtime_timestamp_ms() -> u64 {
         .unwrap_or_default()
         .as_millis()
         .min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{binance_cancel_matches_worker, binance_cancel_order_group_matches_worker};
+    use qx_control::{CommandKind, ControlCommand, Permission};
+    use qx_runtime::WorkerConfig;
+    use std::collections::BTreeMap;
+
+    fn worker(venue_id: &str, account_id: &str) -> WorkerConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": "binance-execution",
+            "role": "execution",
+            "enabled": true,
+            "account_id": account_id,
+            "venue_id": venue_id
+        }))
+        .expect("valid execution worker")
+    }
+
+    fn command(account_id: &str, venue_id: &str) -> ControlCommand {
+        ControlCommand {
+            command_id: 91,
+            request_id: "cancel-group-91".into(),
+            operator_id: "ops".into(),
+            reason: "cancel OCO group".into(),
+            kind: CommandKind::CancelOrderGroup,
+            target: "protect-btc-1".into(),
+            payload: BTreeMap::from([
+                ("account_id".into(), account_id.into()),
+                ("venue_id".into(), venue_id.into()),
+            ]),
+            permission: Permission::Trading,
+            dry_run: false,
+        }
+    }
+
+    fn single_cancel_command(account_id: &str, venue_id: &str) -> ControlCommand {
+        let mut command = command(account_id, venue_id);
+        command.command_id = 92;
+        command.request_id = "cancel-order-92".into();
+        command.kind = CommandKind::CancelOrder;
+        command.target = "701".into();
+        command
+    }
+
+    #[test]
+    fn cancel_order_group_routes_only_to_the_matching_binance_account() {
+        assert!(binance_cancel_order_group_matches_worker(
+            &command("main", "BINANCE"),
+            &worker("binance", "main")
+        ));
+        assert!(binance_cancel_order_group_matches_worker(
+            &command("main", "binance-testnet"),
+            &worker("binance-testnet", "main")
+        ));
+        assert!(!binance_cancel_order_group_matches_worker(
+            &command("main", "BINANCE"),
+            &worker("binance-testnet", "main")
+        ));
+        assert!(!binance_cancel_order_group_matches_worker(
+            &command("other", "BINANCE"),
+            &worker("binance", "main")
+        ));
+        assert!(!binance_cancel_order_group_matches_worker(
+            &command("main", "OKX"),
+            &worker("binance", "main")
+        ));
+        assert!(binance_cancel_matches_worker(
+            &single_cancel_command("main", "binance-testnet"),
+            &worker("binance-testnet", "main")
+        ));
+        assert!(!binance_cancel_matches_worker(
+            &single_cancel_command("main", "binance-testnet"),
+            &worker("binance", "main")
+        ));
+    }
 }

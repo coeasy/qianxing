@@ -6,8 +6,8 @@ use crate::{
 };
 use qx_api::{ApiService, ControlSubmitError};
 use qx_control::{
-    amend_order_target_from_command, cancel_order_target_from_command,
-    order_group_from_submit_command, CommandKind, ControlError,
+    amend_order_target_from_command, cancel_order_group_target_from_command,
+    cancel_order_target_from_command, order_group_from_submit_command, CommandKind, ControlError,
 };
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerRole};
@@ -164,6 +164,29 @@ pub(super) fn build_configured_api_service_inner(
                 }
                 Ok(())
             }
+            CommandKind::CancelOrderGroup => {
+                let target = cancel_order_group_target_from_command(command).map_err(|error| {
+                    ControlSubmitError::Rejected(ControlError::Invalid(format!(
+                        "CancelOrderGroup 载荷非法: {error:?}"
+                    )))
+                })?;
+                if !VenueFamily::parse_option(Some(&target.venue_id))
+                    .is_some_and(|family| family == VenueFamily::Binance)
+                    || !order_group_routes.iter().any(|(account_id, venue_id)| {
+                        cancel_order_group_route_matches(
+                            account_id,
+                            venue_id,
+                            &target.account_id,
+                            &target.venue_id,
+                        )
+                    })
+                {
+                    return Err(ControlSubmitError::Rejected(ControlError::Invalid(
+                        "CancelOrderGroup 当前只路由到已启用的 Binance Execution worker".into(),
+                    )));
+                }
+                Ok(())
+            }
             CommandKind::AmendOrder => {
                 let target = amend_order_target_from_command(command).map_err(|error| {
                     ControlSubmitError::Rejected(ControlError::Invalid(format!(
@@ -183,4 +206,40 @@ pub(super) fn build_configured_api_service_inner(
             _ => Ok(()),
         },
     )
+}
+
+fn cancel_order_group_route_matches(
+    route_account: &str,
+    route_venue: &str,
+    target_account: &str,
+    target_venue: &str,
+) -> bool {
+    route_account == target_account && route_venue.eq_ignore_ascii_case(target_venue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cancel_order_group_route_matches;
+
+    #[test]
+    fn group_cancel_route_keeps_binance_testnet_separate_from_production() {
+        assert!(cancel_order_group_route_matches(
+            "main",
+            "binance-testnet",
+            "main",
+            "BINANCE-TESTNET"
+        ));
+        assert!(!cancel_order_group_route_matches(
+            "main",
+            "binance-testnet",
+            "main",
+            "binance"
+        ));
+        assert!(!cancel_order_group_route_matches(
+            "main",
+            "binance-testnet",
+            "other",
+            "binance-testnet"
+        ));
+    }
 }

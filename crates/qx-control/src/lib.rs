@@ -27,6 +27,7 @@ pub enum CommandKind {
     ReconcileAccount,
     RetryJob,
     SwitchVenue,
+    CancelOrderGroup,
 }
 
 impl CommandKind {
@@ -37,7 +38,10 @@ impl CommandKind {
             | Self::SubmitOrderGroup
             | Self::AmendOrder
             | Self::ReconcileAccount => Permission::Trading,
-            Self::PauseStrategy | Self::ResumeStrategy | Self::CancelOrder => Permission::Trading,
+            Self::PauseStrategy
+            | Self::ResumeStrategy
+            | Self::CancelOrder
+            | Self::CancelOrderGroup => Permission::Trading,
             Self::ChangeRiskLimit | Self::SwitchVenue => Permission::Admin,
         }
     }
@@ -52,13 +56,14 @@ impl CommandKind {
                 | Self::SubmitOrderGroup
                 | Self::AmendOrder
                 | Self::CancelOrder
+                | Self::CancelOrderGroup
                 | Self::PauseStrategy
                 | Self::ResumeStrategy
         )
     }
 
     /// 全部变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
-    pub const ALL: [CommandKind; 10] = [
+    pub const ALL: [CommandKind; 11] = [
         Self::SubmitOrder,
         Self::SubmitOrderGroup,
         Self::AmendOrder,
@@ -69,6 +74,7 @@ impl CommandKind {
         Self::ReconcileAccount,
         Self::RetryJob,
         Self::SwitchVenue,
+        Self::CancelOrderGroup,
     ];
 }
 
@@ -92,6 +98,57 @@ pub struct CancelOrderTarget {
     pub client_order_id: u64,
     pub account_id: String,
     pub venue_id: String,
+}
+
+/// CancelOrderGroup resolves its group ID against the worker's durable order-group store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelOrderGroupTarget {
+    pub group_id: String,
+    pub account_id: String,
+    pub venue_id: String,
+}
+
+fn parse_cancel_order_group_target(
+    command: &ControlCommand,
+) -> Result<CancelOrderGroupTarget, ControlError> {
+    if command.kind != CommandKind::CancelOrderGroup {
+        return Err(ControlError::Invalid(
+            "控制命令不是 CancelOrderGroup".into(),
+        ));
+    }
+    let group_id = command.target.trim();
+    if group_id.is_empty() || group_id.len() > 128 {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup target 必须是 1 至 128 字符的 group_id".into(),
+        ));
+    }
+    if command.payload.len() != 2
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+    {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup payload 必须且只能包含 account_id 和 venue_id".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup account_id/venue_id 不能为空".into(),
+        ));
+    }
+    Ok(CancelOrderGroupTarget {
+        group_id: group_id.to_owned(),
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+    })
+}
+
+pub fn cancel_order_group_target_from_command(
+    command: &ControlCommand,
+) -> Result<CancelOrderGroupTarget, ControlError> {
+    command.validate()?;
+    parse_cancel_order_group_target(command)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,6 +278,9 @@ impl ControlCommand {
         }
         if self.kind == CommandKind::CancelOrder {
             parse_cancel_order_target(self)?;
+        }
+        if self.kind == CommandKind::CancelOrderGroup {
+            parse_cancel_order_group_target(self)?;
         }
         if self.kind == CommandKind::AmendOrder {
             parse_amend_order_target(self)?;
@@ -855,6 +915,28 @@ mod tests {
         let mut mismatched = command;
         mismatched.target = "another-group".into();
         assert!(order_group_from_submit_command(&mismatched).is_err());
+    }
+
+    #[test]
+    fn cancel_order_group_command_binds_group_and_route_without_extra_payload() {
+        let mut command = command(Permission::Trading);
+        command.kind = CommandKind::CancelOrderGroup;
+        command.target = "main-btc-protection".into();
+        command.payload = BTreeMap::from([
+            ("account_id".into(), "main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]);
+        let target = cancel_order_group_target_from_command(&command).unwrap();
+        assert_eq!(target.group_id, "main-btc-protection");
+        assert_eq!(target.account_id, "main");
+        assert_eq!(target.venue_id, "BINANCE");
+
+        let mut extra = command.clone();
+        extra.payload.insert("order_id".into(), "71".into());
+        assert!(cancel_order_group_target_from_command(&extra).is_err());
+        let mut empty_group = command;
+        empty_group.target = "  ".into();
+        assert!(cancel_order_group_target_from_command(&empty_group).is_err());
     }
 
     fn amend_command(order: &Order) -> ControlCommand {

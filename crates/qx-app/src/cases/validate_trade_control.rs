@@ -2,8 +2,8 @@
 
 use crate::{AppError, AppErrorCategory, CallerCapability, RunContext};
 use qx_control::{
-    cancel_order_target_from_command, order_from_submit_command, CommandKind, ControlCommand,
-    Permission,
+    cancel_order_group_target_from_command, cancel_order_target_from_command,
+    order_from_submit_command, CommandKind, ControlCommand, Permission,
 };
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +112,19 @@ pub fn validate_trade_control(
                 AppError::new(
                     AppErrorCategory::InvalidInput,
                     format!("CancelOrder 载荷无效: {error:?}"),
+                )
+            })?;
+        } else if spec.command.kind == CommandKind::CancelOrderGroup {
+            if spec.workflow != TradeWorkflow::Live {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "CancelOrderGroup 当前只支持 Live Binance OCO 工作流",
+                ));
+            }
+            cancel_order_group_target_from_command(&spec.command).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("CancelOrderGroup 载荷无效: {error:?}"),
                 )
             })?;
         }
@@ -241,6 +254,37 @@ mod tests {
             validate_trade_control(
                 &live_dry_run,
                 &RunContext::new(CallerCapability::Live, "request-41"),
+                Permission::Trading,
+            )
+            .unwrap_err()
+            .category(),
+            AppErrorCategory::InvalidInput
+        );
+    }
+
+    #[test]
+    fn cancel_order_group_is_live_only_and_binds_account_and_venue() {
+        let mut live = spec(TradeWorkflow::Live, false);
+        live.command.kind = CommandKind::CancelOrderGroup;
+        live.command.target = "main-btc-protection".into();
+        live.command.payload = BTreeMap::from([
+            ("account_id".into(), "main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]);
+        let accepted = validate_trade_control(
+            &live,
+            &RunContext::new(CallerCapability::Live, "request-41"),
+            Permission::Trading,
+        )
+        .expect("valid Live CancelOrderGroup command");
+        assert_eq!(accepted, live.command);
+
+        let mut paper = live;
+        paper.workflow = TradeWorkflow::Paper;
+        assert_eq!(
+            validate_trade_control(
+                &paper,
+                &RunContext::new(CallerCapability::Paper, "request-41"),
                 Permission::Trading,
             )
             .unwrap_err()

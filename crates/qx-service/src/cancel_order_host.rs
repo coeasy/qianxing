@@ -6,7 +6,7 @@ use qx_control::{
     amend_order_target_from_command, cancel_order_target_from_command, AmendOrderTarget,
     CancelOrderTarget, ControlCommand,
 };
-use qx_core::Order;
+use qx_core::{Order, VenueFamily};
 use qx_execution::{BorrowedVenuePort, ExecutionGateway};
 use qx_runtime::{required_account_event_log, LiveEventPipeline, WorkerConfig};
 use qx_zhenlu::Venue;
@@ -80,10 +80,13 @@ pub fn prepare_cancel_order(
         .map_err(|error| format!("CancelOrder 命令无效: {error:?}"))?;
     if worker.account_id.as_deref() != Some(target.account_id.as_str())
         || !target.venue_id.eq_ignore_ascii_case(expected_venue)
-        || worker
-            .venue_id
-            .as_deref()
-            .is_some_and(|venue| !venue.eq_ignore_ascii_case(expected_venue))
+        || worker.venue_id.as_deref().is_some_and(|venue| {
+            if expected_venue.eq_ignore_ascii_case("BINANCE") {
+                VenueFamily::parse(venue) != VenueFamily::Binance
+            } else {
+                !venue.eq_ignore_ascii_case(expected_venue)
+            }
+        })
     {
         return Err("CancelOrder 账户或交易所与执行 worker 不一致".into());
     }

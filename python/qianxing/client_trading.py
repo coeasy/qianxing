@@ -20,8 +20,8 @@ class TradeCommand:
     operator_id: str
     reason: str
     kind: Literal[
-        "SubmitOrder", "AmendOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
-        "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue",
+        "SubmitOrder", "SubmitOrderGroup", "AmendOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
+        "CancelOrder", "CancelOrderGroup", "ReconcileAccount", "RetryJob", "SwitchVenue",
     ]
     target: str
     payload: dict[str, str]

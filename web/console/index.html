@@ -475,6 +475,7 @@
             <option value="ResumeStrategy">ResumeStrategy</option>
             <option value="ChangeRiskLimit">ChangeRiskLimit</option>
             <option value="CancelOrder">CancelOrder</option>
+            <option value="CancelOrderGroup">CancelOrderGroup</option>
             <option value="ReconcileAccount">ReconcileAccount</option>
             <option value="RetryJob">RetryJob</option>
             <option value="SwitchVenue">SwitchVenue</option>
@@ -488,7 +489,9 @@
             <option value="Admin">Admin</option>
           </select>
         </label>
-        <label>target <input id="cmd-target" type="text" placeholder="BTCUSDT-PERP.BINANCE" /></label>
+        <label>target（订单 ID 或订单组 ID） <input id="cmd-target" type="text" placeholder="client_order_id / group_id" /></label>
+        <label>account_id（撤单路由） <input id="cmd-account" type="text" placeholder="main" /></label>
+        <label>venue_id（执行 worker 路由） <input id="cmd-venue" type="text" placeholder="binance-testnet" /></label>
         <label>operator_id（审计字段）
           <input id="cmd-operator" type="text" placeholder="ops" />
         </label>
@@ -501,8 +504,8 @@
       <p class="foot">
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
-        本构建里 <code>SubmitOrder</code> / <code>AmendOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code>
-        有派发者；改单只路由到匹配账户和交易所的 CCXT 执行 worker，撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
+        本构建里 <code>SubmitOrder</code> / <code>SubmitOrderGroup</code> / <code>AmendOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code> / <code>CancelOrderGroup</code>
+        有派发者；组撤销只路由到 Binance OCO，改单只路由到匹配账户和交易所的 CCXT 执行 worker，单笔撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
         <strong>受理那一步就被拒</strong>（<code>400</code>），
         不会被记成 <code>Accepted</code>。
       </p>

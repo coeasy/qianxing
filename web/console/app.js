@@ -938,14 +938,20 @@ async function queryProductCapability() {
 
 function controlCommandFromForm() {
   const requestId = $("cmd-request").value.trim() || `console-${Date.now()}`;
+  const kind = $("cmd-kind").value;
+  const payload = {};
+  if (["CancelOrder", "CancelOrderGroup"].includes(kind)) {
+    payload.account_id = $("cmd-account").value.trim();
+    payload.venue_id = $("cmd-venue").value.trim();
+  }
   const command = {
     command_id: state.commandSeq,
     request_id: requestId,
     operator_id: $("cmd-operator").value.trim(),
     reason: $("cmd-reason").value.trim(),
-    kind: $("cmd-kind").value,
+    kind,
     target: $("cmd-target").value.trim(),
-    payload: {},
+    payload,
     permission: $("cmd-permission").value,
     dry_run: $("cmd-dry-run").checked,
   };

@@ -171,6 +171,7 @@ pub fn build_configured_api_service(
                         | CommandKind::SubmitOrderGroup
                         | CommandKind::AmendOrder
                         | CommandKind::CancelOrder
+                        | CommandKind::CancelOrderGroup
                 ) {
                     validate_control_payload(&command)?;
                 }

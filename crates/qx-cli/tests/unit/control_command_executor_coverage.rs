@@ -6,7 +6,7 @@
 //! 交易所、调度器那两侧什么都没有。现在提交入口按 `CommandKind::executed()` 裁决，
 //! 但判定式本身是一行手写的 `matches!`，它会腐坏，所以本文件钉住两侧：
 //!
-//! - **行为侧**：全部变体逐个过真实提交入口 —— 六颗受理、其余以 `Invalid` 拒绝，且拒绝时
+//! - **行为侧**：全部变体逐个过真实提交入口 —— 七颗受理、其余以 `Invalid` 拒绝，且拒绝时
 //!   既不写审计也不留待办（"拒绝"必须是真的没受理，而不是受理后再标失败）。
 //! - **源码侧**：`executed()` 为真的名字必须出现在生产派发者文件里；为假的名字在**任何**
 //!   生产源码里都不许以 `CommandKind::<名字>` 的形式出现。于是"加了派发者却忘了改判定式"
@@ -122,9 +122,13 @@ fn command(kind: CommandKind, id: u64) -> ControlCommand {
                 ("order_json".into(), serde_json::to_string(&order).unwrap()),
             ]),
         )
-    } else if kind == CommandKind::CancelOrder {
+    } else if kind == CommandKind::CancelOrder || kind == CommandKind::CancelOrderGroup {
         (
-            id.to_string(),
+            if kind == CommandKind::CancelOrder {
+                id.to_string()
+            } else {
+                format!("group-{id}")
+            },
             BTreeMap::from([
                 ("account_id".into(), "main".into()),
                 ("venue_id".into(), "BINANCE".into()),
@@ -182,7 +186,8 @@ fn control_plane_accepts_only_the_kinds_that_have_an_executor() {
             "AmendOrder",
             "PauseStrategy",
             "ResumeStrategy",
-            "CancelOrder"
+            "CancelOrder",
+            "CancelOrderGroup"
         ],
         "受理名单变了却没同步执行者：{accepted:?}"
     );

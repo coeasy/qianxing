@@ -159,7 +159,7 @@ venues:
     sandbox: unsupported
     precision: implemented-unverified
     evidence: [maturity/evidence/testnet/20260920T005856Z-dryrun, maturity/capabilities.yaml]
-    limitations: ["运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证", "余额、订单和成交历史私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified", "只覆盖现货；衍生品与多市场未声明"]
+    limitations: ["运行时能力合同声明 Binance Spot 市场、market/limit 订单、撤单/查询/对账；通用执行入口在登记前拒绝未声明订单类型，testnet conformance 尚未验证", "余额、订单和成交历史私有查询已按独立范围门控；testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified", "订单组级撤销命令只路由到精确匹配的 Binance worker 账户域，操作范围是已有列表身份的 Spot OCO；通过撤销活动子腿触发整组撤销并随后对账，没有 Testnet 结果，仍是 implemented-unverified", "只覆盖现货；衍生品与多市场未声明"]
     account_query_scopes:
       - venue: BINANCE
         product: spot
