@@ -516,18 +516,24 @@ fn qx_cli_binary() -> PathBuf {
             return binary;
         }
     }
-    let profile_dir = std::env::current_exe()
-        .expect("读取测试可执行文件路径失败")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("测试可执行文件应位于 target/<profile>/deps")
-        .to_path_buf();
-    let binary = profile_dir.join(if cfg!(windows) {
+    let test_executable = std::env::current_exe().expect("读取测试可执行文件路径失败");
+    let binary_name = if cfg!(windows) {
         "qx-cli.exe"
     } else {
         "qx-cli"
-    });
-    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    };
+    let binary = test_executable
+        .ancestors()
+        .find_map(|directory| {
+            let candidate = directory.join(binary_name);
+            (candidate.is_file() && directory.join("deps").is_dir()).then_some(candidate)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "未找到被测 binary {binary_name}，测试可执行文件为 {}",
+                test_executable.display()
+            )
+        });
     // `cargo test --bin` 不重链 CLI executable；fallback 仍要检查 binary 新鲜度，
     // 防止定向跑子进程用例时静默对着旧行为变绿（V11 S6）。
     assert_binary_fresh(&binary);
