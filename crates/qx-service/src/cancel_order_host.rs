@@ -138,6 +138,8 @@ pub fn execute_prepared_cancel_order<V: Venue>(
     gateway.cancel_command(command).map(|result| result.message)
 }
 
+// Keep the worker and prepared request dependencies explicit at this execution boundary.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_prepared_amend_order<V: Venue>(
     command: &ControlCommand,
     worker: &WorkerConfig,

@@ -838,6 +838,8 @@ fn execute_ccxt_queued_cancel(
     Ok(result)
 }
 
+// Keep the worker, transport, request, and reporting dependencies explicit at this boundary.
+#[allow(clippy::too_many_arguments)]
 fn execute_ccxt_queued_amend(
     worker: &WorkerConfig,
     pipeline_storage: &PipelineStorage,

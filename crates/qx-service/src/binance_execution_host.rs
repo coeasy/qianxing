@@ -697,7 +697,7 @@ where
         .filter(|order| !grouped_order_ids.contains(&order.client_id))
         .collect::<Vec<_>>();
     if let Err(error) = require_active_orders_execution_capability(
-        ungrouped_active.into_iter(),
+        ungrouped_active,
         worker,
         runtime_environment,
         runtime_config_path,

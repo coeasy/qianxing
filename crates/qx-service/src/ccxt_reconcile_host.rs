@@ -137,6 +137,8 @@ fn ccxt_reconcile_call(
     }
 }
 
+// These reconciliation helpers pass explicit durable state and transport dependencies.
+#[allow(clippy::too_many_arguments)]
 fn reconcile_ccxt_native_order_groups(
     venue: &mut CcxtProcessVenue,
     worker: &WorkerConfig,
@@ -388,6 +390,7 @@ fn reconcile_ccxt_native_order_groups(
     Ok(updates)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mark_ccxt_group_query_failed(
     group: &qx_core::OrderGroupState,
     is_bitget: bool,
@@ -419,6 +422,7 @@ fn okx_algo_client_order_id(group_id: &str) -> String {
     format!("QX{:016X}", hash.finish())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_bitget_uta_oco_observation(
     venue: &mut CcxtProcessVenue,
     group: &qx_core::OrderGroupState,
@@ -652,6 +656,7 @@ pub(crate) fn bitget_rejected_oco_children_prove_no_execution(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_bitget_rejected_oco_group(
     group: &qx_core::OrderGroupState,
     children: &[serde_json::Value],
@@ -814,6 +819,7 @@ pub(crate) fn bitget_oco_child_matches_leg(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_bitget_triggered_oco_children(
     venue: &mut CcxtProcessVenue,
     group: &qx_core::OrderGroupState,
@@ -898,7 +904,17 @@ fn reconcile_bitget_triggered_oco_children(
             )?;
             return Ok(0);
         }
-        matched.push((role_matches[0], child, id.unwrap().to_owned()));
+        let Some(id) = id else {
+            unresolved(
+                "Bitget OCO 子单缺少订单 ID",
+                store,
+                pipeline,
+                source_seq,
+                issues,
+            )?;
+            return Ok(0);
+        };
+        matched.push((role_matches[0], child, id.to_owned()));
     }
     if matched
         .iter()
@@ -1335,6 +1351,7 @@ fn reconcile_ccxt_cancelled_native_group(
     Ok(group.legs.len())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_ccxt_triggered_native_group(
     group: &qx_core::OrderGroupState,
     remote: &serde_json::Value,

@@ -283,7 +283,7 @@ fn resolve_order_execution_capability(
         }
     };
 
-    let order_type = execution_order_type(&order);
+    let order_type = execution_order_type(order);
     let quantity_unit = if order.is_quote_budget_order() {
         "quote"
     } else if market_spec.product.is_derivative() {
