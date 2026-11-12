@@ -953,8 +953,10 @@ mod tests {
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
     use qx_core::{
-        AccountBalance, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId, Money, Order,
-        OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, VenueId,
+        AccountBalance, ConditionalOrderIntent, ConditionalOrderKind, ExactAccountBalanceAmounts,
+        ExactDecimal, ExactOrderAmounts, InstrumentId, Money, Order, OrderGroupExecution,
+        OrderGroupIntent, OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole, OrderStatus,
+        Price, Quantity, Side, TradingInstrumentSpec, VenueId,
     };
     use qx_guanxing::QuoteTick;
     use qx_protocol::AccountSnapshot;
@@ -1171,6 +1173,57 @@ mod tests {
     #[test]
     fn query_model_loader_treats_missing_scheduler_state_as_empty_and_keeps_supplied_ledger() {
         let root = temp_root("query-models");
+        let group_instrument = InstrumentId::parse("BTC/USDT.OKX").expect("valid group instrument");
+        let protective_order = |client_id, kind, trigger| Order {
+            client_id,
+            instrument: group_instrument.clone(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("1").expect("quantity"),
+                limit_price: None,
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(ExactDecimal::parse(trigger).expect("trigger")),
+                    trigger_price_type: None,
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        };
+        let group = qx_core::OrderGroupState::from_intent(
+            OrderGroupIntent::new(
+                "protective-btc",
+                OrderGroupKind::Oco,
+                OrderGroupExecution::NativeRequired,
+                vec![
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::TakeProfit,
+                        order: protective_order(7101, ConditionalOrderKind::TakeProfit, "110"),
+                    },
+                    OrderGroupLegIntent {
+                        role: OrderGroupLegRole::StopLoss,
+                        order: protective_order(7102, ConditionalOrderKind::StopLoss, "90"),
+                    },
+                ],
+            )
+            .expect("valid protective OCO intent"),
+        )
+        .expect("valid persisted order group");
+        let mut group_store = qx_zhenlu::FileOrderGroupStore::new(root.join("order-groups"))
+            .expect("order-group store");
+        qx_zhenlu::OrderGroupStore::create(&mut group_store, &group).expect("persist order group");
         let mut ledger = qx_core::Ledger::new();
         let entry_id = ledger
             .deposit("main", "USDT", qx_core::Money::from_i64(10), 1)
@@ -1191,6 +1244,16 @@ mod tests {
         assert_eq!(loaded.ledger_entries.len(), 1);
         assert_eq!(loaded.ledger_entries[0].id, ledger_entry.id);
         assert!(loaded.reconcile_reports.is_empty());
+        assert_eq!(loaded.order_groups.len(), 1);
+        assert_eq!(loaded.order_groups[0].intent.group_id, "protective-btc");
+        assert_eq!(loaded.order_groups[0].intent.legs.len(), 2);
+        std::fs::write(root.join("order-groups/corrupt.json"), "{\"broken\":true}")
+            .expect("write corrupt durable group");
+        let error = match load_api_query_models(&root, Path::new("scheduler.json"), Vec::new()) {
+            Ok(_) => panic!("a corrupt group must not be presented as an empty result"),
+            Err(error) => error,
+        };
+        assert!(error.contains("订单组"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
