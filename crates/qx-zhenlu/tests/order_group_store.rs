@@ -367,3 +367,49 @@ fn loading_legacy_filled_bracket_with_dual_protection_fills_repairs_to_reconcili
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn loading_legacy_cancelled_bracket_with_open_position_repairs_to_reconciliation() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qianxing-legacy-unprotected-bracket-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = FileOrderGroupStore::new(&root).unwrap();
+    let mut legacy = bracket_state("legacy-unprotected-bracket");
+    legacy.status = qx_core::OrderGroupStatus::Cancelled;
+    legacy.legs[0].order.status = OrderStatus::Cancelled;
+    legacy.legs[0].order.exact_amounts.as_mut().unwrap().filled =
+        ExactDecimal::parse("0.004").unwrap();
+    for leg in &mut legacy.legs[1..] {
+        leg.order.status = OrderStatus::Cancelled;
+    }
+    std::fs::write(
+        root.join("legacy-unprotected-bracket.json"),
+        serde_json::to_vec_pretty(&legacy).unwrap(),
+    )
+    .unwrap();
+
+    let repaired = store.load("legacy-unprotected-bracket").unwrap().unwrap();
+    assert_eq!(
+        repaired.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+    let persisted: OrderGroupState = serde_json::from_slice(
+        &std::fs::read(root.join("legacy-unprotected-bracket.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        persisted.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -1523,11 +1523,11 @@ impl OrderGroupStore for FileOrderGroupStore {
         if group.intent.group_id != group_id {
             return Err("订单组文件名与组内标识不一致".into());
         }
-        // Older reducers could persist a terminal Bracket even when both
-        // protection orders filled, or a protection filled beyond the known
-        // entry quantity. Repair before validation so startup fails closed
-        // without making that legacy snapshot unreadable.
-        let repaired_bracket = group.repair_bracket_fill_conflict();
+        // Older reducers could persist a terminal Bracket despite conflicting
+        // protection fills or an unprotected residual entry position. Repair
+        // before validation so startup fails closed without making the legacy
+        // snapshot unreadable.
+        let repaired_bracket = group.repair_unsafe_bracket_status();
         let repaired_rejected = group.repair_legacy_rejected_status();
         group.validate_persisted()?;
         if repaired_bracket || repaired_rejected {

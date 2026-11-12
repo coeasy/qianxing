@@ -4,7 +4,7 @@
 //! advertise and implement native group semantics before executing an intent; a
 //! pair of ordinary orders is not an atomic OCO order.
 
-use crate::{ConditionalOrderKind, Order, OrderStatus};
+use crate::{ConditionalOrderKind, ExactDecimal, Order, OrderStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -402,19 +402,75 @@ impl OrderGroupState {
         if protections.len() > 1 {
             return true;
         }
-        let (Some(entry), Some(protection)) = (entry, protections.first()) else {
+        let Some(entry) = entry else {
             return false;
         };
-        protection
-            .order
-            .filled_decimal()
+        let protection_fill = protections
+            .first()
+            .map_or(ExactDecimal::ZERO, |protection| {
+                protection.order.filled_decimal()
+            });
+        if protection_fill
             .checked_cmp(entry.order.filled_decimal())
             .is_none_or(std::cmp::Ordering::is_gt)
+        {
+            return true;
+        }
+        let protection_legs: Vec<_> = self
+            .legs
+            .iter()
+            .filter(|leg| {
+                matches!(
+                    leg.role,
+                    OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+                )
+            })
+            .collect();
+        // A terminal entry with remaining exposure and no live protection is
+        // not a cancelled or completed Bracket. It must be reconciled as an
+        // unmanaged position.
+        entry.order.status.is_terminal()
+            && order_has_fill(&entry.order)
+            && protection_legs
+                .iter()
+                .all(|leg| leg.order.status.is_terminal())
+            && protection_fill
+                .checked_cmp(entry.order.filled_decimal())
+                .is_some_and(std::cmp::Ordering::is_lt)
     }
 
-    /// Recover persisted bracket snapshots whose protective fill facts are unsafe to treat as
-    /// terminal. The event reducer uses the same predicate for newly observed venue snapshots.
-    pub fn repair_bracket_fill_conflict(&mut self) -> bool {
+    fn bracket_requires_peer_cancel(&self) -> bool {
+        if self.intent.kind != OrderGroupKind::Bracket {
+            return false;
+        }
+        let Some(entry) = self
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::Entry)
+        else {
+            return false;
+        };
+        let Some(filled_protection) = self.legs.iter().find(|leg| {
+            matches!(
+                leg.role,
+                OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+            ) && order_has_fill(&leg.order)
+        }) else {
+            return false;
+        };
+        !entry.order.status.is_terminal()
+            || self.legs.iter().any(|leg| {
+                matches!(
+                    leg.role,
+                    OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+                ) && leg.role != filled_protection.role
+                    && !leg.order.status.is_terminal()
+            })
+    }
+
+    /// Recover persisted bracket snapshots whose fills are unsafe to treat as terminal.
+    /// The event reducer applies the same predicate to newly observed venue snapshots.
+    pub fn repair_unsafe_bracket_status(&mut self) -> bool {
         if self.has_bracket_fill_conflict() && self.status != OrderGroupStatus::ReconcileRequired {
             self.status = OrderGroupStatus::ReconcileRequired;
             return true;
@@ -593,6 +649,74 @@ impl OrderGroupState {
                 } else {
                     self.status = OrderGroupStatus::PeerCancelRequired;
                 }
+                return;
+            }
+        }
+        if self.intent.kind == OrderGroupKind::Bracket {
+            if self.has_bracket_fill_conflict() {
+                self.status = OrderGroupStatus::ReconcileRequired;
+                return;
+            }
+            if self.bracket_requires_peer_cancel() {
+                self.status = OrderGroupStatus::PeerCancelRequired;
+                return;
+            }
+            if let (Some(entry), Some(protection)) = (
+                self.legs
+                    .iter()
+                    .find(|leg| leg.role == OrderGroupLegRole::Entry),
+                self.legs.iter().find(|leg| {
+                    matches!(
+                        leg.role,
+                        OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+                    ) && order_has_fill(&leg.order)
+                }),
+            ) {
+                if entry.order.status.is_terminal()
+                    && self.legs.iter().all(|leg| leg.order.status.is_terminal())
+                    && protection
+                        .order
+                        .filled_decimal()
+                        .checked_cmp(entry.order.filled_decimal())
+                        .is_some_and(std::cmp::Ordering::is_eq)
+                {
+                    self.status = OrderGroupStatus::Filled;
+                    return;
+                }
+            }
+            let entry_has_fill = self
+                .legs
+                .iter()
+                .find(|leg| leg.role == OrderGroupLegRole::Entry)
+                .is_some_and(|leg| order_has_fill(&leg.order));
+            let entry_is_resolved_or_live = self
+                .legs
+                .iter()
+                .find(|leg| leg.role == OrderGroupLegRole::Entry)
+                .is_some_and(|leg| {
+                    leg.order.status.is_terminal()
+                        || matches!(
+                            leg.order.status,
+                            OrderStatus::Accepted | OrderStatus::Working
+                        )
+                });
+            let protections_are_live = self
+                .legs
+                .iter()
+                .filter(|leg| {
+                    matches!(
+                        leg.role,
+                        OrderGroupLegRole::TakeProfit | OrderGroupLegRole::StopLoss
+                    )
+                })
+                .all(|leg| {
+                    matches!(
+                        leg.order.status,
+                        OrderStatus::Accepted | OrderStatus::Working
+                    )
+                });
+            if entry_has_fill && entry_is_resolved_or_live && protections_are_live {
+                self.status = OrderGroupStatus::Active;
                 return;
             }
         }
@@ -1049,6 +1173,93 @@ mod tests {
             .unwrap();
 
         assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+    }
+
+    #[test]
+    fn bracket_protection_fill_requires_peer_cancel_then_settles_closed_position() {
+        let mut group = bracket_state();
+        for id in [801, 802, 803] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        group
+            .apply_order_snapshot(snapshot(&group, 801, OrderStatus::Filled, "0.01"), None)
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::Active);
+
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 802, OrderStatus::Filled, "0.01"),
+                Some("venue-tp".into()),
+            )
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::PeerCancelRequired);
+
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 803, OrderStatus::CancelPending, "0"),
+                Some("venue-sl".into()),
+            )
+            .unwrap();
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 803, OrderStatus::Cancelled, "0"),
+                Some("venue-sl".into()),
+            )
+            .unwrap();
+        assert_eq!(group.status, OrderGroupStatus::Filled);
+        group.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn bracket_partial_entry_cannot_be_cancelled_without_resolving_exposure() {
+        let mut group = bracket_state();
+        for id in [801, 802, 803] {
+            for status in [
+                OrderStatus::Submitted,
+                OrderStatus::Accepted,
+                OrderStatus::Working,
+            ] {
+                group
+                    .apply_order_snapshot(snapshot(&group, id, status, "0"), None)
+                    .unwrap();
+            }
+        }
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 801, OrderStatus::PartiallyFilled, "0.004"),
+                None,
+            )
+            .unwrap();
+        group
+            .apply_order_snapshot(
+                snapshot(&group, 801, OrderStatus::CancelPending, "0.004"),
+                None,
+            )
+            .unwrap();
+        group
+            .apply_order_snapshot(snapshot(&group, 801, OrderStatus::Cancelled, "0.004"), None)
+            .unwrap();
+        for id in [802, 803] {
+            group
+                .apply_order_snapshot(snapshot(&group, id, OrderStatus::CancelPending, "0"), None)
+                .unwrap();
+            group
+                .apply_order_snapshot(snapshot(&group, id, OrderStatus::Cancelled, "0"), None)
+                .unwrap();
+        }
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        assert!(group.validate_persisted().is_ok());
+        group.status = OrderGroupStatus::Cancelled;
+        assert!(group.validate_persisted().is_err());
     }
 
     #[test]
