@@ -57,6 +57,11 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo build -p qx-python
+      - name: Build qx-cli binary for workspace process tests
+        run: |
+          binary="$(cargo build -p qx-cli --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "qx-cli" and .executable != null) | .executable' | tail -n 1)"
+          test -n "$binary"
+          echo "QX_CLI_TEST_BINARY=$binary" >> "$GITHUB_ENV"
       # 显式钉住解释器：`e2e_and_python_contract` 的两条 worker 契约用例在缺 QX_PYTHON 时
       # 回落 PATH 上的 `python`，于是「Python 链在 CI 绿」可能只是碰巧有个能跑的解释器，
       # 而不是真的跑在 CI 声明的那一版上（V13 R26）。
@@ -615,7 +620,10 @@ jobs:
       - name: Check feature build
         run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Build qx-cli binary for process behavior tests
-        run: cargo build -p qx-cli --no-default-features --features "${{ matrix.features }}"
+        run: |
+          binary="$(cargo build -p qx-cli --no-default-features --features "${{ matrix.features }}" --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "qx-cli" and .executable != null) | .executable' | tail -n 1)"
+          test -n "$binary"
+          echo "QX_CLI_TEST_BINARY=$binary" >> "$GITHUB_ENV"
       - name: Test feature build
         run: cargo test -p qx-cli --no-default-features --features "${{ matrix.features }}"
 

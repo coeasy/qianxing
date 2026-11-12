@@ -506,6 +506,16 @@ fn assert_binary_fresh(binary: &Path) {
 }
 
 fn qx_cli_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("QX_CLI_TEST_BINARY") {
+        let binary = PathBuf::from(path);
+        assert!(
+            binary.is_file(),
+            "QX_CLI_TEST_BINARY 指向的 CLI 不存在: {}",
+            binary.display()
+        );
+        assert_binary_fresh(&binary);
+        return binary;
+    }
     if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
         let binary = PathBuf::from(path);
         // Some Cargo invocations expose an OUT_DIR-style path for bin unit tests
