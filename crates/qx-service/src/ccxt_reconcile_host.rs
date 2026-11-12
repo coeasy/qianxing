@@ -565,6 +565,9 @@ fn reconcile_bitget_uta_oco_observation(
             }
             reconcile_ccxt_cancelled_native_group(group, worker, store, pipeline, now, source_seq)
         }
+        Some("rejected") => reconcile_bitget_rejected_oco_group(
+            group, children, worker, store, pipeline, now, source_seq, issues,
+        ),
         Some("triggered") => reconcile_bitget_triggered_oco_children(
             venue,
             group,
@@ -614,6 +617,147 @@ fn reconcile_bitget_uta_oco_observation(
             Ok(0)
         }
     }
+}
+
+pub(crate) fn bitget_rejected_oco_children_prove_no_execution(
+    children: &[serde_json::Value],
+) -> bool {
+    if children.is_empty() {
+        return true;
+    }
+    let mut child_ids = std::collections::BTreeSet::new();
+    children.iter().all(|child| {
+        let id = child
+            .get("order_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()));
+        id.is_some_and(|id| child_ids.insert(id.to_owned()))
+            && child.get("status").and_then(serde_json::Value::as_str) == Some("failed")
+            && child
+                .get("cum_exec_qty")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| qx_core::ExactDecimal::parse(value).ok())
+                .is_some_and(qx_core::ExactDecimal::is_zero)
+    })
+}
+
+fn reconcile_bitget_rejected_oco_group(
+    group: &qx_core::OrderGroupState,
+    children: &[serde_json::Value],
+    worker: &WorkerConfig,
+    store: &mut dyn qx_zhenlu::OrderGroupStore,
+    pipeline: &mut qx_runtime::LiveEventPipeline,
+    now: u64,
+    source_seq: &mut u64,
+    issues: &mut Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    let local_orders = pipeline.orders();
+    let clean_rejection = bitget_rejected_oco_children_prove_no_execution(children)
+        && group.legs.iter().all(|leg| {
+            leg.venue_order_id.is_none()
+                && leg.order.filled.raw() == 0
+                && leg
+                    .order
+                    .exact_amounts
+                    .is_none_or(|amounts| amounts.filled.is_zero())
+                && local_orders
+                    .iter()
+                    .find(|order| order.client_id == leg.order.client_id)
+                    .is_some_and(|order| {
+                        order.status == qx_core::OrderStatus::Rejected
+                            || (!order.status.is_terminal()
+                                && order
+                                    .status
+                                    .can_transition_to(qx_core::OrderStatus::Rejected)
+                                && order.filled.raw() == 0
+                                && order
+                                    .exact_amounts
+                                    .is_none_or(|amounts| amounts.filled.is_zero()))
+                    })
+        });
+    if !clean_rejection {
+        mark_ccxt_group_unresolved(
+            group,
+            worker,
+            store,
+            pipeline,
+            now,
+            source_seq,
+            "Bitget OCO 策略单拒绝事实与子单/本地成交状态不一致",
+        )?;
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_rejection_unresolved",
+            "Bitget UTA OCO 被拒绝，但无法证明没有子单成交",
+        );
+        return Ok(0);
+    }
+    store.require_reconciliation(&group.intent.group_id)?;
+    let mut snapshots = Vec::with_capacity(group.legs.len());
+    for leg in &group.legs {
+        let current = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+            .ok_or_else(|| {
+                format!(
+                    "Bitget OCO 被拒绝的子腿 {} 不在 EventLog",
+                    leg.order.client_id
+                )
+            })?;
+        if current.status != qx_core::OrderStatus::Rejected {
+            *source_seq = (*source_seq).saturating_add(1);
+            pipeline
+                .ingest(qx_runtime::RuntimeEventEnvelope::venue(
+                    qx_runtime::RuntimeExternalEvent::OrderStatusReconciled {
+                        client_order_id: current.client_id,
+                        account_id: current.account_id.clone(),
+                        venue_id: current.instrument.venue.as_str().to_owned(),
+                        status: qx_core::OrderStatus::Rejected,
+                        venue_order_id: None,
+                        filled_raw: 0,
+                        filled_exact: Some(qx_core::ExactDecimal::ZERO),
+                    },
+                    now,
+                    now,
+                    *source_seq,
+                    format!("{}:bitget-oco-rejected:{}", worker.id, current.client_id),
+                ))
+                .map_err(|error| format!("归约 Bitget OCO 权威拒绝事实失败: {error:?}"))?;
+        }
+        let rejected = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == leg.order.client_id)
+            .ok_or_else(|| format!("Bitget OCO 拒绝子腿 {} 归约后缺失", leg.order.client_id))?;
+        if rejected.status != qx_core::OrderStatus::Rejected
+            || rejected.filled.raw() != 0
+            || rejected
+                .exact_amounts
+                .is_some_and(|amounts| !amounts.filled.is_zero())
+        {
+            mark_ccxt_group_unresolved(
+                group,
+                worker,
+                store,
+                pipeline,
+                now,
+                source_seq,
+                "Bitget OCO 拒绝后的 OMS 子腿未收敛为零成交 Rejected",
+            )?;
+            push_ccxt_group_issue(
+                issues,
+                group,
+                "native_order_group_rejection_unresolved",
+                "Bitget UTA OCO 拒绝后本地子腿状态仍不一致",
+            );
+            return Ok(0);
+        }
+        snapshots.push((rejected, None));
+    }
+    store_ccxt_group_snapshots(&group.intent.group_id, snapshots, true, store)?;
+    Ok(group.legs.len())
 }
 
 pub(crate) fn bitget_oco_child_matches_leg(
@@ -2062,8 +2206,8 @@ fn runtime_timestamp_ms() -> u64 {
 mod native_order_group_reconcile_tests {
     use super::{
         OkxOcoObservation, bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
-        classify_okx_oco_observation, okx_algo_client_order_id,
-        sync_ccxt_order_groups_from_user_stream,
+        bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
+        okx_algo_client_order_id, sync_ccxt_order_groups_from_user_stream,
     };
 
     fn protection_order(
@@ -2297,6 +2441,170 @@ mod native_order_group_reconcile_tests {
             }),
             &group.legs[0]
         ));
+    }
+
+    #[test]
+    fn bitget_rejected_oco_requires_empty_or_failed_zero_fill_children() {
+        assert!(bitget_rejected_oco_children_prove_no_execution(&[]));
+        assert!(bitget_rejected_oco_children_prove_no_execution(&[
+            serde_json::json!({
+                "order_id": "901", "status": "failed", "cum_exec_qty": "0"
+            }),
+        ]));
+        assert!(!bitget_rejected_oco_children_prove_no_execution(&[
+            serde_json::json!({
+                "order_id": "bad", "status": "failed", "cum_exec_qty": "0"
+            }),
+        ]));
+        assert!(!bitget_rejected_oco_children_prove_no_execution(&[
+            serde_json::json!({
+                "order_id": "901", "status": "cancelled", "cum_exec_qty": "0"
+            }),
+        ]));
+        assert!(!bitget_rejected_oco_children_prove_no_execution(&[
+            serde_json::json!({
+                "order_id": "901", "status": "failed", "cum_exec_qty": "0.001"
+            }),
+        ]));
+    }
+
+    #[test]
+    fn bitget_rejected_oco_closes_both_orders_and_group_when_no_children_exist() {
+        use super::reconcile_bitget_rejected_oco_group;
+        use qx_core::{
+            ConditionalOrderKind, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+            OrderGroupLegIntent, OrderGroupLegRole, OrderGroupStatus, OrderStatus,
+        };
+        use qx_runtime::{LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent};
+        use qx_runtime::{WorkerConfig, WorkerRole};
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-bitget-rejected-oco-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        let take_profit = protection_order(
+            51,
+            "account",
+            "BITGET",
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let stop_loss = protection_order(
+            52,
+            "account",
+            "BITGET",
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let intent = OrderGroupIntent::new(
+            "bitget-rejected-no-child",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit.clone(),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut store = FileOrderGroupStore::new(root.join("order-groups")).unwrap();
+        store
+            .create(&qx_core::OrderGroupState::from_intent(intent).unwrap())
+            .unwrap();
+        let mut pipeline = LiveEventPipeline::open(&root, "account", "USDT").unwrap();
+        let mut source_seq = 0;
+        for order in [&take_profit, &stop_loss] {
+            pipeline.register_order(order.clone(), 10).unwrap();
+            let mut submitted = order.clone();
+            submitted.status = OrderStatus::Submitted;
+            store
+                .apply_order_snapshot("bitget-rejected-no-child", &submitted, None)
+                .unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::Accepted {
+                        client_order_id: order.client_id,
+                        venue_order_id: None,
+                    },
+                    10,
+                    10,
+                    source_seq,
+                    format!("accepted:{}", order.client_id),
+                ))
+                .unwrap();
+            let accepted = pipeline
+                .orders()
+                .into_iter()
+                .find(|current| current.client_id == order.client_id)
+                .unwrap();
+            store
+                .apply_order_snapshot("bitget-rejected-no-child", &accepted, None)
+                .unwrap();
+        }
+        store
+            .record_venue_group_id("bitget-rejected-no-child", "123456789".into())
+            .unwrap();
+        let group = store.load("bitget-rejected-no-child").unwrap().unwrap();
+        let worker = WorkerConfig {
+            id: "bitget-reconciler".into(),
+            role: WorkerRole::Reconciler,
+            enabled: true,
+            account_id: Some("account".into()),
+            venue_id: Some("BITGET".into()),
+            endpoint: None,
+            symbols: vec![],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        let mut issues = Vec::new();
+        assert_eq!(
+            reconcile_bitget_rejected_oco_group(
+                &group,
+                &[],
+                &worker,
+                &mut store,
+                &mut pipeline,
+                20,
+                &mut source_seq,
+                &mut issues,
+            )
+            .unwrap(),
+            2
+        );
+        let reconciled = store.load("bitget-rejected-no-child").unwrap().unwrap();
+        assert_eq!(reconciled.status, OrderGroupStatus::Rejected);
+        assert!(
+            reconciled
+                .legs
+                .iter()
+                .all(|leg| leg.order.status == OrderStatus::Rejected)
+        );
+        assert!(
+            pipeline
+                .orders()
+                .iter()
+                .all(|order| order.status == OrderStatus::Rejected)
+        );
+        assert!(issues.is_empty());
     }
 
     #[test]

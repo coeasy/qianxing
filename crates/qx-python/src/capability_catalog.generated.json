@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "b23ae830353b816fbb19c9e3e96cffdbd241c6d80005452708095611c0dc4535",
+    "maturity/capability-matrix.yaml": "c0d7f63dd9f9ae0dd59ade996d3c981fe38cb6c26ac5e3fad532ad14e48a7190",
     "maturity/capabilities.yaml": "d9297492facdd9df3f1adc5b2eb12d4222f8d35d0b1d066c680e719bc2e51991",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -2600,7 +2600,7 @@
         "limitations": [
           "运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型",
           "OKX 原生 OCO 已接通提交、查询、取消、触发子腿恢复与订单组/OMS 对账；能力按下方 OKX Spot/Perpetual OCO scopes 分列，但仍为 implemented-unverified，未通过 OKX Sandbox；未知或并发成交保留 ReconcileRequired，不自动重放",
-          "Bitget UTA Spot OCO 已接服务提交、撤销及 live/cancelled 状态恢复；触发后的保护腿仍保留 ReconcileRequired，且未完成授权 Sandbox 验收",
+          "Bitget UTA Spot OCO 已接通提交、权威查询、撤销及触发后子腿/精确成交恢复；权威零成交拒绝现在收敛为 Rejected，角色歧义、历史窗口外及成交冲突仍保留 ReconcileRequired；仍未完成授权 Sandbox 验收",
           "条件单形态虽已列入下方逐产品 execution_scopes，但除单独声明的 OCO 形态外全部仍为 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行",
           "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收",
           "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收",
