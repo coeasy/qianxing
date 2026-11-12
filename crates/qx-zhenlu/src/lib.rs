@@ -303,6 +303,12 @@ pub enum VenueEvent {
     },
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct VenueOrderGroupSubmission {
+    pub venue_group_id: Option<String>,
+    pub events: Vec<VenueEvent>,
+}
+
 /// 连接器的健康档位。断开不是一档状态而是一条义务：`disconnect()` 直接把档位钉成
 /// `ReconcileRequired`，`reconnect()` 立刻进 `Snapshotting`（没有异步握手期），"降级"则由
 /// 监管侧的 `ServiceStatus::Degraded` 承担 —— 故 `Disconnected`/`Connecting`/`Degraded` 已删。
@@ -412,7 +418,7 @@ pub trait Venue {
         &mut self,
         _group: &OrderGroupState,
         _ts: u64,
-    ) -> QxResult<Vec<VenueEvent>> {
+    ) -> QxResult<VenueOrderGroupSubmission> {
         Err(QxError::BusinessViolation(
             "Venue 未实现原生 OCO/Bracket 订单组提交".into(),
         ))
@@ -1410,6 +1416,14 @@ pub trait OrderGroupStore {
     /// Atomically claim the only venue submit attempt; returns false after restart/replay.
     fn begin_submission(&mut self, group_id: &str) -> Result<bool, String>;
     fn require_reconciliation(&mut self, group_id: &str) -> Result<(), String>;
+    fn record_venue_group_id(
+        &mut self,
+        group_id: &str,
+        venue_group_id: String,
+    ) -> Result<(), String> {
+        let _ = (group_id, venue_group_id);
+        Err("订单组存储不支持保存交易所组 ID".into())
+    }
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1548,6 +1562,25 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组文件名与组内标识不一致".into());
         }
         group.require_reconciliation();
+        self.save_locked(&group)
+    }
+
+    fn record_venue_group_id(
+        &mut self,
+        group_id: &str,
+        venue_group_id: String,
+    ) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取订单组状态失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析订单组状态失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.record_venue_group_id(venue_group_id)?;
         self.save_locked(&group)
     }
 

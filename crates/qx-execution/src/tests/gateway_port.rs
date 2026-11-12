@@ -172,16 +172,19 @@ impl VenuePort for NativeGroupPortVenue {
         &mut self,
         group: &qx_core::OrderGroupState,
         _ts: u64,
-    ) -> Result<Vec<ExecutionEvent>, String> {
+    ) -> Result<OrderGroupSubmission, String> {
         self.group_submit_calls += 1;
-        Ok(group
-            .legs
-            .iter()
-            .map(|leg| ExecutionEvent::Accepted {
-                client_order_id: leg.order.client_id,
-                venue_order_id: format!("exchange-{}", leg.order.client_id),
-            })
-            .collect())
+        Ok(OrderGroupSubmission {
+            venue_group_id: Some("exchange-list-42".into()),
+            events: group
+                .legs
+                .iter()
+                .map(|leg| ExecutionEvent::Accepted {
+                    client_order_id: leg.order.client_id,
+                    venue_order_id: format!("exchange-{}", leg.order.client_id),
+                })
+                .collect(),
+        })
     }
 
     fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
@@ -242,6 +245,7 @@ fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc()
     assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
     assert!(restored.legs.iter().all(|leg| leg.venue_order_id.as_deref()
         == Some(format!("exchange-{}", leg.order.client_id).as_str())));
+    assert_eq!(restored.venue_group_id.as_deref(), Some("exchange-list-42"));
 
     let error = PortExecutionService::new(
         &mut venue,
@@ -287,7 +291,7 @@ impl VenuePort for UnknownNativeGroupPortVenue {
         &mut self,
         _group: &qx_core::OrderGroupState,
         _ts: u64,
-    ) -> Result<Vec<ExecutionEvent>, String> {
+    ) -> Result<OrderGroupSubmission, String> {
         self.group_submit_calls += 1;
         Err("timeout after exchange accepted request".into())
     }

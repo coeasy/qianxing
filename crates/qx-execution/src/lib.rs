@@ -170,6 +170,15 @@ fn venue_events_to_application(events: Vec<VenueEvent>) -> Vec<ExecutionEvent> {
         .collect()
 }
 
+fn venue_group_submission_to_application(
+    submission: qx_zhenlu::VenueOrderGroupSubmission,
+) -> OrderGroupSubmission {
+    OrderGroupSubmission {
+        venue_group_id: submission.venue_group_id,
+        events: venue_events_to_application(submission.events),
+    }
+}
+
 impl<V: Venue> VenuePort for VenuePortAdapter<V> {
     fn venue_id(&self) -> &str {
         self.venue.id()
@@ -198,10 +207,10 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
         &mut self,
         group: &qx_core::OrderGroupState,
         ts: u64,
-    ) -> Result<Vec<ExecutionEvent>, String> {
+    ) -> Result<OrderGroupSubmission, String> {
         self.venue
             .submit_order_group(group, ts)
-            .map(venue_events_to_application)
+            .map(venue_group_submission_to_application)
             .map_err(|error| format!("Venue 订单组提交结果未知: {error:?}"))
     }
 
@@ -280,10 +289,10 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
         &mut self,
         group: &qx_core::OrderGroupState,
         ts: u64,
-    ) -> Result<Vec<ExecutionEvent>, String> {
+    ) -> Result<OrderGroupSubmission, String> {
         self.venue
             .submit_order_group(group, ts)
-            .map(venue_events_to_application)
+            .map(venue_group_submission_to_application)
             .map_err(|error| format!("Venue 订单组提交结果未知: {error:?}"))
     }
 
@@ -854,13 +863,25 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             }
         }
 
-        let facts = match self.venue.submit_order_group(&group, self.now) {
-            Ok(facts) => facts,
+        let submission = match self.venue.submit_order_group(&group, self.now) {
+            Ok(submission) => submission,
             Err(error) => {
                 self.mark_group_reconcile(&group, "group-submit-unknown")?;
                 return Err(format!("Venue 订单组提交结果未知，已围栏待对账: {error}"));
             }
         };
+        if let Some(venue_group_id) = submission.venue_group_id {
+            let result = self
+                .order_group_store
+                .as_deref_mut()
+                .ok_or_else(|| "订单组存储不可用".to_string())?
+                .record_venue_group_id(&group.intent.group_id, venue_group_id);
+            if let Err(error) = result {
+                self.mark_group_reconcile(&group, "venue-group-id-conflict")?;
+                return Err(format!("交易所订单组 ID 无法持久化，已围栏待对账: {error}"));
+            }
+        }
+        let facts = submission.events;
         let mut per_leg = Vec::with_capacity(group.legs.len());
         for leg in &group.legs {
             let leg_facts: Vec<_> = facts

@@ -201,6 +201,8 @@ pub struct OrderGroupState {
     pub schema_version: u16,
     pub intent: OrderGroupIntent,
     pub status: OrderGroupStatus,
+    #[serde(default)]
+    pub venue_group_id: Option<String>,
     pub legs: Vec<OrderGroupLegState>,
 }
 
@@ -220,8 +222,25 @@ impl OrderGroupState {
             schema_version: ORDER_GROUP_SCHEMA_VERSION,
             intent,
             status: OrderGroupStatus::Planned,
+            venue_group_id: None,
             legs,
         })
+    }
+
+    pub fn record_venue_group_id(&mut self, venue_group_id: String) -> Result<(), String> {
+        let venue_group_id = venue_group_id.trim();
+        if venue_group_id.is_empty() {
+            return Err("venue_group_id 不能为空".into());
+        }
+        if self
+            .venue_group_id
+            .as_deref()
+            .is_some_and(|existing| existing != venue_group_id)
+        {
+            return Err("订单组 venue_group_id 与已确认 ID 冲突".into());
+        }
+        self.venue_group_id = Some(venue_group_id.to_string());
+        Ok(())
     }
 
     /// Durably fence the one allowed submit attempt. Once a group reached
@@ -247,6 +266,13 @@ impl OrderGroupState {
             ));
         }
         self.intent.validate()?;
+        if self
+            .venue_group_id
+            .as_deref()
+            .is_some_and(|id| id.trim().is_empty())
+        {
+            return Err("持久订单组含空 venue_group_id".into());
+        }
         if self.legs.len() != self.intent.legs.len() {
             return Err("持久订单组腿数量与原始意图不一致".into());
         }
@@ -653,5 +679,11 @@ mod tests {
         let decoded: OrderGroupState = serde_json::from_slice(&encoded).unwrap();
         decoded.validate_persisted().unwrap();
         assert_eq!(decoded, group);
+
+        let mut legacy = serde_json::to_value(&group).unwrap();
+        legacy.as_object_mut().unwrap().remove("venue_group_id");
+        let legacy: OrderGroupState = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.venue_group_id, None);
+        legacy.validate_persisted().unwrap();
     }
 }

@@ -58,6 +58,15 @@ pub enum ExecutionEvent {
     },
 }
 
+/// A venue's response to one atomic group submission. `venue_group_id` identifies
+/// the exchange-side order-list/resource (for example an OCO list), while each
+/// child event retains its own exchange order ID and fills.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OrderGroupSubmission {
+    pub venue_group_id: Option<String>,
+    pub events: Vec<ExecutionEvent>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ExecutionEventEnvelope {
     pub event: ExecutionEvent,
@@ -161,7 +170,7 @@ pub trait VenuePort {
         &mut self,
         _group: &qx_core::OrderGroupState,
         _ts: u64,
-    ) -> Result<Vec<ExecutionEvent>, String> {
+    ) -> Result<OrderGroupSubmission, String> {
         Err("Venue 未实现原生 OCO/Bracket 订单组提交".into())
     }
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String>;

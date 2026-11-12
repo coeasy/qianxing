@@ -99,6 +99,9 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
             Some("exchange-order-701".into()),
         )
         .unwrap();
+    store
+        .record_venue_group_id("persisted-oco", "exchange-list-9001".into())
+        .unwrap();
     store.require_reconciliation("persisted-oco").unwrap();
     store
         .record_order_snapshot_during_reconciliation(
@@ -119,6 +122,13 @@ fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
         restored.legs[0].venue_order_id.as_deref(),
         Some("exchange-order-701")
     );
+    assert_eq!(
+        restored.venue_group_id.as_deref(),
+        Some("exchange-list-9001")
+    );
+    assert!(store
+        .record_venue_group_id("persisted-oco", "conflicting-list".into())
+        .is_err());
     assert_eq!(reopened.group_ids().unwrap(), vec!["persisted-oco"]);
 
     let mut changed = oco_state("persisted-oco");
