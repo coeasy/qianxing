@@ -2225,9 +2225,170 @@ mod native_order_group_reconcile_tests {
     use super::{
         OkxOcoObservation, bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
         bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
-        mark_ccxt_group_query_failed, okx_algo_client_order_id,
+        mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
         sync_ccxt_order_groups_from_user_stream,
     };
+
+    #[test]
+    fn okx_oco_rpc_query_error_persists_reconciliation_barrier() {
+        use qx_adapter::{CcxtProcessVenue, CcxtRpc};
+        use qx_core::{
+            ConditionalOrderKind, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
+            OrderGroupLegIntent, OrderGroupLegRole, OrderGroupStatus, OrderStatus,
+        };
+        use qx_runtime::{
+            LiveEventPipeline, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent,
+            WorkerConfig, WorkerRole,
+        };
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+        use std::sync::{Arc, Mutex};
+
+        struct FailedGroupQuery(Arc<Mutex<Vec<serde_json::Value>>>);
+        impl CcxtRpc for FailedGroupQuery {
+            fn call(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+                self.0.lock().unwrap().push(request);
+                Err("test query timeout".into())
+            }
+        }
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-okx-rpc-query-unknown-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let take_profit = protection_order(
+            91,
+            "account",
+            "OKX",
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let stop_loss = protection_order(
+            92,
+            "account",
+            "OKX",
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let intent = OrderGroupIntent::new(
+            "okx-rpc-query-unknown",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit.clone(),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut store = FileOrderGroupStore::new(root.join("order-groups")).unwrap();
+        store
+            .create(&qx_core::OrderGroupState::from_intent(intent).unwrap())
+            .unwrap();
+        assert!(store.begin_submission("okx-rpc-query-unknown").unwrap());
+        store
+            .record_venue_group_id("okx-rpc-query-unknown", "99887766".into())
+            .unwrap();
+        store
+            .activate_native_group("okx-rpc-query-unknown")
+            .unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(&root, "account", "USDT").unwrap();
+        let mut source_seq = 0_u64;
+        for order in [&take_profit, &stop_loss] {
+            pipeline.register_order(order.clone(), 10).unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::Accepted {
+                        client_order_id: order.client_id,
+                        venue_order_id: None,
+                    },
+                    10,
+                    10,
+                    source_seq,
+                    format!("accepted:{}", order.client_id),
+                ))
+                .unwrap();
+        }
+        assert_eq!(
+            store.load("okx-rpc-query-unknown").unwrap().unwrap().status,
+            OrderGroupStatus::Active
+        );
+
+        let worker = WorkerConfig {
+            id: "okx-reconciler".into(),
+            role: WorkerRole::Reconciler,
+            enabled: true,
+            account_id: Some("account".into()),
+            venue_id: Some("OKX".into()),
+            endpoint: None,
+            symbols: vec![],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        let sample = include_str!("../../../deploy/qianxing.runtime.ccxt.example.json");
+        let mut runtime_config = RuntimeConfig::from_json(sample).unwrap();
+        runtime_config.storage.data_dir = root.to_string_lossy().into_owned();
+        let pipeline_storage =
+            crate::pipeline::PipelineStorage::from_config(&runtime_config).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut venue =
+            CcxtProcessVenue::new("OKX", Box::new(FailedGroupQuery(Arc::clone(&requests))));
+        let mut issues = Vec::new();
+        let updates = reconcile_ccxt_native_order_groups(
+            &mut venue,
+            &worker,
+            &pipeline_storage,
+            std::path::Path::new("unused-runtime-config.json"),
+            &mut pipeline,
+            20,
+            &mut source_seq,
+            &mut issues,
+        )
+        .unwrap();
+
+        assert_eq!(updates, 0);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["op"], "fetch_order_group");
+        assert_eq!(requests[0]["algo_id"], "99887766");
+        assert_eq!(requests[0]["instrument"], "BTC/USDT.OKX");
+        drop(requests);
+
+        let restored = FileOrderGroupStore::new(root.join("order-groups"))
+            .unwrap()
+            .load("okx-rpc-query-unknown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.status, OrderGroupStatus::ReconcileRequired);
+        assert!(
+            restored
+                .legs
+                .iter()
+                .all(|leg| leg.order.status == OrderStatus::Unknown)
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0]["reason"], "OKX 原生 OCO 查询失败或响应未知");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn protection_order(
         client_id: u64,

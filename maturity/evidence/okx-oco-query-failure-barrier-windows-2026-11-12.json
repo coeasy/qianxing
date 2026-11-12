@@ -20,9 +20,20 @@
       ]
     },
     {
+      "command": "cargo test --offline --locked -j 1 -p qx-service okx_oco_rpc_query_error_persists_reconciliation_barrier",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "the service reconciler issues fetch_order_group with the persisted OKX algo_id and instrument",
+        "the local CCXT RPC mock returns a query timeout and the persisted group becomes ReconcileRequired",
+        "both child orders remain Unknown and a venue-specific issue is emitted"
+      ]
+    },
+    {
       "command": "cargo test --offline --locked -j 1 -p qx-service native_order_group_reconcile_tests",
       "result": "passed",
-      "passed": 8,
+      "passed": 9,
       "failed": 0
     },
     {
@@ -33,8 +44,7 @@
     }
   ],
   "limitations": [
-    "The service test invokes the shared query-failure reducer directly; it does not execute the CCXT RPC call path.",
-    "No OKX or Bitget API/Demo request was made.",
+    "The RPC error is injected by a local mock; no OKX or Bitget API/Demo request was made.",
     "Connector maturity remains implemented-unverified."
   ]
 }

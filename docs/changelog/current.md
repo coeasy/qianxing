@@ -1,4 +1,4 @@
-- CCXT 原生 OCO 查询失败现在会对 OKX 和 Bitget 一致持久化 `ReconcileRequired`，并把仍活动的两条子订单写入 EventLog 为未知状态；不再让 OKX 组在远端未知时保留 `Active`。
+- CCXT 原生 OCO 查询失败现在会对 OKX 和 Bitget 一致持久化 `ReconcileRequired`，并把仍活动的两条子订单写入 EventLog 为未知状态；不再让 OKX 组在远端未知时保留 `Active`。新增服务入口级 OKX RPC mock 回归：实际走 `fetch_order_group` 调用并注入超时，重载持久快照确认人工对账屏障。定向订单组测试 9/9、架构检查 1,633 项通过；没有请求真实交易所。
 - 订单组快照改用同目录临时文件、文件冲刷与原子替换；移除 Windows 替换失败时先删除旧快照的路径。原子替换操作失败会保留旧状态；替换成功后若目录冲刷报错，调用方需重新读取核实可见状态。
 - 账户快照升级为 v5：新构造器要求显式传入市场日历交易日，Rust 与 Python 共同校验有效 `YYYYMMDD`；API 启动恢复和实时刷新从 `api.account_trading_days_path` 的外部日历映射读取每个账户/venue 的交易日，不从 `as_of` 或事件时间推断。旧 v1-v4 快照保持读取兼容，v4 schema 路由保留并新增 v5 路由；交易日沿用已有状态哈希字段，但仅 v5 强制非空合法值。更新发布 schema、API 文档、迁移/能力台账及回归门禁。
 
