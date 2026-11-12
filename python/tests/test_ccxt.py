@@ -411,7 +411,10 @@ class CcxtTest(unittest.TestCase):
             algo_client_order_id="QXGROUPABC123",
         )
         self.assertEqual(submitted["algo_id"], "123456")
-        order_request = exchange.calls[-1]
+        self.assertEqual(submitted["state"], "live")
+        order_request = next(
+            call for call in exchange.calls if call[1] == "trade/order-algo" and call[3] == "POST"
+        )
         self.assertEqual(order_request[1:4], ("trade/order-algo", "private", "POST"))
         self.assertEqual(order_request[4]["ordType"], "oco")
         self.assertEqual(order_request[4]["tpOrdPx"], "109.5")

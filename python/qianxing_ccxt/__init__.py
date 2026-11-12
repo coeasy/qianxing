@@ -2784,11 +2784,13 @@ class CcxtExchangeClient:
                 CcxtErrorClass.EXCHANGE,
                 "OKX OCO 返回的 algoId/algoClOrdId 与提交身份不完整或不匹配",
             )
+        snapshot = self.fetch_okx_oco_order_group(instrument, algo_id=algo_id)
         return {
             "algo_id": algo_id,
             "algo_client_order_id": echoed_client_id,
             "instrument": market.instrument,
             "order_type": "oco",
+            "state": snapshot["state"],
         }
 
     def fetch_okx_oco_order_group(

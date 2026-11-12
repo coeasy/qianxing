@@ -175,6 +175,7 @@ fn venue_group_submission_to_application(
 ) -> OrderGroupSubmission {
     OrderGroupSubmission {
         venue_group_id: submission.venue_group_id,
+        group_status: submission.group_status,
         events: venue_events_to_application(submission.events),
     }
 }
@@ -880,7 +881,28 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                 return Err(format!("交易所订单组 ID 无法持久化，已围栏待对账: {error}"));
             }
         }
+        let group_status = submission.group_status;
         let facts = submission.events;
+        if let Some(group_status) = group_status {
+            if group_status == qx_core::OrderGroupStatus::Active && facts.is_empty() {
+                self.order_group_store
+                    .as_deref_mut()
+                    .ok_or_else(|| "订单组存储不可用".to_string())?
+                    .activate_native_group(&group.intent.group_id)?;
+                return Ok(PortExecutionResult {
+                    message: format!(
+                        "ORDER_GROUP_ACTIVE group_id={} venue_resource=accepted_without_child_orders",
+                        group.intent.group_id
+                    ),
+                    event_count: 0,
+                });
+            }
+            self.mark_group_reconcile(&group, "native-group-state-requires-reconcile")?;
+            return Err(format!(
+                "Venue 原生订单组状态 {:?} 尚不能安全归约到子订单，已围栏待对账",
+                group_status
+            ));
+        }
         let mut per_leg = Vec::with_capacity(group.legs.len());
         for leg in &group.legs {
             let leg_facts: Vec<_> = facts

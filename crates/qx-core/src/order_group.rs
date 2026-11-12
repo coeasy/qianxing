@@ -243,6 +243,33 @@ impl OrderGroupState {
         Ok(())
     }
 
+    /// Mark a venue-native group active before it has created ordinary child orders.
+    /// A group resource ID must never be copied into the child order IDs.
+    pub fn activate_native_group(&mut self) -> Result<(), String> {
+        if self.status != OrderGroupStatus::Submitting {
+            return Err(format!(
+                "订单组 {:?} 不能从当前状态激活原生组资源",
+                self.status
+            ));
+        }
+        if self.venue_group_id.as_deref().is_none_or(str::is_empty) {
+            return Err("原生组激活前必须先保存 venue_group_id".into());
+        }
+        if self.legs.iter().any(|leg| {
+            !matches!(leg.order.status, OrderStatus::PendingSubmit | OrderStatus::Submitted)
+                || leg.order.filled.raw() != 0
+                || leg
+                    .order
+                    .exact_amounts
+                    .is_some_and(|amounts| amounts.filled.is_positive())
+                || leg.venue_order_id.is_some()
+        }) {
+            return Err("原生组激活只允许尚未生成子订单的未成交腿".into());
+        }
+        self.status = OrderGroupStatus::Active;
+        Ok(())
+    }
+
     /// Durably fence the one allowed submit attempt. Once a group reached
     /// `Submitting`, a restarted worker must reconcile it instead of replaying
     /// the venue side effect.
@@ -582,6 +609,18 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn native_group_activation_does_not_assign_group_id_to_child_orders() {
+        let mut group = oco_state();
+        group.begin_submission().unwrap();
+        group.record_venue_group_id("okx-algo-123".into()).unwrap();
+        group.activate_native_group().unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::Active);
+        assert_eq!(group.venue_group_id.as_deref(), Some("okx-algo-123"));
+        assert!(group.legs.iter().all(|leg| leg.venue_order_id.is_none()));
     }
 
     fn snapshot(

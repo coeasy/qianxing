@@ -2828,6 +2828,7 @@ impl Venue for BinanceSpotVenue {
         self.forget_orders(&evicted);
         Ok(VenueOrderGroupSubmission {
             venue_group_id: Some(wire.order_list_id.to_string()),
+            group_status: None,
             events,
         })
     }

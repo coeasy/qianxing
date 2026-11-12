@@ -1419,7 +1419,7 @@ impl Venue for CcxtProcessVenue {
     fn submit_order_group(
         &mut self,
         group: &OrderGroupState,
-        ts: u64,
+        _ts: u64,
     ) -> QxResult<VenueOrderGroupSubmission> {
         self.validate_order_group(group)?;
         let expected_client_id = okx_algo_client_order_id(&group.intent.group_id);
@@ -1464,17 +1464,14 @@ impl Venue for CcxtProcessVenue {
                 "OKX OCO 返回的 algo client ID、标的或订单组类型与提交不匹配".into(),
             ));
         }
+        let group_status = match result.get("state").and_then(Value::as_str) {
+            Some("live") => qx_core::OrderGroupStatus::Active,
+            _ => qx_core::OrderGroupStatus::ReconcileRequired,
+        };
         Ok(VenueOrderGroupSubmission {
             venue_group_id: Some(algo_id.to_string()),
-            events: group
-                .legs
-                .iter()
-                .map(|leg| VenueEvent::Accepted {
-                    client_order_id: leg.order.client_id,
-                    venue_order_id: algo_id.to_string(),
-                    ts,
-                })
-                .collect(),
+            group_status: Some(group_status),
+            events: Vec::new(),
         })
     }
 

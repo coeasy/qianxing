@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "okx_native_group_resource_acceptance_local",
+  "generated_at_utc": "2026-11-12T05:20:01Z",
+  "source": {
+    "code_base_commit": "ad578ada",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-core/src/order_group.rs",
+      "crates/qx-zhenlu/src/lib.rs",
+      "crates/qx-adapter/src/binance.rs",
+      "crates/qx-adapter/src/ccxt.rs",
+      "crates/qx-adapter/src/ccxt/tests.rs",
+      "crates/qx-execution/src/application.rs",
+      "crates/qx-execution/src/lib.rs",
+      "crates/qx-execution/src/tests/gateway_port.rs",
+      "python/qianxing_ccxt/__init__.py",
+      "python/tests/test_ccxt.py",
+      "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md"
+    ]
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "dependency_resolution": "offline, locked"
+  },
+  "results": [
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-core native_group_activation_does_not_assign_group_id_to_child_orders -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-execution native_group_resource_can_be_active_before_child_orders_exist -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-adapter okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m unittest discover -s python/tests -p test_ccxt.py",
+      "selected_tests": 57,
+      "passed": 57,
+      "failed": 0
+    },
+    {
+      "command": "python -m unittest discover -s python/tests -p test_ccxt_worker.py",
+      "selected_tests": 24,
+      "passed": 24,
+      "failed": 0
+    }
+  ],
+  "scope_limitations": [
+    "These local tests prove state modeling, request mapping, and worker contract behavior only; no OKX API call was made.",
+    "OKX order-group query/cancel service routing, triggered child-order identity recovery, private-stream reduction, and restart reconciliation remain incomplete.",
+    "OKX OCO remains unavailable for sandbox or production use; this evidence does not advance its maturity status."
+  ]
+}

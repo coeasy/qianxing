@@ -157,6 +157,12 @@ fn okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs() {
         request["algo_client_order_id"],
         okx_algo_client_order_id("protective-btc-group-1")
     );
+
+    let mut venue = CcxtProcessVenue::new("okx", Box::new(FakeRpc { calls: Vec::new() }));
+    let submission = venue.submit_order_group(&group, 123).unwrap();
+    assert_eq!(submission.venue_group_id.as_deref(), Some("123456"));
+    assert_eq!(submission.group_status, Some(qx_core::OrderGroupStatus::Active));
+    assert!(submission.events.is_empty());
 }
 
 struct FakeRpc {
@@ -281,6 +287,15 @@ impl CcxtRpc for FakeRpc {
                     "average_raw": 100_000_000_000i64,
                     "fee_raw": 1_000_000_000i64,
                     "fee_currency": "USDT"
+                }
+            })),
+            Some("create_order_group") => Ok(json!({
+                "order_group": {
+                    "algo_id": "123456",
+                    "algo_client_order_id": request["algo_client_order_id"],
+                    "instrument": request["instrument"],
+                    "order_type": "oco",
+                    "state": "live"
                 }
             })),
             _ => Ok(json!({})),

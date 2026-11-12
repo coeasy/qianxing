@@ -145,6 +145,7 @@ fn venue_without_native_group_support_fails_before_store_or_oms_side_effects() {
 struct NativeGroupPortVenue {
     preflight_calls: usize,
     group_submit_calls: usize,
+    group_status: Option<qx_core::OrderGroupStatus>,
 }
 
 impl VenuePort for NativeGroupPortVenue {
@@ -176,14 +177,19 @@ impl VenuePort for NativeGroupPortVenue {
         self.group_submit_calls += 1;
         Ok(OrderGroupSubmission {
             venue_group_id: Some("exchange-list-42".into()),
-            events: group
-                .legs
-                .iter()
-                .map(|leg| ExecutionEvent::Accepted {
-                    client_order_id: leg.order.client_id,
-                    venue_order_id: format!("exchange-{}", leg.order.client_id),
-                })
-                .collect(),
+            group_status: self.group_status,
+            events: if self.group_status.is_some() {
+                Vec::new()
+            } else {
+                group
+                    .legs
+                    .iter()
+                    .map(|leg| ExecutionEvent::Accepted {
+                        client_order_id: leg.order.client_id,
+                        venue_order_id: format!("exchange-{}", leg.order.client_id),
+                    })
+                    .collect()
+            },
         })
     }
 
@@ -218,6 +224,7 @@ fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc()
     let mut venue = NativeGroupPortVenue {
         preflight_calls: 0,
         group_submit_calls: 0,
+        group_status: None,
     };
     let mut pipeline = PortState::default();
     let mut source_seq = 0;
@@ -259,6 +266,53 @@ fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc()
     .unwrap_err();
     assert!(error.contains("已在 OMS 中"), "{error}");
     assert_eq!(venue.group_submit_calls, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_group_resource_can_be_active_before_child_orders_exist() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-resource-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+        group_status: Some(qx_core::OrderGroupStatus::Active),
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-resource-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 0);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Submitted));
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+    assert_eq!(restored.venue_group_id.as_deref(), Some("exchange-list-42"));
+    assert!(restored.legs.iter().all(|leg| leg.venue_order_id.is_none()));
 
     std::fs::remove_dir_all(root).unwrap();
 }

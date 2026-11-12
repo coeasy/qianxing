@@ -64,6 +64,7 @@ pub enum ExecutionEvent {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct OrderGroupSubmission {
     pub venue_group_id: Option<String>,
+    pub group_status: Option<qx_core::OrderGroupStatus>,
     pub events: Vec<ExecutionEvent>,
 }
 

@@ -306,6 +306,9 @@ pub enum VenueEvent {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct VenueOrderGroupSubmission {
     pub venue_group_id: Option<String>,
+    /// Some venues accept a group resource before creating ordinary child orders.
+    /// In that case `events` must not invent child order IDs.
+    pub group_status: Option<qx_core::OrderGroupStatus>,
     pub events: Vec<VenueEvent>,
 }
 
@@ -1424,6 +1427,10 @@ pub trait OrderGroupStore {
         let _ = (group_id, venue_group_id);
         Err("订单组存储不支持保存交易所组 ID".into())
     }
+    fn activate_native_group(&mut self, group_id: &str) -> Result<(), String> {
+        let _ = group_id;
+        Err("订单组存储不支持激活无子订单的原生组资源".into())
+    }
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1581,6 +1588,21 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组文件名与组内标识不一致".into());
         }
         group.record_venue_group_id(venue_group_id)?;
+        self.save_locked(&group)
+    }
+
+    fn activate_native_group(&mut self, group_id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload = std::fs::read(&path)
+            .map_err(|error| format!("读取待激活订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待激活订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.activate_native_group()?;
         self.save_locked(&group)
     }
 
