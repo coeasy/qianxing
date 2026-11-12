@@ -837,3 +837,7 @@ R05 import 清单边界复核：Python import audit 在解析前触发。为避�
 2026-11-13 R10/R12 Bracket 生命周期安全收敛：订单组 reducer 不再把保护腿成交后的存活对手腿误归为 Submitting；标记 PeerCancelRequired，待入场和另一保护腿均取得终态事实后才可收敛。入场部分成交后若两条保护腿终结仍留有仓位，则改为 ReconcileRequired；双保护成交、保护量超出入场量继续 fail closed。文件存储加载会修复旧版 Filled/Cancelled 冲突快照并持久化屏障。Windows 本机 qx-core order_group 15 项及 qx-zhenlu order_group_store 6 项通过，格式和 diff 检查通过。此项只覆盖共享 reducer/文件存储，不等同于 OKX/Binance/Bitget 的 bracket 撤单或授权 testnet 验收；提交后的 hosted CI 仍在运行。
 
 2026-11-13 订单组快照更新原子性修复：`apply_order_snapshot` 先验证可选交易所订单 ID 非空，再修改腿快照，避免非法空 ID 返回错误时留下部分状态变更。新增回归检查逐字段确认失败更新不改变订单组。`cargo test -p qx-core order_group::tests::empty_venue_order_id_rejects_snapshot_without_mutating_group`、格式及 diff 检查通过。
+
+2026-11-13 R17 hosted macOS acceptance 证据复核：从 GitHub PR CI run `42685651313` 的 `Python wheel (macos-latest, Python 3.12)` job 取回 R17-AC01 日志及源码清单，确认 macOS ARM64 / Python 3.12.10 的六项聚焦 Rust 指标、HTML/XLSX 投影断言通过；日志、来源文件摘要已绑定到验收索引。该证据的 source revision 为 PR merge `5614625e4ee079c034ef3c2a523c78f01eec6c0a`，与当前工作树有 7 个 R17 源码路径及 workflow 路径不同，故 R17 仍为 partial，等待当前 hosted PR CI run `43307120811` 同一 macOS acceptance 复验后再决定是否关闭。
+
+2026-11-13 hosted CI run `43307120811` 的 macOS Python 3.12 suite 在 R17 聚焦步骤前失败：`test_app_use_cases.py` 将每例临时目录放在仓库 `target/` 下，却假设干净 macOS checkout 已有该父目录；报告为 `FileNotFoundError`，因此本次 R17 步骤被跳过。测试夹具现在创建 `target/`，45 项 Python app-use-case 测试及“父目录原本不存在”的独立检查在 Windows 通过。R17 保持 partial，需在修复后的 hosted macOS job 上重跑整套 Python suite 和六项报告断言。

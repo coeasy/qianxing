@@ -692,9 +692,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Linux Debian 12 Podman and hosted macOS Python 3.12 PR CI #423 pass the focused metrics/report contract; uploaded macOS acceptance evidence awaits review."
+        "The current hosted PR CI run 43307120811 failed in the macOS Python 3.12 suite before R17-AC01: test_app_use_cases assumed the repository target/ parent existed. The fixture now creates that parent, and 45 local test_app_use_cases tests plus an absent-target checkout probe pass; a hosted rerun is required. Historical macOS R17-AC01 evidence remains bound at source revision 5614625e4ee079c034ef3c2a523c78f01eec6c0a."
       ],
-      "next_action": "Review the macOS R17-AC01 acceptance log and source manifest from PR CI #423, then bind the reviewed evidence.",
+      "next_action": "Push the temporary-directory fixture repair, then bind the new hosted macOS R17-AC01 result and source manifest after the macOS Python suite and focused report checks both pass.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -760,7 +760,9 @@
         "maturity/acceptance-artifacts/5031ea2c-3466-4e76-b184-258bc6a55d1f.source-tree.json",
         "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.log",
         "maturity/acceptance-artifacts/ab02e693-9a9a-4346-9a1e-18b38e339c6a.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.log",
+        "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json"
       ]
     },
     {

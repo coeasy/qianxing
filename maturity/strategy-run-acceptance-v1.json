@@ -18196,6 +18196,59 @@
         }
       ],
       "notes": "Retry after Podman WSL VM stopped during test run; increased VM memory. Reusing isolated Linux build cache."
+    },
+    {
+      "run_id": "4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-09T20:03:34.291950Z",
+      "source_revision": "5614625e4ee079c034ef3c2a523c78f01eec6c0a",
+      "source_tree_sha256": "2b480a83676c992e5eaa0bb0ea8c92d8e7a8914225fc2701cea16cbd3219ab93",
+      "source_manifest": "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "7b9164d571574783c0f732e0190f2d9bfbc446cdf99820eef62de0079c5b61d9"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "089fbe40585a2c9557a3549b9b074bf2591de2e2038fe04ac5047be5bdec1fff"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "dc08a552ed25301b11f49775c004c61b8001f8b574b29696468c6fb012c34fc9"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "75daf5f23a11d7b60b70cdcf2d72412f84948b9ba39639f4cca2584a192b60c8"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "28b9c70480d13c3bd8974d72cf5edc53bd7a506e159b6efb0551d063ba5d8406"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.log",
+          "sha256": "a4de1681fc9805045ff6e3119f9b42f96c83f49f6f3092ebcacbb1117b664549"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/4b0d9a5f-9ade-494e-a7f5-ffdf0fcdd29a.source-tree.json",
+          "sha256": "0f840109039f7ee792d68a0792582655fb9f39daea5e87eaf4c632213593281e"
+        }
+      ],
+      "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

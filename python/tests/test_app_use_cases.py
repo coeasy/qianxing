@@ -159,8 +159,10 @@ class AppUseCaseTests(unittest.TestCase):
         cls.bridge = app
 
     def setUp(self):
+        target_dir = self.root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir = tempfile.TemporaryDirectory(
-            prefix="qx-app-use-cases-", dir=self.root / "target"
+            prefix="qx-app-use-cases-", dir=target_dir
         )
         self.output_dir = Path(self.temp_dir.name)
 
