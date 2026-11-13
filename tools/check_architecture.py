@@ -20573,7 +20573,7 @@ def cli_project_command_module_check() -> None:
             module,
         ) is not None
         and re.search(
-            r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*instrument,\s*exchange,\s*\)",
+            r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*as_of_ms,\s*instrument,\s*exchange,\s*\)",
             module,
         ) is not None
         and "guide::run(args)" in module
