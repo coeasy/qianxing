@@ -115,6 +115,76 @@
       "targets": [
         { "expr": "sum(rate(qx_app_run_watcher_rejections_total[5m]))", "legendFormat": "拒绝/秒" }
       ]
+    },
+    {
+      "id": 12,
+      "title": "行情 / 执行 / 对账延迟 P95（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, worker) (rate(qx_ccxt_ohlcv_request_duration_seconds_bucket[5m])))", "legendFormat": "OHLCV · {{worker}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, worker, port) (rate(qx_gateway_port_operation_duration_seconds_bucket[5m])))", "legendFormat": "{{port}} · {{worker}}" }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "任务 / 控制命令队列积压",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "targets": [
+        { "expr": "qx_job_queue_pending", "legendFormat": "可领取任务" },
+        { "expr": "qx_control_command_queue_pending", "legendFormat": "未确认命令" }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "队列最老等待年龄（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "targets": [
+        { "expr": "qx_job_queue_oldest_age_seconds", "legendFormat": "任务队列" },
+        { "expr": "qx_control_command_queue_oldest_age_seconds", "legendFormat": "控制命令队列" }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "未解决订单组 / 对账问题",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 64 },
+      "targets": [
+        { "expr": "sum by (account, venue) (qx_order_group_status{status=\"reconcile_required\"})", "legendFormat": "待人工对账 · {{account}} · {{venue}}" },
+        { "expr": "sum(qx_reconcile_order_issues)", "legendFormat": "最新报告未解决订单问题" },
+        { "expr": "qx_order_group_metrics_available", "legendFormat": "订单组指标可用" },
+        { "expr": "qx_reconcile_metrics_available", "legendFormat": "对账报告指标可用" }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "交易网关错误类别速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 64 },
+      "targets": [
+        { "expr": "sum by (port, class) (rate(qx_gateway_port_errors_total[5m]))", "legendFormat": "{{port}} · {{class}}" }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "CCXT 行情限流重试速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
+      "targets": [
+        { "expr": "sum by (worker) (rate(qx_ccxt_ohlcv_rate_limit_retries_total[5m]))", "legendFormat": "{{worker}}" }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "持久队列指标采集可用性",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 },
+      "targets": [
+        { "expr": "qx_job_queue_metrics_available", "legendFormat": "任务队列" },
+        { "expr": "qx_control_command_queue_metrics_available", "legendFormat": "控制命令队列" }
+      ]
     }
   ]
 }
