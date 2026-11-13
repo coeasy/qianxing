@@ -432,13 +432,25 @@ fn same_preflight_binding(
     previous: &ExecutionCapabilityDecisionFact,
     current: &ExecutionCapabilityDecisionFact,
 ) -> bool {
+    // Schema-v1 facts written before trace fields were added have None here. The canonical order
+    // fingerprint already binds the complete serialized Order, so accept those legacy omissions
+    // when every immutable order and preflight field still matches.
+    let legacy_optional_matches = |previous: &Option<String>, current: &Option<String>| {
+        previous
+            .as_ref()
+            .is_none_or(|previous| current.as_ref() == Some(previous))
+    };
     previous.schema_version == current.schema_version
         && previous.client_order_id == current.client_order_id
         && previous.account_id == current.account_id
-        && previous.run_id == current.run_id
-        && previous.strategy_id == current.strategy_id
-        && previous.signal_id == current.signal_id
-        && previous.intent_id == current.intent_id
+        && legacy_optional_matches(&previous.run_id, &current.run_id)
+        && legacy_optional_matches(&previous.strategy_id, &current.strategy_id)
+        && previous
+            .signal_id
+            .is_none_or(|id| current.signal_id == Some(id))
+        && previous
+            .intent_id
+            .is_none_or(|id| current.intent_id == Some(id))
         && previous.venue_id.eq_ignore_ascii_case(&current.venue_id)
         && previous.order_fingerprint == current.order_fingerprint
         && previous.market_rule_fingerprint == current.market_rule_fingerprint
@@ -1347,6 +1359,9 @@ mod tests {
         assert_eq!(fact.client_order_id, order.client_id);
         assert_eq!(fact.account_id, order.account_id);
         assert_eq!(fact.run_id.as_deref(), Some("worker-run-73"));
+        assert_eq!(fact.strategy_id.as_deref(), Some("momentum"));
+        assert_eq!(fact.signal_id, Some(7));
+        assert_eq!(fact.intent_id, Some(9));
         assert_eq!(fact.venue_id, "BINANCE");
         assert_eq!(fact.catalog_fingerprint, "c".repeat(64));
         assert!(fact.preflight_json.contains("account_model"));
@@ -1362,6 +1377,13 @@ mod tests {
             )
             .unwrap()
         ));
+
+        let mut legacy_fact = fact.clone();
+        legacy_fact.run_id = None;
+        legacy_fact.strategy_id = None;
+        legacy_fact.signal_id = None;
+        legacy_fact.intent_id = None;
+        assert!(same_preflight_binding(&legacy_fact, &fact));
 
         let mut changed = resolved;
         changed.spec.market_rule_fingerprint = "d".repeat(64);
