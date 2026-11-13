@@ -7,7 +7,7 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "e11a11e844b997669983893be795d8df2176ee8393afd5f843efbdc0cfecf101",
+    "maturity/capability-matrix.yaml": "d15931961e457e7b8ba4513e88f902b05e8665dfb3e6e3e4a481705c7e1c1bac",
     "maturity/capabilities.yaml": "5c4594f7206bb5b1ace82904e08992d8821cc300ce1e3acb6bee7d6c4fc020f6",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
@@ -2611,14 +2611,16 @@
         "evidence": [
           "crates/qx-adapter/src/ccxt.rs",
           "crates/qx-adapter/src/ccxt/tests.rs",
-          "maturity/capabilities.yaml"
+          "maturity/capabilities.yaml",
+          "maturity/evidence/ccxt-native-oco-child-amendment-local-2026-11-13.json",
+          "maturity/evidence/ccxt-native-oco-amend-cancel-serialization-local-2026-11-13.json"
         ],
         "limitations": [
           "运行时能力合同声明 runtime-configured CCXT market、market/limit 及条件单意图、撤单/查询/改单/对账；未声明 client order id 幂等，通用执行入口在登记前拒绝未声明订单类型",
           "OKX 原生 OCO 已接通提交、查询、取消、触发子腿恢复与订单组/OMS 对账；能力按下方 OKX Spot/Perpetual OCO scopes 分列，但仍为 implemented-unverified，未通过 OKX Sandbox；未知或并发成交保留 ReconcileRequired，不自动重放",
           "Bitget UTA Spot OCO 已接通提交、权威查询、撤销及触发后子腿/精确成交恢复；权威零成交拒绝现在收敛为 Rejected，角色歧义、历史窗口外及成交冲突仍保留 ReconcileRequired；仍未完成授权 Sandbox 验收",
           "条件单形态虽已列入下方逐产品 execution_scopes，但除单独声明的 OCO 形态外全部仍为 implemented-unverified；Python client 按实时市场 feature 拒绝交易所未声明的能力；没有 Sandbox 证据，生产预检不得放行",
-          "改单只实现普通 Market/Limit，必须通过交易所运行时原生 editOrder 预检；条件单、报价预算订单和各交易所真实改单语义未完成逐产品 sandbox 验收",
+          "普通 Market/Limit 改单，以及已触发 OKX Spot/Perpetual 与 Bitget UTA Spot 原生 OCO 子单的数量/限价修改有本地代码路径；后者持有账户 admission lock、写入组级待对账 overlay 并在 OMS/EventLog 确认后同步。条件触发条款不得变化；未触发条件单、Bracket 组、Binance OCO 组、cancel-replace 与各交易所真实改单语义仍未完成逐产品 sandbox 验收",
           "私有账户查询按 venue/product/account model/operation 单独登记并在连接前门控；每个交易所的账户模式、endpoint 和数据形状仍需沙盒验收",
           "进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保",
           "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"
