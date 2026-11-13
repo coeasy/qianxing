@@ -14,7 +14,10 @@ use crate::{
 };
 use qx_core::{MakerTakerFeeModel, OrderPolicy};
 use qx_datastruct::BarFrame;
-use qx_xingban::{LeverageMargin, MarginTier, NoMargin, PortfolioBarStrategy, TieredMargin};
+use qx_xingban::{
+    ContractMarginTier, ContractTieredMargin, LeverageMargin, MarginTier, NoMargin,
+    PortfolioBarStrategy, TieredMargin,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -130,7 +133,8 @@ pub(super) fn prepare_multi_market_markets(
                     .and_then(serde_json::Value::as_array)
                     .is_some_and(|tiers| !tiers.is_empty())
             })
-            .map(crate::backtest_margin_model_from_market);
+            .map(crate::backtest_margin_model_from_market)
+            .transpose()?;
         let margin_model = market
             .margin_model
             .as_ref()
@@ -148,6 +152,19 @@ pub(super) fn prepare_multi_market_markets(
                         })
                         .collect(),
                 }),
+                Some(BacktestMarginConfig::ContractTiers { tiers }) => {
+                    Box::new(ContractTieredMargin {
+                        tiers: tiers
+                            .iter()
+                            .map(|tier| ContractMarginTier {
+                                max_contracts: tier.max_contracts,
+                                initial_bp: tier.initial_bp,
+                                maintenance_bp: tier.maintenance_bp,
+                                max_leverage: tier.max_leverage,
+                            })
+                            .collect(),
+                    })
+                }
                 Some(BacktestMarginConfig::Leverage {
                     leverage,
                     maintenance_bp,

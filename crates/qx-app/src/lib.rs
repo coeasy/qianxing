@@ -287,8 +287,8 @@ pub use spec::multi_market::{
 };
 pub use spec::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestArtifacts,
-    BacktestDatasetInput, BacktestFillModel, BacktestMarginConfig, BacktestMarginTier,
-    BacktestOutcome, BacktestRiskRules, BacktestSpec, BuiltinStrategySpec,
+    BacktestContractMarginTier, BacktestDatasetInput, BacktestFillModel, BacktestMarginConfig,
+    BacktestMarginTier, BacktestOutcome, BacktestRiskRules, BacktestSpec, BuiltinStrategySpec,
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, DatasetManifestValidationSpec, DatasetSnapshotPublicationSpec,
     DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,

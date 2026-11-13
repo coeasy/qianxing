@@ -353,7 +353,7 @@ mod backtest;
 pub use backtest::{BacktestDatasetInput, BacktestFillModel, BacktestRiskRules, BacktestSpec};
 
 mod margin;
-pub use margin::{BacktestMarginConfig, BacktestMarginTier};
+pub use margin::{BacktestContractMarginTier, BacktestMarginConfig, BacktestMarginTier};
 mod depth;
 pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION};
 mod multi_leg;

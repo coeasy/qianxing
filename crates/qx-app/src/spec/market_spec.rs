@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppErrorCategory};
-use crate::spec::{BacktestMarginConfig, BacktestMarginTier};
+use crate::spec::{BacktestContractMarginTier, BacktestMarginConfig, BacktestMarginTier};
 use qx_core::{
     ExactDecimal, ExactTradingRules, InstrumentId, TradingInstrumentSpec, TradingProduct,
 };
@@ -31,7 +31,7 @@ pub fn backtest_market_spec_binding(
 
     Ok(BacktestMarketSpecBinding {
         spec: Some(market_spec_from_value(instrument, market)?),
-        app_margin_model: Some(backtest_margin_model_from_market(market)),
+        app_margin_model: Some(backtest_margin_model_from_market(market)?),
         source: market_spec_source_label(market),
     })
 }
@@ -269,49 +269,111 @@ fn declared_field_problem(key: &str, what: &str, fallback: &str) -> AppError {
 }
 
 /// Convert normalized CCXT leverage bands into the serializable application margin binding.
-pub fn backtest_margin_model_from_market(market: &Value) -> BacktestMarginConfig {
-    let Some(rows) = market.get("leverage_tiers").and_then(Value::as_array) else {
-        return BacktestMarginConfig::NoMargin;
+pub fn backtest_margin_model_from_market(market: &Value) -> Result<BacktestMarginConfig, AppError> {
+    let product = market.get("product").and_then(Value::as_str).unwrap_or("");
+    let Some(rows) = market
+        .get("leverage_tiers")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+    else {
+        if product != "spot" && !product.is_empty() {
+            return Err(invalid(
+                "衍生品 CCXT market 缺少杠杆档位，拒绝使用无保证金模型",
+            ));
+        }
+        return Ok(BacktestMarginConfig::NoMargin);
     };
-    let tiers = rows
-        .iter()
-        .filter_map(|row| {
-            let max_notional = row
-                .get("max_notional_raw")
-                .and_then(Value::as_i64)
-                .map(i128::from)
-                .or_else(|| {
-                    row.get("max_notional_raw")
-                        .and_then(Value::as_u64)
-                        .map(i128::from)
-                })
-                .unwrap_or(i128::MAX);
-            let initial_bp = row
-                .get("initial_margin_bps")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let maintenance_bp = row
-                .get("maintenance_margin_bps")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let max_leverage = row
-                .get("max_leverage")
-                .and_then(Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok());
-            (max_notional > 0 && initial_bp >= 0 && maintenance_bp >= 0).then_some(
-                BacktestMarginTier {
-                    max_notional,
+    let first = &rows[0];
+    let exposure_unit = first
+        .get("exposure_unit")
+        .and_then(Value::as_str)
+        .unwrap_or("quote_notional");
+    if rows.iter().any(|row| {
+        row.get("exposure_unit")
+            .and_then(Value::as_str)
+            .unwrap_or("quote_notional")
+            != exposure_unit
+    }) {
+        return Err(invalid("CCXT market 杠杆档位混用了不同敞口单位"));
+    }
+    if exposure_unit == "contracts" {
+        let tiers = rows
+            .iter()
+            .map(|row| {
+                let max_contracts = ccxt_tier_i128(row, "max_notional_raw")
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少合法上限"))?;
+                let initial_bp = row
+                    .get("initial_margin_bps")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少初始保证金率"))?;
+                let maintenance_bp = row
+                    .get("maintenance_margin_bps")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少维持保证金率"))?;
+                let max_leverage = ccxt_tier_leverage(row)?;
+                Ok(BacktestContractMarginTier {
+                    max_contracts,
                     initial_bp,
                     maintenance_bp,
                     max_leverage,
-                },
-            )
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let config = BacktestMarginConfig::ContractTiers { tiers };
+        config.validate().map_err(invalid)?;
+        return Ok(config);
+    }
+    if exposure_unit != "quote_notional" {
+        return Err(invalid(format!(
+            "CCXT market 杠杆档位敞口单位不支持: {exposure_unit}"
+        )));
+    }
+    let tiers = rows
+        .iter()
+        .map(|row| {
+            let max_notional = ccxt_tier_i128(row, "max_notional_raw")
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少合法上限"))?;
+            let initial_bp = row
+                .get("initial_margin_bps")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少初始保证金率"))?;
+            let maintenance_bp = row
+                .get("maintenance_margin_bps")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少维持保证金率"))?;
+            let max_leverage = ccxt_tier_leverage(row)?;
+            Ok(BacktestMarginTier {
+                max_notional,
+                initial_bp,
+                maintenance_bp,
+                max_leverage,
+            })
         })
-        .collect::<Vec<_>>();
-    if tiers.is_empty() {
-        BacktestMarginConfig::NoMargin
-    } else {
-        BacktestMarginConfig::Tiers { tiers }
+        .collect::<Result<Vec<_>, AppError>>()?;
+    let config = BacktestMarginConfig::Tiers { tiers };
+    config.validate().map_err(invalid)?;
+    Ok(config)
+}
+
+fn ccxt_tier_i128(row: &Value, key: &str) -> Option<i128> {
+    match row.get(key)? {
+        Value::Null => Some(i128::MAX),
+        value => value
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| value.as_u64().map(i128::from)),
+    }
+}
+
+fn ccxt_tier_leverage(row: &Value) -> Result<Option<u32>, AppError> {
+    match row.get("max_leverage") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .map(Some)
+            .ok_or_else(|| invalid("CCXT 杠杆档位最大杠杆必须为正整数")),
     }
 }
 
@@ -433,6 +495,34 @@ mod binding_tests {
             tiered_binding.app_margin_model,
             Some(BacktestMarginConfig::Tiers { .. })
         ));
+
+        let mut contract_unit_market = market.clone();
+        contract_unit_market["leverage_tiers"][0]["exposure_unit"] =
+            Value::String("contracts".into());
+        let contract_binding =
+            backtest_market_spec_binding(&instrument, Some(&contract_unit_market))
+                .expect("contract-count tiers bind without comparing them as quote notional");
+        assert!(matches!(
+            contract_binding.app_margin_model,
+            Some(BacktestMarginConfig::ContractTiers { ref tiers })
+                if tiers[0].max_contracts == 100_000_000_000_000_i128
+        ));
+
+        let mut invalid_unit_market = market.clone();
+        invalid_unit_market["leverage_tiers"][0]["exposure_unit"] =
+            Value::String("unknown_units".into());
+        assert!(backtest_market_spec_binding(&instrument, Some(&invalid_unit_market)).is_err());
+
+        let mut incomplete_tier_market = contract_unit_market.clone();
+        incomplete_tier_market["leverage_tiers"][0]
+            .as_object_mut()
+            .expect("tier object")
+            .remove("maintenance_margin_bps");
+        assert!(backtest_market_spec_binding(&instrument, Some(&incomplete_tier_market)).is_err());
+
+        let mut unbounded_tier_market = contract_unit_market;
+        unbounded_tier_market["leverage_tiers"][0]["max_notional_raw"] = Value::Null;
+        assert!(backtest_market_spec_binding(&instrument, Some(&unbounded_tier_market)).is_ok());
 
         let mut missing_base_tier = market_without_market_level_rate.clone();
         missing_base_tier["leverage_tiers"] = serde_json::json!([{

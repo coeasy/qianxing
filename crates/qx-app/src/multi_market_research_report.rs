@@ -255,7 +255,8 @@ fn build_report(
                     .and_then(Value::as_array)
                     .is_some_and(|tiers| !tiers.is_empty())
             })
-            .map(crate::backtest_margin_model_from_market);
+            .map(crate::backtest_margin_model_from_market)
+            .transpose()?;
         let selected_margin_model = configured
             .margin_model
             .as_ref()
@@ -715,6 +716,18 @@ fn summarize_margin_model(model: &BacktestMarginConfig) -> Result<Value, AppErro
             "tiers_sha256": digest,
             "tiers": tiers.iter().take(MAX_MULTI_MARKET_REPORT_SCHEDULE_PREVIEW_ROWS).map(|tier| serde_json::json!({
                 "max_notional_raw": tier.max_notional.to_string(),
+                "initial_bp": tier.initial_bp,
+                "maintenance_bp": tier.maintenance_bp,
+                "max_leverage": tier.max_leverage,
+            })).collect::<Vec<_>>()
+        }),
+        BacktestMarginConfig::ContractTiers { tiers } => serde_json::json!({
+            "kind": "contract_tiers",
+            "tiers_total": tiers.len(),
+            "tiers_truncated": tiers.len() > MAX_MULTI_MARKET_REPORT_SCHEDULE_PREVIEW_ROWS,
+            "tiers_sha256": digest,
+            "tiers": tiers.iter().take(MAX_MULTI_MARKET_REPORT_SCHEDULE_PREVIEW_ROWS).map(|tier| serde_json::json!({
+                "max_contracts_raw": tier.max_contracts.to_string(),
                 "initial_bp": tier.initial_bp,
                 "maintenance_bp": tier.maintenance_bp,
                 "max_leverage": tier.max_leverage,

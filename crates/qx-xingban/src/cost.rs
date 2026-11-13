@@ -316,6 +316,127 @@ impl TieredMargin {
     }
 }
 
+/// Exchange margin schedule whose band limits are measured in contract quantity.
+/// Margin amounts are still calculated from the instrument's quote notional.
+pub struct ContractTieredMargin {
+    pub tiers: Vec<ContractMarginTier>,
+}
+
+pub struct ContractMarginTier {
+    /// Maximum contracts in 1e-9 raw quantity units, matching `ExactDecimal` projection.
+    pub max_contracts: i128,
+    pub initial_bp: i64,
+    pub maintenance_bp: i64,
+    pub max_leverage: Option<u32>,
+}
+
+impl ContractTieredMargin {
+    fn tier(&self, contracts_raw: i128) -> Option<&ContractMarginTier> {
+        self.tiers
+            .iter()
+            .filter(|tier| tier.max_contracts >= contracts_raw.max(0))
+            .min_by_key(|tier| tier.max_contracts)
+    }
+
+    fn missing_instrument_spec() -> QxError {
+        QxError::BusinessViolation("合约数档位保证金需要产品规格、合约数量与价格".into())
+    }
+}
+
+impl MarginRule for ContractTieredMargin {
+    fn name(&self) -> &'static str {
+        "ContractTieredMargin"
+    }
+
+    fn initial_margin(&self, _notional: i128) -> QxResult<i128> {
+        Err(Self::missing_instrument_spec())
+    }
+
+    fn maintain_margin(&self, _notional: i128) -> QxResult<i128> {
+        Err(Self::missing_instrument_spec())
+    }
+
+    fn instrument_initial_margin(
+        &self,
+        spec: &TradingInstrumentSpec,
+        qty: i128,
+        price: i128,
+        leverage: u32,
+    ) -> QxResult<i128> {
+        let tier = self
+            .tier(qty)
+            .ok_or_else(|| QxError::BusinessViolation("产品合约数超过阶梯保证金最大档位".into()))?;
+        if tier.max_leverage.is_some_and(|max| leverage > max) {
+            return Err(QxError::BusinessViolation(
+                "订单杠杆超过当前合约数阶梯限制".into(),
+            ));
+        }
+        bp_amount(spec.notional(qty, price)?, tier.initial_bp)
+    }
+
+    fn instrument_initial_margin_exact(
+        &self,
+        spec: &TradingInstrumentSpec,
+        quantity: ExactDecimal,
+        price: ExactDecimal,
+        leverage: u32,
+    ) -> QxResult<ExactDecimal> {
+        let quantity_raw = quantity
+            .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::Ceiling)
+            .and_then(|value| value.to_raw(9).ok())
+            .ok_or_else(|| QxError::Invariant("精确保证金合约数无法保守投影到 raw".into()))?;
+        let tier = self
+            .tier(quantity_raw)
+            .ok_or_else(|| QxError::BusinessViolation("产品合约数超过阶梯保证金最大档位".into()))?;
+        if tier.max_leverage.is_some_and(|max| leverage > max) {
+            return Err(QxError::BusinessViolation(
+                "订单杠杆超过当前合约数阶梯限制".into(),
+            ));
+        }
+        if tier.initial_bp < 0 {
+            return Err(QxError::BusinessViolation(
+                "阶梯保证金初始保证金比例不能为负数".into(),
+            ));
+        }
+        let notional = spec.notional_exact(quantity, price)?;
+        let rate = ExactDecimal::from_parts(i128::from(tier.initial_bp), 4)
+            .map_err(|error| QxError::Invariant(error.into()))?;
+        notional
+            .checked_mul_at_scale(rate, ExactDecimal::MAX_SCALE, DecimalRounding::AwayFromZero)
+            .ok_or_else(|| QxError::Invariant("合约数阶梯初始保证金计算溢出".into()))
+    }
+
+    fn instrument_maintenance_margin(
+        &self,
+        spec: &TradingInstrumentSpec,
+        qty: i128,
+        price: i128,
+    ) -> QxResult<i128> {
+        let tier = self
+            .tier(qty)
+            .ok_or_else(|| QxError::BusinessViolation("产品合约数超过阶梯保证金最大档位".into()))?;
+        bp_amount(spec.notional(qty, price)?, tier.maintenance_bp)
+    }
+
+    fn descriptor(&self) -> String {
+        let tiers = self
+            .tiers
+            .iter()
+            .map(|tier| {
+                format!(
+                    "{}:{}:{}:{}",
+                    tier.max_contracts,
+                    tier.initial_bp,
+                    tier.maintenance_bp,
+                    tier.max_leverage.unwrap_or(0)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{}@{}[contract_tiers={tiers}]", self.name(), self.version())
+    }
+}
+
 impl MarginRule for FixedRateMargin {
     fn name(&self) -> &'static str {
         "FixedRateMargin"
@@ -444,5 +565,69 @@ mod tests {
             .unwrap();
 
         assert_eq!(margin, ExactDecimal::parse("0.00000002002").unwrap());
+    }
+
+    #[test]
+    fn contract_tiers_select_by_contract_count_and_charge_margin_on_quote_notional() {
+        let spec = TradingInstrumentSpec {
+            instrument: qx_core::InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap(),
+            product: qx_core::TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: 10_000_000,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 100,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(qx_core::ExactTradingRules {
+                contract_size: ExactDecimal::parse("0.01").unwrap(),
+                price_tick: ExactDecimal::parse("0.000000001").unwrap(),
+                quantity_step: ExactDecimal::parse("0.000000001").unwrap(),
+                minimum_quantity: ExactDecimal::parse("0.000000001").unwrap(),
+                minimum_notional: ExactDecimal::ZERO,
+            }),
+        };
+        let margin = ContractTieredMargin {
+            tiers: vec![
+                ContractMarginTier {
+                    max_contracts: qx_core::SCALE,
+                    initial_bp: 1_000,
+                    maintenance_bp: 500,
+                    max_leverage: Some(100),
+                },
+                ContractMarginTier {
+                    max_contracts: 2 * qx_core::SCALE,
+                    initial_bp: 2_000,
+                    maintenance_bp: 1_000,
+                    max_leverage: Some(50),
+                },
+            ],
+        };
+        let first = margin
+            .instrument_initial_margin_exact(
+                &spec,
+                ExactDecimal::ONE,
+                ExactDecimal::parse("100000").unwrap(),
+                3,
+            )
+            .unwrap();
+        let second = margin
+            .instrument_initial_margin_exact(
+                &spec,
+                ExactDecimal::parse("1.5").unwrap(),
+                ExactDecimal::parse("100000").unwrap(),
+                3,
+            )
+            .unwrap();
+        assert_eq!(first, ExactDecimal::parse("100").unwrap());
+        assert_eq!(second, ExactDecimal::parse("300").unwrap());
+        assert!(margin.initial_margin(100_000 * qx_core::SCALE).is_err());
     }
 }

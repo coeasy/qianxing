@@ -2,9 +2,9 @@ use crate::spec::{BacktestMarginConfig, BacktestSpec};
 use crate::{AppError, AppErrorCategory};
 use qx_core::{AShareFeeModel, FeeModel};
 use qx_xingban::{
-    BarVolumeParticipationLimit, BestPriceFillModel, FillModel, LatencyModel, LeverageMargin,
-    MarginRule, MarginTier, NextBarOpenFillModel, NoMargin, OneTickSlippageFillModel, TieredMargin,
-    VirtualTradingConfig, ZeroLatency,
+    BarVolumeParticipationLimit, BestPriceFillModel, ContractMarginTier, ContractTieredMargin,
+    FillModel, LatencyModel, LeverageMargin, MarginRule, MarginTier, NextBarOpenFillModel,
+    NoMargin, OneTickSlippageFillModel, TieredMargin, VirtualTradingConfig, ZeroLatency,
 };
 
 pub(crate) struct ExecutionBinding {
@@ -98,6 +98,19 @@ pub(crate) fn bind_margin(spec: &BacktestSpec) -> Box<dyn MarginRule> {
                 })
                 .collect(),
         }),
+        (Some(BacktestMarginConfig::ContractTiers { tiers }), _) => {
+            Box::new(ContractTieredMargin {
+                tiers: tiers
+                    .iter()
+                    .map(|tier| ContractMarginTier {
+                        max_contracts: tier.max_contracts,
+                        initial_bp: tier.initial_bp,
+                        maintenance_bp: tier.maintenance_bp,
+                        max_leverage: tier.max_leverage,
+                    })
+                    .collect(),
+            })
+        }
         (None, Some(market)) if market.product.supports_leverage() => Box::new(LeverageMargin {
             leverage: 1,
             maintenance_bp: i64::from(market.maintenance_margin_bps),

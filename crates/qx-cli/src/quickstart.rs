@@ -21,6 +21,10 @@ use crate::{
 const DEFAULT_PROJECT_DIR: &str = "qianxing-quickstart";
 /// 首跑绑定的内置策略与 README「安装 A」那六条里的 `--strategy macd` 一致。
 const QUICKSTART_STRATEGY: &str = "macd";
+/// One whole instrument unit. `CcxtBuiltinBacktestInput.quantity` is in display units,
+/// and the snapshot builder converts it to 1e-9 raw quantity; passing SCALE here would
+/// accidentally request one billion contracts/coins.
+const CCXT_QUICKSTART_DEFAULT_QUANTITY: i64 = 1;
 /// 项目内运行时配置的文件名，同样取自 README 那六条的写法。
 const RUNTIME_FILE_NAME: &str = "qianxing.runtime.json";
 /// 收尾计数最多打开多少个目录。正常项目是一层 data 目录，个位数够用；这一格是符号链接环
@@ -297,7 +301,7 @@ pub(crate) fn run(
             start_ms: range.start_ms,
             end_ms: range.end_ms,
             spec_path: None,
-            quantity: 1_000_000_000,
+            quantity: CCXT_QUICKSTART_DEFAULT_QUANTITY,
             runtime_config_path: Some(&runtime),
             use_public_default_fees: true,
         })
@@ -473,7 +477,15 @@ fn write_public_ccxt_config(
 
 #[cfg(test)]
 mod tests {
-    use super::quickstart_ccxt_window;
+    use super::{quickstart_ccxt_window, CCXT_QUICKSTART_DEFAULT_QUANTITY};
+
+    #[test]
+    fn ccxt_quickstart_default_is_one_display_unit() {
+        assert_eq!(
+            qx_core::Quantity::from_i64(CCXT_QUICKSTART_DEFAULT_QUANTITY).raw(),
+            qx_core::SCALE
+        );
+    }
 
     #[test]
     fn ccxt_window_uses_closed_bars_without_an_inclusive_endpoint_extra_bar() {

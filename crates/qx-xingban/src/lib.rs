@@ -40,8 +40,8 @@ pub use self::backtest::{
     RunManifestIdentity, VirtualTradingConfig, MAX_INSTRUMENT_EQUITY_SAMPLES,
 };
 pub use self::cost::{
-    FixedRateMargin, LatencyModel, LeverageMargin, MarginRule, MarginTier, NoMargin, StaticLatency,
-    TieredMargin, ZeroLatency,
+    ContractMarginTier, ContractTieredMargin, FixedRateMargin, LatencyModel, LeverageMargin,
+    MarginRule, MarginTier, NoMargin, StaticLatency, TieredMargin, ZeroLatency,
 };
 pub use self::cost_rules::{ExecutionCostRules, DEFAULT_MAKER_BP, DEFAULT_TAKER_BP};
 pub(crate) use self::execution_attempt::ExecutionLiquidityEvidence;

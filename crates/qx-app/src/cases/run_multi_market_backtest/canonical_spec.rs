@@ -105,7 +105,8 @@ pub(crate) fn build_multi_market_canonical_run_spec(
                     .and_then(Value::as_array)
                     .is_some_and(|tiers| !tiers.is_empty())
             })
-            .map(crate::backtest_margin_model_from_market);
+            .map(crate::backtest_margin_model_from_market)
+            .transpose()?;
         let margin_model = market
             .margin_model
             .as_ref()

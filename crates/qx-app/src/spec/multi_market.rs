@@ -205,8 +205,9 @@ impl MultiMarketBacktestSpec {
                     .get("leverage_tiers")
                     .and_then(serde_json::Value::as_array)
                     .is_some_and(|tiers| !tiers.is_empty());
-                let snapshot_margin_model =
-                    has_frozen_tiers.then(|| crate::backtest_margin_model_from_market(snapshot));
+                let snapshot_margin_model = has_frozen_tiers
+                    .then(|| crate::backtest_margin_model_from_market(snapshot))
+                    .transpose()?;
                 if has_frozen_tiers
                     && matches!(&snapshot_margin_model, Some(BacktestMarginConfig::NoMargin))
                 {
