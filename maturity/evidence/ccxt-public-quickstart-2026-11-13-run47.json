@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "kind": "ccxt_public_quickstart_acceptance",
+  "generated_at_utc": "2026-11-13T17:36:41Z",
+  "run_id": 43469985005,
+  "source_commit": "317f5b7e50f0910dee0bd8b6544e820739c3ca1c",
+  "workflow_url": "https://github.com/coeasy/qianxing/actions/runs/43469985005",
+  "shared_linux_artifact": {
+    "job_id": 132039030286,
+    "conclusion": "success",
+    "artifact_id": 14060568020,
+    "artifact_name": "qianxing-linux-release",
+    "size_bytes": 40576753,
+    "sha256_from_github_artifact_metadata": "f6999520fcd409abd134161b401a6d206e34402d1d380c5b74868ee6af4b9cfa"
+  },
+  "venues": {
+    "okx": {
+      "job_id": 132045286976,
+      "conclusion": "success",
+      "market_scope": "public USDT perpetual OHLCV, BTC/USDT:USDT.OKX, 15m, 180 days",
+      "rows": 17280,
+      "missing_intervals": 0,
+      "rejected_orders": 0,
+      "backtest_fills": 953,
+      "return_bps": -78,
+      "max_drawdown_bps": 84,
+      "html_report": "generated",
+      "artifact_id": 14061452055,
+      "artifact_name": "public-ccxt-quickstart-okx",
+      "artifact_sha256_from_github_metadata": "1e393a06124bd35e3d85ae57e7178b81cd65b3ce5cc2e3cad6e1eff6a3b788b8"
+    },
+    "bitget": {
+      "job_id": 132045287042,
+      "conclusion": "success",
+      "market_scope": "public USDT perpetual OHLCV, BTC/USDT:USDT.BITGET, 15m, venue history window 52 days",
+      "rows": 4992,
+      "missing_intervals": 0,
+      "rejected_orders": 0,
+      "backtest_fills": 260,
+      "return_bps": -1961,
+      "max_drawdown_bps": 2647,
+      "html_report": "generated",
+      "artifact_id": 14060981917,
+      "artifact_name": "public-ccxt-quickstart-bitget",
+      "artifact_sha256_from_github_metadata": "3761b977d3c5eab65c15d030817d00b4dc422e76e03528e025883429ddd15d8d"
+    },
+    "binance": {
+      "job_id": 132045287212,
+      "conclusion": "failure",
+      "failure_stage": "load_markets",
+      "http_status": 451,
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "reason": "Binance eligibility restriction for the hosted runner location",
+      "artifact_id": 14061256677,
+      "artifact_name": "public-ccxt-quickstart-binance",
+      "artifact_sha256_from_github_metadata": "92dcf7e9ff97637fdf6638ad1dc1a3692e7b6dc38feb2d2d5e0504fac670e9c9"
+    }
+  },
+  "scope_limitations": [
+    "OKX and Bitget evidence covers anonymous public market data, backtest and report generation only; it does not prove private API, testnet/live order execution, account-specific fees, or strategy effectiveness.",
+    "Binance was not rerouted around the region eligibility restriction and remains unverified in this hosted location.",
+    "Artifact digests above are copied from GitHub Actions artifact metadata and were not independently rehashed in this run."
+  ]
+}
