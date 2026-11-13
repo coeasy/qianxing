@@ -8,7 +8,7 @@ use crate::market_bridges::{
     open_paper_market_bridges, PaperMarketQuote,
 };
 use crate::pipeline::PipelineStorage;
-use crate::pipeline_metrics_report::PipelineMetricsReporter;
+use crate::pipeline_metrics_report::{ccxt_error_metric_category, PipelineMetricsReporter};
 use crate::worker_host;
 use qx_adapter::{CcxtCallOutcome, CcxtProcessClient};
 use qx_core::{ExactDecimal, InstrumentId, MarketDepthLevel, Price, Quantity};
@@ -162,6 +162,10 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
+                    metrics.observe_gateway_port_error_category(
+                        ExchangeGatewayPort::MarketData,
+                        ccxt_error_metric_category(&error),
+                    );
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
@@ -269,6 +273,10 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
+                    metrics.observe_gateway_port_error_category(
+                        ExchangeGatewayPort::MarketData,
+                        ccxt_error_metric_category(&error),
+                    );
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
@@ -353,6 +361,10 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
+                    metrics.observe_gateway_port_error_category(
+                        ExchangeGatewayPort::MarketData,
+                        ccxt_error_metric_category(&error),
+                    );
                     observe_ohlcv_request_duration(request_duration, &mut metrics);
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;

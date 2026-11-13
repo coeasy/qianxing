@@ -452,6 +452,22 @@ fn metric_delta(
     read(current).saturating_sub(previous.map_or(0, read))
 }
 
+pub(crate) fn ccxt_error_metric_category(error: &str) -> &'static str {
+    let category = error
+        .split_once("CCXT Worker [")
+        .and_then(|(_, tail)| tail.split_once(']'))
+        .map(|(category, _)| category);
+    match category {
+        Some("retryable") => "retryable",
+        Some("rate_limited") => "rate_limited",
+        Some("authentication") => "authentication",
+        Some("exchange") => "exchange",
+        Some("unsupported") => "unsupported",
+        Some("invalid") => "invalid",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,6 +564,22 @@ mod tests {
             body.matches("qx_ccxt_ohlcv_rate_limit_retries_total{")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn ccxt_error_metric_categories_are_whitelisted() {
+        assert_eq!(
+            ccxt_error_metric_category("CCXT Worker [authentication] invalid credential"),
+            "authentication"
+        );
+        assert_eq!(
+            ccxt_error_metric_category("request failed: CCXT Worker [rate_limited] backoff"),
+            "rate_limited"
+        );
+        assert_eq!(
+            ccxt_error_metric_category("private response includes secret data"),
+            "unknown"
         );
     }
 

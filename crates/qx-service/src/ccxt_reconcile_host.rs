@@ -11,7 +11,7 @@ use crate::execution_capability_gate::{
 };
 use crate::market_bridges::venue_balance_fact_identity;
 use crate::pipeline::PipelineStorage;
-use crate::pipeline_metrics_report::PipelineMetricsReporter;
+use crate::pipeline_metrics_report::{ccxt_error_metric_category, PipelineMetricsReporter};
 use crate::reconcile_report::{persist_reconcile_report, ReconcileReportInput};
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_adapter::{CcxtProcessClient, CcxtProcessVenue};
@@ -185,22 +185,6 @@ fn ccxt_reconcile_call(
     match client.call_cancellable(request, || context.should_stop())? {
         qx_adapter::CcxtCallOutcome::Response(response) => Ok(Some(response)),
         qx_adapter::CcxtCallOutcome::Cancelled => Ok(None),
-    }
-}
-
-fn ccxt_reconcile_metric_error_category(error: &str) -> &'static str {
-    let category = error
-        .split_once("CCXT Worker [")
-        .and_then(|(_, tail)| tail.split_once(']'))
-        .map(|(category, _)| category);
-    match category {
-        Some("retryable") => "retryable",
-        Some("rate_limited") => "rate_limited",
-        Some("authentication") => "authentication",
-        Some("exchange") => "exchange",
-        Some("unsupported") => "unsupported",
-        Some("invalid") => "invalid",
-        _ => "unknown",
     }
 }
 
@@ -2272,7 +2256,7 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
         if let Err(error) = &result {
             metrics.observe_gateway_port_error_category(
                 ExchangeGatewayPort::Reconciliation,
-                ccxt_reconcile_metric_error_category(error),
+                ccxt_error_metric_category(error),
             );
         }
         if result.is_err() {
@@ -2316,26 +2300,27 @@ fn runtime_timestamp_ms() -> u64 {
 mod native_order_group_reconcile_tests {
     use super::{
         bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
-        bitget_rejected_oco_children_prove_no_execution, ccxt_reconcile_metric_error_category,
-        classify_okx_oco_observation, mark_ccxt_group_query_failed, okx_algo_client_order_id,
-        reconcile_ccxt_native_order_groups, reconcile_order_group_amendment_overlays,
-        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+        bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
+        mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
+        reconcile_order_group_amendment_overlays, sync_ccxt_order_groups_from_user_stream,
+        OkxOcoObservation,
     };
+    use crate::pipeline_metrics_report::ccxt_error_metric_category;
 
     #[test]
     fn reconcile_error_metrics_keep_only_whitelisted_ccxt_classes() {
         assert_eq!(
-            ccxt_reconcile_metric_error_category(
+            ccxt_error_metric_category(
                 "fetch failed: CCXT Worker [authentication] invalid credential"
             ),
             "authentication"
         );
         assert_eq!(
-            ccxt_reconcile_metric_error_category("CCXT Worker [rate_limited] backoff"),
+            ccxt_error_metric_category("CCXT Worker [rate_limited] backoff"),
             "rate_limited"
         );
         assert_eq!(
-            ccxt_reconcile_metric_error_category("unexpected secret response"),
+            ccxt_error_metric_category("unexpected secret response"),
             "unknown"
         );
     }
