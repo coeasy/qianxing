@@ -6,7 +6,7 @@ use crate::ccxt_stream_retry::{
 };
 use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
-use crate::pipeline_metrics_report::PipelineMetricsReporter;
+use crate::pipeline_metrics_report::{ccxt_error_metric_category, PipelineMetricsReporter};
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_adapter::{CcxtCallOutcome, CcxtProcessClient, CcxtProcessVenue};
 use qx_core::VenueFamily;
@@ -97,6 +97,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             Ok(CcxtCallOutcome::Cancelled) => break,
             Err(error) => {
                 let detail = format!("{error:?}");
+                observe_ccxt_user_stream_error(&mut metrics, &detail);
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
                     metrics.observe_gateway_port_business_status(
                         ExchangeGatewayPort::PrivateOrderStream,
@@ -367,6 +368,13 @@ fn ccxt_user_stream_recovered_sessions(
     internal_reconnects.saturating_add(u64::from(std::mem::take(outer_reconnect_pending)))
 }
 
+fn observe_ccxt_user_stream_error(metrics: &mut PipelineMetricsReporter, error: &str) {
+    metrics.observe_gateway_port_error_category(
+        ExchangeGatewayPort::PrivateOrderStream,
+        ccxt_error_metric_category(error),
+    );
+}
+
 fn runtime_timestamp_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -379,8 +387,10 @@ fn runtime_timestamp_ms() -> u64 {
 mod tests {
     use super::{
         ccxt_user_stream_recovered_sessions, latest_ccxt_user_event_timestamp_ms,
-        validate_ccxt_user_stream_worker,
+        observe_ccxt_user_stream_error, validate_ccxt_user_stream_worker,
     };
+    use crate::pipeline_metrics_report::PipelineMetricsReporter;
+    use qx_runtime::RuntimeConfig;
     use qx_runtime::WorkerConfig;
 
     fn worker(role: &str, enabled: bool, venue_id: &str) -> WorkerConfig {
@@ -457,5 +467,20 @@ mod tests {
             3
         );
         assert!(!outer_pending);
+    }
+
+    #[test]
+    fn ccxt_user_stream_errors_publish_only_bounded_categories() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut metrics = PipelineMetricsReporter::new(&config, "okx-user-stream", "main");
+        observe_ccxt_user_stream_error(&mut metrics, "CCXT Worker [authentication] private detail");
+        let body = metrics.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_errors_total{worker=\"okx-user-stream\",account=\"main\",port=\"private_order_stream\",class=\"authentication\"} 1"
+        ));
+        assert!(!body.contains("private detail"));
     }
 }
