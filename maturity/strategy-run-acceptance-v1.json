@@ -208,7 +208,7 @@
     {
       "acceptance_id": "R11-AC01",
       "work_package": "R11",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Hosted Linux and Windows file/SQLite/PostgreSQL Paper worker recovery must cover all six persisted dispatch-to-ack crash boundaries, preserve cursor/checkpoint semantics, and prove idempotent recovery; venue side effects remain outside this fixture acceptance."
       ],
@@ -676,7 +676,7 @@
       "work_package": "R21",
       "status": "accepted",
       "acceptance_criteria": [
-        "Record versioned p50/p95, RSS, journal size, and recovery behavior for bounded PreparedEvaluation batches; fill configured file/SQLite/PostgreSQL JobQueues and ControlCommandQueues to their exact unacknowledged caps; prove overflow and oversized ControlCommand rejection without losing pending records; verify owner-matched worker batches; acknowledge all benchmark records; verify PostgreSQL transactional storage and six isolated Paper worker crash/restart boundaries with idempotent recovery. Linux acceptance remains open."
+        "Record versioned p50/p95, RSS, journal size, and recovery behavior for bounded PreparedEvaluation batches; fill configured file/SQLite/PostgreSQL JobQueues and ControlCommandQueues to their exact unacknowledged caps; prove overflow and oversized ControlCommand rejection without losing pending records; verify owner-matched worker batches; acknowledge all benchmark records; verify PostgreSQL transactional storage and six isolated Paper worker crash/restart boundaries with idempotent recovery. Hosted Linux acceptance completed in Actions run #592."
       ],
       "required_artifacts": [
         "benchmarks/run_prepared_evaluation_capacity.py",
@@ -19768,6 +19768,165 @@
         }
       ],
       "notes": "Hosted Linux process exits after every PreparedEvaluation atomic replacement boundary; recovery returns a complete digest-valid old or new journal"
+    },
+    {
+      "run_id": "96747697-7caa-4b33-99de-461f2b185c57",
+      "acceptance_id": "R11-AC01",
+      "recorded_at_utc": "2026-11-13T02:40:22.138118Z",
+      "source_revision": "8212207ae5ddfdbe0bcafa41a494121e00639295",
+      "source_tree_sha256": "bf4a83246a4afdf510455258651b1826db5bcc2a008c19c6e9c21de4768df962",
+      "source_manifest": "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "file",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.log",
+          "sha256": "5bb4c741d0c9673262f22c33562ef140001e01383f4d73a9f55e59b23ec4185a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.source-tree.json",
+          "sha256": "3a1cf45c09922f9d5ef6df7d4f2b6d30d66445eb2b759b36a3ac0fea9e9aa158"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: file; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "390f624c-62bb-40c1-880f-70fda9347bac",
+      "acceptance_id": "R11-AC01",
+      "recorded_at_utc": "2026-11-13T02:40:43.263349Z",
+      "source_revision": "8212207ae5ddfdbe0bcafa41a494121e00639295",
+      "source_tree_sha256": "a77c6aa588ae06890d91ac9ba97721ecab34c9a417ed0d99a9baed78e1df8ebc",
+      "source_manifest": "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "sqlite",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.log",
+          "sha256": "a09827c1324afc3ff232d4d1eab4b738317d95eb1173cd7baa65c19e6c89d346"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.source-tree.json",
+          "sha256": "8f13f2c0bd35d3b4d1dd21421ca36aabd8dd44f8b75f74524b54d9300a04f840"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: sqlite; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "02680d74-d159-4fcb-9d9e-90bd77d66cff",
+      "acceptance_id": "R11-AC01",
+      "recorded_at_utc": "2026-11-13T02:41:53.237177Z",
+      "source_revision": "8212207ae5ddfdbe0bcafa41a494121e00639295",
+      "source_tree_sha256": "4ad1fdd33496b6a8d8bba66cc6edba45ba765c164d8215908a10fc0688a04923",
+      "source_manifest": "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "postgres",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.log",
+          "sha256": "2bdd6e74ed937dbd35680f3825f20b09d9b6db1ea887175816e8736dfc00ab9d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json",
+          "sha256": "980bd1f6f5913de3cc5d0988863234b2c8afbf03949420313ec7aa572f92fa35"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries and idempotent recovery"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

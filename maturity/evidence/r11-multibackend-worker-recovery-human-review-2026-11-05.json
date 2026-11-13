@@ -3,25 +3,39 @@
   "kind": "qianxing_acceptance_human_review",
   "work_package": "R11",
   "acceptance_id": "R11-AC01",
-  "reviewed_at": "2026-11-05",
-  "decision": "accepted_for_windows_local_acceptance",
-  "reviewed_run_id": "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4",
+  "reviewed_at": "2026-11-13",
+  "decision": "accepted_for_windows_and_hosted_linux_acceptance",
   "reviewed_artifacts": [
     "maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json",
     "maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json",
     "maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json",
     "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log",
     "crates/qx-cli/src/workers/strategy_worker.rs",
-    "benchmarks/run_strategy_worker_crash_recovery.py"
+    "benchmarks/run_strategy_worker_crash_recovery.py",
+    "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.log",
+    "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.source-tree.json",
+    "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.log",
+    "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.source-tree.json",
+    "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.log",
+    "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-file.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
   ],
   "findings": [
     "File, SQLite, and PostgreSQL Paper worker evidence each covers six persisted crash boundaries from control command persistence through prepared-journal cleanup after acknowledgement.",
     "The Windows PostgreSQL run uses six isolated databases, exits with the injected failure at each boundary, recovers successfully, then performs an idempotent restart; each boundary retains one Accepted/Executed control command and does not send real orders or access a venue.",
-    "The final-source PostgreSQL run is bound to a passed R21-AC01 run with a source-tree manifest and hashed command log."
+    "The final-source PostgreSQL run is bound to a passed R21-AC01 run with a source-tree manifest and hashed command log.",
+    "Hosted Ubuntu CI run #592 now binds R11-AC01 directly for file, SQLite, and PostgreSQL. Each backend recovered successfully at all six persisted dispatch-to-ack boundaries; this resolves the prior scenario attribution gap and matches the reviewed Windows Paper behavior."
   ],
   "limitations": [
-    "This accepts Windows local backend coverage only; Linux strategy-storage-recovery CI remains pending.",
     "The backend uses isolated PostgreSQL on Windows and Paper fixtures; no external venue is exercised.",
     "This review covers the six worker crash/restart boundaries; it does not independently claim every persistence micro-boundary beyond those represented by the recorded crash points."
+  ],
+  "reviewed_run_ids": [
+    "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4",
+    "96747697-7caa-4b33-99de-461f2b185c57",
+    "390f624c-62bb-40c1-880f-70fda9347bac",
+    "02680d74-d159-4fcb-9d9e-90bd77d66cff"
   ]
 }

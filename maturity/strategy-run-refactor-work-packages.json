@@ -382,11 +382,11 @@
     {
       "id": "R11",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "The Linux worker crash-recovery CI step now records under R11-AC01 so the six-boundary results are no longer misattributed to R21; the updated hosted CI run and artifact review are pending. R11-AC02 atomic journal recovery is already accepted."
+        "No remaining R11 Paper worker recovery acceptance gaps; live venue recovery remains a separate R23 scope and is not proven by these fixture tests."
       ],
-      "next_action": "Run the updated hosted Linux durable-recovery job, import all three backend R11-AC01 records and artifacts, then review and close R11.",
+      "next_action": "Track authorized venue recovery acceptance under R23; do not infer live recovery from Paper worker fixtures.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
@@ -426,7 +426,13 @@
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
         "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
         "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.log",
-        "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.source-tree.json"
+        "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.source-tree.json",
+        "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.log",
+        "maturity/acceptance-artifacts/96747697-7caa-4b33-99de-461f2b185c57.source-tree.json",
+        "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.log",
+        "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.source-tree.json",
+        "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.log",
+        "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json"
       ]
     },
     {
