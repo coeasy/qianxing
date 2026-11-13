@@ -352,6 +352,51 @@ pub fn order_group_metrics_prometheus(root: &Path) -> String {
     output
 }
 
+/// Render the latest durable reconciliation facts for each configured worker.
+/// Unreadable or invalid report storage is explicitly unavailable, never an empty result.
+pub fn reconcile_metrics_prometheus(root: &Path) -> String {
+    use crate::worker_metrics::prometheus_label;
+
+    let mut output = String::from(
+        "# HELP qx_reconcile_metrics_available Whether durable reconciliation reports were read successfully.\n\
+# TYPE qx_reconcile_metrics_available gauge\n\
+# HELP qx_reconcile_report_count Number of durable reconciliation reports currently available.\n\
+# TYPE qx_reconcile_report_count gauge\n\
+# HELP qx_reconcile_report_observed_timestamp_seconds Unix timestamp of the latest reconciliation report.\n\
+# TYPE qx_reconcile_report_observed_timestamp_seconds gauge\n\
+# HELP qx_reconcile_order_issues Number of unresolved order issues in the latest reconciliation report.\n\
+# TYPE qx_reconcile_order_issues gauge\n\
+# HELP qx_reconcile_balance_discrepancies Number of unresolved balance discrepancies in the latest reconciliation report.\n\
+# TYPE qx_reconcile_balance_discrepancies gauge\n",
+    );
+    let reports = match qx_runtime::load_reconcile_reports(root) {
+        Ok(reports) => reports,
+        Err(_) => {
+            output.push_str("qx_reconcile_metrics_available 0\n");
+            return output;
+        }
+    };
+    output.push_str("qx_reconcile_metrics_available 1\n");
+    output.push_str(&format!("qx_reconcile_report_count {}\n", reports.len()));
+    for report in reports {
+        let labels = format!(
+            "worker=\"{}\",account=\"{}\",venue=\"{}\"",
+            prometheus_label(&report.worker_id),
+            prometheus_label(&report.account_id),
+            prometheus_label(&report.venue_id),
+        );
+        output.push_str(&format!(
+            "qx_reconcile_report_observed_timestamp_seconds{{{labels}}} {}\n\
+qx_reconcile_order_issues{{{labels}}} {}\n\
+qx_reconcile_balance_discrepancies{{{labels}}} {}\n",
+            report.observed_ts / 1_000,
+            report.order_issues.len(),
+            report.balance_discrepancies.len(),
+        ));
+    }
+    output
+}
+
 /// Load and validate the latest persisted reconciliation report per worker.
 pub fn load_reconcile_reports(root: &Path) -> Result<Vec<ReconcileReportSnapshot>, String> {
     qx_runtime::load_reconcile_reports(root)
@@ -1012,7 +1057,7 @@ mod tests {
         apply_reconcile_reports, configured_account_trading_day, default_account_event_log,
         load_api_account_snapshots_with_market_specs, load_api_query_models,
         load_reconcile_reports, order_group_metrics_prometheus, project_position_unrealized_pnl,
-        query_api_models,
+        query_api_models, reconcile_metrics_prometheus,
     };
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
@@ -1435,6 +1480,58 @@ mod tests {
         assert!(metrics.contains("qx_order_group_metrics_available 0\n"));
         assert!(!metrics.contains("qx_order_group_metrics_available 1\n"));
         assert!(!metrics.contains("qx_order_group_status{"));
+    }
+
+    #[test]
+    fn reconcile_metrics_expose_report_age_inputs_and_discrepancy_counts() {
+        let root = temp_root("reconcile-metrics");
+        let report_dir = root.join("reconcile");
+        std::fs::create_dir_all(&report_dir).unwrap();
+        let report = ReconcileReportSnapshot {
+            schema_version: 1,
+            worker_id: "ccxt-reconcile".into(),
+            account_id: "main".into(),
+            venue_id: "OKX".into(),
+            observed_ts: 91_999,
+            order_issues: vec![serde_json::json!({"kind": "unknown_order"})],
+            balances_count: 2,
+            balance_discrepancies: vec![
+                serde_json::json!({"asset": "USDT"}),
+                serde_json::json!({"asset": "BTC"}),
+            ],
+            position_snapshots_count: Some(0),
+            funding_rate_snapshots_count: Some(0),
+            cashflow_count: Some(0),
+        };
+        std::fs::write(
+            report_dir.join("ccxt-reconcile.json"),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
+
+        let metrics = reconcile_metrics_prometheus(&root);
+        assert!(metrics.contains("qx_reconcile_metrics_available 1\n"));
+        assert!(metrics.contains("qx_reconcile_report_count 1\n"));
+        assert!(metrics.contains(
+            "qx_reconcile_report_observed_timestamp_seconds{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 91\n"
+        ));
+        assert!(metrics.contains(
+            "qx_reconcile_order_issues{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 1\n"
+        ));
+        assert!(metrics.contains(
+            "qx_reconcile_balance_discrepancies{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 2\n"
+        ));
+
+        std::fs::write(report_dir.join("corrupt.json"), br#"{"broken":true}"#).unwrap();
+        let unavailable = reconcile_metrics_prometheus(&root);
+        assert!(unavailable.contains("qx_reconcile_metrics_available 0\n"));
+        assert!(!unavailable
+            .lines()
+            .any(|line| line.starts_with("qx_reconcile_report_count ")));
+        assert!(!unavailable
+            .lines()
+            .any(|line| line.starts_with("qx_reconcile_order_issues{")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

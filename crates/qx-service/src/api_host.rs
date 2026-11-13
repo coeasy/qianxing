@@ -73,7 +73,7 @@ pub fn build_configured_api_service(
     let readiness_store = control_store.clone();
     let metrics_dir = crate::worker_metrics::worker_metrics_dir(config);
     let gateway_metrics_dir = metrics_dir.clone();
-    let order_group_metrics_root = Path::new(&config.storage.data_dir).to_path_buf();
+    let durable_metrics_root = Path::new(&config.storage.data_dir).to_path_buf();
     let metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let metrics_now_ms = now_ms;
     let gateway_config = config.clone();
@@ -141,7 +141,10 @@ pub fn build_configured_api_service(
                 metrics_stale_after_ms,
             );
             metrics.push_str(&crate::api_read_model::order_group_metrics_prometheus(
-                &order_group_metrics_root,
+                &durable_metrics_root,
+            ));
+            metrics.push_str(&crate::api_read_model::reconcile_metrics_prometheus(
+                &durable_metrics_root,
             ));
             metrics
         })
@@ -812,6 +815,9 @@ mod tests {
         assert!(metrics_response
             .body
             .contains("qx_order_group_metrics_available 1\n"));
+        assert!(metrics_response
+            .body
+            .contains("qx_reconcile_metrics_available 1\n"));
         let body: serde_json::Value =
             serde_json::from_str(&response.body).expect("readiness JSON is valid");
         let gateway = body["readiness_layers"]["O"]["exchange_gateways"]["gateways"]
