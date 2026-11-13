@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_native_group_amendment_fence_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "757e3489fdf817424fc70444447b39c097ed2737",
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "temporary_directory": "target/test-tmp"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "qx-service",
+        "--",
+        "--test-threads=1"
+      ],
+      "environment": "TEMP and TMP point to target/test-tmp",
+      "exit_code": 0,
+      "selected_tests": 134,
+      "passed": 134,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "The CCXT AmendOrder route checks durable native order groups before spawning the connector process.",
+    "Amendment is rejected for a leg belonging to a group that is not Cancelled or Rejected, preventing the exchange order terms from changing while the persisted group snapshot remains unchanged.",
+    "Account, venue, client order identity, and terminal-group exclusions are covered by the route predicate test."
+  ],
+  "scope_limitations": [
+    "This change does not implement group-level amendment or an amended-order overlay in OrderGroupState; active native-group child amendment remains unavailable.",
+    "This is local Rust service test evidence only. No exchange private API was called and no order was changed.",
+    "OKX, Binance, and Bitget amendment behavior remains implemented-unverified and requires venue-specific sandbox lifecycle evidence."
+  ]
+}
