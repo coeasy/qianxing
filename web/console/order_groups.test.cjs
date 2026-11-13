@@ -73,6 +73,8 @@ test("order group table exposes group and child identities, including quote-budg
     "account-activity-venue-id": { value: "" },
     "account-activity-client-order-id": { value: "" },
     "account-activity-exchange-order-id": { value: "" },
+    "account-activity-signal-id": { value: "stale-signal" },
+    "account-activity-intent-id": { value: "stale-intent" },
     "account-activity-load": { clicks: 0, click() { this.clicks += 1; } },
     "card-account-activity": { scrolls: [], scrollIntoView(options) { this.scrolls.push(options); } },
   };
@@ -139,6 +141,8 @@ test("order group table exposes group and child identities, including quote-budg
   assert.equal(controls["account-activity-venue-id"].value, "BINANCE");
   assert.equal(controls["account-activity-client-order-id"].value, "17");
   assert.equal(controls["account-activity-exchange-order-id"].value, "venue-order-1");
+  assert.equal(controls["account-activity-signal-id"].value, "");
+  assert.equal(controls["account-activity-intent-id"].value, "");
   assert.equal(controls["account-activity-load"].clicks, 1);
   assert.deepEqual(
     JSON.parse(JSON.stringify(controls["card-account-activity"].scrolls)),
