@@ -148,7 +148,6 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 break;
             }
             let channel = format!("fetch_ticker:{instrument}");
-            let request_started = Instant::now();
             let response = client.call_cancellable(
                 serde_json::json!({
                     "op": "fetch_ticker",
@@ -156,16 +155,13 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 }),
                 || context.should_stop(),
             );
-            let request_duration = request_started.elapsed();
             let result = match response {
                 Ok(CcxtCallOutcome::Response(result)) => {
-                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     reconnect_budget.note_success(&channel);
                     result
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
-                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
@@ -336,7 +332,8 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 spec.timeframe_ms
                     .saturating_mul(spec.history_limit.saturating_add(2) as u64),
             );
-            let result = match client.call_cancellable(
+            let request_started = Instant::now();
+            let response = client.call_cancellable(
                 serde_json::json!({
                     "op": "fetch_ohlcv",
                     "instrument": spec.instrument.to_string(),
@@ -346,13 +343,17 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                     "limit": spec.history_limit.saturating_add(2),
                 }),
                 || context.should_stop(),
-            ) {
+            );
+            let request_duration = request_started.elapsed();
+            let result = match response {
                 Ok(CcxtCallOutcome::Response(result)) => {
+                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     reconnect_budget.note_success(&channel);
                     result
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
+                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
