@@ -79,6 +79,8 @@
         "exchange_order_id": { "type": ["string", "null"] },
         "run_id": { "type": ["string", "null"] },
         "strategy_id": { "type": ["string", "null"] },
+        "signal_id": { "type": ["string", "null"] },
+        "intent_id": { "type": ["string", "null"] },
         "correlation_id": { "type": ["string", "null"] },
         "limit": { "type": "integer", "minimum": 1, "maximum": 300 },
         "has_older": { "type": "boolean" },

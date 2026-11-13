@@ -29,6 +29,12 @@ pub struct AccountActivityReportReadOptionsV1 {
     /// Exact strategy identity; can be combined with `run_id` or order filters.
     #[serde(default)]
     pub strategy_id: Option<String>,
+    /// Exact signal identity from the event context.
+    #[serde(default)]
+    pub signal_id: Option<String>,
+    /// Exact intent identity from the event context.
+    #[serde(default)]
+    pub intent_id: Option<String>,
     /// Exact correlation anchor; when it identifies an order event, include all retained facts
     /// for that same client order so the submit/ack/fill/ledger lifecycle can be inspected.
     #[serde(default)]
@@ -46,6 +52,8 @@ impl Default for AccountActivityReportReadOptionsV1 {
             exchange_order_id: None,
             run_id: None,
             strategy_id: None,
+            signal_id: None,
+            intent_id: None,
             correlation_id: None,
             limit: DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1,
         }
@@ -99,6 +107,10 @@ pub struct AccountActivityEventPageV1 {
     #[serde(default)]
     pub strategy_id: Option<String>,
     #[serde(default)]
+    pub signal_id: Option<String>,
+    #[serde(default)]
+    pub intent_id: Option<String>,
+    #[serde(default)]
     pub correlation_id: Option<String>,
     pub oldest_seq: Option<u64>,
     pub latest_seq: Option<u64>,
@@ -134,6 +146,10 @@ pub struct AccountActivityEventRowV1 {
     pub run_id: String,
     #[serde(default)]
     pub strategy_id: String,
+    #[serde(default)]
+    pub signal_id: String,
+    #[serde(default)]
+    pub intent_id: String,
 }
 
 impl AccountActivityEventRowV1 {
@@ -162,6 +178,8 @@ impl AccountActivityEventRowV1 {
             exchange_order_id,
             run_id: context.run_id.clone(),
             strategy_id: context.strategy_id.clone(),
+            signal_id: context.signal_id.clone(),
+            intent_id: context.intent_id.clone(),
         }
     }
 }
@@ -351,6 +369,8 @@ pub fn read_account_activity_report_v1(
             exchange_order_id: options.exchange_order_id.clone(),
             run_id: options.run_id.clone(),
             strategy_id: options.strategy_id.clone(),
+            signal_id: options.signal_id.clone(),
+            intent_id: options.intent_id.clone(),
             correlation_id: options.correlation_id.clone(),
             oldest_seq: selected_page.oldest_seq,
             latest_seq: selected_page.latest_seq,
@@ -423,6 +443,20 @@ fn validate_options(options: &AccountActivityReportReadOptionsV1) -> Result<(), 
         .is_some_and(|value| value.trim().is_empty())
     {
         return Err(invalid("账户活动 strategy_id 不能为空"));
+    }
+    if options
+        .signal_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("账户活动 signal_id 不能为空"));
+    }
+    if options
+        .intent_id
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("账户活动 intent_id 不能为空"));
     }
     if options
         .correlation_id
@@ -502,6 +536,14 @@ fn select_event_page<'a>(
                 .strategy_id
                 .as_deref()
                 .is_none_or(|expected| event.metadata.context.strategy_id == expected)
+            && options
+                .signal_id
+                .as_deref()
+                .is_none_or(|expected| event.metadata.context.signal_id == expected)
+            && options
+                .intent_id
+                .as_deref()
+                .is_none_or(|expected| event.metadata.context.intent_id == expected)
             && options.correlation_id.as_deref().is_none_or(|expected| {
                 event.correlation_id == expected
                     || client_order_id.is_some_and(|client_order_id| {
@@ -770,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn run_and_strategy_filters_are_exact_and_compose_with_order_filters() {
+    fn run_strategy_signal_and_intent_filters_compose_with_order_filters() {
         let mut events = events();
         events[0].kind = EventKind::ExecutionCapabilityDecision {
             decision: qx_core::ExecutionCapabilityDecisionFact {
@@ -801,6 +843,8 @@ mod tests {
                 client_order_id: 77,
                 venue_order_id: None,
             };
+            events[index].metadata.context.signal_id = "8".into();
+            events[index].metadata.context.intent_id = "77".into();
         }
         let report = read_account_activity_report_v1(
             &snapshot(),
@@ -808,6 +852,8 @@ mod tests {
             &AccountActivityReportReadOptionsV1 {
                 run_id: Some("run-1".into()),
                 strategy_id: Some("strategy-a".into()),
+                signal_id: Some("8".into()),
+                intent_id: Some("77".into()),
                 client_order_id: Some(77),
                 ..AccountActivityReportReadOptionsV1::default()
             },
@@ -817,6 +863,8 @@ mod tests {
         assert_eq!(report.events.available_total, 3);
         assert_eq!(report.events.run_id.as_deref(), Some("run-1"));
         assert_eq!(report.events.strategy_id.as_deref(), Some("strategy-a"));
+        assert_eq!(report.events.signal_id.as_deref(), Some("8"));
+        assert_eq!(report.events.intent_id.as_deref(), Some("77"));
         assert_eq!(
             report
                 .events
@@ -828,6 +876,8 @@ mod tests {
         );
         assert_eq!(report.events.rows[0].run_id, "run-1");
         assert_eq!(report.events.rows[0].strategy_id, "strategy-a");
+        assert_eq!(report.events.rows[0].signal_id, "8");
+        assert_eq!(report.events.rows[0].intent_id, "77");
 
         let empty = read_account_activity_report_v1(
             &snapshot(),
@@ -835,6 +885,8 @@ mod tests {
             &AccountActivityReportReadOptionsV1 {
                 run_id: Some("run-1".into()),
                 strategy_id: Some("strategy-b".into()),
+                signal_id: Some("8".into()),
+                intent_id: Some("77".into()),
                 ..AccountActivityReportReadOptionsV1::default()
             },
             200,
@@ -857,6 +909,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 2,
             },
@@ -884,6 +938,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1138,6 +1194,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1160,6 +1218,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1179,6 +1239,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1198,6 +1260,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1218,6 +1282,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1240,6 +1306,8 @@ mod tests {
                 exchange_order_id: None,
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1259,6 +1327,8 @@ mod tests {
                 exchange_order_id: Some("remote-77".into()),
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 10,
             },
@@ -1289,6 +1359,8 @@ mod tests {
                 exchange_order_id: Some("remote-77".into()),
                 run_id: None,
                 strategy_id: None,
+                signal_id: None,
+                intent_id: None,
                 correlation_id: None,
                 limit: 1,
             },
@@ -1325,6 +1397,14 @@ mod tests {
                 strategy_id: Some("".into()),
                 ..AccountActivityReportReadOptionsV1::default()
             },
+            AccountActivityReportReadOptionsV1 {
+                signal_id: Some(" ".into()),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
+            AccountActivityReportReadOptionsV1 {
+                intent_id: Some("".into()),
+                ..AccountActivityReportReadOptionsV1::default()
+            },
         ] {
             assert_eq!(
                 read_account_activity_report_v1(&snapshot(), &events, &options, 200)
@@ -1344,6 +1424,8 @@ mod tests {
                     exchange_order_id: None,
                     run_id: None,
                     strategy_id: None,
+                    signal_id: None,
+                    intent_id: None,
                     correlation_id: None,
                     limit: 2,
                 },
@@ -1364,6 +1446,8 @@ mod tests {
                     exchange_order_id: None,
                     run_id: None,
                     strategy_id: None,
+                    signal_id: None,
+                    intent_id: None,
                     correlation_id: None,
                     limit: 2,
                 },
@@ -1384,6 +1468,8 @@ mod tests {
                     exchange_order_id: None,
                     run_id: None,
                     strategy_id: None,
+                    signal_id: None,
+                    intent_id: None,
                     correlation_id: None,
                     limit: MAX_ACCOUNT_ACTIVITY_EVENT_PAGE_V1 + 1,
                 },

@@ -12,7 +12,25 @@ const to = source.indexOf("function fillTable(", from);
 assert.notEqual(from, -1, "missing account-activity refresh function");
 assert.notEqual(to, -1, "missing account-activity renderer boundary");
 
-test("account activity filters run and strategy context through the HTTP query", async () => {
+test("legacy account activity rows may omit newly added signal and intent fields", () => {
+  const rosterStart = source.indexOf("const RESPONSE_FIELDS = {");
+  const rosterEnd = source.indexOf("function shapeText(", rosterStart);
+  assert.notEqual(rosterStart, -1, "missing response-field roster");
+  assert.notEqual(rosterEnd, -1, "missing response shape checker");
+  const context = {};
+  vm.runInNewContext(
+    `${source.slice(rosterStart, rosterEnd)}\nglobalThis.missingFields = missingFields;`,
+    context,
+  );
+  const fields = [
+    "event_id", "seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq",
+    "correlation_id", "metadata", "client_order_id", "exchange_order_id", "run_id", "strategy_id",
+  ];
+  const legacyRow = Object.fromEntries(fields.map((field) => [field, null]));
+  assert.equal(context.missingFields("accountActivityEventRow", legacyRow).length, 0);
+});
+
+test("account activity filters run, strategy, signal, and intent context through the HTTP query", async () => {
   let requestedPath;
   let reportedRows = [];
   const elements = new Map([
@@ -22,6 +40,8 @@ test("account activity filters run and strategy context through the HTTP query",
     ["account-activity-exchange-order-id", { value: "" }],
     ["account-activity-run-id", { value: "run/4" }],
     ["account-activity-strategy-id", { value: "mean reversion" }],
+    ["account-activity-signal-id", { value: "signal 7" }],
+    ["account-activity-intent-id", { value: "intent/9" }],
     ["account-activity-correlation-id", { value: "corr-123" }],
     ["account-activity-meta", {}],
     ["account-activity-prev", { disabled: false }],
@@ -36,6 +56,8 @@ test("account activity filters run and strategy context through the HTTP query",
       activityExchangeOrderId: null,
       activityRunId: null,
       activityStrategyId: null,
+      activitySignalId: null,
+      activityIntentId: null,
       activityCorrelationId: null,
       activityAfter: null,
       activityBefore: null,
@@ -80,6 +102,8 @@ test("account activity filters run and strategy context through the HTTP query",
   assert.equal(query.get("venue_id"), "OKX");
   assert.equal(query.get("run_id"), "run/4");
   assert.equal(query.get("strategy_id"), "mean reversion");
+  assert.equal(query.get("signal_id"), "signal 7");
+  assert.equal(query.get("intent_id"), "intent/9");
   assert.equal(query.get("correlation_id"), "corr-123");
   assert.equal(context.state.activityPage.available_total, 0);
   assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /3\/4 correlation/);
@@ -94,6 +118,8 @@ test("a stale account activity response cannot replace the latest selection", as
     ["account-activity-exchange-order-id", { value: "" }],
     ["account-activity-run-id", { value: "" }],
     ["account-activity-strategy-id", { value: "" }],
+    ["account-activity-signal-id", { value: "" }],
+    ["account-activity-intent-id", { value: "" }],
     ["account-activity-correlation-id", { value: "" }],
     ["account-activity-meta", {}],
     ["account-activity-prev", { disabled: false }],
@@ -109,6 +135,8 @@ test("a stale account activity response cannot replace the latest selection", as
       activityExchangeOrderId: null,
       activityRunId: null,
       activityStrategyId: null,
+      activitySignalId: null,
+      activityIntentId: null,
       activityCorrelationId: null,
       activityAfter: null,
       activityBefore: null,
@@ -159,6 +187,8 @@ test("an order snapshot links to account events with its client ID and default a
     ["account-activity-venue-id", { value: "" }],
     ["account-activity-client-order-id", { value: "" }],
     ["account-activity-exchange-order-id", { value: "" }],
+    ["account-activity-signal-id", { value: "stale-signal" }],
+    ["account-activity-intent-id", { value: "stale-intent" }],
     ["card-account-activity", { scrollIntoView() {} }],
     ["account-activity-load", { clicks: 0, click() { this.clicks += 1; } }],
   ]);
@@ -176,6 +206,8 @@ test("an order snapshot links to account events with its client ID and default a
   assert.equal(elements.get("account-activity-client-order-id").value, "823");
   // The snapshot's order_id is local; don't guess that it's an exchange order ID.
   assert.equal(elements.get("account-activity-exchange-order-id").value, "");
+  assert.equal(elements.get("account-activity-signal-id").value, "");
+  assert.equal(elements.get("account-activity-intent-id").value, "");
   assert.equal(elements.get("account-activity-load").clicks, 1);
 });
 
@@ -191,6 +223,8 @@ test("an account event correlation link clears intersecting filters and loads th
     ["account-activity-exchange-order-id", { value: "remote-123" }],
     ["account-activity-run-id", { value: "run-1" }],
     ["account-activity-strategy-id", { value: "strategy-1" }],
+    ["account-activity-signal-id", { value: "signal-1" }],
+    ["account-activity-intent-id", { value: "intent-1" }],
     ["account-activity-correlation-id", { value: "" }],
     ["card-account-activity", { scrollIntoView() {} }],
     ["account-activity-load", { clicks: 0, click() { this.clicks += 1; } }],
@@ -210,6 +244,8 @@ test("an account event correlation link clears intersecting filters and loads th
     "account-activity-exchange-order-id",
     "account-activity-run-id",
     "account-activity-strategy-id",
+    "account-activity-signal-id",
+    "account-activity-intent-id",
   ]) assert.equal(elements.get(id).value, "");
   assert.equal(elements.get("account-activity-load").clicks, 1);
 });
