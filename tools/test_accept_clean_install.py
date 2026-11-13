@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import io
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.accept_clean_install import ensure_cli_install
+from tools.accept_clean_install import configure_utf8_output, ensure_cli_install
 
 
 class EnsureCliInstallTests(unittest.TestCase):
@@ -44,6 +45,20 @@ class EnsureCliInstallTests(unittest.TestCase):
                 self.assertEqual(ensure_cli_install(repo, cli_root, {}), expected_cli)
 
             run.assert_called_once()
+
+
+class Utf8OutputTests(unittest.TestCase):
+    def test_reconfigures_legacy_windows_console_encoding(self) -> None:
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        try:
+            configure_utf8_output(stream)
+            self.assertEqual(stream.encoding.lower().replace("_", "-"), "utf-8")
+            self.assertEqual(stream.errors, "backslashreplace")
+            stream.write("中文帮助输出")
+            stream.flush()
+            self.assertIn("中文帮助输出".encode("utf-8"), stream.buffer.getvalue())
+        finally:
+            stream.close()
 
 
 if __name__ == "__main__":

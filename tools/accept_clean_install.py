@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import TextIO
 
 import tomllib
 
@@ -56,7 +57,19 @@ def ensure_cli_install(repo: Path, cli_root: Path, env: dict[str, str]) -> Path:
     return cli
 
 
+def configure_utf8_output(stream: TextIO) -> None:
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main() -> int:
+    # Windows hosted runners may expose a legacy console code page (for example
+    # cp1252), while qx-cli help and diagnostics intentionally contain Chinese.
+    # Keep acceptance logs lossless and prevent an otherwise successful install
+    # from failing while printing subprocess output.
+    for stream in (sys.stdout, sys.stderr):
+        configure_utf8_output(stream)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", required=True, help="Python interpreter with pip and maturin")
     parser.add_argument("--work-dir", required=True, help="New directory outside the source tree")
