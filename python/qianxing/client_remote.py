@@ -500,6 +500,8 @@ class AppClient(_HttpJsonClient):
         exchange_order_id: str | None = None,
         run_id: str | None = None,
         strategy_id: str | None = None,
+        signal_id: str | None = None,
+        intent_id: str | None = None,
         correlation_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -517,6 +519,8 @@ class AppClient(_HttpJsonClient):
         for name, value in (
             ("run_id", run_id),
             ("strategy_id", strategy_id),
+            ("signal_id", signal_id),
+            ("intent_id", intent_id),
             ("correlation_id", correlation_id),
         ):
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -546,6 +550,10 @@ class AppClient(_HttpJsonClient):
             query.append(("run_id", run_id))
         if strategy_id is not None:
             query.append(("strategy_id", strategy_id))
+        if signal_id is not None:
+            query.append(("signal_id", signal_id))
+        if intent_id is not None:
+            query.append(("intent_id", intent_id))
         if correlation_id is not None:
             query.append(("correlation_id", correlation_id))
         query.append(("limit", str(limit)))
@@ -563,6 +571,8 @@ class AppClient(_HttpJsonClient):
         exchange_order_id: str | None = None,
         run_id: str | None = None,
         strategy_id: str | None = None,
+        signal_id: str | None = None,
+        intent_id: str | None = None,
         correlation_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -576,6 +586,8 @@ class AppClient(_HttpJsonClient):
             exchange_order_id=exchange_order_id,
             run_id=run_id,
             strategy_id=strategy_id,
+            signal_id=signal_id,
+            intent_id=intent_id,
             correlation_id=correlation_id,
             limit=limit,
         )

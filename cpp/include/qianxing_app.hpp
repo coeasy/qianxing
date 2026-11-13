@@ -407,7 +407,9 @@ public:
         std::uint32_t limit = 50,
         std::optional<std::string_view> run_id = std::nullopt,
         std::optional<std::string_view> strategy_id = std::nullopt,
-        std::optional<std::string_view> correlation_id = std::nullopt) const {
+        std::optional<std::string_view> correlation_id = std::nullopt,
+        std::optional<std::string_view> signal_id = std::nullopt,
+        std::optional<std::string_view> intent_id = std::nullopt) const {
         if (account_id.empty() || venue_id.empty()) {
             return {400, R"({"error":"account_id and venue_id are required"})"};
         }
@@ -417,9 +419,19 @@ public:
         if (limit == 0 || limit > 300) {
             return {400, R"({"error":"limit must be between 1 and 300"})"};
         }
-        if ((run_id && run_id->empty()) || (strategy_id && strategy_id->empty()) ||
-            (correlation_id && correlation_id->empty())) {
-            return {400, R"({"error":"run_id, strategy_id and correlation_id must be non-empty"})"};
+        const auto is_blank = [](std::string_view value) {
+            for (const char ch : value) {
+                if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\f' &&
+                    ch != '\v') {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if ((run_id && is_blank(*run_id)) || (strategy_id && is_blank(*strategy_id)) ||
+            (correlation_id && is_blank(*correlation_id)) || (signal_id && is_blank(*signal_id)) ||
+            (intent_id && is_blank(*intent_id))) {
+            return {400, R"({"error":"run_id, strategy_id, signal_id, intent_id and correlation_id must be non-empty"})"};
         }
         std::string path(routes::kAccountActivity);
         path += "?account_id=" + routes::encode_query_component(account_id);
@@ -435,6 +447,12 @@ public:
         }
         if (strategy_id) {
             path += "&strategy_id=" + routes::encode_query_component(*strategy_id);
+        }
+        if (signal_id) {
+            path += "&signal_id=" + routes::encode_query_component(*signal_id);
+        }
+        if (intent_id) {
+            path += "&intent_id=" + routes::encode_query_component(*intent_id);
         }
         if (correlation_id) {
             path += "&correlation_id=" + routes::encode_query_component(*correlation_id);
