@@ -827,12 +827,34 @@ async function refreshReadModels() {
     getJson(API_PATHS.strategyDeployments),
   ]);
   const count = (r) => (Array.isArray(r.body) ? `${r.body.length} 条` : `HTTP ${r.status}`);
-  rows($("readmodels-rows"), [
+  const readModelRows = [
     ["/account/ledger", count(ledger)],
     ["/reconcile/reports", count(recon)],
     ["/scheduler/runs", count(sched)],
     ["/control/audit", count(audit)],
-  ]);
+  ];
+  if (!recon.ok || !Array.isArray(recon.body)) {
+    readModelRows.push(["对账详情", `HTTP ${recon.status}: ${errorOf(recon.body) || "报告不可用"}`]);
+  } else if (!recon.body.length) {
+    readModelRows.push(["对账详情", "没有持久化对账报告；不能据此认定账户无差异"]);
+  } else {
+    for (const report of recon.body) {
+      const orderIssues = Array.isArray(report.order_issues) ? report.order_issues.length : null;
+      const balanceDiscrepancies = Array.isArray(report.balance_discrepancies)
+        ? report.balance_discrepancies.length : null;
+      const missingFacts = orderIssues === null || balanceDiscrepancies === null;
+      const hasDiscrepancies = !missingFacts && (orderIssues > 0 || balanceDiscrepancies > 0);
+      const ageMs = Number.isSafeInteger(report.observed_ts)
+        ? Date.now() - report.observed_ts : null;
+      const ageText = ageMs === null ? "未知" : ageMs < 0 ? "时间超前" : `${ageMs}ms`;
+      const result = missingFacts ? "报告字段不完整" : hasDiscrepancies ? "存在差异" : "报告记录 0 项差异";
+      readModelRows.push([
+        `对账 ${report.worker_id || "未知 worker"} / ${report.account_id || "未知账户"} / ${report.venue_id || "未知 venue"}`,
+        `${result}; observed=${tsText(report.observed_ts)}; age=${ageText}; order_issues=${orderIssues ?? "未知"}; balance_discrepancies=${balanceDiscrepancies ?? "未知"}`,
+      ]);
+    }
+  }
+  rows($("readmodels-rows"), readModelRows);
   // 控制面②③两阶段从这份审计里推进：受理之后命令走到哪一步，这里看得见。
   const deploymentRows = [];
   if (!deployments.ok || !Array.isArray(deployments.body)) {
