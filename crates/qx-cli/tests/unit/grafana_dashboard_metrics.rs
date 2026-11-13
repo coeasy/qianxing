@@ -78,6 +78,8 @@ fn grafana_dashboard_is_valid_json_and_references_real_metrics_only() {
         "qx_control_command_queue_oldest_age_seconds",
         "qx_order_group_status",
         "qx_reconcile_order_issues",
+        "qx_gateway_port_business_status",
+        "qx_gateway_port_business_timestamp_seconds",
     ] {
         assert!(
             exprs.iter().any(|expr| expr.contains(required)),

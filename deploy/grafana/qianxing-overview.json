@@ -185,6 +185,40 @@
         { "expr": "qx_job_queue_metrics_available", "legendFormat": "任务队列" },
         { "expr": "qx_control_command_queue_metrics_available", "legendFormat": "控制命令队列" }
       ]
+    },
+    {
+      "id": 19,
+      "title": "交易业务端口健康状态（0 异常 / 1 降级 / 2 健康）",
+      "type": "timeseries",
+      "description": "Unobserved 不会伪装成数值；无序列表示尚未观察到该端口。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 80 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "qx_gateway_port_business_status", "legendFormat": "{{worker}} · {{account}} · {{port}}" }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "交易业务端口最近活动年龄（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
+      "targets": [
+        { "expr": "time() - qx_gateway_port_business_timestamp_seconds", "legendFormat": "{{worker}} · {{account}} · {{port}}" }
+      ]
     }
   ]
 }
