@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "d15931961e457e7b8ba4513e88f902b05e8665dfb3e6e3e4a481705c7e1c1bac",
-    "maturity/capabilities.yaml": "82ccbeaa110db03cca5f90b818550fd0db9e1162ad9148f0fd5b7bb17e15bb6e",
+    "maturity/capabilities.yaml": "21a7de809105bf83ee8b886c9bf072a102725bec48d0104aaaf23a5a2311477d",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -210,7 +210,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 85,
+      "evidence_path_count": 86,
       "limitation_count": 3
     },
     {
@@ -1942,6 +1942,7 @@
             "maturity/evidence/binance-testnet-pit-import-2026-10-23/refetch-evidence.json records a third anonymous Release CLI fetch of the same 15 historical Testnet bars; its BarFrame SHA-256 matches the first captures and the rebuilt PIT ledger has 75 facts with zero multi-version facts. This verifies repeat-read stability for one window only; it does not establish vendor publication time, revision history, or authenticated sandbox acceptance",
             "maturity/evidence/ccxt-public-quickstart-2026-11-13.json records run 43382383244 and the Bitget regression; maturity/evidence/ccxt-public-quickstart-2026-11-13-c6acd342.json records run 43390976787; maturity/evidence/ccxt-public-quickstart-2026-11-13-c435e3d3.json records run 43393595406; maturity/evidence/ccxt-public-quickstart-2026-11-13-ba2b717a.json records run 43397625762; maturity/evidence/ccxt-public-quickstart-2026-11-13-4290cd31.json records run 43408514771 on source 4290cd31. The latest run also verified that runtime workers and strategy venue match the selected exchange; private workers receive environment variable names only, with execution disabled. OKX and Bitget completed real public 30-day 1h OHLCV, quality manifest, public default fees, backtest, and HTML report with 720 bars, no gaps, 38 fills, and zero rejected orders. Binance passed scaffold initialization and public quickstart checks before public exchangeInfo returned HTTP 451 on this runner. No credentials or orders were used; private execution remains unverified.",
             "maturity/evidence/ccxt-public-quickstart-2026-11-13-long-window.json",
+            "maturity/evidence/ccxt-public-quickstart-2026-11-13-run44.json",
             "tools/backtest_acceptance.py creates `report --evidence` bundles for every crypto quickstart and A-share example rerun, then requires `evidence verify-run` before recording the five artifact SHA-256 values; same-directory reruns compare bundle bytes and independent directories compare normalized bundle contents with referenced artifact digests rebound after verification; maturity/backtest_acceptance.yaml and maturity/ashare_example_backtest_acceptance.yaml record verified bundle hashes; python/tests/test_backtest_acceptance.py checks path/config normalization without erasing run identity"
           ],
           "limitations_count": 3
