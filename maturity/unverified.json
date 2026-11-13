@@ -473,6 +473,7 @@
         "production_approved"
       ],
       "limitations": [
+        "ccxt_long_window_public_profile_not_yet_closed：CI run 43460761813 在修复提交 0ede3c10 上完成 OKX 180 天 15m（17,280 根，零缺口）及 Bitget 52 天 15m（4,992 根，零缺口）的真实公开行情、回测和 HTML 报告；Bitget artifact 的时间戳验证发现原 2,594 根分页截断修复后仍有每 200 根一根缺口，根因是历史接口 startTime 返回其后的 K 线，而游标跳到下一根再次越过边界。现按末根时间戳重叠查询并严格校验相同边界行，本机 CCXT 66 项通过，run 43460761813 证明 Bitget 0 缺口。Binance 在 South Central US runner 的公开 exchangeInfo 收到 HTTP 451。证据仅覆盖匿名公开行情、回测和报告，不覆盖认证 API、testnet/live 下单或交易生命周期 （状态：未收口；收口门：在符合地区资格的环境完成 Binance profile，并取得逐产品授权 sandbox 生命周期证据）",
         "ccxt_public_provider_profile_only_partially_recorded：CI run 43408514771 在 Linux release wheel/CLI 上完成 OKX 与 Bitget 真实公开 30 天 1h 行情、质量清单、公开默认费率、回测和 HTML 报告；两者均 720 根、零缺口、38 fills、零拒单，运行配置 venue 与所选 exchange 一致。Binance runtime scaffold 及 credential-name topology validation 通过，随后 hosted runner 的公开 exchangeInfo 返回 HTTP 451，未完成公开行情 profile。证据仅覆盖指定窗口的公开只读研究，不覆盖 authenticated/private API、数据修订/发布时间、testnet/live 订单或交易所实盘可用性 （状态：未收口；收口门：在合法可访问环境记录 Binance 同等公开 profile，并取得逐产品授权 sandbox 生命周期证据；未排期原因：runner 地区限制且当前无三家授权 Sandbox 订单窗口）",
         "capability_level_is_capped_at_l2：本地 run generation 只到 L2；L3/L4（沙盒/生产）必须由统一 EvidenceBundle 的 venue generation 与真实窗口支撑，构建器今天只声明 L1 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
