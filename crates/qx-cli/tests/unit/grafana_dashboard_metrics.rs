@@ -16,6 +16,7 @@ const KNOWN_PREFIXES: &[&str] = &[
     "qx_control_command_queue_",
     "qx_ccxt_",
     "qx_gateway_port_",
+    "qx_gateway_venue_",
     "qx_job_queue_",
     "qx_order_group_",
     "qx_worker_",
@@ -80,6 +81,8 @@ fn grafana_dashboard_is_valid_json_and_references_real_metrics_only() {
         "qx_reconcile_order_issues",
         "qx_gateway_port_business_status",
         "qx_gateway_port_business_timestamp_seconds",
+        "qx_gateway_venue_reconnects_total",
+        "qx_gateway_venue_last_event_timestamp_seconds",
     ] {
         assert!(
             exprs.iter().any(|expr| expr.contains(required)),
