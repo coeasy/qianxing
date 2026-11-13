@@ -917,9 +917,19 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(account_events.len(), 1);
-        let default_events = service.handle("GET", "/events", "", 12);
-        let default_events: Vec<serde_json::Value> =
-            serde_json::from_str(&default_events.body).expect("default events are JSON");
+        let default_events = loop {
+            let response = service.handle("GET", "/events", "", 12);
+            let events: Vec<serde_json::Value> =
+                serde_json::from_str(&response.body).expect("default events are JSON");
+            if !events.is_empty() {
+                break events;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "projection bridge did not publish default account events"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
         assert_eq!(
             default_events.len(),
             1,
