@@ -1,8 +1,8 @@
 //! CCXT SubmitOrder queue and multi-leg recovery lifecycle.
 
 use crate::cancel_order_host::{
-    execute_prepared_amend_order_with_admission_lock, execute_prepared_cancel_order,
-    prepare_amend_order, prepare_cancel_order,
+    execute_prepared_amend_order, execute_prepared_cancel_order, prepare_amend_order,
+    prepare_cancel_order,
 };
 use crate::ccxt_market_host::{exact_json_decimal_or_raw, raw_json_i128};
 use crate::configured_backends::ControlStateBackend;
@@ -1138,7 +1138,7 @@ fn execute_ccxt_queued_amend(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
-    let result = execute_prepared_amend_order_with_admission_lock(
+    let result = execute_prepared_amend_order(
         command,
         worker,
         runtime_config_path,

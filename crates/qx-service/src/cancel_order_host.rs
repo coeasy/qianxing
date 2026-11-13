@@ -138,36 +138,10 @@ pub fn execute_prepared_cancel_order<V: Venue>(
     gateway.cancel_command(command).map(|result| result.message)
 }
 
-// Keep the worker and prepared request dependencies explicit at this execution boundary.
-#[allow(clippy::too_many_arguments)]
-pub fn execute_prepared_amend_order<V: Venue>(
-    command: &ControlCommand,
-    worker: &WorkerConfig,
-    pipeline_storage: &PipelineStorage,
-    runtime_config_path: &Path,
-    prepared: &mut PreparedAmendOrder,
-    venue: &mut V,
-    now: u64,
-    source_seq: &mut u64,
-) -> Result<String, String> {
-    let log_name = required_account_event_log(worker)?;
-    let _admission_lock =
-        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
-    execute_prepared_amend_order_with_admission_lock(
-        command,
-        worker,
-        runtime_config_path,
-        prepared,
-        venue,
-        now,
-        source_seq,
-    )
-}
-
 /// Execute amendment admission and OMS persistence while the caller holds the
 /// account admission lock across its domain-specific preflight and venue request.
 #[allow(clippy::too_many_arguments)]
-pub fn execute_prepared_amend_order_with_admission_lock<V: Venue>(
+pub fn execute_prepared_amend_order<V: Venue>(
     command: &ControlCommand,
     worker: &WorkerConfig,
     runtime_config_path: &Path,
