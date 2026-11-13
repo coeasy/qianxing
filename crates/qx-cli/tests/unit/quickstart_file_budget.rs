@@ -54,7 +54,8 @@ fn project_file_count_honours_its_directory_budget() {
 fn production_budget_never_truncates_a_real_project() {
     let root = temp_cli_case_dir("r2-quickstart-production-budget");
     let runtime = root.join("qianxing.runtime.json");
-    run_init_with_profile(&runtime, false, Some("macd"), Some("builtin")).expect("init 应当成功");
+    run_init_with_profile(&runtime, false, Some("macd"), Some("builtin"), true)
+        .expect("init 应当成功");
     let (files, truncated) =
         quickstart::project_file_count(&root, quickstart::PROJECT_FILE_COUNT_BUDGET);
     assert!(!truncated, "真实项目被生产预算截断了：份数 {files}");

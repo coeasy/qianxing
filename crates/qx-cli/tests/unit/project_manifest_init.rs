@@ -6,7 +6,7 @@ use super::*;
 fn init_writes_valid_project_manifest_with_real_dataset_and_strategy_refs() {
     let root = temp_cli_case_dir("project-manifest-init");
     let runtime = root.join("qianxing.runtime.json");
-    run_init_with_profile(&runtime, false, Some("macd"), None).expect("本地初始化应通过");
+    run_init_with_profile(&runtime, false, Some("macd"), None, true).expect("本地初始化应通过");
 
     let payload = std::fs::read_to_string(root.join("qianxing.project.json"))
         .expect("存在真实数据集时 init 必须写 ProjectManifest");

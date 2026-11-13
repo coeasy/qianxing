@@ -236,6 +236,7 @@ pub(crate) fn run_init_with_profile(
     force: bool,
     strategy_name: Option<&str>,
     profile: Option<&str>,
+    emit_next_step: bool,
 ) -> Result<(), String> {
     let (template_name, profile_assets, profile_name) =
         init_profile_template(profile, strategy_name)?;
@@ -422,13 +423,15 @@ pub(crate) fn run_init_with_profile(
         );
     }
     let program = cli_args::PROGRAM_NAME;
-    println!(
-        "下一步：{program} doctor {}{}",
-        output.display(),
-        backtest_step
-            .map(|step| format!("；{step}"))
-            .unwrap_or_default()
-    );
+    if emit_next_step {
+        println!(
+            "下一步：{program} doctor {}{}",
+            output.display(),
+            backtest_step
+                .map(|step| format!("；{step}"))
+                .unwrap_or_default()
+        );
+    }
     Ok(())
 }
 

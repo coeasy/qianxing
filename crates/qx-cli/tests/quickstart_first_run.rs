@@ -369,6 +369,10 @@ fn advertised_next_steps_run_as_printed() {
     let project = base.join("project");
     let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy()]);
     assert_eq!(code, 0, "quickstart 首跑失败: {stderr}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("下一步：")),
+        "quickstart 不应混入内部 init 的单步指路；它会打印自己的完整流程：\n{stdout}"
+    );
     let steps = advertised_next_steps(&stdout);
     assert_eq!(steps.len(), 3, "下一步指路必须是三条:\n{stdout}");
     for step in &steps {

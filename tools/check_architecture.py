@@ -20568,7 +20568,10 @@ def cli_project_command_module_check() -> None:
         and 'strategy.as_deref() == Some("")' in module
         and 'profile.as_deref() == Some("")' in module
         and 'PathBuf::from("qianxing.runtime.json")' in module
-        and "run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())" in module
+        and re.search(
+            r"run_init_with_profile\(\s*&output,\s*force,\s*strategy\.as_deref\(\),\s*profile\.as_deref\(\),\s*true,\s*\)",
+            module,
+        ) is not None
         and re.search(
             r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*instrument,\s*exchange,\s*\)",
             module,

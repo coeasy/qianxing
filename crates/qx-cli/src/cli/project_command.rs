@@ -17,9 +17,13 @@ pub(super) fn dispatch_init(
         std::process::exit(2);
     }
     let output = output.unwrap_or_else(|| PathBuf::from("qianxing.runtime.json"));
-    if let Err(error) =
-        run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())
-    {
+    if let Err(error) = run_init_with_profile(
+        &output,
+        force,
+        strategy.as_deref(),
+        profile.as_deref(),
+        true,
+    ) {
         eprintln!("[qx-cli · CLI] 初始化失败: {error}");
         std::process::exit(2);
     }

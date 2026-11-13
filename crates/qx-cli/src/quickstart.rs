@@ -250,7 +250,9 @@ pub(crate) fn run(
         "建项目",
         &command_line(&init_arguments),
         &retry,
-        run_init_with_profile(&runtime, force, strategy_name, init_profile),
+        // quickstart owns the full guided flow; do not interleave `init`'s
+        // standalone follow-up command with this profile-specific sequence.
+        run_init_with_profile(&runtime, force, strategy_name, init_profile, false),
     );
     require(
         "静态检查",
