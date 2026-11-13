@@ -18,7 +18,7 @@ use qx_runtime::{
     worker_settlement_currency, RuntimeConfig, RuntimeEventEnvelope, ServiceStatus, WorkerConfig,
     WorkerContext, WorkerRole,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// 一轮轮询的健康结论：本轮任何一次 ticker / OHLCV 调用失败都不能被"healthy"覆盖。
 ///
@@ -58,13 +58,12 @@ fn observe_ohlcv_rate_limit_retries(
     }
 }
 
-fn observe_ohlcv_response_duration(
-    result: &serde_json::Value,
+fn observe_ohlcv_request_duration(
+    duration: std::time::Duration,
     metrics: &mut PipelineMetricsReporter,
 ) {
-    if let Some(duration_ns) = result.get("duration_ns").and_then(|value| value.as_u64()) {
-        metrics.observe_ccxt_ohlcv_response_duration(duration_ns);
-    }
+    let duration_ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
+    metrics.observe_ccxt_ohlcv_request_duration(duration_ns);
 }
 
 pub struct CcxtMarketWorkerInput {
@@ -149,19 +148,24 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 break;
             }
             let channel = format!("fetch_ticker:{instrument}");
-            let result = match client.call_cancellable(
+            let request_started = Instant::now();
+            let response = client.call_cancellable(
                 serde_json::json!({
                     "op": "fetch_ticker",
                     "instrument": instrument.to_string(),
                 }),
                 || context.should_stop(),
-            ) {
+            );
+            let request_duration = request_started.elapsed();
+            let result = match response {
                 Ok(CcxtCallOutcome::Response(result)) => {
+                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     reconnect_budget.note_success(&channel);
                     result
                 }
                 Ok(CcxtCallOutcome::Cancelled) => return Ok(1),
                 Err(error) => {
+                    observe_ohlcv_request_duration(request_duration, &mut metrics);
                     cycle_failures = cycle_failures.saturating_add(1);
                     let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
@@ -375,7 +379,6 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 &mut market_rate_limit_retries_total,
                 &mut metrics,
             );
-            observe_ohlcv_response_duration(&result, &mut metrics);
             let frame = BarFrame::from_json(
                 &serde_json::to_string(frame_value)
                     .map_err(|error| format!("编码 CCXT OHLCV frame 失败: {error}"))?,
@@ -559,31 +562,25 @@ mod exact_ticker_value_tests {
     }
 
     #[test]
-    fn ccxt_ohlcv_response_duration_flows_to_histogram_metrics() {
+    fn ccxt_ohlcv_request_duration_flows_to_histogram_metrics() {
         let config = RuntimeConfig::from_json(include_str!(
             "../../../deploy/qianxing.runtime.paper-strategy.example.json"
         ))
         .expect("paper runtime config is valid");
         let mut metrics = PipelineMetricsReporter::new(&config, "okx-market", "");
 
-        observe_ohlcv_response_duration(
-            &serde_json::json!({"duration_ns": 100_000_000}),
-            &mut metrics,
-        );
-        observe_ohlcv_response_duration(
-            &serde_json::json!({"duration_ns": 5_000_000_000_u64}),
-            &mut metrics,
-        );
+        observe_ohlcv_request_duration(std::time::Duration::from_millis(100), &mut metrics);
+        observe_ohlcv_request_duration(std::time::Duration::from_secs(5), &mut metrics);
 
         let body = metrics.body(true, 2_000);
         assert!(body.contains(
-            "qx_ccxt_ohlcv_response_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"0.1\"} 1"
+            "qx_ccxt_ohlcv_request_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"0.1\"} 1"
         ));
         assert!(body.contains(
-            "qx_ccxt_ohlcv_response_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"+Inf\"} 2"
+            "qx_ccxt_ohlcv_request_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"+Inf\"} 2"
         ));
         assert!(body.contains(
-            "qx_ccxt_ohlcv_response_duration_seconds_sum{worker=\"okx-market\",account=\"\"} 5.100000000"
+            "qx_ccxt_ohlcv_request_duration_seconds_sum{worker=\"okx-market\",account=\"\"} 5.100000000"
         ));
         assert!(!body.contains("instrument="));
     }

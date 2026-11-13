@@ -11,7 +11,6 @@ import asyncio
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -83,7 +82,6 @@ class CcxtJsonWorker:
             return {"market": market_payload}
         if operation == "fetch_ohlcv":
             retries_before = self.client.market_data_rate_limit_retries_total
-            started_ns = time.perf_counter_ns()
             frame = self.client.fetch_ohlcv(
                 str(request["instrument"]),
                 timeframe=str(request.get("timeframe", "1m")),
@@ -96,7 +94,6 @@ class CcxtJsonWorker:
                 "frame": json.loads(frame.to_json()),
                 "rate_limit_retries": self.client.market_data_rate_limit_retries_total
                 - retries_before,
-                "duration_ns": max(0, time.perf_counter_ns() - started_ns),
             }
         if operation == "fetch_ticker":
             ticker = self.client.fetch_ticker(

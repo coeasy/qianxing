@@ -788,7 +788,6 @@ class CcxtWorkerTest(unittest.TestCase):
 
         self.assertTrue(response["ok"], response)
         self.assertEqual(response["result"]["rate_limit_retries"], 1)
-        self.assertGreaterEqual(response["result"]["duration_ns"], 0)
         self.assertEqual(response["result"]["frame"]["ts"], [1000])
 
     def test_jsonl_create_order_requires_amount_unit_and_rejects_spot_contracts(self):

@@ -58,9 +58,9 @@ pub struct PipelineMetricsReporter {
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
     gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
     ccxt_ohlcv_rate_limit_retries_total: Option<u64>,
-    ccxt_ohlcv_response_duration_buckets: [u64; 10],
-    ccxt_ohlcv_response_duration_count: u64,
-    ccxt_ohlcv_response_duration_ns_total: u128,
+    ccxt_ohlcv_request_duration_buckets: [u64; 10],
+    ccxt_ohlcv_request_duration_count: u64,
+    ccxt_ohlcv_request_duration_ns_total: u128,
     gateway_venue_reconnects: BTreeMap<String, u64>,
     gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
@@ -171,8 +171,8 @@ impl PipelineMetricsReporter {
         *observed = (*observed).max(total);
     }
 
-    /// Record one successful OHLCV request including CCXT retry backoff time.
-    pub(crate) fn observe_ccxt_ohlcv_response_duration(&mut self, duration_ns: u64) {
+    /// Record one completed OHLCV worker RPC, including retry backoff and failed responses.
+    pub(crate) fn observe_ccxt_ohlcv_request_duration(&mut self, duration_ns: u64) {
         const BUCKETS_NS: [u64; 10] = [
             10_000_000,
             25_000_000,
@@ -186,13 +186,13 @@ impl PipelineMetricsReporter {
             10_000_000_000,
         ];
         if let Some(index) = BUCKETS_NS.iter().position(|bound| duration_ns <= *bound) {
-            self.ccxt_ohlcv_response_duration_buckets[index] =
-                self.ccxt_ohlcv_response_duration_buckets[index].saturating_add(1);
+            self.ccxt_ohlcv_request_duration_buckets[index] =
+                self.ccxt_ohlcv_request_duration_buckets[index].saturating_add(1);
         }
-        self.ccxt_ohlcv_response_duration_count =
-            self.ccxt_ohlcv_response_duration_count.saturating_add(1);
-        self.ccxt_ohlcv_response_duration_ns_total = self
-            .ccxt_ohlcv_response_duration_ns_total
+        self.ccxt_ohlcv_request_duration_count =
+            self.ccxt_ohlcv_request_duration_count.saturating_add(1);
+        self.ccxt_ohlcv_request_duration_ns_total = self
+            .ccxt_ohlcv_request_duration_ns_total
             .saturating_add(u128::from(duration_ns));
     }
 
@@ -314,7 +314,7 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
                 "qx_ccxt_ohlcv_rate_limit_retries_total{{{label}}} {retries}\n"
             ));
         }
-        if self.ccxt_ohlcv_response_duration_count > 0 {
+        if self.ccxt_ohlcv_request_duration_count > 0 {
             const BUCKETS: [(&str, u64); 10] = [
                 ("0.01", 10_000_000),
                 ("0.025", 25_000_000),
@@ -328,22 +328,21 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
                 ("10", 10_000_000_000),
             ];
             let mut cumulative = 0_u64;
-            for ((bound_label, _), count) in BUCKETS
-                .iter()
-                .zip(self.ccxt_ohlcv_response_duration_buckets)
+            for ((bound_label, _), count) in
+                BUCKETS.iter().zip(self.ccxt_ohlcv_request_duration_buckets)
             {
                 cumulative = cumulative.saturating_add(count);
                 body.push_str(&format!(
-                    "qx_ccxt_ohlcv_response_duration_seconds_bucket{{{label},le=\"{bound_label}\"}} {cumulative}\n"
+                    "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{label},le=\"{bound_label}\"}} {cumulative}\n"
                 ));
             }
             body.push_str(&format!(
-                "qx_ccxt_ohlcv_response_duration_seconds_bucket{{{label},le=\"+Inf\"}} {}\n\
-qx_ccxt_ohlcv_response_duration_seconds_sum{{{label}}} {:.9}\n\
-qx_ccxt_ohlcv_response_duration_seconds_count{{{label}}} {}\n",
-                self.ccxt_ohlcv_response_duration_count,
-                self.ccxt_ohlcv_response_duration_ns_total as f64 / 1_000_000_000.0,
-                self.ccxt_ohlcv_response_duration_count,
+                "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{label},le=\"+Inf\"}} {}\n\
+qx_ccxt_ohlcv_request_duration_seconds_sum{{{label}}} {:.9}\n\
+qx_ccxt_ohlcv_request_duration_seconds_count{{{label}}} {}\n",
+                self.ccxt_ohlcv_request_duration_count,
+                self.ccxt_ohlcv_request_duration_ns_total as f64 / 1_000_000_000.0,
+                self.ccxt_ohlcv_request_duration_count,
             ));
         }
         for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {
