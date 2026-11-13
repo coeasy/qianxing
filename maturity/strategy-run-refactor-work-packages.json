@@ -190,11 +190,11 @@
     {
       "id": "R08",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Linux built-in, external-process, legacy C ABI, and Python strategy capability runs are bound; Runtime Python class/module-function capability negotiation is covered by the workspace suite but is being given an isolated acceptance record to complete the hosted POSIX matrix."
+        "Host capability acceptance matrix is complete for Windows and hosted Linux/POSIX; any venue sandbox/live maturity remains tracked separately under R23."
       ],
-      "next_action": "Run the isolated Linux Runtime Python class/module-function acceptance, import it with the R08 external-process record, then review the complete Windows/Linux host matrix.",
+      "next_action": "Keep the host-capability contract covered when a new strategy host or capability is added; do not infer venue readiness from host acceptance.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -250,7 +250,15 @@
         "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json",
         "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
         "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.log",
-        "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.source-tree.json"
+        "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.source-tree.json",
+        "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.log",
+        "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.source-tree.json",
+        "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.log",
+        "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.source-tree.json",
+        "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.log",
+        "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.source-tree.json",
+        "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.log",
+        "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.source-tree.json"
       ]
     },
     {

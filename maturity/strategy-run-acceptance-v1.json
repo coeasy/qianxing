@@ -125,7 +125,7 @@
     {
       "acceptance_id": "R08-AC01",
       "work_package": "R08",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Run shared positive and negative capability fixtures against every supported host before construction/dispatch; Windows covers local Python file, Runtime Python class/module-function, built-in, C ABI (including legacy plugins without the optional requirement export), and external process. Repeat the host matrix on Linux/POSIX when available."
       ],
@@ -19979,6 +19979,199 @@
         }
       ],
       "notes": "Linux external process accepts the exact host capability acknowledgment and rejects unsupported requirements before spawn or a mismatched host identity before dispatch"
+    },
+    {
+      "run_id": "acf8eed0-717a-42e5-8736-072d1c2ceeac",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T03:24:40.107258Z",
+      "source_revision": "639598f78d63bc286fbf5b0c537f185409e2343a",
+      "source_tree_sha256": "fdc198262fdc5fa5543727c8939b5ef277648f9c068a7bf987731f441a14a508",
+      "source_manifest": "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "--",
+        "--test-threads=1",
+        "builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "a5d517fb5339774b18ba2006938101c48cdc0dffcd8438a409956992abcc529e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.log",
+          "sha256": "20945867406f9329a703652ae16e53b00664d0e9478398eff7e1f4b9c9c40cb1"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.source-tree.json",
+          "sha256": "e53bea496eaa3b38b7532b799ef8a37af89451855de6e8c4500a63266c0578f7"
+        }
+      ],
+      "notes": "Linux built-in Strategy host accepts supported requirements and rejects unsupported or algorithm-missing capabilities before dispatch"
+    },
+    {
+      "run_id": "f138071d-fec5-48fc-8fc7-18bb513b4b2a",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T03:24:40.592223Z",
+      "source_revision": "639598f78d63bc286fbf5b0c537f185409e2343a",
+      "source_tree_sha256": "fdc198262fdc5fa5543727c8939b5ef277648f9c068a7bf987731f441a14a508",
+      "source_manifest": "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "capability_dispatch_tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/strategy_host/process_client.rs",
+          "sha256": "9b62e920d2cfee0701fecd16a85c607f2a288da22130edab686dbcbbb1452423"
+        },
+        {
+          "path": "crates/qx-cli/src/strategy_host/python_client.rs",
+          "sha256": "d4dac2fa1d54619ba027d54e85d902270be431c1487ca4aef9f779d0840b6e17"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "a5d517fb5339774b18ba2006938101c48cdc0dffcd8438a409956992abcc529e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.log",
+          "sha256": "c1bb497b3a8f3c7da8655dfed42cbefde3732b0ce3950563aa3040e75963a7cf"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.source-tree.json",
+          "sha256": "e53bea496eaa3b38b7532b799ef8a37af89451855de6e8c4500a63266c0578f7"
+        }
+      ],
+      "notes": "Linux external process accepts the exact host capability acknowledgment and rejects unsupported requirements before spawn or a mismatched host identity before dispatch"
+    },
+    {
+      "run_id": "ae05325d-cbfb-43e8-9ac1-aab025ef2b3d",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T03:24:42.914229Z",
+      "source_revision": "639598f78d63bc286fbf5b0c537f185409e2343a",
+      "source_tree_sha256": "fdc198262fdc5fa5543727c8939b5ef277648f9c068a7bf987731f441a14a508",
+      "source_manifest": "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "rust_invokes_python_basestrategy_class_through_process_contract",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/unit/e2e_and_python_contract.rs",
+          "sha256": "af81dac059e97670bfae68be541161c0530dd089aea27389f40eb2d310144c8b"
+        },
+        {
+          "path": "crates/qx-cli/src/strategy_host/python_client.rs",
+          "sha256": "d4dac2fa1d54619ba027d54e85d902270be431c1487ca4aef9f779d0840b6e17"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.log",
+          "sha256": "39088d38c1785d75f3f6b704a03b7f6fedf9be9c4f55b95f3500814e0eab6fad"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.source-tree.json",
+          "sha256": "e53bea496eaa3b38b7532b799ef8a37af89451855de6e8c4500a63266c0578f7"
+        }
+      ],
+      "notes": "Linux local Python file and Runtime Python class/module-function hosts negotiate supported catalogs and reject unsupported requirements before strategy dispatch across the supported Runtime transports"
+    },
+    {
+      "run_id": "225eb562-0401-4fdb-8c23-030afef36d56",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T03:24:47.721965Z",
+      "source_revision": "639598f78d63bc286fbf5b0c537f185409e2343a",
+      "source_tree_sha256": "fdc198262fdc5fa5543727c8939b5ef277648f9c068a7bf987731f441a14a508",
+      "source_manifest": "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-strategy",
+        "--test",
+        "legacy_c_abi_capability_load"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-strategy/tests/legacy_c_abi_capability_load.rs",
+          "sha256": "f9f0b406d12cf60d604055dace1630ed0e1bbf70468adc3a0579aa188945b8de"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "a5d517fb5339774b18ba2006938101c48cdc0dffcd8438a409956992abcc529e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.log",
+          "sha256": "0e15dd35a438a3b999337e5a3aa28bd6a88797731659ac4370294f041255b49d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.source-tree.json",
+          "sha256": "e53bea496eaa3b38b7532b799ef8a37af89451855de6e8c4500a63266c0578f7"
+        }
+      ],
+      "notes": "Linux legacy C ABI plugin without the optional capability export remains compatible with empty requirements and rejects unsupported requirements before create"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

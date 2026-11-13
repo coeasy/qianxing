@@ -1,0 +1,76 @@
+$ cargo test -p qx-strategy --test legacy_c_abi_capability_load
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test legacy_plugin_without_optional_requirement_export_loads_empty_requirements_and_fails_closed_before_create ... ok
+test signed_c_abi_library_loads_and_bad_signature_is_rejected_before_plugin_create ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+[stderr]
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[92m   Compiling[0m qx-core v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-core)
+[1m[92m   Compiling[0m qx-strategy v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-strategy)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 4.44s
+[1m[92m     Running[0m tests/legacy_c_abi_capability_load.rs (target/debug/build/qx-strategy/412d8b80008cf320/out/legacy_c_abi_capability_load-412d8b80008cf320)
