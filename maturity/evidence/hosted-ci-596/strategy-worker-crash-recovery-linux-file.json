@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "paper_strategy_worker_crash_recovery",
+  "recorded_at_utc": "2026-11-13T03:43:06.626429Z",
+  "platform": "posix",
+  "lease_seconds": 2,
+  "recovery_wait_seconds": 3.0,
+  "storage_backend": "file",
+  "venue": "paper",
+  "network_accessed": false,
+  "real_order_sent": false,
+  "recovery_count": 6,
+  "crash_recovery": [
+    {
+      "crash_point": "control_command_persisted",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": null,
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "fbe532561947a5dc234de5f5f23b5032ed4f869643ca523e2e60c79620209f1e",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "fbe532561947a5dc234de5f5f23b5032ed4f869643ca523e2e60c79620209f1e",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    },
+    {
+      "crash_point": "command_result_persisted",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": null,
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "fbe532561947a5dc234de5f5f23b5032ed4f869643ca523e2e60c79620209f1e",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "fbe532561947a5dc234de5f5f23b5032ed4f869643ca523e2e60c79620209f1e",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    },
+    {
+      "crash_point": "cursor_checkpoint_committed",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    },
+    {
+      "crash_point": "scheduler_run_completed",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    },
+    {
+      "crash_point": "queue_job_acknowledged",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    },
+    {
+      "crash_point": "prepared_journal_cleaned_after_ack",
+      "injected_exit_code": 86,
+      "recovery_exit_code": 0,
+      "control_command_count": 1,
+      "control_audit_statuses": [
+        "Accepted",
+        "Executed"
+      ],
+      "paper_summary": "[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+4 本轮新增) ✓",
+      "cursor_before_crash": null,
+      "cursor_after_crash": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_recovery": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "cursor_after_idempotent_restart": {
+        "path": "strategy-paper.execution-cursor.json",
+        "sha256": "e74da43a05ad4f7fcc15e53534a8f0349632f2997ab78daeeff2b10ddfe2da43",
+        "next_seq_by_log": {},
+        "commit_generation": 1,
+        "checkpoint_sha256": null
+      },
+      "idempotent_restart_exit_code": 0
+    }
+  ]
+}

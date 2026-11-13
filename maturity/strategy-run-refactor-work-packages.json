@@ -266,9 +266,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows and Debian 12 Podman Paper lifecycle reviews pass. Hosted Ubuntu PR CI #423 validates PostgreSQL deploy/pause/resume/rollback/failed-replacement/stop and supervisor checkpoint restart. Authoritative full live-readiness proof remains open; Paper runs do not establish venue authorization."
+        "Windows and Debian 12 Podman Paper lifecycle reviews pass. Hosted Ubuntu PR CI #596 confirms PostgreSQL deploy/pause/resume/rollback/failed-replacement/stop and supervisor checkpoint restart. Authoritative full live-readiness proof remains open; Paper runs do not establish venue authorization."
       ],
-      "next_action": "Review strategy-storage-recovery-linux from PR CI #423, then bind authoritative full live-readiness and authorized venue evidence.",
+      "next_action": "Bind authoritative full live-readiness and authorized venue evidence when credentials and trust roots are available.",
       "code_paths": [
         "docs/strategy-deployment-observations.md",
         "crates/qx-service/src/worker_host.rs",
@@ -442,7 +442,16 @@
         "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.log",
         "maturity/acceptance-artifacts/390f624c-62bb-40c1-880f-70fda9347bac.source-tree.json",
         "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.log",
-        "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json"
+        "maturity/acceptance-artifacts/02680d74-d159-4fcb-9d9e-90bd77d66cff.source-tree.json",
+        "maturity/acceptance-artifacts/4a7dbe64-634d-4c13-bb1b-0178f02270cf.log",
+        "maturity/acceptance-artifacts/4a7dbe64-634d-4c13-bb1b-0178f02270cf.source-tree.json",
+        "maturity/acceptance-artifacts/b6b8e897-86f2-447e-8a52-22cd6aa66756.log",
+        "maturity/acceptance-artifacts/b6b8e897-86f2-447e-8a52-22cd6aa66756.source-tree.json",
+        "maturity/acceptance-artifacts/ba442ba7-698b-4b3c-b3df-1d24150a0dc8.log",
+        "maturity/acceptance-artifacts/ba442ba7-698b-4b3c-b3df-1d24150a0dc8.source-tree.json",
+        "maturity/evidence/hosted-ci-596/strategy-worker-crash-recovery-linux-file.json",
+        "maturity/evidence/hosted-ci-596/strategy-worker-crash-recovery-linux-sqlite.json",
+        "maturity/evidence/hosted-ci-596/strategy-worker-crash-recovery-linux-postgres.json"
       ]
     },
     {
@@ -583,7 +592,13 @@
         "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.log",
         "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.source-tree.json",
         "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.log",
-        "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.source-tree.json"
+        "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.source-tree.json",
+        "maturity/acceptance-artifacts/67c48de6-520b-4ec8-9e50-2ffb07ae767e.log",
+        "maturity/acceptance-artifacts/67c48de6-520b-4ec8-9e50-2ffb07ae767e.source-tree.json",
+        "maturity/acceptance-artifacts/af7a0811-33e1-4fa1-92f0-f4036093a56c.log",
+        "maturity/acceptance-artifacts/af7a0811-33e1-4fa1-92f0-f4036093a56c.source-tree.json",
+        "maturity/evidence/hosted-ci-596/r13-strategy-deployment-lifecycle-linux-postgres.json",
+        "maturity/evidence/hosted-ci-596/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json"
       ]
     },
     {
@@ -1432,7 +1447,25 @@
         "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.log",
         "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.source-tree.json",
         "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.log",
-        "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.source-tree.json"
+        "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.source-tree.json",
+        "maturity/acceptance-artifacts/d1628509-3397-48c9-a6fa-c1025ef3b0ce.log",
+        "maturity/acceptance-artifacts/d1628509-3397-48c9-a6fa-c1025ef3b0ce.source-tree.json",
+        "maturity/acceptance-artifacts/313439d0-7b33-4346-b6c1-33195ac1d6df.log",
+        "maturity/acceptance-artifacts/313439d0-7b33-4346-b6c1-33195ac1d6df.source-tree.json",
+        "maturity/acceptance-artifacts/30fd9241-1bef-4acb-bc36-41d4847fa1af.log",
+        "maturity/acceptance-artifacts/30fd9241-1bef-4acb-bc36-41d4847fa1af.source-tree.json",
+        "maturity/acceptance-artifacts/e592093f-b2f0-403f-a749-2fba2f8f1cfc.log",
+        "maturity/acceptance-artifacts/e592093f-b2f0-403f-a749-2fba2f8f1cfc.source-tree.json",
+        "maturity/acceptance-artifacts/880cbc4d-e070-4eac-9558-40c3dd0c445d.log",
+        "maturity/acceptance-artifacts/880cbc4d-e070-4eac-9558-40c3dd0c445d.source-tree.json",
+        "maturity/acceptance-artifacts/74a26fc2-8a8b-4db3-b1ca-d3e4de75e908.log",
+        "maturity/acceptance-artifacts/74a26fc2-8a8b-4db3-b1ca-d3e4de75e908.source-tree.json",
+        "maturity/evidence/hosted-ci-596/job-queue-capacity-linux-file.json",
+        "maturity/evidence/hosted-ci-596/job-queue-capacity-linux-sqlite.json",
+        "maturity/evidence/hosted-ci-596/job-queue-capacity-linux-postgres.json",
+        "maturity/evidence/hosted-ci-596/control-command-queue-capacity-linux-file.json",
+        "maturity/evidence/hosted-ci-596/control-command-queue-capacity-linux-sqlite.json",
+        "maturity/evidence/hosted-ci-596/control-command-queue-capacity-linux-postgres.json"
       ]
     },
     {
