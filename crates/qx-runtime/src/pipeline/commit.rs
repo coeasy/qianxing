@@ -170,7 +170,10 @@ impl LiveEventPipeline {
 
         let context = EventContext {
             tenant_id: decision.account_id.clone(),
-            run_id: format!("account:{}", decision.account_id),
+            run_id: decision
+                .run_id
+                .clone()
+                .unwrap_or_else(|| format!("account:{}", decision.account_id)),
             account_id: decision.account_id.clone(),
             portfolio_id: decision.account_id.clone(),
             strategy_id: "execution-capability-preflight".into(),

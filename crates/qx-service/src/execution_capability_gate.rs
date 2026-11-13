@@ -394,6 +394,7 @@ fn execution_decision_fact(
         "order_group_id": order_group_id,
         "client_order_id": order.client_id,
         "account_id": order.account_id,
+        "run_id": order.trace.as_ref().and_then(|trace| trace.run_id.as_deref()),
         "venue_id": resolved.spec.venue,
         "order_fingerprint": order_fingerprint,
         "catalog_fingerprint": resolved.catalog_fingerprint,
@@ -409,6 +410,7 @@ fn execution_decision_fact(
         order_group_id,
         client_order_id: order.client_id,
         account_id: order.account_id.clone(),
+        run_id: order.trace.as_ref().and_then(|trace| trace.run_id.clone()),
         venue_id: resolved.spec.venue.clone(),
         order_fingerprint,
         catalog_fingerprint: resolved.catalog_fingerprint.clone(),
@@ -424,6 +426,7 @@ fn same_preflight_binding(
     previous.schema_version == current.schema_version
         && previous.client_order_id == current.client_order_id
         && previous.account_id == current.account_id
+        && previous.run_id == current.run_id
         && previous.venue_id.eq_ignore_ascii_case(&current.venue_id)
         && previous.order_fingerprint == current.order_fingerprint
         && previous.market_rule_fingerprint == current.market_rule_fingerprint
@@ -898,7 +901,7 @@ mod tests {
     };
     use qx_core::{
         ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
-        InstrumentId, OrderStatus, Price, Quantity, Side, VenueId,
+        InstrumentId, OrderStatus, OrderTrace, Price, Quantity, Side, VenueId,
     };
     use serde_json::json;
 
@@ -1289,7 +1292,14 @@ mod tests {
 
     #[test]
     fn order_fingerprint_binds_requested_terms_but_ignores_live_progress() {
-        let order = test_order();
+        let mut order = test_order();
+        order.trace = Some(OrderTrace {
+            run_id: Some("worker-run-73".into()),
+            strategy_id: Some("momentum".into()),
+            signal_id: Some(7),
+            intent_id: Some(9),
+            rule_version: Some("v2".into()),
+        });
         let original = order_fingerprint(&order).unwrap();
         let mut progressed = order.clone();
         progressed.status = OrderStatus::PartiallyFilled;
@@ -1303,7 +1313,14 @@ mod tests {
 
     #[test]
     fn persisted_decision_keeps_the_complete_snapshot_and_command_binding() {
-        let order = test_order();
+        let mut order = test_order();
+        order.trace = Some(OrderTrace {
+            run_id: Some("worker-run-73".into()),
+            strategy_id: Some("momentum".into()),
+            signal_id: Some(7),
+            intent_id: Some(9),
+            rule_version: Some("v2".into()),
+        });
         let resolved = test_resolved();
         let fact = execution_decision_fact(
             &order,
@@ -1317,6 +1334,7 @@ mod tests {
         assert_eq!(fact.order_group_id.as_deref(), Some("spread-41"));
         assert_eq!(fact.client_order_id, order.client_id);
         assert_eq!(fact.account_id, order.account_id);
+        assert_eq!(fact.run_id.as_deref(), Some("worker-run-73"));
         assert_eq!(fact.venue_id, "BINANCE");
         assert_eq!(fact.catalog_fingerprint, "c".repeat(64));
         assert!(fact.preflight_json.contains("account_model"));
@@ -1341,6 +1359,20 @@ mod tests {
             &execution_decision_fact(
                 &order,
                 &changed,
+                ExecutionCapabilityDecisionKind::RecoveryAdoption,
+                None,
+                None,
+            )
+            .unwrap()
+        ));
+
+        let mut other_run = order;
+        other_run.trace.as_mut().unwrap().run_id = Some("worker-run-74".into());
+        assert!(!same_preflight_binding(
+            &fact,
+            &execution_decision_fact(
+                &other_run,
+                &test_resolved(),
                 ExecutionCapabilityDecisionKind::RecoveryAdoption,
                 None,
                 None,

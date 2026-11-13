@@ -3071,6 +3071,7 @@ mod tests {
             order_group_id: Some("spread-12".into()),
             client_order_id: 34,
             account_id: "main".into(),
+            run_id: None,
             venue_id: "BINANCE".into(),
             order_fingerprint: "b".repeat(64),
             catalog_fingerprint: "c".repeat(64),

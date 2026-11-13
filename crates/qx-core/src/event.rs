@@ -510,6 +510,9 @@ pub struct ExecutionCapabilityDecisionFact {
     pub order_group_id: Option<String>,
     pub client_order_id: u64,
     pub account_id: String,
+    /// Strategy execution identity for the order this preflight admitted. Older facts omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     pub venue_id: String,
     pub order_fingerprint: String,
     pub catalog_fingerprint: String,

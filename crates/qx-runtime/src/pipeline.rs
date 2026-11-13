@@ -2159,6 +2159,7 @@ mod tests {
             order_group_id: None,
             client_order_id: 7,
             account_id: "main".into(),
+            run_id: Some("run-7".into()),
             venue_id: "BINANCE".into(),
             order_fingerprint: "b".repeat(64),
             catalog_fingerprint: "c".repeat(64),
@@ -2175,6 +2176,13 @@ mod tests {
         let seq = pipeline
             .record_execution_capability_decision(decision.clone(), 100)
             .unwrap();
+        let event = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| event.seq == seq)
+            .unwrap();
+        assert_eq!(event.metadata.context.run_id, "run-7");
         assert_eq!(
             pipeline
                 .record_execution_capability_decision(decision.clone(), 100)
