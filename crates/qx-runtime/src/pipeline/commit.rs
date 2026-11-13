@@ -10,6 +10,71 @@
 use super::*;
 
 impl LiveEventPipeline {
+    fn enrich_registered_order_context(
+        &self,
+        metadata: &mut EventMetadata,
+        event: &RuntimeExternalEvent,
+    ) {
+        let client_order_id = match event {
+            RuntimeExternalEvent::Accepted {
+                client_order_id, ..
+            }
+            | RuntimeExternalEvent::Rejected {
+                client_order_id, ..
+            }
+            | RuntimeExternalEvent::CancelPending { client_order_id }
+            | RuntimeExternalEvent::Cancelled { client_order_id }
+            | RuntimeExternalEvent::ReconcileRequired { client_order_id }
+            | RuntimeExternalEvent::OrderStatusReconciled {
+                client_order_id, ..
+            } => Some(*client_order_id),
+            RuntimeExternalEvent::Fill { fill } => Some(fill.order_id),
+            RuntimeExternalEvent::FillWithSpec { fill, .. } => Some(fill.order_id),
+            RuntimeExternalEvent::FeeAdjustment { order_id, .. } => Some(*order_id),
+            RuntimeExternalEvent::OrderAmended { order, .. }
+            | RuntimeExternalEvent::OrderAmendmentPending { order, .. } => Some(order.client_id),
+            RuntimeExternalEvent::MarketQuote { .. }
+            | RuntimeExternalEvent::MarketOrderBook { .. }
+            | RuntimeExternalEvent::AccountBalanceSnapshot { .. }
+            | RuntimeExternalEvent::AccountPositionSnapshot { .. }
+            | RuntimeExternalEvent::FundingRateSnapshot { .. }
+            | RuntimeExternalEvent::AccountCashflow { .. } => None,
+        };
+        let Some(order) = client_order_id.and_then(|id| self.oms.get(id)) else {
+            return;
+        };
+        let registered = order_event_context(order);
+        let context = &mut metadata.context;
+        if context.tenant_id.trim().is_empty() {
+            context.tenant_id.clone_from(&registered.tenant_id);
+        }
+        if context.run_id.trim().is_empty() {
+            context.run_id.clone_from(&registered.run_id);
+        }
+        if context.account_id.trim().is_empty() {
+            context.account_id.clone_from(&registered.account_id);
+        }
+        if context.portfolio_id.trim().is_empty() {
+            context.portfolio_id.clone_from(&registered.portfolio_id);
+        }
+        if context.strategy_id.trim().is_empty()
+            || matches!(
+                context.strategy_id.as_str(),
+                "external-execution" | "external-fee-adjustment" | "unattributed-order"
+            )
+        {
+            context.strategy_id.clone_from(&registered.strategy_id);
+        }
+        if context.signal_id.trim().is_empty() {
+            context.signal_id.clone_from(&registered.signal_id);
+        }
+        if context.intent_id.trim().is_empty()
+            || context.intent_id == format!("order:{}", order.client_id)
+        {
+            context.intent_id.clone_from(&registered.intent_id);
+        }
+    }
+
     /// Append one immutable capability decision to the account EventLog. The caller has already
     /// run the catalog/maturity preflight; this method enforces order identity and persistence.
     pub(super) fn record_execution_capability_decision_once(
@@ -266,6 +331,7 @@ impl LiveEventPipeline {
             metadata.rule_version = "runtime-v1".into();
         }
         enrich_runtime_event_context(&mut metadata, &event);
+        self.enrich_registered_order_context(&mut metadata, &event);
         metadata.validate().map_err(QxError::BusinessViolation)?;
 
         let semantic_replay = matches!(

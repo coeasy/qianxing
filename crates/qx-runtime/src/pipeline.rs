@@ -2210,6 +2210,16 @@ mod tests {
                 "accepted-7",
             ))
             .unwrap();
+        let accepted = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::Accepted { .. }))
+            .expect("venue acceptance fact");
+        assert_eq!(accepted.metadata.context.account_id, "main");
+        assert_eq!(accepted.metadata.context.strategy_id, "demo");
+        assert_eq!(accepted.metadata.context.signal_id, "1");
+        assert_eq!(accepted.metadata.context.intent_id, "7");
         let mut amended = pipeline.orders()[0].clone();
         amended.qty = Quantity::from_i64(3);
         amended.limit = Some(Price::from_i64(101));
@@ -3036,6 +3046,15 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(recovered.orders()[0].status, OrderStatus::Accepted);
+        let reconciled = recovered
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::OrderStatusReconciled { .. }))
+            .expect("authoritative status reconciliation fact");
+        assert_eq!(reconciled.metadata.context.strategy_id, "demo");
+        assert_eq!(reconciled.metadata.context.signal_id, "1");
+        assert_eq!(reconciled.metadata.context.intent_id, "7");
         let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(final_recovery.orders()[0].status, OrderStatus::Accepted);
         let _ = std::fs::remove_dir_all(root);
@@ -3573,6 +3592,27 @@ mod tests {
         assert_eq!(receipt.derived_seqs.len(), 3);
         assert_eq!(pipeline.ledger().entries().len(), 3);
         assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
+        let fill_event = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::Filled { .. }))
+            .expect("venue fill fact");
+        assert_eq!(fill_event.metadata.context.strategy_id, "demo");
+        assert_eq!(fill_event.metadata.context.signal_id, "1");
+        assert_eq!(fill_event.metadata.context.intent_id, "7");
+        let ledger_events: Vec<_> = pipeline
+            .log()
+            .events()
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::LedgerApplied { .. }))
+            .collect();
+        assert_eq!(ledger_events.len(), 3);
+        assert!(ledger_events.iter().all(|event| {
+            event.metadata.context.strategy_id == "demo"
+                && event.metadata.context.signal_id == "1"
+                && event.metadata.context.intent_id == "7"
+        }));
         assert_eq!(pipeline.snapshot().log_len, 8);
         let late_quote = pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
@@ -3618,6 +3658,91 @@ mod tests {
         assert_eq!(restored.snapshot(), pipeline.snapshot());
         assert_eq!(restored.ledger().entries().len(), 3);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn registered_trace_is_inherited_by_cancel_and_reconcile_facts() {
+        let cancel_root = temp_root("order-trace-cancel-context");
+        let mut cancel_pipeline =
+            LiveEventPipeline::open(&cancel_root, "binance-main", "USDT").unwrap();
+        cancel_pipeline.register_order(order(), 100).unwrap();
+        for (event, ts, source_seq, correlation) in [
+            (
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: Some("venue-7".into()),
+                },
+                110,
+                1,
+                "accepted-7",
+            ),
+            (
+                RuntimeExternalEvent::CancelPending { client_order_id: 7 },
+                120,
+                2,
+                "cancel-pending-7",
+            ),
+            (
+                RuntimeExternalEvent::Cancelled { client_order_id: 7 },
+                130,
+                3,
+                "cancelled-7",
+            ),
+        ] {
+            cancel_pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    event,
+                    ts,
+                    ts,
+                    source_seq,
+                    correlation,
+                ))
+                .unwrap();
+        }
+        let lifecycle: Vec<_> = cancel_pipeline
+            .log()
+            .events()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::Accepted { .. }
+                        | EventKind::CancelPending { .. }
+                        | EventKind::Cancelled { .. }
+                )
+            })
+            .collect();
+        assert_eq!(lifecycle.len(), 3);
+        assert!(lifecycle.iter().all(|event| {
+            event.metadata.context.strategy_id == "demo"
+                && event.metadata.context.signal_id == "1"
+                && event.metadata.context.intent_id == "7"
+        }));
+        let _ = std::fs::remove_dir_all(cancel_root);
+
+        let reconcile_root = temp_root("order-trace-reconcile-context");
+        let mut reconcile_pipeline =
+            LiveEventPipeline::open(&reconcile_root, "binance-main", "USDT").unwrap();
+        reconcile_pipeline.register_order(order(), 100).unwrap();
+        reconcile_pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::ReconcileRequired { client_order_id: 7 },
+                110,
+                110,
+                1,
+                "reconcile-required-7",
+            ))
+            .unwrap();
+        let reconcile = reconcile_pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::ReconcileRequired { .. }))
+            .expect("reconciliation barrier fact");
+        assert_eq!(reconcile.metadata.context.strategy_id, "demo");
+        assert_eq!(reconcile.metadata.context.signal_id, "1");
+        assert_eq!(reconcile.metadata.context.intent_id, "7");
+        let _ = std::fs::remove_dir_all(reconcile_root);
     }
 
     #[test]
@@ -4366,6 +4491,13 @@ mod tests {
                 "position-1",
             ))
             .unwrap();
+        let position_fact = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::AccountPositionSnapshot { .. }))
+            .expect("account position snapshot fact");
+        assert!(position_fact.metadata.context.signal_id.is_empty());
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::FundingRateSnapshot {
@@ -4400,6 +4532,13 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(cashflow_receipt.derived_seqs.len(), 1);
+        let cashflow_fact = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::AccountCashflow { .. }))
+            .expect("account cashflow fact");
+        assert!(cashflow_fact.metadata.context.signal_id.is_empty());
         let derived = pipeline
             .log()
             .events()

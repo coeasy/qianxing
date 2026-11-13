@@ -40,16 +40,8 @@ pub(super) fn enrich_runtime_event_context(
 ) {
     let context = &mut metadata.context;
     match event {
-        RuntimeExternalEvent::AccountBalanceSnapshot {
-            account_id,
-            venue_id,
-            ..
-        }
-        | RuntimeExternalEvent::AccountPositionSnapshot {
-            account_id,
-            venue_id,
-            ..
-        } => {
+        RuntimeExternalEvent::AccountBalanceSnapshot { account_id, .. }
+        | RuntimeExternalEvent::AccountPositionSnapshot { account_id, .. } => {
             if context.account_id.trim().is_empty() {
                 context.account_id = account_id.clone();
             }
@@ -64,9 +56,6 @@ pub(super) fn enrich_runtime_event_context(
             }
             if context.strategy_id.trim().is_empty() {
                 context.strategy_id = "external-account-state".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = venue_id.clone();
             }
         }
         RuntimeExternalEvent::AccountCashflow { cashflow } => {
@@ -84,9 +73,6 @@ pub(super) fn enrich_runtime_event_context(
             }
             if context.strategy_id.trim().is_empty() {
                 context.strategy_id = "external-cashflow".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = cashflow.venue_id.clone();
             }
         }
         RuntimeExternalEvent::OrderAmended { order, .. }
@@ -130,7 +116,6 @@ pub(super) fn enrich_runtime_event_context(
         RuntimeExternalEvent::OrderStatusReconciled {
             client_order_id,
             account_id,
-            venue_id,
             ..
         } => {
             if context.account_id.trim().is_empty() {
@@ -145,16 +130,12 @@ pub(super) fn enrich_runtime_event_context(
             if context.run_id.trim().is_empty() {
                 context.run_id = format!("account:{account_id}");
             }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = venue_id.clone();
-            }
             if context.intent_id.trim().is_empty() {
                 context.intent_id = format!("order:{client_order_id}");
             }
         }
         RuntimeExternalEvent::FeeAdjustment {
             account_id,
-            venue_id,
             order_id,
             ..
         } => {
@@ -172,9 +153,6 @@ pub(super) fn enrich_runtime_event_context(
             }
             if context.strategy_id.trim().is_empty() {
                 context.strategy_id = "external-fee-adjustment".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = venue_id.clone();
             }
             if context.intent_id.trim().is_empty() {
                 context.intent_id = format!("order:{order_id}");
