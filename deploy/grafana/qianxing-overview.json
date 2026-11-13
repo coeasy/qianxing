@@ -122,8 +122,8 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum by (le, worker) (rate(qx_ccxt_ohlcv_request_duration_seconds_bucket[5m])))", "legendFormat": "OHLCV · {{worker}}" },
-        { "expr": "histogram_quantile(0.95, sum by (le, worker, port) (rate(qx_gateway_port_operation_duration_seconds_bucket[5m])))", "legendFormat": "{{port}} · {{worker}}" }
+        { "expr": "histogram_quantile(0.95, sum by (le, venue_id, worker) (rate(qx_ccxt_ohlcv_request_duration_seconds_bucket[5m])))", "legendFormat": "{{venue_id}} · OHLCV · {{worker}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, venue_id, worker, account, port) (rate(qx_gateway_port_operation_duration_seconds_bucket[5m])))", "legendFormat": "{{venue_id}} · {{port}} · {{worker}}" }
       ]
     },
     {
@@ -164,7 +164,7 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 64 },
       "targets": [
-        { "expr": "sum by (port, class) (rate(qx_gateway_port_errors_total[5m]))", "legendFormat": "{{port}} · {{class}}" }
+        { "expr": "sum by (venue_id, worker, account, port, class) (rate(qx_gateway_port_errors_total[5m]))", "legendFormat": "{{venue_id}} · {{port}} · {{class}}" }
       ]
     },
     {
@@ -173,7 +173,7 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
       "targets": [
-        { "expr": "sum by (worker) (rate(qx_ccxt_ohlcv_rate_limit_retries_total[5m]))", "legendFormat": "{{worker}}" }
+        { "expr": "sum by (venue_id, worker) (rate(qx_ccxt_ohlcv_rate_limit_retries_total[5m]))", "legendFormat": "{{venue_id}} · {{worker}}" }
       ]
     },
     {
@@ -217,7 +217,7 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
       "targets": [
-        { "expr": "time() - qx_gateway_port_business_timestamp_seconds", "legendFormat": "{{worker}} · {{account}} · {{port}}" }
+        { "expr": "time() - qx_gateway_port_business_timestamp_seconds", "legendFormat": "{{venue_id}} · {{worker}} · {{account}} · {{port}}" }
       ]
     },
     {
@@ -227,7 +227,7 @@
       "description": "只累计 CCXT Pro 内部恢复后成功应答，以及 Rust worker 重建后的首次成功应答；失败尝试不计作成功重连。",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
       "targets": [
-        { "expr": "sum by (worker, account, venue) (rate(qx_gateway_venue_reconnects_total[5m]))", "legendFormat": "{{venue}} · {{account}}" }
+        { "expr": "sum by (venue_id, worker, account, venue) (rate(qx_gateway_venue_reconnects_total[5m]))", "legendFormat": "{{venue_id}} · {{venue}} · {{account}}" }
       ]
     },
     {
@@ -237,7 +237,7 @@
       "description": "只计算已观察到的正时间戳；无序列表示当前没有可用的事件时间证据。",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
       "targets": [
-        { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds) and (qx_gateway_venue_last_event_timestamp_seconds > 0)", "legendFormat": "{{venue}} · {{account}}" }
+        { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds) and (qx_gateway_venue_last_event_timestamp_seconds > 0)", "legendFormat": "{{venue_id}} · {{venue}} · {{account}}" }
       ]
     }
   ]

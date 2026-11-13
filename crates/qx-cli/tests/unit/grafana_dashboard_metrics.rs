@@ -67,6 +67,17 @@ fn grafana_dashboard_is_valid_json_and_references_real_metrics_only() {
         payload.contains("{{venue_id}} · {{worker}} · {{account}} · {{port}}"),
         "网关业务状态图例应明确显示交易所身份"
     );
+    for grouping in [
+        "sum by (le, venue_id, worker)",
+        "sum by (le, venue_id, worker, account, port)",
+        "sum by (venue_id, worker, account, port, class)",
+        "sum by (venue_id, worker)",
+    ] {
+        assert!(
+            payload.contains(grouping),
+            "多交易所监控查询必须按 venue_id 分组: {grouping}"
+        );
+    }
 
     let mut exprs = Vec::new();
     collect_exprs(&dashboard, &mut exprs);

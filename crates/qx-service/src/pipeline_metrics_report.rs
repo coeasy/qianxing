@@ -371,7 +371,7 @@ qx_gateway_port_business_timestamp_seconds{{{gateway_label},port=\"{port_label}\
         }
         for (venue, reconnects) in &self.gateway_venue_reconnects {
             body.push_str(&format!(
-                "qx_gateway_venue_reconnects_total{{{label},venue=\"{}\"}} {reconnects}\n",
+                "qx_gateway_venue_reconnects_total{{{gateway_label},venue=\"{}\"}} {reconnects}\n",
                 prometheus_label(venue)
             ));
         }
@@ -389,7 +389,7 @@ qx_gateway_port_business_timestamp_seconds{{{gateway_label},port=\"{port_label}\
                 ("10", 10_000_000_000),
             ];
             let port_label = port.metric_label();
-            let port_labels = format!("{label},port=\"{port_label}\"");
+            let port_labels = format!("{gateway_label},port=\"{port_label}\"");
             let mut cumulative = 0_u64;
             for ((bound_label, _), bucket_count) in BUCKETS.iter().zip(buckets) {
                 cumulative = cumulative.saturating_add(*bucket_count);
@@ -406,13 +406,13 @@ qx_gateway_port_operation_duration_seconds_count{{{port_labels}}} {count}\n",
         }
         for ((port, category), count) in &self.gateway_error_categories {
             body.push_str(&format!(
-                "qx_gateway_port_errors_total{{{label},port=\"{}\",class=\"{category}\"}} {count}\n",
+                "qx_gateway_port_errors_total{{{gateway_label},port=\"{}\",class=\"{category}\"}} {count}\n",
                 port.metric_label()
             ));
         }
         if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
             body.push_str(&format!(
-                "qx_ccxt_ohlcv_rate_limit_retries_total{{{label}}} {retries}\n"
+                "qx_ccxt_ohlcv_rate_limit_retries_total{{{gateway_label}}} {retries}\n"
             ));
         }
         if self.ccxt_ohlcv_request_duration_count > 0 {
@@ -434,13 +434,13 @@ qx_gateway_port_operation_duration_seconds_count{{{port_labels}}} {count}\n",
             {
                 cumulative = cumulative.saturating_add(count);
                 body.push_str(&format!(
-                    "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{label},le=\"{bound_label}\"}} {cumulative}\n"
+                    "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{gateway_label},le=\"{bound_label}\"}} {cumulative}\n"
                 ));
             }
             body.push_str(&format!(
-                "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{label},le=\"+Inf\"}} {}\n\
-qx_ccxt_ohlcv_request_duration_seconds_sum{{{label}}} {:.9}\n\
-qx_ccxt_ohlcv_request_duration_seconds_count{{{label}}} {}\n",
+                "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{gateway_label},le=\"+Inf\"}} {}\n\
+qx_ccxt_ohlcv_request_duration_seconds_sum{{{gateway_label}}} {:.9}\n\
+qx_ccxt_ohlcv_request_duration_seconds_count{{{gateway_label}}} {}\n",
                 self.ccxt_ohlcv_request_duration_count,
                 self.ccxt_ohlcv_request_duration_ns_total as f64 / 1_000_000_000.0,
                 self.ccxt_ohlcv_request_duration_count,
@@ -448,7 +448,7 @@ qx_ccxt_ohlcv_request_duration_seconds_count{{{label}}} {}\n",
         }
         for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {
             body.push_str(&format!(
-                "qx_gateway_venue_last_event_timestamp_seconds{{{label},venue=\"{}\"}} {timestamp_seconds}\n",
+                "qx_gateway_venue_last_event_timestamp_seconds{{{gateway_label},venue=\"{}\"}} {timestamp_seconds}\n",
                 prometheus_label(venue)
             ));
         }
@@ -547,6 +547,51 @@ mod tests {
         assert!(body.contains(
             "qx_gateway_port_business_timestamp_seconds{worker=\"paper-execution\",account=\"paper-main\",venue_id=\"paper\",port=\"venue_execution\"} 91"
         ));
+    }
+
+    #[test]
+    fn gateway_diagnostics_keep_configured_venue_identity_across_metric_families() {
+        let mut config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let worker = config.workers.first_mut().expect("fixture has a worker");
+        worker.id = "binance-market".into();
+        worker.venue_id = Some("binance-testnet".into());
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-market", "main");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::MarketData,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter
+            .observe_gateway_port_operation_duration(ExchangeGatewayPort::MarketData, 50_000_000);
+        reporter
+            .observe_gateway_port_error_category(ExchangeGatewayPort::MarketData, "rate_limited");
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(2);
+        reporter.observe_ccxt_ohlcv_request_duration(50_000_000);
+        reporter.observe_gateway_venue_reconnects("BINANCE", 2);
+        reporter.observe_gateway_venue_last_event("BINANCE", 91_000);
+
+        let body = reporter.body(true, 92_000);
+        for metric in [
+            "qx_gateway_port_business_status",
+            "qx_gateway_port_operation_duration_seconds_bucket",
+            "qx_gateway_port_errors_total",
+            "qx_ccxt_ohlcv_rate_limit_retries_total",
+            "qx_ccxt_ohlcv_request_duration_seconds_bucket",
+            "qx_gateway_venue_reconnects_total",
+            "qx_gateway_venue_last_event_timestamp_seconds",
+        ] {
+            let sample = body
+                .lines()
+                .find(|line| line.starts_with(&format!("{metric}{{")))
+                .unwrap_or_else(|| panic!("missing gateway metric family {metric}"));
+            assert!(
+                sample.contains("venue_id=\"binance-testnet\""),
+                "{metric} must identify its configured venue: {sample}"
+            );
+        }
     }
 
     #[test]
