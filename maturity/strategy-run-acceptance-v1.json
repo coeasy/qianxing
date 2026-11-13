@@ -210,7 +210,7 @@
       "work_package": "R11",
       "status": "planned",
       "acceptance_criteria": [
-        "Add fault-injection coverage for every persistence boundary from PreparedEvaluation fsync through command dispatch, cursor/checkpoint, scheduler completion, ack, and journal cleanup; verify configured file/SQLite/PostgreSQL backends. Windows file, SQLite and PostgreSQL 18.6 worker recovery now passes; Linux remains open."
+        "Hosted Linux and Windows file/SQLite/PostgreSQL Paper worker recovery must cover all six persisted dispatch-to-ack crash boundaries, preserve cursor/checkpoint semantics, and prove idempotent recovery; venue side effects remain outside this fixture acceptance."
       ],
       "required_artifacts": [
         "Evidence for R11: crates/qx-cli/src/workers/strategy_worker.rs",

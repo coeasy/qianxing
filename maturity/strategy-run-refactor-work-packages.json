@@ -384,9 +384,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "R11-AC02 atomic journal boundary recovery passed hosted Linux. R11-AC01 remains unaccepted as a distinct ledger scenario; its six-boundary hosted Linux evidence is currently bound to R21-AC01 alongside the previously reviewed Windows evidence."
+        "The Linux worker crash-recovery CI step now records under R11-AC01 so the six-boundary results are no longer misattributed to R21; the updated hosted CI run and artifact review are pending. R11-AC02 atomic journal recovery is already accepted."
       ],
-      "next_action": "Bind the six-boundary worker recovery records to R11-AC01 with a distinct acceptance run or explicitly reconcile its scope with R21-AC01.",
+      "next_action": "Run the updated hosted Linux durable-recovery job, import all three backend R11-AC01 records and artifacts, then review and close R11.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",

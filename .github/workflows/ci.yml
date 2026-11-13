@@ -964,7 +964,7 @@ jobs:
           set -euo pipefail
           for backend in file sqlite postgres; do
             python3 tools/record_strategy_acceptance.py \
-              --acceptance-id R21-AC01 \
+              --acceptance-id R11-AC01 \
               --input benchmarks/run_strategy_worker_crash_recovery.py \
               --input crates/qx-cli/src/workers/strategy_worker.rs \
               --input crates/qx-storage/src/postgres.rs \
