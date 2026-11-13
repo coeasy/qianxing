@@ -71,10 +71,12 @@ pub(crate) fn run() {
             strategy,
             days,
             timeframe,
+            as_of_ms,
             instrument,
             exchange,
         } => project_command::dispatch_quickstart(
-            project, html, force, profile, strategy, days, timeframe, instrument, exchange,
+            project, html, force, profile, strategy, days, timeframe, as_of_ms, instrument,
+            exchange,
         ),
         Command::Guide(args) => project_command::dispatch_guide(args),
         Command::Doctor {

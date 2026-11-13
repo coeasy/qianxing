@@ -74,6 +74,9 @@ pub(crate) enum Command {
         /// CCXT 行情周期，如 1h 或 15m。
         #[arg(long)]
         timeframe: Option<String>,
+        /// 复现窗口的 UTC Unix 毫秒时间上限；同一值可让多所 quickstart 对齐结束 K 线。
+        #[arg(long)]
+        as_of_ms: Option<u64>,
         /// CCXT 永续合约标的（必须含结算币和交易所后缀），默认 BTC/USDT:USDT.OKX。
         #[arg(long)]
         instrument: Option<String>,

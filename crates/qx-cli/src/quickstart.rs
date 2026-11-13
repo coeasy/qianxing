@@ -107,13 +107,17 @@ pub(crate) fn run(
     strategy: Option<String>,
     days: Option<u32>,
     timeframe: Option<String>,
+    as_of_ms: Option<u64>,
     instrument: Option<String>,
     exchange: Option<String>,
 ) {
-    let ccxt_options_used =
-        days.is_some() || timeframe.is_some() || instrument.is_some() || exchange.is_some();
+    let ccxt_options_used = days.is_some()
+        || timeframe.is_some()
+        || as_of_ms.is_some()
+        || instrument.is_some()
+        || exchange.is_some();
     if profile != cli_args::QuickstartProfile::Ccxt && ccxt_options_used {
-        eprintln!("[止步] --days、--timeframe、--instrument、--exchange 仅适用于 --profile ccxt");
+        eprintln!("[止步] --days、--timeframe、--as-of-ms、--instrument、--exchange 仅适用于 --profile ccxt");
         std::process::exit(2);
     }
     let days = days.unwrap_or(30);
@@ -172,7 +176,7 @@ pub(crate) fn run(
         }
     };
     let ccxt_preflight = if profile == cli_args::QuickstartProfile::Ccxt {
-        let range = match quickstart_ccxt_window(days, &timeframe) {
+        let range = match quickstart_ccxt_window(days, &timeframe, as_of_ms) {
             Ok(range) => range,
             Err(error) => {
                 eprintln!("[止步] CCXT quickstart 参数无效：{error}");
@@ -295,8 +299,11 @@ pub(crate) fn run(
             &runtime_text,
             "--use-public-default-fees",
         ]);
+        let as_of_label = as_of_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "system_utc".into());
         println!(
-            "[真实公开行情 · 只读] exchange={exchange_id} instrument={instrument} timeframe={timeframe} days={days} start_ms={} end_ms={}；不加载密钥、不提交订单",
+            "[真实公开行情 · 只读] exchange={exchange_id} instrument={instrument} timeframe={timeframe} days={days} as_of={as_of_label} start_ms={} end_ms={}；不加载密钥、不提交订单",
             range.start_ms, range.end_ms
         );
         let backtest_outcome = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
@@ -410,12 +417,17 @@ pub(crate) fn run(
     );
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CcxtQuickstartWindow {
     start_ms: u64,
     end_ms: u64,
 }
 
-fn quickstart_ccxt_window(days: u32, timeframe: &str) -> Result<CcxtQuickstartWindow, String> {
+fn quickstart_ccxt_window(
+    days: u32,
+    timeframe: &str,
+    as_of_ms: Option<u64>,
+) -> Result<CcxtQuickstartWindow, String> {
     if !(1..=365).contains(&days) {
         return Err("--days 必须在 1 到 365 之间".into());
     }
@@ -440,7 +452,11 @@ fn quickstart_ccxt_window(days: u32, timeframe: &str) -> Result<CcxtQuickstartWi
         .map_err(|error| format!("读取系统 UTC 时间失败: {error}"))?
         .as_millis();
     let now_ms = u64::try_from(now_ms).map_err(|_| "系统 UTC 毫秒时间戳溢出".to_string())?;
-    let end_ms = (now_ms / interval_ms)
+    let cutoff_ms = as_of_ms.unwrap_or(now_ms);
+    if cutoff_ms > now_ms {
+        return Err("--as-of-ms 不能晚于当前 UTC 时间".into());
+    }
+    let end_ms = (cutoff_ms / interval_ms)
         .checked_mul(interval_ms)
         .and_then(|aligned| aligned.checked_sub(interval_ms))
         .ok_or_else(|| "系统 UTC 时间早于有效回测窗口".to_string())?;
@@ -495,7 +511,7 @@ mod tests {
 
     #[test]
     fn ccxt_window_uses_closed_bars_without_an_inclusive_endpoint_extra_bar() {
-        let window = quickstart_ccxt_window(3, "1h").unwrap();
+        let window = quickstart_ccxt_window(3, "1h", None).unwrap();
         assert_eq!(window.end_ms % 3_600_000, 0);
         assert_eq!((window.end_ms - window.start_ms) / 3_600_000 + 1, 72);
         assert_eq!(window.end_ms - window.start_ms + 3_600_000, 3 * 86_400_000);
@@ -503,12 +519,12 @@ mod tests {
 
     #[test]
     fn ccxt_long_window_bar_counts_match_six_month_and_bitget_api_cadence() {
-        let six_months = quickstart_ccxt_window(180, "15m").unwrap();
+        let six_months = quickstart_ccxt_window(180, "15m", None).unwrap();
         assert_eq!(
             (six_months.end_ms - six_months.start_ms) / 900_000 + 1,
             17_280
         );
-        let bitget_classic_limit = quickstart_ccxt_window(52, "15m").unwrap();
+        let bitget_classic_limit = quickstart_ccxt_window(52, "15m", None).unwrap();
         assert_eq!(
             (bitget_classic_limit.end_ms - bitget_classic_limit.start_ms) / 900_000 + 1,
             4_992
@@ -516,17 +532,33 @@ mod tests {
     }
 
     #[test]
+    fn ccxt_as_of_timestamp_makes_the_window_end_reproducible() {
+        let as_of_ms = 1_700_000_100_000;
+        let first = quickstart_ccxt_window(30, "15m", Some(as_of_ms)).unwrap();
+        let second = quickstart_ccxt_window(30, "15m", Some(as_of_ms)).unwrap();
+        let interval_ms = 900_000;
+        let expected_end = (as_of_ms / interval_ms) * interval_ms - interval_ms;
+        assert_eq!(first, second);
+        assert_eq!(first.end_ms, expected_end);
+        assert_eq!(
+            (first.end_ms - first.start_ms) / interval_ms + 1,
+            30 * 24 * 4
+        );
+        assert!(quickstart_ccxt_window(30, "15m", Some(u64::MAX)).is_err());
+    }
+
+    #[test]
     fn ccxt_window_rounds_up_non_dividing_timeframes_to_cover_requested_days() {
-        let window = quickstart_ccxt_window(1, "7m").unwrap();
+        let window = quickstart_ccxt_window(1, "7m", None).unwrap();
         assert_eq!((window.end_ms - window.start_ms) / 420_000 + 1, 206);
         assert!(window.end_ms - window.start_ms + 420_000 >= 86_400_000);
     }
 
     #[test]
     fn ccxt_window_rejects_large_or_unbounded_periods() {
-        assert!(quickstart_ccxt_window(0, "1h").is_err());
-        assert!(quickstart_ccxt_window(366, "1h").is_err());
-        assert!(quickstart_ccxt_window(100, "1m").is_err());
-        assert!(quickstart_ccxt_window(30, "1M").is_err());
+        assert!(quickstart_ccxt_window(0, "1h", None).is_err());
+        assert!(quickstart_ccxt_window(366, "1h", None).is_err());
+        assert!(quickstart_ccxt_window(100, "1m", None).is_err());
+        assert!(quickstart_ccxt_window(30, "1M", None).is_err());
     }
 }

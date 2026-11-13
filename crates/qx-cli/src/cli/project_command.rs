@@ -37,11 +37,12 @@ pub(super) fn dispatch_quickstart(
     strategy: Option<String>,
     days: Option<u32>,
     timeframe: Option<String>,
+    as_of_ms: Option<u64>,
     instrument: Option<String>,
     exchange: Option<String>,
 ) {
     quickstart::run(
-        project, html, force, profile, strategy, days, timeframe, instrument, exchange,
+        project, html, force, profile, strategy, days, timeframe, as_of_ms, instrument, exchange,
     );
 }
 

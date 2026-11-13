@@ -291,6 +291,21 @@ def _signed_raw_decimal(value: Any, *, field: str) -> int:
         raise CcxtConnectorError(CcxtErrorClass.INVALID, message) from error
 
 
+def _fixed_timeframe_interval_ms(timeframe: str) -> int | None:
+    """Return a fixed-duration OHLCV interval, excluding calendar months."""
+    if len(timeframe) < 2:
+        return None
+    units = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}
+    multiplier = units.get(timeframe[-1])
+    if multiplier is None:
+        return None
+    try:
+        amount = int(timeframe[:-1])
+    except ValueError:
+        return None
+    return amount * multiplier if amount > 0 else None
+
+
 def _decimal_from_raw(value: int, *, field: str) -> str:
     try:
         return native.raw_to_decimal(str(value), False)
@@ -1443,6 +1458,15 @@ class CcxtExchangeClient:
         if start_ms < 0 or end_ms < start_ms or limit <= 0 or max_pages <= 0:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "OHLCV 查询边界非法")
         market = self.resolve_market(instrument)
+        # CCXT 4.5.89's Bitget history-candles endpoint caps pages at 200. If a
+        # larger limit is passed, CCXT shortens the history window after deriving
+        # its end time from the original limit, which skips candles between pages.
+        page_limit = min(limit, 200) if self.config.exchange_id == "bitget" else limit
+        bitget_interval_ms = (
+            _fixed_timeframe_interval_ms(timeframe)
+            if self.config.exchange_id == "bitget"
+            else None
+        )
         rows: dict[int, Sequence[Any]] = {}
         since = start_ms
         for _ in range(max_pages):
@@ -1451,12 +1475,12 @@ class CcxtExchangeClient:
                 market.symbol,
                 timeframe,
                 since,
-                limit,
+                page_limit,
                 dict(params or {}),
             )
             if not batch:
                 break
-            if len(batch) > limit:
+            if len(batch) > page_limit:
                 raise CcxtConnectorError(
                     CcxtErrorClass.EXCHANGE,
                     "CCXT OHLCV exchange returned more rows than the requested page limit",
@@ -1503,7 +1527,12 @@ class CcxtExchangeClient:
                     CcxtErrorClass.EXCHANGE,
                     "CCXT OHLCV pagination made no progress; refusing partial history",
                 )
-            since = previous + 1
+            if bitget_interval_ms is not None:
+                # Bitget rounds history query boundaries to candle opens; align
+                # every page cursor to avoid drifting off the 15m boundary.
+                since = (previous // bitget_interval_ms + 1) * bitget_interval_ms
+            else:
+                since = previous + 1
             if since > end_ms:
                 break
         else:

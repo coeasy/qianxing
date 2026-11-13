@@ -1033,6 +1033,33 @@ class CcxtTest(unittest.TestCase):
         fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
         self.assertEqual(len(fetch_calls), 2)
 
+    def test_bitget_history_ohlcv_uses_capped_aligned_pages(self):
+        interval_ms = 15 * 60 * 1000
+
+        class BitgetHistoryExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if since <= 2 * interval_ms:
+                    timestamps = (interval_ms, 2 * interval_ms)
+                else:
+                    timestamps = (3 * interval_ms,)
+                return [[timestamp, 100, 101, 99, 100, 1] for timestamp in timestamps]
+
+        exchange = BitgetHistoryExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="bitget"), exchange=exchange)
+        frame = client.fetch_ohlcv(
+            "BTC/USDT:USDT.BITGET",
+            timeframe="15m",
+            start_ms=interval_ms,
+            end_ms=3 * interval_ms,
+            limit=1_000,
+        )
+
+        self.assertEqual(frame.ts, (interval_ms, 2 * interval_ms, 3 * interval_ms))
+        fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual([call[3] for call in fetch_calls], [interval_ms, 3 * interval_ms])
+        self.assertEqual([call[4] for call in fetch_calls], [200, 200])
+
     def test_ohlcv_duplicate_timestamps_fail_closed_instead_of_silently_overwriting(self):
         class DuplicateTimestampExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
