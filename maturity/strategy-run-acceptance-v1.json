@@ -19927,6 +19927,58 @@
         }
       ],
       "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "a4f77491-8906-40ac-bc61-4e33c0df1b21",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T03:03:51.727216Z",
+      "source_revision": "1d5e4ad5c25c21468e916101aa11d92eb28966f9",
+      "source_tree_sha256": "8b885a2b4eade4bb747bce61289ea6d2b47fd2204ad1d8ba4b771887456280e8",
+      "source_manifest": "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "capability_dispatch_tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/strategy_host/process_client.rs",
+          "sha256": "9b62e920d2cfee0701fecd16a85c607f2a288da22130edab686dbcbbb1452423"
+        },
+        {
+          "path": "crates/qx-cli/src/strategy_host/python_client.rs",
+          "sha256": "d4dac2fa1d54619ba027d54e85d902270be431c1487ca4aef9f779d0840b6e17"
+        },
+        {
+          "path": "crates/qx-strategy/src/capabilities.rs",
+          "sha256": "a5d517fb5339774b18ba2006938101c48cdc0dffcd8438a409956992abcc529e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.log",
+          "sha256": "edd96b84a89bb0910cf6524106e4ad63c40a97a2d6dcd9870fa3f20e590725aa"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.source-tree.json",
+          "sha256": "0197c6000f206f61d3cc622fc08ba9dc862b38c995a055d7b0cb56f0d36eee06"
+        }
+      ],
+      "notes": "Linux external process accepts the exact host capability acknowledgment and rejects unsupported requirements before spawn or a mismatched host identity before dispatch"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

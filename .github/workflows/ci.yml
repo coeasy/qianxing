@@ -96,6 +96,18 @@ jobs:
           --input crates/qx-strategy/src/capabilities.rs
           --notes "Linux external process accepts the exact host capability acknowledgment and rejects unsupported requirements before spawn or a mismatched host identity before dispatch"
           -- cargo test -p qx-cli --bin qx-cli capability_dispatch_tests -- --test-threads=1
+      - name: Linux Runtime Python class and module-function capability matrix (R08)
+        env:
+          QX_PYTHON: python3
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R08-AC01
+          --input crates/qx-cli/tests/unit/e2e_and_python_contract.rs
+          --input crates/qx-cli/src/strategy_host/python_client.rs
+          --notes "Linux local Python file and Runtime Python class/module-function hosts negotiate supported catalogs and reject unsupported requirements before strategy dispatch across the supported Runtime transports"
+          -- cargo test -p qx-cli --bin qx-cli
+          rust_invokes_python_basestrategy_class_through_process_contract
+          -- --test-threads=1
       - name: Linux legacy C ABI capability compatibility (R08)
         run: >-
           python3 tools/record_strategy_acceptance.py

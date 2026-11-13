@@ -192,9 +192,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Hosted Linux acceptance records cover built-in, legacy C ABI, and Python strategy hosts, but an isolated external-process host acknowledgment run is being added so every supported host has directly attributable positive/negative evidence."
+        "Linux built-in, external-process, legacy C ABI, and Python strategy capability runs are bound; Runtime Python class/module-function capability negotiation is covered by the workspace suite but is being given an isolated acceptance record to complete the hosted POSIX matrix."
       ],
-      "next_action": "Run the updated Rust core job; import its Linux external-process record with the existing host-capability acceptance artifact, then review the full R08 matrix.",
+      "next_action": "Run the isolated Linux Runtime Python class/module-function acceptance, import it with the R08 external-process record, then review the complete Windows/Linux host matrix.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
@@ -248,7 +248,9 @@
         "maturity/acceptance-artifacts/ef726719-4d42-4005-919b-f66b2b36250f.source-tree.json",
         "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.log",
         "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.log",
+        "maturity/acceptance-artifacts/a4f77491-8906-40ac-bc61-4e33c0df1b21.source-tree.json"
       ]
     },
     {
