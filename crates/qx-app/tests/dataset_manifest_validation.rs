@@ -71,6 +71,32 @@ fn dirty_series_is_diagnosed_and_manifest_keeps_source_bytes_untouched() {
 }
 
 #[test]
+fn overflowing_gap_count_is_rejected_without_publishing_a_manifest() {
+    let root = case_dir("gap-overflow");
+    let frame = root.join("bars.json");
+    let output = root.join("manifest.json");
+    let payload = format!(
+        r#"{{"schema_version":1,"instrument":"BTCUSDT.BINANCE","source":"fixture","ts":[0,{0},0,{0}],"open_raw":[10,10,10,10],"high_raw":[11,11,11,11],"low_raw":[9,9,9,9],"close_raw":[10,10,10,10],"volume_raw":[1,1,1,1]}}"#,
+        u64::MAX
+    );
+    std::fs::write(&frame, payload).unwrap();
+    let spec = DatasetManifestValidationSpec::new(
+        frame.to_string_lossy(),
+        "overflow.dataset",
+        "snapshot-1",
+        1,
+        "UTC",
+        output.to_string_lossy(),
+    );
+
+    let error = run(&spec).unwrap_err();
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.message().contains("缺口计数溢出"));
+    assert!(!output.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn clean_series_uses_canonical_fingerprint_and_rechecks_idempotently() {
     let root = case_dir("clean");
     let frame = root.join("bars.json");

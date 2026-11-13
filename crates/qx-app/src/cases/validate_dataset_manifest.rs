@@ -181,7 +181,10 @@ fn assess_frame(ts: &[u64], interval_ms: u64) -> Result<FrameQuality, String> {
         } else if current == previous {
             duplicate_rows += 1;
         } else {
-            missing_intervals += (current - previous).div_ceil(interval_ms) - 1;
+            let missing_for_gap = (current - previous).div_ceil(interval_ms) - 1;
+            missing_intervals = missing_intervals
+                .checked_add(missing_for_gap)
+                .ok_or_else(|| "数据集缺口计数溢出".to_string())?;
         }
     }
     Ok(FrameQuality {
