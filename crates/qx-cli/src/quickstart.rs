@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    cli_args, run_ccxt_builtin_backtest, run_doctor, run_init_with_profile, run_report, run_status,
-    run_unified_backtest, write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
+    cli_args, run_ccxt_builtin_backtest, run_doctor, run_init_with_ccxt_selection,
+    run_init_with_profile, run_report, run_status, run_unified_backtest,
+    write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
 };
 
 /// 不带参数时的项目目录名。默认值不取 `.`：那会把整份产物摊进使用者的当前目录，
@@ -250,13 +251,18 @@ pub(crate) fn run(
     if force {
         init_arguments.push("--force");
     }
+    let init_outcome = if let Some((_, exchange_id)) = ccxt_preflight.as_ref() {
+        run_init_with_ccxt_selection(&runtime, force, exchange_id, &instrument)
+    } else {
+        run_init_with_profile(&runtime, force, strategy_name, init_profile, false)
+    };
     require(
         "建项目",
         &command_line(&init_arguments),
         &retry,
         // quickstart owns the full guided flow; do not interleave `init`'s
         // standalone follow-up command with this profile-specific sequence.
-        run_init_with_profile(&runtime, force, strategy_name, init_profile, false),
+        init_outcome,
     );
     require(
         "静态检查",

@@ -238,8 +238,41 @@ pub(crate) fn run_init_with_profile(
     profile: Option<&str>,
     emit_next_step: bool,
 ) -> Result<(), String> {
-    let (template_name, profile_assets, profile_name) =
+    run_init_with_profile_selection(output, force, strategy_name, profile, emit_next_step, None)
+}
+
+pub(crate) fn run_init_with_ccxt_selection(
+    output: &Path,
+    force: bool,
+    exchange: &str,
+    instrument: &str,
+) -> Result<(), String> {
+    run_init_with_profile_selection(
+        output,
+        force,
+        None,
+        Some("ccxt"),
+        false,
+        Some((exchange, instrument)),
+    )
+}
+
+fn run_init_with_profile_selection(
+    output: &Path,
+    force: bool,
+    strategy_name: Option<&str>,
+    profile: Option<&str>,
+    emit_next_step: bool,
+    ccxt_selection: Option<(&str, &str)>,
+) -> Result<(), String> {
+    let (template_name, mut profile_assets, profile_name) =
         init_profile_template(profile, strategy_name)?;
+    if ccxt_selection.is_some() && profile_name != "ccxt" {
+        return Err("交易所选择只能用于 ccxt 初始化配置".into());
+    }
+    if ccxt_selection.is_some_and(|(exchange, _)| exchange != "okx") {
+        profile_assets.retain(|asset| *asset != "qianxing.ccxt.okx.perpetual.spec.json");
+    }
     let template = repository_deploy_path(template_name);
     if !template.exists() {
         return Err(format!(
@@ -337,6 +370,12 @@ pub(crate) fn run_init_with_profile(
             }
         }
     }
+    if let Some((exchange, instrument)) = ccxt_selection {
+        align_ccxt_profile_selection(&mut document, exchange, instrument)?;
+        if exchange != "okx" {
+            init_assets.retain(|asset| asset != "qianxing.ccxt.okx.perpetual.spec.json");
+        }
+    }
     let project_root = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -386,6 +425,9 @@ pub(crate) fn run_init_with_profile(
     for asset in &init_assets {
         copy_init_asset(project_root, asset, force)?;
     }
+    if let Some((exchange, instrument)) = ccxt_selection {
+        write_ccxt_profile_selection_assets(project_root, exchange, instrument, force)?;
+    }
     std::fs::create_dir_all(project_root.join("data"))
         .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
     let readme_path = project_root.join("README.qianxing.md");
@@ -431,6 +473,187 @@ pub(crate) fn run_init_with_profile(
                 .map(|step| format!("；{step}"))
                 .unwrap_or_default()
         );
+    }
+    Ok(())
+}
+
+fn align_ccxt_profile_selection(
+    document: &mut serde_json::Value,
+    exchange: &str,
+    instrument: &str,
+) -> Result<(), String> {
+    let workers = document
+        .get_mut("workers")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "CCXT 运行时模板缺少 workers 列表".to_string())?;
+    for worker in workers {
+        let Some(fields) = worker.as_object_mut() else {
+            continue;
+        };
+        if fields.get("venue_id").is_some_and(|value| !value.is_null()) {
+            fields.insert(
+                "venue_id".into(),
+                serde_json::Value::String(exchange.into()),
+            );
+        }
+        if let Some(symbols) = fields
+            .get_mut("symbols")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for symbol in symbols {
+                if symbol.as_str().is_some_and(|value| value.ends_with(".OKX")) {
+                    *symbol = serde_json::Value::String(instrument.into());
+                }
+            }
+        }
+        if exchange != "okx"
+            && fields
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|role| matches!(role, "execution" | "spread_recovery"))
+        {
+            // There is no verified static contract specification for every venue. These workers
+            // are already disabled by the CCXT scaffold; never carry an OKX spec into another venue.
+            fields.remove("instrument_spec_path");
+        }
+    }
+    if let Some(providers) = document
+        .pointer_mut("/api/data_providers")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for provider in providers {
+            if let Some(id) = provider.get_mut("provider_id") {
+                *id = serde_json::Value::String(format!("ccxt-{exchange}-1m"));
+            }
+        }
+    }
+    if let Some(strategies) = document
+        .get_mut("strategies")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for strategy in strategies {
+            align_ccxt_strategy_selection(strategy, exchange, instrument);
+        }
+    }
+    if let Some(strategy) = document.get_mut("strategy") {
+        align_ccxt_strategy_selection(strategy, exchange, instrument);
+    }
+    Ok(())
+}
+
+fn align_ccxt_strategy_selection(
+    strategy: &mut serde_json::Value,
+    exchange: &str,
+    instrument: &str,
+) {
+    let Some(fields) = strategy.as_object_mut() else {
+        return;
+    };
+    if fields.contains_key("venue_id") {
+        fields.insert(
+            "venue_id".into(),
+            serde_json::Value::String(exchange.into()),
+        );
+    }
+    if fields.contains_key("instrument") {
+        fields.insert(
+            "instrument".into(),
+            serde_json::Value::String(instrument.into()),
+        );
+    }
+    if fields.contains_key("bars_snapshot_path") {
+        fields.insert(
+            "bars_snapshot_path".into(),
+            serde_json::Value::String(format!("qianxing.bar-frame.{exchange}.example.json")),
+        );
+    }
+    if fields.contains_key("live_enabled") {
+        fields.insert("live_enabled".into(), serde_json::Value::Bool(false));
+    }
+}
+
+fn write_ccxt_profile_selection_assets(
+    project_root: &Path,
+    exchange: &str,
+    instrument: &str,
+    force: bool,
+) -> Result<(), String> {
+    let exchange_config_path = project_root.join("qianxing.ccxt.exchange.example.json");
+    let mut exchange_config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&exchange_config_path).map_err(|error| {
+            format!(
+                "读取 CCXT 样例配置失败 {}: {error}",
+                exchange_config_path.display()
+            )
+        })?)
+        .map_err(|error| format!("CCXT 样例配置 JSON 无效: {error}"))?;
+    exchange_config["exchange_id"] = serde_json::Value::String(exchange.into());
+    exchange_config["default_type"] = serde_json::Value::String("swap".into());
+    exchange_config["instruments"] = serde_json::json!([instrument]);
+    if let Some(credentials) = exchange_config
+        .get_mut("credential_env")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let venue = exchange.to_ascii_uppercase();
+        for (field, suffix) in [
+            ("api_key", "API_KEY"),
+            ("secret", "SECRET"),
+            ("password", "PASSWORD"),
+        ] {
+            if credentials.contains_key(field) {
+                credentials.insert(
+                    field.into(),
+                    serde_json::Value::String(format!("QX_CCXT_{venue}_{suffix}")),
+                );
+            }
+        }
+    }
+    let serialized = serde_json::to_vec_pretty(&exchange_config)
+        .map_err(|error| format!("编码 CCXT 样例配置失败: {error}"))?;
+    std::fs::write(&exchange_config_path, serialized).map_err(|error| {
+        format!(
+            "写入 CCXT 样例配置失败 {}: {error}",
+            exchange_config_path.display()
+        )
+    })?;
+
+    let source_frame = project_root.join("qianxing.bar-frame.okx.example.json");
+    let selected_frame = project_root.join(format!("qianxing.bar-frame.{exchange}.example.json"));
+    if exchange != "okx" && source_frame.exists() {
+        if selected_frame.exists() && !force {
+            return Err(format!(
+                "目标行情样例已存在: {}；如确认覆盖，请显式添加 --force",
+                selected_frame.display()
+            ));
+        }
+        std::fs::rename(&source_frame, &selected_frame)
+            .or_else(|error| {
+                if force && selected_frame.exists() {
+                    std::fs::remove_file(&selected_frame)?;
+                    std::fs::rename(&source_frame, &selected_frame)
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|error| format!("调整行情样例文件名失败: {error}"))?;
+    }
+    let frame_path = if exchange == "okx" {
+        source_frame
+    } else {
+        selected_frame
+    };
+    if frame_path.exists() {
+        let mut frame: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&frame_path)
+                .map_err(|error| format!("读取行情样例失败 {}: {error}", frame_path.display()))?,
+        )
+        .map_err(|error| format!("行情样例 JSON 无效: {error}"))?;
+        frame["instrument"] = serde_json::Value::String(instrument.into());
+        frame["source"] = serde_json::Value::String(format!("example-{exchange}-bars-v1"));
+        let serialized = serde_json::to_vec_pretty(&frame)
+            .map_err(|error| format!("编码行情样例失败: {error}"))?;
+        std::fs::write(&frame_path, serialized)
+            .map_err(|error| format!("写入行情样例失败 {}: {error}", frame_path.display()))?;
     }
     Ok(())
 }
@@ -561,4 +784,69 @@ pub(crate) fn run_strategy_init(
         project_root.join(&bars).display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod ccxt_selection_tests {
+    use super::run_init_with_ccxt_selection;
+    use serde_json::Value;
+    use std::path::PathBuf;
+
+    #[test]
+    fn ccxt_quickstart_selection_aligns_runtime_and_demo_assets() {
+        let unique = format!(
+            "qianxing-ccxt-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.task-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+
+        run_init_with_ccxt_selection(&runtime, false, "bitget", "BTC/USDT:USDT.BITGET").unwrap();
+
+        let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        for worker in config["workers"].as_array().unwrap() {
+            if !worker["venue_id"].is_null() {
+                assert_eq!(worker["venue_id"], "bitget");
+            }
+            if let Some(symbols) = worker["symbols"].as_array() {
+                assert!(symbols
+                    .iter()
+                    .all(|symbol| symbol == "BTC/USDT:USDT.BITGET"));
+            }
+        }
+        assert_eq!(config["strategy"]["venue_id"], "bitget");
+        assert_eq!(config["strategy"]["instrument"], "BTC/USDT:USDT.BITGET");
+        assert_eq!(config["strategy"]["live_enabled"], false);
+        let execution = config["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["role"] == "execution")
+            .unwrap();
+        assert_eq!(execution["enabled"], false);
+        assert!(execution.get("instrument_spec_path").is_none());
+
+        let exchange_config: Value = serde_json::from_slice(
+            &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(exchange_config["exchange_id"], "bitget");
+        assert_eq!(exchange_config["sandbox"], true);
+        assert_eq!(exchange_config["default_type"], "swap");
+        assert_eq!(exchange_config["instruments"][0], "BTC/USDT:USDT.BITGET");
+        assert!(root
+            .join("qianxing.bar-frame.bitget.example.json")
+            .is_file());
+        assert!(!root.join("qianxing.bar-frame.okx.example.json").exists());
+        assert!(!root.join("qianxing.ccxt.okx.perpetual.spec.json").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
