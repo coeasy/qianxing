@@ -144,6 +144,8 @@ python -m unittest discover -s tests -p 'test_ccxt*.py' -q
 python -m unittest discover -s tests -p 'test_packaging_contract.py' -q
 ```
 
+Public OHLCV history reads honor CCXT's built-in rate limiter and retry only exchange rate-limit responses. The defaults allow three retries with exponential backoff starting at 1 second (1, 2, then 4 seconds); set `market_data_rate_limit_retries` (0–5) and `market_data_rate_limit_backoff_ms` (0–10000) in the exchange config to tune or disable this behavior. Authentication, invalid-request, network, and order-write failures are not retried by this OHLCV policy. A retry budget that is exhausted returns the original classified error; it never returns a partial history as complete.
+
 Create sandbox/demo credentials in each exchange's own account. Set the values only in your local PowerShell session or secret manager; keep the JSON examples unchanged because they contain environment-variable names, not keys.
 
 ```powershell

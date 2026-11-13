@@ -342,6 +342,8 @@ class CcxtConfig:
     timeout_ms: int = 30_000
     default_type: str = "spot"
     options: Mapping[str, Any] | None = None
+    market_data_rate_limit_retries: int = 3
+    market_data_rate_limit_backoff_ms: int = 1_000
     ws_max_retries: int = 3
     ws_retry_backoff_ms: int = 250
     account_model: str = ""
@@ -353,6 +355,16 @@ class CcxtConfig:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "timeout_ms 必须大于 0")
         if not self.default_type.strip():
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "default_type 不能为空")
+        if not 0 <= self.market_data_rate_limit_retries <= 5:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "market_data_rate_limit_retries 必须在 0..5 内",
+            )
+        if not 0 <= self.market_data_rate_limit_backoff_ms <= 10_000:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "market_data_rate_limit_backoff_ms 必须在 0..10000 内",
+            )
         if self.account_model and self.account_model not in {
             "spot",
             "usd_m_futures",
@@ -1470,14 +1482,29 @@ class CcxtExchangeClient:
         rows: dict[int, Sequence[Any]] = {}
         since = start_ms
         for _ in range(max_pages):
-            batch = self._call(
-                "fetch_ohlcv",
-                market.symbol,
-                timeframe,
-                since,
-                page_limit,
-                dict(params or {}),
-            )
+            for retry in range(self.config.market_data_rate_limit_retries + 1):
+                try:
+                    batch = self._call(
+                        "fetch_ohlcv",
+                        market.symbol,
+                        timeframe,
+                        since,
+                        page_limit,
+                        dict(params or {}),
+                    )
+                    break
+                except CcxtConnectorError as error:
+                    if (
+                        error.error_class is not CcxtErrorClass.RATE_LIMITED
+                        or retry >= self.config.market_data_rate_limit_retries
+                    ):
+                        raise
+                    delay_ms = min(
+                        self.config.market_data_rate_limit_backoff_ms * (2**retry),
+                        60_000,
+                    )
+                    if delay_ms:
+                        time.sleep(delay_ms / 1_000)
             if not batch:
                 break
             if len(batch) > page_limit:

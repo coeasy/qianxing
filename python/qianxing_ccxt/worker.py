@@ -636,6 +636,10 @@ def _config_from_file(path: Path) -> CcxtConfig:
         timeout_ms=int(value.get("timeout_ms", 30_000)),
         default_type=str(value.get("default_type", "spot")),
         options=dict(value.get("options", {})),
+        market_data_rate_limit_retries=int(value.get("market_data_rate_limit_retries", 3)),
+        market_data_rate_limit_backoff_ms=int(
+            value.get("market_data_rate_limit_backoff_ms", 1_000)
+        ),
         ws_max_retries=int(value.get("ws_max_retries", 3)),
         ws_retry_backoff_ms=int(value.get("ws_retry_backoff_ms", 250)),
     )

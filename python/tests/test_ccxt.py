@@ -1013,6 +1013,89 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(frame.close_raw[0], 100_500_000_000)
         self.assertEqual(frame.source, "ccxt:binance:BTC/USDT:1m")
 
+    def test_ohlcv_retries_rate_limit_with_bounded_backoff(self):
+        class RateLimitExceeded(Exception):
+            pass
+
+        class RateLimitedOnceExchange(FakeExchange):
+            def __init__(self):
+                super().__init__()
+                self.rate_limit_failures = 1
+
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if self.rate_limit_failures:
+                    self.rate_limit_failures -= 1
+                    raise RateLimitExceeded("Too Many Requests")
+                if since == 1000:
+                    return [[1000, 100, 101, 99, 100, 1]]
+                return []
+
+        exchange = RateLimitedOnceExchange()
+        client = CcxtExchangeClient(
+            CcxtConfig(
+                exchange_id="bitget",
+                market_data_rate_limit_retries=2,
+                market_data_rate_limit_backoff_ms=0,
+            ),
+            exchange=exchange,
+        )
+        frame = client.fetch_ohlcv("BTCUSDT.BITGET", start_ms=1000, end_ms=1000)
+
+        self.assertEqual(frame.ts, (1000,))
+        calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(calls), 2)
+
+    def test_ohlcv_does_not_retry_non_rate_limit_failures(self):
+        class NetworkError(Exception):
+            pass
+
+        class FailingExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                raise NetworkError("connection reset")
+
+        exchange = FailingExchange()
+        client = CcxtExchangeClient(
+            CcxtConfig(
+                exchange_id="binance",
+                market_data_rate_limit_retries=3,
+                market_data_rate_limit_backoff_ms=0,
+            ),
+            exchange=exchange,
+        )
+        with self.assertRaises(CcxtConnectorError) as raised:
+            client.fetch_ohlcv("BTCUSDT.BINANCE", start_ms=1000, end_ms=1000)
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.RETRYABLE)
+        calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(calls), 1)
+
+    def test_ohlcv_rate_limit_retry_budget_is_bounded(self):
+        class RateLimitExceeded(Exception):
+            pass
+
+        class AlwaysRateLimitedExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                raise RateLimitExceeded("Too Many Requests")
+
+        exchange = AlwaysRateLimitedExchange()
+        client = CcxtExchangeClient(
+            CcxtConfig(
+                exchange_id="bitget",
+                market_data_rate_limit_retries=2,
+                market_data_rate_limit_backoff_ms=0,
+            ),
+            exchange=exchange,
+        )
+        with self.assertRaises(CcxtConnectorError) as raised:
+            client.fetch_ohlcv("BTCUSDT.BITGET", start_ms=1000, end_ms=1000)
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.RATE_LIMITED)
+        calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(calls), 3)
+
     def test_ohlcv_continues_when_exchange_caps_nonempty_pages_below_requested_limit(self):
         class CappedPageExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
