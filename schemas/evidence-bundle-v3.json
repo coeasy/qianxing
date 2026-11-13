@@ -376,6 +376,14 @@
                       "type": "integer",
                       "minimum": 1
                     },
+                    "acquisition_cutoff_ms": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "excluded_unclosed_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "timezone": {
                       "type": "string",
                       "minLength": 1
@@ -472,6 +480,8 @@
                       "out_of_order_rows": { "type": "integer", "minimum": 0 },
                       "missing_intervals": { "type": "integer", "minimum": 0 },
                       "interval_ms": { "type": "integer", "minimum": 1 },
+                      "acquisition_cutoff_ms": { "type": "integer", "minimum": 0 },
+                      "excluded_unclosed_rows": { "type": "integer", "minimum": 0 },
                       "timezone": { "type": "string", "minLength": 1 },
                       "corporate_action_coverage": { "type": "boolean" },
                       "usable_tiers": {

@@ -1013,6 +1013,31 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(frame.close_raw[0], 100_500_000_000)
         self.assertEqual(frame.source, "ccxt:binance:BTC/USDT:1m")
 
+    def test_ohlcv_excludes_unclosed_candles_at_deterministic_as_of_cutoff(self):
+        class CurrentCandleExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [
+                    [60_000, 100, 101, 99, 100, 1],
+                    [120_000, 100, 101, 99, 100, 1],
+                    [180_000, 100, 101, 99, 100, 1],
+                ]
+
+        client = CcxtExchangeClient(
+            CcxtConfig(exchange_id="binance"), exchange=CurrentCandleExchange()
+        )
+        fetched = client.fetch_ohlcv_with_quality(
+            "BTCUSDT.BINANCE",
+            timeframe="1m",
+            start_ms=60_000,
+            end_ms=180_000,
+            as_of_ms=180_000,
+        )
+
+        self.assertEqual(fetched["frame"].ts, (60_000, 120_000))
+        self.assertEqual(fetched["as_of_ms"], 180_000)
+        self.assertEqual(fetched["excluded_unclosed_rows"], 1)
+
     def test_ohlcv_retries_rate_limit_with_bounded_backoff(self):
         class RateLimitExceeded(Exception):
             pass

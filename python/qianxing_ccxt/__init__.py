@@ -1468,8 +1468,39 @@ class CcxtExchangeClient:
         params: Mapping[str, Any] | None = None,
         max_pages: int = 1_000,
     ) -> BarFrame:
+        """Fetch only fully closed candles, preserving the legacy BarFrame result."""
+        return self.fetch_ohlcv_with_quality(
+            instrument,
+            timeframe=timeframe,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            limit=limit,
+            params=params,
+            max_pages=max_pages,
+        )["frame"]
+
+    def fetch_ohlcv_with_quality(
+        self,
+        instrument: str,
+        *,
+        timeframe: str = "1m",
+        start_ms: int,
+        end_ms: int,
+        limit: int = 1_000,
+        params: Mapping[str, Any] | None = None,
+        max_pages: int = 1_000,
+        as_of_ms: int | None = None,
+    ) -> dict[str, Any]:
         if start_ms < 0 or end_ms < start_ms or limit <= 0 or max_pages <= 0:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "OHLCV 查询边界非法")
+        interval_ms = _fixed_timeframe_interval_ms(timeframe)
+        if interval_ms is None:
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                f"无法确定 {timeframe!r} 的固定 K 线周期，拒绝将未收盘 K 线混入快照",
+            )
+        if as_of_ms is not None and as_of_ms < 0:
+            raise CcxtConnectorError(CcxtErrorClass.INVALID, "as_of_ms 必须为非负毫秒时间戳")
         market = self.resolve_market(instrument)
         # CCXT 4.5.89's Bitget history-candles endpoint caps pages at 200. If a
         # larger limit is passed, CCXT shortens the history window after deriving
@@ -1588,10 +1619,20 @@ class CcxtExchangeClient:
                 CcxtErrorClass.EXCHANGE,
                 f"CCXT OHLCV pagination reached max_pages={max_pages}; refusing partial history",
             )
-        ordered = [rows[timestamp] for timestamp in sorted(rows)]
+        cutoff_ms = time.time_ns() // 1_000_000 if as_of_ms is None else as_of_ms
+        closed_rows = {
+            timestamp: row
+            for timestamp, row in rows.items()
+            if timestamp <= cutoff_ms - interval_ms
+        }
+        excluded_unclosed_rows = len(rows) - len(closed_rows)
+        ordered = [closed_rows[timestamp] for timestamp in sorted(closed_rows)]
         if not ordered:
-            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT OHLCV 查询为空")
-        return BarFrame(
+            raise CcxtConnectorError(
+                CcxtErrorClass.EXCHANGE,
+                "CCXT OHLCV 查询没有已收盘 K 线（未收盘行已全部排除）",
+            )
+        frame = BarFrame(
             instrument=instrument,
             source=f"ccxt:{self.config.exchange_id}:{market.symbol}:{timeframe}",
             ts=tuple(int(row[0]) for row in ordered),
@@ -1614,6 +1655,11 @@ class CcxtExchangeClient:
                 for row in ordered
             ),
         )
+        return {
+            "frame": frame,
+            "as_of_ms": cutoff_ms,
+            "excluded_unclosed_rows": excluded_unclosed_rows,
+        }
 
     def fetch_ticker(self, instrument: str, *, params: Mapping[str, Any] | None = None) -> CcxtTicker:
         market = self.resolve_market(instrument)

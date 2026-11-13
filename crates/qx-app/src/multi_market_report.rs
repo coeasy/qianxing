@@ -698,6 +698,8 @@ mod tests {
                 out_of_order_rows: 0,
                 missing_intervals: 0,
                 interval_ms: Some(1_000),
+                acquisition_cutoff_ms: None,
+                excluded_unclosed_rows: None,
                 timezone: "UTC".into(),
                 corporate_action_coverage: false,
                 usable_tiers: vec!["bar".into()],

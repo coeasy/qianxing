@@ -295,6 +295,14 @@
               "type": "integer",
               "minimum": 1
             },
+            "acquisition_cutoff_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "excluded_unclosed_rows": {
+              "type": "integer",
+              "minimum": 0
+            },
             "timezone": {
               "type": "string",
               "minLength": 1

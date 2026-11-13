@@ -319,6 +319,8 @@ pub fn run_provider_depth_backtest(
                 out_of_order_rows: 0,
                 missing_intervals,
                 interval_ms: Some(spec.snapshot_context.frequency_ms),
+                acquisition_cutoff_ms: None,
+                excluded_unclosed_rows: None,
                 timezone: spec.timezone.clone(),
                 corporate_action_coverage: false,
                 usable_tiers: vec![tier.as_str().to_owned()],

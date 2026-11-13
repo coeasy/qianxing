@@ -781,6 +781,7 @@ class CcxtWorkerTest(unittest.TestCase):
                         "instrument": "BTCUSDT.BITGET",
                         "start_ms": 1000,
                         "end_ms": 1000,
+                        "as_of_ms": 61_000,
                     }
                 )
             )
@@ -789,6 +790,8 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertTrue(response["ok"], response)
         self.assertEqual(response["result"]["rate_limit_retries"], 1)
         self.assertEqual(response["result"]["frame"]["ts"], [1000])
+        self.assertEqual(response["result"]["quality"]["as_of_ms"], 61_000)
+        self.assertEqual(response["result"]["quality"]["excluded_unclosed_rows"], 0)
 
     def test_jsonl_create_order_requires_amount_unit_and_rejects_spot_contracts(self):
         exchange = FakeExchange()

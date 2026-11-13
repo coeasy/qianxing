@@ -311,6 +311,17 @@ pub(crate) fn run_ccxt_fetch_ohlcv(
     let frame = result
         .get("frame")
         .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
+    let acquisition_quality = result
+        .get("quality")
+        .ok_or_else(|| "CCXT OHLCV 响应缺少 K 线收盘质量信息".to_string())?;
+    let acquisition_cutoff_ms = acquisition_quality
+        .get("as_of_ms")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "CCXT OHLCV 响应的 as_of_ms 无效".to_string())?;
+    let excluded_unclosed_rows = acquisition_quality
+        .get("excluded_unclosed_rows")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "CCXT OHLCV 响应的 excluded_unclosed_rows 无效".to_string())?;
     let manifest_path = manifest_path
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_dataset_manifest_path(output_path));
@@ -337,15 +348,19 @@ pub(crate) fn run_ccxt_fetch_ohlcv(
         output_path,
         &manifest_path,
         interval_ms,
+        acquisition_cutoff_ms,
+        excluded_unclosed_rows,
     )?;
     println!(
-        "[CCXT · OHLCV] instrument={} timeframe={} rows={} duplicate={} out_of_order={} missing_intervals={} output={} manifest={} ✓",
+        "[CCXT · OHLCV] instrument={} timeframe={} rows={} duplicate={} out_of_order={} missing_intervals={} as_of_ms={} excluded_unclosed={} output={} manifest={} ✓",
         instrument,
         timeframe,
         manifest.quality_report.row_count,
         manifest.quality_report.duplicate_rows,
         manifest.quality_report.out_of_order_rows,
         manifest.quality_report.missing_intervals,
+        manifest.quality_report.acquisition_cutoff_ms.unwrap_or_default(),
+        manifest.quality_report.excluded_unclosed_rows.unwrap_or_default(),
         output_path.display(),
         manifest_path.display(),
     );
@@ -401,6 +416,8 @@ fn publish_ccxt_frame_with_manifest(
     frame_path: &Path,
     manifest_path: &Path,
     interval_ms: u64,
+    acquisition_cutoff_ms: u64,
+    excluded_unclosed_rows: u64,
 ) -> Result<qx_data::DatasetManifestV2, String> {
     if frame_path == manifest_path {
         return Err("BarFrame 与 DatasetManifestV2 不能写入同一路径".into());
@@ -439,8 +456,12 @@ fn publish_ccxt_frame_with_manifest(
         );
         let validation = qx_app::validate_dataset_manifest(&spec, &context)
             .map_err(|error| format!("CCXT OHLCV 质量验证失败: {error}"))?;
-        let manifest_bytes = std::fs::read(&temporary_manifest)
-            .map_err(|error| format!("读取 CCXT 临时质量清单失败: {error}"))?;
+        let mut manifest = validation.manifest;
+        manifest.quality_report.acquisition_cutoff_ms = Some(acquisition_cutoff_ms);
+        manifest.quality_report.excluded_unclosed_rows = Some(excluded_unclosed_rows);
+        manifest.validate()?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("编码 CCXT 质量清单失败: {error}"))?;
         // Check both immutable destinations before publishing either file. This prevents a
         // known conflict on one sidecar from leaving its matching BarFrame behind (or vice
         // versa). Each final rename remains atomic; cross-process pair transactions are not
@@ -464,7 +485,7 @@ fn publish_ccxt_frame_with_manifest(
                 manifest_path.display()
             )
         })?;
-        Ok(validation.manifest)
+        Ok(manifest)
     })();
     let _ = std::fs::remove_dir_all(&temporary_root);
     result
@@ -698,11 +719,15 @@ mod tests {
             &frame_path,
             &manifest_path,
             60_000,
+            200_000,
+            2,
         )
         .unwrap();
         assert_eq!(manifest.quality_report.row_count, 3);
         assert_eq!(manifest.quality_report.duplicate_rows, 0);
         assert_eq!(manifest.quality_report.missing_intervals, 0);
+        assert_eq!(manifest.quality_report.acquisition_cutoff_ms, Some(200_000));
+        assert_eq!(manifest.quality_report.excluded_unclosed_rows, Some(2));
         assert_eq!(
             qx_data::DatasetManifestV2::from_json(
                 &std::fs::read_to_string(&manifest_path).unwrap()
@@ -733,6 +758,8 @@ mod tests {
             &frame_path,
             &manifest_path,
             60_000,
+            200_000,
+            2,
         )
         .is_err());
         assert_eq!(std::fs::read(&frame_path).unwrap(), payload);
@@ -780,6 +807,8 @@ mod tests {
             &frame_path,
             &manifest_path,
             60_000,
+            180_000,
+            1,
         )
         .unwrap_err();
 

@@ -92,6 +92,8 @@ pub fn manifest_from_bar_frame(
             out_of_order_rows: 0,
             missing_intervals,
             interval_ms: Some(interval_ms),
+            acquisition_cutoff_ms: None,
+            excluded_unclosed_rows: None,
             timezone: timezone.to_owned(),
             corporate_action_coverage: false,
             usable_tiers: vec![DatasetTier::Bar.as_str().to_owned()],

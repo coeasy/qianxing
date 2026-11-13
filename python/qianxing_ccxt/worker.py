@@ -83,16 +83,21 @@ class CcxtJsonWorker:
             return {"market": market_payload}
         if operation == "fetch_ohlcv":
             retries_before = self.client.market_data_rate_limit_retries_total
-            frame = self.client.fetch_ohlcv(
+            fetched = self.client.fetch_ohlcv_with_quality(
                 str(request["instrument"]),
                 timeframe=str(request.get("timeframe", "1m")),
                 start_ms=int(request["start_ms"]),
                 end_ms=int(request["end_ms"]),
                 limit=int(request.get("limit", 1_000)),
                 params=dict(request.get("params", {})),
+                as_of_ms=(int(request["as_of_ms"]) if request.get("as_of_ms") is not None else None),
             )
             return {
-                "frame": json.loads(frame.to_json()),
+                "frame": json.loads(fetched["frame"].to_json()),
+                "quality": {
+                    "as_of_ms": fetched["as_of_ms"],
+                    "excluded_unclosed_rows": fetched["excluded_unclosed_rows"],
+                },
                 "rate_limit_retries": self.client.market_data_rate_limit_retries_total
                 - retries_before,
             }

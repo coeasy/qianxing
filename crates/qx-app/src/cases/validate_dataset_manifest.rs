@@ -334,6 +334,8 @@ fn run_data_validate(
             out_of_order_rows: quality.out_of_order_rows,
             missing_intervals: quality.missing_intervals,
             interval_ms: Some(spec.interval_ms),
+            acquisition_cutoff_ms: None,
+            excluded_unclosed_rows: None,
             timezone: spec.timezone.clone(),
             // 本入口只读行情文件，看不到公司行为组件；覆盖与否如实记 false，不替别的链背书。
             corporate_action_coverage: false,
