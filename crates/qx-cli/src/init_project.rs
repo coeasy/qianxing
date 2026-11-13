@@ -506,6 +506,20 @@ fn align_ccxt_profile_selection(
                 }
             }
         }
+        if fields
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|role| matches!(role, "execution" | "spread_recovery" | "reconciler"))
+        {
+            let venue = exchange.to_ascii_uppercase();
+            fields.insert(
+                "credential_env".into(),
+                serde_json::json!({
+                    "api_key": format!("QX_CCXT_{venue}_API_KEY"),
+                    "secret": format!("QX_CCXT_{venue}_SECRET"),
+                }),
+            );
+        }
         if exchange != "okx"
             && fields
                 .get("role")
@@ -832,6 +846,20 @@ mod ccxt_selection_tests {
             .unwrap();
         assert_eq!(execution["enabled"], false);
         assert!(execution.get("instrument_spec_path").is_none());
+        let reconciler = config["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["role"] == "reconciler")
+            .unwrap();
+        assert_eq!(
+            reconciler["credential_env"]["api_key"],
+            "QX_CCXT_BITGET_API_KEY"
+        );
+        assert_eq!(
+            reconciler["credential_env"]["secret"],
+            "QX_CCXT_BITGET_SECRET"
+        );
 
         let exchange_config: Value = serde_json::from_slice(
             &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
@@ -846,6 +874,52 @@ mod ccxt_selection_tests {
             .is_file());
         assert!(!root.join("qianxing.bar-frame.okx.example.json").exists());
         assert!(!root.join("qianxing.ccxt.okx.perpetual.spec.json").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn binance_quickstart_scaffold_names_credentials_without_loading_secrets() {
+        let unique = format!(
+            "qianxing-binance-ccxt-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.task-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+
+        run_init_with_ccxt_selection(&runtime, false, "binance", "BTC/USDT:USDT.BINANCE").unwrap();
+
+        let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        let workers = config["workers"].as_array().unwrap();
+        assert!(workers
+            .iter()
+            .filter(|worker| !worker["venue_id"].is_null())
+            .all(|worker| worker["venue_id"] == "binance"));
+        let execution = workers
+            .iter()
+            .find(|worker| worker["role"] == "execution")
+            .unwrap();
+        assert_eq!(execution["enabled"], false);
+        let reconciler = workers
+            .iter()
+            .find(|worker| worker["role"] == "reconciler")
+            .unwrap();
+        assert_eq!(
+            reconciler["credential_env"]["api_key"],
+            "QX_CCXT_BINANCE_API_KEY"
+        );
+        assert_eq!(
+            reconciler["credential_env"]["secret"],
+            "QX_CCXT_BINANCE_SECRET"
+        );
+        assert!(config["workers"].to_string().find("secret-value").is_none());
 
         let _ = std::fs::remove_dir_all(root);
     }
