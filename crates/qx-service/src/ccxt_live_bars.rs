@@ -170,9 +170,31 @@ pub fn live_strategy_order_book_instruments(
 
 #[cfg(test)]
 mod tests {
-    use super::{live_strategy_bar_specs, live_strategy_order_book_instruments};
+    use super::{
+        live_strategy_bar_specs, live_strategy_order_book_instruments, write_live_bar_snapshot,
+    };
     use qx_core::InstrumentId;
+    use qx_datastruct::BarFrame;
     use qx_runtime::{RuntimeConfig, WorkerConfig, WorkerRole};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn scratch_dir() -> std::path::PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "qx-live-bars-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn bar_frame(close: i64) -> BarFrame {
+        BarFrame::from_json(&format!(
+            r#"{{"schema_version":1,"instrument":"BTCUSDT.BINANCE","source":"fixture@v1","ts":[60000],"open_raw":[10],"high_raw":[{}],"low_raw":[9],"close_raw":[{}],"volume_raw":[1]}}"#,
+            close + 1,
+            close
+        ))
+        .unwrap()
+    }
 
     #[test]
     fn orderbook_strategy_does_not_schedule_primary_or_reference_ohlcv_reads() {
@@ -214,6 +236,42 @@ mod tests {
             live_strategy_order_book_instruments(&config, &worker).unwrap(),
             [InstrumentId::parse("BTCUSDT.BINANCE").unwrap()]
         );
+    }
+
+    #[test]
+    fn live_bar_snapshot_replaces_existing_frame_atomically() {
+        let root = scratch_dir();
+        let path = root.join("bars.json");
+        let first = bar_frame(10);
+        let second = bar_frame(11);
+
+        assert_eq!(
+            write_live_bar_snapshot(&path, &first).unwrap(),
+            first.digest()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first.to_json());
+        assert_eq!(
+            write_live_bar_snapshot(&path, &second).unwrap(),
+            second.digest()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second.to_json());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn live_bar_snapshot_failure_preserves_existing_destination() {
+        let root = scratch_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("bars.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("sentinel"), b"keep").unwrap();
+
+        assert!(write_live_bar_snapshot(&path, &bar_frame(10)).is_err());
+        assert_eq!(std::fs::read(path.join("sentinel")).unwrap(), b"keep");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -316,25 +374,8 @@ pub fn closed_live_frame(
 }
 
 pub fn write_live_bar_snapshot(path: &Path, frame: &BarFrame) -> Result<u64, String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("实时 BarFrame 路径没有父目录: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("创建实时 BarFrame 目录失败 {}: {error}", parent.display()))?;
     let payload = frame.to_json();
-    let temporary = path.with_extension(format!("barframe.tmp.{}", std::process::id()));
-    std::fs::write(&temporary, payload)
-        .map_err(|error| format!("写入实时 BarFrame 临时文件失败: {error}"))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        // Windows 无法直接覆盖已有文件；只在替换失败时删除旧快照，
-        // Strategy worker 遇到短暂缺文件会等待下一轮，不会读取半份 JSON。
-        let _ = std::fs::remove_file(path);
-        std::fs::rename(&temporary, path).map_err(|replacement| {
-            format!(
-                "提交实时 BarFrame 失败 {}: initial={error}; replacement={replacement}",
-                path.display()
-            )
-        })?;
-    }
+    qx_core::atomic_file::write_atomic_file(path, payload.as_bytes())
+        .map_err(|error| format!("原子提交实时 BarFrame 失败 {}: {error}", path.display()))?;
     Ok(frame.digest())
 }
