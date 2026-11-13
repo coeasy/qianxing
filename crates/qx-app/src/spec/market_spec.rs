@@ -141,25 +141,18 @@ fn ccxt_market_to_spec(
         }
         None => 1,
     };
-    let maintenance_margin_bps = match market
-        .get("maintenance_margin_bps")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    {
-        Some(value) if value <= 10_000 => value,
-        Some(value) => {
-            return Err(invalid(format!(
-                "CCXT market maintenance_margin_bps 非法: {value}"
-            )));
+    let maintenance_margin_bps = match market.get("maintenance_margin_bps") {
+        Some(value) if !value.is_null() => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value <= 10_000)
+            .ok_or_else(|| invalid(format!("CCXT market maintenance_margin_bps 非法: {value}")))?,
+        _ if product.is_derivative() => {
+            ccxt_first_tier_maintenance_margin_bps(market).ok_or_else(|| {
+                declared_field_problem("maintenance_margin_bps", "衍生品维持保证金率", "500bp")
+            })?
         }
-        None if product.is_derivative() => {
-            return Err(declared_field_problem(
-                "maintenance_margin_bps",
-                "衍生品维持保证金率",
-                "500bp",
-            ));
-        }
-        None => 0,
+        _ => 0,
     };
     Ok(TradingInstrumentSpec {
         instrument: instrument.clone(),
@@ -180,6 +173,24 @@ fn ccxt_market_to_spec(
         valid_to: market.get("expiry_ms").and_then(Value::as_u64),
         exact_rules: exact_rules_from_ccxt(market)?,
     })
+}
+
+/// CCXT may omit a market-level maintenance margin rate while returning a complete
+/// leverage-tier schedule. In that case, use the first tier only as the baseline
+/// `TradingInstrumentSpec` value; the backtest margin model still consumes the full
+/// tier schedule for notional-dependent calculations. Refuse to infer a baseline when
+/// the first tier does not start at zero exposure or omits its own rate.
+fn ccxt_first_tier_maintenance_margin_bps(market: &Value) -> Option<u32> {
+    let first_tier = market.get("leverage_tiers")?.as_array()?.first()?;
+    let min_notional = first_tier.get("min_notional_raw")?.as_u64()?;
+    if min_notional != 0 {
+        return None;
+    }
+    first_tier
+        .get("maintenance_margin_bps")?
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value <= 10_000)
 }
 
 fn exact_rules_from_ccxt(market: &Value) -> Result<Option<ExactTradingRules>, AppError> {
@@ -402,6 +413,41 @@ mod binding_tests {
             binding.app_margin_model,
             Some(BacktestMarginConfig::Tiers { .. })
         ));
+
+        let mut market_without_market_level_rate = market.clone();
+        market_without_market_level_rate
+            .as_object_mut()
+            .expect("market object")
+            .remove("maintenance_margin_bps");
+        let tiered_binding =
+            backtest_market_spec_binding(&instrument, Some(&market_without_market_level_rate))
+                .expect("the zero-exposure tier provides the baseline MMR");
+        assert_eq!(
+            tiered_binding
+                .spec
+                .as_ref()
+                .map(|spec| spec.maintenance_margin_bps),
+            Some(50)
+        );
+        assert!(matches!(
+            tiered_binding.app_margin_model,
+            Some(BacktestMarginConfig::Tiers { .. })
+        ));
+
+        let mut missing_base_tier = market_without_market_level_rate.clone();
+        missing_base_tier["leverage_tiers"] = serde_json::json!([{
+            "symbol": "BTC/USDT:USDT",
+            "tier": 2,
+            "min_notional_raw": 1,
+            "max_notional_raw": 100_000_000_000_000_i64,
+            "initial_margin_bps": 1_000,
+            "maintenance_margin_bps": 50,
+            "max_leverage": 20
+        }]);
+        assert!(market_spec_from_value(&instrument, &missing_base_tier)
+            .unwrap_err()
+            .message()
+            .contains("maintenance_margin_bps"));
 
         let mut wrong_venue = market.clone();
         wrong_venue["exchange_id"] = serde_json::Value::String("bitget".into());
