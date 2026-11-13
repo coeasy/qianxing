@@ -1,0 +1,42 @@
+rule_files:
+  - qianxing-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: durable order groups requiring reconciliation page an operator
+    interval: 1m
+    input_series:
+      - series: 'qx_order_group_status{account="main",venue="OKX",status="reconcile_required"}'
+        values: '1 1'
+      - series: 'qx_order_group_metrics_available'
+        values: '1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: QianxingOrderGroupNeedsReconciliation
+        exp_alerts:
+          - exp_labels:
+              account: main
+              venue: OKX
+              status: reconcile_required
+              severity: critical
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing order group needs operator reconciliation
+              description: account=main venue=OKX has 1 order groups in reconcile_required.
+
+  - name: unreadable durable order groups page an operator
+    interval: 1m
+    input_series:
+      - series: 'qx_order_group_metrics_available'
+        values: '0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: QianxingOrderGroupMetricsUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing durable order-group state is unavailable
+              description: The API could not read durable order-group snapshots; do not treat missing order groups as a clean state.

@@ -1587,8 +1587,9 @@ context of a Tokio 1.x runtime`——`--features nats` 的链路在"连接建立
 所以判据是：`Degraded` + `idle` 计数在涨 = 市场安静；出现带"超过上限"的具名放弃 = 链路真的断了。
 
 Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，覆盖 worker 失联、心跳
-过期、Outbox 发布失败、Consumer 死信和 ACK 失败；生产环境应根据实际抓取间隔、租约窗口和
-值班策略调整 `for` 与 heartbeat 阈值。
+过期、Outbox 发布失败、Consumer 死信和 ACK 失败，也会在持久订单组读取失败或订单组需要对账时告警。
+规则表达式与对应的状态行为测试分别位于 `deploy/prometheus/qianxing-alerts.test.yml`，由 CI 中固定版本的
+`promtool` 校验；生产环境应根据实际抓取间隔、租约窗口和值班策略调整 `for` 与 heartbeat 阈值。
 
 ## 自检与内部命令
 

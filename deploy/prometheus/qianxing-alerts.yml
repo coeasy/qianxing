@@ -111,6 +111,26 @@ groups:
           summary: "Qianxing reconciliation found balance discrepancies"
           description: "worker={{ $labels.worker }} account={{ $labels.account }} venue={{ $labels.venue }} reports {{ $value }} unresolved balance discrepancies."
 
+      - alert: QianxingOrderGroupMetricsUnavailable
+        expr: qx_order_group_metrics_available == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing durable order-group state is unavailable"
+          description: "The API could not read durable order-group snapshots; do not treat missing order groups as a clean state."
+
+      - alert: QianxingOrderGroupNeedsReconciliation
+        expr: qx_order_group_status{status=~"reconcile_required|peer_cancel_required"} > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing order group needs operator reconciliation"
+          description: "account={{ $labels.account }} venue={{ $labels.venue }} has {{ $value }} order groups in {{ $labels.status }}."
+
       # 这一条读的是状态量而不是增量：`qx_outbox_relay_parked` 是"库里现在还有几条已用尽
       # 投递预算"，relay 每轮原样写出，所以判据是 > 0 而不是 increase(...)。用尽预算的事件
       # 不再被投递、也不再占住页首，只会静静留在 outbox 里——没有这一条，它们在运维面上

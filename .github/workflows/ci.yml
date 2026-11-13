@@ -37,6 +37,12 @@ jobs:
           --volume "$GITHUB_WORKSPACE/deploy/prometheus:/etc/prometheus:ro"
           mirror.gcr.io/prom/prometheus:v3.16.0
           check rules /etc/prometheus/qianxing-alerts.yml
+      - name: Verify Prometheus alert behavior
+        run: >-
+          docker run --rm --entrypoint=/bin/promtool
+          --volume "$GITHUB_WORKSPACE/deploy/prometheus:/etc/prometheus:ro"
+          mirror.gcr.io/prom/prometheus:v3.16.0
+          test rules /etc/prometheus/qianxing-alerts.test.yml
       - name: Check tracked Markdown links and path casing
         run: python tools/check_markdown_links.py
       - name: Validate strategy refactor work-package ledger
