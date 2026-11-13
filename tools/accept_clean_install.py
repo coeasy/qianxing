@@ -17,19 +17,40 @@ from typing import TextIO
 
 import tomllib
 
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
+BUILD_COMMAND_TIMEOUT_SECONDS = 2_400
 
-def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    if timeout_seconds <= 0:
+        raise ValueError("command timeout must be positive")
     print("$ " + shlex.join(command), flush=True)
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        env=env,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        for output, stream in ((error.stdout, sys.stdout), (error.stderr, sys.stderr)):
+            if output:
+                text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+                print(text, end="" if text.endswith("\n") else "\n", file=stream, flush=True)
+        raise TimeoutError(
+            f"command timed out after {timeout_seconds}s: {shlex.join(command)}"
+        ) from error
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True)
     if result.stderr:
@@ -51,6 +72,7 @@ def ensure_cli_install(repo: Path, cli_root: Path, env: dict[str, str]) -> Path:
             ],
             cwd=repo,
             env=env,
+            timeout_seconds=BUILD_COMMAND_TIMEOUT_SECONDS,
         )
     if not cli.is_file():
         raise RuntimeError(f"cargo install did not produce {cli}")
@@ -122,6 +144,7 @@ def main() -> int:
             ],
             cwd=project_dir,
             env=env,
+            timeout_seconds=BUILD_COMMAND_TIMEOUT_SECONDS,
         )
         wheels = sorted(wheelhouse.glob("qianxing-*.whl"))
     if len(wheels) != 1:

@@ -1,13 +1,39 @@
 from __future__ import annotations
 
-import os
 import io
+import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.accept_clean_install import configure_utf8_output, ensure_cli_install
+from tools.accept_clean_install import (
+    BUILD_COMMAND_TIMEOUT_SECONDS,
+    configure_utf8_output,
+    ensure_cli_install,
+    run,
+)
+
+
+class RunTimeoutTests(unittest.TestCase):
+    def test_passes_timeout_to_subprocess(self) -> None:
+        expected = subprocess.CompletedProcess(["tool"], 0, "ok", "")
+        with patch("tools.accept_clean_install.subprocess.run", return_value=expected) as run_process:
+            result = run(["tool"], cwd=Path("."), env={}, timeout_seconds=12)
+
+        self.assertIs(result, expected)
+        self.assertEqual(run_process.call_args.kwargs["timeout"], 12)
+
+    def test_reports_timed_out_command(self) -> None:
+        failure = subprocess.TimeoutExpired(["slow-tool"], 7, output=b"partial output")
+        with patch("tools.accept_clean_install.subprocess.run", side_effect=failure):
+            with self.assertRaisesRegex(TimeoutError, r"timed out after 7s: slow-tool"):
+                run(["slow-tool"], cwd=Path("."), env={}, timeout_seconds=7)
+
+    def test_rejects_non_positive_timeout(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            run(["tool"], cwd=Path("."), env={}, timeout_seconds=0)
 
 
 class EnsureCliInstallTests(unittest.TestCase):
@@ -34,10 +60,17 @@ class EnsureCliInstallTests(unittest.TestCase):
             cli_name = "qx-cli.exe" if os.name == "nt" else "qx-cli"
             expected_cli = cli_bin / cli_name
 
-            def fake_install(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+            def fake_install(
+                command: list[str],
+                *,
+                cwd: Path,
+                env: dict[str, str],
+                timeout_seconds: int,
+            ) -> None:
                 self.assertEqual(command[:2], ["cargo", "install"])
                 self.assertIn("--force", command)
                 self.assertEqual(cwd, repo)
+                self.assertEqual(timeout_seconds, BUILD_COMMAND_TIMEOUT_SECONDS)
                 cli_bin.mkdir(parents=True)
                 expected_cli.write_text("new test binary", encoding="utf-8")
 
