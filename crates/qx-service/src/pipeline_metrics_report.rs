@@ -58,6 +58,9 @@ pub struct PipelineMetricsReporter {
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
     gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
     ccxt_ohlcv_rate_limit_retries_total: Option<u64>,
+    ccxt_ohlcv_response_duration_buckets: [u64; 10],
+    ccxt_ohlcv_response_duration_count: u64,
+    ccxt_ohlcv_response_duration_ns_total: u128,
     gateway_venue_reconnects: BTreeMap<String, u64>,
     gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
@@ -168,6 +171,31 @@ impl PipelineMetricsReporter {
         *observed = (*observed).max(total);
     }
 
+    /// Record one successful OHLCV request including CCXT retry backoff time.
+    pub(crate) fn observe_ccxt_ohlcv_response_duration(&mut self, duration_ns: u64) {
+        const BUCKETS_NS: [u64; 10] = [
+            10_000_000,
+            25_000_000,
+            50_000_000,
+            100_000_000,
+            250_000_000,
+            500_000_000,
+            1_000_000_000,
+            2_500_000_000,
+            5_000_000_000,
+            10_000_000_000,
+        ];
+        if let Some(index) = BUCKETS_NS.iter().position(|bound| duration_ns <= *bound) {
+            self.ccxt_ohlcv_response_duration_buckets[index] =
+                self.ccxt_ohlcv_response_duration_buckets[index].saturating_add(1);
+        }
+        self.ccxt_ohlcv_response_duration_count =
+            self.ccxt_ohlcv_response_duration_count.saturating_add(1);
+        self.ccxt_ohlcv_response_duration_ns_total = self
+            .ccxt_ohlcv_response_duration_ns_total
+            .saturating_add(u128::from(duration_ns));
+    }
+
     /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
     /// participates in readiness or execution authorization.
     pub(crate) fn observe_gateway_venue_reconnects(&mut self, venue_id: &str, total: u64) {
@@ -233,7 +261,7 @@ impl PipelineMetricsReporter {
     ///
     /// 不带 `# HELP`/`# TYPE`，与 `worker-metrics/*.prom` 已有的那份正文同形态：抓取端按
     /// 样本名与值即可解析，`read_worker_metrics` 也是原样透传、只改写 `qx_worker_up` 那一行。
-    fn body(&self, up: bool, now_ms: u64) -> String {
+    pub(crate) fn body(&self, up: bool, now_ms: u64) -> String {
         let label = format!(
             "worker=\"{}\",account=\"{}\"",
             prometheus_label(&self.worker_id),
@@ -284,6 +312,38 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
         if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
             body.push_str(&format!(
                 "qx_ccxt_ohlcv_rate_limit_retries_total{{{label}}} {retries}\n"
+            ));
+        }
+        if self.ccxt_ohlcv_response_duration_count > 0 {
+            const BUCKETS: [(&str, u64); 10] = [
+                ("0.01", 10_000_000),
+                ("0.025", 25_000_000),
+                ("0.05", 50_000_000),
+                ("0.1", 100_000_000),
+                ("0.25", 250_000_000),
+                ("0.5", 500_000_000),
+                ("1", 1_000_000_000),
+                ("2.5", 2_500_000_000),
+                ("5", 5_000_000_000),
+                ("10", 10_000_000_000),
+            ];
+            let mut cumulative = 0_u64;
+            for ((bound_label, _), count) in BUCKETS
+                .iter()
+                .zip(self.ccxt_ohlcv_response_duration_buckets)
+            {
+                cumulative = cumulative.saturating_add(count);
+                body.push_str(&format!(
+                    "qx_ccxt_ohlcv_response_duration_seconds_bucket{{{label},le=\"{bound_label}\"}} {cumulative}\n"
+                ));
+            }
+            body.push_str(&format!(
+                "qx_ccxt_ohlcv_response_duration_seconds_bucket{{{label},le=\"+Inf\"}} {}\n\
+qx_ccxt_ohlcv_response_duration_seconds_sum{{{label}}} {:.9}\n\
+qx_ccxt_ohlcv_response_duration_seconds_count{{{label}}} {}\n",
+                self.ccxt_ohlcv_response_duration_count,
+                self.ccxt_ohlcv_response_duration_ns_total as f64 / 1_000_000_000.0,
+                self.ccxt_ohlcv_response_duration_count,
             ));
         }
         for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {

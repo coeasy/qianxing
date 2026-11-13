@@ -58,6 +58,15 @@ fn observe_ohlcv_rate_limit_retries(
     }
 }
 
+fn observe_ohlcv_response_duration(
+    result: &serde_json::Value,
+    metrics: &mut PipelineMetricsReporter,
+) {
+    if let Some(duration_ns) = result.get("duration_ns").and_then(|value| value.as_u64()) {
+        metrics.observe_ccxt_ohlcv_response_duration(duration_ns);
+    }
+}
+
 pub struct CcxtMarketWorkerInput {
     pub context: WorkerContext,
     pub worker: WorkerConfig,
@@ -366,6 +375,7 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 &mut market_rate_limit_retries_total,
                 &mut metrics,
             );
+            observe_ohlcv_response_duration(&result, &mut metrics);
             let frame = BarFrame::from_json(
                 &serde_json::to_string(frame_value)
                     .map_err(|error| format!("编码 CCXT OHLCV frame 失败: {error}"))?,
@@ -546,6 +556,36 @@ mod exact_ticker_value_tests {
         );
 
         assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn ccxt_ohlcv_response_duration_flows_to_histogram_metrics() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut metrics = PipelineMetricsReporter::new(&config, "okx-market", "");
+
+        observe_ohlcv_response_duration(
+            &serde_json::json!({"duration_ns": 100_000_000}),
+            &mut metrics,
+        );
+        observe_ohlcv_response_duration(
+            &serde_json::json!({"duration_ns": 5_000_000_000_u64}),
+            &mut metrics,
+        );
+
+        let body = metrics.body(true, 2_000);
+        assert!(body.contains(
+            "qx_ccxt_ohlcv_response_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"0.1\"} 1"
+        ));
+        assert!(body.contains(
+            "qx_ccxt_ohlcv_response_duration_seconds_bucket{worker=\"okx-market\",account=\"\",le=\"+Inf\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_ccxt_ohlcv_response_duration_seconds_sum{worker=\"okx-market\",account=\"\"} 5.100000000"
+        ));
+        assert!(!body.contains("instrument="));
     }
 }
 
