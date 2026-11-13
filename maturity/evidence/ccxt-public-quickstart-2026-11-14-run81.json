@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "workflow": "Public CCXT quickstart acceptance",
+  "workflow_run_id": 43522694703,
+  "workflow_run_number": 81,
+  "workflow_conclusion": "failure",
+  "head_commit": "8f97799403e570603df2d3f1eae20654a9e31c66",
+  "public_data_only": true,
+  "credentials_loaded": false,
+  "orders_submitted": false,
+  "shared_linux_release_artifact": {
+    "artifact_id": 14083208849,
+    "sha256": "cc489770c96efecca6049f0a52ef341875df553493683f0fdfe317d6d9829604",
+    "runner_download_digest_verified": true
+  },
+  "venue_results": {
+    "okx": {
+      "job_id": 132225103687,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "timeframe": "15m",
+      "window_days": 180,
+      "bars": 17280,
+      "missing_intervals": 0,
+      "fills": 954,
+      "rejected_orders": 0,
+      "result_hash": "1ec994c7704ecd69",
+      "artifact_id": 14084935658,
+      "artifact_sha256": "5fa43eea9752295c2390755d9a5a01ab3fe05bbc13f47dc8a6d1f5ed7c2b59f4",
+      "artifact_sha256_independently_verified": false
+    },
+    "binance": {
+      "job_id": 132225103693,
+      "status": "failure",
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "failure_stage": "load_markets before OHLCV retrieval",
+      "remote_endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "http_status": 451,
+      "restriction": "Binance returned a restricted-location eligibility response",
+      "fallback_or_reroute_used": false,
+      "backtest_or_report_created": false,
+      "artifact_id": 14083617979,
+      "artifact_sha256": "5ef694773d82739dae585ee8c819a84b7a00921dff1d9e1e8581f97756ac44d9",
+      "artifact_sha256_independently_verified": false
+    },
+    "bitget": {
+      "job_id": 132225103745,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "timeframe": "15m",
+      "window_days": 52,
+      "bars": 4992,
+      "missing_intervals": 0,
+      "fills": 261,
+      "rejected_orders": 0,
+      "result_hash": "ecd278357b05253c",
+      "artifact_id": 14084696348,
+      "artifact_sha256": "77a10276e20059a83d20b425204280f0fc54931b6aef0ee464825f118667cd3e",
+      "artifact_sha256_independently_verified": false
+    }
+  },
+  "limitations": [
+    "The Binance public-data job stopped during market metadata loading; no Binance candles, backtest, or report were produced.",
+    "OKX and Bitget results cover anonymous read-only public data, backtest, and report generation only; they do not verify private API, testnet/live orders, account-specific fees, or strategy profitability.",
+    "Binance remains unverified from this runner region. No alternate endpoint, proxy, or credentialed request was used.",
+    "The Binance Testnet acceptance in CI run 686 skipped its credentialed portion because credentials were not configured; its offline fail-closed checks are not testnet evidence."
+  ]
+}
