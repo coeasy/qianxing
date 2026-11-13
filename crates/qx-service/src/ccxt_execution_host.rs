@@ -11,7 +11,8 @@ use crate::execution_capability_gate::{
     require_and_record_submit_command_execution_capability,
     require_and_record_submit_order_group_execution_capability,
     require_cancel_order_execution_capability, require_order_execution_capability,
-    require_submit_command_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
+    require_order_group_execution_capability, require_submit_command_execution_capability,
+    AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
 use crate::pipeline::PipelineStorage;
@@ -1180,6 +1181,18 @@ fn execute_ccxt_queued_cancel_order_group(
     let mut pipeline = pipeline_storage
         .open(log_name, settlement_currency.to_owned())
         .map_err(|error| format!("打开原生 OCO 撤销 EventLog 失败: {error}"))?;
+    if let Err(reason) = require_order_group_execution_capability(
+        &group.intent,
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        ExecutionConnectorProfile::Ccxt {
+            config_path: Path::new(ccxt_config_path),
+        },
+        "cancel",
+    ) {
+        return Ok(Err(reason));
+    }
     for leg in &group.legs {
         if let Err(reason) = require_cancel_order_execution_capability(
             &leg.order,

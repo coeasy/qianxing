@@ -514,25 +514,14 @@ pub fn require_and_record_submit_order_group_execution_capability(
     }
     let group = qx_control::order_group_from_submit_command(command)
         .map_err(|error| format!("SubmitOrderGroup 载荷非法: {error:?}"))?;
-    group
-        .validate()
-        .map_err(|error| format!("订单组意图非法: {error}"))?;
-    if group.execution != qx_core::OrderGroupExecution::NativeRequired {
-        return Err("FAIL_CLOSED: 当前真实连接器只接受 NativeRequired 订单组".into());
-    }
-    let representative = group
-        .legs
-        .first()
-        .ok_or_else(|| "订单组缺少可用于能力预检的订单腿".to_owned())?;
-    let representative = resolve_order_execution_capability(
-        &representative.order,
+    require_order_group_execution_capability(
+        &group,
         worker,
         runtime_environment,
         runtime_config_path,
-        "submit",
         connector,
+        "submit",
     )?;
-    require_order_group_scope_capability(&representative.spec, group.kind)?;
     let expected_account = worker.account_id.as_deref().unwrap_or_default();
     let expected_venue = match connector {
         ExecutionConnectorProfile::BinanceSpot => "BINANCE",
@@ -588,9 +577,61 @@ pub fn require_and_record_submit_order_group_execution_capability(
     Ok(())
 }
 
+/// Resolve a native order-group operation against its group-level catalog shape before a venue
+/// connector is created. Child order checks remain separate because child cancel/submit support
+/// does not imply native OCO/Bracket semantics.
+pub fn require_order_group_execution_capability(
+    group: &qx_core::OrderGroupIntent,
+    worker: &WorkerConfig,
+    runtime_environment: &str,
+    runtime_config_path: &Path,
+    connector: ExecutionConnectorProfile<'_>,
+    operation: &str,
+) -> Result<(), String> {
+    group
+        .validate()
+        .map_err(|error| format!("订单组意图非法: {error}"))?;
+    if group.execution != qx_core::OrderGroupExecution::NativeRequired {
+        return Err("FAIL_CLOSED: 当前真实连接器只接受 NativeRequired 订单组".into());
+    }
+    if !matches!(operation, "submit" | "cancel") {
+        return Err(format!("订单组能力预检不支持操作: {operation}"));
+    }
+    let expected_account = worker.account_id.as_deref().unwrap_or_default();
+    let expected_venue = match connector {
+        ExecutionConnectorProfile::BinanceSpot => "BINANCE",
+        ExecutionConnectorProfile::Ccxt { .. } => worker.venue_id.as_deref().unwrap_or_default(),
+    };
+    if group.legs.iter().any(|leg| {
+        leg.order.account_id != expected_account
+            || !leg
+                .order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(expected_venue)
+    }) {
+        return Err("订单组账户或 Venue 与执行 worker 不一致".into());
+    }
+    let representative = group
+        .legs
+        .first()
+        .ok_or_else(|| "订单组缺少可用于能力预检的订单腿".to_owned())?;
+    let resolved = resolve_order_execution_capability(
+        &representative.order,
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        "submit",
+        connector,
+    )?;
+    require_order_group_scope_capability(&resolved.spec, group.kind, operation)
+}
+
 fn require_order_group_scope_capability(
     order_spec: &ExecutionCapabilityPreflightSpecV1,
     kind: qx_core::OrderGroupKind,
+    operation: &str,
 ) -> Result<(), String> {
     let mut spec = order_spec.clone();
     spec.order_type = match kind {
@@ -603,11 +644,15 @@ fn require_order_group_scope_capability(
         CallerCapability::Live,
         format!("order-group-preflight-{}-{}", spec.venue, spec.product),
     );
-    let decision = evaluate_execution_capability_preflight_v1(&spec, &catalog, &context)
-        .map_err(|error| format!("订单组能力预检无法完成: {error}"))?;
+    let decision = match operation {
+        "submit" => evaluate_execution_capability_preflight_v1(&spec, &catalog, &context),
+        "cancel" => evaluate_cancel_execution_capability_preflight_v1(&spec, &catalog, &context),
+        other => return Err(format!("订单组能力预检不支持操作: {other}")),
+    }
+    .map_err(|error| format!("订单组能力预检无法完成: {error}"))?;
     decision.require_allowed(&context).map_err(|error| {
         format!(
-            "ORDER_GROUP_CAPABILITY_DENIED {} kind={kind:?} capability={} code={} reason={}",
+            "ORDER_GROUP_CAPABILITY_DENIED {} operation={operation} kind={kind:?} capability={} code={} reason={}",
             error,
             decision.capability_id,
             decision.reason_code.as_deref().unwrap_or("unknown"),
@@ -1021,17 +1066,54 @@ mod tests {
     #[test]
     fn generated_catalog_requires_a_native_oco_group_scope() {
         let mut spec = test_resolved().spec;
-        assert!(require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco).is_ok());
+        assert!(require_order_group_scope_capability(
+            &spec,
+            qx_core::OrderGroupKind::Oco,
+            "submit"
+        )
+        .is_ok());
+        assert!(require_order_group_scope_capability(
+            &spec,
+            qx_core::OrderGroupKind::Oco,
+            "cancel"
+        )
+        .is_ok());
 
         spec.capability_id = "qx.venue.ccxt_process".into();
-        let error = require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco)
-            .expect_err("CCXT Binance Spot does not declare native OCO");
+        let error =
+            require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco, "submit")
+                .expect_err("CCXT Binance Spot does not declare native OCO");
         assert!(error.contains("ORDER_GROUP_CAPABILITY_DENIED"), "{error}");
+        assert!(error.contains("scope_not_declared"), "{error}");
+        let error =
+            require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco, "cancel")
+                .expect_err("CCXT Binance Spot does not declare native OCO cancellation");
+        assert!(error.contains("scope_not_declared"), "{error}");
+
+        spec.venue = "BITGET".into();
+        spec.account_model = "uta".into();
+        assert!(require_order_group_scope_capability(
+            &spec,
+            qx_core::OrderGroupKind::Oco,
+            "submit"
+        )
+        .is_ok());
+        assert!(require_order_group_scope_capability(
+            &spec,
+            qx_core::OrderGroupKind::Oco,
+            "cancel"
+        )
+        .is_ok());
+        spec.account_model = "classic".into();
+        let error =
+            require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco, "cancel")
+                .expect_err("Bitget Classic does not declare UTA Spot OCO");
         assert!(error.contains("scope_not_declared"), "{error}");
 
         let error = require_order_group_scope_capability(
             &test_resolved().spec,
             qx_core::OrderGroupKind::Bracket,
+            "submit",
         )
         .expect_err("no generated venue scope currently declares Bracket");
         assert!(error.contains("scope_not_declared"), "{error}");

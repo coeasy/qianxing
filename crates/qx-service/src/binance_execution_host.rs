@@ -7,7 +7,8 @@ use crate::execution_capability_gate::{
     require_and_record_submit_command_execution_capability,
     require_and_record_submit_order_group_execution_capability,
     require_cancel_order_execution_capability, require_order_execution_capability,
-    require_submit_command_execution_capability, AccountQueryPurpose, ExecutionConnectorProfile,
+    require_order_group_execution_capability, require_submit_command_execution_capability,
+    AccountQueryPurpose, ExecutionConnectorProfile,
 };
 use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
 use crate::pipeline::PipelineStorage;
@@ -831,6 +832,16 @@ where
             target.group_id, group.status
         )));
     };
+    if let Err(reason) = require_order_group_execution_capability(
+        &group.intent,
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        ExecutionConnectorProfile::BinanceSpot,
+        "cancel",
+    ) {
+        return Ok(Err(reason));
+    }
 
     // Binance documents that cancelling either OCO child cancels the whole order list.
     // Reuse the audited single-order OMS cancellation and subsequent full-list reconciliation
