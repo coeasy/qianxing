@@ -740,6 +740,7 @@ class CcxtWorkerTest(unittest.TestCase):
         rows = [json.loads(line) for line in output_stream.getvalue().splitlines()]
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["result"]["market"]["symbol"], "BTC/USDT")
+        self.assertEqual(rows[0]["result"]["market"]["instrument"], "BTC/USDT.BINANCE")
         self.assertTrue(rows[1]["ok"])
         self.assertEqual(rows[1]["result"]["frame"]["ts"], [1000, 1100, 1200])
         self.assertFalse(rows[2]["ok"])

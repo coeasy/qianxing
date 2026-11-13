@@ -74,7 +74,12 @@ class CcxtJsonWorker:
             return {"markets": list(markets.values())}
         if operation == "resolve_market":
             market = self.client.resolve_market(str(request["instrument"]))
-            return {"market": market.__dict__}
+            # `instrument` is a derived property rather than a dataclass field, so it is
+            # absent from `__dict__`. Preserve the canonical identity in the JSONL contract
+            # for downstream market-spec freezing and venue-level validation.
+            market_payload = dict(market.__dict__)
+            market_payload["instrument"] = market.instrument
+            return {"market": market_payload}
         if operation == "fetch_ohlcv":
             frame = self.client.fetch_ohlcv(
                 str(request["instrument"]),
