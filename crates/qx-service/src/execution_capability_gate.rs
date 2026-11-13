@@ -622,7 +622,7 @@ pub fn require_order_group_execution_capability(
         worker,
         runtime_environment,
         runtime_config_path,
-        "submit",
+        operation,
         connector,
     )?;
     require_order_group_scope_capability(&resolved.spec, group.kind, operation)
