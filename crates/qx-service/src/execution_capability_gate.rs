@@ -514,6 +514,25 @@ pub fn require_and_record_submit_order_group_execution_capability(
     }
     let group = qx_control::order_group_from_submit_command(command)
         .map_err(|error| format!("SubmitOrderGroup 载荷非法: {error:?}"))?;
+    group
+        .validate()
+        .map_err(|error| format!("订单组意图非法: {error}"))?;
+    if group.execution != qx_core::OrderGroupExecution::NativeRequired {
+        return Err("FAIL_CLOSED: 当前真实连接器只接受 NativeRequired 订单组".into());
+    }
+    let representative = group
+        .legs
+        .first()
+        .ok_or_else(|| "订单组缺少可用于能力预检的订单腿".to_owned())?;
+    let representative = resolve_order_execution_capability(
+        &representative.order,
+        worker,
+        runtime_environment,
+        runtime_config_path,
+        "submit",
+        connector,
+    )?;
+    require_order_group_scope_capability(&representative.spec, group.kind)?;
     let expected_account = worker.account_id.as_deref().unwrap_or_default();
     let expected_venue = match connector {
         ExecutionConnectorProfile::BinanceSpot => "BINANCE",
@@ -567,6 +586,34 @@ pub fn require_and_record_submit_order_group_execution_capability(
         }
     }
     Ok(())
+}
+
+fn require_order_group_scope_capability(
+    order_spec: &ExecutionCapabilityPreflightSpecV1,
+    kind: qx_core::OrderGroupKind,
+) -> Result<(), String> {
+    let mut spec = order_spec.clone();
+    spec.order_type = match kind {
+        qx_core::OrderGroupKind::Oco => "oco",
+        qx_core::OrderGroupKind::Bracket => "bracket",
+    }
+    .to_owned();
+    let catalog = qx_api::product_capability_catalog_document()?;
+    let context = RunContext::new(
+        CallerCapability::Live,
+        format!("order-group-preflight-{}-{}", spec.venue, spec.product),
+    );
+    let decision = evaluate_execution_capability_preflight_v1(&spec, &catalog, &context)
+        .map_err(|error| format!("订单组能力预检无法完成: {error}"))?;
+    decision.require_allowed(&context).map_err(|error| {
+        format!(
+            "ORDER_GROUP_CAPABILITY_DENIED {} kind={kind:?} capability={} code={} reason={}",
+            error,
+            decision.capability_id,
+            decision.reason_code.as_deref().unwrap_or("unknown"),
+            decision.reason.as_deref().unwrap_or("订单组范围或证据不足"),
+        )
+    })
 }
 
 pub fn require_submit_command_execution_capability(
@@ -969,6 +1016,25 @@ mod tests {
             production.reason_code.as_deref(),
             Some("evidence_floor_not_met")
         );
+    }
+
+    #[test]
+    fn generated_catalog_requires_a_native_oco_group_scope() {
+        let mut spec = test_resolved().spec;
+        assert!(require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco).is_ok());
+
+        spec.capability_id = "qx.venue.ccxt_process".into();
+        let error = require_order_group_scope_capability(&spec, qx_core::OrderGroupKind::Oco)
+            .expect_err("CCXT Binance Spot does not declare native OCO");
+        assert!(error.contains("ORDER_GROUP_CAPABILITY_DENIED"), "{error}");
+        assert!(error.contains("scope_not_declared"), "{error}");
+
+        let error = require_order_group_scope_capability(
+            &test_resolved().spec,
+            qx_core::OrderGroupKind::Bracket,
+        )
+        .expect_err("no generated venue scope currently declares Bracket");
+        assert!(error.contains("scope_not_declared"), "{error}");
     }
 
     fn reconciler_worker(venue_id: &str) -> WorkerConfig {

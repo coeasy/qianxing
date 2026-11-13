@@ -336,7 +336,14 @@ fn validate_spec(spec: &ExecutionCapabilityPreflightSpecV1) -> Result<(), AppErr
     }
     if !matches!(
         spec.order_type.as_str(),
-        "market" | "limit" | "trigger" | "stop_loss" | "take_profit" | "trailing"
+        "market"
+            | "limit"
+            | "trigger"
+            | "stop_loss"
+            | "take_profit"
+            | "trailing"
+            | "oco"
+            | "bracket"
     ) || !matches!(spec.quantity_unit.as_str(), "base" | "contracts" | "quote")
         || !matches!(spec.side.as_str(), "buy" | "sell")
     {
@@ -590,6 +597,31 @@ mod tests {
             production.reason_code.as_deref(),
             Some("evidence_floor_not_met")
         );
+    }
+
+    #[test]
+    fn native_oco_group_requires_an_explicit_oco_scope() {
+        let mut request = spec(ExecutionProfile::SandboxAcceptance, true);
+        request.order_type = "oco".into();
+        let mut catalog = catalog();
+
+        let denied =
+            evaluate_execution_capability_preflight_v1(&request, &catalog, &live_context())
+                .expect("well-formed OCO request");
+        assert_eq!(denied.reason_code.as_deref(), Some("scope_not_declared"));
+
+        catalog["capabilities"][0]["execution_scopes"][0]["order_shapes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "order_type": "oco",
+                "quantity_unit": "base",
+                "side": "buy"
+            }));
+        let allowed =
+            evaluate_execution_capability_preflight_v1(&request, &catalog, &live_context())
+                .expect("declared OCO scope");
+        assert!(allowed.allowed, "{allowed:?}");
     }
 
     #[test]
