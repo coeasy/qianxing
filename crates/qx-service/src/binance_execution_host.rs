@@ -774,6 +774,9 @@ where
             "CancelOrderGroup 账户或交易所与 Binance worker 拓扑不匹配".into(),
         ));
     }
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock =
+        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
     let store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
     let Some(group) = store.load(&target.group_id)? else {
         return Ok(Err(format!(
@@ -855,7 +858,7 @@ where
     ]
     .into_iter()
     .collect();
-    execute_binance_queued_cancel(
+    execute_binance_queued_cancel_with_admission_lock(
         worker,
         pipeline_storage,
         settlement_currency,
@@ -892,6 +895,46 @@ where
             "CancelOrder 账户或执行 worker Venue 与 Binance worker 不匹配".into(),
         ));
     }
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock =
+        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
+    execute_binance_queued_cancel_with_admission_lock(
+        worker,
+        pipeline_storage,
+        settlement_currency,
+        runtime_environment,
+        runtime_config_path,
+        now,
+        command,
+        metrics,
+        create_venue,
+        dedicated_spread_recovery,
+        cancel_group,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_binance_queued_cancel_with_admission_lock<F>(
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    settlement_currency: &str,
+    runtime_environment: &str,
+    runtime_config_path: &Path,
+    now: u64,
+    command: &ControlCommand,
+    metrics: &mut PipelineMetricsReporter,
+    create_venue: &mut F,
+    dedicated_spread_recovery: bool,
+    cancel_group: Option<&qx_core::OrderGroupState>,
+) -> Result<Result<String, String>, String>
+where
+    F: FnMut(&WorkerConfig) -> Result<BinanceSpotVenue, String>,
+{
+    if !binance_cancel_matches_worker(command, worker) {
+        return Ok(Err(
+            "CancelOrder 账户或执行 worker Venue 与 Binance worker 不匹配".into(),
+        ));
+    }
     let mut execution_command = command.clone();
     execution_command
         .payload
@@ -902,6 +945,28 @@ where
         "BINANCE",
         pipeline_storage,
         settlement_currency,
+    )?;
+    prepared
+        .pipeline
+        .refresh()
+        .map_err(|error| format!("刷新 Binance 撤单前账户 EventLog 失败: {error:?}"))?;
+    prepared.order = prepared
+        .pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == prepared.target.client_order_id)
+        .ok_or_else(|| {
+            format!(
+                "刷新后账户 EventLog 不存在 Binance 撤单订单 {}",
+                prepared.target.client_order_id
+            )
+        })?;
+    crate::risk_host::require_no_unresolved_live_order_operations(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        &prepared.pipeline,
+        Some(prepared.target.client_order_id),
     )?;
     if prepared.order.status == qx_core::OrderStatus::Cancelled {
         return Ok(Ok("ALREADY_CANCELLED".into()));
