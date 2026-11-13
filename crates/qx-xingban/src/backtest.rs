@@ -659,6 +659,7 @@ impl BacktestEngine {
                                 filled: Quantity::ZERO,
                                 account_id: account_id.clone(),
                                 trace: Some(qx_core::OrderTrace {
+                                    run_id: None,
                                     strategy_id: Some("qx-protective-exit".into()),
                                     signal_id: None,
                                     intent_id: None,

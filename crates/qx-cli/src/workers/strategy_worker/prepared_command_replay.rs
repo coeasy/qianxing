@@ -625,6 +625,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: account_id.into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(worker_id.into()),
                 signal_id: Some(1),
                 intent_id: Some(command_id),
@@ -1055,6 +1056,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(worker_id.into()),
                 signal_id: Some(1),
                 intent_id: Some(41),
@@ -1249,6 +1251,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(worker_id.into()),
                 signal_id: Some(1),
                 intent_id: Some(42),

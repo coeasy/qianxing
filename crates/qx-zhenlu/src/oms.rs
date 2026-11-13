@@ -372,6 +372,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(OrderTrace {
+                run_id: None,
                 strategy_id: Some("oms-test".into()),
                 signal_id: Some(1),
                 intent_id: Some(1),

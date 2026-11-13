@@ -124,6 +124,9 @@ impl OrderStatus {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrderTrace {
+    /// Stable run identity that created the order. Older orders omit it; readers must not infer it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     pub strategy_id: Option<String>,
     pub signal_id: Option<u64>,
     pub intent_id: Option<u64>,
@@ -400,6 +403,14 @@ impl Order {
         }
         if self.account_id.trim().is_empty() {
             return Err("订单账户不能为空".into());
+        }
+        if self
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.run_id.as_deref())
+            .is_some_and(|run_id| run_id.trim().is_empty())
+        {
+            return Err("订单 run_id 不能为空字符串；未知运行身份应省略该字段".into());
         }
         if self.policy.is_some_and(|policy| policy.leverage == 0) {
             return Err("订单杠杆必须大于 0".into());
@@ -686,6 +697,38 @@ impl Fill {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn order_trace_run_identity_is_optional_backward_compatible_and_nonempty() {
+        let legacy: OrderTrace = serde_json::from_str(
+            r#"{"strategy_id":"legacy","signal_id":null,"intent_id":null,"rule_version":null}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.run_id, None);
+
+        let mut order = Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTC/USDT.OKX").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: Some(OrderTrace {
+                run_id: Some("  ".into()),
+                strategy_id: Some("strategy".into()),
+                signal_id: None,
+                intent_id: None,
+                rule_version: None,
+            }),
+            policy: None,
+            exact_amounts: None,
+        };
+        assert!(order.validate().unwrap_err().contains("run_id"));
+        order.trace.as_mut().unwrap().run_id = Some("run-42".into());
+        order.validate().unwrap();
+    }
 
     #[test]
     fn conditional_order_terms_are_validated_and_part_of_idempotency_identity() {

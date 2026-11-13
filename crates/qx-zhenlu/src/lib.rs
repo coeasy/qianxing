@@ -269,6 +269,7 @@ impl OrderIntent {
             filled: Quantity::ZERO,
             account_id: self.account_id,
             trace: Some(OrderTrace {
+                run_id: None,
                 strategy_id: Some(self.strategy_id),
                 signal_id: self.signal_id,
                 intent_id: Some(self.intent_id),

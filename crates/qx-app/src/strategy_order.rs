@@ -72,6 +72,7 @@ pub fn build_strategy_target_order(
             delta
         };
         let round_scope = format!("strategy-target:{}", input.run_id.max(1));
+        let run_id = input.run_id.max(1).to_string();
         let built = build_strategy_order_from_intent(
             &StrategyOrderInput {
                 intent_id: input.signal_id.max(1),
@@ -92,6 +93,7 @@ pub fn build_strategy_target_order(
             &StrategyOrderBindings {
                 account_id: input.account_id,
                 strategy_id: input.strategy_id,
+                run_id: Some(&run_id),
                 signal_id: input.signal_id,
                 round_scope: &round_scope,
                 rule_version: input.strategy_id,
@@ -215,6 +217,8 @@ pub struct StrategyOrderInput {
 pub struct StrategyOrderBindings<'a> {
     pub account_id: &'a str,
     pub strategy_id: &'a str,
+    /// Stable strategy run identity, when the caller has one.
+    pub run_id: Option<&'a str>,
     pub signal_id: u64,
     pub round_scope: &'a str,
     pub rule_version: &'a str,
@@ -422,6 +426,7 @@ pub fn build_strategy_order_from_intent(
         filled: Quantity::ZERO,
         account_id: bindings.account_id.into(),
         trace: Some(qx_core::OrderTrace {
+            run_id: bindings.run_id.map(str::to_owned),
             strategy_id: Some(bindings.strategy_id.into()),
             signal_id: Some(bindings.signal_id),
             intent_id: Some(intent.intent_id),

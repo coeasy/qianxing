@@ -2072,6 +2072,7 @@ fn build_compensation_order(
         filled: Quantity::ZERO,
         account_id: target.account_id.clone(),
         trace: Some(OrderTrace {
+            run_id: None,
             strategy_id: Some(group.strategy_id.clone()),
             signal_id: None,
             intent_id: None,

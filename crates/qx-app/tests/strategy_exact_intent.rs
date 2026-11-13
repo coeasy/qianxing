@@ -60,6 +60,7 @@ fn exact_strategy_intent_becomes_scale_aware_order_after_frozen_rule_validation(
         &StrategyOrderBindings {
             account_id: "account-1",
             strategy_id: "pepe-maker",
+            run_id: Some("run-1"),
             signal_id: 9,
             round_scope: "run-1",
             rule_version: "v1",
@@ -75,6 +76,14 @@ fn exact_strategy_intent_becomes_scale_aware_order_after_frozen_rule_validation(
     let exact = built.order.exact_amounts.unwrap();
     assert_eq!(built.order.qty.raw(), 0);
     assert_eq!(built.order.limit, None);
+    assert_eq!(
+        built
+            .order
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.run_id.as_deref()),
+        Some("run-1")
+    );
     assert_eq!(exact.quantity, ExactDecimal::parse("0.0000000001").unwrap());
     assert_eq!(
         exact.limit_price,
@@ -111,6 +120,7 @@ fn bitget_quote_budget_intent_builds_a_distinct_exact_market_order() {
         &StrategyOrderBindings {
             account_id: "bitget-account",
             strategy_id: "budget-buy",
+            run_id: None,
             signal_id: 2,
             round_scope: "run-1",
             rule_version: "v1",
@@ -140,6 +150,7 @@ fn exact_strategy_intent_requires_market_rules_and_rejects_off_step_values() {
     let mut missing_spec = StrategyOrderBindings {
         account_id: "account-1",
         strategy_id: "pepe-maker",
+        run_id: None,
         signal_id: 9,
         round_scope: "run-1",
         rule_version: "v1",

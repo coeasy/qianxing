@@ -369,6 +369,7 @@ fn strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates()
     let strategy_id = config.strategy.id.as_deref().unwrap();
     let mut order = mk_order(91_701, &instrument, Side::Buy, 2);
     order.trace = Some(OrderTrace {
+        run_id: None,
         strategy_id: Some(strategy_id.into()),
         signal_id: Some(1),
         intent_id: Some(1),

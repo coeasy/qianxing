@@ -1243,6 +1243,7 @@ mod tests {
             filled: Quantity::from_i64(1),
             account_id: "paper".into(),
             trace: Some(OrderTrace {
+                run_id: None,
                 strategy_id: Some("update-test".into()),
                 signal_id: Some(3),
                 intent_id: Some(4),

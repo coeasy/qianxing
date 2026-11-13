@@ -216,6 +216,7 @@ fn order(seq: u64) -> qx_core::Order {
         filled: Quantity::ZERO,
         account_id: "main".into(),
         trace: Some(OrderTrace {
+            run_id: None,
             strategy_id: Some("demo".into()),
             signal_id: Some(1),
             intent_id: Some(seq),

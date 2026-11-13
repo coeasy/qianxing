@@ -74,10 +74,9 @@ fn contract_intent_identity_is_scoped_by_round() {
     assert!(order_for(&config, "9201", 1).client_id > 0);
     // 归因侧保留策略原值，跨轮折身份不能把 intent_id 洗掉。
     let order = order_for(&config, "9201", 3);
-    assert_eq!(
-        order.trace.expect("策略订单必须带 trace").intent_id,
-        Some(3)
-    );
+    let trace = order.trace.expect("策略订单必须带 trace");
+    assert_eq!(trace.intent_id, Some(3));
+    assert_eq!(trace.run_id.as_deref(), Some("9201"));
 }
 
 #[test]

@@ -515,7 +515,8 @@ pub(crate) fn build_strategy_order(
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
 /// `round_scope` 是这一轮的标识：worker 链与回测链都传 `output.request_id`（即调度器的
-/// run id，实时作业按 BarFrame 指纹幂等）。非空不用在这里再查一遍——
+/// run id，实时作业按 BarFrame 指纹幂等），同时写入订单 trace 供 EventLog 和账本追踪。
+/// 非空不用在这里再查一遍——
 /// `StrategyContractOutput::validate_for` 要求 output 原样回显 input 的 request_id，而
 /// `StrategyContractInput::validate` 已经拒绝空值。
 #[allow(clippy::too_many_arguments)] // Keep each versioned intent field and execution context explicit at the kernel boundary.
@@ -553,6 +554,7 @@ pub(crate) fn build_strategy_order_from_contract_intent(
                 .or(config.strategy.account_id.as_deref())
                 .unwrap_or_default(),
             strategy_id,
+            run_id: Some(round_scope),
             signal_id,
             round_scope,
             rule_version: &config.strategy.version,

@@ -1799,7 +1799,10 @@ fn order_event_context(order: &Order) -> EventContext {
     let trace = order.trace.as_ref();
     EventContext {
         tenant_id: order.account_id.clone(),
-        run_id: format!("account:{}", order.account_id),
+        run_id: trace
+            .and_then(|trace| trace.run_id.clone())
+            .filter(|run_id| !run_id.trim().is_empty())
+            .unwrap_or_else(|| format!("account:{}", order.account_id)),
         account_id: order.account_id.clone(),
         portfolio_id: order.account_id.clone(),
         strategy_id: trace
@@ -2134,6 +2137,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(OrderTrace {
+                run_id: Some("run-7".into()),
                 strategy_id: Some("demo".into()),
                 signal_id: Some(1),
                 intent_id: Some(7),
@@ -2217,6 +2221,7 @@ mod tests {
             .find(|event| matches!(event.kind, EventKind::Accepted { .. }))
             .expect("venue acceptance fact");
         assert_eq!(accepted.metadata.context.account_id, "main");
+        assert_eq!(accepted.metadata.context.run_id, "run-7");
         assert_eq!(accepted.metadata.context.strategy_id, "demo");
         assert_eq!(accepted.metadata.context.signal_id, "1");
         assert_eq!(accepted.metadata.context.intent_id, "7");
@@ -3053,6 +3058,7 @@ mod tests {
             .find(|event| matches!(event.kind, EventKind::OrderStatusReconciled { .. }))
             .expect("authoritative status reconciliation fact");
         assert_eq!(reconciled.metadata.context.strategy_id, "demo");
+        assert_eq!(reconciled.metadata.context.run_id, "run-7");
         assert_eq!(reconciled.metadata.context.signal_id, "1");
         assert_eq!(reconciled.metadata.context.intent_id, "7");
         let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
@@ -3599,6 +3605,7 @@ mod tests {
             .find(|event| matches!(event.kind, EventKind::Filled { .. }))
             .expect("venue fill fact");
         assert_eq!(fill_event.metadata.context.strategy_id, "demo");
+        assert_eq!(fill_event.metadata.context.run_id, "run-7");
         assert_eq!(fill_event.metadata.context.signal_id, "1");
         assert_eq!(fill_event.metadata.context.intent_id, "7");
         let ledger_events: Vec<_> = pipeline
@@ -3610,6 +3617,7 @@ mod tests {
         assert_eq!(ledger_events.len(), 3);
         assert!(ledger_events.iter().all(|event| {
             event.metadata.context.strategy_id == "demo"
+                && event.metadata.context.run_id == "run-7"
                 && event.metadata.context.signal_id == "1"
                 && event.metadata.context.intent_id == "7"
         }));
@@ -3715,6 +3723,7 @@ mod tests {
         assert_eq!(lifecycle.len(), 3);
         assert!(lifecycle.iter().all(|event| {
             event.metadata.context.strategy_id == "demo"
+                && event.metadata.context.run_id == "run-7"
                 && event.metadata.context.signal_id == "1"
                 && event.metadata.context.intent_id == "7"
         }));
@@ -3740,6 +3749,7 @@ mod tests {
             .find(|event| matches!(event.kind, EventKind::ReconcileRequired { .. }))
             .expect("reconciliation barrier fact");
         assert_eq!(reconcile.metadata.context.strategy_id, "demo");
+        assert_eq!(reconcile.metadata.context.run_id, "run-7");
         assert_eq!(reconcile.metadata.context.signal_id, "1");
         assert_eq!(reconcile.metadata.context.intent_id, "7");
         let _ = std::fs::remove_dir_all(reconcile_root);

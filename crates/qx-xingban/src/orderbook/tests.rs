@@ -15,6 +15,7 @@ fn order(side: Side, qty: i128, limit: Option<i128>) -> Order {
         filled: Quantity::ZERO,
         account_id: "main".into(),
         trace: Some(OrderTrace {
+            run_id: None,
             strategy_id: Some("book-test".into()),
             signal_id: Some(1),
             intent_id: Some(1),

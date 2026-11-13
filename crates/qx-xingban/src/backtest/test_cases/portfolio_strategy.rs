@@ -87,6 +87,7 @@ impl BarStrategy for ScheduledBuyer {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(self.id.into()),
                 signal_id: Some(1),
                 intent_id: Some(1),
@@ -245,6 +246,7 @@ impl BarStrategy for MisattributedBuyer {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some("beta".into()),
                 signal_id: None,
                 intent_id: None,

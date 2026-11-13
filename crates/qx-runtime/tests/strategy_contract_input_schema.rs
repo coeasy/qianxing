@@ -153,6 +153,7 @@ fn input_v3_schema_requires_event_log_bound_fills_and_allows_status_updates() {
         filled: qx_core::Quantity::ZERO,
         account_id: "account-1".into(),
         trace: Some(qx_core::OrderTrace {
+            run_id: None,
             strategy_id: Some("strategy-1".into()),
             signal_id: Some(1),
             intent_id: Some(7),

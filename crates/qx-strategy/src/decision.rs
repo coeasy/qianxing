@@ -78,6 +78,7 @@ impl StrategyDecision {
                 filled: Quantity::ZERO,
                 account_id: context.account_id.clone(),
                 trace: Some(OrderTrace {
+                    run_id: None,
                     strategy_id: Some(context.strategy_id.clone()),
                     signal_id: Some(self.signal_id),
                     intent_id: Some(intent.intent_id),

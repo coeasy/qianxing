@@ -40,6 +40,7 @@ impl BarStrategy for SubmitToSharedTargetFromEachMarket {
             filled: Quantity::ZERO,
             account_id: "shared-account".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(callback_instrument.to_string()),
                 signal_id: None,
                 intent_id: None,

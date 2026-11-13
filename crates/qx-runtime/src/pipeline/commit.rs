@@ -48,7 +48,10 @@ impl LiveEventPipeline {
         if context.tenant_id.trim().is_empty() {
             context.tenant_id.clone_from(&registered.tenant_id);
         }
-        if context.run_id.trim().is_empty() {
+        if context.run_id.trim().is_empty()
+            || (context.run_id == format!("account:{}", order.account_id)
+                && registered.run_id != format!("account:{}", order.account_id))
+        {
             context.run_id.clone_from(&registered.run_id);
         }
         if context.account_id.trim().is_empty() {

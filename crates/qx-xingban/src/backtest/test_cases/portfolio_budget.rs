@@ -91,6 +91,7 @@ fn strategy_budget_sums_each_pending_instrument_in_budget_currency() {
         filled: Quantity::ZERO,
         account_id: "main".into(),
         trace: Some(qx_core::OrderTrace {
+            run_id: None,
             strategy_id: Some("alpha".into()),
             signal_id: None,
             intent_id: None,
@@ -214,6 +215,7 @@ fn strategy_budget_keeps_the_highest_pending_reference_price_per_instrument() {
         filled: Quantity::ZERO,
         account_id: "main".into(),
         trace: Some(qx_core::OrderTrace {
+            run_id: None,
             strategy_id: Some("alpha".into()),
             signal_id: None,
             intent_id: None,

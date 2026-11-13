@@ -305,6 +305,7 @@ mod tests {
             filled: Quantity::ZERO,
             account_id: "acct-a".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(strategy_id.into()),
                 signal_id: Some(1),
                 intent_id: Some(client_id),

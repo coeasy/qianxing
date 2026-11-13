@@ -306,6 +306,7 @@ impl BarStrategy for PortfolioBarStrategy {
             )?;
             for order in &mut child_orders {
                 let trace = order.trace.get_or_insert(qx_core::OrderTrace {
+                    run_id: None,
                     strategy_id: None,
                     signal_id: None,
                     intent_id: None,
@@ -357,6 +358,7 @@ impl BarStrategy for PortfolioBarStrategy {
             )?;
             for order in &mut child_orders {
                 let trace = order.trace.get_or_insert(qx_core::OrderTrace {
+                    run_id: None,
                     strategy_id: None,
                     signal_id: None,
                     intent_id: None,

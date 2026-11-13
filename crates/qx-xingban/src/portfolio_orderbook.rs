@@ -378,6 +378,7 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
                     .allocate_order_id()
                     .map_err(|error| error.to_string())?;
                 let trace = order.trace.get_or_insert(OrderTrace {
+                    run_id: None,
                     strategy_id: None,
                     signal_id: None,
                     intent_id: None,
