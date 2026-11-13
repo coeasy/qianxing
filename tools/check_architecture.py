@@ -29594,19 +29594,11 @@ SELF_ROLLED_PUBLISH = (
     re.compile(r"\.tmp-"),
 )
 # 豁免登记表：带自搓发布形状、但**不是**产物落盘的运行期/数据层写点，每项一条理由。
-# 转走 sink 的那天把条目移出去——(d) 盯着「已无指纹还赖在表里」。qx-data 三处与
-# qx-zhenlu 还有结构性理由：sink 住在 qx-app，而这些 crate 在依赖序上位于 qx-app
-# 下游（qx-app 的依赖清单里有它们，反向不成立），发布原语下沉是独立议题。
+# 转走 sink 的那天把条目移出去——(d) 盯着「已无指纹还赖在表里」。运行期状态文件使用
+# qx-core 的原子文件原语，不属于 qx-app 产物 sink 的职责，也不应继续豁免旧手写发布指纹。
 ARTIFACT_PUBLISH_EXEMPT = {
-    "crates/qx-service/src/ccxt_live_bars.rs": "实时 BarFrame 快照：行情运行期断点，每轮整份覆写，不是一次运行的产物",
-    "crates/qx-cli/src/strategy_live_state.rs": "实时策略 digest 断点：运行期状态，非产物",
     "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs": "策略执行 cursor/checkpoint：有 fencing 的运行期恢复状态，非研究/回测产物",
     "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs": "Strategy PreparedEvaluation durable journal：命令恢复用运行期事务状态，非研究/回测产物",
-    "crates/qx-service/src/worker_metrics.rs": "worker Prometheus .prom 边车文件：运维指标出口，非产物（WP-3.14）",
-    "crates/qx-data/src/catalog.rs": "数据集目录登记：数据层存储，sink 在 qx-app、qx-data 位于其下游",
-    "crates/qx-data/src/registry.rs": "数据集注册表：数据层存储，同上",
-    "crates/qx-data/src/storage.rs": "Bar 存储落盘：数据层存储，同上",
-    "crates/qx-zhenlu/src/lib.rs": "多腿组合单状态：FileLock 保护的活单运行期状态，非产物",
     "crates/qx-orchestrator/src/strategy_deployment.rs": "按部署 revision 原子物化的运行期 worker 配置：由 supervisor 自身消费，非研究或回测产物",
 }
 
