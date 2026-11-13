@@ -441,6 +441,37 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(cancelled["cancel_request_accepted"], "true")
         self.assertEqual(exchange.calls[-1][1:4], ("trade/cancel-algos", "private", "POST"))
 
+    def test_okx_oco_query_falls_back_to_history_for_a_terminal_algo(self):
+        class OkxHistoricalAlgoExchange(FakeExchange):
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "trade/order-algo":
+                    return {"code": "51603", "msg": "Order does not exist", "data": []}
+                if path == "trade/orders-algo-history":
+                    return {"code": "0", "data": [{
+                        "algoId": params["algoId"],
+                        "algoClOrdId": "QXGROUPABC123",
+                        "instId": "BTCUSDT",
+                        "ordType": "oco",
+                        "state": "effective",
+                        "actualSide": "tp",
+                        "actualSz": "0.5",
+                        "actualPx": "110.4",
+                        "ordIdList": ["987654321"],
+                    }]}
+                raise AssertionError((path, method))
+
+        exchange = OkxHistoricalAlgoExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange)
+        snapshot = client.fetch_okx_oco_order_group("BTC/USDT.OKX", algo_id="123456")
+
+        self.assertEqual(snapshot["state"], "effective")
+        self.assertEqual(snapshot["order_ids"], ["987654321"])
+        self.assertEqual(
+            exchange.calls[-1][1:5],
+            ("trade/orders-algo-history", "private", "GET", {"ordType": "oco", "algoId": "123456"}),
+        )
+
     def test_bitget_uta_oco_uses_strategy_endpoint_without_client_oid(self):
         class BitgetUtaExchange(FakeExchange):
             def amount_to_precision(self, symbol, value):

@@ -2874,11 +2874,40 @@ class CcxtExchangeClient:
                 raise CcxtConnectorError(CcxtErrorClass.INVALID, "OKX algoClOrdId 格式非法")
             params["algoClOrdId"] = client_id
         response = self._call("request", "trade/order-algo", "private", "GET", params)
-        if not isinstance(response, Mapping) or response.get("code") != "0":
-            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 查询顶层响应失败")
+        if not isinstance(response, Mapping):
+            raise CcxtConnectorError(CcxtErrorClass.UNKNOWN, "OKX order-algo 查询响应格式非法")
         rows = response.get("data")
+        detail_missing = response.get("code") == "51603" or (
+            response.get("code") == "0" and isinstance(rows, list) and not rows
+        )
+        used_history_fallback = False
+        if detail_missing and algo_id is not None:
+            # The detail endpoint may no longer expose a completed algo. OKX documents a
+            # separate three-month algo history endpoint keyed by algoId; use it to
+            # reconcile terminal OCO facts instead of turning a known terminal order into
+            # an unresolvable lookup. Never broaden a client-id lookup into an account scan.
+            response = self._call(
+                "request",
+                "trade/orders-algo-history",
+                "private",
+                "GET",
+                {"ordType": "oco", "algoId": algo_id},
+            )
+            used_history_fallback = True
+            if not isinstance(response, Mapping) or response.get("code") != "0":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNKNOWN, "OKX algo history 查询响应失败或结果未知"
+                )
+            rows = response.get("data")
+        elif response.get("code") != "0":
+            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 查询顶层响应失败")
         if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
-            raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "OKX order-algo 查询必须返回一条记录")
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNKNOWN if used_history_fallback else CcxtErrorClass.EXCHANGE,
+                "OKX algo 查询必须返回唯一记录；history 缺失不得清除对账屏障"
+                if used_history_fallback
+                else "OKX order-algo 查询必须返回一条记录",
+            )
         row = rows[0]
         if (
             str(row.get("instId") or "") != market.market_id
