@@ -473,7 +473,7 @@
         "production_approved"
       ],
       "limitations": [
-        "ccxt_public_provider_profile_only_partially_recorded：CI run 43393595406 已在 Linux release wheel/CLI 上完成 OKX 与 Bitget 真实公开 30 天 1h 行情、质量清单、公开默认费率、回测和 HTML 报告；两者均 720 根、零缺口、38 fills、零拒单。Binance hosted runner 的公开 exchangeInfo 返回 HTTP 451，未完成 profile。证据仅覆盖指定窗口的公开只读研究，不覆盖 authenticated/private API、数据修订/发布时间、testnet/live 订单或交易所实盘可用性 （状态：未收口；收口门：在合法可访问环境记录 Binance 同等公开 profile，并取得逐产品授权 sandbox 生命周期证据；未排期原因：runner 地区限制且当前无三家授权 Sandbox 订单窗口）",
+        "ccxt_public_provider_profile_only_partially_recorded：CI run 43397625762 已在 Linux release wheel/CLI 上完成 OKX 与 Bitget 真实公开 30 天 1h 行情、质量清单、公开默认费率、回测和 HTML 报告；两者均 720 根、零缺口、38 fills、零拒单。Binance hosted runner 的公开 exchangeInfo 返回 HTTP 451，未完成 profile。证据仅覆盖指定窗口的公开只读研究，不覆盖 authenticated/private API、数据修订/发布时间、testnet/live 订单或交易所实盘可用性 （状态：未收口；收口门：在合法可访问环境记录 Binance 同等公开 profile，并取得逐产品授权 sandbox 生命周期证据；未排期原因：runner 地区限制且当前无三家授权 Sandbox 订单窗口）",
         "capability_level_is_capped_at_l2：本地 run generation 只到 L2；L3/L4（沙盒/生产）必须由统一 EvidenceBundle 的 venue generation 与真实窗口支撑，构建器今天只声明 L1 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
