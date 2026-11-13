@@ -2160,6 +2160,9 @@ mod tests {
             client_order_id: 7,
             account_id: "main".into(),
             run_id: Some("run-7".into()),
+            strategy_id: Some("demo".into()),
+            signal_id: Some(1),
+            intent_id: Some(7),
             venue_id: "BINANCE".into(),
             order_fingerprint: "b".repeat(64),
             catalog_fingerprint: "c".repeat(64),
@@ -2183,6 +2186,9 @@ mod tests {
             .find(|event| event.seq == seq)
             .unwrap();
         assert_eq!(event.metadata.context.run_id, "run-7");
+        assert_eq!(event.metadata.context.strategy_id, "demo");
+        assert_eq!(event.metadata.context.signal_id, "1");
+        assert_eq!(event.metadata.context.intent_id, "7");
         assert_eq!(
             pipeline
                 .record_execution_capability_decision(decision.clone(), 100)

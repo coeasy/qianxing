@@ -395,6 +395,9 @@ fn execution_decision_fact(
         "client_order_id": order.client_id,
         "account_id": order.account_id,
         "run_id": order.trace.as_ref().and_then(|trace| trace.run_id.as_deref()),
+        "strategy_id": order.trace.as_ref().and_then(|trace| trace.strategy_id.as_deref()),
+        "signal_id": order.trace.as_ref().and_then(|trace| trace.signal_id),
+        "intent_id": order.trace.as_ref().and_then(|trace| trace.intent_id),
         "venue_id": resolved.spec.venue,
         "order_fingerprint": order_fingerprint,
         "catalog_fingerprint": resolved.catalog_fingerprint,
@@ -411,6 +414,12 @@ fn execution_decision_fact(
         client_order_id: order.client_id,
         account_id: order.account_id.clone(),
         run_id: order.trace.as_ref().and_then(|trace| trace.run_id.clone()),
+        strategy_id: order
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.strategy_id.clone()),
+        signal_id: order.trace.as_ref().and_then(|trace| trace.signal_id),
+        intent_id: order.trace.as_ref().and_then(|trace| trace.intent_id),
         venue_id: resolved.spec.venue.clone(),
         order_fingerprint,
         catalog_fingerprint: resolved.catalog_fingerprint.clone(),
@@ -427,6 +436,9 @@ fn same_preflight_binding(
         && previous.client_order_id == current.client_order_id
         && previous.account_id == current.account_id
         && previous.run_id == current.run_id
+        && previous.strategy_id == current.strategy_id
+        && previous.signal_id == current.signal_id
+        && previous.intent_id == current.intent_id
         && previous.venue_id.eq_ignore_ascii_case(&current.venue_id)
         && previous.order_fingerprint == current.order_fingerprint
         && previous.market_rule_fingerprint == current.market_rule_fingerprint

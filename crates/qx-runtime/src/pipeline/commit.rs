@@ -176,9 +176,18 @@ impl LiveEventPipeline {
                 .unwrap_or_else(|| format!("account:{}", decision.account_id)),
             account_id: decision.account_id.clone(),
             portfolio_id: decision.account_id.clone(),
-            strategy_id: "execution-capability-preflight".into(),
-            signal_id: String::new(),
-            intent_id: format!("order:{}", decision.client_order_id),
+            strategy_id: decision
+                .strategy_id
+                .clone()
+                .unwrap_or_else(|| "execution-capability-preflight".into()),
+            signal_id: decision
+                .signal_id
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            intent_id: decision
+                .intent_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| format!("order:{}", decision.client_order_id)),
         };
         let correlation_id = format!(
             "execution-capability:{}:{}",

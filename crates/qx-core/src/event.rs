@@ -513,6 +513,12 @@ pub struct ExecutionCapabilityDecisionFact {
     /// Strategy execution identity for the order this preflight admitted. Older facts omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_id: Option<u64>,
     pub venue_id: String,
     pub order_fingerprint: String,
     pub catalog_fingerprint: String,
