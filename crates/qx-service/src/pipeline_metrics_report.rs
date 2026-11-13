@@ -61,6 +61,7 @@ pub struct PipelineMetricsReporter {
     ccxt_ohlcv_request_duration_buckets: [u64; 10],
     ccxt_ohlcv_request_duration_count: u64,
     ccxt_ohlcv_request_duration_ns_total: u128,
+    gateway_request_durations: BTreeMap<ExchangeGatewayPort, ([u64; 10], u64, u128)>,
     gateway_venue_reconnects: BTreeMap<String, u64>,
     gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
@@ -196,6 +197,32 @@ impl PipelineMetricsReporter {
             .saturating_add(u128::from(duration_ns));
     }
 
+    /// Record a completed request or cycle for a fixed gateway port label.
+    pub(crate) fn observe_gateway_port_operation_duration(
+        &mut self,
+        port: ExchangeGatewayPort,
+        duration_ns: u64,
+    ) {
+        const BUCKETS_NS: [u64; 10] = [
+            10_000_000,
+            25_000_000,
+            50_000_000,
+            100_000_000,
+            250_000_000,
+            500_000_000,
+            1_000_000_000,
+            2_500_000_000,
+            5_000_000_000,
+            10_000_000_000,
+        ];
+        let (buckets, count, total_ns) = self.gateway_request_durations.entry(port).or_default();
+        if let Some(index) = BUCKETS_NS.iter().position(|bound| duration_ns <= *bound) {
+            buckets[index] = buckets[index].saturating_add(1);
+        }
+        *count = count.saturating_add(1);
+        *total_ns = total_ns.saturating_add(u128::from(duration_ns));
+    }
+
     /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
     /// participates in readiness or execution authorization.
     pub(crate) fn observe_gateway_venue_reconnects(&mut self, venue_id: &str, total: u64) {
@@ -307,6 +334,35 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
             body.push_str(&format!(
                 "qx_gateway_venue_reconnects_total{{{label},venue=\"{}\"}} {reconnects}\n",
                 prometheus_label(venue)
+            ));
+        }
+        for (port, (buckets, count, total_ns)) in &self.gateway_request_durations {
+            const BUCKETS: [(&str, u64); 10] = [
+                ("0.01", 10_000_000),
+                ("0.025", 25_000_000),
+                ("0.05", 50_000_000),
+                ("0.1", 100_000_000),
+                ("0.25", 250_000_000),
+                ("0.5", 500_000_000),
+                ("1", 1_000_000_000),
+                ("2.5", 2_500_000_000),
+                ("5", 5_000_000_000),
+                ("10", 10_000_000_000),
+            ];
+            let port_label = port.metric_label();
+            let port_labels = format!("{label},port=\"{port_label}\"");
+            let mut cumulative = 0_u64;
+            for ((bound_label, _), bucket_count) in BUCKETS.iter().zip(buckets) {
+                cumulative = cumulative.saturating_add(*bucket_count);
+                body.push_str(&format!(
+                    "qx_gateway_port_operation_duration_seconds_bucket{{{port_labels},le=\"{bound_label}\"}} {cumulative}\n"
+                ));
+            }
+            body.push_str(&format!(
+                "qx_gateway_port_operation_duration_seconds_bucket{{{port_labels},le=\"+Inf\"}} {count}\n\
+qx_gateway_port_operation_duration_seconds_sum{{{port_labels}}} {:.9}\n\
+qx_gateway_port_operation_duration_seconds_count{{{port_labels}}} {count}\n",
+                *total_ns as f64 / 1_000_000_000.0,
             ));
         }
         if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
@@ -530,6 +586,12 @@ mod tests {
         let body = reporter.body(true, 92_000);
         assert!(body.contains(
             "qx_gateway_port_business_status{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_operation_duration_seconds_count{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\"} 1"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_operation_duration_seconds_bucket{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\",le=\"+Inf\"} 1"
         ));
     }
 }

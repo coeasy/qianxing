@@ -19,7 +19,7 @@ use qx_runtime::{
     WorkerContext,
 };
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_binance_reconcile_worker<F>(
@@ -49,6 +49,7 @@ where
     metrics.publish_if_due(true, runtime_timestamp_ms());
     run_polling_worker(&context, once, || {
         let mut account_query_observed = false;
+        let cycle_started = Instant::now();
         let result = (|| -> Result<u64, String> {
             let query_capabilities = require_account_query_execution_capability(
                 &worker,
@@ -224,6 +225,12 @@ where
             metrics.publish_if_due(true, received_ts);
             Ok(30_000)
         })();
+        if !context.should_stop() {
+            metrics.observe_gateway_port_operation_duration(
+                ExchangeGatewayPort::Reconciliation,
+                cycle_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            );
+        }
         if result.is_err() {
             let now_ms = runtime_timestamp_ms();
             metrics.observe_gateway_port_business_status(

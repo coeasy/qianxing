@@ -4,6 +4,7 @@ use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use qx_core::{ErrorCode, Order, QxError, QxResult, TradingInstrumentSpec};
 use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
+use std::time::Instant;
 
 pub(crate) struct GatewayExecutionProbeVenue<'a, V> {
     venue: V,
@@ -19,11 +20,20 @@ impl<'a, V> GatewayExecutionProbeVenue<'a, V> {
         self.venue
     }
 
-    fn observe(&mut self, status: GatewayBusinessHealthStatus, observed_ts_ms: u64) {
+    fn observe(
+        &mut self,
+        status: GatewayBusinessHealthStatus,
+        observed_ts_ms: u64,
+        duration: std::time::Duration,
+    ) {
         self.metrics.observe_gateway_port_business_status(
             ExchangeGatewayPort::VenueExecution,
             status,
             observed_ts_ms,
+        );
+        self.metrics.observe_gateway_port_operation_duration(
+            ExchangeGatewayPort::VenueExecution,
+            duration.as_nanos().min(u128::from(u64::MAX)) as u64,
         );
     }
 }
@@ -54,14 +64,16 @@ impl<V: Venue> Venue for GatewayExecutionProbeVenue<'_, V> {
     }
 
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        let started = Instant::now();
         let result = self.venue.submit(order, ts);
-        self.observe(execution_result_status(&result), ts);
+        self.observe(execution_result_status(&result), ts, started.elapsed());
         result
     }
 
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        let started = Instant::now();
         let result = self.venue.cancel(client_order_id, ts);
-        self.observe(execution_result_status(&result), ts);
+        self.observe(execution_result_status(&result), ts, started.elapsed());
         result
     }
 
@@ -70,8 +82,9 @@ impl<V: Venue> Venue for GatewayExecutionProbeVenue<'_, V> {
     }
 
     fn amend(&mut self, current: &Order, amended: &Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        let started = Instant::now();
         let result = self.venue.amend(current, amended, ts);
-        self.observe(execution_result_status(&result), ts);
+        self.observe(execution_result_status(&result), ts, started.elapsed());
         result
     }
 

@@ -23,6 +23,7 @@ use qx_runtime::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 /// Persist CCXT private-stream order facts into matching native OCO group snapshots.
 /// The stream reducer must append the order facts to EventLog first; this function only
@@ -1723,6 +1724,7 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
     metrics.publish_if_due(true, runtime_timestamp_ms());
     crate::worker_host::run_polling_worker(&context, once, || {
         let mut account_query_observed = false;
+        let cycle_started = Instant::now();
         let result = (|| -> Result<u64, String> {
             let query_capabilities = require_account_query_execution_capability(
                 &worker,
@@ -2245,6 +2247,12 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
             metrics.publish_if_due(true, received_ts);
             Ok(5_000)
         })();
+        if !context.should_stop() {
+            metrics.observe_gateway_port_operation_duration(
+                ExchangeGatewayPort::Reconciliation,
+                cycle_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            );
+        }
         if result.is_err() {
             let now_ms = runtime_timestamp_ms();
             metrics.observe_gateway_port_business_status(

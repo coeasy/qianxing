@@ -150,6 +150,8 @@ The CCXT MarketData worker publishes `qx_ccxt_ohlcv_rate_limit_retries_total{wor
 
 The API `/metrics` endpoint also reports durable queue state: `qx_job_queue_pending` and `qx_job_queue_oldest_age_seconds` cover runnable jobs waiting to be claimed; `qx_control_command_queue_pending` and `qx_control_command_queue_oldest_age_seconds` cover all unacknowledged control commands, including commands with active leases. Each queue has a `*_metrics_available` gauge. A storage read failure sets that gauge to `0` and omits depth/age samples instead of presenting an empty queue. Age uses the same lease-clock seconds as persisted enqueue timestamps.
 
+Execution and reconciliation workers publish `qx_gateway_port_operation_duration_seconds_{bucket,sum,count}` with the fixed `port` label. `venue_execution` measures each completed submit/cancel/amend operation; `reconciliation` measures a full reconciliation cycle, including private venue reads and local reconciliation work. Shutdown-cancelled cycles are omitted. These histograms expose latency distributions without command, order, or instrument labels.
+
 Create sandbox/demo credentials in each exchange's own account. Set the values only in your local PowerShell session or secret manager; keep the JSON examples unchanged because they contain environment-variable names, not keys.
 
 ```powershell
