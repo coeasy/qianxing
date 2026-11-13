@@ -87,6 +87,15 @@ jobs:
           --notes "Linux built-in Strategy host accepts supported requirements and rejects unsupported or algorithm-missing capabilities before dispatch"
           -- cargo test -p qx-cli --bin qx-cli -- --test-threads=1
           builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch
+      - name: Linux external-process host capability acknowledgment (R08)
+        run: >-
+          python3 tools/record_strategy_acceptance.py
+          --acceptance-id R08-AC01
+          --input crates/qx-cli/src/strategy_host/process_client.rs
+          --input crates/qx-cli/src/strategy_host/python_client.rs
+          --input crates/qx-strategy/src/capabilities.rs
+          --notes "Linux external process accepts the exact host capability acknowledgment and rejects unsupported requirements before spawn or a mismatched host identity before dispatch"
+          -- cargo test -p qx-cli --bin qx-cli capability_dispatch_tests -- --test-threads=1
       - name: Linux legacy C ABI capability compatibility (R08)
         run: >-
           python3 tools/record_strategy_acceptance.py

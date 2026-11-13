@@ -192,9 +192,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu Python 3.12 (PR CI #423) pass built-in dispatch, legacy C ABI compatibility, and Python host-capability acceptance; uploaded acceptance artifact awaits review."
+        "Hosted Linux acceptance records cover built-in, legacy C ABI, and Python strategy hosts, but an isolated external-process host acknowledgment run is being added so every supported host has directly attributable positive/negative evidence."
       ],
-      "next_action": "Review host-capability-acceptance-linux from PR CI #423 and bind the reviewed acceptance records.",
+      "next_action": "Run the updated Rust core job; import its Linux external-process record with the existing host-capability acceptance artifact, then review the full R08 matrix.",
       "code_paths": [
         "crates/qx-cli/src/strategy_host.rs",
         "crates/qx-cli/src/workers/strategy_worker.rs",
