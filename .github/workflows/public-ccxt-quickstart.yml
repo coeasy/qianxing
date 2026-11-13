@@ -12,6 +12,7 @@ on:
       - "crates/qx-cli/src/report_html.rs"
       - "crates/qx-cli/src/worker_entry.rs"
       - "crates/qx-xingban/src/backtest/**"
+      - "crates/qx-risk/src/**"
       - "crates/qx-adapter/src/ccxt.rs"
       - "python/qianxing_ccxt/**"
       - "tools/build_python_wheel.sh"

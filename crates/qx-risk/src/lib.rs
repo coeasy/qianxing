@@ -285,11 +285,19 @@ impl OrderRiskContext {
         }
         let policy = order.policy.unwrap_or_default();
         policy.validate_for(spec)?;
-        spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))?;
         let price = order
             .limit
             .or(self.reference_price)
             .ok_or_else(|| QxError::BusinessViolation("订单级风控缺少市价参考价".into()))?;
+        // The outer admission gate and risk gate must use the same as-of mark for
+        // market-order minimum-notional validation. `validate_order` only has a
+        // submitted limit price, so it rejects valid legacy market orders whenever
+        // the frozen venue spec has a positive minimum notional.
+        spec.validate_order_with_reference(
+            order.qty.raw(),
+            order.limit.map(|price| price.raw()),
+            Some(price.raw()),
+        )?;
         let notional = spec.notional(order.qty.raw(), price.raw())?;
         if self
             .max_order_notional_raw
@@ -776,6 +784,65 @@ mod tests {
         assert!(!rejected.allowed);
         assert_eq!(rejected.violations.len(), 1);
         assert!(rejected.violations[0].contains("TradingInstrumentSpec"));
+    }
+
+    #[test]
+    fn legacy_market_order_risk_uses_reference_for_minimum_notional() {
+        use qx_core::{TradingInstrumentSpec, TradingProduct, SCALE};
+
+        let order = Order {
+            client_id: 2,
+            instrument: InstrumentId::parse("BTC/USDT:USDT.BITGET").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let spec = TradingInstrumentSpec {
+            instrument: order.instrument.clone(),
+            product: TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: SCALE,
+            qty_step: SCALE,
+            min_qty: SCALE,
+            min_notional_raw: 10 * SCALE,
+            max_leverage: 10,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: None,
+        };
+        let context = OrderRiskContext {
+            reference_price: Some(Price::from_i64(100)),
+            instrument_spec: Some(spec.clone()),
+            ..OrderRiskContext::default()
+        };
+
+        let decision = RiskEngine::evaluate_order(&context, &order);
+        assert!(decision.allowed, "{decision:?}");
+        assert_eq!(decision.reference_price_raw, Some(100 * SCALE));
+
+        let missing_mark = OrderRiskContext {
+            reference_price: None,
+            instrument_spec: Some(spec),
+            ..OrderRiskContext::default()
+        };
+        let rejected = RiskEngine::evaluate_order(&missing_mark, &order);
+        assert!(!rejected.allowed);
+        assert!(rejected
+            .violations
+            .iter()
+            .any(|violation| violation.contains("市价参考价")));
     }
 
     #[test]
