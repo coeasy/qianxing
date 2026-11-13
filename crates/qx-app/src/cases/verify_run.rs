@@ -24,8 +24,13 @@
 //! 唯一的 `Err` 留给"这份调用方手上的 outcome 自己就不合法"——没有 run_id 的复核请求
 //! 没有意义。
 
+use crate::artifact_store::FileArtifactReader;
+use crate::artifact_store::{
+    declared_run_record_artifact_locators, read_text_bounded, read_text_bounded_by_id,
+    scan_csv_artifact, scan_csv_artifact_by_id, ArtifactReader,
+};
 use crate::cases::artifacts::{
-    csv_rows, last_equity_raw, read_text, summary_from_json, unverified,
+    summary_from_json, unverified, unverified_artifact_read, verify_declared_artifact_identity,
 };
 use crate::cases::attach;
 use crate::cases::guard::guard_panics;
@@ -33,6 +38,8 @@ use crate::context::RunContext;
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{BacktestOutcome, VerificationResult};
 use qx_core::RunManifest;
+
+const MAX_VERIFY_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
 
 /// 复核一次运行的产物。
 ///
@@ -45,6 +52,15 @@ pub fn verify_run(
     outcome: &BacktestOutcome,
     context: &RunContext,
 ) -> Result<VerificationResult, AppError> {
+    verify_run_with_reader(outcome, context, &FileArtifactReader)
+}
+
+/// Verify a Bar run using a caller-provided artifact storage adapter.
+pub(crate) fn verify_run_with_reader(
+    outcome: &BacktestOutcome,
+    context: &RunContext,
+    reader: &dyn ArtifactReader,
+) -> Result<VerificationResult, AppError> {
     let correlation_id = context.correlation_id().to_string();
     if outcome.run_id.trim().is_empty() {
         return Err(AppError::new(
@@ -53,19 +69,60 @@ pub fn verify_run(
         )
         .with_correlation_id(&correlation_id));
     }
-    let outcome = guard_panics(&correlation_id, || Ok(verify_run_inner(outcome)));
+    let outcome = guard_panics(&correlation_id, || Ok(verify_run_inner(outcome, reader)));
     outcome.map_err(|error| attach(error, &correlation_id))
 }
 
-fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
-    let manifest_body = match read_text(&outcome.artifacts.run_manifest) {
+fn verify_run_inner(outcome: &BacktestOutcome, reader: &dyn ArtifactReader) -> VerificationResult {
+    let summary_body = match read_text_bounded(
+        reader,
+        &outcome.artifacts.summary,
+        MAX_VERIFY_ARTIFACT_BYTES,
+        "研究摘要",
+    ) {
         Ok(body) => body,
         Err(error) => {
             return unverified(
                 &outcome.run_id,
-                format!("产物缺失或不完整（run manifest）: {error}"),
-            )
+                format!("产物缺失或不完整（summary）: {error}"),
+            );
         }
+    };
+    let summary_value: serde_json::Value = match serde_json::from_str(&summary_body) {
+        Ok(value) => value,
+        Err(error) => return unverified(&outcome.run_id, format!("研究摘要 JSON 无效: {error}")),
+    };
+    let declared_artifacts = match declared_run_record_artifact_locators(&summary_value, reader) {
+        Ok(locators) => locators,
+        Err(error) => {
+            return unverified(
+                &outcome.run_id,
+                format!("RunRecord SHA-256 复核失败（工件身份不可用）: {error}"),
+            );
+        }
+    };
+    let summary = match summary_from_json(&summary_body) {
+        Ok(summary) => summary,
+        Err(error) => return unverified(&outcome.run_id, error.message().to_string()),
+    };
+    let manifest_body_result = match &declared_artifacts {
+        Some(locators) => read_text_bounded_by_id(
+            reader,
+            &locators.run_manifest.id,
+            Some(&locators.run_manifest.legacy_reference),
+            MAX_VERIFY_ARTIFACT_BYTES,
+            "run manifest",
+        ),
+        None => read_text_bounded(
+            reader,
+            &outcome.artifacts.run_manifest,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            "run manifest",
+        ),
+    };
+    let manifest_body = match manifest_body_result {
+        Ok(body) => body,
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "run manifest", &error),
     };
     let manifest = match RunManifest::from_json(&manifest_body) {
         Ok(manifest) => manifest,
@@ -76,39 +133,38 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
                     "run manifest 无法解析 {}: {error}",
                     outcome.artifacts.run_manifest
                 ),
-            )
+            );
         }
     };
-    let summary_body = match read_text(&outcome.artifacts.summary) {
-        Ok(body) => body,
-        Err(error) => {
-            return unverified(
-                &outcome.run_id,
-                format!("产物缺失或不完整（summary）: {error}"),
-            )
+    let equity_result = match &declared_artifacts {
+        Some(locators) => {
+            scan_csv_artifact_by_id(reader, &locators.equity, MAX_VERIFY_ARTIFACT_BYTES, true)
         }
+        None => scan_csv_artifact(
+            reader,
+            &outcome.artifacts.equity,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            true,
+        ),
     };
-    let summary = match summary_from_json(&summary_body) {
-        Ok(summary) => summary,
-        Err(error) => return unverified(&outcome.run_id, error.message().to_string()),
+    let equity = match equity_result {
+        Ok(check) => check,
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "equity", &error),
     };
-    let equity_body = match read_text(&outcome.artifacts.equity) {
-        Ok(body) => body,
-        Err(error) => {
-            return unverified(
-                &outcome.run_id,
-                format!("产物缺失或不完整（equity）: {error}"),
-            )
+    let fills_result = match &declared_artifacts {
+        Some(locators) => {
+            scan_csv_artifact_by_id(reader, &locators.fills, MAX_VERIFY_ARTIFACT_BYTES, false)
         }
+        None => scan_csv_artifact(
+            reader,
+            &outcome.artifacts.fills,
+            MAX_VERIFY_ARTIFACT_BYTES,
+            false,
+        ),
     };
-    let fills_body = match read_text(&outcome.artifacts.fills) {
-        Ok(body) => body,
-        Err(error) => {
-            return unverified(
-                &outcome.run_id,
-                format!("产物缺失或不完整（fills）: {error}"),
-            )
-        }
+    let fills = match fills_result {
+        Ok(check) => check,
+        Err(error) => return unverified_artifact_read(&outcome.run_id, "fills", &error),
     };
 
     let mut checks = Vec::new();
@@ -233,7 +289,7 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
         &outcome.max_drawdown_bps.to_string(),
     );
 
-    let equity_rows = csv_rows(&equity_body).len() as u64;
+    let equity_rows = equity.rows;
     if equity_rows == summary.equity_points && equity_rows == outcome.equity_points {
         checks.push(format!("equity.csv 行数 == equity_points == {equity_rows}"));
     } else {
@@ -242,7 +298,7 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
             summary.equity_points, outcome.equity_points
         ));
     }
-    match last_equity_raw(&equity_body) {
+    match equity.final_equity_raw {
         Some(last) if last == summary.final_equity_raw => {
             checks.push(format!("equity.csv 末行 == final_equity_raw == {last}"));
         }
@@ -252,8 +308,48 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
         )),
         None => mismatches.push("equity.csv 读不出末行权益值".to_string()),
     }
+    let exact_final = summary_value
+        .pointer("/metrics_exact/equity/final")
+        .and_then(serde_json::Value::as_str);
+    match (equity.final_equity_exact.as_deref(), exact_final) {
+        (Some(actual), Some(expected)) => {
+            let actual_decimal = qx_core::ExactDecimal::parse(actual);
+            let expected_decimal = qx_core::ExactDecimal::parse(expected);
+            if actual_decimal.is_ok_and(|value| value.to_string() == actual)
+                && expected_decimal.is_ok_and(|value| value.to_string() == expected)
+                && actual == expected
+            {
+                checks.push("equity.csv 末行 exact == metrics_exact.equity.final".into());
+            } else {
+                mismatches.push(
+                    "equity.csv 末行 exact 与 metrics_exact.equity.final 不一致或格式非法".into(),
+                );
+            }
+        }
+        (Some(_), None) => mismatches.push(
+            "权益 CSV 声明 equity_exact，但摘要缺少 metrics_exact.equity.final".into(),
+        ),
+        (None, Some(expected)) => match qx_core::ExactDecimal::parse(expected) {
+            Ok(value)
+                if value
+                    .checked_mul_at_scale(
+                        qx_core::ExactDecimal::ONE,
+                        9,
+                        qx_core::DecimalRounding::TowardZero,
+                    )
+                    .and_then(|projection| projection.to_raw(9).ok())
+                    == Some(summary.final_equity_raw) =>
+            {
+                checks.push("精确期末权益可由 legacy raw 曲线无损表示".into());
+            }
+            _ => mismatches.push(
+                "metrics_exact.equity.final 无法由 legacy raw 曲线无损表示，缺少 equity_exact CSV 列".into(),
+            ),
+        },
+        (None, None) => {}
+    }
 
-    let fill_rows = csv_rows(&fills_body).len() as u64;
+    let fill_rows = fills.rows;
     if summary.fills == outcome.fills && fill_rows == summary.fills {
         checks.push(format!("fills.csv 行数 == fills == {fill_rows}"));
     } else {
@@ -274,6 +370,8 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
             summary.replay_ledger_entries, summary.ledger_entries
         ));
     }
+
+    verify_declared_artifact_identity(&summary_value, &mut checks, &mut mismatches, reader);
 
     VerificationResult {
         run_id: outcome.run_id.clone(),

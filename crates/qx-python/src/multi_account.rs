@@ -1,15 +1,15 @@
-use crate::{app_error, NativeRun, PyRunHandle};
+use crate::{app_error, research_context, NativeRun, PyRunHandle};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use qx_app::{
-    run_multi_account_backtest, run_multi_account_depth_backtest, CallerCapability,
-    MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, RunContext,
+    run_multi_account_backtest, run_multi_account_depth_backtest, MultiAccountBacktestSpec,
+    MultiAccountDepthBacktestSpec,
 };
 
 #[pyfunction]
 fn app_run_multi_account_backtest(spec_json: &str) -> PyResult<String> {
     let spec = MultiAccountBacktestSpec::from_json(spec_json).map_err(app_error)?;
-    let context = RunContext::new(CallerCapability::Research, &spec.batch_id);
+    let context = research_context(&spec.batch_id);
     run_multi_account_backtest(&spec, &context)
         .and_then(|result| result.to_json())
         .map_err(app_error)
@@ -18,7 +18,7 @@ fn app_run_multi_account_backtest(spec_json: &str) -> PyResult<String> {
 #[pyfunction]
 fn app_start_multi_account_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
     let spec = MultiAccountBacktestSpec::from_json(spec_json).map_err(app_error)?;
-    let context = RunContext::new(CallerCapability::Research, &spec.batch_id);
+    let context = research_context(&spec.batch_id);
     Ok(PyRunHandle {
         inner: NativeRun::MultiAccount(spec.start(context)),
     })
@@ -27,7 +27,7 @@ fn app_start_multi_account_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
 #[pyfunction]
 fn app_run_multi_account_depth_backtest(spec_json: &str) -> PyResult<String> {
     let spec = MultiAccountDepthBacktestSpec::from_json(spec_json).map_err(app_error)?;
-    let context = RunContext::new(CallerCapability::Research, &spec.batch_id);
+    let context = research_context(&spec.batch_id);
     run_multi_account_depth_backtest(&spec, &context)
         .and_then(|result| result.to_json())
         .map_err(app_error)
@@ -36,7 +36,7 @@ fn app_run_multi_account_depth_backtest(spec_json: &str) -> PyResult<String> {
 #[pyfunction]
 fn app_start_multi_account_depth_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
     let spec = MultiAccountDepthBacktestSpec::from_json(spec_json).map_err(app_error)?;
-    let context = RunContext::new(CallerCapability::Research, &spec.batch_id);
+    let context = research_context(&spec.batch_id);
     Ok(PyRunHandle {
         inner: NativeRun::MultiAccountDepth(spec.start(context)),
     })

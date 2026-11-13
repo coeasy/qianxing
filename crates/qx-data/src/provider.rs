@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::DatasetManifest;
 use crate::fingerprint::fingerprint_bars;
 use crate::schema::{Bar, DATA_SCHEMA_VERSION};
+use qx_core::ExactOhlcv;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,23 +117,11 @@ struct BarFrameJson {
     low_raw: Vec<i128>,
     close_raw: Vec<i128>,
     volume_raw: Vec<i128>,
-}
-
-/// `schema_version >= 1` 的严格视图：未知字段直接拒绝，`source` 必填。
-/// 兼容分支继续使用 [`BarFrameJson`]，因此旧样例（无 `schema_version`）仍可解析。
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StrictBarFrameJson {
     #[serde(default)]
-    schema_version: u32,
-    instrument: String,
-    source: String,
-    ts: Vec<u64>,
-    open_raw: Vec<i128>,
-    high_raw: Vec<i128>,
-    low_raw: Vec<i128>,
-    close_raw: Vec<i128>,
-    volume_raw: Vec<i128>,
+    exact_ohlcv: Option<Vec<ExactOhlcv>>,
+    /// Legacy documents ignore extensions; versioned documents reject them below.
+    #[serde(flatten)]
+    extra_fields: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 /// BarFrame JSON 顶层契约信息；用于把“这份数据来自哪里、按哪个契约版本写出”
@@ -161,6 +151,7 @@ struct ParsedBarFrame {
     low_raw: Vec<i128>,
     close_raw: Vec<i128>,
     volume_raw: Vec<i128>,
+    exact_ohlcv: Option<Vec<ExactOhlcv>>,
 }
 
 impl ParsedBarFrame {
@@ -203,6 +194,13 @@ impl ParsedBarFrame {
         if columns.iter().any(|length| *length != columns[0]) || columns[0] == 0 {
             return Err("BarFrame column lengths are inconsistent or empty".into());
         }
+        if self
+            .exact_ohlcv
+            .as_ref()
+            .is_some_and(|values| values.len() != self.ts.len())
+        {
+            return Err("BarFrame exact_ohlcv row count does not match columns".into());
+        }
         if self.ts.windows(2).any(|window| window[0] >= window[1]) {
             return Err("BarFrame timestamps must be strictly increasing".into());
         }
@@ -216,6 +214,7 @@ impl ParsedBarFrame {
                 low_raw: self.low_raw[index],
                 close_raw: self.close_raw[index],
                 volume_raw: self.volume_raw[index],
+                exact_ohlcv: self.exact_ohlcv.as_ref().map(|values| values[index]),
             };
             bar.validate()?;
             if start <= bar.timestamp && bar.timestamp <= end {
@@ -231,50 +230,63 @@ impl ParsedBarFrame {
 
 /// 解析 BarFrame JSON：`schema_version` 缺省（0）走兼容分支，`>= 1` 启用严格模式。
 fn parse_bar_frame(payload: &str) -> Result<ParsedBarFrame, String> {
-    let legacy: BarFrameJson = serde_json::from_str(payload)
+    // One typed pass is enough: the old path first allocated every column in
+    // BarFrameJson, then parsed the same JSON again into StrictBarFrameJson.
+    let frame: BarFrameJson = serde_json::from_str(payload)
         .map_err(|error| format!("decode BarFrame JSON failed: {error}"))?;
-    if legacy.schema_version == 0 {
+    if frame.schema_version == 0 {
+        if frame.exact_ohlcv.is_some() {
+            return Err("BarFrame exact_ohlcv requires schema_version=2".into());
+        }
         return Ok(ParsedBarFrame {
             schema_version: 0,
-            instrument: legacy.instrument,
-            source: legacy.source,
-            ts: legacy.ts,
-            open_raw: legacy.open_raw,
-            high_raw: legacy.high_raw,
-            low_raw: legacy.low_raw,
-            close_raw: legacy.close_raw,
-            volume_raw: legacy.volume_raw,
+            instrument: frame.instrument,
+            source: frame.source,
+            ts: frame.ts,
+            open_raw: frame.open_raw,
+            high_raw: frame.high_raw,
+            low_raw: frame.low_raw,
+            close_raw: frame.close_raw,
+            volume_raw: frame.volume_raw,
+            exact_ohlcv: None,
         });
     }
+    if frame.schema_version < 2 && frame.exact_ohlcv.is_some() {
+        return Err("BarFrame exact_ohlcv requires schema_version=2".into());
+    }
+    if frame.schema_version == 2 && frame.exact_ohlcv.is_none() {
+        return Err("BarFrame schema_version=2 requires exact_ohlcv".into());
+    }
     // fail-closed：高于本构建支持的契约版本必须报错，不能降级成宽松解析。
-    if legacy.schema_version > BAR_FRAME_SCHEMA_VERSION {
+    if frame.schema_version > BAR_FRAME_SCHEMA_VERSION {
         return Err(format!(
             "unsupported BarFrame schema_version={} (supported versions: 0 legacy, 1..={BAR_FRAME_SCHEMA_VERSION})",
-            legacy.schema_version
+            frame.schema_version
         ));
     }
-    let strict: StrictBarFrameJson = serde_json::from_str(payload).map_err(|error| {
-        format!(
-            "decode BarFrame JSON failed (schema_version={} strict mode): {error}",
-            legacy.schema_version
-        )
-    })?;
-    if strict.source.trim().is_empty() {
+    if let Some(unknown) = frame.extra_fields.keys().next() {
+        return Err(format!(
+            "decode BarFrame JSON failed (schema_version={} strict mode): unknown field `{unknown}`",
+            frame.schema_version
+        ));
+    }
+    if frame.source.trim().is_empty() {
         return Err(format!(
             "BarFrame schema_version={} requires a non-empty source",
-            strict.schema_version
+            frame.schema_version
         ));
     }
     Ok(ParsedBarFrame {
-        schema_version: strict.schema_version,
-        instrument: strict.instrument,
-        source: strict.source,
-        ts: strict.ts,
-        open_raw: strict.open_raw,
-        high_raw: strict.high_raw,
-        low_raw: strict.low_raw,
-        close_raw: strict.close_raw,
-        volume_raw: strict.volume_raw,
+        schema_version: frame.schema_version,
+        instrument: frame.instrument,
+        source: frame.source,
+        ts: frame.ts,
+        open_raw: frame.open_raw,
+        high_raw: frame.high_raw,
+        low_raw: frame.low_raw,
+        close_raw: frame.close_raw,
+        volume_raw: frame.volume_raw,
+        exact_ohlcv: frame.exact_ohlcv,
     })
 }
 
@@ -369,7 +381,7 @@ mod tests {
         let payload = r#"{"schema_version":1,"instrument":"000001.SZSE","source":"easy_tdx","ts":[1000],"open_raw":[10],"high_raw":[11],"low_raw":[9],"close_raw":[10],"volume_raw":[1]}"#;
         let frame = parse_bar_frame(payload).unwrap();
         let contract = frame.contract();
-        assert_eq!(contract.schema_version, BAR_FRAME_SCHEMA_VERSION);
+        assert_eq!(contract.schema_version, 1);
         assert_eq!(contract.source, "easy_tdx");
         assert_eq!(frame.manifest_source("akshare"), "easy_tdx");
 
@@ -391,8 +403,27 @@ mod tests {
             .unwrap();
         assert_eq!(bars.len(), 1);
         assert_eq!(manifest.source, "easy_tdx");
-        assert_eq!(manifest.schema_version, BAR_FRAME_SCHEMA_VERSION);
+        assert_eq!(manifest.schema_version, 1);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bar_frame_contract_v2_preserves_exact_values_in_one_pass() {
+        let payload = r#"{"schema_version":2,"instrument":"TINYUSDT.BINANCE","source":"fixture-exact","ts":[1000],"open_raw":[1000000000],"high_raw":[1000000000],"low_raw":[1000000000],"close_raw":[1000000000],"volume_raw":[1000000000],"exact_ohlcv":[{"open":{"coefficient":"10000000001","scale":10},"high":{"coefficient":"10000000003","scale":10},"low":{"coefficient":"10000000001","scale":10},"close":{"coefficient":"10000000002","scale":10},"volume":{"coefficient":"100000000005","scale":11}}]}"#;
+        let frame = parse_bar_frame(payload).expect("v2 exact columns parse");
+        assert_eq!(frame.contract().schema_version, 2);
+        let bars = frame
+            .bars("TINYUSDT.BINANCE", 1_000, 1_000)
+            .expect("exact bar is valid");
+        let exact = bars[0].exact_ohlcv.expect("source precision is retained");
+        assert_eq!(
+            exact.close,
+            qx_core::ExactDecimal::parse("1.0000000002").unwrap()
+        );
+        assert_eq!(
+            exact.volume,
+            qx_core::ExactDecimal::parse("1.00000000005").unwrap()
+        );
     }
 
     #[test]

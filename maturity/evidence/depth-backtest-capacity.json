@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "replay_verified_l2_depth_backtest_capacity",
+  "generated_at_utc": "2026-10-22T17:23:26Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "64fa287b0b42404d6f58905e6cde415f31c1f02a206d67c73c34deaecdfe2f7e",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "7c47dac059cbe24432bbed7cb508a12981ef8eaa810729a386c36f365e906fba",
+  "benchmark_script_sha256": "c4cab1143ce81a91de368a3e3c714eb4e09303a943ff1a6d0b3c8aaca4c31cc6",
+  "scenario": "qx-cli app depth-backtest with synthetic BTCUSDT perpetual L2 snapshots and ten-level books",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "resource_measurement": "OS process counters plus optional 10ms psutil process-tree RSS/CPU/I/O sampling",
+  "limitations": [
+    "synthetic deterministic depth snapshots; no venue feed capture or paper/live workflow",
+    "L2 depth level count is a configurable synthetic workload dimension",
+    "process-tree samples may miss brief peaks; this is not a hard memory bound",
+    "does not measure allocator calls, long-run stability, internal parallelism, or all nine maturity profiles"
+  ],
+  "workloads": [
+    {
+      "snapshots": 1000,
+      "depth_levels_per_side": 10,
+      "repeats": 3,
+      "input_generation_ms": 16.292,
+      "input_bytes": 978916,
+      "input_sha256": "2cd2920023c4ddcf3e62a72d270ab83c853e624803d8767038af7226ee4cf3b5",
+      "data_fingerprint": "depth:capacity-synthetic-l2-1000x10-v1:f857b223ff6995a7",
+      "result_hash_unique_count": 1,
+      "fills_per_repeat": [
+        49,
+        49,
+        49
+      ],
+      "wall_p50_ms": 338.544,
+      "wall_p95_ms": 358.598,
+      "peak_rss_bytes_max": 10268672,
+      "process_tree_peak_rss_bytes_max": 9469952,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.016,
+      "process_tree_io_read_bytes_max": 1052367,
+      "process_tree_io_write_bytes_max": 73103,
+      "artifact_directory_bytes_max": 72251,
+      "replay_verification": "passed_each_repeat",
+      "scope_claim": "synthetic_l2_matching_capacity_only"
+    },
+    {
+      "snapshots": 8000,
+      "depth_levels_per_side": 10,
+      "repeats": 3,
+      "input_generation_ms": 128.088,
+      "input_bytes": 7845916,
+      "input_sha256": "4aaa8174184124b5ed5f3dbb627c5e619466b52cd3a5e6ffaa8830c9237673ac",
+      "data_fingerprint": "depth:capacity-synthetic-l2-8000x10-v1:877f946d2fba0d9c",
+      "result_hash_unique_count": 1,
+      "fills_per_repeat": [
+        399,
+        399,
+        399
+      ],
+      "wall_p50_ms": 706.451,
+      "wall_p95_ms": 708.303,
+      "peak_rss_bytes_max": 32448512,
+      "process_tree_peak_rss_bytes_max": 30011392,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.281,
+      "process_tree_io_read_bytes_max": 8399498,
+      "process_tree_io_write_bytes_max": 553173,
+      "artifact_directory_bytes_max": 552318,
+      "replay_verification": "passed_each_repeat",
+      "scope_claim": "synthetic_l2_matching_capacity_only"
+    },
+    {
+      "snapshots": 64000,
+      "depth_levels_per_side": 10,
+      "repeats": 3,
+      "input_generation_ms": 1272.438,
+      "input_bytes": 62889919,
+      "input_sha256": "e9214e339f5b0e1aada8b650ca0d9dac84f4169f635c8d255922b64b0fb2ce99",
+      "data_fingerprint": "depth:capacity-synthetic-l2-64000x10-v1:1e3ec90392691b20",
+      "result_hash_unique_count": 1,
+      "fills_per_repeat": [
+        2510,
+        2510,
+        2510
+      ],
+      "wall_p50_ms": 20345.275,
+      "wall_p95_ms": 20413.086,
+      "peak_rss_bytes_max": 184147968,
+      "process_tree_peak_rss_bytes_max": 184147968,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 17.938,
+      "process_tree_io_read_bytes_max": 66995897,
+      "process_tree_io_write_bytes_max": 4104782,
+      "artifact_directory_bytes_max": 4104782,
+      "replay_verification": "passed_each_repeat",
+      "scope_claim": "synthetic_l2_matching_capacity_only"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 3,
+  "worker_id": "strategy-paper",
+  "config_sha256": "814c8f23314aa586a3b35a0f8421b2e0d79f17b88565945307292d3c8d39b53c",
+  "process_id": 19212,
+  "owner_id": "strategy-paper@19212-1793907747090818700-1",
+  "observed_at_ms": 1793907747112,
+  "phase": "stopped",
+  "host_capabilities": {
+    "schema_version": 1,
+    "host_id": "builtin_rust_strategy_runtime",
+    "profile": "server",
+    "supported": [
+      "bar",
+      "bar_history"
+    ]
+  },
+  "checkpoint_roundtrip_observed": false,
+  "host_lifecycle": {
+    "schema_version": 2,
+    "host_id": "builtin_rust_strategy_runtime",
+    "constructed": true,
+    "initialized": true,
+    "checkpoint_input_supplied": false,
+    "warmup_applicable": false,
+    "warmup_required_instruments": [],
+    "warmup_completed_instruments": []
+  }
+}

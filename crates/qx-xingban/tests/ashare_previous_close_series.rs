@@ -38,12 +38,12 @@ fn adaptive_previous_close_series_matches_pointwise_rules_for_dense_actions() {
 
     // 8,000 Bars and 1,024 actions select the production adaptive path. Compare every
     // element against the established pointwise implementation, including day edges.
-    let series = rules.previous_close_series(&bars);
+    let series = rules.previous_close_series(&bars).unwrap();
     assert_eq!(series.len(), bars.len());
     for (index, actual) in series.iter().enumerate() {
         assert_eq!(
             *actual,
-            rules.previous_close(&bars, index),
+            rules.previous_close(&bars, index).unwrap(),
             "bar index {index}"
         );
     }

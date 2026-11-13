@@ -28,6 +28,7 @@ impl OrderBookStrategy for TwoBuysOnce {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect())
     }
@@ -48,10 +49,12 @@ fn orderbook_pending_orders_count_toward_max_notional_before_fill() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let mut rules = RuleSet::with_version("pending-exposure-test-v1");
     rules.add(Box::new(MaxNotionalRule {

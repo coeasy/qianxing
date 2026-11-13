@@ -28,6 +28,7 @@ fn absent_keys_print_absent_while_declared_zero_still_prints_zero() {
         "fills=absent",
         "return_bps=absent",
         "max_drawdown_bps=absent",
+        "max_drawdown_raw=absent",
         "turnover_raw=absent",
         "final_equity_raw=absent",
         "account_initial_cash_raw=absent",
@@ -54,7 +55,7 @@ fn string_typed_and_negative_money_fields_still_read_as_numbers() {
     let summary = serde_json::json!({
         "schema_version": 4,
         "account": { "initial_cash_raw": "100000000000000", "source": "declared" },
-        "metrics": { "return_bps": -123, "turnover_raw": 385200000000000i64 },
+        "metrics": { "return_bps": -123, "max_drawdown_raw": "1234567890123", "turnover_raw": 385200000000000i64 },
     });
     let text = joined(&report_readout_lines(&summary, "verified"));
     assert!(
@@ -62,6 +63,10 @@ fn string_typed_and_negative_money_fields_still_read_as_numbers() {
         "字符串型本金没读出来: {text}"
     );
     assert!(text.contains("return_bps=-123"), "负收益被读成缺席: {text}");
+    assert!(
+        text.contains("max_drawdown_raw=1234567890123"),
+        "字符串型原始最大回撤金额没读出来: {text}"
+    );
     assert!(
         text.contains("turnover_raw=385200000000000"),
         "成交额没读出来: {text}"
@@ -95,6 +100,12 @@ fn generation_note_tells_apart_older_schema_from_missing_block() {
             && note.contains("run_record=not_declared_before_v5"),
         "本世代缺块与未来世代字段没被区分: {note}"
     );
+    let v8_without_raw_drawdown = serde_json::json!({"schema_version": 8, "metrics": {}});
+    let note = summary_generation_note(&v8_without_raw_drawdown);
+    assert!(
+        note.contains("metrics.max_drawdown_raw=MISSING_IN_THIS_GENERATION"),
+        "v8 必须指出新增的原始最大回撤指标缺失: {note}"
+    );
     // 连世代都没写的产物：报 absent，而不是默认自己就是最新世代。
     let note = summary_generation_note(&serde_json::json!({"strategy_id": "s"}));
     assert!(
@@ -116,11 +127,11 @@ fn generation_note_tells_apart_older_schema_from_missing_block() {
 
 #[test]
 fn backtest_summary_reader_compatibility_matches_matrix() {
-    for version in 5..=7 {
+    for version in 5..=8 {
         require_current_summary_schema(&serde_json::json!({"schema_version": version}))
             .unwrap_or_else(|error| panic!("summary v{version} must remain reportable: {error}"));
     }
-    for version in [1, 2, 3, 4, 8, 99] {
+    for version in [1, 2, 3, 4, 9, 99] {
         let error = require_current_summary_schema(&serde_json::json!({"schema_version": version}))
             .expect_err("unsupported summary generations must be refused");
         assert!(

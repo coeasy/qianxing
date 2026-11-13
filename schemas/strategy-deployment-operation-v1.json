@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-deployment-operation-v1.json",
+  "title": "Qianxing Strategy Deployment Operation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "operation_id", "idempotency_key", "request_sha256", "worker_id", "action", "target_revision", "requested_at_ms", "requested_by", "state", "accepted_at_ms", "completed_at_ms", "error_code", "error_message"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "qianxing_strategy_deployment_operation"},
+    "operation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 256},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "worker_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "action": {"enum": ["deploy", "stop", "rollback", "pause", "resume"]},
+    "target_revision": {"type": "integer", "minimum": 1},
+    "requested_at_ms": {"type": "integer", "minimum": 0},
+    "requested_by": {"type": "string", "minLength": 1, "maxLength": 256},
+    "state": {"enum": ["accepted", "succeeded", "failed", "cancelled"]},
+    "accepted_at_ms": {"type": "integer", "minimum": 0},
+    "completed_at_ms": {"type": ["integer", "null"], "minimum": 0},
+    "error_code": {"type": ["string", "null"], "maxLength": 128},
+    "error_message": {"type": ["string", "null"], "maxLength": 2048}
+  }
+}

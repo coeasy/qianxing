@@ -1,0 +1,104 @@
+$ cargo test -p qx-cli --bin qx-cli workers::strategy_worker::execution_updates::prepared_evaluation::crash_recovery_tests::save_crash_boundaries_recover_a_valid_record -- --exact --nocapture
+exit_code=0
+
+[stdout]
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::execution_updates::prepared_evaluation::crash_recovery_tests::save_crash_boundaries_recover_a_valid_record ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 515 filtered out; finished in 0.04s
+
+
+[stderr]
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[92m   Compiling[0m qx-storage v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-storage)
+[1m[92m   Compiling[0m qx-adapter v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-adapter)
+[1m[92m   Compiling[0m qx-runtime v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-runtime)
+[1m[92m   Compiling[0m qx-orchestrator v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-orchestrator)
+[1m[92m   Compiling[0m qx-api v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-api)
+[1m[92m   Compiling[0m qx-service v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-service)
+[1m[92m   Compiling[0m qx-cli v0.4.0 (/home/runner/work/qianxing/qianxing/crates/qx-cli)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 28.73s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/qx-cli/19ae86513515f299/out/qx_cli-19ae86513515f299)
+simulated process crash after PreparedEvaluation boundary: temp_created
+simulated process crash after PreparedEvaluation boundary: payload_written
+simulated process crash after PreparedEvaluation boundary: temp_synced
+simulated process crash after PreparedEvaluation boundary: stale_backup_removed
+simulated process crash after PreparedEvaluation boundary: backup_renamed
+simulated process crash after PreparedEvaluation boundary: new_published
+simulated process crash after PreparedEvaluation boundary: backup_cleaned
+simulated process crash after PreparedEvaluation boundary: directory_synced

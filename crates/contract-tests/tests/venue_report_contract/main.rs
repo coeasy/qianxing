@@ -29,7 +29,10 @@ use qx_zhenlu::{PaperVenue, Venue, VenueEvent};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "../common/temp_root.rs"]
+mod temp_root;
+pub(crate) use temp_root::test_temp_root;
 
 mod harness;
 pub(crate) use harness::*;

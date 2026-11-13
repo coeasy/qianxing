@@ -8,6 +8,11 @@ use crate::{
     AppError, AppErrorCategory, CallerCapability, DepthBacktestOutcome, DepthBacktestSpec,
     RunContext,
 };
+use qx_data::{
+    DatasetManifest, DatasetManifestV2, DatasetQualityReport, DatasetSnapshotContextV1,
+    DatasetSnapshotV1, DatasetSourceLineage, DatasetTier, DatasetTimestampSemantics,
+    DATASET_MANIFEST_V2_SCHEMA_VERSION, DEPTHFRAME_DATASET_VERSION,
+};
 use qx_provider::{DataKind, DataRequest, ProviderErrorClass, ProviderRegistry, RegistryError};
 use qx_xingban::{DepthFrame, OrderBookSnapshot};
 use serde::{Deserialize, Serialize};
@@ -23,6 +28,8 @@ pub struct ProviderDepthBacktestSpec {
     pub schema_version: u32,
     pub data_request: DataRequest,
     pub backtest: DepthBacktestSpec,
+    pub timezone: String,
+    pub snapshot_context: DatasetSnapshotContextV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +42,10 @@ pub struct ProviderDepthBacktestOutcome {
     pub retry_chain: Vec<String>,
     pub source_hash: String,
     pub depth_path: String,
+    pub manifest: DatasetManifestV2,
+    pub dataset_snapshot: DatasetSnapshotV1,
+    pub manifest_path: String,
+    pub snapshot_path: String,
 }
 
 impl ProviderDepthBacktestSpec {
@@ -68,6 +79,18 @@ impl ProviderDepthBacktestSpec {
             || expected_tier.is_none()
             || self.data_request.requirements.required_data_tier != expected_tier
             || instruments.len() != 1
+            || self.timezone.trim().is_empty()
+            || self.snapshot_context.schema_version
+                != qx_data::DATASET_SNAPSHOT_CONTEXT_SCHEMA_VERSION
+            || self.snapshot_context.captured_at_ms == 0
+            || self.snapshot_context.frequency_ms == 0
+            || self.snapshot_context.price_precision > 18
+            || self.snapshot_context.quantity_precision > 18
+            || self.snapshot_context.price_unit.trim().is_empty()
+            || self.snapshot_context.quantity_unit.trim().is_empty()
+            || self.snapshot_context.calendar_id.trim().is_empty()
+            || self.snapshot_context.calendar_version.trim().is_empty()
+            || self.snapshot_context.timestamp_semantics != DatasetTimestampSemantics::EventTime
             || self
                 .backtest
                 .market_spec
@@ -76,7 +99,7 @@ impl ProviderDepthBacktestSpec {
         {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "Provider depth backtest requires a declared l1/l2 Quote tier matching its one instrument and market_spec",
+                "Provider depth backtest requires a declared l1/l2 Quote tier, matching instrument/market_spec, timezone, and a complete EventTime snapshot context",
             ));
         }
         Ok(())
@@ -192,8 +215,27 @@ pub fn run_provider_depth_backtest(
             result.request_id,
             result.source_hash
         );
+        let levels = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bids.iter().chain(&snapshot.asks))
+            .collect::<Vec<_>>();
+        let exact_count = levels
+            .iter()
+            .filter(|level| level.price_exact.is_some() && level.qty_exact.is_some())
+            .count();
+        if exact_count != 0 && exact_count != levels.len() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "Provider depth payload mixes exact and 1e-9-only book levels",
+            ));
+        }
+        let schema_version = if !levels.is_empty() && exact_count == levels.len() {
+            DepthFrame::EXACT_SCHEMA_VERSION
+        } else {
+            DepthFrame::LEGACY_SCHEMA_VERSION
+        };
         let frame = DepthFrame {
-            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            schema_version,
             source,
             instrument: snapshots
                 .first()
@@ -220,8 +262,102 @@ pub fn run_provider_depth_backtest(
             )
         })?;
         let depth_path = PathBuf::from(&spec.backtest.depth_path);
+        let timestamps = frame
+            .snapshots
+            .iter()
+            .map(|item| item.ts)
+            .collect::<Vec<_>>();
+        let (Some(start_timestamp), Some(end_timestamp)) =
+            (timestamps.first().copied(), timestamps.last().copied())
+        else {
+            return Err(AppError::new(
+                AppErrorCategory::DataUnavailable,
+                "Provider returned no depth snapshots",
+            ));
+        };
+        if start_timestamp >= end_timestamp {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "Provider depth snapshot requires at least two distinct event times",
+            ));
+        }
+        let missing_intervals = timestamps
+            .windows(2)
+            .try_fold(0_u64, |total, pair| {
+                total.checked_add(
+                    (pair[1] - pair[0]).div_ceil(spec.snapshot_context.frequency_ms) - 1,
+                )
+            })
+            .ok_or_else(|| {
+                AppError::new(AppErrorCategory::InvalidInput, "depth gap count overflow")
+            })?;
+        let tier = if spec.backtest.tier == "l1" {
+            DatasetTier::L1
+        } else {
+            DatasetTier::L2
+        };
+        let fingerprint = format!("{:016x}", frame.input_hash());
+        let manifest = DatasetManifestV2 {
+            manifest_version: DATASET_MANIFEST_V2_SCHEMA_VERSION,
+            dataset: DatasetManifest {
+                dataset_id: format!("depth-bars:{}", frame.instrument),
+                version: DEPTHFRAME_DATASET_VERSION.to_owned(),
+                source: frame.source.clone(),
+                fingerprint,
+                schema_version: frame.schema_version,
+                start_timestamp,
+                end_timestamp,
+            },
+            instrument: frame.instrument.to_string(),
+            timezone: spec.timezone.clone(),
+            tier,
+            provider_version: DEPTHFRAME_DATASET_VERSION.to_owned(),
+            content_hash: qx_data::sha256_hex_bytes(&frame_json),
+            quality_report: DatasetQualityReport {
+                row_count: frame.snapshots.len() as u64,
+                duplicate_rows: 0,
+                out_of_order_rows: 0,
+                missing_intervals,
+                interval_ms: Some(spec.snapshot_context.frequency_ms),
+                acquisition_cutoff_ms: None,
+                excluded_unclosed_rows: None,
+                timezone: spec.timezone.clone(),
+                corporate_action_coverage: false,
+                usable_tiers: vec![tier.as_str().to_owned()],
+            },
+            source_lineage: DatasetSourceLineage {
+                primary_source: result.provider_id.clone(),
+                backup_sources: Vec::new(),
+            },
+        };
+        manifest
+            .validate()
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+        crate::cases::publish_dataset_snapshot::validate_snapshot_data(
+            &frame_json,
+            &manifest,
+            &spec.snapshot_context,
+            &depth_path.to_string_lossy(),
+        )?;
+        let dataset_snapshot = DatasetSnapshotV1::from_manifest_and_context(
+            manifest.clone(),
+            spec.snapshot_context.clone(),
+        )
+        .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+        let manifest_path = PathBuf::from(format!("{}.manifest.json", depth_path.display()));
+        let manifest_json = manifest
+            .to_json()
+            .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
+        let snapshot_path = PathBuf::from(format!("{}.snapshot.json", manifest_path.display()));
+        let snapshot_json = serde_json::to_string(&dataset_snapshot).map_err(|error| {
+            AppError::new(AppErrorCategory::InternalInvariant, error.to_string())
+        })?;
         freeze(&depth_path, &frame_json)?;
-        let outcome = run_depth_backtest(&spec.backtest, context)?;
+        freeze(&manifest_path, manifest_json.as_bytes())?;
+        freeze(&snapshot_path, snapshot_json.as_bytes())?;
+        let mut backtest = spec.backtest.clone();
+        backtest.quality_manifest_path = Some(snapshot_path.to_string_lossy().into_owned());
+        let outcome = run_depth_backtest(&backtest, context)?;
         Ok(ProviderDepthBacktestOutcome {
             outcome,
             provider_id: result.provider_id,
@@ -230,6 +366,10 @@ pub fn run_provider_depth_backtest(
             retry_chain: result.retry_chain,
             source_hash: format!("{:016x}", result.source_hash),
             depth_path: depth_path.to_string_lossy().into_owned(),
+            manifest,
+            dataset_snapshot,
+            manifest_path: manifest_path.to_string_lossy().into_owned(),
+            snapshot_path: snapshot_path.to_string_lossy().into_owned(),
         })
     })
     .map_err(|error| attach(error, &correlation_id))
@@ -239,7 +379,7 @@ pub fn run_provider_depth_backtest(
 mod tests {
     use super::*;
     use crate::{BuiltinStrategySpec, CallerCapability, RunContext};
-    use qx_core::{InstrumentId, Price, Quantity, SCALE};
+    use qx_core::{ExactDecimal, InstrumentId, Price, Quantity, SCALE};
     use qx_provider::{
         DataProvider, DataQuery, DataRequirements, ProviderCapability, ProviderError,
         ProviderPayload, ProviderResult, PROVIDER_RESULT_SCHEMA_VERSION,
@@ -263,23 +403,59 @@ mod tests {
         }
     }
 
-    fn snapshot(ts: u64) -> OrderBookSnapshot {
+    fn snapshot(ts: u64, exact: bool) -> OrderBookSnapshot {
+        let level = |price: i64, exact_price: &str, exact_qty: &str| {
+            if exact {
+                BookLevel::from_exact(
+                    ExactDecimal::parse(exact_price).unwrap(),
+                    ExactDecimal::parse(exact_qty).unwrap(),
+                )
+                .unwrap()
+            } else {
+                BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
+                    price: Price::from_i64(price),
+                    qty: Quantity::from_i64(2),
+                }
+            }
+        };
         OrderBookSnapshot {
             instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
             ts,
             sequence: ts,
-            bids: vec![BookLevel {
-                price: Price::from_i64(100 + ts as i64),
-                qty: Quantity::from_i64(2),
-            }],
-            asks: vec![BookLevel {
-                price: Price::from_i64(101 + ts as i64),
-                qty: Quantity::from_i64(2),
-            }],
+            bids: vec![level(
+                100 + ts as i64,
+                &format!("{}.0000000001", 100 + ts),
+                "0.0000000001",
+            )],
+            asks: vec![level(
+                101 + ts as i64,
+                &format!("{}.0000000002", 101 + ts),
+                "0.0000000002",
+            )],
         }
     }
 
-    fn registry() -> (ProviderRegistry, DataRequest) {
+    fn test_snapshot_context() -> DatasetSnapshotContextV1 {
+        DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 1,
+            timestamp_semantics: DatasetTimestampSemantics::EventTime,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
+        }
+    }
+
+    fn registry(exact_depth: bool) -> (ProviderRegistry, DataRequest) {
         let capability = ProviderCapability {
             provider_id: "fixture-depth".into(),
             version: "v1".into(),
@@ -300,7 +476,7 @@ mod tests {
         let instrument = "BTCUSDT.BINANCE";
         let payloads = (1..=3)
             .map(|ts| {
-                let book = snapshot(ts);
+                let book = snapshot(ts, exact_depth);
                 (
                     ts,
                     ts,
@@ -364,6 +540,8 @@ mod tests {
             queue_position_bps: 0,
             queue_position_model: qx_xingban::QueuePositionModel::Disabled,
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir,
             strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, strategy_id),
             market_spec: None,
@@ -391,7 +569,7 @@ mod tests {
 
     #[test]
     fn provider_depth_data_is_frozen_with_lineage_then_runs_shared_engine() {
-        let (registry, data_request) = registry();
+        let (registry, data_request) = registry(false);
         let root = std::env::current_dir()
             .unwrap()
             .join("target")
@@ -409,7 +587,10 @@ mod tests {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
             data_request,
             backtest,
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
+        let expected_query_digest = format!("{:016x}", spec.data_request.query.digest());
         let mut mismatched = spec.clone();
         mismatched.backtest.tier = "l2".into();
         assert!(mismatched.validate().is_err());
@@ -425,12 +606,75 @@ mod tests {
         assert!(frozen.source.contains("#source="));
         assert_eq!(frozen.snapshots.len(), 3);
         assert_eq!(outcome.outcome.run_id, "provider-depth-e2e");
+        let report = crate::read_provider_depth_backtest_report_v1(
+            &outcome,
+            &RunContext::new(CallerCapability::Research, "provider-depth-e2e"),
+        )
+        .expect("Provider depth report should verify the frozen input and shared report");
+        assert!(report.report.verification.verified);
+        assert_eq!(report.provider_id, "fixture-depth");
+        assert_eq!(report.query_digest, expected_query_digest);
+        assert_eq!(
+            report.depth_input_hash,
+            format!("{:016x}", frozen.input_hash())
+        );
+
+        let mut tampered_outcome = outcome.clone();
+        tampered_outcome.source_hash = "0000000000000000".into();
+        assert!(crate::read_provider_depth_backtest_report_v1(
+            &tampered_outcome,
+            &RunContext::new(CallerCapability::Research, "provider-depth-e2e"),
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn provider_depth_freezes_exact_v2_input_and_fails_closed_before_rounded_execution() {
+        let (registry, data_request) = registry(true);
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("qx-provider-depth-exact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let depth_path = root.join("depth.json");
+        let spec = ProviderDepthBacktestSpec {
+            schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+            data_request,
+            backtest: depth_spec(
+                "provider-depth-exact",
+                depth_path.to_string_lossy().into_owned(),
+                root.join("runs").to_string_lossy().into_owned(),
+                "provider-exact",
+                Some("provider-test".into()),
+            ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
+        };
+
+        let error = run_provider_depth_backtest(
+            &registry,
+            &spec,
+            &RunContext::new(CallerCapability::Research, "provider-depth-exact"),
+        )
+        .unwrap_err();
+        assert!(
+            error.message().contains("精确盘口"),
+            "exact provider data must fail closed, got: {}",
+            error.message()
+        );
+        let frozen = DepthFrame::from_json(&std::fs::read_to_string(&depth_path).unwrap()).unwrap();
+        assert_eq!(frozen.schema_version, DepthFrame::EXACT_SCHEMA_VERSION);
+        assert_eq!(
+            frozen.snapshots[0].bids[0].qty_exact,
+            Some(ExactDecimal::parse("0.0000000001").unwrap())
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn provider_depth_spec_rejects_bar_query_before_provider_access() {
-        let (registry, mut request) = registry();
+        let (registry, mut request) = registry(false);
         request.query.kind = DataKind::Bar;
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
@@ -442,6 +686,8 @@ mod tests {
                 "invalid",
                 None,
             ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
         let error = run_provider_depth_backtest(
             &registry,
@@ -454,7 +700,7 @@ mod tests {
 
     #[test]
     fn provider_depth_spec_rejects_unknown_schema_before_provider_access() {
-        let (registry, data_request) = registry();
+        let (registry, data_request) = registry(false);
         let spec = ProviderDepthBacktestSpec {
             schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION + 1,
             data_request,
@@ -465,6 +711,8 @@ mod tests {
                 "future",
                 None,
             ),
+            timezone: "UTC".into(),
+            snapshot_context: test_snapshot_context(),
         };
         let error = run_provider_depth_backtest(
             &registry,

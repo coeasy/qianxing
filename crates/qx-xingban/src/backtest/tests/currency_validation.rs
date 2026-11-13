@@ -36,10 +36,12 @@ fn derivative_backtest_uses_spec_pnl_instead_of_full_notional_cashflow() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 100,
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     let bars = vec![
         Bar::new(
@@ -96,10 +98,12 @@ fn market_cash_currency_mismatch_is_rejected_before_strategy_execution() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 100,
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     let bars = [
         Bar::new(1, 100, 100, 100, 100, 10),

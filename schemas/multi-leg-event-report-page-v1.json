@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-leg-event-report-page-v1.json",
+  "title": "Multi-leg Event Report Page V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "total",
+    "offset",
+    "limit",
+    "truncated",
+    "rows",
+    "event_hash",
+    "fill_count"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "total": { "type": "integer", "minimum": 0 },
+    "offset": { "type": "integer", "minimum": 0 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 300 },
+    "truncated": { "type": "boolean" },
+    "rows": {
+      "type": "array",
+      "maxItems": 300,
+      "items": { "type": "object" }
+    },
+    "event_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "fill_count": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -125,8 +125,14 @@ fn order_risk_projection_fields_stay_documented_as_unread_in_production() {
          现在读者={readers:?}，登记={documented}。接上读者就摘掉登记并写进产物，\
          别把已登记的缺口改掉"
     );
+    let risk_source = workspace_source("crates/qx-risk/src/lib.rs");
+    let order_risk_docs = risk_source
+        .split("/// 统一订单级风控输出。")
+        .nth(1)
+        .and_then(|tail| tail.split("pub struct OrderRiskDecision").next())
+        .expect("OrderRiskDecision 应有独立文档段");
     assert_eq!(
-        workspace_source("crates/qx-risk/src/lib.rs").contains("没有任何生产读者"),
+        order_risk_docs.contains("没有任何生产读者"),
         readers.is_empty(),
         "`OrderRiskDecision` 的文档得跟着读者走：有读者时这句就是假话，没读者时删掉它就是漏登记"
     );

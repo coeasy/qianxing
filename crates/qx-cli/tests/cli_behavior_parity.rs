@@ -53,6 +53,27 @@ fn artifact_files(root: &Path) -> Vec<String> {
     files
 }
 
+fn canonical_artifact_paths(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .map(|path| {
+            let parts = path.split('/').collect::<Vec<_>>();
+            if parts.len() >= 4
+                && parts[0..2] == ["data", "qianxing-paper"]
+                && parts[2] == "strategy-observations"
+            {
+                let mut normalized = parts;
+                normalized[3] = "<run-id>";
+                normalized[4] = "<observation-id>.json";
+                normalized.truncate(5);
+                normalized.join("/")
+            } else {
+                path.clone()
+            }
+        })
+        .collect()
+}
+
 fn artifact_digests(root: &Path, files: &[String]) -> Vec<(String, u64)> {
     files
         .iter()
@@ -219,12 +240,81 @@ mod full_health_readout;
 mod plan_readout_parity;
 #[path = "cli_behavior_parity/quickstart_parity.rs"]
 mod quickstart_parity;
+#[path = "cli_behavior_parity/report_metrics_projection.rs"]
+mod report_metrics_projection;
 #[path = "cli_behavior_parity/verify_json_parity.rs"]
 mod verify_json_parity;
 
 fn observe(label: &str, args: &[&str], replay: usize) -> Observation {
     let cwd = temp_dir(label, replay);
     let observation = observe_in(&cwd, args);
+    let _ = std::fs::remove_dir_all(cwd);
+    observation
+}
+
+fn isolated_paper_runtime(cwd: &Path) -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli tests are two levels below the workspace root");
+    let template = workspace.join("deploy/qianxing.runtime.paper-strategy.example.json");
+    let deploy_dir = workspace.join("deploy");
+    let mut runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&template).expect("read Paper runtime fixture"))
+            .expect("Paper runtime fixture is JSON");
+    let absolute = |path: &str| {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            workspace.join(path)
+        }
+    };
+
+    let data_dir = cwd.join("data/qianxing-paper");
+    runtime["storage"]["data_dir"] = serde_json::json!(data_dir.to_string_lossy());
+    runtime["scheduler"]["state_path"] =
+        serde_json::json!(data_dir.join("scheduler.json").to_string_lossy());
+    runtime["scheduler"]["jobs_path"] = serde_json::json!(deploy_dir
+        .join(
+            runtime["scheduler"]["jobs_path"]
+                .as_str()
+                .expect("Paper scheduler fixture has jobs_path")
+        )
+        .to_string_lossy());
+    runtime["scheduler"]["job_queue_path"] =
+        serde_json::json!(data_dir.join("job-queue").to_string_lossy());
+    runtime["strategy"]["target_snapshot_path"] = serde_json::json!(deploy_dir
+        .join(
+            runtime["strategy"]["target_snapshot_path"]
+                .as_str()
+                .expect("Paper strategy fixture has target_snapshot_path")
+        )
+        .to_string_lossy());
+    for worker in runtime["workers"]
+        .as_array_mut()
+        .expect("Paper runtime fixture has workers")
+    {
+        if let Some(path) = worker["instrument_spec_path"].as_str() {
+            worker["instrument_spec_path"] = serde_json::json!(absolute(path).to_string_lossy());
+        }
+    }
+
+    let runtime_path = cwd.join("runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec_pretty(&runtime).expect("encode isolated Paper runtime"),
+    )
+    .expect("write isolated Paper runtime");
+    runtime_path
+}
+
+fn observe_paper(label: &str, route: &[&str]) -> Observation {
+    let cwd = temp_dir(label, 1);
+    let runtime = isolated_paper_runtime(&cwd);
+    let mut args = route.to_vec();
+    args.push(runtime.to_str().expect("Paper runtime path is UTF-8"));
+    let observation = observe_in(&cwd, &args);
     let _ = std::fs::remove_dir_all(cwd);
     observation
 }
@@ -267,6 +357,126 @@ fn pure_local_entrypoints_replay_the_same_process_contract() {
             "pure listing command wrote files: {first:?}"
         );
     }
+}
+
+#[test]
+fn strategy_diagnose_depth_rejects_non_run_input() {
+    let cwd = temp_dir("strategy-diagnose-depth-invalid", 1);
+    let output_path = cwd.join("diagnostics.json");
+    let output = Command::new(binary())
+        .current_dir(&cwd)
+        .env_remove("QX_DEPLOY_DIR")
+        .env_remove("QX_PYTHON")
+        .args([
+            "strategy",
+            "diagnose-depth",
+            "missing.multi-market-depth.json",
+            "--output",
+            "diagnostics.json",
+        ])
+        .output()
+        .expect("run strategy diagnose-depth with a missing artifact");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("strategy diagnose-depth 只接受多市场深度运行产物"));
+    assert!(!output_path.exists());
+    assert!(artifact_files(&cwd).is_empty());
+    let _ = std::fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn strategy_diagnose_bar_replays_verified_run_and_attaches_to_html_report() {
+    let cwd = temp_dir("strategy-diagnose-bar-e2e", 1);
+    let frame_path = cwd.join("bars.json");
+    let spec_path = cwd.join("backtest-spec.json");
+    let diagnostics_path = cwd.join("diagnostics.json");
+    let output_dir = cwd.join("runs");
+    let timestamps = (0..48)
+        .map(|index| 1_000 + index * 1_000)
+        .collect::<Vec<_>>();
+    let closes = (0..48)
+        .map(|index| (100 + ((index % 12) as i128 - 6) * 2) * 1_000_000_000_i128)
+        .collect::<Vec<_>>();
+    let frame = serde_json::json!({
+        "schema_version": 1,
+        "instrument": "BTCUSDT.BINANCE",
+        "source": "diagnose-bar-e2e-v1",
+        "ts": timestamps,
+        "open_raw": closes,
+        "high_raw": closes.iter().map(|price| price + 1_000_000_000).collect::<Vec<_>>(),
+        "low_raw": closes.iter().map(|price| price - 1_000_000_000).collect::<Vec<_>>(),
+        "close_raw": closes,
+        "volume_raw": vec![10_000_000_000_i128; 48],
+    });
+    std::fs::write(&frame_path, serde_json::to_vec(&frame).unwrap()).unwrap();
+    let spec = serde_json::json!({
+        "schema_version": 1,
+        "run_id": "diagnose-bar-e2e",
+        "instrument": "BTCUSDT.BINANCE",
+        "bars_path": frame_path.to_string_lossy(),
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 100_000_000_000_000_i128,
+        "seed": 19,
+        "output_dir": output_dir.to_string_lossy(),
+        "strategy": {
+            "kind": "sma_cross",
+            "strategy_id": "diagnose-bar-sma",
+            "quantity_raw": 1_000_000_000_i128,
+            "fast_window": 2,
+            "slow_window": 5,
+        },
+    });
+    std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
+
+    let run = Command::new(binary())
+        .current_dir(&cwd)
+        .args(["app", "backtest", spec_path.to_str().unwrap()])
+        .output()
+        .expect("run a real Rust Bar backtest");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let summary_path = outcome["artifacts"]["summary"].as_str().unwrap();
+
+    let diagnosis = Command::new(binary())
+        .current_dir(&cwd)
+        .args([
+            "strategy",
+            "diagnose-bar",
+            summary_path,
+            "--spec",
+            spec_path.to_str().unwrap(),
+            "--output",
+            diagnostics_path.to_str().unwrap(),
+            "--html",
+        ])
+        .output()
+        .expect("generate and attach bounded Bar strategy diagnostics");
+    assert_eq!(
+        diagnosis.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&diagnosis.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&diagnostics_path).unwrap()).unwrap();
+    assert_eq!(report["run_id"], "diagnose-bar-e2e");
+    assert_eq!(report["strategy_id"], "diagnose-bar-sma");
+    assert_eq!(report["input_kind"], "bar");
+    assert_eq!(report["input_bars"], 48);
+    assert_eq!(report["data_visibility"]["status"], "visibility_unknown");
+    assert!(report.pointer("/startup/trajectory").is_some());
+    assert!(report.pointer("/lookahead/checks").is_some());
+
+    let html_path = Path::new(summary_path).with_file_name("diagnose-bar-e2e.report.html");
+    let html = std::fs::read_to_string(&html_path).expect("diagnostics are attached to HTML");
+    assert!(html.contains("diagnose-bar-sma"));
+    assert!(html.contains("visibility_unknown"));
+    let _ = std::fs::remove_dir_all(cwd);
 }
 
 #[test]
@@ -368,23 +578,21 @@ fn config_lock_replay_preserves_the_locked_artifact_bytes() {
 
 #[test]
 fn run_paper_aliases_match_the_top_level_paper_process_contract() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("qx-cli tests are two levels below the workspace root");
-    let runtime = root
-        .join("deploy/qianxing.runtime.paper-strategy.example.json")
-        .to_string_lossy()
-        .into_owned();
-    let direct = observe("paper-direct", &["paper-e2e", runtime.as_str()], 1);
-    for (label, alias) in [
-        ("run-paper", vec!["run", "paper", runtime.as_str()]),
-        (
-            "run-paper-check",
-            vec!["run", "paper-check", runtime.as_str()],
-        ),
+    let direct = observe_paper("paper-direct", &["paper-e2e"]);
+    for artifact in [
+        "data/qianxing-paper/scheduler.json",
+        "data/qianxing-paper/paper-main-paper-events.json",
     ] {
-        let routed = observe(label, &alias, 1);
+        assert!(
+            direct.artifacts.iter().any(|path| path == artifact),
+            "Paper process must persist {artifact} under its isolated working directory: {direct:?}"
+        );
+    }
+    for (label, route) in [
+        ("run-paper", &["run", "paper"][..]),
+        ("run-paper-check", &["run", "paper-check"][..]),
+    ] {
+        let routed = observe_paper(label, route);
         assert_eq!(
             direct.exit_code, 0,
             "top-level Paper route failed: {direct:?}"
@@ -396,7 +604,8 @@ fn run_paper_aliases_match_the_top_level_paper_process_contract() {
         );
         assert_eq!(routed.result_hashes, direct.result_hashes);
         assert_eq!(
-            routed.artifacts, direct.artifacts,
+            canonical_artifact_paths(&routed.artifacts),
+            canonical_artifact_paths(&direct.artifacts),
             "{label} wrote a different file set"
         );
         assert!(

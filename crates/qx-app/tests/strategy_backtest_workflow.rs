@@ -22,7 +22,7 @@ impl BarStrategy for NoOrders {}
 fn workflow_executes_adapter_and_publishes_its_verified_identity_and_artifacts() {
     let root = scratch("strategy-backtest-workflow");
     let frame = BarFrame::from_json(&frame_json("BTCUSDT.BINANCE", 32)).expect("valid frame json");
-    let bars: Vec<qx_guanxing::Bar> = (&frame).into();
+    let bars = frame.bars().expect("BarFrame exact values are valid");
     let spec = backtest_spec("workflow-test", "memory://workflow-test", &root);
     let context = RunContext::new(CallerCapability::Research, "strategy-workflow-test");
     let result = run_and_persist_strategy_backtest(StrategyBacktestWorkflowInput {
@@ -78,7 +78,7 @@ fn workflow_executes_adapter_and_publishes_its_verified_identity_and_artifacts()
 fn workflow_builds_native_execution_context_from_the_resolved_spec_and_input_identity() {
     let root = scratch("strategy-backtest-native-workflow");
     let frame = BarFrame::from_json(&frame_json("BTCUSDT.BINANCE", 32)).expect("valid frame json");
-    let bars: Vec<qx_guanxing::Bar> = (&frame).into();
+    let bars = frame.bars().expect("BarFrame exact values are valid");
     let mut spec = backtest_spec(
         "native-workflow-test",
         "memory://native-workflow-test",
@@ -148,7 +148,7 @@ fn derivative_declaration_without_market_spec_fails_before_artifact_side_effects
     let root = scratch("strategy-backtest-missing-spec");
     let unpublished = root.join("unpublished");
     let frame = BarFrame::from_json(&frame_json("BTCUSDT.BINANCE", 32)).expect("valid frame json");
-    let bars: Vec<qx_guanxing::Bar> = (&frame).into();
+    let bars = frame.bars().expect("BarFrame exact values are valid");
     let spec = backtest_spec("missing-spec-test", "memory://missing-spec-test", &root);
     let context = RunContext::new(CallerCapability::Research, "strategy-missing-spec-test");
 

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-project-v1.json",
+  "title": "Qianxing Strategy Project v1",
+  "description": "Project-first local strategy workflow manifest. Paths are relative to the project root unless absolute; project validation never embeds credentials.",
+  "type": "object",
+  "required": ["schema_version", "kind", "project_id", "strategy_file", "input_spec"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "qianxing-strategy-project"},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "strategy_file": {"type": ["string", "null"], "minLength": 1},
+    "input_spec": {"type": ["string", "null"], "minLength": 1},
+    "strategy_id": {"type": ["string", "null"], "minLength": 1},
+    "strategy_version": {"type": ["string", "null"], "minLength": 1},
+    "runtime_config": {"type": ["string", "null"], "minLength": 1},
+    "worker_id": {"type": ["string", "null"], "minLength": 1},
+    "data": {
+      "type": ["object", "null"],
+      "properties": {
+        "source": {"type": ["string", "null"], "minLength": 1, "pattern": "\\S"},
+        "cache_root": {"type": ["string", "null"], "minLength": 1, "pattern": "\\S"},
+        "retries": {"type": ["integer", "null"], "minimum": 0, "maximum": 9}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

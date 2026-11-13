@@ -106,6 +106,8 @@ fn independent_consumer_runs_sync_and_async_multi_account_depth_batches() {
         queue_position_bps: 0,
         queue_position_model: Default::default(),
         market_impact_bps: 0,
+        funding_bps: 0,
+        funding_events: Vec::new(),
         output_dir: root.join("account-a").to_string_lossy().into_owned(),
         strategy: depth_strategy,
         market_spec: None,

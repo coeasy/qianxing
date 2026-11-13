@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/provider-backtest-report-v1.json",
+  "title": "Qianxing ProviderBacktestReport v1",
+  "description": "Verified shared Bar report plus its bound Provider dataset verdict, immutable manifest, and DatasetSnapshotV1.",
+  "type": "object",
+  "required": ["schema_version", "report", "dataset_verdict", "manifest", "dataset_snapshot"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "report": {"$ref": "research-run-report-v1.json"},
+    "dataset_verdict": {"$ref": "provider-backtest-result-v1.json#/$defs/DatasetVerdict"},
+    "manifest": {"$ref": "dataset-manifest-v2.json"},
+    "dataset_snapshot": {"$ref": "dataset-snapshot-v1.json"}
+  },
+  "additionalProperties": false
+}

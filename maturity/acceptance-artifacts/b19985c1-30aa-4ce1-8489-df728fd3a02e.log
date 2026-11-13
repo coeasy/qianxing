@@ -1,0 +1,7 @@
+$ python3 tools/accept_project_run_identity.py maturity/evidence/project-run-identity-linux.json
+exit_code=0
+
+[stdout]
+{"out": "/tmp/qx-clean/maturity/evidence/project-run-identity-linux.json", "evidence_kind": "linux_project_run_process_identity", "identity_checks": 5}
+
+[stderr]

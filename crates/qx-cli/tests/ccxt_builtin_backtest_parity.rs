@@ -14,10 +14,13 @@ fn repo_root() -> PathBuf {
 }
 
 fn case_root() -> PathBuf {
-    let path = repo_root()
-        .join("target")
-        .join(format!("qx-cli-ccxt-builtin-parity-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_CASE: AtomicU64 = AtomicU64::new(0);
+    let path = repo_root().join("target").join(format!(
+        "qx-cli-ccxt-builtin-parity-{}-{}",
+        std::process::id(),
+        NEXT_CASE.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&path).expect("create CCXT builtin parity case directory");
     path
 }
@@ -61,12 +64,35 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         serde_json::to_vec_pretty(&runtime).expect("encode isolated runtime"),
     )
     .expect("write isolated runtime");
+    let mut conflicting_runtime = runtime.clone();
+    conflicting_runtime["strategy"]["cost_rules_path"] = json!("preselected-costs.json");
+    let conflicting_runtime_path = case.join("runtime-with-costs.json");
+    std::fs::write(
+        &conflicting_runtime_path,
+        serde_json::to_vec_pretty(&conflicting_runtime).expect("encode conflicting runtime"),
+    )
+    .expect("write runtime with explicit costs");
     let mut python_paths = vec![python_root];
     if let Some(existing) = env::var_os("PYTHONPATH") {
         python_paths.extend(env::split_paths(&existing));
     }
     let python_path = env::join_paths(python_paths).expect("compose fake worker PYTHONPATH");
     let python = env::var("QX_PYTHON").unwrap_or_else(|_| "python".to_string());
+    let conflict = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(&root)
+        .env("QX_PYTHON", &python)
+        .env("PYTHONPATH", &python_path)
+        .args(["backtest", "ccxt-builtin"])
+        .arg(&config_path)
+        .args(["sma_cross", "BTCUSDT.BINANCE", "1000", "70000", "1s"])
+        .arg("--config")
+        .arg(&conflicting_runtime_path)
+        .arg("--use-public-default-fees")
+        .output()
+        .expect("check conflicting explicit and public fee sources");
+    assert_eq!(conflict.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("cost_rules_path"));
+
     let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
         .current_dir(&root)
         .env("QX_PYTHON", python)
@@ -97,7 +123,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         "instrument=BTCUSDT.BINANCE",
         "bars=70",
         "fills=",
-        "result_hash=55a91efd8bfb7254",
+        "result_hash=c3d92708bceb2ecb",
     ] {
         assert!(metrics.contains(field), "missing {field} in {metrics}");
     }
@@ -264,4 +290,172 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         "CCXT adapter must preserve the requested fetch window and instrument"
     );
     let _ = std::fs::remove_dir_all(case);
+}
+
+#[test]
+fn ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest() {
+    let root = repo_root();
+    let case = case_root();
+    let python_root = case.join("python");
+    let package = python_root.join("qianxing_ccxt");
+    std::fs::create_dir_all(&package).expect("create fake CCXT worker package");
+    std::fs::write(package.join("__init__.py"), "").expect("write fake package marker");
+
+    let frame_path = root.join("deploy/qianxing.bar-frame.example.json");
+    let frame_payload = std::fs::read_to_string(&frame_path).expect("read deterministic BarFrame");
+    let market_payload = json!({
+        "exchange_id": "BINANCE",
+        "instrument": "BTCUSDT.BINANCE",
+        "symbol": "BTC/USDT",
+        "market_id": "BTCUSDT",
+        "base": "BTC",
+        "quote": "USDT",
+        "market_type": "spot",
+        "active": true,
+        "contract": false,
+        "linear": null,
+        "inverse": null,
+        "contract_size_raw": 1_000_000_000i64,
+        "settle": null,
+        "expiry_ms": null,
+        "price_tick_raw": 1_000_000i64,
+        "min_price_raw": null,
+        "max_price_raw": null,
+        "qty_step_raw": 1_000_000i64,
+        "market_order_qty_step_raw": null,
+        "min_qty_raw": 1_000_000i64,
+        "market_order_min_qty_raw": null,
+        "min_notional_raw": null,
+        "market_order_min_notional_raw": null,
+        "max_notional_raw": null,
+        "market_order_max_notional_raw": null,
+        "market_order_notional_filter_present": false,
+        "max_qty_raw": null,
+        "market_order_max_qty_raw": null,
+        "max_leverage": 1,
+        "maintenance_margin_bps": 0,
+        "maker_fee_rate": "0.0008",
+        "taker_fee_rate": "0.001",
+        "exact_rules": {
+            "contract_size": "1",
+            "price_tick": "0.001",
+            "quantity_step": "0.001",
+            "minimum_quantity": "0.001",
+            "minimum_notional": "0"
+        }
+    });
+    let worker_process_log = case.join("worker-processes.txt");
+    let worker = format!(
+        "import json, os, sys\nFRAME = json.loads({frame_payload})\nMARKET = json.loads({market_payload})\nPROCESS_LOG = {process_log}\nfor line in sys.stdin:\n request = json.loads(line)\n with open(PROCESS_LOG, 'a', encoding='utf-8') as log:\n  log.write(str(os.getpid()) + '\\n')\n op = request.get('op')\n result = {{'frame': FRAME}} if op == 'fetch_ohlcv' else {{'market': MARKET}} if op == 'resolve_market' else {{'tiers': []}} if op == 'fetch_leverage_tiers' else {{}}\n print(json.dumps({{'ok': True, 'result': result}}, separators=(',', ':')), flush=True)\n",
+        frame_payload = serde_json::to_string(&frame_payload).expect("encode fixture for worker"),
+        market_payload = serde_json::to_string(&market_payload.to_string())
+            .expect("encode market fixture"),
+        process_log = serde_json::to_string(&worker_process_log.to_string_lossy())
+            .expect("encode process log path"),
+    );
+    std::fs::write(package.join("worker.py"), worker).expect("write deterministic worker");
+
+    let config_path = case.join("ccxt.json");
+    std::fs::write(&config_path, json!({"timeout_ms": 2_000}).to_string())
+        .expect("write worker config");
+    let mut runtime: Value = serde_json::from_slice(
+        &std::fs::read(root.join("deploy/qianxing.runtime.strategy-backtest.example.json"))
+            .expect("read strategy backtest runtime template"),
+    )
+    .expect("runtime template is JSON");
+    runtime["storage"]["data_dir"] = json!(case
+        .strip_prefix(&root)
+        .expect("case directory is inside the workspace")
+        .join("data")
+        .to_string_lossy());
+    runtime["strategy"]
+        .as_object_mut()
+        .expect("runtime strategy is object")
+        .remove("cost_rules_path");
+    let runtime_path = case.join("runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec_pretty(&runtime).expect("encode isolated runtime"),
+    )
+    .expect("write isolated runtime");
+
+    let mut python_paths = vec![python_root];
+    if let Some(existing) = env::var_os("PYTHONPATH") {
+        python_paths.extend(env::split_paths(&existing));
+    }
+    let python_path = env::join_paths(python_paths).expect("compose fake worker PYTHONPATH");
+    let python = env::var("QX_PYTHON").unwrap_or_else(|_| "python".to_string());
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(&root)
+        .env("QX_PYTHON", python)
+        .env("PYTHONPATH", python_path)
+        .args(["backtest", "ccxt-builtin"])
+        .arg(&config_path)
+        .args(["sma_cross", "BTCUSDT.BINANCE", "1000", "70000", "1s"])
+        .arg("--config")
+        .arg(&runtime_path)
+        .arg("--use-public-default-fees")
+        .output()
+        .expect("run CCXT builtin with automatic market and fee snapshots");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "public fee option should run through the shared backtest: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout
+            .contains("source=public-market-default account_specific=false maker_bp=8 taker_bp=10"),
+        "resolved fee source and basis points should be visible: {stdout}"
+    );
+    let artifact_line = stdout
+        .lines()
+        .find(|line| line.starts_with("[Artifacts] summary="))
+        .expect("backtest should persist its summary");
+    let summary_path = root.join(
+        artifact_line
+            .strip_prefix("[Artifacts] summary=")
+            .and_then(|value| value.split_whitespace().next())
+            .map(PathBuf::from)
+            .expect("summary path is present"),
+    );
+    let summary: Value = serde_json::from_slice(
+        &std::fs::read(&summary_path).expect("read persisted backtest summary"),
+    )
+    .expect("summary is JSON");
+    let runtime_snapshot_path = root.join(
+        summary["runtime_config"]
+            .as_str()
+            .expect("summary names effective runtime snapshot"),
+    );
+    let runtime_snapshot: Value = serde_json::from_slice(
+        &std::fs::read(&runtime_snapshot_path).expect("read effective runtime snapshot"),
+    )
+    .expect("runtime snapshot is JSON");
+    let cost_rules_path = runtime_snapshot["strategy"]["cost_rules_path"]
+        .as_str()
+        .expect("public fee file is bound into runtime snapshot");
+    let cost_rules: Value = serde_json::from_slice(
+        &std::fs::read(cost_rules_path).expect("read frozen public fee rules"),
+    )
+    .expect("cost rules are JSON");
+    assert_eq!(cost_rules["maker_bp"], 8);
+    assert_eq!(cost_rules["taker_bp"], 10);
+    assert_eq!(cost_rules["fee_snapshot"]["account_specific"], false);
+    assert_eq!(
+        summary["execution_costs"]["source"],
+        format!("cost-rules-file:{cost_rules_path}")
+    );
+    let worker_processes =
+        std::fs::read_to_string(&worker_process_log).expect("read worker process identities");
+    let unique_processes = worker_processes
+        .lines()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique_processes.len(),
+        1,
+        "OHLCV and market metadata queries must share one CCXT worker process"
+    );
 }

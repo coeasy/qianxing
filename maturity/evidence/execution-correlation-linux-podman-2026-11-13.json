@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "execution_correlation_order_lifecycle_linux_validation",
+  "generated_at_utc": "2026-11-13T05:12:18Z",
+  "source": {
+    "code_base_commit": "c5969958064764aa0178763b20fc0d53dd3f66b3",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": []
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4 with WSL2",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "container_kernel": "Linux 6.18.40.1-microsoft-standard-WSL2 x86_64",
+    "dependency_resolution": "offline, locked",
+    "source_mount": "read-only workspace bind mount",
+    "target_directory": "/tmp/qx-target-offline"
+  },
+  "results": [
+    {
+      "command": "cargo test --offline -j 2 -p qx-execution submit_response_facts_keep_the_callers_stable_correlation_namespace --locked",
+      "environment": "Podman Linux",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline -j 2 -p qx-app account_activity_correlation_anchor_expands_to_the_same_order_lifecycle --lib --locked",
+      "environment": "Podman Linux",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "scope_limitations": [
+    "These tests verify stable submit-response correlation and account EventLog expansion from a submit anchor to the same order's acknowledgement, fill, and ledger facts.",
+    "This was a local Linux container test, not the Simular Box environment. No exchange API, account credential, or order submission was used.",
+    "The check does not establish a full Linux package installation matrix, distributed tracing, or OKX/Binance/Bitget live lifecycle acceptance."
+  ]
+}

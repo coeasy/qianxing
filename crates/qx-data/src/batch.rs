@@ -92,6 +92,7 @@ mod tests {
                     low_raw: 9,
                     close_raw: 11,
                     volume_raw: 100,
+                    exact_ohlcv: None,
                 })
                 .collect())
         }

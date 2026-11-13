@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "reason": "host_stop",
+  "context": {
+    "strategy_id": "golden-stop",
+    "strategy_version": "1.0",
+    "account_id": "main",
+    "venue_id": "paper",
+    "data_fingerprint": "stop-fixture-v1",
+    "as_of": 100,
+    "positions": {},
+    "cash": {},
+    "available_margin_raw": null,
+    "risk_state": "ready"
+  }
+}

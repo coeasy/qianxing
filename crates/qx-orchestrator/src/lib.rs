@@ -3,7 +3,11 @@
 //! 该 crate 只负责把已验证的 RuntimeConfig 转换为 worker 启动计划，以及管理
 //! worker 子进程的日志、退出传播和停止顺序；不执行策略、下单、对账或账簿副作用。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
+mod process_logs;
 mod reap;
+mod strategy_deployment;
 mod strategy_pipes;
 mod strategy_rings;
 mod strategy_worker;
@@ -14,16 +18,18 @@ use qx_runtime::{RuntimeConfig, WorkerRole};
 use reap::{stop_managed_children, ManagedChild};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::Duration;
 
 pub use qx_process_io::write_all_within;
+pub use strategy_deployment::{
+    StrategyLifecycleAction, StrategyLifecycleCommandOutcome, StrategyLifecyclePort,
+};
 pub use strategy_pipes::{pump_strategy_process, StrategyWorkerPipes, StrategyWorkerResponse};
 pub use strategy_rings::StrategySharedRings;
 pub use strategy_worker::{
     shared_ring_arguments, StrategyWorkerProcess, StrategyWorkerSpawnConfig,
 };
-use supervisor_stop::{wait_for_children, ManagedProcess, ProcessExit, SupervisorStop};
+use supervisor_stop::{ManagedProcess, ProcessExit, SupervisorStop};
 
 /// Standard process handles for a strategy worker launched under the restricted strategy
 /// environment. The caller owns the child and decides how to pump protocol and diagnostics.
@@ -42,9 +48,47 @@ pub fn spawn_strategy_process(
     env: &std::collections::BTreeMap<String, String>,
     transport: qx_strategy::transport::StrategyTransport,
 ) -> Result<StrategyProcessPipes, String> {
+    spawn_strategy_process_with_host_provider_env(
+        executable,
+        args,
+        env,
+        &std::collections::BTreeMap::new(),
+        transport,
+    )
+}
+
+/// Spawn a trusted host-side provider bridge with a separate, tightly allowlisted
+/// provider credential environment. Strategy-configured environment variables still
+/// pass the normal credential rejection rules; only explicit sandbox-provider SDK
+/// keys are admitted through this channel, and bridges must keep them out of sandboxes.
+pub fn spawn_strategy_process_with_host_provider_env(
+    executable: &str,
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+    host_provider_env: &std::collections::BTreeMap<String, String>,
+    transport: qx_strategy::transport::StrategyTransport,
+) -> Result<StrategyProcessPipes, String> {
     use qx_strategy::transport::StrategyTransport;
 
-    let child_env = qx_runtime::strategy_child_environment(env)?;
+    let mut child_env = qx_runtime::strategy_child_environment(env)?;
+    for (key, value) in host_provider_env {
+        if !matches!(
+            key.as_str(),
+            "E2B_API_KEY" | "MICROSANDBOX_API_KEY" | "OPEN_SANDBOX_API_KEY"
+        ) {
+            return Err(format!(
+                "unsupported host provider credential environment variable: {key}"
+            ));
+        }
+        if value.trim().is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '\0' | '\n' | '\r'))
+        {
+            return Err(format!("{key} must be a non-empty single-line value"));
+        }
+        child_env.insert(key.clone(), value.clone());
+    }
     let shared = matches!(
         transport,
         StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
@@ -76,6 +120,7 @@ pub fn spawn_strategy_process(
             id: format!("strategy:{executable}"),
             child,
             stop_channel: stdin,
+            log_drainers: Vec::new(),
         }];
         let reap = stop_managed_children(&mut failed_child, Duration::from_secs(1));
         return Err(match reap {
@@ -103,6 +148,7 @@ pub fn stop_strategy_process(
         id: id.into(),
         child,
         stop_channel,
+        log_drainers: Vec::new(),
     }];
     stop_managed_children(&mut child, budget)
 }
@@ -288,6 +334,7 @@ pub fn plan_workers(
 }
 
 impl ManagedProcess for ManagedChild {
+    #[cfg(test)]
     fn id(&self) -> &str {
         &self.id
     }
@@ -364,12 +411,18 @@ pub fn supervise_workers(
     executable: &Path,
     work_dir: &Path,
     allow_unmanaged_roles: bool,
+    lifecycle_port: &mut dyn StrategyLifecyclePort,
 ) -> Result<(), SuperviseFailure> {
-    let launches = plan_workers(config, config_path, allow_unmanaged_roles)?;
+    let (effective_config, mut active_strategy_revisions, mut active_strategy_bundles) =
+        strategy_deployment::recover_active_config(config, work_dir, executable)?;
+    let launches = plan_workers(&effective_config, config_path, allow_unmanaged_roles)?;
     // 在派生任何子进程之前就接管终止信号：否则规划/启动窗口内的 Ctrl+C 会直接打死
     // 监督器，留下无人回收的 worker 子进程。
     qx_runtime::install_shutdown_signals();
-    let data_dir = Path::new(&config.storage.data_dir);
+    // CLI/服务宿主可通过关闭父进程提供的 stdin 管道发出跨平台停机请求；这也覆盖
+    // Windows 上无法把 POSIX SIGINT 语义映射到控制台 CTRL_BREAK_EVENT 的调用方。
+    qx_runtime::install_stdin_shutdown_listener();
+    let data_dir = Path::new(&effective_config.storage.data_dir);
     let data_dir = if data_dir.is_absolute() {
         data_dir.to_path_buf()
     } else {
@@ -379,18 +432,56 @@ pub fn supervise_workers(
     std::fs::create_dir_all(&log_dir)
         .map_err(|error| format!("创建进程日志目录失败 {}: {error}", log_dir.display()))?;
 
+    let has_strategy_workers = effective_config
+        .workers
+        .iter()
+        .any(|worker| worker.role == WorkerRole::Strategy);
+    let initial_strategy_config = has_strategy_workers
+        .then(|| strategy_deployment::write_supervisor_snapshot(config_path, &effective_config))
+        .transpose()?;
+
     let mut children = Vec::with_capacity(launches.len());
+    let mut active_strategy_configs = std::collections::BTreeMap::new();
     let result = (|| -> Result<(), SuperviseFailure> {
-        for launch in launches {
+        for mut launch in launches {
+            if let Some(snapshot) = initial_strategy_config.as_ref() {
+                if launch.args.len() < 2 {
+                    return Err(format!(
+                        "worker {} has no runtime config argument",
+                        launch.worker_id
+                    )
+                    .into());
+                }
+                launch.args[1] = snapshot.to_string_lossy().into_owned();
+            }
+            if effective_config.workers.iter().any(|worker| {
+                worker.enabled
+                    && worker.id == launch.worker_id
+                    && worker.role == WorkerRole::Strategy
+            }) {
+                let snapshot = initial_strategy_config
+                    .as_ref()
+                    .ok_or_else(|| "strategy supervisor snapshot is unavailable".to_string())?;
+                if launch.args.len() < 2 {
+                    return Err(format!(
+                        "Strategy worker {} has no runtime config argument",
+                        launch.worker_id
+                    )
+                    .into());
+                }
+                launch.args[1] = snapshot.to_string_lossy().into_owned();
+                active_strategy_configs.insert(launch.worker_id.clone(), snapshot.clone());
+            }
             let stdout_path = log_dir.join(format!("{}.out.log", launch.worker_id));
             let stderr_path = log_dir.join(format!("{}.err.log", launch.worker_id));
-            let stdout = std::fs::File::create(&stdout_path).map_err(|error| {
+            let stdout = process_logs::prepare(&stdout_path).map_err(|error| {
                 format!("创建 worker {} stdout 日志失败: {error}", launch.worker_id)
             })?;
-            let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
+            let stderr = process_logs::prepare(&stderr_path).map_err(|error| {
                 format!("创建 worker {} stderr 日志失败: {error}", launch.worker_id)
             })?;
-            let mut child = Command::new(executable)
+            let mut process = Command::new(executable);
+            process
                 .args(launch.args)
                 .current_dir(work_dir)
                 .env(
@@ -398,10 +489,39 @@ pub fn supervise_workers(
                     qx_runtime::WORKER_STOP_CHANNEL_STDIN_EOF,
                 )
                 .stdin(Stdio::piped())
-                .stdout(Stdio::from(stdout))
-                .stderr(Stdio::from(stderr))
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(revision) = active_strategy_revisions.get(&launch.worker_id) {
+                process.env(
+                    qx_runtime::STRATEGY_DEPLOYMENT_REVISION_ENV,
+                    revision.to_string(),
+                );
+            }
+            if let Some(bundle) = active_strategy_bundles.get(&launch.worker_id) {
+                process.env(qx_runtime::STRATEGY_DEPLOYMENT_BUNDLE_ENV, bundle);
+            }
+            let mut child = process
                 .spawn()
                 .map_err(|error| format!("启动 worker {} 失败: {error}", launch.worker_id))?;
+            let mut log_drainers = Vec::with_capacity(2);
+            if let Some(pipe) = child.stdout.take() {
+                log_drainers.push(process_logs::pump(
+                    pipe,
+                    stdout_path,
+                    stdout,
+                    launch.worker_id.clone(),
+                    "stdout",
+                ));
+            }
+            if let Some(pipe) = child.stderr.take() {
+                log_drainers.push(process_logs::pump(
+                    pipe,
+                    stderr_path,
+                    stderr,
+                    launch.worker_id.clone(),
+                    "stderr",
+                ));
+            }
             // `take()` 失败要先把子进程挂进台账再返回：`Stdio::piped()` 之后这个 `Some` 是
             // 不变式，此路径今天走不到；但上游一旦改成无管道模式，裸 `?` 就留下一个没人回收的
             // worker 进程——`children` 还没拿到它，收尾那一处收不到。这里不就地 kill+wait：回收
@@ -414,6 +534,7 @@ pub fn supervise_workers(
                         id: launch.worker_id.clone(),
                         child,
                         stop_channel: None,
+                        log_drainers,
                     });
                     let detail = format!("启动 worker {} 后拿不到 stop channel", launch.worker_id);
                     return Err(detail.into());
@@ -428,15 +549,20 @@ pub fn supervise_workers(
                 id: launch.worker_id,
                 child,
                 stop_channel: Some(stop_channel),
+                log_drainers,
             });
         }
-        let started = std::time::Instant::now();
-        match wait_for_children(
+        match strategy_deployment::supervise_with_deployments(
             &mut children,
-            qx_runtime::shutdown_signalled,
-            || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            |millis| thread::sleep(Duration::from_millis(millis)),
-            config.shutdown_timeout_ms,
+            &effective_config,
+            config_path,
+            executable,
+            work_dir,
+            &log_dir,
+            lifecycle_port,
+            &mut active_strategy_configs,
+            &mut active_strategy_revisions,
+            &mut active_strategy_bundles,
         )? {
             SupervisorStop::WorkerExited { id, code, label } => {
                 return Err(SuperviseFailure::WorkerExit {
@@ -465,11 +591,15 @@ pub fn supervise_workers(
         Duration::from_millis(config.shutdown_timeout_ms),
     )
     .map_err(SuperviseFailure::Usage);
-    match (result, reaped) {
+    let outcome = match (result, reaped) {
         (Ok(()), reap) => reap,
         (Err(error), Ok(())) => Err(error),
         (Err(error), Err(reap_error)) => Err(error.append(format!("且收尾未收干净: {reap_error}"))),
+    };
+    if let Some(path) = initial_strategy_config {
+        let _ = std::fs::remove_file(path);
     }
+    outcome
 }
 
 #[cfg(test)]

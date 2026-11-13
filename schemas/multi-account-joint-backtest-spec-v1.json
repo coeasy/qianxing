@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-joint-backtest-spec-v1.json",
+  "title": "Qianxing MultiAccountJointBacktestSpec v1",
+  "description": "Separately funded OKX, Binance, and Bitget accounts with synchronized aggregate Bar portfolio reporting. The same instrument may appear in separate accounts; ledgers remain isolated and there is no cross-account margin netting.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "settlement_currency", "seed", "output_dir", "accounts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+    "settlement_currency": {"type": "string", "minLength": 1, "pattern": "^[^a-z]*$"},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "output_dir": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "accounts": {"type": "array", "minItems": 2, "maxItems": 32, "items": {"$ref": "#/$defs/JointBacktestAccount"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "JointBacktestAccount": {
+      "type": "object",
+      "required": ["exchange_id", "account_id", "initial_cash_raw", "markets"],
+      "properties": {
+        "exchange_id": {"enum": ["okx", "binance", "bitget"]},
+        "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+        "initial_cash_raw": {"type": "integer", "minimum": 1},
+        "markets": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "multi-market-backtest-spec-v1.json#/$defs/MultiMarketBacktestMarket"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

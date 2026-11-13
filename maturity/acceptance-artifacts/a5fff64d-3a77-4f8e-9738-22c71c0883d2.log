@@ -1,0 +1,15 @@
+$ cargo test -p qx-storage --features postgres --lib postgres::json_state_tests::postgres_deployment_blobs_are_immutable_and_content_addressable --offline -j 1 -- --ignored --exact --nocapture
+exit_code=0
+
+[stdout]
+
+running 1 test
+test postgres::json_state_tests::postgres_deployment_blobs_are_immutable_and_content_addressable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.18s
+
+
+[stderr]
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+    Finished `test` profile [unoptimized] target(s) in 7.21s
+     Running unittests src\lib.rs (target\debug\deps\qx_storage-2138d043f8f7d3c6.exe)

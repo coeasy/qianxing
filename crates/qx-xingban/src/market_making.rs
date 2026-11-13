@@ -210,12 +210,14 @@ impl MarketMakingStrategy {
             filled: Quantity::ZERO,
             account_id: self.account_id.clone(),
             trace: Some(OrderTrace {
+                run_id: None,
                 strategy_id: Some(self.strategy_id.clone()),
                 signal_id: Some(sequence),
                 intent_id: Some(client_id),
                 rule_version: Some("market-making-v1".into()),
             }),
             policy: self.policy,
+            exact_amounts: None,
         })
     }
 }

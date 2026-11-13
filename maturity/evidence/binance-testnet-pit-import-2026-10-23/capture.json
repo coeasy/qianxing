@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-pit-snapshot-capture",
+  "exchange": "binance",
+  "network": "official_spot_testnet",
+  "instrument": "BTC/USDT.BINANCE",
+  "timeframe": "1m",
+  "start_ms": 1792709255979,
+  "end_ms": 1792710155979,
+  "binary_sha256": "09fede073156f8bfba2ec39e7e8a8c6bef6c449c0415dfe88e01be2e60960cf7",
+  "credentials_present": false,
+  "private_account_calls": false,
+  "orders_sent": false,
+  "snapshots": [
+    {
+      "path": "D:\\aex_work\\qianxing\\maturity\\evidence\\binance-testnet-pit-import-2026-10-23\\snapshot-1.json",
+      "observed_at_ms": 1792710280759
+    },
+    {
+      "path": "D:\\aex_work\\qianxing\\maturity\\evidence\\binance-testnet-pit-import-2026-10-23\\snapshot-2.json",
+      "observed_at_ms": 1792710285104
+    }
+  ]
+}

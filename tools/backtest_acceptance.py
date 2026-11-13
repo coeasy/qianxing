@@ -19,17 +19,17 @@ A 股示例结论落进 `maturity/ashare_example_backtest_acceptance.yaml`（均
 **同一目录重跑（逐格相等）**——同输入两次 `backtest`，下列每一格都必须逐字相等：
 
 * `result_hash`、`data_fingerprint`、`config_fingerprint`；
-* 四份产物的**文件名**（含配置指纹后缀）与**内容 sha256**；
+* 五份产物（含离线验证通过的运行 EvidenceBundle）的**文件名**（含配置指纹后缀）与**内容 sha256**；
 * `replay_verdict`。
 
 **两个独立目录（只要求语义相等）**——两个互不相干的项目各跑一轮，下列必须相等：
-`result_hash`、`data_fingerprint`、`replay_verdict`，以及四份产物**归一化之后**的 sha256
+`result_hash`、`data_fingerprint`、`replay_verdict`，以及五份产物**归一化之后**的 sha256
 （`equity.csv` / `fills.csv` 这两份纯数据要求**逐字节**相等，不做归一化）。
 
 **允许不同、且必须只差这些**：配置里的 `storage.data_dir` 是绝对路径，两处目录不同 →
 配置内容不同 → 内容寻址的 `config_hash` 不同 → 由它派生的产物**文件名后缀**也不同；
 `summary.json` / `run.json` 里各自写着本轮的绝对路径与那个 `config_hash`。
-归一化只抹掉这三样（路径、`config_hash`、由它派生的文件名后缀），**其余仍要求逐字节相等**
+归一化只抹掉这三样（路径、`config_hash`、由它派生的文件名后缀），EvidenceBundle 也包含在内，**其余仍要求逐字节相等**
 ——归一化不是放水，它把「差异只来自路径」这句话变成了断言。这恰好是 §46 那条
 「artifact digest vs result_hash」的区分：**结果**必须与路径无关，**产物身份**不必。
 
@@ -70,10 +70,14 @@ ARTIFACT_KINDS = {
     ".equity.csv": "equity",
     ".fills.csv": "fills",
     ".run.json": "run_manifest",
+    ".evidence.json": "evidence",
 }
 
-RUN_MANIFEST_PATH = re.compile(r"\[RunManifest\]\s+path=(\S+)")
-ARTIFACTS_LINE = re.compile(r"\[Artifacts\]\s+summary=(\S+)\s+equity=(\S+)\s+fills=(\S+)")
+RUN_MANIFEST_PATH = re.compile(r"^\[RunManifest\][ \t]+path=([^\r\n]+)\r?$", re.MULTILINE)
+ARTIFACTS_LINE = re.compile(
+    r"^\[Artifacts\][ \t]+summary=([^\r\n]+?)[ \t]+equity=([^\r\n]+?)[ \t]+fills=([^\r\n]+)\r?$",
+    re.MULTILINE,
+)
 BACKTEST_RESULT_HASH = re.compile(r"\[Strategy · Backtest\].*?result_hash=(\S+)")
 
 # 跨目录归一化时要抹掉的两样（都是 `storage.data_dir` 绝对路径的下游）：内容寻址的
@@ -86,8 +90,10 @@ ARTIFACT_CONFIG_FINGERPRINT = re.compile(
     r"(?<=_)[0-9a-f]{64}(?=_[0-9a-f]{24}-[0-9a-f]{16})"
 )
 ARTIFACT_STEM = re.compile(
-    r"-[0-9a-f]{16}(?:\.v7)?\.(summary\.json|equity\.csv|fills\.csv|record\.json|run\.json)"
+    r"-[0-9a-f]{16}(?:\.v\d+)?\.(summary\.json|equity\.csv|fills\.csv|record\.json|run\.json)"
 )
+CONFIG_DIGEST = re.compile(r'("config_digest"\s*:\s*")[0-9a-f]{64}("\s*[,}])')
+CONFIG_HASH_TEXT = re.compile(r"(config_hash=)[0-9a-f]{64}")
 
 
 def default_binary() -> Path:
@@ -156,6 +162,54 @@ def sha256_normalized(path: Path, root: Path) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def sha256_normalized_evidence(path: Path, root: Path) -> str:
+    """Compare EvidenceBundles semantically while rebinding each artifact digest.
+
+    Bundle digests are expected to differ across independent project roots because the referenced
+    summary, manifest, and runtime config contain those roots. Recompute each declared digest after
+    the same path/config normalization used by the acceptance contract, then normalize the bundle's
+    own paths and config-derived identities. `evidence verify-run` has already checked every raw
+    digest before this comparison.
+    """
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        run = bundle["generation"]["run"]
+        artifacts = run["artifacts"]
+        if not isinstance(artifacts, list) or not artifacts:
+            raise ValueError("EvidenceBundle has no run artifacts")
+        resolved_root = root.resolve()
+        for artifact in artifacts:
+            raw_path = artifact["path"]
+            if not isinstance(raw_path, str):
+                raise ValueError("EvidenceBundle artifact path is not a string")
+            # Rust may preserve the Win32 extended-length prefix in serialized paths.
+            if raw_path.startswith("\\\\?\\"):
+                raw_path = raw_path[4:]
+            artifact_path = Path(raw_path)
+            if not artifact_path.is_absolute():
+                artifact_path = resolved_root / artifact_path
+            artifact_path = artifact_path.resolve(strict=True)
+            if not artifact_path.is_relative_to(resolved_root):
+                raise ValueError(f"EvidenceBundle artifact escapes project root: {artifact_path}")
+            if sha256_file(artifact_path) != artifact["digest"]:
+                raise ValueError(f"EvidenceBundle artifact digest changed: {artifact_path}")
+            artifact["digest"] = sha256_normalized(artifact_path, root)
+
+        text = json.dumps(bundle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        escaped = json.dumps(str(root))[1:-1]
+        for variant in {str(root), str(root).replace("\\", "/"), escaped}:
+            text = text.replace(variant, "<ROOT>")
+        text = CONFIG_HASH.sub('"config_hash":"<CONFIG_HASH>"', text)
+        text = CONFIG_DIGEST.sub(r"\1<CONFIG_HASH>\2", text)
+        text = CONFIG_HASH_TEXT.sub(r"\1<CONFIG_HASH>", text)
+        text = RUN_ID_CONFIG_HASH.sub(r"\1<CONFIG_HASH>\2", text)
+        text = ARTIFACT_CONFIG_FINGERPRINT.sub("<CONFIG_HASH>", text)
+        text = ARTIFACT_STEM.sub(r"-<CONFIG_HASH>.\1", text)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"EvidenceBundle 独立目录归一化失败 {path}: {error}") from error
+
+
 def read_status(binary: Path, runtime: Path, cwd: Path) -> dict[str, Any]:
     code, output = run([str(binary), "status", str(runtime), "--json"], cwd)
     if code != 0:
@@ -166,7 +220,7 @@ def read_status(binary: Path, runtime: Path, cwd: Path) -> dict[str, Any]:
     return json.loads(output[start : end + 1])
 
 
-def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
+def snapshot_from_output(output: str, project: Path, evidence_path: Path) -> dict[str, Any]:
     """从 `backtest` 的 stdout 里取**这一轮**的产物路径，再逐份算摘要。
 
     按输出取路径而不是扫目录：`quickstart` 自带的那一轮与本脚本受控的那两轮落在同一个
@@ -184,9 +238,12 @@ def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
         "equity": Path(artifacts.group(2)),
         "fills": Path(artifacts.group(3)),
         "run_manifest": manifest_path,
+        "evidence": evidence_path,
     }
+    # 与 tools/backtest_baseline.py 同一判据：记录文件的名字跟着 CLI 印出的产物名走，
+    # 不在这里硬写版本中缀（当前摘要已升到 v8，旧世代仍需可归一化）。
     record_path = manifest_path.with_name(
-        manifest_path.name.replace(".run.json", ".v7.record.json")
+        paths["summary"].name.replace("summary.json", "record.json")
     )
     for path in (*paths.values(), record_path):
         if not path.is_file():
@@ -201,7 +258,14 @@ def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
         "config_fingerprint": record.get("config_fingerprint"),
         "replay_verdict": record.get("replay_verdict"),
         "contents": {kind: sha256_file(path) for kind, path in paths.items()},
-        "normalized": {kind: sha256_normalized(path, project) for kind, path in paths.items()},
+        "normalized": {
+            kind: (
+                sha256_normalized_evidence(path, project)
+                if kind == "evidence"
+                else sha256_normalized(path, project)
+            )
+            for kind, path in paths.items()
+        },
     }
 
 
@@ -224,7 +288,31 @@ def backtest(
     )
     if code != 0:
         raise SystemExit(f"backtest 以 {code} 退出：\n{output}")
-    return snapshot_from_output(output, project)
+    artifacts = ARTIFACTS_LINE.search(output)
+    if not artifacts:
+        raise SystemExit(f"`backtest` 的输出缺少可解析的产物行：\n{output}")
+    summary_path = Path(artifacts.group(1))
+    code, report_output = run(
+        [str(binary), "report", str(summary_path), "--evidence"],
+        cwd,
+    )
+    if code != 0:
+        raise SystemExit(f"`report --evidence` 以 {code} 退出：\n{report_output}")
+    evidence_match = re.search(
+        r"^\[Report\][ \t]+evidence=([^\r\n]+)\r?$", report_output, re.MULTILINE
+    )
+    if not evidence_match:
+        raise SystemExit(f"`report --evidence` 没有交出 EvidenceBundle 路径：\n{report_output}")
+    evidence_path = Path(evidence_match.group(1))
+    if not evidence_path.is_file():
+        raise SystemExit(f"`report --evidence` 点名的 EvidenceBundle 不在盘：{evidence_path}")
+    code, verify_output = run(
+        [str(binary), "evidence", "verify-run", str(evidence_path)],
+        cwd,
+    )
+    if code != 0:
+        raise SystemExit(f"`evidence verify-run` 以 {code} 退出：\n{verify_output}")
+    return snapshot_from_output(output, project, evidence_path)
 
 
 def one_leg(binary: Path, label: str, scenario: str) -> dict[str, Any]:
@@ -343,6 +431,7 @@ def write_record(legs: list[dict[str, Any]], binary: Path, record_path: Path, sc
         "orders_sent: false\n"
         "same_dir_rerun: byte_identical\n"
         "independent_dirs: result_hash_and_artifact_contents_equal\n"
+        "evidence_bundle_verified: true\n"
         f"independent_runs: {len(legs)}\n"
         f"result_hash: {first['result_hash']}\n"
         f"data_fingerprint: {first['data_fingerprint']}\n"

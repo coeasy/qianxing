@@ -1,0 +1,18 @@
+{
+  "account_id": null,
+  "artifacts": {
+    "equity": ".task-tmp/fill2-run\\fill-probe2.equity.csv",
+    "event_trace": ".task-tmp/fill2-run\\fill-probe2.events.jsonl",
+    "fills": ".task-tmp/fill2-run\\fill-probe2.fills.csv",
+    "run_manifest": ".task-tmp/fill2-run\\fill-probe2.run.json",
+    "summary": ".task-tmp/fill2-run\\fill-probe2.summary.json"
+  },
+  "data_fingerprint": "barframe:613fdc1dc0b779e7",
+  "equity_points": 70,
+  "fills": 2,
+  "instrument": "BTCUSDT.BINANCE",
+  "max_drawdown_bps": 0,
+  "result_hash": "2de31ff395c814e0",
+  "return_bps": 0,
+  "run_id": "fill-probe2"
+}

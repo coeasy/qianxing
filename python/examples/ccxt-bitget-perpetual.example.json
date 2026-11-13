@@ -1,0 +1,22 @@
+{
+  "exchange_id": "bitget",
+  "account_id": "bitget-sandbox",
+  "sandbox": true,
+  "enable_rate_limit": true,
+  "timeout_ms": 30000,
+  "ws_max_retries": 0,
+  "ws_retry_backoff_ms": 250,
+  "default_type": "swap",
+  "credential_env": {
+    "api_key": "QX_CCXT_BITGET_API_KEY",
+    "secret": "QX_CCXT_BITGET_SECRET",
+    "password": "QX_CCXT_BITGET_PASSPHRASE"
+  },
+  "options": {
+    "uta": false
+  },
+  "instruments": [
+    "BTC/USDT:USDT.BITGET"
+  ],
+  "account_model": "classic"
+}

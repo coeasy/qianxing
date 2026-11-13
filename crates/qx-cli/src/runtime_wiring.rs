@@ -49,7 +49,7 @@ pub(crate) use qx_service::worker_metrics::write_worker_metrics;
 ///
 /// 费率倒是接得上（`execution_cost_binding_from_config` 就是挂钩点），但只接费率会让产物显示
 /// "A 股佣金"而订单照样 T+0、照样可以 150 股买入 —— 比整段不认更容易骗人。
-const ASHARE_SUBMIT_GAP: &str =
+pub(crate) const ASHARE_SUBMIT_GAP: &str =
     "T+1 需要\"今日买入\"的结算状态、整手与涨跌停要按板块和昨收逐单判定，\
      而提交前的账户闸门只做规格、杠杆、名义额与可用保证金预检";
 

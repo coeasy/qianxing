@@ -6,25 +6,40 @@ use std::{path::Path, process::Command};
 fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
     let root = scratch("legacy-builtin-parity");
     let bars = sample_bars();
+    let mut runtime: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("deploy/qianxing.runtime.builtin-strategy.example.json"))
+            .expect("read builtin strategy runtime template"),
+    )
+    .expect("parse builtin strategy runtime template");
+    runtime["storage"]["data_dir"] = json!(root.join("legacy-data").to_string_lossy());
+    let runtime_path = root.join("legacy-runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec_pretty(&runtime).expect("serialize isolated runtime"),
+    )
+    .expect("write isolated runtime");
+    // Refreshed after the result identity began including native strategy-decision and risk facts.
     let strategies = [
-        ("sma_cross", "0d4347c63a5254b3"),
-        ("ema_cross", "269a4897dc0dd634"),
-        ("macd", "1189853a7c12447d"),
+        ("sma_cross", "092fdc46817956a3"),
+        ("ema_cross", "8aeb8d92a6b85a8c"),
+        ("macd", "a54513c4314ffbe1"),
         // Cash-spot sells without available inventory are rejected by the shared engine.
-        ("rsi", "039291b36c391d9d"),
-        ("bollinger", "3ad5dc6e6dc13eaa"),
-        ("donchian_breakout", "eca2b2c9724529f8"),
-        ("momentum", "f3b9742cd9c467b8"),
-        ("mean_reversion", "2c9ab4c42024e17a"),
-        ("grid", "aeab250a1024980a"),
-        ("atr_trend", "e25fddfd488529b1"),
-        ("keltner_trend", "f057d53be9ec40a9"),
-        ("vwap_reversion", "45f986ab58cab026"),
-        ("volatility_breakout", "e25fddfd488529b1"),
+        ("rsi", "5e3bcfe7e6e9608f"),
+        ("bollinger", "cfa3e83b491ec337"),
+        ("donchian_breakout", "5c7b4521a6faf3e2"),
+        ("momentum", "0b8acafd936e49f4"),
+        ("mean_reversion", "08ed1e1bdb298765"),
+        ("grid", "fe6739a096de371f"),
+        ("atr_trend", "cfa3e83b491ec337"),
+        ("keltner_trend", "5ee3d3eae8001de4"),
+        ("vwap_reversion", "4e9408201d114419"),
+        ("volatility_breakout", "cfa3e83b491ec337"),
     ];
+    let mut stale_baselines = Vec::new();
     for (kind, expected_hash) in strategies {
         let legacy_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-            .args(["backtest", "builtin", kind, &bars])
+            .args(["backtest", "builtin", kind, &bars, "--config"])
+            .arg(&runtime_path)
             .output()
             .expect("start legacy builtin backtest");
         assert_eq!(
@@ -73,11 +88,12 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
             legacy_field("result_hash"),
             "{kind}: CLI stdout={legacy_stdout}; app outcome={app}"
         );
-        assert_eq!(
-            legacy_field("result_hash"),
-            expected_hash,
-            "{kind} baseline"
-        );
+        let actual_hash = legacy_field("result_hash");
+        if actual_hash != expected_hash {
+            stale_baselines.push(format!(
+                "{kind}: expected {expected_hash}, actual {actual_hash}"
+            ));
+        }
         assert_eq!(
             app["fills"].as_u64().unwrap().to_string(),
             legacy_field("fills"),
@@ -101,6 +117,10 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
             );
         }
     }
+    assert!(
+        stale_baselines.is_empty(),
+        "内置策略固定结果基线过期；策略入口彼此仍保持一致，请一次校准全部项：{stale_baselines:?}"
+    );
 }
 
 #[test]
@@ -115,6 +135,7 @@ fn configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding() {
     runtime["strategy"]["builtin_fast_window"] = json!(2);
     runtime["strategy"]["builtin_slow_window"] = json!(3);
     runtime["strategy"]["fill_model"] = json!("best_price");
+    runtime["storage"]["data_dir"] = json!(root.join("legacy-data").to_string_lossy());
     let runtime_path = root.join("runtime.json");
     std::fs::write(
         &runtime_path,

@@ -110,10 +110,12 @@ fn app_backtest_binds_explicit_exchange_tiered_margin() {
         price_tick: SCALE / 100,
         qty_step: SCALE / 100,
         min_qty: SCALE / 100,
+        min_notional_raw: 0,
         max_leverage: 10,
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     });
     spec.margin_model = Some(BacktestMarginConfig::Tiers {
         tiers: vec![BacktestMarginTier {

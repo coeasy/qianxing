@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-event-report-page-v1.json",
+  "title": "Qianxing ResearchEventReportPage v1",
+  "description": "A bounded page from a replay-verified EventLog, with complete fill identities used to reconcile the fills artifact.",
+  "type": "object",
+  "required": ["schema_version", "total", "offset", "truncated", "rows", "fill_counts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "total": {"type": "integer", "minimum": 0},
+    "offset": {"type": "integer", "minimum": 0},
+    "truncated": {"type": "boolean"},
+    "rows": {"type": "array", "maxItems": 300, "items": {"type": "object"}},
+    "fill_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["identity", "count"],
+        "properties": {
+          "identity": {"$ref": "#/$defs/FillIdentity"},
+          "count": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "FillIdentity": {
+      "type": "object",
+      "required": ["ts", "order_id", "qty_raw", "price_raw", "fee_raw", "strategy_id"],
+      "properties": {
+        "ts": {"type": "integer", "minimum": 0},
+        "order_id": {"type": "integer", "minimum": 0},
+        "qty_raw": {"type": "integer"},
+        "price_raw": {"type": "integer"},
+        "fee_raw": {"type": "integer"},
+        "strategy_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -58,6 +58,66 @@ fn summary_files(root: &Path) -> Vec<PathBuf> {
     summaries
 }
 
+fn valid_legacy_v5_summary(root: &Path, source_summary: &Path) -> PathBuf {
+    let mut summary: Value = serde_json::from_slice(
+        &std::fs::read(source_summary).expect("read verified source summary for v5 fixture"),
+    )
+    .expect("source summary is JSON");
+    let source_locations = summary["artifact_locations"]
+        .as_object()
+        .expect("source summary declares artifact locations");
+    let fixture_dir = root.join("legacy-v5");
+    std::fs::create_dir_all(&fixture_dir).expect("create legacy v5 artifact directory");
+    let summary_path = fixture_dir.join("legacy.summary.json");
+    let equity_path = fixture_dir.join("legacy.equity.csv");
+    let fills_path = fixture_dir.join("legacy.fills.csv");
+    let manifest_path = fixture_dir.join("legacy.run.json");
+    let record_path = fixture_dir.join("legacy.record.json");
+    for (name, target) in [
+        ("equity", &equity_path),
+        ("fills", &fills_path),
+        ("run_manifest", &manifest_path),
+    ] {
+        let source = source_locations[name]
+            .as_str()
+            .unwrap_or_else(|| panic!("source summary has {name} path"));
+        let source = Path::new(source);
+        let source = if source.is_absolute() {
+            source.to_path_buf()
+        } else {
+            root.join(source)
+        };
+        std::fs::copy(&source, target)
+            .unwrap_or_else(|error| panic!("copy v5 fixture {name}: {error}"));
+    }
+
+    summary["schema_version"] = json!(5);
+    let object = summary
+        .as_object_mut()
+        .expect("source summary is a JSON object");
+    object.remove("ashare_analysis");
+    object.remove("execution_attempts");
+    object.remove("execution_attempt_count");
+    summary["run_manifest"] = json!(manifest_path.to_string_lossy());
+    summary["run_record"] = json!(record_path.to_string_lossy());
+    summary["artifact_locations"] = json!({
+        "summary": summary_path.to_string_lossy(),
+        "equity": equity_path.to_string_lossy(),
+        "fills": fills_path.to_string_lossy(),
+        "run_manifest": manifest_path.to_string_lossy(),
+    });
+    write_json(&summary_path, &summary);
+    let created_record = qx_app::artifact_store::persist_verified_run_record(
+        &manifest_path,
+        &summary_path,
+        &equity_path,
+        &fills_path,
+    )
+    .expect("persist a digest-valid v5 RunRecord");
+    assert_eq!(created_record, record_path);
+    summary_path
+}
+
 fn assert_evidence_recomputes_after_portable_export(
     cwd: &Path,
     report: &Value,
@@ -186,7 +246,18 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
         }),
     );
     let actions_path = cwd.join("actions.json");
-    write_json(&actions_path, &json!([]));
+    write_json(
+        &actions_path,
+        &json!([{
+            "instrument": "000001.SZSE",
+            "ex_date": "2024-01-02",
+            "published_at": "2023-12-20T00:00:00+08:00",
+            "action_type": "capital_change",
+            "issuer_total_shares_raw": 1000000000000_i64,
+            "issuer_free_float_shares_raw": 700000000000_i64,
+            "source": "ashare-report-process-fixture-v1"
+        }]),
+    );
 
     let mut config: Value = serde_json::from_slice(
         &std::fs::read(repo.join("deploy/qianxing.runtime.ashare.example.json"))
@@ -269,6 +340,16 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
                 }),
             "the A-share fixture must exercise its T+1 rule: {payload}"
         );
+        assert_eq!(
+            payload["ashare_analysis"]["issuer_capital_snapshots"][0]["total_shares_raw"],
+            "1000000000000",
+            "the persisted readout must carry the issuer share-capital fact"
+        );
+        assert_eq!(
+            payload["ashare_analysis"]["issuer_capital_at_end"]["free_float_shares_raw"],
+            "700000000000",
+            "the end-of-run readout must select the effective capital snapshot"
+        );
         quality::assert_summary(&payload, 60_000, 24);
         summaries.push(summary);
     }
@@ -303,10 +384,23 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
         let report: Value =
             serde_json::from_str(&stdout).expect("report --json emits one JSON value");
         assert_eq!(report["input_check"]["verdict"], "verified");
-        assert_eq!(report["summary"]["schema_version"], 7);
+        assert_eq!(report["summary"]["schema_version"], 8);
+        assert_eq!(
+            report["summary"]["ashare_analysis"]["issuer_capital_at_end"]["total_shares_raw"],
+            "1000000000000"
+        );
         assert!(report["generated_artifacts"]["html"].as_str().is_some());
         assert!(report["run_evidence"]["path"].as_str().is_some());
         quality::assert_html_and_evidence_quality(&report);
+        let report_html = std::fs::read_to_string(
+            report["generated_artifacts"]["html"]
+                .as_str()
+                .expect("A-share report HTML path"),
+        )
+        .expect("read A-share report HTML");
+        assert!(report_html.contains("发行人股本快照"));
+        assert!(report_html.contains("1000000000000"));
+        assert!(report_html.contains("700000000000"));
         assert_evidence_recomputes_after_portable_export(&cwd, &report, runtime, run_index);
         for artifact in ["html", "equity_svg", "fills_svg", "monthly_svg"] {
             let path = Path::new(report["generated_artifacts"][artifact].as_str().unwrap());
@@ -317,7 +411,7 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
             );
         }
 
-        benchmark::assert_benchmark_report_product(&cwd, summary, &frame);
+        benchmark::assert_benchmark_report_product(&cwd, summary, &frame, run_index);
 
         let direct_xlsx = cwd.join(format!(
             "{}.report.xlsx",
@@ -351,6 +445,28 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
             direct_xlsx.display().to_string()
         );
         quality::assert_xlsx_quality(&direct_xlsx);
+        let mut workbook = zip::ZipArchive::new(
+            std::fs::File::open(&direct_xlsx).expect("A-share report XLSX exists"),
+        )
+        .expect("A-share report XLSX is a ZIP package");
+        let mut workbook_index = String::new();
+        workbook
+            .by_name("xl/workbook.xml")
+            .expect("workbook index exists")
+            .read_to_string(&mut workbook_index)
+            .expect("read workbook index");
+        assert!(
+            workbook_index.contains("Ashare"),
+            "XLSX must expose the issuer-capital readout sheet"
+        );
+        let mut ashare_sheet = String::new();
+        workbook
+            .by_name("xl/worksheets/sheet5.xml")
+            .expect("A-share readout is the fifth base worksheet")
+            .read_to_string(&mut ashare_sheet)
+            .expect("read A-share worksheet");
+        assert!(ashare_sheet.contains("1000000000000"));
+        assert!(ashare_sheet.contains("700000000000"));
 
         let alias_args = std::iter::once("run".to_owned())
             .chain(direct_args)
@@ -377,6 +493,44 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
             );
         }
     }
+
+    let legacy_summary = valid_legacy_v5_summary(&cwd, &summaries[0]);
+    let legacy_html = cwd.join("legacy-v5-report.html");
+    let legacy_xlsx = cwd.join("legacy-v5-report.xlsx");
+    let legacy_args = vec![
+        "report".into(),
+        legacy_summary.to_string_lossy().into_owned(),
+        "--json".into(),
+        "--html".into(),
+        "-o".into(),
+        legacy_html.to_string_lossy().into_owned(),
+        "--xlsx".into(),
+        legacy_xlsx.to_string_lossy().into_owned(),
+    ];
+    let legacy_output = run(&cwd, &legacy_args);
+    let (legacy_stdout, legacy_stderr) = output_text(&legacy_output);
+    assert_eq!(
+        legacy_output.status.code(),
+        Some(0),
+        "valid v5 report must export HTML and XLSX: {legacy_stderr}\n{legacy_stdout}"
+    );
+    let legacy_report: Value = serde_json::from_str(&legacy_stdout).expect("v5 report emits JSON");
+    assert_eq!(legacy_report["input_check"]["verdict"], "verified");
+    assert_eq!(legacy_report["summary"]["schema_version"], 5);
+    assert!(legacy_report["summary"].get("ashare_analysis").is_none());
+    assert!(legacy_html.is_file() && legacy_xlsx.is_file());
+    let legacy_html_content = std::fs::read_to_string(&legacy_html).expect("read v5 report HTML");
+    assert!(!legacy_html_content.contains("A 股公司行为分析"));
+    let mut legacy_workbook =
+        zip::ZipArchive::new(std::fs::File::open(&legacy_xlsx).expect("v5 report XLSX exists"))
+            .expect("v5 report XLSX is a ZIP package");
+    let mut legacy_workbook_index = String::new();
+    legacy_workbook
+        .by_name("xl/workbook.xml")
+        .expect("v5 workbook index exists")
+        .read_to_string(&mut legacy_workbook_index)
+        .expect("read v5 workbook index");
+    assert!(!legacy_workbook_index.contains("Ashare"));
 
     let comparison_html = cwd.join("comparison.html");
     let comparison_xlsx = cwd.join("comparison.xlsx");
@@ -437,16 +591,31 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
     assert!(
         html.contains("lang=\"zh-CN\"")
             && html.contains("name=\"viewport\"")
-            && html.contains(".scroll{overflow-x:auto}")
-            && html.contains("<div class=\"scroll\"><table>")
+            && html.contains(".scroll{overflow:auto;max-height:72vh}")
+            && html.contains("<div class=\"scroll\"><table id=\"qx-runs\">")
+            && html.contains("id=\"qx-search\"")
+            && html.contains("id=\"qx-strategy\"")
+            && html.contains("id=\"qx-min-return\"")
+            && html.contains("id=\"qx-equity-chart\"")
+            && html.contains("id=\"qx-equity-legend\"")
+            && html.contains("const equityData=[")
+            && html.contains("\"equity_raw\"")
+            && html.contains("按时间戳对齐并以各自首个权益点归一化")
+            && html.contains("2,000 个抽样点")
+            && html.contains("canvas.addEventListener('pointermove'")
+            && html.contains("function update()")
+            && html.contains("row.hidden=")
+            && html.contains("header.addEventListener('click'")
             && html.contains("原始收益排名")
             && html.contains("主动收益排名")
             && html.contains("模型假设")
             && html.contains("结果哈希")
             && html.contains("</table>")
-            && !html.contains("<script")
+            && html.contains("<script>")
+            && html.contains("</script>")
+            && !html.contains("https://cdn")
             && !html.contains("src=\"http"),
-        "comparison HTML must be a self-contained, mobile-aware analysis table"
+        "comparison HTML must provide offline filtering/sorting and remain self-contained"
     );
     benchmark::assert_comparison_benchmark_product(&cwd, &summaries);
 

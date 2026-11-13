@@ -1,0 +1,8 @@
+test_native_cancellation_is_terminal_without_successful_outcome (python.tests.test_native_project_runs.NativeProjectRunTests.test_native_cancellation_is_terminal_without_successful_outcome) ... ok
+test_native_success_verifies_replay_and_isolates_repeated_run_artifacts (python.tests.test_native_project_runs.NativeProjectRunTests.test_native_success_verifies_replay_and_isolates_repeated_run_artifacts) ... ok
+test_server_plan_uses_real_bridge_without_importing_strategy (python.tests.test_native_project_runs.NativeProjectRunTests.test_server_plan_uses_real_bridge_without_importing_strategy) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 160.335s
+
+OK

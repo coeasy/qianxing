@@ -44,6 +44,8 @@ impl Ledger {
                 position_side: None,
 
                 leverage: None,
+
+                exact_amounts: None,
             })?);
         }
         if action.split_num != action.split_den {
@@ -71,6 +73,8 @@ impl Ledger {
                     position_side: None,
 
                     leverage: None,
+
+                    exact_amounts: None,
                 })?);
             }
         }
@@ -116,6 +120,8 @@ impl Ledger {
             position_side: None,
 
             leverage: None,
+
+            exact_amounts: None,
         })
         .map(Some)
     }
@@ -157,6 +163,8 @@ impl Ledger {
             position_side: None,
 
             leverage: None,
+
+            exact_amounts: None,
         })
         .map(Some)
     }

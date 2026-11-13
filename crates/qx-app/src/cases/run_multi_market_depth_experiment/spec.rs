@@ -122,7 +122,9 @@ impl RunMultiMarketDepthExperimentSpec {
             .map_err(|error| attach(error, &correlation_id))?;
         if !self.strategy_kinds.is_empty() || !self.parameter_space.is_empty() {
             return Err(attach(
-                invalid("自定义策略工厂只能使用 callback_parameter_space，不能混用内置策略参数或 strategy_kinds"),
+                invalid(
+                    "自定义策略工厂只能使用 callback_parameter_space，不能混用内置策略参数或 strategy_kinds",
+                ),
                 &correlation_id,
             ));
         }
@@ -156,7 +158,9 @@ impl RunMultiMarketDepthExperimentSpec {
             .map_err(|error| attach(error, &correlation_id))?;
         if !self.strategy_kinds.is_empty() || !self.parameter_space.is_empty() {
             return Err(attach(
-                invalid("自定义策略工厂只能使用 callback_parameter_space，不能混用内置策略参数或 strategy_kinds"),
+                invalid(
+                    "自定义策略工厂只能使用 callback_parameter_space，不能混用内置策略参数或 strategy_kinds",
+                ),
                 &correlation_id,
             ));
         }
@@ -181,6 +185,9 @@ impl RunMultiMarketDepthExperimentSpec {
 fn validate_callback_parameter_grid(
     dimensions: &[ExperimentParameterSpace],
 ) -> Result<usize, AppError> {
+    if dimensions.len() > 6 {
+        return Err(invalid("callback_parameter_space 最多接受 6 个参数维度"));
+    }
     let mut names = BTreeSet::new();
     let mut total = 1_usize;
     for dimension in dimensions {

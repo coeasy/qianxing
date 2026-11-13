@@ -1,0 +1,6 @@
+backtest 以 2 退出：
+牵星 Qianxing — 分级校准，量天定位
+
+[Data · Dataset] dataset=strategy-bars:000001.SZSE version=barframe-json-v1 source=ashare-example-qfq-v1 fingerprint=5e59cfcf3adca434
+[qx-cli · CLI] 统一策略回测失败: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-ashare
+

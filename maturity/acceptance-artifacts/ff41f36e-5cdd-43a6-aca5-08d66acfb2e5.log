@@ -1,0 +1,16 @@
+GUN g1_unsupported_code file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1480 claim=ladder dict is pinned | {'inv[70 chars]'partial': 5, 'unsupported': 7, 'cache-miss': 7, 'provi
+GUN g2_reserved_key file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1480 claim=reserved-row set difference | {'inv[18 chars]'creds': 3, 'missing-extra': 3, 'network': 4, [58 chars
+GUN g3_accessor_constant file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1494 claim=per-row accessor pin | 8 != 2 : invalid-request
+GUN g4_doc_drift file=docs/first-run.md red=killed ran=1 test_lines=1513 claim=published table matches the constant | 'invalid-request2/credentials3/missing-extra3/network4/partial5/unsupp
+GUN g5_cli_constant file=python/qianxing_ashare/cli.py red=killed ran=1 test_lines=1522 claim=process exit follows the table | Tuples differ: ('unsupported', 2) != ('unsupported', 6)
+GUN g6_default_typo file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1504 claim=vocabulary read from producer source | Items in the first set but not the second:
+GUN g7_reserved_row_only file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1506 claim=reserved row has exactly one owner | Items in the second set but not the first:
+GUN g8_fallback_only file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=1496 claim=unknown category falls to provider | 2 != 8
+GUN g9_plan_doc_drift file=docs/牵星Qianxing-易用性对照RQAlpha架构评审与优化重构方案-2026-10-30.md red=killed ran=1 test_lines=1513 claim=review doc ladder matches the constant | 'invalid-request2/credentials3/missing-extra3/network4/partial5/unsupp
+TALLY fired=9 killed=9 equivalent=0
+VERDICT red=False ran=1
+SHA docs/first-run.md e0b08836b443e9b5 e0b08836b443e9b5
+SHA docs/牵星Qianxing-易用性对照RQAlpha架构评审与优化重构方案-2026-10-30.md 5e5dfb7d62a218df 5e5dfb7d62a218df
+SHA python/qianxing_ashare/cli.py cb1f31f9870ea7a4 cb1f31f9870ea7a4
+SHA python/qianxing_ashare/sources.py 6958a7e328d68e3c 6958a7e328d68e3c
+LADDER BATTERY CLOSED

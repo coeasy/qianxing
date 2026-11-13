@@ -12,9 +12,11 @@ use crate::{
 use qx_strategy::Strategy;
 
 mod artifacts;
+pub(crate) use artifacts::DEPTH_RUNTIME_VERSION;
+mod canonical_spec;
 mod custom_strategy;
 mod portfolio;
-mod quality;
+pub(crate) mod quality;
 use custom_strategy::CallbackStrategy;
 pub(super) use custom_strategy::InjectedDepthStrategy;
 use custom_strategy::{run_custom_strategies, start_custom_strategies};

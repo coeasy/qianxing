@@ -1,3 +1,4 @@
+use qx_core::ExactDecimal;
 use qx_core::Side;
 
 /// Why one eligible order did or did not trade on a market observation.
@@ -20,6 +21,7 @@ pub enum ExecutionAttemptReason {
     MarketHalted,
     SideBlocked,
     InvalidModelOutput,
+    ExactAmountsUnsupported,
 }
 
 /// One deterministic, reportable attempt to execute an order.
@@ -32,7 +34,16 @@ pub struct ExecutionAttempt {
     pub requested_qty_raw: i128,
     pub filled_qty_raw: i128,
     pub remaining_qty_raw: i128,
+    /// Scale-aware quantity facts; populated for Bar orders carrying exact amounts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_qty_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled_qty_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_qty_exact: Option<ExactDecimal>,
     pub price_raw: Option<i128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_exact: Option<ExactDecimal>,
     pub reason: ExecutionAttemptReason,
     /// Snapshot-visible quantity at the relevant price level, when the matcher has one.
     #[serde(default)]

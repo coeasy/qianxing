@@ -246,6 +246,32 @@ fn combined_return_pools_both_legs_by_capital_instead_of_averaging_bps() {
         "两腿本金必须不等，否则下面的对比是空的: {initial:?}"
     );
     let funded_raw = initial[0] + initial[1];
+    let account = line_fields(&stdout, "[Multi-leg · Account]");
+    assert_eq!(
+        field(&account, "initial_cash_raw"),
+        funded_raw,
+        "CLI account line must report the combined two-leg capital"
+    );
+    assert_eq!(
+        field(&account, "primary_initial_cash_raw"),
+        initial[0],
+        "CLI account line must show the primary capital weight"
+    );
+    assert_eq!(
+        field(&account, "reference_initial_cash_raw"),
+        initial[1],
+        "CLI account line must show the reference capital weight"
+    );
+    assert_eq!(
+        field(&account, "final_equity_raw"),
+        final_equity[0] + final_equity[1],
+        "CLI account line must report pooled ending equity"
+    );
+    assert_eq!(
+        account.get("account_base_source").map(String::as_str),
+        Some("multi-leg-funding-rule"),
+        "CLI account line must identify the source of leg capital weights"
+    );
     let pooled = (final_equity[0] + final_equity[1] - funded_raw) * 10_000 / funded_raw;
     assert_eq!(
         combined, pooled,
@@ -257,6 +283,34 @@ fn combined_return_pools_both_legs_by_capital_instead_of_averaging_bps() {
             .expect("产物缺少 totals/combined_return_bps 或非整数"),
         i64::try_from(pooled).expect("组合收益应在 i64 范围内"),
         "产物里那颗组合收益必须与 stdout 是同一份事实"
+    );
+    let summary_path = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[Artifacts] composition_summary="))
+        .map(PathBuf::from)
+        .expect("多腿回测应发布 composition summary JSON");
+    let summary: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&summary_path).expect("读取 composition summary JSON"),
+    )
+    .expect("composition summary 必须是有效 JSON");
+    assert_eq!(
+        summary["totals"]["combined_return_bps"].as_i64(),
+        Some(i64::try_from(pooled).expect("组合收益应在 i64 范围内")),
+        "组合 summary JSON 必须保存按两腿本金汇总的收益"
+    );
+    assert_eq!(
+        summary["accounts"]["primary_initial_cash"].as_str(),
+        Some(initial[0].to_string().as_str()),
+        "summary 必须保留 primary 腿的资金权重本金"
+    );
+    assert_eq!(
+        summary["accounts"]["reference_initial_cash"].as_str(),
+        Some(initial[1].to_string().as_str()),
+        "summary 必须保留 reference 腿的资金权重本金"
+    );
+    assert!(
+        summary["accounts"]["funding_rule"].as_str().is_some(),
+        "summary 必须说明两腿本金的定资规则"
     );
     assert_ne!(
         combined,

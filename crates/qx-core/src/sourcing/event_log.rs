@@ -271,6 +271,50 @@ impl EventLog {
         })
     }
 
+    /// Digest using the Q68-era event encoding. This is a read-compatibility check for stored
+    /// manifests; callers must continue writing manifests with [`Self::digest`].
+    pub fn legacy_q68_digest(&self) -> u64 {
+        let mut hasher = Fnv1a::new();
+        hasher.write_u64(self.events.len() as u64);
+        for event in &self.events {
+            event.digest_legacy_q68(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Rolling Q68-era digest for stored-manifest compatibility checks.
+    pub fn legacy_q68_event_digest(&self) -> u64 {
+        Self::extend_legacy_q68_event_digest(Fnv1a::new().finish(), &self.events)
+    }
+
+    /// Digest the first `len` events using the Q68-era length-prefixed format.
+    pub fn legacy_q68_digest_of_prefix(&self, len: usize) -> Option<u64> {
+        let events = self.events.get(..len)?;
+        let mut hasher = Fnv1a::new();
+        hasher.write_u64(len as u64);
+        for event in events {
+            event.digest_legacy_q68(&mut hasher);
+        }
+        Some(hasher.finish())
+    }
+
+    /// Rolling Q68-era digest for the first `len` events.
+    pub fn legacy_q68_event_digest_of_prefix(&self, len: usize) -> Option<u64> {
+        Some(Self::extend_legacy_q68_event_digest(
+            Fnv1a::new().finish(),
+            self.events.get(..len)?,
+        ))
+    }
+
+    /// Extend a Q68-era rolling digest while verifying a legacy manifest.
+    pub fn extend_legacy_q68_event_digest(seed: u64, events: &[Event]) -> u64 {
+        let mut rolling = Fnv1a::from_state(seed);
+        for event in events {
+            event.digest_legacy_q68(&mut rolling);
+        }
+        rolling.finish()
+    }
+
     /// Digest the first `len` events with the same format as [`Self::digest`].
     pub fn digest_of_prefix(&self, len: usize) -> Option<u64> {
         self.prefix_summary(len).and_then(|summary| summary.digest)
@@ -280,6 +324,18 @@ impl EventLog {
     /// This is used by segmented manifest v2 so appending can extend a verified prefix in O(new events).
     pub fn event_digest(&self) -> u64 {
         self.event_digest
+    }
+
+    /// Extend a previously verified rolling EventLog digest with a tail of events.
+    ///
+    /// File-backed stores use this to verify an incrementally read suffix against the
+    /// committed manifest without replaying the already validated prefix.
+    pub fn extend_event_digest(seed: u64, events: &[Event]) -> u64 {
+        let mut rolling = Fnv1a::from_state(seed);
+        for event in events {
+            event.digest(&mut rolling);
+        }
+        rolling.finish()
     }
 
     /// Rolling event payload digest for the first `len` events.

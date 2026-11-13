@@ -1,6 +1,6 @@
 {
   "exchange_id": "okx",
-  "account_id": "main",
+  "account_id": "okx-demo-swap",
   "sandbox": true,
   "enable_rate_limit": true,
   "timeout_ms": 30000,
@@ -13,5 +13,8 @@
     "password": "QX_CCXT_OKX_PASSWORD"
   },
   "options": {},
-  "instruments": ["BTC/USDT:USDT.OKX"]
+  "instruments": [
+    "BTC/USDT:USDT.OKX"
+  ],
+  "account_model": "unified"
 }

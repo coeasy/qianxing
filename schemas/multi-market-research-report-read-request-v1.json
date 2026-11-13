@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-market-research-report-read-request-v1.json",
+  "title": "Multi-market Research Report Read Request V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "outcome"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "outcome": { "$ref": "https://qianxing.local/schemas/multi-market-backtest-result-v1.json" },
+    "page": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["offset", "limit"],
+          "properties": {
+            "offset": { "type": "integer", "minimum": 0 },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 300 }
+          }
+        }
+      ]
+    }
+  }
+}

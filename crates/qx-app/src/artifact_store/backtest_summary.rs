@@ -8,7 +8,8 @@ use qx_strategy::BuiltinStrategyConfig;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 7;
+pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8;
+pub const BACKTEST_METRICS_DEFINITION_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct PersistedBacktestArtifacts {
@@ -31,14 +32,21 @@ pub struct BacktestInputProvenance {
     pub fingerprint: String,
 }
 
+impl BacktestInputProvenance {
+    /// Canonical wire representation shared by API/SDK and CLI summary writers.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": self.kind,
+            "path": self.path,
+            "dataset_id": self.dataset_id,
+            "dataset_version": self.dataset_version,
+            "fingerprint": self.fingerprint,
+        })
+    }
+}
+
 fn input_provenance_json(input: &BacktestInputProvenance) -> serde_json::Value {
-    serde_json::json!({
-        "kind": input.kind,
-        "path": input.path,
-        "dataset_id": input.dataset_id,
-        "dataset_version": input.dataset_version,
-        "fingerprint": input.fingerprint,
-    })
+    input.to_json()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,6 +192,84 @@ mod signal_params_tests {
     }
 }
 
+#[cfg(test)]
+mod metrics_definition_tests {
+    use super::{backtest_metrics_definition_json, BACKTEST_METRICS_DEFINITION_VERSION};
+
+    #[test]
+    fn metrics_definition_is_versioned_and_discloses_period_and_fee_semantics() {
+        let definition = backtest_metrics_definition_json();
+
+        assert_eq!(
+            definition["schema_version"],
+            BACKTEST_METRICS_DEFINITION_VERSION
+        );
+        assert_eq!(
+            definition["risk_ratio_period_basis"],
+            "per_sample_no_annualization"
+        );
+        assert_eq!(
+            definition["benchmark_period_basis"],
+            "exact_timestamp_aligned_observations_no_annualization"
+        );
+        assert_eq!(
+            definition["fees_exact_basis"],
+            "ledger_fee_entries_grouped_by_currency"
+        );
+        assert_eq!(
+            definition["fees_raw_basis"],
+            "compatibility_projection_only"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fills_csv_v2_tests {
+    use super::{serialize_backtest_fills_csv, serialize_multi_leg_backtest_fills_csv};
+    use qx_core::{ExactDecimal, ExactFillAmounts, ExactFillFee, Fill};
+
+    fn exact_fill() -> Fill {
+        let mut fill = Fill {
+            order_id: 7,
+            ts: 123,
+            account_id: "main".into(),
+            strategy_id: Some("small-coin".into()),
+            venue_id: Some("BINANCE".into()),
+            venue_order_id: Some("venue-7".into()),
+            ..Fill::default()
+        };
+        fill.exact_amounts = Some(ExactFillAmounts {
+            quantity: ExactDecimal::parse("0.001").unwrap(),
+            price: ExactDecimal::parse("0.00001234").unwrap(),
+            quote_cost: None,
+            quote_budget_complete: false,
+        });
+        fill.exact_fees.push(ExactFillFee {
+            amount: ExactDecimal::parse("0.00000001").unwrap(),
+            currency: Some("USDT".into()),
+            source_trade_ids: Vec::new(),
+        });
+        fill
+    }
+
+    #[test]
+    fn standard_and_multi_leg_csv_keep_exact_fill_values_and_escape_fee_json() {
+        let fill = exact_fill();
+        let standard = serialize_backtest_fills_csv(std::slice::from_ref(&fill)).unwrap();
+        assert!(standard.starts_with(
+            "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\n"
+        ));
+        assert!(standard.contains(",0.001,0.00001234,\"[{\"\"amount\"\""));
+
+        let multi_leg =
+            serialize_multi_leg_backtest_fills_csv(std::slice::from_ref(&fill), &[]).unwrap();
+        assert!(multi_leg.starts_with(
+            "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\nprimary,7,123,0,0,0,main"
+        ));
+        assert!(multi_leg.contains(",0.001,0.00001234,\"[{\"\"amount\"\""));
+    }
+}
+
 /// 同账户策略组合的成交归属：哪些策略占过槽、各自成交几笔。
 ///
 /// 它只对组合链有意义，所以是可选块：非组合链不写这两个键（"没有的东西不占键"，
@@ -205,6 +291,7 @@ pub struct BacktestArtifacts<'a> {
     pub samples: usize,
     pub sample_ts: BacktestSampleTimestamps<'a>,
     pub equity: &'a [i128],
+    pub equity_exact: Option<&'a [qx_core::ExactDecimal]>,
     pub positions: &'a [i128],
     pub fills: &'a [qx_core::Fill],
     /// 每次订单执行评估及其结果，供报告分析成交/未成交成因。
@@ -222,6 +309,8 @@ pub struct BacktestArtifacts<'a> {
     pub issuer_capital_at_end: Option<&'a qx_xingban::AshareIssuerCapitalSnapshot>,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
+    /// Maximum peak-to-trough equity loss in the same fixed-point raw unit as the account values.
+    pub max_drawdown_raw: i128,
     pub fees_raw: i128,
     pub turnover_raw: i128,
     pub final_equity_raw: i128,
@@ -289,6 +378,16 @@ fn ratio_to_json(value: Option<f64>) -> serde_json::Value {
     }
 }
 
+pub fn backtest_metrics_definition_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": BACKTEST_METRICS_DEFINITION_VERSION,
+        "risk_ratio_period_basis": "per_sample_no_annualization",
+        "benchmark_period_basis": "exact_timestamp_aligned_observations_no_annualization",
+        "fees_exact_basis": "ledger_fee_entries_grouped_by_currency",
+        "fees_raw_basis": "compatibility_projection_only",
+    })
+}
+
 fn rejection_count(rejections: &[(String, usize)]) -> usize {
     crate::trade_facts::rejection_count(rejections)
 }
@@ -301,6 +400,80 @@ fn rejection_count(rejections: &[(String, usize)]) -> usize {
 pub fn write_backtest_artifact(path: &Path, payload: &str, label: &str) -> Result<(), String> {
     sink::publish(path, payload, sink::PublishMode::Idempotent)
         .map_err(|error| format!("{label}落盘失败: {error}"))
+}
+
+/// Serialize the canonical fills CSV v2 used by both ordinary and custom-strategy Bar runs.
+/// The raw columns remain stable projections; exact values preserve venue precision.
+pub fn serialize_backtest_fills_csv(fills: &[qx_core::Fill]) -> Result<String, String> {
+    let mut output = String::from(
+        "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\n",
+    );
+    for fill in fills {
+        append_fill_csv_row(&mut output, fill_csv_fields(fill)?, None);
+    }
+    Ok(output)
+}
+
+/// Serialize primary/reference fills while retaining each leg and exact v2 amounts.
+pub fn serialize_multi_leg_backtest_fills_csv(
+    primary: &[qx_core::Fill],
+    reference: &[qx_core::Fill],
+) -> Result<String, String> {
+    let mut output = String::from(
+        "leg,order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id,qty_exact,price_exact,exact_fees_json\n",
+    );
+    for (leg, fills) in [("primary", primary), ("reference", reference)] {
+        for fill in fills {
+            append_fill_csv_row(&mut output, fill_csv_fields(fill)?, Some(leg));
+        }
+    }
+    Ok(output)
+}
+
+fn fill_csv_fields(fill: &qx_core::Fill) -> Result<Vec<String>, String> {
+    let (qty_exact, price_exact) = fill.exact_amounts.map_or_else(
+        || (String::new(), String::new()),
+        |amounts| (amounts.quantity.to_string(), amounts.price.to_string()),
+    );
+    let exact_fees_json = if fill.exact_fees.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(&fill.exact_fees)
+            .map_err(|error| format!("编码精确成交费用失败: {error}"))?
+    };
+    Ok(vec![
+        fill.order_id.to_string(),
+        fill.ts.to_string(),
+        fill.qty.raw().to_string(),
+        fill.price.raw().to_string(),
+        fill.fee.raw().to_string(),
+        fill.account_id.clone(),
+        fill.strategy_id.clone().unwrap_or_default(),
+        fill.signal_id
+            .map_or_else(String::new, |value| value.to_string()),
+        fill.intent_id
+            .map_or_else(String::new, |value| value.to_string()),
+        fill.venue_id.clone().unwrap_or_default(),
+        fill.venue_order_id.clone().unwrap_or_default(),
+        qty_exact,
+        price_exact,
+        exact_fees_json,
+    ])
+}
+
+fn append_fill_csv_row(output: &mut String, fields: Vec<String>, leg: Option<&str>) {
+    if let Some(leg) = leg {
+        output.push_str(&csv_cell(leg));
+        output.push(',');
+    }
+    output.push_str(
+        &fields
+            .iter()
+            .map(|field| csv_cell(field))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    output.push('\n');
 }
 
 pub fn persist_backtest_artifacts(
@@ -395,6 +568,7 @@ pub fn persist_backtest_artifacts_with_summary(
         "metrics": {
             "return_bps": input.return_bps,
             "max_drawdown_bps": input.max_drawdown_bps,
+            "max_drawdown_raw": input.max_drawdown_raw.to_string(),
             "fees_raw": input.fees_raw,
             "turnover_raw": input.turnover_raw,
             "final_equity_raw": input.final_equity_raw,
@@ -406,6 +580,7 @@ pub fn persist_backtest_artifacts_with_summary(
             "win_rate": ratio_to_json(ratios.win_rate),
             "profit_factor": ratio_to_json(ratios.profit_factor),
         },
+        "metrics_definition": backtest_metrics_definition_json(),
         "assumptions": input.assumptions,
         "model_descriptors": input.model_descriptors,
         "matching_kernel": input.matching_kernel,
@@ -416,6 +591,12 @@ pub fn persist_backtest_artifacts_with_summary(
         "execution_costs": { "source": input.cost_source },
         "run_manifest": manifest_path.to_string_lossy(),
         "run_record": summary_path.with_file_name(format!("{stem}.record.json")).to_string_lossy(),
+        "artifact_locations": {
+            "summary": summary_path.to_string_lossy(),
+            "equity": equity_path.to_string_lossy(),
+            "fills": fills_path.to_string_lossy(),
+            "run_manifest": manifest_path.to_string_lossy(),
+        },
     });
     if let Some(analysis) = crate::ashare_analysis_json(
         input.ledger,
@@ -496,42 +677,29 @@ pub fn persist_backtest_artifacts_with_summary(
 
     // Writing to String is infallible; do not turn the fmt::Write contract into a panic path.
     let mut equity_payload = String::from("index,ts,equity_raw,position_raw\n");
-    for (index, equity) in input.equity.iter().enumerate() {
-        let ts = input.sample_ts.get(index).unwrap_or_default();
-        let position = input.positions.get(index).copied().unwrap_or_default();
-        let _ = writeln!(&mut equity_payload, "{index},{ts},{equity},{position}");
+    if let Some(equity_exact) = input.equity_exact {
+        if equity_exact.len() != input.equity.len() || input.positions.len() != input.equity.len() {
+            return Err("精确权益 CSV 的 raw/exact/position 曲线长度不一致".into());
+        }
+        equity_payload = String::from("index,ts,equity_raw,equity_exact,position_raw\n");
+        for (index, (equity, exact)) in input.equity.iter().zip(equity_exact).enumerate() {
+            let ts = input.sample_ts.get(index).unwrap_or_default();
+            let position = input.positions[index];
+            let _ = writeln!(
+                &mut equity_payload,
+                "{index},{ts},{equity},{exact},{position}"
+            );
+        }
+    } else {
+        for (index, equity) in input.equity.iter().enumerate() {
+            let ts = input.sample_ts.get(index).unwrap_or_default();
+            let position = input.positions.get(index).copied().unwrap_or_default();
+            let _ = writeln!(&mut equity_payload, "{index},{ts},{equity},{position}");
+        }
     }
     write_backtest_artifact(&equity_path, &equity_payload, "权益曲线")?;
 
-    let mut fills_payload = String::from(
-        "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id\n",
-    );
-    for fill in input.fills {
-        let _ = write!(
-            &mut fills_payload,
-            "{},{},{},{},{},{},{},",
-            fill.order_id,
-            fill.ts,
-            fill.qty.raw(),
-            fill.price.raw(),
-            fill.fee.raw(),
-            fill.account_id,
-            fill.strategy_id.as_deref().unwrap_or_default(),
-        );
-        if let Some(signal_id) = fill.signal_id {
-            let _ = write!(&mut fills_payload, "{signal_id}");
-        }
-        fills_payload.push(',');
-        if let Some(intent_id) = fill.intent_id {
-            let _ = write!(&mut fills_payload, "{intent_id}");
-        }
-        let _ = writeln!(
-            &mut fills_payload,
-            ",{},{}",
-            fill.venue_id.as_deref().unwrap_or_default(),
-            fill.venue_order_id.as_deref().unwrap_or_default(),
-        );
-    }
+    let fills_payload = serialize_backtest_fills_csv(input.fills)?;
     write_backtest_artifact(&fills_path, &fills_payload, "成交明细")?;
     persist_verified_run_record(manifest_path, &summary_path, &equity_path, &fills_path)?;
     Ok(PersistedBacktestArtifacts {
@@ -540,4 +708,15 @@ pub fn persist_backtest_artifacts_with_summary(
         fills_path,
         summary,
     })
+}
+
+fn csv_cell(value: &str) -> String {
+    if value
+        .chars()
+        .any(|character| matches!(character, ',' | '"' | '\n' | '\r'))
+    {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }

@@ -111,10 +111,14 @@ mod tests {
             ts,
             sequence,
             bids: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(99),
                 qty: Quantity::from_i64(2),
             }],
             asks: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: Price::from_i64(100),
                 qty: Quantity::from_i64(2),
             }],

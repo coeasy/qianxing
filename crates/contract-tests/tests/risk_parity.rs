@@ -57,10 +57,12 @@ fn perpetual_spec() -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 20,
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -86,6 +88,7 @@ fn fixture(case: &Case) -> Fixture {
         instrument_spec: Some(perpetual_spec()),
         max_order_notional_raw,
         max_position_notional_raw: case.max_position_notional_raw,
+        exact: None,
     };
     let canonical = OrderRiskContext {
         available_margin_raw: Some(case.available_margin_raw),
@@ -95,6 +98,7 @@ fn fixture(case: &Case) -> Fixture {
         max_order_notional_raw,
         max_position_notional_raw: case.max_position_notional_raw,
         position,
+        exact: None,
     };
     let order = Order {
         client_id: 11,
@@ -114,6 +118,7 @@ fn fixture(case: &Case) -> Fixture {
             leverage: 10,
             post_only: false,
         }),
+        exact_amounts: None,
     };
     Fixture {
         order,

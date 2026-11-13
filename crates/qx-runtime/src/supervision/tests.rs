@@ -1,9 +1,12 @@
 //! 健康快照与监督器生命周期用例。
 
 use super::*;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn health_snapshot_detects_stale_ready_service() {
@@ -266,4 +269,136 @@ fn the_grace_budget_is_counted_from_the_request_not_from_the_start_of_waiting() 
     }
     assert!(supervisor.is_shutdown_requested());
     assert!(worker.join().unwrap().is_ok());
+}
+
+const REAL_SIGNAL_CHILD_ENV: &str = "QX_RUNTIME_REAL_SIGNAL_CHILD";
+
+#[test]
+fn real_shutdown_signal_child() {
+    if std::env::var_os(REAL_SIGNAL_CHILD_ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return;
+    }
+
+    install_shutdown_signals();
+    let supervisor = RuntimeSupervisor::new(config()).expect("valid runtime test config");
+    let worker = supervisor
+        .spawn_worker("market", |context| {
+            while !context.should_stop() {
+                thread::sleep(Duration::from_millis(2));
+            }
+            Ok(())
+        })
+        .expect("start signal test worker");
+    println!("QX_SHUTDOWN_SIGNAL_READY");
+    std::io::stdout().flush().expect("flush readiness marker");
+
+    let started = Instant::now();
+    let result = wait_for_worker_finish(
+        &supervisor,
+        || worker.is_finished(),
+        shutdown_signalled,
+        || started.elapsed().as_millis() as u64,
+        |millis| thread::sleep(Duration::from_millis(millis)),
+    );
+    assert!(
+        matches!(result, WorkerLadder::StoppedWithinBudget { .. }),
+        "real OS signal must reach the worker shutdown ladder: {result:?}"
+    );
+    assert!(supervisor.is_shutdown_requested());
+    assert!(worker.join().expect("join stopped test worker").is_ok());
+}
+
+#[test]
+fn operating_system_shutdown_signal_reaches_worker_ladder() {
+    let mut command = Command::new(std::env::current_exe().expect("test executable path"));
+    command
+        .arg("--exact")
+        .arg("supervision::tests::real_shutdown_signal_child")
+        .arg("--nocapture")
+        .env(REAL_SIGNAL_CHILD_ENV, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    let mut child = command.spawn().expect("spawn shutdown signal child");
+    let stdout = child.stdout.take().expect("piped child stdout");
+    let (ready_tx, ready_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut ready_sent = false;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    if !ready_sent {
+                        let _ = ready_tx.send(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "signal child exited before readiness",
+                        )));
+                    }
+                    break;
+                }
+                Ok(_) if !ready_sent && line.trim() == "QX_SHUTDOWN_SIGNAL_READY" => {
+                    ready_sent = true;
+                    let _ = ready_tx.send(Ok(line));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
+    let ready = ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_else(|error| {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("signal child did not become ready: {error}");
+        })
+        .expect("read child readiness marker");
+    assert_eq!(ready.trim(), "QX_SHUTDOWN_SIGNAL_READY");
+
+    send_shutdown_signal(child.id());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().expect("poll signal child") {
+            if !status.success() {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!("signal child failed with {status}: {stderr}");
+            }
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("worker did not exit after a real shutdown signal");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn send_shutdown_signal(process_id: u32) {
+    let result = unsafe { libc::kill(process_id as libc::pid_t, libc::SIGTERM) };
+    assert_eq!(result, 0, "send SIGTERM to shutdown child");
+}
+
+#[cfg(windows)]
+fn send_shutdown_signal(process_id: u32) {
+    const CTRL_BREAK_EVENT: u32 = 1;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GenerateConsoleCtrlEvent(control_type: u32, process_group_id: u32) -> i32;
+    }
+    let result = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process_id) };
+    assert_ne!(result, 0, "send CTRL_BREAK_EVENT to shutdown child group");
 }

@@ -288,7 +288,8 @@ mod tests {
     fn append_quote(pipeline: &mut qx_runtime::LiveEventPipeline) {
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
-                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+                    .expect("valid instrument fixture"),
                 QuoteTick::new(
                     10,
                     Price::from_i64(99),
@@ -331,6 +332,7 @@ mod tests {
             id: "main".into(),
             settlement_currency: Some("USDT".into()),
             initial_cash_raw: None,
+            portfolio_id: None,
         });
         let log_name = qx_runtime::account_event_log_name("main", "paper").unwrap();
         let pipeline = open_account_pipeline(&config, &root, &log_name, OutboxRecovery::ReadOnly)

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing-provider-pit-ledger-import-acceptance",
+  "outcome": "pass",
+  "exchange": "binance",
+  "network": "official_spot_testnet",
+  "instrument": "BTC/USDT.BINANCE",
+  "timeframe": "1m",
+  "access": {
+    "credentials_present": false,
+    "private_account_calls": false,
+    "orders_sent": false
+  },
+  "binary_sha256": "09fede073156f8bfba2ec39e7e8a8c6bef6c449c0415dfe88e01be2e60960cf7",
+  "importer_sha256": "4d539e420faa1209b7811bd3bc5ed11da224047efba0eff8ee23dc39c21f78f0",
+  "snapshot_count": 2,
+  "snapshots": [
+    {
+      "path": "snapshot-1.json",
+      "observed_at_ms": 1792710280759,
+      "sha256": "68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+      "bars": 15
+    },
+    {
+      "path": "snapshot-2.json",
+      "observed_at_ms": 1792710285104,
+      "sha256": "68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+      "bars": 15
+    }
+  ],
+  "fact_count": 75,
+  "version_count": 75,
+  "facts_with_multiple_versions": 0,
+  "ledger_fingerprint": "63caf908b6025c6af8031ce41647a5d302f10fe609b5484c7352e4be499d9c7f",
+  "ledger_sha256": "52f5e0875f72ce054ea042c171a112294b7536e0e2991ef9bd75d742cad00146",
+  "availability_semantics": "first capture time, not exchange publication time",
+  "limitations": [
+    "Two provider captures were identical; no real vendor correction was observed.",
+    "Observed capture times do not establish when the exchange first published each value.",
+    "No private account or order API was called."
+  ]
+}

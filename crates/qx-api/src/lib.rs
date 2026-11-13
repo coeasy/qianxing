@@ -17,6 +17,17 @@ mod provider_registry;
 mod read_scope;
 mod snapshot_history;
 mod state_lock;
+mod strategy_deployments;
+pub use qx_runtime::{
+    StrategyHostLifecycleEvidenceV1, StrategyHostLifecycleEvidenceV2, StrategyWorkerObservationV1,
+    StrategyWorkerObservationV2, StrategyWorkerObservationV3, StrategyWorkerPhase,
+};
+pub use strategy_deployments::{
+    aggregate_strategy_deployment_nodes, ReceivedStrategyDeploymentNodeSnapshotV1,
+    RegisteredStrategyDeploymentNodeV1, StrategyDeploymentNodeFreshnessV1,
+    StrategyDeploymentNodeSnapshotV1, StrategyDeploymentNodeStatusV1,
+    StrategyDeploymentReconciliationV1, StrategyDeploymentStatusV1,
+};
 mod tls_config;
 mod transport;
 mod ws;
@@ -27,12 +38,21 @@ pub use admission::validate_admission_config;
 use admission::{
     is_websocket_upgrade, preflight, query_param, ConnectionBudget, CorsPolicy, Preflight,
 };
+pub use app_surface::{product_capability_catalog_document, product_capability_query_document};
 use event_cursor::{events_after_cursor, parse_after_cursor};
-use qx_app::TradeWorkflow;
+use qx_app::{
+    read_account_activity_report_v1, AccountActivityReportReadOptionsV1, AppError,
+    AppErrorCategory, TradeWorkflow,
+};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
-use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
+use qx_core::{
+    DecimalRounding, Event, EventKind, EventLog, ExactDecimal, Fnv1a, InstrumentId, LedgerEntry,
+    OrderGroupState, TradingInstrumentSpec, TradingProduct, SCALE,
+};
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V4,
     PROJECTION_ENVELOPE_SCHEMA_VERSION,
 };
 use qx_scheduler::JobRun;
@@ -552,6 +572,14 @@ pub struct ApiState {
     pub job_runs: Vec<JobRun>,
     pub ledger_entries: Vec<LedgerEntry>,
     pub reconcile_reports: BTreeMap<String, ReconcileReportSnapshot>,
+    /// Frozen spot-market specs and the latest derived FX graph used only for read-only cash
+    /// equivalents. This deliberately does not feed execution risk or shared margin.
+    portfolio_fx_market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    /// Frozen specs for account snapshot valuation, including Paper margin projection.
+    account_market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    portfolio_fx_rates_by_reporting: BTreeMap<String, BTreeMap<String, ExactDecimal>>,
+    portfolio_fx_published_at_ms: u64,
+    portfolio_fx_max_quote_age_ms: u64,
 }
 
 /// API 限流额度只有一处定义：进程内令牌桶、`with_rate_limit`、以及 `qx-cli`
@@ -559,6 +587,13 @@ pub struct ApiState {
 /// 顺带改掉限流策略（V12 §16）。
 pub const DEFAULT_RATE_LIMIT_CAPACITY: u64 = 100;
 pub const DEFAULT_RATE_LIMIT_REFILL_PER_SECOND: u64 = 100;
+
+fn exact_decimal_to_scale9_raw(value: ExactDecimal) -> Option<i128> {
+    value
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)?
+        .to_raw(9)
+        .ok()
+}
 
 #[derive(Clone, Debug)]
 pub struct ApiRateLimiter {
@@ -814,14 +849,35 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
         // 订单与账簿条目没有"账户域"这一栏，只有标的后缀：paper 账户交易的符号就叫
         // BTCUSDT.BINANCE，拿它当账户 venue 会把本账户自己的事实判成外来事实（V11 R13）。
         // 这两条只核对账户身份；交易所侧的串读由带显式 venue 的余额/持仓/资金/成交事实守住。
-        EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
+        EventKind::OrderSubmitted { order }
+        | EventKind::OrderAmended { order, .. }
+        | EventKind::OrderAmendmentPending { order, .. } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
+        EventKind::FeeAdjustment {
+            account_id,
+            venue_id,
+            ..
+        } => Some((account_id.as_str(), Some(venue_id.as_str()))),
+        EventKind::OrderStatusReconciled {
+            account_id,
+            venue_id,
+            ..
+        } => Some((account_id.as_str(), Some(venue_id.as_str()))),
         EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
+        EventKind::ExecutionCapabilityDecision { decision } => Some((
+            decision.account_id.as_str(),
+            Some(decision.venue_id.as_str()),
+        )),
+        EventKind::StrategyDecision { .. } | EventKind::OrderRiskDecision { .. } => {
+            Some((event.metadata.context.account_id.as_str(), None))
+        }
         EventKind::MarketQuote { .. }
+        | EventKind::MarketOrderBook { .. }
         | EventKind::FundingRateSnapshot { .. }
         | EventKind::Submit { .. }
         | EventKind::Accepted { .. }
         | EventKind::Rejected { .. }
+        | EventKind::CancelPending { .. }
         | EventKind::Cancelled { .. }
         | EventKind::ReconcileRequired { .. }
         | EventKind::Settle => None,
@@ -839,6 +895,33 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
                 event.seq
             ));
         }
+    }
+    let event_venue = match &event.kind {
+        EventKind::ExecutionCapabilityDecision { decision } => Some(decision.venue_id.clone()),
+        EventKind::OrderRiskDecision { decision } => Some(decision.instrument.venue.to_string()),
+        EventKind::StrategyDecision { decision } => {
+            let mut venues = decision
+                .intents
+                .iter()
+                .map(|intent| intent.instrument.venue.to_string());
+            venues
+                .next()
+                .filter(|first| venues.all(|venue| venue == *first))
+        }
+        _ => None,
+    };
+    if event_venue
+        .as_deref()
+        .is_some_and(|venue_id| !venue_id.eq_ignore_ascii_case(&key.venue_id))
+    {
+        return Err(format!(
+            "事件身份与 API 投影 Venue 不匹配: expected={}/{} actual={}/{} seq={}",
+            key.account_id,
+            key.venue_id,
+            event.metadata.context.account_id,
+            event_venue.as_deref().unwrap_or("unknown"),
+            event.seq
+        ));
     }
     Ok(())
 }
@@ -871,12 +954,23 @@ pub struct ApiService {
     session_shutdown: Arc<AtomicBool>,
     /// None 表示仅供已受信的进程内调用；网络/生产入口应使用 `with_policy`。
     policy: Option<ApiPolicy>,
+    /// Runtime 装配的 paper-only loopback mode。它仅接受已验证的 Paper 工作流；
+    /// 通用控制命令仍须通过认证 operator policy。
+    local_paper_control: bool,
     rate_limiter: Arc<dyn ApiRateLimitBackend>,
     control_submitter: Option<ControlSubmitter>,
     command_enqueuer: Option<CommandEnqueuer>,
     metrics: Arc<ApiMetrics>,
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
+    strategy_deployments_provider: Option<strategy_deployments::StrategyDeploymentsProvider>,
+    strategy_deployment_nodes_provider:
+        Option<strategy_deployments::StrategyDeploymentNodesProvider>,
+    strategy_deployment_node_snapshot_acceptor:
+        Option<strategy_deployments::StrategyDeploymentNodeSnapshotAcceptor>,
+    deployment_revision_creator: Option<strategy_deployments::DeploymentRevisionCreator>,
+    deployment_operation_acceptor: Option<strategy_deployments::DeploymentOperationAcceptor>,
+    deployment_operation_reader: Option<strategy_deployments::DeploymentOperationReader>,
     query_models_provider: Option<QueryModelsProvider>,
     algo_execution_provider: Option<algo_lifecycle::Provider>,
     pub(crate) control_plane_provider: Option<ControlPlaneProvider>,
@@ -948,12 +1042,13 @@ type ControlSubmitter = Arc<
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
 
-/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
+/// `/scheduler/runs`、`/account/ledger`、`/account/order-groups`、`/reconcile/reports` 只读端点共用的一份现读结果。对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
 #[derive(Default, Clone)]
 pub struct ApiQueryModels {
     pub job_runs: Vec<JobRun>,
     pub ledger_entries: Vec<LedgerEntry>,
     pub reconcile_reports: Vec<ReconcileReportSnapshot>,
+    pub order_groups: Vec<OrderGroupState>,
 }
 
 type QueryModelsProvider = Arc<dyn Fn() -> Result<ApiQueryModels, String> + Send + Sync>;
@@ -1013,44 +1108,7 @@ fn unconfigured_readiness_layers() -> BTreeMap<String, serde_json::Value> {
         ),
     ])
 }
-/// 对账读模型。订单差异和余额差异保留为 JSON 事实，避免 API 层依赖某个
-/// Venue 适配器的枚举；写入前由 Reconcile worker 生成并校验 schema_version。
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct ReconcileReportSnapshot {
-    pub schema_version: u32,
-    pub worker_id: String,
-    pub account_id: String,
-    pub venue_id: String,
-    pub observed_ts: u64,
-    #[serde(default)]
-    pub order_issues: Vec<serde_json::Value>,
-    pub balances_count: usize,
-    #[serde(default)]
-    pub balance_discrepancies: Vec<serde_json::Value>,
-    /// 下面三个是"这一轮有没有去取"的覆盖度，不是账户事实本身：`None` 表示这条对账链
-    /// 没有取该项（Binance 现货 worker 不查持仓/资金费/账单，CCXT 在该交易所报
-    /// "能力不支持"时跳过），`Some(0)` 才是取了且为空。此前三者是不可区分的 `usize`
-    /// 且 Binance 侧硬写 0，读侧把"没取"当成"账户没有"（V11 Q69）。
-    #[serde(default)]
-    pub position_snapshots_count: Option<usize>,
-    #[serde(default)]
-    pub funding_rate_snapshots_count: Option<usize>,
-    #[serde(default)]
-    pub cashflow_count: Option<usize>,
-}
-
-impl ReconcileReportSnapshot {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1
-            || self.worker_id.trim().is_empty()
-            || self.account_id.trim().is_empty()
-            || self.venue_id.trim().is_empty()
-        {
-            return Err("对账报告身份或 schema_version 非法".into());
-        }
-        Ok(())
-    }
-}
+pub use qx_runtime::ReconcileReportSnapshot;
 
 /// API 查询端口：只读方法集合，不持有 Ledger、Venue 或可变控制面引用；未来替换为独立 QueryService 时保持同一契约。
 ///
@@ -1114,11 +1172,20 @@ impl ApiService {
         Self::build(state, Some(policy))
     }
 
+    /// Allow the unauthenticated loopback API to submit only Paper workflow commands.
+    /// Runtime topology validation must restrict this service to `environment=paper` and a
+    /// loopback bind. The server grants Trading permission and replaces the body operator id.
+    pub fn with_local_paper_control(mut self) -> Self {
+        self.local_paper_control = true;
+        self
+    }
+
     fn build(state: ApiState, policy: Option<ApiPolicy>) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             session_shutdown: Arc::new(AtomicBool::new(false)),
             policy,
+            local_paper_control: false,
             rate_limiter: Arc::new(LocalRateLimitBackend {
                 limiter: Mutex::new(ApiRateLimiter::new(
                     DEFAULT_RATE_LIMIT_CAPACITY,
@@ -1130,6 +1197,12 @@ impl ApiService {
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            strategy_deployments_provider: None,
+            strategy_deployment_nodes_provider: None,
+            strategy_deployment_node_snapshot_acceptor: None,
+            deployment_revision_creator: None,
+            deployment_operation_acceptor: None,
+            deployment_operation_reader: None,
             query_models_provider: None,
             algo_execution_provider: None,
             control_plane_provider: None,
@@ -1225,7 +1298,7 @@ impl ApiService {
         self
     }
 
-    /// 取三份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
+    /// 取四份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
     /// 启动时装进 `state` 的那份。回填是为了让 `QueryPort` 的 trait 读点与 HTTP 端点
     /// 说同一份数据，而不是各念一份（V11 S3）。
     fn query_models(&self) -> Result<ApiQueryModels, String> {
@@ -1235,6 +1308,7 @@ impl ApiService {
                 job_runs: state.job_runs.clone(),
                 ledger_entries: state.ledger_entries.clone(),
                 reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+                order_groups: Vec::new(),
             });
         };
         let models = provider()?;
@@ -1286,6 +1360,21 @@ impl ApiService {
         lock_state(&self.state)?.publish_event(event)
     }
 
+    /// Publish a refreshed global compatibility snapshot and its account-scoped copy.
+    pub fn publish_snapshot(&self, snapshot: AccountSnapshot) -> Result<u64, String> {
+        lock_state(&self.state)?.publish_snapshot(snapshot)
+    }
+
+    /// Publish a refreshed account snapshot without changing the global compatibility account.
+    pub fn publish_snapshot_for(
+        &self,
+        account_id: impl Into<String>,
+        venue_id: impl Into<String>,
+        snapshot: AccountSnapshot,
+    ) -> Result<u64, String> {
+        lock_state(&self.state)?.publish_snapshot_for(account_id, venue_id, snapshot)
+    }
+
     /// 将外部 Runtime EventLog 投影到 API 读模型。该方法不会改变 Runtime
     /// 的事实日志，只更新 API 查询和订阅所需的副本。
     pub fn project_event_log(&self, source: &EventLog) -> Result<usize, String> {
@@ -1309,6 +1398,80 @@ impl ApiService {
         venue_id: &str,
     ) -> Result<Option<AccountSnapshot>, String> {
         Ok(lock_state(&self.state)?.account_snapshot_for(account_id, venue_id))
+    }
+
+    /// Configure the frozen Spot specs used by the read-only portfolio FX view.
+    pub fn set_portfolio_fx_market_specs(
+        &self,
+        specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    ) -> Result<(), String> {
+        if specs.iter().any(|(instrument, spec)| {
+            instrument != &spec.instrument || spec.product != TradingProduct::Spot
+        }) {
+            return Err("portfolio FX 规格必须是标的身份匹配的 Spot 规格".into());
+        }
+        lock_state(&self.state)?.portfolio_fx_market_specs = specs;
+        Ok(())
+    }
+
+    /// Return the immutable Spot spec set to the API-owned market quote projection loop.
+    pub fn portfolio_fx_market_specs(
+        &self,
+    ) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
+        Ok(lock_state(&self.state)?.portfolio_fx_market_specs.clone())
+    }
+
+    /// Configure the frozen market specs used by account snapshot valuation.
+    pub fn set_account_market_specs(
+        &self,
+        specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    ) -> Result<(), String> {
+        if specs
+            .iter()
+            .any(|(instrument, spec)| instrument != &spec.instrument)
+        {
+            return Err("账户估值规格必须与标的身份匹配".into());
+        }
+        lock_state(&self.state)?.account_market_specs = specs;
+        Ok(())
+    }
+
+    /// Return the immutable spec set used by the account projection loop.
+    pub fn account_market_specs(
+        &self,
+    ) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
+        Ok(lock_state(&self.state)?.account_market_specs.clone())
+    }
+
+    /// Publish FX conversion rates derived from fresh, configured Spot market quotes.
+    /// Rates are SCALE-valued amounts of reporting currency for one unit of source currency.
+    pub fn publish_portfolio_fx_rates(
+        &self,
+        published_at_ms: u64,
+        max_quote_age_ms: u64,
+        rates_by_reporting: BTreeMap<String, BTreeMap<String, ExactDecimal>>,
+    ) -> Result<(), String> {
+        let mut normalized = BTreeMap::new();
+        for (reporting, rates) in rates_by_reporting {
+            let reporting = reporting.trim().to_ascii_uppercase();
+            if reporting.is_empty() {
+                return Err("portfolio FX reporting currency 不能为空".into());
+            }
+            let mut normalized_rates = BTreeMap::new();
+            for (source, rate) in rates {
+                let source = source.trim().to_ascii_uppercase();
+                if source.is_empty() || !rate.is_positive() {
+                    return Err("portfolio FX source currency 与 rate 必须有效".into());
+                }
+                normalized_rates.insert(source, rate);
+            }
+            normalized.insert(reporting, normalized_rates);
+        }
+        let mut state = lock_state(&self.state)?;
+        state.portfolio_fx_rates_by_reporting = normalized;
+        state.portfolio_fx_published_at_ms = published_at_ms;
+        state.portfolio_fx_max_quote_age_ms = max_quote_age_ms;
+        Ok(())
     }
 
     fn projection_readiness(&self) -> Option<String> {
@@ -1359,6 +1522,488 @@ impl ApiService {
         }
         let state = lock_state(&self.state)?;
         Ok(state.snapshot.clone())
+    }
+
+    fn account_activity_for_query(&self, query: &str, now_ms: u64) -> ApiResponse {
+        let key = match projection_key_from_query(query) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return ApiResponse::json(
+                    400,
+                    error_json("account activity requires account_id and venue_id"),
+                );
+            }
+            Err(error) => return ApiResponse::json(400, error_json(&error)),
+        };
+        let options = match parse_account_activity_options(query) {
+            Ok(options) => options,
+            Err(error) => return app::respond(Err(error)),
+        };
+        let snapshot = match self.account_snapshot_for(&key.account_id, &key.venue_id) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
+            Err(error) => return read_error_response(&error),
+        };
+        if let Err(error) = snapshot.validate() {
+            return ApiResponse::json(
+                500,
+                error_json(&format!("account_snapshot_invalid: {error:?}")),
+            );
+        }
+        let snapshot_json = match snapshot.to_json() {
+            Ok(snapshot_json) => snapshot_json,
+            Err(error) => {
+                return ApiResponse::json(
+                    500,
+                    error_json(&format!("account_snapshot_serialization_failed: {error:?}")),
+                );
+            }
+        };
+        let snapshot_value = match serde_json::from_str(&snapshot_json) {
+            Ok(snapshot_value) => snapshot_value,
+            Err(error) => {
+                return ApiResponse::json(
+                    500,
+                    error_json(&format!("account_snapshot_decode_failed: {error}")),
+                );
+            }
+        };
+        let events = match self.projection_events_for_query(query) {
+            Ok(events) => events,
+            Err(error) => return read_error_response(&error),
+        };
+        let result = read_account_activity_report_v1(&snapshot_value, &events, &options, now_ms)
+            .and_then(|report| {
+                serde_json::to_string(&report).map_err(|error| {
+                    AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        format!("账户活动报告序列化失败: {error}"),
+                    )
+                })
+            });
+        app::respond(result)
+    }
+
+    fn portfolio_cash_for_query(
+        &self,
+        query: &str,
+        now_ms: u64,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let portfolio_id = query_param(query, "portfolio_id")?
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "portfolio_id 必须是非空字符串".to_string())?;
+        let reporting_currency = query_param(query, "reporting_currency")?
+            .map(|value| value.trim().to_ascii_uppercase());
+        if reporting_currency.as_ref().is_some_and(|currency| {
+            currency.is_empty()
+                || currency.len() > 16
+                || !currency
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        }) {
+            return Err("reporting_currency 格式非法".into());
+        }
+        let state = lock_state(&self.state)?;
+        let mut members = Vec::new();
+        let mut cash_by_currency = BTreeMap::<String, i128>::new();
+        let mut cash_by_currency_decimal = BTreeMap::<String, ExactDecimal>::new();
+        let mut unrealized_pnl_by_currency = BTreeMap::<String, i128>::new();
+        let mut unrealized_pnl_by_currency_decimal = BTreeMap::<String, ExactDecimal>::new();
+        let mut position_valuation_complete = true;
+        for (key, projection) in &state.projections {
+            let Some(snapshot) = projection
+                .snapshot
+                .as_ref()
+                .filter(|snapshot| snapshot.header.portfolio_id == portfolio_id)
+            else {
+                continue;
+            };
+            let mut account_cash = BTreeMap::<String, i128>::new();
+            let mut account_cash_decimal = BTreeMap::<String, ExactDecimal>::new();
+            for (source_currency, amount) in &snapshot.cash_raw {
+                let currency = source_currency.trim().to_ascii_uppercase();
+                let account_total = account_cash.entry(currency.clone()).or_default();
+                *account_total = account_total.checked_add(*amount).ok_or_else(|| {
+                    format!(
+                        "account {}@{} 的 {currency} 现金合计溢出",
+                        key.account_id, key.venue_id
+                    )
+                })?;
+                let total = cash_by_currency.entry(currency.clone()).or_default();
+                *total = total.checked_add(*amount).ok_or_else(|| {
+                    format!("portfolio {portfolio_id} 的 {currency} 现金合计溢出")
+                })?;
+                let exact = match snapshot.cash_exact.get(source_currency).copied() {
+                    Some(exact) => exact,
+                    None => ExactDecimal::from_parts(*amount, 9).map_err(|error| {
+                        format!(
+                            "account {}@{} 的 {currency} raw 现金精确化失败: {error}",
+                            key.account_id, key.venue_id
+                        )
+                    })?,
+                };
+                let account_exact = account_cash_decimal
+                    .entry(currency.clone())
+                    .or_insert(ExactDecimal::ZERO);
+                *account_exact = account_exact.checked_add(exact).ok_or_else(|| {
+                    format!(
+                        "account {}@{} 的 {currency} 精确现金合计溢出",
+                        key.account_id, key.venue_id
+                    )
+                })?;
+                let total_exact = cash_by_currency_decimal
+                    .entry(currency.clone())
+                    .or_insert(ExactDecimal::ZERO);
+                *total_exact = total_exact.checked_add(exact).ok_or_else(|| {
+                    format!("portfolio {portfolio_id} 的 {currency} 精确现金合计溢出")
+                })?;
+            }
+            for position in snapshot.positions.values().filter(|position| {
+                position.quantity_raw != 0
+                    || position
+                        .exact_amounts
+                        .is_some_and(|amounts| !amounts.quantity.is_zero())
+            }) {
+                let symbol = position.instrument.symbol().to_ascii_uppercase();
+                let derivative = position.settlement_currency.is_some()
+                    || symbol.contains(':')
+                    || symbol.ends_with("-PERP")
+                    || symbol.ends_with("-SWAP");
+                // Spot positions are represented by base-asset cash in a venue balance
+                // snapshot. Adding their position value or treating their missing PnL as an
+                // incomplete derivative would double count assets or hide valid cash equity.
+                if !derivative {
+                    let base_currency = position
+                        .instrument
+                        .symbol()
+                        .split(['/', '-'])
+                        .next()
+                        .map(str::trim)
+                        .filter(|currency| !currency.is_empty())
+                        .map(str::to_ascii_uppercase);
+                    if base_currency
+                        .as_ref()
+                        .is_none_or(|currency| !account_cash.contains_key(currency))
+                    {
+                        // Paper/ledger positions aren't exchange wallet balances. Without a
+                        // market-price valuation in this read model, don't publish cash as
+                        // total equity for such an account.
+                        position_valuation_complete = false;
+                    }
+                    continue;
+                }
+                let Some(currency) = position
+                    .settlement_currency
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|currency| !currency.is_empty())
+                else {
+                    position_valuation_complete = false;
+                    continue;
+                };
+                let Some(exact_pnl) = position
+                    .exact_amounts
+                    .and_then(|amounts| amounts.unrealized_pnl)
+                    .or_else(|| {
+                        position
+                            .unrealized_pnl_raw
+                            .and_then(|raw| ExactDecimal::from_parts(raw, 9).ok())
+                    })
+                else {
+                    position_valuation_complete = false;
+                    continue;
+                };
+                let currency = currency.to_ascii_uppercase();
+                if let Some(raw_pnl) = position.unrealized_pnl_raw {
+                    let total = unrealized_pnl_by_currency
+                        .entry(currency.clone())
+                        .or_default();
+                    *total = total.checked_add(raw_pnl).ok_or_else(|| {
+                        format!("portfolio {portfolio_id} 的 {currency} 未实现盈亏合计溢出")
+                    })?;
+                }
+                let total_exact = unrealized_pnl_by_currency_decimal
+                    .entry(currency.clone())
+                    .or_insert(ExactDecimal::ZERO);
+                *total_exact = total_exact.checked_add(exact_pnl).ok_or_else(|| {
+                    format!("portfolio {portfolio_id} 的 {currency} 精确未实现盈亏合计溢出")
+                })?;
+            }
+            let account_cash_exact = account_cash
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>();
+            let account_cash_decimal = account_cash_decimal
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>();
+            members.push(serde_json::json!({
+                "account_id": key.account_id,
+                "venue_id": key.venue_id,
+                "as_of": snapshot.header.as_of,
+                "event_seq": snapshot.header.event_seq,
+                "cash_by_currency_raw": account_cash,
+                "cash_by_currency_raw_exact": account_cash_exact,
+                "cash_by_currency_decimal": account_cash_decimal,
+            }));
+        }
+        if members.is_empty() {
+            return Ok(None);
+        }
+        let cash_by_currency_raw_exact = cash_by_currency
+            .iter()
+            .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let unrealized_pnl_by_currency_raw_exact = unrealized_pnl_by_currency
+            .iter()
+            .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let cash_by_currency_decimal_json = cash_by_currency_decimal
+            .iter()
+            .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let unrealized_pnl_by_currency_decimal_json = unrealized_pnl_by_currency_decimal
+            .iter()
+            .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let equity_by_currency = if position_valuation_complete {
+            let mut equity = cash_by_currency.clone();
+            for (currency, pnl) in &unrealized_pnl_by_currency {
+                let total = equity.entry(currency.clone()).or_default();
+                *total = total.checked_add(*pnl).ok_or_else(|| {
+                    format!("portfolio {portfolio_id} 的 {currency} 净值合计溢出")
+                })?;
+            }
+            Some(equity)
+        } else {
+            None
+        };
+        let equity_by_currency_raw_exact = equity_by_currency.as_ref().map(|equity| {
+            equity
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>()
+        });
+        let equity_decimal_values = if position_valuation_complete {
+            let mut equity = cash_by_currency_decimal.clone();
+            for (currency, pnl) in &unrealized_pnl_by_currency_decimal {
+                let total = equity.entry(currency.clone()).or_insert(ExactDecimal::ZERO);
+                *total = total.checked_add(*pnl).ok_or_else(|| {
+                    format!("portfolio {portfolio_id} 的 {currency} 精确净值合计溢出")
+                })?;
+            }
+            Some(equity)
+        } else {
+            None
+        };
+        let equity_by_currency_decimal = equity_decimal_values.as_ref().map(|equity| {
+            equity
+                .iter()
+                .map(|(currency, amount)| (currency.clone(), amount.to_string()))
+                .collect::<BTreeMap<_, _>>()
+        });
+
+        let mut cash_equivalent_raw = None;
+        let mut cash_equivalent_decimal = None;
+        let mut cash_valuation_status = "reporting_currency_not_requested";
+        let mut missing_fx_currencies = Vec::new();
+        let mut cash_valuation_as_of_ms = None;
+        if let Some(reporting) = reporting_currency.as_deref() {
+            let needs_fx = cash_by_currency_decimal
+                .iter()
+                .any(|(currency, amount)| !amount.is_zero() && currency != reporting);
+            let quote_age = now_ms.checked_sub(state.portfolio_fx_published_at_ms);
+            let fresh = !needs_fx
+                || (state.portfolio_fx_published_at_ms > 0
+                    && quote_age.is_some_and(|age| age <= state.portfolio_fx_max_quote_age_ms));
+            if !fresh {
+                cash_valuation_status = "fx_quotes_unavailable_or_stale";
+            } else {
+                let rates = state
+                    .portfolio_fx_rates_by_reporting
+                    .get(reporting)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut equivalent = 0_i128;
+                let mut equivalent_decimal = ExactDecimal::ZERO;
+                for (currency, amount) in &cash_by_currency_decimal {
+                    if amount.is_zero() {
+                        continue;
+                    }
+                    let rate_decimal = if currency == reporting {
+                        ExactDecimal::ONE
+                    } else if let Some(rate) = rates.get(currency) {
+                        *rate
+                    } else {
+                        missing_fx_currencies.push(currency.clone());
+                        continue;
+                    };
+                    let rate = exact_decimal_to_scale9_raw(rate_decimal).ok_or_else(|| {
+                        format!("portfolio {portfolio_id} 的 {currency}->{reporting} 汇率投影溢出")
+                    })?;
+                    let raw_amount = cash_by_currency.get(currency).copied().unwrap_or_default();
+                    let converted = raw_amount
+                        .checked_mul(rate)
+                        .and_then(|value| value.checked_div(SCALE))
+                        .ok_or_else(|| {
+                            format!(
+                                "portfolio {portfolio_id} 的 {currency}->{reporting} 现金估值溢出"
+                            )
+                        })?;
+                    equivalent = equivalent.checked_add(converted).ok_or_else(|| {
+                        format!("portfolio {portfolio_id} 的 {reporting} 现金估值合计溢出")
+                    })?;
+                    let converted_decimal = amount
+                        .checked_mul_at_scale(
+                            rate_decimal,
+                            ExactDecimal::MAX_SCALE,
+                            DecimalRounding::TowardZero,
+                        )
+                        .ok_or_else(|| {
+                            format!("portfolio {portfolio_id} 的 {currency}->{reporting} 精确现金估值溢出")
+                        })?;
+                    equivalent_decimal = equivalent_decimal
+                        .checked_add(converted_decimal)
+                        .ok_or_else(|| {
+                            format!("portfolio {portfolio_id} 的 {reporting} 精确现金估值合计溢出")
+                        })?;
+                }
+                if missing_fx_currencies.is_empty() {
+                    cash_equivalent_raw = Some(equivalent);
+                    cash_equivalent_decimal = Some(equivalent_decimal.to_string());
+                    cash_valuation_status = if needs_fx {
+                        "indicative_spot_mid_cash_only"
+                    } else {
+                        "same_currency_cash_only"
+                    };
+                    if needs_fx {
+                        cash_valuation_as_of_ms = Some(state.portfolio_fx_published_at_ms);
+                    }
+                } else {
+                    cash_valuation_status = "missing_spot_fx_route";
+                }
+            }
+        }
+        let mut equity_equivalent_raw = None;
+        let mut equity_equivalent_decimal = None;
+        let mut equity_valuation_status = if position_valuation_complete {
+            "native_currency_cash_plus_unrealized_pnl"
+        } else {
+            "incomplete_position_pnl_or_settlement_currency"
+        };
+        let mut missing_equity_fx_currencies = Vec::new();
+        if let (Some(reporting), Some(equity), Some(equity_decimal)) = (
+            reporting_currency.as_deref(),
+            equity_by_currency.as_ref(),
+            equity_decimal_values.as_ref(),
+        ) {
+            let needs_fx = equity_decimal
+                .iter()
+                .any(|(currency, amount)| !amount.is_zero() && currency != reporting);
+            let quote_age = now_ms.checked_sub(state.portfolio_fx_published_at_ms);
+            let fresh = !needs_fx
+                || (state.portfolio_fx_published_at_ms > 0
+                    && quote_age.is_some_and(|age| age <= state.portfolio_fx_max_quote_age_ms));
+            if !fresh {
+                equity_valuation_status = "fx_quotes_unavailable_or_stale";
+            } else {
+                let rates = state
+                    .portfolio_fx_rates_by_reporting
+                    .get(reporting)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut equivalent = 0_i128;
+                let mut equivalent_decimal = ExactDecimal::ZERO;
+                for (currency, amount) in equity_decimal {
+                    if amount.is_zero() {
+                        continue;
+                    }
+                    let rate_decimal = if currency == reporting {
+                        ExactDecimal::ONE
+                    } else if let Some(rate) = rates.get(currency) {
+                        *rate
+                    } else {
+                        missing_equity_fx_currencies.push(currency.clone());
+                        continue;
+                    };
+                    let rate = exact_decimal_to_scale9_raw(rate_decimal).ok_or_else(|| {
+                        format!("portfolio {portfolio_id} 的 {currency}->{reporting} 汇率投影溢出")
+                    })?;
+                    let raw_amount = equity.get(currency).copied().unwrap_or_default();
+                    let converted = raw_amount
+                        .checked_mul(rate)
+                        .and_then(|value| value.checked_div(SCALE))
+                        .ok_or_else(|| {
+                            format!(
+                                "portfolio {portfolio_id} 的 {currency}->{reporting} 净值估算溢出"
+                            )
+                        })?;
+                    equivalent = equivalent.checked_add(converted).ok_or_else(|| {
+                        format!("portfolio {portfolio_id} 的 {reporting} 净值估算合计溢出")
+                    })?;
+                    let converted_decimal = amount
+                        .checked_mul_at_scale(
+                            rate_decimal,
+                            ExactDecimal::MAX_SCALE,
+                            DecimalRounding::TowardZero,
+                        )
+                        .ok_or_else(|| {
+                            format!("portfolio {portfolio_id} 的 {currency}->{reporting} 精确净值估算溢出")
+                        })?;
+                    equivalent_decimal = equivalent_decimal
+                        .checked_add(converted_decimal)
+                        .ok_or_else(|| {
+                            format!("portfolio {portfolio_id} 的 {reporting} 精确净值估算合计溢出")
+                        })?;
+                }
+                if missing_equity_fx_currencies.is_empty() {
+                    equity_equivalent_raw = Some(equivalent);
+                    equity_equivalent_decimal = Some(equivalent_decimal.to_string());
+                    equity_valuation_status = if needs_fx {
+                        "indicative_spot_mid_native_cash_plus_unrealized_pnl"
+                    } else {
+                        "same_currency_cash_plus_unrealized_pnl"
+                    };
+                } else {
+                    equity_valuation_status = "missing_spot_fx_route";
+                }
+            }
+        }
+        Ok(Some(serde_json::json!({
+            "schema_version": 1,
+            "portfolio_id": portfolio_id,
+            "account_count": members.len(),
+            "accounts": members,
+            "cash_aggregation": "net_by_currency_across_portfolio_accounts",
+            "cash_by_currency_raw": cash_by_currency,
+            "cash_by_currency_raw_exact": cash_by_currency_raw_exact,
+            "cash_by_currency_decimal": cash_by_currency_decimal_json,
+            "reporting_currency": reporting_currency,
+            "cash_equivalent_raw": cash_equivalent_raw,
+            "cash_equivalent_raw_exact": cash_equivalent_raw.map(|value| value.to_string()),
+            "cash_equivalent_decimal": cash_equivalent_decimal,
+            "cash_valuation_status": cash_valuation_status,
+            "cash_valuation_method": "spot_mid_prices",
+            "cash_valuation_as_of_ms": cash_valuation_as_of_ms,
+            "cash_valuation_quote_max_age_ms": state.portfolio_fx_max_quote_age_ms,
+            "cash_valuation_missing_fx_currencies": missing_fx_currencies,
+            "unrealized_pnl_by_currency_raw": unrealized_pnl_by_currency,
+            "unrealized_pnl_by_currency_raw_exact": unrealized_pnl_by_currency_raw_exact,
+            "unrealized_pnl_by_currency_decimal": unrealized_pnl_by_currency_decimal_json,
+            "equity_by_currency_raw": equity_by_currency,
+            "equity_by_currency_raw_exact": equity_by_currency_raw_exact,
+            "equity_by_currency_decimal": equity_by_currency_decimal,
+            "equity_equivalent_raw": equity_equivalent_raw,
+            "equity_equivalent_raw_exact": equity_equivalent_raw.map(|value| value.to_string()),
+            "equity_equivalent_decimal": equity_equivalent_decimal,
+            "equity_valuation_status": equity_valuation_status,
+            "equity_valuation_method": "wallet_cash_plus_exchange_reported_unrealized_pnl_by_settlement_currency",
+            "equity_valuation_missing_fx_currencies": missing_equity_fx_currencies,
+            "equity_raw": null,
+            "equity_status": equity_valuation_status,
+            "margin_netting": false,
+        })))
     }
 
     fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
@@ -1468,7 +2113,14 @@ impl ApiService {
         if self.policy.is_some()
             && !matches!(
                 route,
-                "/health" | "/ready" | "/schema/account-snapshot-v1" | "/schema/contract-matrix"
+                "/health"
+                    | "/ready"
+                    | "/schema/account-snapshot-v1"
+                    | "/schema/account-snapshot-v2"
+                    | "/schema/account-snapshot-v3"
+                    | "/schema/account-snapshot-v4"
+                    | "/schema/account-snapshot-v5"
+                    | "/schema/contract-matrix"
             )
         {
             let authorized = authenticated_operator
@@ -1498,9 +2150,47 @@ impl ApiService {
         }
         let permission =
             authenticated_operator.and_then(|operator| self.policy.as_ref()?.permission(operator));
+        if method == "POST"
+            && matches!(
+                route,
+                "/strategies/deployments/revisions" | "/strategies/deployments/operations"
+            )
+            && self.policy.is_some()
+            && permission != Some(Permission::Admin)
+        {
+            return ApiResponse::json(403, error_json("strategy_deployment_admin_required"));
+        }
         let trading_authorized = self.policy.is_none() || algo_lifecycle::can_trade(permission);
         let app_paths = &self.app_paths;
         match (method, route) {
+            ("GET", "/strategies/deployments") => self.strategy_deployments_response(query),
+            ("GET", "/strategies/deployment-nodes") => {
+                if query.is_empty() {
+                    self.strategy_deployment_nodes_response()
+                } else {
+                    ApiResponse::json(400, error_json("deployment_node_query_not_supported"))
+                }
+            }
+            ("POST", "/strategies/deployment-nodes") => {
+                if query.is_empty() {
+                    self.receive_strategy_deployment_node_snapshot_response(
+                        body,
+                        ts,
+                        authenticated_operator,
+                    )
+                } else {
+                    ApiResponse::json(400, error_json("deployment_node_query_not_supported"))
+                }
+            }
+            ("POST", "/strategies/deployments/revisions") => {
+                self.create_deployment_revision_response(body, ts, authenticated_operator)
+            }
+            ("POST", "/strategies/deployments/operations") => {
+                self.create_deployment_operation_response(body, ts, authenticated_operator)
+            }
+            ("GET", "/strategies/deployments/operations") => {
+                self.deployment_operation_response(query)
+            }
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
             ("GET", "/ready") => {
                 let mut readiness = self
@@ -1564,12 +2254,25 @@ qx_control_retired_commands_total {}\n\
 qx_control_retired_audit_records_total {}\n",
                     retirement.retired_commands, retirement.retired_audit_records
                 ));
+                body.push_str(&self.app_runs.watcher_metrics_prometheus());
                 if let Some(provider) = &self.worker_metrics_provider {
                     body.push_str(&provider());
                 }
                 ApiResponse::prometheus(body)
             }
             ("GET", "/schema/account-snapshot-v1") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V1)
+            }
+            ("GET", "/schema/account-snapshot-v2") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V2)
+            }
+            ("GET", "/schema/account-snapshot-v3") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V3)
+            }
+            ("GET", "/schema/account-snapshot-v4") => {
+                ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA_V4)
+            }
+            ("GET", "/schema/account-snapshot-v5") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
             ("GET", "/schema/contract-matrix") => app_surface_route::contract_matrix_response(),
@@ -1585,6 +2288,12 @@ qx_control_retired_audit_records_total {}\n",
                 Ok(Some(snapshot)) => app_surface_route::account_snapshot_response(snapshot),
                 Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
             },
+            ("GET", "/account/activity") => self.account_activity_for_query(query, ts),
+            ("GET", "/account/portfolio") => match self.portfolio_cash_for_query(query, ts) {
+                Err(error) => ApiResponse::json(400, error_json(&error)),
+                Ok(Some(portfolio)) => serialized_json_response(200, &portfolio),
+                Ok(None) => ApiResponse::json(404, "{\"error\":\"portfolio_not_found\"}"),
+            },
             ("GET", "/account/orders") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
@@ -1595,6 +2304,29 @@ qx_control_retired_audit_records_total {}\n",
                     .unwrap_or_default();
                 serialized_json_response(200, &orders)
             }
+            ("GET", "/account/order-groups") => match ScopeFilter::from_query(query) {
+                Err(error) => read_error_response(&error),
+                Ok(scope) => match self.query_models() {
+                    Ok(models) => {
+                        let groups: Vec<_> = models
+                            .order_groups
+                            .into_iter()
+                            .filter(|group| {
+                                let Some(leg) = group.legs.first() else {
+                                    return false;
+                                };
+                                scope_keeps_account(scope.as_ref(), &leg.order.account_id)
+                                    && scope_keeps_venue(
+                                        scope.as_ref(),
+                                        &leg.order.instrument.venue.to_string(),
+                                    )
+                            })
+                            .collect();
+                        serialized_json_response(200, &groups)
+                    }
+                    Err(error) => ApiResponse::json(503, error_json(&error)),
+                },
+            },
             ("GET", "/account/positions") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
@@ -1613,6 +2345,7 @@ qx_control_retired_audit_records_total {}\n",
                 let body = serde_json::json!({
                     "cash_raw": snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
                     "equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw),
+                    "equity_diagnostic": snapshot.as_ref().and_then(|snapshot| snapshot.equity_diagnostic.clone()),
                     "available_raw": snapshot.as_ref().and_then(|snapshot| snapshot.available_raw),
                     "margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw),
                 });
@@ -1749,6 +2482,9 @@ qx_control_retired_audit_records_total {}\n",
                 app::multi_market_depth_experiment(body, &self.app_paths)
             }
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
+            ("POST", "/app/multi-account-joint-backtest") => {
+                app_surface::multi_account_joint(body, &self.app_paths)
+            }
             ("POST", "/app/multi-account-depth-backtest") => app::depth_batch(body, app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             ("POST", "/app/run-multi-market-experiment") => app::multi_market_grid(body, app_paths),
@@ -1881,6 +2617,9 @@ qx_control_retired_audit_records_total {}\n",
             Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
         };
         let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
+        if self.local_paper_control && authenticated.is_none() {
+            return ApiResponse::json(403, error_json("authenticated_operator_required"));
+        }
         if let Some(operator_id) = authenticated {
             command.operator_id = operator_id.to_string();
         }
@@ -2133,6 +2872,77 @@ fn non_empty_or_system(value: String) -> String {
     }
 }
 
+fn parse_account_activity_options(
+    query: &str,
+) -> Result<AccountActivityReportReadOptionsV1, AppError> {
+    for key in [
+        "after",
+        "before",
+        "limit",
+        "client_order_id",
+        "exchange_order_id",
+        "run_id",
+        "strategy_id",
+        "signal_id",
+        "intent_id",
+        "correlation_id",
+    ] {
+        let occurrences = query
+            .split('&')
+            .filter(|part| part.split('=').next() == Some(key))
+            .count();
+        if occurrences > 1 {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("账户活动查询参数 {key} 不能重复"),
+            ));
+        }
+    }
+    let parse_cursor = |key: &str| -> Result<Option<u64>, AppError> {
+        query_param(query, key)
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?
+            .map(|value| {
+                value.parse::<u64>().map_err(|_| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!("账户活动 {key} 必须是无符号整数"),
+                    )
+                })
+            })
+            .transpose()
+    };
+    let limit = query_param(query, "limit")
+        .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?
+        .map(|value| {
+            value.parse::<usize>().map_err(|_| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "账户活动 limit 必须是正整数",
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(qx_app::DEFAULT_ACCOUNT_ACTIVITY_EVENT_PAGE_V1);
+    Ok(AccountActivityReportReadOptionsV1 {
+        after: parse_cursor("after")?,
+        before: parse_cursor("before")?,
+        client_order_id: parse_cursor("client_order_id")?,
+        exchange_order_id: query_param(query, "exchange_order_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        run_id: query_param(query, "run_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        strategy_id: query_param(query, "strategy_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        signal_id: query_param(query, "signal_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        intent_id: query_param(query, "intent_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        correlation_id: query_param(query, "correlation_id")
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.to_string()))?,
+        limit,
+    })
+}
+
 fn event_venue_id(event: &Event) -> String {
     match &event.kind {
         EventKind::AccountBalanceSnapshot { venue_id, .. }
@@ -2145,6 +2955,17 @@ fn event_venue_id(event: &Event) -> String {
             .as_ref()
             .map(|instrument| instrument.venue.to_string())
             .unwrap_or_default(),
+        EventKind::StrategyDecision { decision } => {
+            let mut venues = decision
+                .intents
+                .iter()
+                .map(|intent| intent.instrument.venue.to_string());
+            venues
+                .next()
+                .filter(|first| venues.all(|venue| venue == *first))
+                .unwrap_or_default()
+        }
+        EventKind::OrderRiskDecision { decision } => decision.instrument.venue.to_string(),
         _ => event.metadata.context.account_id.clone(),
     }
 }
@@ -2220,7 +3041,10 @@ mod algo_execution_tests;
 mod tests {
     use super::*;
     use qx_control::{CommandKind, Permission};
-    use qx_core::{Event, EventKind, Priority};
+    use qx_core::{
+        Event, EventKind, ExecutionCapabilityDecisionFact, ExecutionCapabilityDecisionKind,
+        Priority, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
+    };
     use qx_protocol::AccountSnapshot;
     use rustls::server::{ClientHello, ResolvesServerCert};
     use rustls::sign::CertifiedKey;
@@ -2243,13 +3067,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn execution_capability_decision_projection_is_account_and_venue_scoped() {
+        let decision = ExecutionCapabilityDecisionFact {
+            schema_version: EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
+            kind: ExecutionCapabilityDecisionKind::Submit,
+            decision_id: "a".repeat(64),
+            command_id: Some(12),
+            order_group_id: Some("spread-12".into()),
+            client_order_id: 34,
+            account_id: "main".into(),
+            run_id: None,
+            strategy_id: None,
+            signal_id: None,
+            intent_id: None,
+            venue_id: "BINANCE".into(),
+            order_fingerprint: "b".repeat(64),
+            catalog_fingerprint: "c".repeat(64),
+            market_rule_fingerprint: "d".repeat(64),
+            preflight_json: r#"{"schema_version":1}"#.into(),
+        };
+        let event = Event::new(
+            0,
+            10,
+            Priority::COMMAND,
+            EventKind::ExecutionCapabilityDecision { decision },
+        );
+        let expected = ApiProjectionKey {
+            account_id: "main".into(),
+            venue_id: "binance".into(),
+        };
+        assert!(validate_projection_event(&expected, &event).is_ok());
+        let wrong_account = ApiProjectionKey {
+            account_id: "other".into(),
+            venue_id: "binance".into(),
+        };
+        assert!(validate_projection_event(&wrong_account, &event).is_err());
+        let wrong_venue = ApiProjectionKey {
+            account_id: "main".into(),
+            venue_id: "okx".into(),
+        };
+        assert!(validate_projection_event(&wrong_venue, &event).is_err());
+    }
+
     /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
     /// 正好是零的钱印成 0、把这一层没算过的钱印成 null。两者印成同一个数时，读侧分不清
     /// "这个账户没有保证金"和"根本没人替它算过保证金"。
     #[test]
     fn balances_endpoint_publishes_absent_money_as_null_not_zero() {
         let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 10);
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", "20260911", 10);
         snapshot.equity_raw = Some(500);
         snapshot.available_raw = Some(0);
         state.publish_snapshot(snapshot).unwrap();
@@ -2268,7 +3135,9 @@ mod tests {
         // 而不是被 `.unwrap_or(0)` 折回一个看起来合法的零。
         let mut absent_state = ApiState::default();
         absent_state
-            .publish_snapshot(AccountSnapshot::new(2, "main", "default", "paper", 20))
+            .publish_snapshot(AccountSnapshot::new(
+                2, "main", "default", "paper", "20260911", 20,
+            ))
             .unwrap();
         let absent_body = ApiService::new(absent_state)
             .handle("GET", "/account/balances", "", 2)
@@ -2277,6 +3146,167 @@ mod tests {
             absent_body.contains("\"equity_raw\":null"),
             "算不出标记价时权益必须印 null，而不是给账户兜一个 0: {absent_body}"
         );
+        let mut diagnostic_state = ApiState::default();
+        let mut diagnostic_snapshot =
+            AccountSnapshot::new(3, "main", "default", "paper", "20260911", 30);
+        diagnostic_snapshot.equity_diagnostic = Some(qx_protocol::EquityDiagnostic {
+            reason: qx_protocol::EquityUnavailableReason::MissingMarkPrices,
+            missing_mark_instruments: vec!["BTC/USDT.BINANCE".into()],
+        });
+        diagnostic_state
+            .publish_snapshot(diagnostic_snapshot)
+            .unwrap();
+        let diagnostic_body = ApiService::new(diagnostic_state)
+            .handle("GET", "/account/balances", "", 3)
+            .body;
+        assert!(
+            diagnostic_body.contains("\"reason\":\"missing_mark_prices\"")
+                && diagnostic_body.contains("BTC/USDT.BINANCE"),
+            "余额读面应带出权益不可用原因和缺价标的: {diagnostic_body}"
+        );
+    }
+
+    #[test]
+    fn portfolio_equity_adds_exchange_pnl_only_in_its_settlement_currency() {
+        let mut state = ApiState::default();
+        let mut okx = AccountSnapshot::new(1, "account-okx", "joint", "okx", "20260911", 10);
+        okx.cash_raw.insert("USDT".into(), 1_000);
+        let btc = InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap();
+        okx.positions.insert(
+            btc.clone(),
+            qx_protocol::PositionSnapshot {
+                instrument: btc,
+                settlement_currency: Some("USDT".into()),
+                quantity_raw: qx_core::SCALE,
+                unrealized_pnl_raw: Some(50),
+                ..qx_protocol::PositionSnapshot::default()
+            },
+        );
+        state
+            .publish_snapshot_for("account-okx", "okx", okx)
+            .unwrap();
+
+        let mut bitget =
+            AccountSnapshot::new(2, "account-bitget", "joint", "bitget", "20260911", 10);
+        bitget.cash_raw.insert("USDC".into(), 300);
+        let eth = InstrumentId::parse("ETH/USDC:USDC.BITGET").unwrap();
+        bitget.positions.insert(
+            eth.clone(),
+            qx_protocol::PositionSnapshot {
+                instrument: eth,
+                settlement_currency: Some("USDC".into()),
+                quantity_raw: qx_core::SCALE,
+                unrealized_pnl_raw: Some(-20),
+                ..qx_protocol::PositionSnapshot::default()
+            },
+        );
+        state
+            .publish_snapshot_for("account-bitget", "bitget", bitget)
+            .unwrap();
+
+        let response =
+            ApiService::new(state).handle("GET", "/account/portfolio?portfolio_id=joint", "", 20);
+        assert_eq!(response.status, 200, "{response:?}");
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["equity_by_currency_raw"]["USDT"], 1_050);
+        assert_eq!(body["equity_by_currency_raw"]["USDC"], 280);
+        assert_eq!(body["unrealized_pnl_by_currency_raw_exact"]["USDT"], "50");
+        assert_eq!(
+            body["equity_valuation_status"],
+            "native_currency_cash_plus_unrealized_pnl"
+        );
+        assert_eq!(body["margin_netting"], false);
+    }
+
+    #[test]
+    fn portfolio_preserves_sub_nano_wallet_cash_and_derivative_pnl() {
+        let mut state = ApiState::default();
+        let mut account =
+            AccountSnapshot::new(1, "micro-account", "micro", "binance", "20260911", 10);
+        account.cash_raw.insert("USDT".into(), 0);
+        account
+            .cash_exact
+            .insert("USDT".into(), ExactDecimal::parse("0.0000000003").unwrap());
+        let instrument = InstrumentId::parse("TINY/USDT:USDT.BINANCE").unwrap();
+        account.positions.insert(
+            instrument.clone(),
+            qx_protocol::PositionSnapshot {
+                instrument,
+                settlement_currency: Some("USDT".into()),
+                exact_amounts: Some(qx_core::ExactAccountPositionAmounts {
+                    quantity: ExactDecimal::parse("0.0000000002").unwrap(),
+                    average_price: None,
+                    mark_price: None,
+                    liquidation_price: None,
+                    unrealized_pnl: Some(ExactDecimal::parse("0.0000000007").unwrap()),
+                    initial_margin: None,
+                    maintenance_margin: None,
+                }),
+                ..qx_protocol::PositionSnapshot::default()
+            },
+        );
+        state
+            .publish_snapshot_for("micro-account", "binance", account)
+            .unwrap();
+
+        let response = ApiService::new(state).handle(
+            "GET",
+            "/account/portfolio?portfolio_id=micro&reporting_currency=USDT",
+            "",
+            20,
+        );
+        assert_eq!(response.status, 200, "{response:?}");
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["cash_by_currency_decimal"]["USDT"], "0.0000000003");
+        assert_eq!(
+            body["unrealized_pnl_by_currency_decimal"]["USDT"],
+            "0.0000000007"
+        );
+        assert_eq!(body["equity_by_currency_decimal"]["USDT"], "0.000000001");
+        assert_eq!(body["cash_equivalent_decimal"], "0.0000000003");
+        assert_eq!(body["equity_equivalent_decimal"], "0.000000001");
+        assert_eq!(body["cash_by_currency_raw"]["USDT"], 0);
+        assert_eq!(body["equity_by_currency_raw"]["USDT"], 0);
+    }
+
+    #[test]
+    fn portfolio_fx_conversion_preserves_sub_nano_rate_and_cash() {
+        let mut state = ApiState::default();
+        let mut account =
+            AccountSnapshot::new(1, "micro-fx-account", "micro-fx", "bitget", "20260911", 10);
+        account.cash_raw.insert("TINY".into(), SCALE);
+        account
+            .cash_exact
+            .insert("TINY".into(), ExactDecimal::from_parts(1, 0).unwrap());
+        state
+            .publish_snapshot_for("micro-fx-account", "bitget", account)
+            .unwrap();
+        let service = ApiService::new(state);
+        service
+            .publish_portfolio_fx_rates(
+                10,
+                10,
+                BTreeMap::from([(
+                    "USDT".into(),
+                    BTreeMap::from([
+                        ("TINY".into(), ExactDecimal::parse("0.0000000007").unwrap()),
+                        ("USDT".into(), ExactDecimal::from_parts(1, 0).unwrap()),
+                    ]),
+                )]),
+            )
+            .unwrap();
+
+        let response = service.handle(
+            "GET",
+            "/account/portfolio?portfolio_id=micro-fx&reporting_currency=USDT",
+            "",
+            20,
+        );
+        assert_eq!(response.status, 200, "{response:?}");
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["cash_equivalent_decimal"], "0.0000000007");
+        assert_eq!(body["equity_equivalent_decimal"], "0.0000000007");
+        assert_eq!(body["cash_equivalent_raw"], 0);
     }
 
     #[test]
@@ -2334,7 +3364,7 @@ mod tests {
     #[test]
     fn query_port_exposes_account_orders_positions_balances_and_audit() {
         let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", 100);
+        let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", "20260911", 100);
         snapshot.cash_raw.insert("USDT".into(), 123);
         let instrument = qx_core::InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
         snapshot.orders.insert(
@@ -2347,6 +3377,7 @@ mod tests {
                 quantity_raw: 1,
                 filled_raw: 0,
                 status: qx_core::OrderStatus::Accepted,
+                exact_amounts: None,
             },
         );
         snapshot.positions.insert(
@@ -2384,6 +3415,7 @@ mod tests {
             position_side: None,
 
             leverage: None,
+            exact_amounts: None,
         });
         state.reconcile_reports.insert(
             "reconciler".into(),
@@ -2416,6 +3448,28 @@ mod tests {
         assert_eq!(service.handle("GET", "/scheduler/runs", "", 5).status, 200);
         assert_eq!(service.handle("GET", "/account/ledger", "", 6).status, 200);
         assert_eq!(
+            service
+                .handle(
+                    "GET",
+                    "/account/order-groups?account_id=main&venue_id=paper",
+                    "",
+                    7
+                )
+                .status,
+            200
+        );
+        assert_eq!(
+            service
+                .handle(
+                    "GET",
+                    "/account/order-groups?account_id=main&unexpected=1",
+                    "",
+                    8
+                )
+                .status,
+            400
+        );
+        assert_eq!(
             service.handle("GET", "/reconcile/reports", "", 7).status,
             200
         );
@@ -2427,6 +3481,198 @@ mod tests {
         assert_eq!(service.query_port().reconcile_reports().unwrap().len(), 1);
         assert!(service.query_port().control_audit().is_ok());
         assert!(service.query_port().control_retirement().is_ok());
+    }
+
+    #[test]
+    fn account_activity_requires_identity_and_pages_one_account_projection() {
+        let mut state = ApiState::default();
+        let mut snapshot = AccountSnapshot::new(11, "primary", "crypto", "OKX", "20260911", 50);
+        snapshot.header.event_seq = 4;
+        snapshot.cash_raw.insert("USDT".into(), 1_000_000_000);
+        snapshot.cash_exact.insert(
+            "USDT".into(),
+            ExactDecimal::from_parts(1_000_000_000, 9).unwrap(),
+        );
+        state
+            .publish_snapshot_for("primary", "OKX", snapshot)
+            .unwrap();
+        let mut source = EventLog::new();
+        for seq in 0..5 {
+            let kind = if seq == 4 {
+                EventKind::Accepted {
+                    client_order_id: 9001,
+                    venue_order_id: Some("okx-order-9001".into()),
+                }
+            } else {
+                EventKind::AccountBalanceSnapshot {
+                    account_id: "primary".into(),
+                    venue_id: "OKX".into(),
+                    balances: Vec::new(),
+                }
+            };
+            let mut event = Event::new(seq, seq, 0, kind);
+            if seq == 4 {
+                event.correlation_id = "order-submit-9001".into();
+                event.metadata.context.run_id = "run-paper-4".into();
+                event.metadata.context.strategy_id = "strategy-momentum".into();
+                event.metadata.context.signal_id = "signal-9001".into();
+                event.metadata.context.intent_id = "intent-9001".into();
+            }
+            source.append(event);
+        }
+        assert_eq!(
+            state
+                .project_account_event_log("primary", "OKX", &source)
+                .unwrap(),
+            5
+        );
+        let service = ApiService::new(state);
+
+        let no_scope = service.handle("GET", "/account/activity?limit=2", "", 100);
+        assert_eq!(no_scope.status, 400);
+        assert!(no_scope.body.contains("requires account_id and venue_id"));
+        let missing = service.handle(
+            "GET",
+            "/account/activity?account_id=missing&venue_id=OKX",
+            "",
+            100,
+        );
+        assert_eq!(missing.status, 404);
+        assert!(missing.body.contains("account_projection_not_found"));
+
+        let first = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&after=1&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(first.status, 200, "{}", first.body);
+        let report: serde_json::Value = serde_json::from_str(&first.body).unwrap();
+        assert_eq!(report["schema_version"], 1);
+        assert_eq!(report["identity"]["account_id"], "primary");
+        assert_eq!(report["identity"]["venue_id"], "OKX");
+        assert_eq!(report["balances"]["cash_raw"]["USDT"], 1_000_000_000_i64);
+        assert_eq!(report["events"]["available_total"], 5);
+        assert_eq!(report["events"]["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(report["events"]["rows"][0]["seq"], 2);
+        assert_eq!(report["events"]["next_after"], 3);
+        assert_eq!(report["events"]["previous_before"], 2);
+
+        let previous = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&before=2&limit=1",
+            "",
+            100,
+        );
+        assert_eq!(previous.status, 200, "{}", previous.body);
+        let previous: serde_json::Value = serde_json::from_str(&previous.body).unwrap();
+        assert_eq!(previous["events"]["rows"][0]["seq"], 1);
+        assert_eq!(previous["events"]["has_newer"], true);
+
+        let order_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&client_order_id=9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(order_trace.status, 200, "{}", order_trace.body);
+        let order_trace: serde_json::Value = serde_json::from_str(&order_trace.body).unwrap();
+        assert_eq!(order_trace["events"]["client_order_id"], 9001);
+        assert_eq!(order_trace["events"]["available_total"], 1);
+        assert_eq!(order_trace["events"]["rows"][0]["seq"], 4);
+        assert_eq!(order_trace["events"]["rows"][0]["client_order_id"], 9001);
+        assert_eq!(
+            order_trace["events"]["rows"][0]["exchange_order_id"],
+            "okx-order-9001"
+        );
+
+        let exchange_order_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&exchange_order_id=okx-order-9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(
+            exchange_order_trace.status, 200,
+            "{}",
+            exchange_order_trace.body
+        );
+        let exchange_order_trace: serde_json::Value =
+            serde_json::from_str(&exchange_order_trace.body).unwrap();
+        assert_eq!(
+            exchange_order_trace["events"]["exchange_order_id"],
+            "okx-order-9001"
+        );
+        assert_eq!(exchange_order_trace["events"]["available_total"], 1);
+        assert_eq!(exchange_order_trace["events"]["rows"][0]["seq"], 4);
+
+        let run_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&run_id=run-paper-4&strategy_id=strategy-momentum&signal_id=signal-9001&intent_id=intent-9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(run_trace.status, 200, "{}", run_trace.body);
+        let run_trace: serde_json::Value = serde_json::from_str(&run_trace.body).unwrap();
+        assert_eq!(run_trace["events"]["run_id"], "run-paper-4");
+        assert_eq!(run_trace["events"]["strategy_id"], "strategy-momentum");
+        assert_eq!(run_trace["events"]["signal_id"], "signal-9001");
+        assert_eq!(run_trace["events"]["intent_id"], "intent-9001");
+        assert_eq!(run_trace["events"]["available_total"], 1);
+        assert_eq!(run_trace["events"]["rows"][0]["client_order_id"], 9001);
+
+        let correlation_trace = service.handle(
+            "GET",
+            "/account/activity?account_id=primary&venue_id=OKX&correlation_id=order-submit-9001&limit=2",
+            "",
+            100,
+        );
+        assert_eq!(correlation_trace.status, 200, "{}", correlation_trace.body);
+        let correlation_trace: serde_json::Value =
+            serde_json::from_str(&correlation_trace.body).unwrap();
+        assert_eq!(
+            correlation_trace["events"]["correlation_id"],
+            "order-submit-9001"
+        );
+        assert_eq!(correlation_trace["events"]["available_total"], 1);
+        assert_eq!(
+            correlation_trace["events"]["rows"][0]["correlation_id"],
+            "order-submit-9001"
+        );
+
+        for (query, expected_status) in [
+            ("after=1&before=2", 400),
+            ("limit=0", 400),
+            ("limit=301", 400),
+            ("limit=2&limit=3", 400),
+            ("client_order_id=nope", 400),
+            ("client_order_id=9&client_order_id=10", 400),
+            ("exchange_order_id=", 400),
+            ("exchange_order_id=one&exchange_order_id=two", 400),
+            ("run_id=", 400),
+            ("run_id=one&run_id=two", 400),
+            ("strategy_id=%20", 400),
+            ("strategy_id=one&strategy_id=two", 400),
+            ("signal_id=", 400),
+            ("signal_id=one&signal_id=two", 400),
+            ("intent_id=%20", 400),
+            ("intent_id=one&intent_id=two", 400),
+            ("correlation_id=", 400),
+            ("correlation_id=one&correlation_id=two", 400),
+            ("after=999", 409),
+        ] {
+            let response = service.handle(
+                "GET",
+                &format!("/account/activity?account_id=primary&venue_id=OKX&{query}"),
+                "",
+                100,
+            );
+            assert_eq!(
+                response.status, expected_status,
+                "{query}: {}",
+                response.body
+            );
+        }
     }
 
     #[test]
@@ -2462,6 +3708,29 @@ mod tests {
         );
         assert_eq!(persisted.lock().unwrap().audit().len(), 1);
         assert_eq!(service.state().lock().unwrap().control.audit().len(), 1);
+    }
+
+    #[test]
+    fn control_submit_endpoint_rejects_unknown_request_fields_before_audit() {
+        let service = ApiService::new(ApiState::default());
+        let command = ControlCommand {
+            command_id: 3,
+            request_id: "strict-command-3".into(),
+            operator_id: "ops".into(),
+            reason: "strict wire test".into(),
+            kind: CommandKind::PauseStrategy,
+            target: "strategy-1".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: true,
+        };
+        let mut body = serde_json::to_value(command).unwrap();
+        body["dry_rnu"] = serde_json::Value::Bool(false);
+
+        let response = service.handle("POST", "/control/commands", &body.to_string(), 3);
+
+        assert_eq!(response.status, 400);
+        assert!(service.state().lock().unwrap().control.audit().is_empty());
     }
 
     #[test]
@@ -2638,9 +3907,11 @@ mod tests {
     #[test]
     fn account_projections_isolate_snapshots_events_and_cursors() {
         let mut state = ApiState::default();
-        let mut paper = AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", 10);
+        let mut paper =
+            AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", "20260911", 10);
         paper.cash_raw.insert("USDT".into(), 100);
-        let mut binance = AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", 10);
+        let mut binance =
+            AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", "20260911", 10);
         binance.cash_raw.insert("USDT".into(), 200);
         state
             .publish_snapshot_for("account-a", "paper", paper)
@@ -2849,10 +4120,10 @@ mod tests {
     #[test]
     fn snapshot_diff_and_event_cursor_require_a_valid_base() {
         let mut state = ApiState::default();
-        let mut base = AccountSnapshot::new(1, "a", "p", "paper", 1);
+        let mut base = AccountSnapshot::new(1, "a", "p", "paper", "20260911", 1);
         base.cash_raw.insert("USD".into(), 100);
         let base_hash = state.publish_snapshot(base).unwrap();
-        let mut target = AccountSnapshot::new(2, "a", "p", "paper", 2);
+        let mut target = AccountSnapshot::new(2, "a", "p", "paper", "20260911", 2);
         target.cash_raw.insert("USD".into(), 120);
         state.publish_snapshot(target).unwrap();
         let seq = state.events.alloc_seq();

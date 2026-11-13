@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "benchmark": "event_log_pipeline_ingest_refresh",
+  "generated_at_utc": "2026-11-07T06:35:42.665801+00:00",
+  "command": [
+    "cargo",
+    "run",
+    "-p",
+    "qx-runtime",
+    "--example",
+    "event_log_pipeline_tail_bench",
+    "--release",
+    "--offline",
+    "-j1"
+  ],
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "profile": "release",
+  "source_sha256": {
+    "benchmarks/run_event_log_pipeline_tail_bench.py": "108075282a903762cfb7c6cdcfe350a17951411439517dbb92e8fbce4835e466",
+    "crates/qx-runtime/examples/event_log_pipeline_tail_bench.rs": "c31ef3cfd9a0850009abbb0df731d7f3a88bc75ec1adb38fb429170af4d23728",
+    "crates/qx-runtime/src/pipeline.rs": "685dac787b89fe8c88d5c76e8b5c0d2fd9ef7f10ddb3e5a070885265558f3c38",
+    "crates/qx-storage/src/lib.rs": "85193dab75c17cd48c6b466e6eec9851b3d3de345e0688ceabcf6c3546376609",
+    "crates/qx-storage/src/segmented_event_log.rs": "5c026d545916b99261804b764eff9562151de3e59986a5d8af81f3fd3394d2ab",
+    "crates/qx-core/src/sourcing/event_log.rs": "8929b67b8ecf332c2518f3105ff3eb3cbd6d269c36abc24966786e402cc87348",
+    "crates/qx-core/src/event.rs": "561c9cdb44588cef68b112c7c4b4f5f74c243b16362a18ee3c1014e48ac15290"
+  },
+  "workload": {
+    "write": "one MarketQuote through LiveEventPipeline::ingest",
+    "refresh": "LiveEventPipeline::refresh on a separately opened reader after the writer commit",
+    "events_per_segment": 1024,
+    "repeats_per_history_size": 7,
+    "timer": "includes writer ingest, file persistence, Outbox append and separate reader refresh; fixture construction and both pipeline startups are excluded"
+  },
+  "results": [
+    {
+      "benchmark": "event_log_pipeline_ingest_refresh",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 12.928500000000001,
+      "flat_file_ms": [
+        12.7329,
+        14.293099999999999,
+        13.1106,
+        12.928500000000001,
+        13.562700000000001,
+        12.7139,
+        12.708
+      ],
+      "history_events": 1000,
+      "repeats": 7,
+      "segmented_median_ms": 8.350299999999999,
+      "segmented_ms": [
+        8.350299999999999,
+        8.2369,
+        8.9176,
+        8.2385,
+        8.4459,
+        8.725,
+        8.3245
+      ]
+    },
+    {
+      "benchmark": "event_log_pipeline_ingest_refresh",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 55.1147,
+      "flat_file_ms": [
+        57.5581,
+        55.84,
+        55.5984,
+        55.021300000000004,
+        55.1147,
+        52.373999999999995,
+        50.7376
+      ],
+      "history_events": 8000,
+      "repeats": 7,
+      "segmented_median_ms": 8.801,
+      "segmented_ms": [
+        8.916500000000001,
+        8.439,
+        8.8133,
+        8.489099999999999,
+        8.7391,
+        8.801,
+        8.9793
+      ]
+    },
+    {
+      "benchmark": "event_log_pipeline_ingest_refresh",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 390.1488,
+      "flat_file_ms": [
+        384.6583,
+        396.986,
+        390.1488,
+        400.8616,
+        381.2808,
+        383.73089999999996,
+        438.76500000000004
+      ],
+      "history_events": 64000,
+      "repeats": 7,
+      "segmented_median_ms": 8.978299999999999,
+      "segmented_ms": [
+        25.5076,
+        36.8262,
+        8.978299999999999,
+        8.4575,
+        8.292499999999999,
+        8.822999999999999,
+        45.4997
+      ]
+    }
+  ],
+  "limitations": [
+    "This measures MarketQuote ingest, persistence, Outbox append and another pipeline refresh; it does not include exchange I/O, venue adapters, order/risk processing, or a complete Paper worker tick.",
+    "Synthetic EventKind::Settle histories do not represent production event mixes.",
+    "Operating-system file cache is uncontrolled; results are host-specific and are not capacity guarantees.",
+    "The flat-file backend preserves the legacy single-file format; segmented storage is explicitly configured and is not the default."
+  ]
+}

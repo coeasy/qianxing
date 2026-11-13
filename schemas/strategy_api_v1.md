@@ -25,6 +25,34 @@ answers `{"ok": true, "output": {…}}` or `{"ok": false, "error": "…"}`. The
 columnar mode moves bar history as fixed-width little-endian columns (`QXCB` magic) and
 keeps the identity fields as canonical JSON.
 
+External process workers using durable checkpoints must include `strategy_checkpoint`
+in successful responses and, when the input checkpoint has
+`adapter_state.state_mode == "external-process"`, include a
+`checkpoint_restore_ack` object. Its `schema_version` is `1` and its
+`checkpoint_sha256` must equal the SHA-256 of the input checkpoint encoded as compact
+UTF-8 JSON with every object recursively sorted by key. This binds the acknowledgment
+to the exact persisted checkpoint supplied to that request; missing or mismatched
+acknowledgments reject the response before the worker can commit its cursor.
+Bootstrap inputs (`state_mode == "bootstrap"`) do not require an acknowledgment.
+See [`strategy-process-checkpoint-restore-ack-v1.json`](strategy-process-checkpoint-restore-ack-v1.json).
+For Python workers, the digest can be computed after restoring the input state:
+
+```python
+import hashlib
+import json
+
+checkpoint_bytes = json.dumps(
+    request["strategy_checkpoint"],
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+).encode("utf-8")
+response["checkpoint_restore_ack"] = {
+    "schema_version": 1,
+    "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+}
+```
+
 Strategies never receive credentials, Venue clients, mutable Ledger handles, or
 control-plane handles. `StrategyContractOutput` is an *order intent*, not an order: every
 intent is rebuilt into a core `Order` by `build_strategy_order_from_contract_intent` and
@@ -62,6 +90,27 @@ Rules that the schema alone cannot express, enforced by
   lowercase forms, which is the stricter direction: a payload that validates against the
   schema always reaches the runtime intact.
 
+The Python package also provides identity-bound constructors so a strategy does not have
+to copy request metadata into every output by hand:
+
+```python
+StrategyOutput.for_target_position(
+    request,
+    signal_id=max(1, request.as_of),
+    target_qty_exact="0.0000000001",
+)
+
+StrategyOutput.for_intents(
+    request,
+    signal_id=max(1, request.as_of),
+    intents=(intent_a, intent_b),
+)
+```
+
+They preserve the same wire contract and validate integer widths before serialization.
+They only describe a target or intent; quantity delta, market rules, Risk and OMS remain
+runtime responsibilities.
+
 ## Numeric rules
 
 Quantities, prices, cash and confidence are signed fixed-point raw integers (core scale
@@ -74,12 +123,18 @@ channel to strings has to move the schema, the Rust structs and the SDKs togethe
 
 `margin_mode`, `position_mode` and `leverage` are carried on the Rust intent and on the
 Python `StrategyIntent` (`python/qianxing_bridge/strategy.py`, which validates and serializes
-all three). Only `qx_order_intent` in `cpp/include/qianxing_strategy.h` carries `position_side`
-but not those three, so a C++ strategy cannot express them and the leg falls back to the
-runtime's own product/position/margin configuration. Unknown keys
-are rejected on both sides: Rust via `deny_unknown_fields`, the Python SDK via
-`_reject_unknown_keys`, so a mistyped optional key fails loudly instead of silently taking
-the default.
+all three). The stable C ABI v2 `qx_order_intent` layout is unchanged. C++ plugins can expose
+the optional `qx_strategy_get_order_policy_v1` symbol to return these fields by `intent_id`;
+its bounded JSON payload is defined by
+[`c-strategy-order-policy-v1.json`](c-strategy-order-policy-v1.json). Older plugins without
+the symbol keep the v2 runtime defaults. The host rejects unsupported schema versions,
+unknown fields, invalid modes, zero leverage, malformed UTF-8 and oversized payloads.
+An extension object either omits all three fields to preserve the runtime defaults or
+specifies `margin_mode`, `position_mode` and `leverage` together; partial overrides are
+rejected because the native `OrderPolicy` contract is a complete policy value.
+Unknown keys are also rejected in Rust strategy-file contracts via `deny_unknown_fields`
+and in the Python SDK via `_reject_unknown_keys`, so a mistyped optional key fails loudly
+instead of silently taking the default.
 
 ## Compatibility
 

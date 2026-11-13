@@ -1,0 +1,16 @@
+$ python -m unittest python.tests.test_long_only_sma -v
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_cross_down_closes_existing_long_never_opens_short (python.tests.test_long_only_sma.LongOnlySmaTests.test_cross_down_closes_existing_long_never_opens_short) ... ok
+test_cross_up_buys_only_when_flat_and_sizes_whole_units (python.tests.test_long_only_sma.LongOnlySmaTests.test_cross_up_buys_only_when_flat_and_sizes_whole_units) ... ok
+test_no_trade_before_start_or_without_history_or_cash (python.tests.test_long_only_sma.LongOnlySmaTests.test_no_trade_before_start_or_without_history_or_cash) ... ok
+test_shared_event_fixture_matches_local_and_runtime_worker_host (python.tests.test_long_only_sma.LongOnlySmaTests.test_shared_event_fixture_matches_local_and_runtime_worker_host) ... ok
+test_short_position_and_bad_parameters_rejected (python.tests.test_long_only_sma.LongOnlySmaTests.test_short_position_and_bad_parameters_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.005s
+
+OK

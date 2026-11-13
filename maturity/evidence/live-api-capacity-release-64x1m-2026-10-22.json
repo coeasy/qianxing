@@ -1,0 +1,275 @@
+{
+  "schema_version": 1,
+  "workload": "live-loopback-api-synthetic-crypto-spot-bar-v1",
+  "bars_per_run": 1000000,
+  "requested_concurrency": 64,
+  "accepted_runs": 64,
+  "start_failures": {},
+  "run_terminal_statuses": {
+    "live-capacity-000": "succeeded",
+    "live-capacity-001": "succeeded",
+    "live-capacity-002": "succeeded",
+    "live-capacity-003": "succeeded",
+    "live-capacity-004": "succeeded",
+    "live-capacity-005": "succeeded",
+    "live-capacity-006": "succeeded",
+    "live-capacity-007": "succeeded",
+    "live-capacity-008": "succeeded",
+    "live-capacity-009": "succeeded",
+    "live-capacity-010": "succeeded",
+    "live-capacity-011": "succeeded",
+    "live-capacity-012": "succeeded",
+    "live-capacity-013": "succeeded",
+    "live-capacity-014": "succeeded",
+    "live-capacity-015": "succeeded",
+    "live-capacity-016": "succeeded",
+    "live-capacity-017": "succeeded",
+    "live-capacity-018": "succeeded",
+    "live-capacity-019": "succeeded",
+    "live-capacity-020": "succeeded",
+    "live-capacity-021": "succeeded",
+    "live-capacity-022": "succeeded",
+    "live-capacity-023": "succeeded",
+    "live-capacity-024": "succeeded",
+    "live-capacity-025": "succeeded",
+    "live-capacity-026": "succeeded",
+    "live-capacity-027": "succeeded",
+    "live-capacity-028": "succeeded",
+    "live-capacity-029": "succeeded",
+    "live-capacity-030": "succeeded",
+    "live-capacity-031": "succeeded",
+    "live-capacity-032": "succeeded",
+    "live-capacity-033": "succeeded",
+    "live-capacity-034": "succeeded",
+    "live-capacity-035": "succeeded",
+    "live-capacity-036": "succeeded",
+    "live-capacity-037": "succeeded",
+    "live-capacity-038": "succeeded",
+    "live-capacity-039": "succeeded",
+    "live-capacity-040": "succeeded",
+    "live-capacity-041": "succeeded",
+    "live-capacity-042": "succeeded",
+    "live-capacity-043": "succeeded",
+    "live-capacity-044": "succeeded",
+    "live-capacity-045": "succeeded",
+    "live-capacity-046": "succeeded",
+    "live-capacity-047": "succeeded",
+    "live-capacity-048": "succeeded",
+    "live-capacity-049": "succeeded",
+    "live-capacity-050": "succeeded",
+    "live-capacity-051": "succeeded",
+    "live-capacity-052": "succeeded",
+    "live-capacity-053": "succeeded",
+    "live-capacity-054": "succeeded",
+    "live-capacity-055": "succeeded",
+    "live-capacity-056": "succeeded",
+    "live-capacity-057": "succeeded",
+    "live-capacity-058": "succeeded",
+    "live-capacity-059": "succeeded",
+    "live-capacity-060": "succeeded",
+    "live-capacity-061": "succeeded",
+    "live-capacity-062": "succeeded",
+    "live-capacity-063": "succeeded"
+  },
+  "all_accepted_succeeded": true,
+  "starts_by_http_status": {
+    "200": 64
+  },
+  "start_latency_ms": {
+    "p50": 949.5,
+    "p95": 1586.709
+  },
+  "health_latency_ms": {
+    "p50": 252.095,
+    "p95": 827.654
+  },
+  "initial_watcher_metrics": {
+    "qx_app_run_watchers_active": 0,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 0
+  },
+  "admission_watcher_samples": [
+    {
+      "at_ms": 3166.407,
+      "http_status": 200,
+      "qx_app_run_watchers_active": 63,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 0
+    }
+  ],
+  "loaded_watcher_metrics": {
+    "qx_app_run_watchers_active": 64,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 0
+  },
+  "final_watcher_metrics": {
+    "qx_app_run_watchers_active": 0,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 1
+  },
+  "overflow_probe": {
+    "run_id": "live-capacity-064",
+    "status": 503,
+    "elapsed_ms": 354.875,
+    "body": {
+      "action": "RETRY_LATER",
+      "category": "TIMEOUT",
+      "correlation_id": null,
+      "message": "异步运行持久化观察器已满；任务未启动，请稍后重试",
+      "retry": "SAFE_NOW",
+      "safe_to_retry": true,
+      "source_code": null
+    }
+  },
+  "recovered_run": {
+    "run_id": "live-capacity-065",
+    "status": 200,
+    "elapsed_ms": 43.368,
+    "body": {
+      "error": null,
+      "result": null,
+      "run_id": "live-capacity-065",
+      "status": "running"
+    },
+    "terminal_status": "succeeded"
+  },
+  "watcher_saturation_and_recovery_proven": true,
+  "observed_peak_tree_rss_bytes": 21845471232,
+  "observed_peak_process_count": 2,
+  "rss_sample_interval_ms": 50,
+  "elapsed_ms": 28214.658,
+  "probe_count": 11,
+  "probes": [
+    {
+      "at_ms": 8254.329,
+      "health": 200,
+      "health_ms": 344.41,
+      "metrics": 200,
+      "metrics_ms": 356.307,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 9569.157,
+      "health": 200,
+      "health_ms": 181.926,
+      "metrics": 200,
+      "metrics_ms": 123.345,
+      "qx_app_run_watchers_active": 61,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 10979.363,
+      "health": 200,
+      "health_ms": 177.678,
+      "metrics": 200,
+      "metrics_ms": 232.091,
+      "qx_app_run_watchers_active": 60,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 12496.329,
+      "health": 200,
+      "health_ms": 336.231,
+      "metrics": 200,
+      "metrics_ms": 179.934,
+      "qx_app_run_watchers_active": 58,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 14107.338,
+      "health": 200,
+      "health_ms": 440.704,
+      "metrics": 200,
+      "metrics_ms": 169.802,
+      "qx_app_run_watchers_active": 49,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 15499.843,
+      "health": 200,
+      "health_ms": 78.726,
+      "metrics": 200,
+      "metrics_ms": 313.523,
+      "qx_app_run_watchers_active": 41,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 16702.687,
+      "health": 200,
+      "health_ms": 132.335,
+      "metrics": 200,
+      "metrics_ms": 69.806,
+      "qx_app_run_watchers_active": 32,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 18412.504,
+      "health": 200,
+      "health_ms": 477.288,
+      "metrics": 200,
+      "metrics_ms": 231.984,
+      "qx_app_run_watchers_active": 27,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 20630.56,
+      "health": 200,
+      "health_ms": 1178.019,
+      "metrics": 200,
+      "metrics_ms": 39.827,
+      "qx_app_run_watchers_active": 16,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 22020.901,
+      "health": 200,
+      "health_ms": 252.095,
+      "metrics": 200,
+      "metrics_ms": 137.557,
+      "qx_app_run_watchers_active": 4,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 23116.5,
+      "health": 200,
+      "health_ms": 55.916,
+      "metrics": 200,
+      "metrics_ms": 39.375,
+      "qx_app_run_watchers_active": 0,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    }
+  ],
+  "binary_sha256": "07042cfebd169882023b90c5d31224199cf43704a140eb167f50c27e1bfb6afd",
+  "binary_build_profile": "release",
+  "barframe_sha256": "558379c4d207ebe04a969193efe72f988758d9f48ebdfb180461c3b6fc3309d0",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "5422d789c63cb46734d669dbcce350317480c33bb0604132cc8632adedb4fb6c",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "python": "3.13.13",
+  "profile_coverage_claim": false,
+  "scope": "Synthetic loopback API, one crypto spot instrument, no venue worker or orders; one run, sampled RSS, no allocation census or long-duration soak.",
+  "server_exit_code": 1,
+  "server_shutdown": "benchmark_terminated_process",
+  "server_stderr_tail": ""
+}

@@ -31,6 +31,26 @@ groups:
           summary: "Qianxing worker metrics file is stale"
           description: "worker={{ $labels.worker }} has no fresh metrics sample."
 
+      - alert: QianxingGatewayPortUnhealthy
+        expr: qx_gateway_port_business_status == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing exchange gateway port is unhealthy"
+          description: "worker={{ $labels.worker }} venue={{ $labels.venue_id }} account={{ $labels.account }} port={{ $labels.port }} is unhealthy."
+
+      - alert: QianxingGatewayPortDegraded
+        expr: qx_gateway_port_business_status == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: qianxing
+        annotations:
+          summary: "Qianxing exchange gateway port is degraded"
+          description: "worker={{ $labels.worker }} venue={{ $labels.venue_id }} account={{ $labels.account }} port={{ $labels.port }} remains degraded."
+
       - alert: QianxingOutboxPublishFailures
         expr: increase(qx_outbox_relay_publish_failures_total[5m]) > 0
         for: 1m
@@ -60,6 +80,76 @@ groups:
         annotations:
           summary: "Qianxing consumer ACK failures"
           description: "worker={{ $labels.worker }} could not acknowledge JetStream messages."
+
+      - alert: QianxingReconcileMetricsUnavailable
+        expr: qx_reconcile_metrics_available == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing reconciliation reports are unavailable"
+          description: "The API could not read durable reconciliation reports; absence must not be treated as a clean account."
+
+      - alert: QianxingReconcilerReportMissing
+        expr: qx_reconcile_report_present == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing reconciler has no durable report"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} venue={{ $labels.venue }} has no report for its configured identity."
+
+      - alert: QianxingReconcileReportStale
+        expr: time() - qx_reconcile_report_observed_timestamp_seconds > 60
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing reconciliation report is stale"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} venue={{ $labels.venue }} has not reconciled for over 60 seconds."
+
+      - alert: QianxingReconcileOrderIssues
+        expr: qx_reconcile_order_issues > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing reconciliation found order issues"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} venue={{ $labels.venue }} reports {{ $value }} unresolved order issues."
+
+      - alert: QianxingReconcileBalanceDiscrepancies
+        expr: qx_reconcile_balance_discrepancies > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing reconciliation found balance discrepancies"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} venue={{ $labels.venue }} reports {{ $value }} unresolved balance discrepancies."
+
+      - alert: QianxingOrderGroupMetricsUnavailable
+        expr: qx_order_group_metrics_available == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing durable order-group state is unavailable"
+          description: "The API could not read durable order-group snapshots; do not treat missing order groups as a clean state."
+
+      - alert: QianxingOrderGroupNeedsReconciliation
+        expr: qx_order_group_status{status=~"reconcile_required|peer_cancel_required"} > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing order group needs operator reconciliation"
+          description: "account={{ $labels.account }} venue={{ $labels.venue }} has {{ $value }} order groups in {{ $labels.status }}."
 
       # 这一条读的是状态量而不是增量：`qx_outbox_relay_parked` 是"库里现在还有几条已用尽
       # 投递预算"，relay 每轮原样写出，所以判据是 > 0 而不是 increase(...)。用尽预算的事件

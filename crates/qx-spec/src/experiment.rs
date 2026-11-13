@@ -29,6 +29,16 @@ pub struct SplitPlan {
     pub test_bars: u64,
     pub walk_forward: bool,
     pub step_bars: u64,
+    /// Bars omitted between the training window and each test window.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub purge_bars: u64,
+    /// Minimum gap between consecutive test windows; only valid for walk-forward plans.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub embargo_bars: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl SplitPlan {
@@ -43,6 +53,22 @@ impl SplitPlan {
         if !self.walk_forward && self.step_bars != 0 {
             return Err("实验切分计划未打开 walk_forward 时 step_bars 必须为 0".into());
         }
+        if !self.walk_forward && self.embargo_bars != 0 {
+            return Err("实验切分计划未打开 walk_forward 时 embargo_bars 必须为 0".into());
+        }
+        if self.walk_forward {
+            let minimum_step = self
+                .test_bars
+                .checked_add(self.embargo_bars)
+                .ok_or_else(|| "实验测试窗与 embargo 间隔长度溢出".to_string())?;
+            if self.step_bars < minimum_step {
+                return Err("实验走查 step_bars 必须至少为 test_bars + embargo_bars，避免测试窗重叠或缩短 embargo".into());
+            }
+        }
+        self.train_bars
+            .checked_add(self.purge_bars)
+            .and_then(|value| value.checked_add(self.test_bars))
+            .ok_or_else(|| "实验训练窗、purge 与测试窗长度溢出".to_string())?;
         Ok(())
     }
 }

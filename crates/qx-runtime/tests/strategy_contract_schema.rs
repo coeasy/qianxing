@@ -37,15 +37,20 @@ fn full_output() -> StrategyContractOutput {
         signal_id: 7,
         instrument: "BTCUSDT.BINANCE".into(),
         target_qty: -3_000,
+        target_qty_exact: None,
         confidence: 12 * 1_000_000_000,
         priority: 2,
         expires_at: 1_800_000_000_000,
         intents: vec![StrategyContractIntent {
             intent_id: 1,
             instrument: "BTCUSDT.BINANCE".into(),
+            account_id: Some("binance-main".into()),
             side: "buy".into(),
             qty_raw: 100 * 1_000_000_000,
+            qty_exact: None,
+            quote_budget_exact: None,
             limit_price_raw: Some(65_000 * 1_000_000),
+            limit_price_exact: None,
             reduce_only: true,
             post_only: true,
             position_side: Some("long".into()),
@@ -163,15 +168,15 @@ fn unknown_keys_are_rejected_rather_than_dropped() {
     );
 }
 
-/// 定点值的线上形态：只有 JSON 整数一种。
+/// 旧 raw 定点字段继续使用 JSON 整数；高精度 intent 字段使用十进制字符串。
 ///
 /// 这里曾按"账户快照产物"的口径以为 Rust 也吃十进制字符串；实测这条 JSONL 通道上
 /// `"target_qty": "4000000000000000000000"` 被判 invalid number，而 Rust 自己写出去
 /// 的就是整数。契约若放行字符串，等于放行一份运行时必收的载荷——所以两边都要钉住：
-/// schema 不许有 string 形态，超出 i64 的整数则必须真的读得回来（否则"integer"是在
-/// 偷偷只承诺 i64 量级）。
+/// raw 字段不许出现字符串形态，超出 i64 的整数则必须真的读得回来；精确数量/价格
+/// 另由 qty_exact/limit_price_exact 按十进制字符串读回。
 #[test]
-fn fixed_point_fields_travel_as_json_integers_only() {
+fn legacy_raw_fields_remain_json_integers_and_exact_intents_use_decimal_strings() {
     let schema = schema();
     for pointer in [
         "/properties/target_qty",
@@ -187,6 +192,16 @@ fn fixed_point_fields_travel_as_json_integers_only() {
         assert!(
             !allowed.contains("string"),
             "{pointer} 放行字符串形态，等于放行一份 Rust 收不下的载荷"
+        );
+    }
+    for pointer in [
+        "/$defs/intent/properties/qty_exact",
+        "/$defs/intent/properties/limit_price_exact",
+    ] {
+        let allowed = allowed_types(&schema, pointer);
+        assert!(
+            allowed.contains("string") && allowed.contains("null"),
+            "{pointer} 必须支持十进制字符串和兼容 null 形态: {allowed:?}"
         );
     }
     let big = 4_000_000_000_000_000_000_000i128;

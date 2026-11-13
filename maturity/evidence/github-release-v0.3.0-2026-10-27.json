@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "github-release-evidence-v1",
+  "generated_at_utc": "2026-10-27T14:22:51Z",
+  "release": {
+    "repository": "coeasy/qianxing",
+    "tag": "v0.3.0",
+    "commit": "8526c77055fad91e5ad524149115aebab4721fe6",
+    "url": "https://github.com/coeasy/qianxing/releases/tag/v0.3.0",
+    "published_at_utc": "2026-10-27T14:22:51Z",
+    "draft": false,
+    "prerelease": false,
+    "asset_count": 15
+  },
+  "workflow": {
+    "name": "release",
+    "run_id": 40518467601,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/40518467601",
+    "event": "push tag",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs_passed": [
+      "version consistency",
+      "Linux, Windows and macOS CLI binaries",
+      "Linux, Windows and macOS CPython stable-ABI wheels with clean-install smoke",
+      "C++ SDK",
+      "static Web console bundle",
+      "SBOM"
+    ],
+    "pypi_publish": "skipped because PYPI_PUBLISH_ENABLED was not true"
+  },
+  "assets": [
+    {"name": "cpp-sdk.sha256", "sha256": "79eccfe2a7fd171f804c6fc8e312a0ce863d6dadd49371cd818240a1759cad40"},
+    {"name": "qianxing-0.3.0-cp310-abi3-linux_x86_64.whl", "sha256": "4e9ced6ee2cd9f77ee986f5798b89824e98b4956f35df4438695b94704ff68c0"},
+    {"name": "qianxing-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", "sha256": "26836256046d579c26af77264f7f1783c37285d40b9f02fce1153fca7a97f7ae"},
+    {"name": "qianxing-0.3.0-cp310-abi3-win_amd64.whl", "sha256": "abc4e35b73e1c692680ed398b3c6cc3cf9321753cd38abf1bc14c678f08e0b19"},
+    {"name": "qianxing-cpp-sdk-v0.3.0.tar.gz", "sha256": "84cf0d9fc1f13069955178e94a8e8f97f3ebe3a76722fa4a24b54066fd746659"},
+    {"name": "qianxing-web-console-v0.3.0.tar.gz", "sha256": "6a100fc2e11b3344d3abdf045055bbfd405ebba295cd2d2452c17d98e3b3536e"},
+    {"name": "qx-cli-v0.3.0-Linux-X64", "sha256": "3aec4ea6df77e1b0a67f50a11dc4edd45ae448193413663dda5ef93a5c75c26d"},
+    {"name": "qx-cli-v0.3.0-Linux-X64.sha256", "sha256": "fcc7fb7ef28313a994a6299b138feb5e83088d40b7a3fc1cc5405d1adff2c4f9"},
+    {"name": "qx-cli-v0.3.0-macOS-ARM64", "sha256": "335fcf8a877f83d68977ad47ec0be2081e9c31bed85ba8abc93734c37b181454"},
+    {"name": "qx-cli-v0.3.0-macOS-ARM64.sha256", "sha256": "10b89bb879ba7f1a2ec9e891b8896196d7953833a36f00dcaa85bc001985fe26"},
+    {"name": "qx-cli-v0.3.0-Windows-X64.exe", "sha256": "fc808c56838d2363c121706225e3140bf2a4b9fcbfa754555e33970ea62870e2"},
+    {"name": "qx-cli-v0.3.0-Windows-X64.exe.sha256", "sha256": "e3f46c4491af34cc2fe13b226ba6b3fce6f6d78a2c73ab6c113054123f4dcf5a"},
+    {"name": "release-identity.json", "sha256": "ce8e14b7b381321ce19b9a32a738c2e4a18342326249f168497db83274c31b1a"},
+    {"name": "sbom.json", "sha256": "ff8584a976c8553ba936210b79b3aa7ff4f4aa1f9c733b0a3b2d2bd4897c79b0"},
+    {"name": "SHA256SUMS", "sha256": "d66d92551c69390504d3a1b5359f716dd3ab30c1292a33f29586b411fdfa1cdb"}
+  ],
+  "release_status": "published"
+}

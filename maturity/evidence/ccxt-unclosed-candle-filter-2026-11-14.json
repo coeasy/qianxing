@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "commit": "ba8e1b746730fc453a58474421dfdc9d35e14be5",
+  "scope": "CCXT fixed-duration OHLCV snapshots exclude unfinished candles and persist acquisition cutoff plus excluded row count in DatasetManifestV2 quality metadata.",
+  "implementation": {
+    "client": "python/qianxing_ccxt/__init__.py::CcxtExchangeClient.fetch_ohlcv_with_quality",
+    "worker": "python/qianxing_ccxt/worker.py::CcxtJsonWorker.handle",
+    "manifest": "crates/qx-data/src/catalog_v2.rs::DatasetQualityReport",
+    "cli": "crates/qx-cli/src/worker_entry.rs::run_ccxt_fetch_ohlcv"
+  },
+  "verification": {
+    "python_ccxt_tests": "100 passed",
+    "qx_data_tests": "44 passed",
+    "ccxt_manifest_publish_test": "1 passed",
+    "cargo_fmt_check": "passed",
+    "git_diff_check": "passed",
+    "json_schema_parse": "dataset-manifest-v2, evidence-bundle-v3, provider-backtest-result-v1 passed"
+  },
+  "behavior": {
+    "cutoff_comparison": "candle_open_ms + fixed_interval_ms <= as_of_ms",
+    "deterministic_test_cutoff_ms": 180000,
+    "kept_closed_candles": [60000, 120000],
+    "excluded_unclosed_rows": 1,
+    "unsupported_calendar_interval": "fails closed"
+  },
+  "hosted_verification": {
+    "ci_run_id": 43528407656,
+    "ci_status_at_recording": "in_progress",
+    "public_ccxt_run_id": 43528407766,
+    "public_ccxt_status_at_recording": "in_progress"
+  },
+  "limitations": [
+    "This verifies local implementation and deterministic tests, not real-time candle behavior at any exchange.",
+    "Only fixed-duration timeframes can be filtered; calendar intervals fail closed.",
+    "Upstream historical candle revisions, data freshness policy, private API access, Testnet/Live execution, account fees, and strategy profitability are not verified.",
+    "OKX/Binance/Bitget execution maturity remains unchanged."
+  ]
+}

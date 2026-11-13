@@ -3,7 +3,7 @@
 use qx_core::RunManifest;
 use qx_spec::{
     ArtifactRef, FoundationDocument, RunEvidenceDatasetComponent, RunEvidenceReportAnalysis,
-    RunRecord,
+    RunEvidenceStrategyDiagnostics, RunRecord, RunRecordV2,
 };
 use std::path::Path;
 
@@ -41,7 +41,60 @@ pub fn load_run_evidence_identity_files(
     )?;
     let record_payload = std::fs::read_to_string(&record_path)
         .map_err(|error| format!("读取运行证据包的 RunRecord 失败 {record_path}: {error}"))?;
-    let record = RunRecord::from_json(&record_payload)?;
+    let record_value: serde_json::Value = serde_json::from_str(&record_payload)
+        .map_err(|error| format!("运行证据包 RunRecord JSON 无效: {error}"))?;
+    let record = match record_value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+    {
+        Some(version) if version == u64::from(qx_spec::RUN_RECORD_SCHEMA_VERSION) => {
+            RunRecord::from_json(&record_payload)?
+        }
+        Some(version) if version == u64::from(qx_spec::RUN_RECORD_V2_SCHEMA_VERSION) => {
+            let pathless = RunRecordV2::from_json(&record_payload)?;
+            let locations = summary
+                .get("artifact_locations")
+                .and_then(serde_json::Value::as_object)
+                .ok_or("RunRecord V2 摘要缺少 artifact_locations")?;
+            let artifacts = pathless
+                .artifact_refs
+                .iter()
+                .map(|reference| {
+                    let location = locations
+                        .get(&reference.name)
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("RunRecord V2 摘要缺少 {} 存储定位", reference.name)
+                        })?;
+                    Ok(ArtifactRef {
+                        name: reference.name.clone(),
+                        path: canonical_run_evidence_path(location, &reference.name)?,
+                        digest: reference.artifact_id.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            RunRecord {
+                schema_version: qx_spec::RUN_RECORD_SCHEMA_VERSION,
+                run_id: pathless.run_id,
+                status: pathless.status,
+                input_digest: pathless.input_digest,
+                code_identity: pathless.code_identity,
+                config_fingerprint: pathless.config_fingerprint,
+                started_at_ms: pathless.started_at_ms,
+                finished_at_ms: pathless.finished_at_ms,
+                artifact_refs: artifacts,
+                replay_verdict: pathless.replay_verdict,
+                capability_level: pathless.capability_level,
+            }
+        }
+        Some(version) => {
+            return Err(format!(
+                "运行证据包 RunRecord schema_version={version} 不受支持"
+            ));
+        }
+        None => return Err("运行证据包 RunRecord 缺少 schema_version".into()),
+    };
+    record.validate()?;
 
     Ok(RunEvidenceRunFiles {
         manifest_path,
@@ -160,6 +213,109 @@ pub fn run_evidence_report_analysis(
             })
         })
         .transpose()
+}
+
+/// Resolve and hash the exact strategy-diagnostic snapshot after the CLI has validated its
+/// strategy, instrument, data fingerprint, and diagnostic contract.
+pub fn run_evidence_strategy_diagnostics(
+    summary: &serde_json::Value,
+    diagnostics: Option<(&Path, &serde_json::Value)>,
+) -> Result<Option<RunEvidenceStrategyDiagnostics>, String> {
+    diagnostics
+        .map(|(path, report)| {
+            let path = path
+                .canonicalize()
+                .map_err(|error| format!("解析策略诊断路径失败 {}: {error}", path.display()))?;
+            let metadata = std::fs::metadata(&path)
+                .map_err(|error| format!("读取策略诊断文件属性失败 {}: {error}", path.display()))?;
+            if metadata.len() > 20 * 1024 * 1024 {
+                return Err("策略诊断文件在打包前超过 20 MiB 上限".into());
+            }
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("读取策略诊断文件失败 {}: {error}", path.display()))?;
+            let persisted_report: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("策略诊断文件在打包前变成无效 JSON: {error}"))?;
+            if &persisted_report != report {
+                return Err("策略诊断文件在报告校验后发生变化；拒绝写入不一致证据包".into());
+            }
+            let strategy_id =
+                crate::artifact_store::run_evidence_summary_str(summary, &["strategy_id"])?;
+            let instrument =
+                crate::artifact_store::run_evidence_summary_str(summary, &["instrument"])?;
+            let fingerprint = crate::artifact_store::run_evidence_summary_str(
+                summary,
+                &["input", "fingerprint"],
+            )?;
+            for (field, expected) in [
+                ("strategy_id", strategy_id),
+                ("instrument", instrument),
+                ("data_fingerprint", fingerprint),
+            ] {
+                if report.get(field).and_then(serde_json::Value::as_str) != Some(expected.as_str())
+                {
+                    return Err(format!("策略诊断 {field} 与已验证回测摘要不一致"));
+                }
+            }
+            Ok(RunEvidenceStrategyDiagnostics {
+                kind: "strategy-bias-diagnostics".into(),
+                input_path: path.to_string_lossy().into_owned(),
+                input_sha256: qx_strategy::sha256_hex(&bytes),
+            })
+        })
+        .transpose()
+}
+
+/// Bind a multi-market diagnostic array to its exact source bytes after the report adapter has
+/// validated every strategy slot, instrument, component fingerprint, row count and end timestamp.
+pub fn run_evidence_strategy_diagnostics_array(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    run_evidence_strategy_diagnostics_array_with_kind(
+        path,
+        diagnostics,
+        "strategy-bias-diagnostics-array",
+    )
+}
+
+/// Bind a multi-market depth diagnostic array after the report adapter has validated each
+/// strategy slot against its DepthFrame identity and event coverage.
+pub fn run_evidence_depth_strategy_diagnostics_array(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    run_evidence_strategy_diagnostics_array_with_kind(
+        path,
+        diagnostics,
+        "strategy-bias-diagnostics-depth-array",
+    )
+}
+
+fn run_evidence_strategy_diagnostics_array_with_kind(
+    path: &Path,
+    diagnostics: &serde_json::Value,
+    kind: &str,
+) -> Result<RunEvidenceStrategyDiagnostics, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("解析多市场策略诊断路径失败 {}: {error}", path.display()))?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("读取多市场策略诊断文件属性失败 {}: {error}", path.display()))?;
+    if metadata.len() > 1024 * 1024 {
+        return Err("多市场策略诊断集合在打包前超过 1 MiB 上限".into());
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("读取多市场策略诊断文件失败 {}: {error}", path.display()))?;
+    let persisted: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("多市场策略诊断文件在打包前变成无效 JSON: {error}"))?;
+    if &persisted != diagnostics {
+        return Err("多市场策略诊断文件在报告校验后发生变化；拒绝写入不一致证据包".into());
+    }
+    Ok(RunEvidenceStrategyDiagnostics {
+        kind: kind.into(),
+        input_path: path.to_string_lossy().into_owned(),
+        input_sha256: qx_strategy::sha256_hex(&bytes),
+    })
 }
 
 /// Project one multi-input dataset component after the adapter has decoded its BarFrame.

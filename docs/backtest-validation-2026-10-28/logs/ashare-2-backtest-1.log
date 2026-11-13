@@ -1,0 +1,11 @@
+牵星 Qianxing — 分级校准，量天定位
+
+[Data · Dataset] dataset=strategy-bars:000001.SZSE version=barframe-json-v1 source=ashare-example-qfq-v1 fingerprint=5e59cfcf3adca434
+[Strategy · Signal] source=config fast_window=2 slow_window=3 period=14 threshold_bps=0 \
+             knobs=fast_window,slow_window declared_unused=builtin_period,builtin_threshold_bps
+[Strategy · Account] initial_cash_raw=100000000000000 account_base_source=builtin-default
+[Strategy · Backtest] strategy=strategy-ashare instrument=000001.SZSE bars=6 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=6e120606d81369b5
+[Strategy · Integrity] rejected_orders=0 rejection_reasons=none
+[RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:6bc38bea49b9659efc0f5c5950beef7fca185ea1ec7f10a9176810bdfd2ef983:134288aa2f947994fc7f6d10 data_fingerprint=dataset-bundle:0796529b56c9ea6b result_hash=6e120606d81369b5 digest=4b04deca0c85271a
+[RunManifest] path=D:\workspace\qval-1028a\a2\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_6bc38bea49b9659efc0f5c5950beef7fca185ea1ec7f10a9176810bdfd2ef983_134288aa2f947994fc7f6d10-4b04deca0c85271a.run.json
+[Artifacts] summary=D:\workspace\qval-1028a\a2\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_6bc38bea49b9659efc0f5c5950beef7fca185ea1ec7f10a9176810bdfd2ef983_134288aa2f947994fc7f6d10-4b04deca0c85271a.v7.summary.json equity=D:\workspace\qval-1028a\a2\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_6bc38bea49b9659efc0f5c5950beef7fca185ea1ec7f10a9176810bdfd2ef983_134288aa2f947994fc7f6d10-4b04deca0c85271a.v7.equity.csv fills=D:\workspace\qval-1028a\a2\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_6bc38bea49b9659efc0f5c5950beef7fca185ea1ec7f10a9176810bdfd2ef983_134288aa2f947994fc7f6d10-4b04deca0c85271a.v7.fills.csv

@@ -55,6 +55,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录 {} 格式损坏: {error}", path.display()),
             )
         })?;
+        let mut events_upgraded = false;
         if !matches!(snapshot.schema_version, 1 | SNAPSHOT_VERSION)
             || !super::valid_run_route_id(&snapshot.run_id)
             || path.file_stem().and_then(|name| name.to_str()) != Some(snapshot.run_id.as_str())
@@ -64,12 +65,21 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录身份或 schema 无效: {}", path.display()),
             ));
         }
-        if snapshot
+        let invalid_event = snapshot
             .events
-            .iter()
+            .iter_mut()
             .enumerate()
-            .any(|(index, event)| event.run_id != snapshot.run_id || event.seq != index as u64 + 1)
-        {
+            .any(|(index, event)| {
+                let seq = index as u64 + 1;
+                if event.event_id.is_empty() {
+                    event.event_id = qx_app::run_event_id(&snapshot.run_id, seq);
+                    events_upgraded = true;
+                }
+                event.run_id != snapshot.run_id
+                    || event.seq != seq
+                    || event.event_id != qx_app::run_event_id(&snapshot.run_id, seq)
+            });
+        if invalid_event {
             return Err(AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("运行记录事件身份或序号无效: {}", path.display()),
@@ -99,12 +109,16 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 .with_correlation_id(run_id.clone())
                 .to_json(),
             );
+            let seq = snapshot.events.len() as u64 + 1;
             snapshot.events.push(RunEvent {
-                seq: snapshot.events.len() as u64 + 1,
+                seq,
+                event_id: qx_app::run_event_id(&run_id, seq),
                 run_id: run_id.clone(),
                 kind: qx_app::RunEventKind::Failed,
                 status: RunStatus::Failed,
             });
+            write_snapshot(root, &snapshot, false)?;
+        } else if events_upgraded {
             write_snapshot(root, &snapshot, false)?;
         }
         let run_id = snapshot.run_id.clone();
@@ -114,7 +128,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 run_id,
                 run: None,
                 cancel_requested: false,
-                watcher_slot_reserved: false,
+                watcher_slot: None,
                 result: snapshot.result,
                 error: snapshot.error,
                 restored_status: Some(snapshot.status),
@@ -178,11 +192,11 @@ pub(super) fn reserve_limited_slot(
     }
 }
 
-pub(super) struct WatcherSlot;
+pub(super) struct WatcherSlot(pub(super) &'static std::sync::atomic::AtomicUsize);
 
 impl Drop for WatcherSlot {
     fn drop(&mut self) {
-        super::APP_RUN_WATCHERS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -258,12 +272,55 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn durable_runs_cannot_overbook_terminal_persistence_watchers() {
-        let slots = std::sync::atomic::AtomicUsize::new(0);
-        assert!(reserve_limited_slot(&slots, 2));
-        assert!(reserve_limited_slot(&slots, 2));
-        assert!(!reserve_limited_slot(&slots, 2));
-        assert_eq!(slots.load(std::sync::atomic::Ordering::Acquire), 2);
+    fn durable_run_watcher_saturation_rejects_overflow_and_recovers_released_capacity() {
+        let counter = Box::leak(Box::new(std::sync::atomic::AtomicUsize::new(0)));
+        let capacity = super::super::APP_RUN_WATCHER_CAPACITY;
+        let mut guards = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            assert!(reserve_limited_slot(counter, capacity));
+            guards.push(WatcherSlot(counter));
+        }
+        assert!(!reserve_limited_slot(counter, capacity));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), capacity);
+
+        drop(guards.pop().expect("one held watcher slot"));
+        assert!(reserve_limited_slot(counter, capacity));
+        guards.push(WatcherSlot(counter));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), capacity);
+
+        drop(guards);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn durable_registry_admission_rejects_the_65th_run_and_releases_slots_on_drop() {
+        let counter = Box::leak(Box::new(std::sync::atomic::AtomicUsize::new(0)));
+        let root = root("watcher-capacity");
+        let capacity = super::super::APP_RUN_WATCHER_CAPACITY;
+        let registry = AppRunRegistry::open_with_watcher_counter(root.clone(), counter);
+        for index in 0..capacity {
+            registry
+                .reserve(format!("watcher-limited-{index}"))
+                .expect("run under watcher capacity must be accepted");
+        }
+        let overflow = registry
+            .reserve("watcher-limited-overflow".to_string())
+            .expect_err("run beyond watcher capacity must be rejected");
+        assert_eq!(overflow.category(), qx_app::AppErrorCategory::Timeout);
+        assert!(overflow.message().contains("观察器已满"));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), capacity);
+
+        drop(registry);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 0);
+
+        let recovered = AppRunRegistry::open_with_watcher_counter(root.clone(), counter);
+        recovered
+            .reserve("watcher-capacity-recovered".to_string())
+            .expect("released registry capacity must admit a later run");
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1);
+        drop(recovered);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn root(label: &str) -> PathBuf {
@@ -294,12 +351,14 @@ mod tests {
             entry.events = vec![
                 RunEvent {
                     seq: 1,
+                    event_id: qx_app::run_event_id("persisted-success", 1),
                     run_id: "persisted-success".into(),
                     kind: qx_app::RunEventKind::Started,
                     status: RunStatus::Running,
                 },
                 RunEvent {
                     seq: 2,
+                    event_id: qx_app::run_event_id("persisted-success", 2),
                     run_id: "persisted-success".into(),
                     kind: qx_app::RunEventKind::Succeeded,
                     status: RunStatus::Succeeded,
@@ -308,6 +367,16 @@ mod tests {
             save(&root, entry).unwrap();
         }
         drop(registry);
+
+        // v2 snapshots written before event_id existed remain readable. The
+        // loader fills deterministic IDs and republishes the upgraded record.
+        let path = root.join("persisted-success.json");
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for event in legacy["events"].as_array_mut().unwrap() {
+            event.as_object_mut().unwrap().remove("event_id");
+        }
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
 
         let reopened = AppRunRegistry::open(root.clone());
         let response = reopened.status("persisted-success");
@@ -319,6 +388,10 @@ mod tests {
         let events = reopened.events("persisted-success", 1);
         let events: serde_json::Value = serde_json::from_str(&events.body).unwrap();
         assert_eq!(events[0]["seq"], 2);
+        assert_eq!(events[0]["event_id"], "persisted-success:2");
+        let upgraded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(upgraded["events"][0]["event_id"], "persisted-success:1");
         std::fs::remove_dir_all(root).unwrap();
     }
 

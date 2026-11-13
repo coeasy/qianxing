@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "strategy-warmup-lifecycle",
+  "warmup_bars": 2,
+  "expected_callback_order": [
+    "on_init",
+    "on_start",
+    "on_bar:1",
+    "on_warmup_complete:BTCUSDT.BINANCE:2",
+    "on_bar:2",
+    "on_stop"
+  ],
+  "warmup_complete": {
+    "schema_version": 1,
+    "event": "warmup_complete",
+    "instrument": "BTCUSDT.BINANCE",
+    "observed_bars": 2
+  }
+}

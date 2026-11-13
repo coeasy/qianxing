@@ -11,7 +11,7 @@ use crate::init_guidance;
 use crate::path_resolution::anchor_init_data_dir;
 use crate::project_manifest::write_init_project_manifest;
 use crate::runtime_wiring::read_runtime_config;
-use qx_runtime::RuntimeConfig;
+use qx_runtime::{RuntimeConfig, DEFAULT_EVENT_LOG_SEGMENT_EVENTS};
 use qx_strategy::BuiltinStrategyKind;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -65,7 +65,7 @@ pub(crate) fn copy_init_asset(
 /// `init --profile` 的可用值。help 的 `<...>` 表、两处错误文案和实际接受的集合都由这一份来
 /// （V11 S5）：`builtin` 此前只在 match 里存在，帮助和"未知 profile"提示都不提它，
 /// 用户被告知的取值集合里恰好少了那个真正能用的取值。
-pub(crate) const INIT_PROFILES: [&str; 7] = [
+pub(crate) const INIT_PROFILES: [&str; 10] = [
     "base",
     "builtin",
     "paper",
@@ -73,6 +73,9 @@ pub(crate) const INIT_PROFILES: [&str; 7] = [
     "ashare",
     "multi-venue",
     "backtest",
+    "research-local",
+    "crypto-paper",
+    "crypto-sandbox-acceptance",
 ];
 
 pub(crate) fn init_profile_template(
@@ -110,8 +113,9 @@ pub(crate) fn init_profile_template(
         "qianxing.dataset-component.arrow.example.json",
         "qianxing.binance.spot.spec.json",
         "qianxing.strategy-target.paper.json",
+        "grafana/qianxing-overview.json",
     ];
-    match selected {
+    let (template_name, mut assets, profile_name) = match selected {
         "base" | "builtin" => Ok((
             if selected == "builtin" {
                 "qianxing.runtime.builtin-strategy.example.json"
@@ -131,6 +135,7 @@ pub(crate) fn init_profile_template(
             vec![
                 "qianxing.ccxt.exchange.example.json",
                 "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.bar-frame.okx.example.json",
                 "qianxing.scheduler.jobs.example.json",
             ],
             selected,
@@ -150,11 +155,15 @@ pub(crate) fn init_profile_template(
         "multi-venue" => Ok((
             "qianxing.runtime.multi-venue-arbitrage.example.json",
             vec![
+                "qianxing.ccxt.binance.usdm.example.json",
                 "qianxing.ccxt.binance.spot.example.json",
                 "qianxing.ccxt.okx.swap.example.json",
                 "qianxing.binance.spot.spec.json",
                 "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.crypto.multi-venue-perpetual-spec.example.json",
                 "qianxing.scheduler.jobs.example.json",
+                "data/qianxing-multi-venue-arbitrage/btc-usdt-okx.bar-frame.json",
+                "data/qianxing-multi-venue-arbitrage/btc-usdt-binance.bar-frame.json",
             ],
             selected,
         )),
@@ -163,11 +172,35 @@ pub(crate) fn init_profile_template(
             vec!["qianxing.bar-frame.example.json"],
             selected,
         )),
+        "research-local" => Ok((
+            "qianxing.runtime.strategy-backtest.example.json",
+            vec!["qianxing.bar-frame.example.json"],
+            selected,
+        )),
+        "crypto-paper" => Ok((
+            "qianxing.runtime.paper-strategy.example.json",
+            common,
+            selected,
+        )),
+        "crypto-sandbox-acceptance" => Ok((
+            "qianxing.runtime.ccxt.example.json",
+            vec![
+                "qianxing.ccxt.exchange.example.json",
+                "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.bar-frame.okx.example.json",
+                "qianxing.scheduler.jobs.example.json",
+            ],
+            selected,
+        )),
         _ => Err(format!(
             "未知 init profile={selected}；可用值：{}",
             INIT_PROFILES.join("、")
         )),
+    }?;
+    if !assets.contains(&"grafana/qianxing-overview.json") {
+        assets.push("grafana/qianxing-overview.json");
     }
+    Ok((template_name, assets, profile_name))
 }
 
 pub(crate) fn normalize_init_template_paths(
@@ -203,9 +236,43 @@ pub(crate) fn run_init_with_profile(
     force: bool,
     strategy_name: Option<&str>,
     profile: Option<&str>,
+    emit_next_step: bool,
 ) -> Result<(), String> {
-    let (template_name, profile_assets, profile_name) =
+    run_init_with_profile_selection(output, force, strategy_name, profile, emit_next_step, None)
+}
+
+pub(crate) fn run_init_with_ccxt_selection(
+    output: &Path,
+    force: bool,
+    exchange: &str,
+    instrument: &str,
+) -> Result<(), String> {
+    run_init_with_profile_selection(
+        output,
+        force,
+        None,
+        Some("ccxt"),
+        false,
+        Some((exchange, instrument)),
+    )
+}
+
+fn run_init_with_profile_selection(
+    output: &Path,
+    force: bool,
+    strategy_name: Option<&str>,
+    profile: Option<&str>,
+    emit_next_step: bool,
+    ccxt_selection: Option<(&str, &str)>,
+) -> Result<(), String> {
+    let (template_name, mut profile_assets, profile_name) =
         init_profile_template(profile, strategy_name)?;
+    if ccxt_selection.is_some() && profile_name != "ccxt" {
+        return Err("交易所选择只能用于 ccxt 初始化配置".into());
+    }
+    if ccxt_selection.is_some_and(|(exchange, _)| exchange != "okx") {
+        profile_assets.retain(|asset| *asset != "qianxing.ccxt.okx.perpetual.spec.json");
+    }
     let template = repository_deploy_path(template_name);
     if !template.exists() {
         return Err(format!(
@@ -245,6 +312,70 @@ pub(crate) fn run_init_with_profile(
     .map_err(|error| format!("运行时模板 JSON 无效 {}: {error}", template.display()))?;
     let mut init_assets = profile_assets.into_iter().map(str::to_owned).collect();
     normalize_init_template_paths(&mut document, &mut init_assets);
+    if let Some(storage) = document
+        .get_mut("storage")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if storage.get("backend").and_then(serde_json::Value::as_str) == Some("files") {
+            storage.insert(
+                "event_log_segment_events".into(),
+                serde_json::Value::from(DEFAULT_EVENT_LOG_SEGMENT_EVENTS),
+            );
+        }
+    }
+    if matches!(
+        profile_name,
+        "ccxt" | "multi-venue" | "crypto-sandbox-acceptance"
+    ) {
+        // A fresh scaffold cannot assert a supplier-signed role catalog or venue credentials.
+        // Leave private execution unarmed until the operator installs those prerequisites.
+        if let Some(workers) = document
+            .get_mut("workers")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for worker in workers {
+                if worker.get("role").and_then(serde_json::Value::as_str) == Some("execution") {
+                    if let Some(fields) = worker.as_object_mut() {
+                        fields.insert("enabled".into(), serde_json::Value::Bool(false));
+                    }
+                }
+            }
+        }
+        if let Some(strategies) = document
+            .get_mut("strategies")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for strategy in strategies {
+                if let Some(fields) = strategy.as_object_mut() {
+                    fields.insert("live_enabled".into(), serde_json::Value::Bool(false));
+                    if !matches!(profile_name, "multi-venue") {
+                        fields.insert(
+                            "bars_snapshot_path".into(),
+                            serde_json::Value::String("qianxing.bar-frame.okx.example.json".into()),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(strategy) = document
+            .get_mut("strategy")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            strategy.insert("live_enabled".into(), serde_json::Value::Bool(false));
+            if !matches!(profile_name, "multi-venue") {
+                strategy.insert(
+                    "bars_snapshot_path".into(),
+                    serde_json::Value::String("qianxing.bar-frame.okx.example.json".into()),
+                );
+            }
+        }
+    }
+    if let Some((exchange, instrument)) = ccxt_selection {
+        align_ccxt_profile_selection(&mut document, exchange, instrument)?;
+        if exchange != "okx" {
+            init_assets.retain(|asset| asset != "qianxing.ccxt.okx.perpetual.spec.json");
+        }
+    }
     let project_root = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -271,10 +402,10 @@ pub(crate) fn run_init_with_profile(
             "bars_snapshot_path".into(),
             serde_json::Value::String("qianxing.bar-frame.example.json".into()),
         );
-        strategy.insert(
-            "dataset_bundle_path".into(),
-            serde_json::Value::String("qianxing.dataset-bundle.bar-frame.example.json".into()),
-        );
+        // `init --strategy` ships a BarFrame fixture, but the copied legacy DatasetBundle
+        // template has no byte-bound DatasetSnapshotV1. Bind this generated local project
+        // to the actual BarFrame; users can attach a verified bundle through dataset-bundle.
+        strategy.remove("dataset_bundle_path");
         if let Some(storage) = document
             .get_mut("storage")
             .and_then(serde_json::Value::as_object_mut)
@@ -293,6 +424,9 @@ pub(crate) fn run_init_with_profile(
         .map_err(|error| format!("写入运行时配置失败 {}: {error}", output.display()))?;
     for asset in &init_assets {
         copy_init_asset(project_root, asset, force)?;
+    }
+    if let Some((exchange, instrument)) = ccxt_selection {
+        write_ccxt_profile_selection_assets(project_root, exchange, instrument, force)?;
     }
     std::fs::create_dir_all(project_root.join("data"))
         .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
@@ -331,13 +465,210 @@ pub(crate) fn run_init_with_profile(
         );
     }
     let program = cli_args::PROGRAM_NAME;
-    println!(
-        "下一步：{program} doctor {}{}",
-        output.display(),
-        backtest_step
-            .map(|step| format!("；{step}"))
-            .unwrap_or_default()
-    );
+    if emit_next_step {
+        println!(
+            "下一步：{program} doctor {}{}",
+            output.display(),
+            backtest_step
+                .map(|step| format!("；{step}"))
+                .unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
+fn align_ccxt_profile_selection(
+    document: &mut serde_json::Value,
+    exchange: &str,
+    instrument: &str,
+) -> Result<(), String> {
+    let workers = document
+        .get_mut("workers")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "CCXT 运行时模板缺少 workers 列表".to_string())?;
+    for worker in workers {
+        let Some(fields) = worker.as_object_mut() else {
+            continue;
+        };
+        if fields.get("venue_id").is_some_and(|value| !value.is_null()) {
+            fields.insert(
+                "venue_id".into(),
+                serde_json::Value::String(exchange.into()),
+            );
+        }
+        if let Some(symbols) = fields
+            .get_mut("symbols")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for symbol in symbols {
+                if symbol.as_str().is_some_and(|value| value.ends_with(".OKX")) {
+                    *symbol = serde_json::Value::String(instrument.into());
+                }
+            }
+        }
+        if fields
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|role| matches!(role, "execution" | "spread_recovery" | "reconciler"))
+        {
+            let venue = exchange.to_ascii_uppercase();
+            fields.insert(
+                "credential_env".into(),
+                serde_json::json!({
+                    "api_key": format!("QX_CCXT_{venue}_API_KEY"),
+                    "secret": format!("QX_CCXT_{venue}_SECRET"),
+                }),
+            );
+        }
+        if exchange != "okx"
+            && fields
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|role| matches!(role, "execution" | "spread_recovery"))
+        {
+            // There is no verified static contract specification for every venue. These workers
+            // are already disabled by the CCXT scaffold; never carry an OKX spec into another venue.
+            fields.remove("instrument_spec_path");
+        }
+    }
+    if let Some(providers) = document
+        .pointer_mut("/api/data_providers")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for provider in providers {
+            if let Some(id) = provider.get_mut("provider_id") {
+                *id = serde_json::Value::String(format!("ccxt-{exchange}-1m"));
+            }
+        }
+    }
+    if let Some(strategies) = document
+        .get_mut("strategies")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for strategy in strategies {
+            align_ccxt_strategy_selection(strategy, exchange, instrument);
+        }
+    }
+    if let Some(strategy) = document.get_mut("strategy") {
+        align_ccxt_strategy_selection(strategy, exchange, instrument);
+    }
+    Ok(())
+}
+
+fn align_ccxt_strategy_selection(
+    strategy: &mut serde_json::Value,
+    exchange: &str,
+    instrument: &str,
+) {
+    let Some(fields) = strategy.as_object_mut() else {
+        return;
+    };
+    if fields.contains_key("venue_id") {
+        fields.insert(
+            "venue_id".into(),
+            serde_json::Value::String(exchange.into()),
+        );
+    }
+    if fields.contains_key("instrument") {
+        fields.insert(
+            "instrument".into(),
+            serde_json::Value::String(instrument.into()),
+        );
+    }
+    if fields.contains_key("bars_snapshot_path") {
+        fields.insert(
+            "bars_snapshot_path".into(),
+            serde_json::Value::String(format!("qianxing.bar-frame.{exchange}.example.json")),
+        );
+    }
+    if fields.contains_key("live_enabled") {
+        fields.insert("live_enabled".into(), serde_json::Value::Bool(false));
+    }
+}
+
+fn write_ccxt_profile_selection_assets(
+    project_root: &Path,
+    exchange: &str,
+    instrument: &str,
+    force: bool,
+) -> Result<(), String> {
+    let exchange_config_path = project_root.join("qianxing.ccxt.exchange.example.json");
+    let mut exchange_config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&exchange_config_path).map_err(|error| {
+            format!(
+                "读取 CCXT 样例配置失败 {}: {error}",
+                exchange_config_path.display()
+            )
+        })?)
+        .map_err(|error| format!("CCXT 样例配置 JSON 无效: {error}"))?;
+    exchange_config["exchange_id"] = serde_json::Value::String(exchange.into());
+    exchange_config["default_type"] = serde_json::Value::String("swap".into());
+    exchange_config["instruments"] = serde_json::json!([instrument]);
+    if let Some(credentials) = exchange_config
+        .get_mut("credential_env")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let venue = exchange.to_ascii_uppercase();
+        for (field, suffix) in [
+            ("api_key", "API_KEY"),
+            ("secret", "SECRET"),
+            ("password", "PASSWORD"),
+        ] {
+            if credentials.contains_key(field) {
+                credentials.insert(
+                    field.into(),
+                    serde_json::Value::String(format!("QX_CCXT_{venue}_{suffix}")),
+                );
+            }
+        }
+    }
+    let serialized = serde_json::to_vec_pretty(&exchange_config)
+        .map_err(|error| format!("编码 CCXT 样例配置失败: {error}"))?;
+    std::fs::write(&exchange_config_path, serialized).map_err(|error| {
+        format!(
+            "写入 CCXT 样例配置失败 {}: {error}",
+            exchange_config_path.display()
+        )
+    })?;
+
+    let source_frame = project_root.join("qianxing.bar-frame.okx.example.json");
+    let selected_frame = project_root.join(format!("qianxing.bar-frame.{exchange}.example.json"));
+    if exchange != "okx" && source_frame.exists() {
+        if selected_frame.exists() && !force {
+            return Err(format!(
+                "目标行情样例已存在: {}；如确认覆盖，请显式添加 --force",
+                selected_frame.display()
+            ));
+        }
+        std::fs::rename(&source_frame, &selected_frame)
+            .or_else(|error| {
+                if force && selected_frame.exists() {
+                    std::fs::remove_file(&selected_frame)?;
+                    std::fs::rename(&source_frame, &selected_frame)
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|error| format!("调整行情样例文件名失败: {error}"))?;
+    }
+    let frame_path = if exchange == "okx" {
+        source_frame
+    } else {
+        selected_frame
+    };
+    if frame_path.exists() {
+        let mut frame: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&frame_path)
+                .map_err(|error| format!("读取行情样例失败 {}: {error}", frame_path.display()))?,
+        )
+        .map_err(|error| format!("行情样例 JSON 无效: {error}"))?;
+        frame["instrument"] = serde_json::Value::String(instrument.into());
+        frame["source"] = serde_json::Value::String(format!("example-{exchange}-bars-v1"));
+        let serialized = serde_json::to_vec_pretty(&frame)
+            .map_err(|error| format!("编码行情样例失败: {error}"))?;
+        std::fs::write(&frame_path, serialized)
+            .map_err(|error| format!("写入行情样例失败 {}: {error}", frame_path.display()))?;
+    }
     Ok(())
 }
 
@@ -402,16 +733,10 @@ pub(crate) fn run_strategy_init(
         "bars_snapshot_path".into(),
         serde_json::Value::String(bars.clone()),
     );
-    if bars_path.is_none() {
-        strategy.insert(
-            "dataset_bundle_path".into(),
-            serde_json::Value::String(
-                "deploy/qianxing.dataset-bundle.bar-frame.example.json".into(),
-            ),
-        );
-    } else {
-        strategy.remove("dataset_bundle_path");
-    }
+    // The bundled example manifest predates byte-bound DatasetSnapshotV1 and is not
+    // executable evidence. A local strategy init binds bars directly; an explicit
+    // DatasetBundle can be attached after publishing its snapshot.
+    strategy.remove("dataset_bundle_path");
     // 与 `init` 共用同一套归一：`deploy/…` 一律改成配置文件同目录的裸文件名并复制过去。
     // 少了这一步，`strategy init` 打印的首条命令只在仓库根可用——运行时相对路径按配置
     // 文件所在目录解析，`deploy/qianxing.bar-frame.example.json` 会拼成
@@ -473,4 +798,129 @@ pub(crate) fn run_strategy_init(
         project_root.join(&bars).display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod ccxt_selection_tests {
+    use super::run_init_with_ccxt_selection;
+    use serde_json::Value;
+    use std::path::PathBuf;
+
+    #[test]
+    fn ccxt_quickstart_selection_aligns_runtime_and_demo_assets() {
+        let unique = format!(
+            "qianxing-ccxt-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.task-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+
+        run_init_with_ccxt_selection(&runtime, false, "bitget", "BTC/USDT:USDT.BITGET").unwrap();
+
+        let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        for worker in config["workers"].as_array().unwrap() {
+            if !worker["venue_id"].is_null() {
+                assert_eq!(worker["venue_id"], "bitget");
+            }
+            if let Some(symbols) = worker["symbols"].as_array() {
+                assert!(symbols
+                    .iter()
+                    .all(|symbol| symbol == "BTC/USDT:USDT.BITGET"));
+            }
+        }
+        assert_eq!(config["strategy"]["venue_id"], "bitget");
+        assert_eq!(config["strategy"]["instrument"], "BTC/USDT:USDT.BITGET");
+        assert_eq!(config["strategy"]["live_enabled"], false);
+        let execution = config["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["role"] == "execution")
+            .unwrap();
+        assert_eq!(execution["enabled"], false);
+        assert!(execution.get("instrument_spec_path").is_none());
+        let reconciler = config["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["role"] == "reconciler")
+            .unwrap();
+        assert_eq!(
+            reconciler["credential_env"]["api_key"],
+            "QX_CCXT_BITGET_API_KEY"
+        );
+        assert_eq!(
+            reconciler["credential_env"]["secret"],
+            "QX_CCXT_BITGET_SECRET"
+        );
+
+        let exchange_config: Value = serde_json::from_slice(
+            &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(exchange_config["exchange_id"], "bitget");
+        assert_eq!(exchange_config["sandbox"], true);
+        assert_eq!(exchange_config["default_type"], "swap");
+        assert_eq!(exchange_config["instruments"][0], "BTC/USDT:USDT.BITGET");
+        assert!(root
+            .join("qianxing.bar-frame.bitget.example.json")
+            .is_file());
+        assert!(!root.join("qianxing.bar-frame.okx.example.json").exists());
+        assert!(!root.join("qianxing.ccxt.okx.perpetual.spec.json").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn binance_quickstart_scaffold_names_credentials_without_loading_secrets() {
+        let unique = format!(
+            "qianxing-binance-ccxt-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.task-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+
+        run_init_with_ccxt_selection(&runtime, false, "binance", "BTC/USDT:USDT.BINANCE").unwrap();
+
+        let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        let workers = config["workers"].as_array().unwrap();
+        assert!(workers
+            .iter()
+            .filter(|worker| !worker["venue_id"].is_null())
+            .all(|worker| worker["venue_id"] == "binance"));
+        let execution = workers
+            .iter()
+            .find(|worker| worker["role"] == "execution")
+            .unwrap();
+        assert_eq!(execution["enabled"], false);
+        let reconciler = workers
+            .iter()
+            .find(|worker| worker["role"] == "reconciler")
+            .unwrap();
+        assert_eq!(
+            reconciler["credential_env"]["api_key"],
+            "QX_CCXT_BINANCE_API_KEY"
+        );
+        assert_eq!(
+            reconciler["credential_env"]["secret"],
+            "QX_CCXT_BINANCE_SECRET"
+        );
+        assert!(config["workers"].to_string().find("secret-value").is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

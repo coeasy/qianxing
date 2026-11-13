@@ -1,0 +1,19 @@
+LEDGER crypto data_fingerprint=barframe:613fdc1dc0b779e7 result_hash=67c176977ad0f81d
+LEDGER ashare data_fingerprint=dataset-bundle:099c5f20c38bc423 result_hash=6e120606d81369b5
+  frame_input=6be98878c53b2b65 bundle_input=84efc597267bbc85 snapshot_hash=6be98878c53b2b65
+  PROBE crypto explicit=67c176977ad0f81d / barframe:613fdc1dc0b779e7   ashare explicit=6e120606d81369b5 / dataset-bundle:099c5f20c38bc423
+  CENSUS declared=ashare,builtin
+  rc build=0 acceptance=0 baseline=0
+  FACE qianxing.runtime.json                                before=bd6535263eea6782 after=15d5ae4d6e3c0a0c state=moved
+  FACE qianxing.bar-frame.example.json                      before=6be98878c53b2b65 after=6be98878c53b2b65 state=unchanged
+  FACE qianxing.binance.spot.spec.json                      before=6f10597c3e4ae954 after=27552fe2e9a0077e state=moved
+  FACE qianxing.dataset-bundle.bar-frame.example.json       before=3ca6c875ff39ed8d after=84efc597267bbc85 state=moved
+  FACE data_fingerprint                                     before=dataset-bundle:8bf50b57f after=barframe:613fdc1dc0b779e state=moved
+  FACE result_hash                                          before=26fdd6b52d020700 after=67c176977ad0f81d state=moved
+  FACE config_fingerprint                                   before=be3aca2d6056abaa8d003be2 after=ff4bac31888bb47989f3abd4 state=moved
+  FACE replay_verdict                                       before=verified after= state=moved
+  FACE ashare data_fingerprint                              before=dataset-bundle:0796529b5 after=dataset-bundle:099c5f20c state=moved
+  FACE ashare result_hash                                   before=6be034a4cb0760fa after=6e120606d81369b5 state=moved
+  FACE ashare config_fingerprint                            before=8cb64752f7e52549ea893dc0 after=92d0bd42cec1bc91155635c7 state=moved
+  FACE ashare replay_verdict                                before=verified after=verified state=unchanged
+LEDGER_OK checks=12

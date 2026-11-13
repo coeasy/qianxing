@@ -1,0 +1,454 @@
+$ python3 tools/accept_backtest_metrics_contract.py
+exit_code=0
+
+[stdout]
+[1/6] cargo test -p qx-core --lib period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m   Compiling[0m qx-core v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-core)
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 10.66s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/qx-core/8d180cefc2b3ab27/out/qx_core-8d180cefc2b3ab27)
+
+running 1 test
+test performance::tests::period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 142 filtered out; finished in 0.00s
+
+[2/6] cargo test -p qx-core --lib aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 0.20s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/qx-core/8d180cefc2b3ab27/out/qx_core-8d180cefc2b3ab27)
+
+running 1 test
+test benchmark::tests::aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 142 filtered out; finished in 0.00s
+
+[3/6] cargo test -p qx-app --lib artifact_store::backtest_summary::metrics_definition_tests --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m   Compiling[0m qx-core v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-core)
+[1m[92m   Compiling[0m qx-guanxing v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-guanxing)
+[1m[92m   Compiling[0m qx-datastruct v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-datastruct)
+[1m[92m   Compiling[0m qx-data v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-data)
+[1m[92m   Compiling[0m qx-risk v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-risk)
+[1m[92m   Compiling[0m qx-zhenlu v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-zhenlu)
+[1m[92m   Compiling[0m qx-strategy v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-strategy)
+[1m[92m   Compiling[0m qx-app v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-app)
+[1m[92m   Compiling[0m qx-xingban v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-xingban)
+[1m[92m   Compiling[0m qx-spec v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-spec)
+[1m[92m   Compiling[0m qx-provider v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-provider)
+[1m[92m   Compiling[0m qx-control v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-control)
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 42.92s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/qx-app/17b968ee69a23ea5/out/qx_app-17b968ee69a23ea5)
+
+running 1 test
+test artifact_store::backtest_summary::metrics_definition_tests::metrics_definition_is_versioned_and_discloses_period_and_fee_semantics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 178 filtered out; finished in 0.00s
+
+[4/6] cargo test -p qx-cli --bin qx-cli report_html::metric_definition_tests --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m   Compiling[0m qx-core v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-core)
+[1m[92m   Compiling[0m qx-guanxing v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-guanxing)
+[1m[92m   Compiling[0m qx-datastruct v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-datastruct)
+[1m[92m   Compiling[0m qx-data v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-data)
+[1m[92m   Compiling[0m qx-risk v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-risk)
+[1m[92m   Compiling[0m qx-zhenlu v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-zhenlu)
+[1m[92m   Compiling[0m qx-control v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-control)
+[1m[92m   Compiling[0m qx-strategy v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-strategy)
+[1m[92m   Compiling[0m qx-spec v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-spec)
+[1m[92m   Compiling[0m qx-protocol v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-protocol)
+[1m[92m   Compiling[0m qx-scheduler v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-scheduler)
+[1m[92m   Compiling[0m qx-storage v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-storage)
+[1m[92m   Compiling[0m qx-execution v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-execution)
+[1m[92m   Compiling[0m qx-provider v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-provider)
+[1m[92m   Compiling[0m qx-factor v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-factor)
+[1m[92m   Compiling[0m qx-runtime v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-runtime)
+[1m[92m   Compiling[0m qx-xingban v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-xingban)
+[1m[92m   Compiling[0m qx-process-io v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-process-io)
+[1m[92m   Compiling[0m qx-app v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-app)
+[1m[92m   Compiling[0m qx-genglu v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-genglu)
+[1m[92m   Compiling[0m qx-adapter v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-adapter)
+[1m[92m   Compiling[0m qx-cli v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-cli)
+[1m[92m   Compiling[0m qx-api v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-api)
+[1m[92m   Compiling[0m qx-orchestrator v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-orchestrator)
+[1m[92m   Compiling[0m qx-service v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-service)
+[1m[92m   Compiling[0m qx-plugin v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-plugin)
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 1m 37s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/qx-cli/05be3f2d848e1969/out/qx_cli-05be3f2d848e1969)
+
+running 1 test
+test report_html::metric_definition_tests::html_surfaces_versioned_metric_period_and_fee_basis ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 515 filtered out; finished in 0.00s
+
+[5/6] cargo test -p qx-cli --bin qx-cli report_xlsx::rows::metrics_projection_tests --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 0.51s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/qx-cli/05be3f2d848e1969/out/qx_cli-05be3f2d848e1969)
+
+running 1 test
+test report_xlsx::rows::metrics_projection_tests::overview_exports_versioned_metric_definitions_and_exact_fee_facts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 515 filtered out; finished in 0.00s
+
+[6/6] cargo test -p qx-cli --bin qx-cli report_benchmark::tests::explicit_calendar_uses_daily_metric_names_and_labels --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 0.08s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/qx-cli/05be3f2d848e1969/out/qx_cli-05be3f2d848e1969)
+
+running 1 test
+test report_benchmark::tests::explicit_calendar_uses_daily_metric_names_and_labels ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 515 filtered out; finished in 0.02s
+
+backtest metrics contract: all six focused Rust checks passed
+
+[stderr]

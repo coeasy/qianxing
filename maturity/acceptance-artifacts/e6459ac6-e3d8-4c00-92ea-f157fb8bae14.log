@@ -1,0 +1,9 @@
+$ cargo build -p qx-python --offline
+exit_code=0
+
+[stdout]
+
+[stderr]
+   Compiling qx-app v0.4.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling qx-python v0.4.0 (D:\aex_work\qianxing\crates\qx-python)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.69s

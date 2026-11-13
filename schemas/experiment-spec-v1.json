@@ -32,7 +32,9 @@
         "train_bars": {"type": "integer", "minimum": 1},
         "test_bars": {"type": "integer", "minimum": 1},
         "walk_forward": {"type": "boolean"},
-        "step_bars": {"type": "integer", "minimum": 0}
+        "step_bars": {"type": "integer", "minimum": 0},
+        "purge_bars": {"type": "integer", "minimum": 0},
+        "embargo_bars": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },

@@ -1,8 +1,8 @@
 //! Request/response lifecycle for external strategy workers.
 
 use crate::{
-    pump_strategy_process, spawn_strategy_process, stop_strategy_process, StrategySharedRings,
-    StrategyWorkerResponse,
+    pump_strategy_process, spawn_strategy_process_with_host_provider_env, stop_strategy_process,
+    StrategySharedRings, StrategyWorkerResponse,
 };
 use qx_process_io::write_all_within;
 use qx_strategy::transport::StrategyTransport;
@@ -42,6 +42,13 @@ pub struct StrategyWorkerSpawnConfig<'a> {
 
 impl StrategyWorkerProcess {
     pub fn spawn(config: StrategyWorkerSpawnConfig<'_>) -> Result<Self, String> {
+        Self::spawn_with_host_provider_env(config, &std::collections::BTreeMap::new())
+    }
+
+    pub fn spawn_with_host_provider_env(
+        config: StrategyWorkerSpawnConfig<'_>,
+        host_provider_env: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
         let StrategyWorkerSpawnConfig {
             executable,
             args,
@@ -75,10 +82,20 @@ impl StrategyWorkerProcess {
         } else {
             None
         };
-        let pipes =
-            spawn_strategy_process(executable, &actual_args, env, transport).map_err(|error| {
-                format!("启动 {label} worker 失败（程序={diagnostic_program}）: {error}")
-            })?;
+        let spawn_result = if host_provider_env.is_empty() {
+            crate::spawn_strategy_process(executable, &actual_args, env, transport)
+        } else {
+            spawn_strategy_process_with_host_provider_env(
+                executable,
+                &actual_args,
+                env,
+                host_provider_env,
+                transport,
+            )
+        };
+        let pipes = spawn_result.map_err(|error| {
+            format!("启动 {label} worker 失败（程序={diagnostic_program}）: {error}")
+        })?;
         let pumped = pump_strategy_process(pipes.stdout, pipes.stderr, transport);
         Ok(Self {
             child: Some(pipes.child),
@@ -105,6 +122,89 @@ impl StrategyWorkerProcess {
                 "; stderr={}",
                 tail.iter().cloned().collect::<Vec<_>>().join(" | ")
             )
+        }
+    }
+
+    /// Wait for a freshly allocated startup marker before publishing worker readiness.
+    /// Protocol responses remain untouched; no synthetic market request is sent.
+    pub fn wait_for_ready_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms);
+        loop {
+            match std::fs::read(path) {
+                Ok(content) if content == b"ready\n" || content == b"ready\r\n" => return Ok(()),
+                // The Python write may be observed before all marker bytes are flushed.
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("cannot read strategy startup marker: {error}")),
+            }
+            if let Some(child) = self.child.as_mut() {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Err(format!(
+                        "strategy initialization failed: {}",
+                        self.death_note()
+                    ));
+                }
+            }
+            if Instant::now() >= deadline {
+                self.kill_child();
+                return Err(format!(
+                    "strategy initialization timed out{}",
+                    self.diagnostics()
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Wait for a bounded, atomically published protocol acknowledgment file.
+    pub fn wait_for_ack_file(
+        &mut self,
+        path: &std::path::Path,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, String> {
+        let deadline = Instant::now() + Duration::from_millis(self.timeout_ms);
+        loop {
+            match std::fs::read(path) {
+                Ok(content) if content.is_empty() => {}
+                Ok(content) if content.len() <= max_bytes => return Ok(content),
+                Ok(_) => {
+                    self.kill_child();
+                    return Err(format!(
+                        "strategy capability acknowledgment exceeds {max_bytes} bytes"
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    self.kill_child();
+                    return Err(format!(
+                        "cannot read strategy capability acknowledgment: {error}"
+                    ));
+                }
+            }
+            if let Some(child) = self.child.as_mut() {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Err(format!(
+                        "strategy capability initialization failed: {}",
+                        self.death_note()
+                    ));
+                }
+            }
+            if Instant::now() >= deadline {
+                self.kill_child();
+                return Err(format!(
+                    "strategy capability acknowledgment timed out{}",
+                    self.diagnostics()
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
         }
     }
 

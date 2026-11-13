@@ -8,10 +8,14 @@ fn snapshot(sequence: u64) -> OrderBookSnapshot {
         ts: sequence * 1_000,
         sequence,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_raw(100 * SCALE),
             qty: Quantity::from_raw(10 * SCALE),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_raw(102 * SCALE),
             qty: Quantity::from_raw(10 * SCALE),
         }],

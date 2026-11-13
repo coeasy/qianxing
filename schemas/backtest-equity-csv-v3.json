@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/backtest-equity-csv-v3.json",
+  "title": "Qianxing Indexed Backtest Equity CSV row v3",
+  "description": "A normalized row view of the indexed depth equity CSV header index,ts,equity_raw,position_raw. The raw monetary columns retain their historical 1e-9 units.",
+  "type": "object",
+  "required": ["index", "ts", "equity_raw", "position_raw"],
+  "properties": {
+    "index": {"type": "string", "pattern": "^[0-9]+$"},
+    "ts": {"type": "string", "pattern": "^[0-9]+$"},
+    "equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "position_raw": {"type": "string", "pattern": "^-?[0-9]+$"}
+  },
+  "additionalProperties": false
+}

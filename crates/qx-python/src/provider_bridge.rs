@@ -20,6 +20,7 @@ struct ProviderBacktestOptions {
     interval_ms: u64,
     timezone: String,
     manifest_path: String,
+    snapshot_context: qx_data::DatasetSnapshotContextV1,
 }
 
 /// Python adapters provide bytes only; ordering, failover, provenance checks and
@@ -197,6 +198,7 @@ impl PyProviderRegistry {
                 interval_ms: options.interval_ms,
                 timezone: options.timezone,
                 manifest_path: Some(options.manifest_path),
+                snapshot_context: options.snapshot_context,
             },
             &context,
         )
@@ -208,6 +210,8 @@ impl PyProviderRegistry {
             "manifest": result.manifest,
             "dataset_verdict": result.dataset_verdict,
             "manifest_path": result.manifest_path,
+            "dataset_snapshot": result.dataset_snapshot,
+            "snapshot_path": result.snapshot_path,
         }))
         .map_err(|error| PyValueError::new_err(format!("Provider workflow serialization failed: {error}")))
     }
@@ -219,18 +223,18 @@ impl PyProviderRegistry {
     ) -> PyResult<String> {
         let data_request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("Provider query invalid: {error:?}")))?;
-        let backtest = qx_app::DepthBacktestSpec::from_json(spec_json).map_err(crate::app_error)?;
-        let context = crate::research_context(&backtest.run_id);
-        let result = qx_app::run_provider_depth_backtest(
-            &self.inner,
-            &qx_app::ProviderDepthBacktestSpec {
-                schema_version: qx_app::PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-                data_request,
-                backtest,
-            },
-            &context,
-        )
-        .map_err(crate::app_error)?;
+        let spec: qx_app::ProviderDepthBacktestSpec =
+            serde_json::from_str(spec_json).map_err(|error| {
+                PyValueError::new_err(format!("Provider depth workflow spec invalid: {error}"))
+            })?;
+        if spec.data_request != data_request {
+            return Err(PyValueError::new_err(
+                "Provider depth workflow query differs from its declared DataRequest",
+            ));
+        }
+        let context = crate::research_context(&spec.backtest.run_id);
+        let result = qx_app::run_provider_depth_backtest(&self.inner, &spec, &context)
+            .map_err(crate::app_error)?;
         serde_json::to_string(&result).map_err(|error| {
             PyValueError::new_err(format!(
                 "Provider depth outcome serialization failed: {error}"
@@ -313,8 +317,26 @@ impl PyProviderRegistry {
                 "depth snapshots must have strictly increasing timestamps and sequences",
             ));
         }
+        let exact_level_count = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bids.iter().chain(&snapshot.asks))
+            .filter(|level| level.price_exact.is_some())
+            .count();
+        let level_count = snapshots
+            .iter()
+            .map(|snapshot| snapshot.bids.len() + snapshot.asks.len())
+            .sum::<usize>();
+        let schema_version = if exact_level_count == 0 {
+            DepthFrame::LEGACY_SCHEMA_VERSION
+        } else if exact_level_count == level_count {
+            DepthFrame::SUPPORTED_SCHEMA_VERSION
+        } else {
+            return Err(PyValueError::new_err(
+                "provider depth snapshots must either all carry exact price/quantity or all use the legacy 1e-9 projection",
+            ));
+        };
         let frame = DepthFrame {
-            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            schema_version,
             source: format!("{}#query={:016x}", result.provider_id, query.digest()),
             instrument: snapshots
                 .first()

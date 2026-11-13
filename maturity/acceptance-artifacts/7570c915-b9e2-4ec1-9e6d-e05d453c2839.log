@@ -1,0 +1,7 @@
+$ python tools/check_strategy_deployment_lifecycle_evidence.py maturity/evidence/r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json --storage-backend sqlite
+exit_code=0
+
+[stdout]
+PASS: maturity\evidence\r13-strategy-deployment-lifecycle-windows-sqlite-checkpoint-restart-2026-11-05.json (9c67d0bb5a744f84a2c9467b12623156)
+
+[stderr]

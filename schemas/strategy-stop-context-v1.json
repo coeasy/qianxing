@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/strategy-stop-context-v1.json",
+  "title": "Qianxing Strategy Stop Context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "reason", "context"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "reason": {
+      "type": "string",
+      "enum": ["completed", "cancelled", "failed", "shutdown", "host_stop"]
+    },
+    "context": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/strategy_context" }
+      ]
+    }
+  },
+  "$defs": {
+    "strategy_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy_id", "strategy_version", "account_id", "venue_id",
+        "data_fingerprint", "as_of", "positions", "cash",
+        "available_margin_raw", "risk_state"
+      ],
+      "properties": {
+        "strategy_id": { "type": "string", "minLength": 1 },
+        "strategy_version": { "type": "string", "minLength": 1 },
+        "account_id": { "type": "string", "minLength": 1 },
+        "venue_id": { "type": "string", "minLength": 1 },
+        "data_fingerprint": { "type": "string", "minLength": 1 },
+        "as_of": { "type": "integer", "minimum": 1 },
+        "positions": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "cash": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "available_margin_raw": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+        "risk_state": { "type": "string", "minLength": 1 },
+        "positions_exact": { "type": "object" },
+        "cash_exact": { "type": "object" },
+        "available_margin_exact": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

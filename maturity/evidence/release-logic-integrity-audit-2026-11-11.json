@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "kind": "release_logic_integrity_audit",
+  "generated_at_utc": "2026-11-11T02:10:29Z",
+  "release_version": "0.4.0",
+  "source": {
+    "code_commit": "7c3cf30b33bb84788020a0c2938c7c423e54f4de",
+    "audit_document_commit_before_this_record": "1487074116ee0e34bf9f28731d693bf1ba3d8aaf",
+    "code_changed_during_audit": false
+  },
+  "checks": {
+    "architecture_and_chain_map": {
+      "command": "python tools/check_architecture.py",
+      "result": "passed",
+      "checks": 1628,
+      "focus": [
+        "CLI command declaration equals dispatch arms",
+        "every declared chain step resolves to a production anchor and test case",
+        "orphan logic has no production consumer and is explicitly classified",
+        "worker loops have cancellation or bounded waits",
+        "frontend/backend routes and message kinds are bidirectionally covered",
+        "Rust/Python/C++ contracts and artifact publication ownership agree"
+      ]
+    },
+    "markdown_references": {
+      "command": "python tools/check_markdown_links.py",
+      "result": "passed",
+      "tracked_documents": 93,
+      "path_references": 4827,
+      "case_mismatches": 0,
+      "ambiguous_paths": 0
+    },
+    "python_sdk": {
+      "command": "python -X utf8 -m unittest discover -s python/tests -q",
+      "result": "passed",
+      "passed": 609,
+      "skipped": 7,
+      "failed": 0,
+      "duration_seconds": 471.385
+    },
+    "qx_cli_unit": {
+      "command": "cargo test -p qx-cli --bin qx-cli --all-features --locked -j 1",
+      "result": "passed",
+      "passed": 507,
+      "ignored": 1,
+      "failed": 0,
+      "note": "TEMP/TMP were directed to an ignored writable directory on D:; the ignored case requires PostgreSQL."
+    },
+    "three_entrypoint_parity": {
+      "command": "cargo test -p qx-cli --test app_three_entrypoints --all-features --locked -j 1 -- --test-threads=1",
+      "result": "passed",
+      "passed": 33,
+      "failed": 0,
+      "note": "Built qx-python from current source before running the cross-language parity tests."
+    },
+    "project_first_run_and_cli_routes": {
+      "command": "cargo test -p qx-cli --test project_commands --all-features --locked -j 1",
+      "result": "passed",
+      "passed": 49,
+      "failed": 0
+    },
+    "cli_process_parity": {
+      "command": "cargo test -p qx-cli --test cli_behavior_parity --all-features --locked -j 1",
+      "result": "passed",
+      "passed": 36,
+      "failed": 0
+    },
+    "rust_sdk_and_contract_consumers": {
+      "command": "cargo test -p qx-sdk -p contract-tests --all-features --locked -j 1",
+      "result": "passed",
+      "passed": 62,
+      "failed": 0
+    },
+    "browser_console_acceptance": {
+      "command": "python tools/check_console_browser_evidence.py maturity/evidence/console-browser-acceptance-2026-11-04.json",
+      "result": "passed",
+      "coverage": "packaged browser login/connect, revision create, deploy operation readback, deployment projection, fail-closed readiness"
+    },
+    "hosted_release_candidate_ci": {
+      "head": "856dc4e7392af4a328fc89cd5fad519bfd92d5e6",
+      "run_id": 42852812040,
+      "run_attempt": 4,
+      "jobs": "33/33 succeeded",
+      "url": "https://github.com/coeasy/qianxing/actions/runs/42852812040"
+    }
+  },
+  "findings": [
+    {
+      "finding": "The Windows host TEMP/TMP default was not writable by test child processes.",
+      "resolution": "Reran Rust tests with TEMP/TMP under the ignored D: target directory; all 507 CLI unit tests passed."
+    },
+    {
+      "finding": "Cross-language parity tests had a stale Python native extension before the current qx-python build.",
+      "resolution": "Built qx-python from the audited source before parity tests; all 33 CLI/HTTP/Python parity tests passed. The README now documents this prerequisite."
+    },
+    {
+      "finding": "The installation guide still described Linux acceptance as pending based on an October record.",
+      "resolution": "Marked that record historical and linked the later Linux, Windows and hosted CI evidence."
+    }
+  ],
+  "release_gates_remaining": [
+    "Authorized venue/testnet round trip",
+    "Licensed market-data evidence",
+    "Supplier signing-role and market-spec review",
+    "Production approval and release signature",
+    "v0.4.0 tag and final tag-workflow asset/provenance verification"
+  ],
+  "publication": {
+    "tagged": false,
+    "github_release_published": false,
+    "pypi_published": false,
+    "crates_io_published": false
+  }
+}

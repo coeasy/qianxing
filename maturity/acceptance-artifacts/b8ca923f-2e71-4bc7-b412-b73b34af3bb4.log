@@ -1,0 +1,481 @@
+$ python tools/check_architecture.py --fast
+exit_code=1
+
+[stdout]
+[PASS] V9 删除的 crate 未复活
+[PASS] 受管运行使用有界、上下文隔离的 Python import audit 捕获并在终态恢复上下文
+[PASS] 运行导入清单记录来源不透明、归档导入器及 sys.modules 清理前观察到的模块
+[PASS] 运行 import observations 进入清单摘要，旧 v1 可读且不完整的 v2 不会通过复核
+[PASS] long-only SMA declares its complete crossover warmup separately from its evaluation/start-time gates
+[PASS] Strategy worker execution result、failure disposition 与 JobRun terminal mapping 唯一归属 lifecycle
+[PASS] PreparedEvaluation recovery 的输入身份/事实校验、lease fencing 与升级持久化唯一归属 prepared_recovery 子模块
+[PASS] Strategy adapter dispatch、restore acknowledgement、warmup evidence 与 live readiness 唯一归属 strategy_evaluation 子模块
+[PASS] 已验证多市场 report 的 canonical manifest、幂等产物修复、冲突判定与写入顺序唯一归属 report_persistence 子模块
+[PASS] 多市场盘口实验 CanonicalRunSpec、标准产物持久化与候选核验各有唯一 owner，运行 facade 保持委托
+[PASS] 策略执行 cursor/checkpoint 状态迁移、fencing 与落盘归独立模块
+[PASS] typed host lifecycle evidence flows through v3 observation, supervisor wait and deployment status
+[PASS] Live Strategy 回滚在停止当前 worker 前通过共享报告校验新鲜、干净的同账户/venue 对账
+[PASS] 多账户 Bar/Depth 报告校验、产物投影与发布分别归 bar/depth workflow，facade 保留输入分派
+[PASS] 多账户 Bar Evidence manifest 逐账户覆盖、缺失状态与 SHA-256 核验在 portable recompute 前唯一执行
+[PASS] 多账户 Bar Evidence pack 由唯一 owner 编排来源/便携 Evidence 验真、路径绑定与 manifest 原子提交
+[PASS] 联合账户证据包的市场路径重定位、父子工件绑定与 ArtifactReader 映射由 portable_paths 唯一拥有
+[PASS] 联合账户 Evidence pack 先验来源身份/报告及子 Evidence，再校验便携导出后原子提交，归 pack owner 唯一编排
+[PASS] 多市场规格/策略指纹与 Bar/Depth 输入集顺序身份由 identity 唯一拥有，兼容重导出保持稳定
+[PASS] 联合账户 Evidence 的 code revision 绑定、市场输入复算和结果/报告对拍归 recompute owner，facade 先复核便携报告
+[PASS] 多账户深度 Evidence bundle IO、create-new、摘要校验和 staging 回收由 io 子模块唯一拥有
+[PASS] 多账户深度 Evidence wire DTO 与固定文件名由 model 子模块唯一拥有，facade 仅供内部稳定重导出
+[PASS] report summary schema gate、Bar/Depth artifact identity、Outcome 重建及共享 qx-app report readback 由 verified_summary 子模块唯一拥有
+[PASS] 内置 Rust 策略的配置装配、双腿数据读取、确定事件投递与共享 contract 输出由 builtin 子模块唯一拥有，保留稳定入口
+[PASS] 多市场 Bar 诊断生成、身份绑定和对照呈现归 diagnostics owner，原报告 facade 保持委托
+[PASS] 多市场深度报告使用 CLI 选中产物 reader 绑定应用层复核并唯一归属 projection owner
+[PASS] qx-cli app use-case adapters have one use_cases owner behind the stable dispatch facade
+[PASS] WP-5.1 机读 CLI 命令清单与 clap 参数源的生成结果逐字节相等
+[PASS] Phase 4p/4q 拆出的兄弟模块均有独立文件落点
+[PASS] 拆出的模块在 crate 根以 mod + pub(crate) use x::* 成对挂载
+[PASS] 链路入口 run_ecosystem_smoke 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 run_paper_smoke 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 run_backtest 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 DemoProvider 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 collect_runtime_check_report 的定义点唯一且在 runtime_check.rs
+[PASS] 链路入口 collect_live_check_report 的定义点唯一且在 live_check.rs
+[PASS] 链路入口 dispatch_scheduled_jobs 的定义点唯一且在 scheduler.rs
+[PASS] 链路入口 build_strategy_contract_input 的定义点唯一且在 strategy_binding/contract_input.rs
+[PASS] 链路入口 run_init_with_profile 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 run_strategy_init 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 repository_deploy_path 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 market_spec_from_value 的定义点唯一且在 market_spec.rs
+[PASS] 链路入口 ccxt_market_to_spec 的定义点唯一且在 market_spec.rs
+[PASS] 链路入口 ccxt_margin_rule_from_market 的定义点唯一且在 market_spec.rs
+[PASS] 链路入口 resolve_deploy_path 的定义点唯一且在 deploy_lookup.rs
+[PASS] 链路入口 pick_deploy_file 的定义点唯一且在 deploy_lookup.rs
+[PASS] 链路入口 locate_deploy_file 的定义点唯一且在 deploy_lookup.rs
+[PASS] 链路入口 read_example_json 的定义点唯一且在 deploy_lookup.rs
+[PASS] 链路入口 relocate_deploy_path 的定义点唯一且在 deploy_lookup.rs
+[PASS] 受管入口族的每个 pub fn 都有生产消费者（V12 D6：死入口不得留下）
+[PASS] 门禁读生产文本一律经 production_text 按项剥测试代码，不再按第一次 cfg(test) 截断
+[PASS] SQLite 与 PostgreSQL 共用 schema 版本登记、拒绝未知版本，并提供严格匹配的显式旧库认领路径
+[PASS] 文件、SQLite、PostgreSQL 的消费者读写均委托 ConsumerStateStore 默认校验步骤
+[PASS] 文件、SQLite、PostgreSQL 的 dead-letter 列表按 attempts/event_id 使用同一页序
+[PASS] 三种 ConsumerStateStore 后端都按消费组/event_id 原子去重，PostgreSQL 也覆盖投影失败无副作用
+[PASS] Binance 成交回报缺 trade_id(t) 时转对账，不得归零
+[PASS] 两个多腿恢复 worker 都必须显式配置 venue_id，不得静默默认
+[PASS] worker 线程 panic 的报错保留 payload，不丢成一句 'panic'
+[PASS] Python StrategyInput.from_dict 拒绝契约之外的键
+[PASS] FactorReport::validate 校验 missing_policy 词表
+[PASS] outbox.attempts 读回走范围检查而不是 as u32 截断
+[PASS] FactorAnalysisConfig::validate 仍是 missing_policy 词表的源头口径
+[PASS] runtime-check 的 snapshot 传真时钟 + worker_stale_after_ms，不传 0/停机预算
+[PASS] PipelineMetricsReporter 由 qx-service 唯一拥有，CLI 只从服务层重导出
+[PASS] build.bat 与 build.sh 的门禁步骤编号连续、总数自洽且逐项同名同序
+[PASS] 两个构建脚本调用的是同一组 cargo 命令
+[PASS] build.bat 把探测选中的解释器导出成 QX_PYTHON，且早于第一道门禁
+[PASS] build.sh 把探测选中的解释器导出成 QX_PYTHON，且早于第一道门禁
+[PASS] build.bat 与 build.sh 各自真的调用一次架构门禁脚本
+[PASS] 架构门禁失败会中止构建脚本，而不是继续跑后面的步骤
+[PASS] 架构门禁排在任何 cargo 命令之前（最便宜的全量判据先跑）
+[PASS] 日期型 A 股公司行为映射到同一上海交易日首根 Bar，且回测装配与行为用例在位
+[PASS] A 股公司行为按映射时点触发，并在当前 Bar 的策略/撮合事件之前进入账本
+[PASS] 提交侧的 A 股闸门只定义一处，且只管会提交新订单的角色
+[PASS] 提交侧复用回测侧那一份拒绝文案，并点名缺的能力是 T+1 结算状态
+[PASS] worker_runtime.rs 每个提交/排队入口都问过 A 股闸门（binance-worker、ccxt-worker）
+[PASS] paper_worker.rs 每个提交/排队入口都问过 A 股闸门（paper-worker）
+[PASS] paper_submit.rs 每个提交/排队入口都问过 A 股闸门（paper-submit-order）
+[PASS] binance_submit.rs 每个提交/排队入口都问过 A 股闸门（binance-submit-order）
+[PASS] strategy_worker.rs 每个提交/排队入口都问过 A 股闸门（strategy-worker）
+[PASS] api_service_builder.rs 每个提交/排队入口都问过 A 股闸门（serve）
+[PASS] 提交侧不得自己装配 A 股规则或费率（半接半丢比不接更危险）
+[PASS] 进程内用例逐条咬住 Q65 口径（五个提交入口 + 两个排队入口的拒绝、不提交角色放行、副作用顺序）
+[PASS] 帮助文本写明提交类入口会当场拒绝 A 股段，而策略 worker 不受影响
+[PASS] 摘要以当前 schema 版本落一个 `input` 块，且这份形状只由 input_provenance_json 写一次
+[PASS] 三条会落产物的链都不自己解帧：入口读与复核读都问 artifacts.rs 的读点
+[PASS] qx-app 单点完成 BarFrame Provider/逐列对账，CLI 唯一读点只委托并返回已核验身份
+[PASS] 报告与对比报告直接调用 qx-app 输入复核；应用层重读输入并逐字段核对，坏 kind 与缺字段均拒绝
+[PASS] 报告出口把复核失败向上抛，且旧 schema 只能被说成「没声明」而不是「已核对」
+[PASS] RunManifest 的 data_fingerprint 回落用被复核过的数据集指纹，引擎自哈希不再冒充输入身份
+[PASS] BarFrame 与深度帧版本均取自 qx-data 唯一契约
+[PASS] BarFrame provider 与深度帧版本只在 qx-data 分别定义一次
+[PASS] 六条用例钉住「声明等于重算、篡改即拒、缺文件即拒、同一身份不容两种内容、深度链同形、未声明不等于通过」
+[PASS] 回测结算币种的 spec/缺省归一由 qx-core 单点实现
+[PASS] 记账币种的缺省值只有一处定义，且值仍是 USDT（换币种要改这一格，不是四处）
+[PASS] 全仓只有定义点那一颗 *SETTLEMENT_CURRENCY* 公共常量
+[PASS] 币种兜底已全部接回常量：生产代码里除定义点外没有第二处写死的 "USDT"
+[PASS] 单源常量自己带着币种字面量与口径说明（缺省值≠合法币种白名单）
+[PASS] 回落链消费者与登记表逐一对应（新增兜底必须登记，不许静默新增第五处）
+[PASS] 账户 EventLog writer 去重名册由 qx-runtime 单点定义，qx-service API 只消费它
+[PASS] 回落链仍读单源常量：crates/qx-service/src/backtest_bindings/single_strategy.rs 的 qx_core::resolve_settlement_currency(None)
+[PASS] 回落链仍读单源常量：crates/qx-app/src/cases/run_multi_builtin_backtest.rs 的 qx_core::resolve_settlement_currency(input.market_spec)
+[PASS] 回落链仍读单源常量：crates/qx-runtime/src/account_ledger.rs 的 .unwrap_or(DEFAULT_SETTLEMENT_CURRENCY).to_ascii_uppercase()
+[PASS] 回落链仍读单源常量：crates/qx-runtime/src/account_ledger.rs 的 .unwrap_or_else(||DEFAULT_SETTLEMENT_CURRENCY.to_string())
+[PASS] 回落链仍读单源常量：crates/qx-cli/src/ecosystem_smoke.rs 的 settlement_currency:DEFAULT_SETTLEMENT_CURRENCY.into(),
+[PASS] 单源口径的三条用例在册：三条回落链同值、声明缺省==不声明、换币种动产物哈希
+[PASS] 币种指纹用例钉的是产物里的 result_hash，且同币种重跑必须相等（不许改用会随墙钟动的 digest）
+[PASS] 文件、SQLite、PostgreSQL 共用同一 Outbox 页序：可投递优先，时间/序号/事件 ID 数值顺序一致
+[PASS] 文件、SQLite、PostgreSQL 的 Outbox append 与 claim 输入校验委托 trait 默认步骤
+[PASS] 文件、SQLite、PostgreSQL 的 Outbox ack/retry 都在存储访问前走共享 event_id 校验
+[PASS] 出站投递预算只有一个判据出口，三本后端都不自己数次数、也不把阈值抄成字面量（V11 K2、R7-d）
+[PASS] relay 在 claim 之前跳过停摆事件，页数上界只在 store 那一处读（V11 K2、R7-d）
+[PASS] 投递页数从 trait 一路绑到三本后端：每家的读各自带一份上界（V11 R7-d）
+[PASS] SQL 的排序/停摆计数阈值绑回唯一常量，文件页排序也委托共享停摆判据（V11 R7-d）
+[PASS] 停摆条数向库里问、再进 report：三本后端各一份不问页数的计数（V11 R7-d）
+[PASS] 停摆数一路到 Prometheus 指标与 relay worker 的自报行（V11 K2，第 8 轮 A5）
+[PASS] 告警按状态量判：`> 0` 而不是 `increase(...)`（V13 第 8 轮 A5）
+[PASS] K2 用例在位：链尾解封在 file/sqlite 两后端各跑一次，停摆由重试一路跑出来（V11 K2）
+[PASS] R7-d 用例在位：三本后端各钉一次「停摆退到页尾 + limit 真截页」，relay 侧两后端各钉一次「停摆数不问页数」（V11 R7-d）
+[PASS] 人工出口那颗 helper 在三本后端各自的用例里各被调用一次，postgres 也在内（V13 第 8 轮 A4）
+[PASS] 停摆夹具跨数位边界（8 与 14），让「按数字比」与「按文本比」在两颗 helper 里各分岔一次（V13 第 8 轮 A4）
+[PASS] 停摆条数按增量问库里的状态量：入账 +2、人工确认之后 +1，两处都现读（V13 第 8 轮 A4）
+[PASS] 投递顺序的跨后端夹具在三本后端各跑一次，且刻意跨数位边界（2 / 20 / 3）（V11 R7-2）
+[PASS] crate 源码树每个 .rs 都被某处 mod 挂载（未挂载即死源码，编译与用例都不覆盖）
+[PASS] 默认 maker/taker 费率常数只在 qx-core::fee 定义（再导出不算第二处）
+[PASS] cost_rules 只再导出费率常数，不重复定义默认值
+[PASS] qx-app 单点绑定解析后的费用/延迟/provenance，qx-service 唯一绑定配置文件
+[PASS] 成本规则文件的读者全仓唯一（qx-service backtest_bindings）
+[PASS] 成本规则模板随仓库发布（配置面的可复制起点）
+[PASS] qx-cli 每个 Paper 构造点都显式给出费用模型
+[PASS] qx-cli 生产代码不得以零费构造 Paper（零费只允许出现在用例里）
+[PASS] Bar 回测成本规则作为 app spec 单源绑定，不在 CLI 构造引擎（Q0a/Q0c/WP-2）
+[PASS] Bar 回测装配不再写死零延迟（零延迟只能由成本绑定推导）
+[PASS] 存在把 Paper 费用记进 Ledger 的可执行用例（Q0a 的行为面证据）
+[PASS] 深度档缺省费率不再由分派层或门面写死
+[PASS] 深度档缺省费率取自成本绑定（三层优先级在契约里只判一次）
+[PASS] 运行时配置声明 strategy.cost_rules_path
+[PASS] config validate 覆盖 cost_rules_path（与装配同一个读者）
+[PASS] 存在「改配置里的 taker_bp → 回测手续费产物随之变化」的行为用例（Q0c 证据）
+[PASS] 形状判定只有一处，来源标签向它问同一个问题
+[PASS] 形状问题只在谓词里问一次，标签不复述判据
+[PASS] 两档输入来源（CCXT 形状/产品形状）由 qx-app 命名且不共用标签
+[PASS] 来源标签与绑定逻辑只在 qx-app 定义和使用，CLI/service 消费绑定结果
+[PASS] 没传规格那一档由 qx-app binding 独占，CLI/service 链上不得自带兜底标签
+[PASS] 策略回测 的运行身份输入块里规格来源只可能是 loader 返回的那个变量
+[PASS] 深度回测 的运行身份输入块里规格来源只可能是 loader 返回的那个变量
+[PASS] A 股单策略费用来源组合由 qx-app 单源实现，CLI 只委托成本绑定
+[PASS] builtin 适配器委托共享策略链，market spec 来源随持久化回测身份输出
+[PASS] 两条写来源的链各有经过真实入口、逐档核对产物标签的行为用例（V11 Q63 证据）
+[PASS] Paper 与 Binance/CCXT 共享服务状态机均保住「submit_as → Accepted → 动作值 → 终态回写」
+[PASS] Binance 与 CCXT 一次性入口都委托 qx-service 的唯一 Accepted/终态状态机
+[PASS] Accepted 之后的 `?` 退出只允许在册的那几处队列管线调用（新增或修好都要当场改登记）
+[PASS] Accepted 之后到终态回写之间不得用 `return` 绕过回写
+[PASS] Paper 入口的队列确认排在终态回写之后，且中间不夹裁决分支（失败也要 ack）
+[PASS] 「这一手已记为终态失败」的指路口径只有一个定义点
+[PASS] 指路尾句没有被手抄到第二处（要换措辞就改定义点，不能在调用点各写一份）
+[PASS] Paper、Binance 与 CCXT 三条服务动作链路都经这族指路口径
+[PASS] 同一次撮合尝试只有一个定义点
+[PASS] 一次性验收入口与常驻 worker 循环各调用一次同一个撮合尝试（第三条手写裁决当场可检出）
+[PASS] 缺行情终态用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）
+[PASS] paper-check 末行按本轮增量给结论且检查模块依赖显式：进场基线、增量子、增量分支与零新增分支都在位
+[PASS] 旧的无条件累计 ✓ 语句不得复活（同日重跑空转不许再冒充端到端验收通过）
+[PASS] 成功 ✓ 排在增量守卫之后、零新增那句排在其后（顺序颠倒即空转与真验收又混成一格）
+[PASS] 已实现/未实现盈亏各有一个算点，且都取 Ledger 的派生方法而不是就地重算一遍公式
+[PASS] 两个派生方法住在 Ledger 查询面：未实现那把尺子缺标记价即返回 None（与 equity 同一条契约），累计一律走 checked_add
+[PASS] 账户级盈亏的生产者有读侧用例：只开仓未平仓时是算出来的零、未实现与持仓行同一条现货尺子
+[PASS] qx-service 事件 consumer 写入走统一带预算通道 write_all_within，服务主路径不阻塞在 stdin
+[PASS] 服务层写侧等待预算取自 handler.timeout_ms，并与退出轮询同源
+[PASS] 服务层写侧失败留下可读诊断（不吞成断链/超时噪声）
+[PASS] 事件 consumer 子进程生命周期归 qx-service，CLI 仅调用服务 handler
+[PASS] 内核持仓观察的三个钱字段是 Option<Money>，且每个都带 #[serde(default)]（老日志缺键读成未报）
+[PASS] 事件摘要逐字段带存在性标记：未报与报为零是两份内容，改日志里的 null 为 0 会改动摘要
+[PASS] 线格式行的两个钱列是 Option<i128> 且默认缺席，价格列仍按 0 哨兵保持不变
+[PASS] 内核观察 ↔ 线格式行的钱列折算各只有一处，线格式没有的那一列折算回未报而不是 0
+[PASS] 行哈希与账户标量共用同一个带存在性标记的写入助手，两处不会各说一套
+[PASS] 持仓行的钱槽位不再手抄：整行交给 serde、未报由 Option 印成 null，手填槽位只剩 money_json 一个来源
+[PASS] 生产与用例里都不给持仓行的钱字段兜一个写死的 0
+[PASS] 读模型用 Ledger 自拼的那一行持仓承认自己算不出这两个钱字段
+[PASS] CCXT 持仓方向只认 long/short（大小写归一），缺失与连接器占位的 unknown 一律 fail-closed
+[PASS] 零数量行在方向闸门之前跳过：平仓位通常不带方向，不该被 fail-closed 连带打死
+[PASS] CCXT 回报的三个钱字段只由一个 optional_money 读法取，省略与 null 都读成未报
+[PASS] 持仓快照的非法保证金守卫建立在「报了才判」上，不给未报补一个可比较的零
+[PASS] Q68 的八处行为用例在位（方向 fail-closed/平仓位跳过/钱字段未报/摘要区分/折算区分/行两态/默认行不报钱/落盘回读）
+[PASS] 毫秒墙钟到租约秒只有一个换算入口，且它确实除以 1000
+[PASS] 作业队列与命令队列使用秒域时钟；策略租约覆盖 Python 请求与 E2B 启动预算
+[PASS] strategy-worker 的宿主可强制要求沙箱，缺失/local provider 在工作进程启动前拒绝
+[PASS] 执行 worker 收尾确认与领取用同一把秒域时钟，作业不会被自己的租约判过期
+[PASS] 八处命令队列入口全部按秒域写时间戳，且没有第九处绕开换算（同一队列混单位会让出队顺序倒置）
+[PASS] 三个 Outbox relay 出口都把墙钟换算成秒后才比较租约，并把停在门后的条数一起念出来（V13 R5）
+[PASS] 调度 tick 只遍历活动运行索引并升级超时作业，不克隆终态历史
+[PASS] 派发写入的 JobRun 与入队时间戳都在秒域，与升级判定同一把时钟
+[PASS] 并发键被占用只跳过本轮，不让一个作业打死整个调度器
+[PASS] 实时策略作业的运行记录以秒填写，deadline 直接由 timeout_seconds 推出
+[PASS] 超时升级数量对运维可见，不是只在状态文件里默默变化
+[PASS] 租约存活、未到期不误判、超时升级、并发键重新派发四断言各有用例钉住
+[PASS] 名册的条目集合就是承诺的七个形状（少一格就少一份接线核对）
+[PASS] 账户快照和活动事件表都有列定义，且都在 index.html 里真的存在
+[PASS] positionRow ⇔ crates/qx-protocol/src/wire.rs 的 PositionSnapshot 字段名逐个相等（双向）
+[PASS] orderRow ⇔ crates/qx-protocol/src/wire.rs 的 OrderSnapshot 字段名逐个相等（双向）
+[PASS] eventRow ⇔ crates/qx-core/src/event.rs 的 Event 字段名逐个相等（双向）
+[PASS] envelope ⇔ crates/qx-protocol/src/lib.rs 的 ProjectionEnvelope<T> 字段名逐个相等（双向）
+[PASS] snapshotTop ⇔ AccountSnapshot::to_json 写侧字面量的顶层键逐个相等（双向）
+[PASS] snapshotHeader ⇔ 同一条写侧字面量里 header 那层的键逐个相等（身份在 header，不在顶层）
+[PASS] balances ⇔ /account/balances 的 json! 响应体键集合相等
+[PASS] 快照写侧的顶层键均由当前 v3 schema 声明，精确余额与费用 map 都可省略
+[PASS] account-activity-events-table 的每一列都在 eventRow 名册里（页面不得读名册外的键）
+[PASS] account-activity-events-table 的表头 <th> 数（4）与列定义数（4）相等
+[PASS] events-table 的每一列都在 eventRow 名册里（页面不得读名册外的键）
+[PASS] events-table 的表头 <th> 数（4）与列定义数（4）相等
+[PASS] orders-table 的每一列都在 orderRow 名册里（页面不得读名册外的键）
+[PASS] orders-table 的表头 <th> 数（5）与列定义数（5）相等
+[PASS] positions-table 的每一列都在 positionRow 名册里（页面不得读名册外的键）
+[PASS] positions-table 的表头 <th> 数（8）与列定义数（8）相等
+[PASS] 每一格名册都被运行时真的读一次（fillTable/renderEvents 的列核对，或 missingFields 点名）
+[PASS] cashflow_amount_raw is explicitly derived from the verified cashflow event payload
+[PASS] app.js 里读到的每个 *_raw 键名都在响应名册或研究报告 schema 里（凭空开一列的那类故障反向也堵）
+[PASS] 写面请求体的键清单 ⇔ crates/qx-control/src/lib.rs 的 ControlCommand 字段名逐个相等（双向）
+[PASS] cmd-kind 的选项清单 ⇔ CommandKind 的变体逐个相等（双向）
+[PASS] cmd-permission 的选项清单 ⇔ Permission 的变体逐个相等（双向）
+[PASS] 控制台只有一处定点标度定义，且位数等于 numeric.rs 的 SCALE（1e9）
+[PASS] 标度换算只有一个出口（除数由 RAW_DECIMALS 推出，别处不得再除一次）
+[PASS] 时间轴标度单源一致：`Ts` 的文档口径就是运行时唯一墙钟的口径（epoch 毫秒，纳秒只在延迟配置里）
+[PASS] 控制台把这一列当毫秒渲染（epoch 毫秒直接进 Date，不再除 1e6），四个时间列走同一个出口
+[PASS] 游标推进只有一个出口，写入形态全在白名单里（没有 `seq + 1` 那一类），没有基线时不带 `after`
+[PASS] 后端游标语义仍是「回 seq > after，缺省从头给」，且事件序号从 0 起（页面那一侧的口径以这两条为前提）
+[PASS] API_PATHS 的 41 条路径都有取数读者，WebSocket 通道名取自名册而不是第二份字面量
+[PASS] WS_FRAME_KINDS 与 ws.rs 真的发射的那 7 种帧名逐个相等（双向）
+[PASS] 后端发的每一种帧在 handleFrame 里都有分派支（落空就是一种：帧被记成未知而实时面照印已连接）
+[PASS] 控制台的 CSRF cookie/头名取自 console.rs 常量（qx_console_csrf / x-qx-csrf）
+[PASS] 写面真的把 CSRF 取出来放回请求头（不读它，同源 BFF 的写面就是一条永久 403 的死路）
+[PASS] 同源 BFF 确实不代理 WebSocket 升级（这条判据一变红，页面与文档的那句「不适用」就成谎话）
+[PASS] BFF 形态下实时面退化为轮询，页面与说明文字都说清（徽标不得报「WS 已连接」）
+[PASS] Paper 轨验收记录在盘，且六格自述齐全（passed / 不需凭据 / 无外部 venue / 无网络 / 无订单 / 主链到 Executed）
+[PASS] 记录由在盘脚本生成，且脚本真做了「主链四段 / 重跑 / 独立目录 / 无凭据」四件比对
+[PASS] Paper 主链四段写全（scheduler -> strategy -> paper-execution -> ledger），四个计数都是正数
+[PASS] Paper 轨不越界替外部验收作保：记录正文不出现任何 venue 名称，实盘两档仍全 false
+[PASS] Paper 轨终态退场且幂等：无遗留待执行命令、审计链校验通过、重跑不重复下单、两个独立目录事实面相等
+[PASS] 脚本默认跑仓库那份 paper 模板且在盘，并主动摘掉凭据环境变量（「不需要凭据」是构造出来的）
+[PASS] Paper 验收使用新的仓内隔离目录且不递归删除已有目录
+[PASS] 能力档登记了 Paper 轨的验收记录与生成器（两条轨各有一份仓库资产，读者找得到证据在哪）
+[PASS] 订单/成交/划转/多币种费用映射共用一个稳定 JSON 渲染点，字段不再手抄
+[PASS] 持仓/订单/成交/划转/多币种费用映射全部经该渲染点，标的键只有一个写法
+[PASS] 往返用例在位：稳定 JSON 既是合法 JSON、又与 serde 那份同源、还能被 from_json 解回同一份状态
+[PASS] 跨语言夹具带着写侧的真实编码：四张键表的键是字符串、枚举是变体名，不是数字键/数字码
+[PASS] 同一份夹具两侧各钉一次：Rust 比对 `to_json` 全等，Python 把它喂进 `load_account_snapshot`——读侧不再只吃手抄的空表字典
+[PASS] 变体生产者判据扫到了全仓的 pub enum（解析退化会让零变体假绿）
+[PASS] 每个 pub enum 变体都有生产代码里的限定名生产者，或在允许清单里说明它的生产者在线格式上
+[PASS] 线格式允许清单逐条可复核：变体仍在册、所在枚举确实 Deserialize、且确实零生产者
+[PASS] 通配 owner 只有一个常量，领取判据不再就地比较 "*"，且与装配端共用同一处判据
+[PASS] 作业 owner 在装配处 fail closed，且新建与载入两条路径都要问
+[PASS] deploy 示例声明的作业清单文件都在其相对布局下找得到
+[PASS] deploy 示例里每个启用作业都有可领取的启用 Strategy worker（owner 路由连通）
+[PASS] JobSpec 三格零读者字段按先例「保留不删 + 登记 limitation + 双向钉住」，而不是删面
+[PASS] deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里
+[PASS] 能力矩阵把「快照无仓库内生产者」与「工件值无读者」立成 limitation，不是写在代码注释里
+[PASS] 物化/增量物化/计划编译/finkit 校验/动量计算在 src 生产文本里零调用（写侧确实无人装配）
+[PASS] 四处读侧确实只认 candidate 血缘与指纹，没有读 artifacts 里的逐标的因子值
+[PASS] 接口文档逐层列出的快照字段与 serde 结构体的字段一一对齐（不多不少）
+[PASS] 接口文档直说快照由仓库外导出、且拼错的键会被拒绝，不让读者以为框架会生成
+[PASS] 五层快照 JSON 结构全部带 deny_unknown_fields（文档承诺与解析行为同源）
+[PASS] 快照读侧仍在就绪判定与两条策略装配里被真的解析（limitation 只承认写侧缺，不掩盖读侧）
+[PASS] 读侧的缺席词只有 report_readout.rs 一处定义，命令侧不再兜底成 0（V12 R1）
+[FAIL] 两个命令各用一份正文函数，正文函数各只定义一处（report_readout_lines / latest_backtest_readout_lines） — 命令侧直读 [] / 正文定义 [('report_readout_lines', 1), ('latest_backtest_readout_lines', 1)]
+[PASS] 产物世代由正文第一行说出，且只在共用读法里拼一次
+[PASS] 读侧世代表里最新的块与摘要写侧的 schema_version 同号（写侧升级必须带着读侧一起升）
+[PASS] 多腿 cost_bps 的口径定义一处、调用一处，产物假设行同时说明零换手是 null
+[PASS] R1 用例在位：五条排版/读法单元 + 四条 report/status 命令行用例
+[PASS] report_readout 在 crate 根以 mod + pub(crate) use 成对挂载
+[PASS] 快速回测 manifest 形状、相对路径和有界并行批次由 qx-app 单点拥有
+[PASS] CLI 快速回测只负责查找并读取 manifest、绑定已有策略入口
+[PASS] 批次 runner 空输入安全、线程数有上限，join panic/error 都能退出并定位作业
+[PASS] 快速回测 manifest 固定版本/字段合同，可选 market_spec 缺省可接受、显式错误必须拒绝并有回归
+[PASS] 自研 HTTP 面覆盖表点名的 self_built_file 全部在盘
+[PASS] 覆盖表按行可解析，且每行自述齐全（area/status/anchor/case/note 四格 + note）
+[PASS] 每行点名的 anchor 符号真的在它登记的文件中声明（fn/const/struct/enum/static/type/trait）
+[PASS] 每行点名的 case 用例真的在它登记的测试文件里（fn <用例> 在盘）
+[PASS] verdict 落 keep_self_built，且 reason 与 migration_trigger 都非空（迁库触发条件在场）
+[PASS] accepted_gaps 恰好等于非 covered 行（gap/partial），by_design 不入列
+[PASS] 研究报告容量驱动器覆盖 JSON/HTML/XLSX 并分别测量报告进程
+[PASS] 研究报告容量证据覆盖 1k/8k/64k × JSON/HTML/XLSX，绑定同一回测且不冒充完整 profile
+[PASS] 文档引用判据的前缀集由仓库顶层目录派生，空集会让这颗判据静默全绿
+[PASS] 活文档里每一处 `path:NN` 都能落地：文件在盘上、行号不越界（台账 #152）
+活文档引用盘点：151 条（落空 0）
+[PASS] 非功能目标按 profile/场景/硬件/版本/证据登记，且目标不被写成现状
+[PASS] runtime paths and strategy path resolution/EventLog identity have one runtime owner and API/pipeline service logic has one service owner
+[PASS] ValuationContext / ExactValuationContext / ValuationResult 落在 qx-core 的 valuation 模块，且 lib.rs 挂载并重导出
+[PASS] Ledger::valuate 在盘，且所有 raw 参数化权益尺子由它派发
+[PASS] Ledger::valuate_exact 在盘，且所有 scale-aware 权益尺子由它派发
+[PASS] MarginState::valuate 在盘，且两个入口共用 ValuationResult::new（available 关系单源）
+[PASS] 参数化权益尺子在生产源码里只出现在定义点与估值单点（其余一律走 Ledger::valuate）
+[PASS] MarginState::equity / available 委托 valuate（保证金算式不在 trading.rs 里再写一份）
+[PASS] 估值派发有四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率给出不同的数）
+[PASS] Paper 衍生持仓按可重放的开仓杠杆计初始保证金，未知旧杠杆 fail-closed
+[PASS] OrderBook 已开仓衍生持仓按各自持久化杠杆投影，候选杠杆只用于新订单
+[PASS] EventLog 摘要纳入新开仓杠杆事实，同时保留旧缺字段事件的摘要兼容性
+[PASS] 多腿恢复扫描、退避、补偿风控和 Paper 行情驱动归 qx-service，CLI 只重导出
+[PASS] `legacy_spot_spec` 兼容分支已从全仓生产源码删除（缺规格不再合成临时现货规格）
+[PASS] MaxNotionalRule::check 缺规格即 fail-closed（点名缺什么，不再合成临时规格）
+[PASS] 缺规格拒绝消息单点定义在 qx-risk/lib.rs，且被规则实现引用（有生产读者）
+[PASS] Bar 与单/多市场 OrderBook 都将完整 RiskContext 交给同一 RuleSet
+[PASS] 缺规格 fail-closed 有一条行为用例在盘
+[PASS] 三入口一致性合同不再引用 position-only 旧入口或历史缺口测试
+[PASS] 模式登记册覆盖 schemas/ 全部契约且指针全部落地
+[PASS] WP-5.2 venue 生产命令连接验收脚本并落盘真实窗口起止时间
+[PASS] WP-5.2 venue producer 只接受凭据、真实发单且通过的 L3 窗口
+[PASS] WP-5.2 两个 venue producer 都校验只读 live-check、幂等拒绝、恢复对账与终态事实
+[PASS] WP-5.2 venue bundle 仅引用脱敏配置摘要与持久化来源，不复制原始阶段输出
+[PASS] 版本化报告 DTO 仅由 qx-app report_read/model.rs 定义
+[PASS] report_read 与 qx-app 根路径继续兼容导出报告 DTO 与事件 reader
+[PASS] 报告 DTO 模型无存储/用例依赖，标准与多市场读取分别归 reader 用例
+[PASS] 多市场 EventLog reader 唯一归属子模块且保留两层兼容导出
+[PASS] Bar/Depth 与 Provider 报告 reader 唯一归属 standard 子模块且兼容导出不变
+[PASS] 单市场 EventLog reader 唯一归属 single_event 子模块且兼容导出不变
+[PASS] 核心 report/CSV 组装与 bounded ArtifactReader primitives 唯一归属 artifact_views
+[PASS] 实验 RunManifest/结果发布与复核职责唯一归属 run_experiment/persistence 且兼容导出保留
+[PASS] 搜索候选 checkpoint 恢复/发布、既有报告身份确认和 retryable 结果分类唯一归属 recovery 子模块
+[PASS] 实验邻域候选枚举/coverage/drawdown 评价唯一归属 neighborhood，版本化报告 DTO 与兼容导出保留
+[PASS] 多市场实验首轮 proposal、训练执行、adaptive trial 反馈和首折搜索报告唯一归属 candidate_execution
+[PASS] 多市场实验输入/结果 DTO 留在 types，JSON contract 与规格校验唯一归属 spec 子模块
+[PASS] Multi-account Bar/Depth XLSX worksheet projection and workbook publication归 multi_account owner
+[PASS] Read-only runtime status and latest summary resolution have one status owner and stable exports
+[PASS] 生产源码里丢弃结构体字段值必须当场写明理由（`let _ = x.y;` 同行要带注释）
+[PASS] 生产源码的 `#[allow(dead_code)]` 必须当场写明理由（同行或紧邻上一行的注释）
+[PASS] 生产源码的 `unreachable!` 必须带非空消息（裸 `unreachable!()` 到不了现场就没人知道为什么）
+[PASS] 生产源码不得留 `todo!`/`unimplemented!` 桩（要么实现，要么登记进 capabilities.yaml）
+[PASS] 生产源码的 TODO/FIXME 标记与登记表逐项相等（多一个或删一个都要同步登记表）
+[PASS] CI 工作流存在
+[PASS] CI production lint denies unwrap/expect in lib/bin and scans all Rust build scripts
+[PASS] feature-matrix job 按矩阵逐组合跑 clippy/check/test（--no-default-features）
+[PASS] qx-cli 声明的每颗特性都出现在 CI 矩阵的某个组合里
+[PASS] CI 矩阵里的每个 token 都是 qx-cli 真有的特性（拼错即红）
+[PASS] NATS 契约用例有一条真执行的腿（点名两个 NATS 测试目标、非 --ignored/--no-run）
+[PASS] `--ignored` 那条存储契约腿仍在盘（真执行腿与它并存，不是替换）
+[PASS] NATS 关键行为用例逐名存在且参与测试发现（不以总数判定）
+[PASS] feature-off 腿的 clippy 步骤按 --no-default-features --all-targets 跑且带 -D warnings
+[PASS] 有 `cfg(not(feature = …))` 分支的 crate 都在 feature-off 腿上（那半边代码只有这腿 lint 得到）
+[PASS] feature-off 腿点名的 crate 恰好是声明了非默认特性的每个 workspace crate（新增特性 crate 必须进腿）
+[PASS] 命令帮助用例读取生成清单，且顶层路由与 clap 表逐一相等
+[PASS] 顶层帮助用例逐条消费生成命令清单
+[PASS] 二级帮助用例逐条消费生成清单，且父/子路由与 clap 表逐一相等
+[PASS] WP-2.1 Binance 与 PostgreSQL/NATS 可选后端命令有离线真实进程拒绝契约
+[PASS] 写面提交不再整份拷贝状态（`self.clone()` + `*self = staged` 的旧写法已消失）
+[PASS] 三条写面都有强制重放回滚，且回滚失败时保留提交根因
+[PASS] 整份重建的短路被 `force` 门控住（失败回滚必须强制重放，否则 next_seq 漏回滚）
+[PASS] 失败回滚有行为用例在盘（断事件数与 seq 游标都收回，且回滚后仍可继续）
+[PASS] qx-app 的依赖集是精确的（11 个内部领域/契约依赖 + serde/serde_json，共 13 名，无门面/适配/执行/存储）
+[PASS] 单策略 Bar 成交参与率经 qx-app 绑定装配
+[PASS] 单策略与 legacy builtin 的规格映射由 qx-app 单源完成并保留 sizing 参数
+[PASS] BarFrame 对外内容身份统一委托 qx-data::fingerprint_bars，应用层不得另用帧摘要冒充数据集指纹
+[PASS] Python BarFrame.digest 委托 qx-datastruct，Python 不复制 FNV 算法或偏移常量
+[PASS] A 股 raw/公司行为/日历校验与 CCXT 分类/重试资格均由 Rust 核心单源执行，Python 只适配/转发
+[PASS] CCXT Worker 端到端用例覆盖七类原生异常分类、重试次数与指数退避预算
+[PASS] 错误类别闭集与版本化应用契约逐条同名同序（少一类/改名/换序都红）
+[PASS] 九项用例登记面在盘、自述 kind 正确、每个用例的九项逐格非空
+[PASS] 登记面每个用例的键集恰好是那九项（多一格少一格都红）
+[PASS] 多策略入口的 typed inputs 是同一用例的支持 API，不登记成平行用例
+[PASS] 登记面的用例集合 == `cases/mod.rs` 的 `pub use`，且每个用例都有自己的 `pub fn` 落点
+[PASS] `cases/mod.rs` 的九项文档表与登记面逐条相等（每个用例名 + 第一列九项）
+[PASS] 登记面的 capability 与用例代码里的能力闸一致（说不管就必须真不管）
+[PASS] qx-app 是 workspace 成员，且三个门面（CLI / HTTP / Python）都依赖它并有门面实现落点
+[PASS] NATS Outbox relay 重试复用稳定 event_id 做 broker 去重，且不把有限窗口误作持久幂等
+[PASS] WP-2.1 `strategy` 全部子命令均有真实 CLI 进程行为用例
+[PASS] data-validate CLI 只适配参数/输出，宽松质量诊断与清单冲突规则由 qx-app 持有
+[PASS] data-validate CLI 保留进程级退出码、stdout/JSON、清单与异内容冲突契约
+[PASS] WP-2.1 data-validate 顶层入口双目录重放比较 stdout、清单字节与产物集合
+[PASS] QXRB 环布局的三处实现在盘（Rust / Python / C++）
+[PASS] Rust 与 Python 的九格环布局常量都能取到（缺一格就少一份核对）
+[PASS] Rust 与 Python 的环布局九格逐格相等（同一份二进制契约的两种语言镜像）
+[PASS] C++ 的 kHeaderBytes / kSlotHeaderBytes 等于 Rust 的 HEADER_BYTES / SLOT_HEADER_BYTES
+[PASS] C++ 头文件的魔数与 header/seq/slot 偏移逐条对齐 Rust（子串指纹）
+[PASS] 环布局有跨语言运行时用例在盘（Rust/Python/C++ 三侧的共享 ring 实参都被真的构造过）
+[PASS] Binance MarketData runner 与 Paper 行情镜像由 qx-service 唯一拥有，CLI 只转发启动
+[PASS] CCXT 执行队列、风控行情、终态回写与多腿恢复由 qx-service 唯一拥有
+[PASS] 能力矩阵在盘、自述 kind 与 schema_version 正确、三段（domains/venues/providers）非空
+[PASS] `levels` 恰是方案 §2 点名的五态且顺序一致（档位词表是闭集，不许就地长出新档）
+[PASS] 全表没有把能力写成布尔值的地方（方案 §2：不得用 `supported=true` 掩盖限制）
+[PASS] `domains` 名册 == 方案 §2 基线表的八个领域（少一个就是有缺口被藏起来了）
+[PASS] 每个领域的档位都落在五态闭集里
+[PASS] 每个领域都写了至少一条限制（「不得掩盖限制」的可核验形态）
+[PASS] 每个领域的证据里至少有一条仓库路径，且每条都在盘（证据不是形容词）
+[PASS] 每个领域都写了下一个闸门（缺口要有人接着）
+[PASS] venue 名册 == 生产代码里真实的 `impl Venue for X`，且 `impl` 就是含该实现的文件
+[PASS] 每个生产 Venue 都实现运行时能力声明；提交/撤单、Binance 查询/对账与 CCXT 查询入口执行对应能力校验
+[PASS] Provider 声明的数据档位参与请求预检，深度回测档位与请求/Provider 能力一致
+[PASS] 每个 venue 逐格给齐 §4.2 的字段名册且档位合法、`verified_version` 非空
+[PASS] provider 名册 == 生产代码里真实的 `impl DataProvider for X`，且逐格给齐数据面字段名册
+[PASS] 外部 venue 声称 `sandbox`/`order_type` 已验时必须有 outcome=pass 的 testnet 记录（没有证据不得翻真，与 `capabilities_check` 同一把尺）
+[PASS] 切分模块在盘且被挂载；`RunExperimentSpec` 的两个旋钮都在，且 spec 与报告两处都带 `skip_serializing_if`（不写这两格的旧 spec 序列化回原样，是纯加法）
+[PASS] qx-app 直接复用 qx-spec::SplitPlan；实验参数 Python 镜像与 qx-app 字段/词表对齐；连续参数名由 schema 约束标识符并按使用场景在 Rust 校验
+[PASS] 切分形状只由 qx-spec::SplitPlan 校验，序列化规格与 qx-app 执行入口调用同一实现
+[PASS] `EXPERIMENT_BASELINE_NAMES`（qx-app）与 `qx_spec::EXPERIMENT_BASELINES` 逐值相等
+[PASS] 选参只读训练窗、样本外分数只读测试窗（走查与『整段跑一遍再切片』的分界）
+[PASS] `buy-and-hold` 用收盘价序列算（策略权益曲线不是买入持有），`zero-signal` 是恒等式
+[PASS] 切分与基准的六条行为用例都在盘（静态判据只是快闸，真牙齿是那六条）
+[PASS] 产物发布原语 ^pub enum PublishMode \{ 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布原语 ^pub enum PublishError \{ 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布原语 ^pub struct TempPublish \{ 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布原语 ^pub fn publish\( 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布原语 ^pub fn publish_bytes\( 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布原语 ^pub fn publish_stream[<(] 只定义于 crates/qx-app/src/artifact_store/sink.rs
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/artifact_store/backtest_summary.rs
+[PASS] crates/qx-app/src/artifact_store/backtest_summary.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/artifact_store/backtest_summary.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/artifact_store/run_record.rs
+[PASS] crates/qx-app/src/artifact_store/run_record.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/artifact_store/run_record.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/artifact_store/portable_run_evidence.rs
+[PASS] crates/qx-app/src/artifact_store/portable_run_evidence.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/artifact_store/portable_run_evidence.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/cases/artifacts.rs
+[PASS] crates/qx-app/src/cases/artifacts.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/cases/artifacts.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs
+[PASS] crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/cases/validate_dataset_manifest.rs
+[PASS] crates/qx-app/src/cases/validate_dataset_manifest.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/cases/validate_dataset_manifest.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-app/src/cases/validate_depth_dataset_manifest.rs
+[PASS] crates/qx-app/src/cases/validate_depth_dataset_manifest.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-app/src/cases/validate_depth_dataset_manifest.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-api/src/app_runs/persistence.rs
+[PASS] crates/qx-api/src/app_runs/persistence.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-api/src/app_runs/persistence.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_html.rs
+[PASS] crates/qx-cli/src/report_html.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_html.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_xlsx/openxml.rs
+[PASS] crates/qx-cli/src/report_xlsx/openxml.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_xlsx/openxml.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_publish.rs
+[PASS] crates/qx-cli/src/report_publish.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_publish.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_benchmark.rs
+[PASS] crates/qx-cli/src/report_benchmark.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_benchmark.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_comparison_benchmark.rs
+[PASS] crates/qx-cli/src/report_comparison_benchmark.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_comparison_benchmark.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_multi_market_depth/diagnostics.rs
+[PASS] crates/qx-cli/src/report_multi_market_depth/diagnostics.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_multi_market_depth/diagnostics.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_multi_market_depth/publication.rs
+[PASS] crates/qx-cli/src/report_multi_market_depth/publication.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_multi_market_depth/publication.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/report_multi_market/publication.rs
+[PASS] crates/qx-cli/src/report_multi_market/publication.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/report_multi_market/publication.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 产物发布调用方登记表条目在盘：crates/qx-cli/src/run_evidence_experiment_recompute/portable_bundle.rs
+[PASS] crates/qx-cli/src/run_evidence_experiment_recompute/portable_bundle.rs 的产物落盘走 sink 出口
+[PASS] crates/qx-cli/src/run_evidence_experiment_recompute/portable_bundle.rs 不再自造临时文件发布（手搓发布已收编）
+[PASS] 未登记的自搓发布形状为空（新写一处落盘必须走 sink 或进豁免登记表）
+[PASS] 豁免登记表条目在盘：crates/qx-service/src/ccxt_live_bars.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-service/src/ccxt_live_bars.rs
+[PASS] 豁免登记表条目在盘：crates/qx-cli/src/strategy_live_state.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-cli/src/strategy_live_state.rs
+[PASS] 豁免登记表条目在盘：crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs
+[PASS] 豁免登记表条目在盘：crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs
+[PASS] 豁免登记表条目在盘：crates/qx-service/src/worker_metrics.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-service/src/worker_metrics.rs
+[PASS] 豁免登记表条目在盘：crates/qx-data/src/catalog.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-data/src/catalog.rs
+[PASS] 豁免登记表条目在盘：crates/qx-data/src/registry.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-data/src/registry.rs
+[PASS] 豁免登记表条目在盘：crates/qx-data/src/storage.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-data/src/storage.rs
+[PASS] 豁免登记表条目在盘：crates/qx-zhenlu/src/lib.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-zhenlu/src/lib.rs
+[PASS] 豁免登记表条目在盘：crates/qx-orchestrator/src/strategy_deployment.rs
+[PASS] 豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：crates/qx-orchestrator/src/strategy_deployment.rs
+
+架构分片 1/4 完成：471 项，失败 1 项
+架构快速分片 1/4 失败：exit 1
+
+[stderr]

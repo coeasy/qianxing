@@ -1,0 +1,16 @@
+$ node --test web/console/console_auth.test.js
+exit_code=0
+
+[stdout]
+✔ packaged console reads its CSRF cookie and sends it with same-origin writes (1.6661ms)
+✔ packaged console does not invent a CSRF token when the cookie is absent (0.5993ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 721.3715
+
+[stderr]

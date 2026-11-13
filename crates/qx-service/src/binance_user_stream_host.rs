@@ -1,11 +1,13 @@
 //! Binance private user-stream worker lifecycle.
 
+use crate::binance_reconcile_host::sync_binance_order_groups_from_user_stream;
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
 use crate::pipeline_metrics_report::PipelineMetricsReporter;
 use crate::venue_market_host::configured_binance_ws_endpoint;
 use crate::worker_market_spec::worker_report_spec;
 use qx_adapter::{
-    run_binance_user_stream_with_config_loader, BinanceSpotAuth, BinanceSpotVenue,
+    run_binance_user_stream_with_config_loader_observing, BinanceSpotAuth, BinanceSpotVenue,
     BinanceStreamRetryPolicy, BinanceUserStreamRunConfig,
 };
 use qx_core::VenueFamily;
@@ -68,13 +70,24 @@ where
     )?;
     let stop_context = context.clone();
     let sleep_context = context.clone();
+    let sleep_metrics = Arc::clone(&metrics);
     let event_context = context.clone();
+    let reconnect_metrics = Arc::clone(&metrics);
     let mut source_seq = 0_u64;
     let mut should_stop = move || stop_context.should_stop();
     let mut sleep = move |delay: Duration| {
         sleep_context.sleep_ms(delay.as_millis() as u64);
         if !sleep_context.should_stop() {
-            let _ = sleep_context.heartbeat(runtime_timestamp_ms());
+            let now = runtime_timestamp_ms();
+            let _ = sleep_context.heartbeat(now);
+            if let Ok(mut metrics) = sleep_metrics.lock() {
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::PrivateOrderStream,
+                    GatewayBusinessHealthStatus::Degraded,
+                    now,
+                );
+                metrics.publish_if_due(true, now);
+            }
         }
     };
     let event_worker = worker.clone();
@@ -94,6 +107,15 @@ where
                 // the reconciler confirms state from REST before submissions resume.
                 if payload.contains("listenKeyExpired") {
                     venue.reconnect();
+                }
+                let now = runtime_timestamp_ms();
+                if let Ok(mut metrics) = event_metrics.lock() {
+                    metrics.observe_gateway_port_business_status(
+                        ExchangeGatewayPort::PrivateOrderStream,
+                        GatewayBusinessHealthStatus::Degraded,
+                        now,
+                    );
+                    metrics.publish_if_due(true, now);
                 }
                 return Err(format!("Binance 用户事件处理失败: {error:?}"));
             }
@@ -117,8 +139,24 @@ where
                 &mut source_seq,
             )?,
         };
+        if event_count != 0 && has_binance_order_list_id(payload) {
+            sync_binance_order_groups_from_user_stream(
+                &pipeline_storage.root,
+                &pipeline,
+                &event_worker,
+                &venue,
+            )?;
+        }
         event_context.heartbeat(received_ts)?;
         if let Ok(mut metrics) = event_metrics.lock() {
+            metrics.observe_gateway_port_business_status(
+                ExchangeGatewayPort::PrivateOrderStream,
+                GatewayBusinessHealthStatus::Healthy,
+                received_ts,
+            );
+            if let Some(timestamp_ms) = venue.last_event_timestamp_ms() {
+                metrics.observe_gateway_venue_last_event("BINANCE", timestamp_ms);
+            }
             metrics.observe(&pipeline);
             metrics.publish_if_due(true, received_ts);
         }
@@ -134,12 +172,19 @@ where
     if let Ok(mut metrics) = metrics.lock() {
         metrics.publish_if_due(true, runtime_timestamp_ms());
     }
-    let report = run_binance_user_stream_with_config_loader(
+    let report = run_binance_user_stream_with_config_loader_observing(
         || load_auth(&worker),
         run_config,
         &mut should_stop,
         &mut sleep,
         &mut on_event,
+        move |reconnects| {
+            let now = runtime_timestamp_ms();
+            if let Ok(mut metrics) = reconnect_metrics.lock() {
+                metrics.observe_gateway_venue_reconnects("BINANCE", reconnects.into());
+                metrics.publish_if_due(true, now);
+            }
+        },
     );
     drop(on_event);
     if let Ok(metrics) = metrics.lock() {
@@ -160,4 +205,11 @@ fn runtime_timestamp_ms() -> u64 {
         .unwrap_or_default()
         .as_millis()
         .min(u64::MAX as u128) as u64
+}
+
+fn has_binance_order_list_id(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| value.get("g").and_then(serde_json::Value::as_i64))
+        .is_some_and(|order_list_id| order_list_id >= 0)
 }

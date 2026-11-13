@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/dataset-snapshot-context-v1.json",
+  "title": "Qianxing Dataset Snapshot Context v1",
+  "description": "Owner-supplied capture metadata combined with a verified DatasetManifestV2 by qx-cli data-snapshot.",
+  "type": "object",
+  "required": ["schema_version", "instrument_role", "captured_at_ms", "frequency_ms", "timestamp_semantics", "price_precision", "quantity_precision", "price_unit", "quantity_unit", "calendar_id", "calendar_version", "gaps", "corporate_action_policy"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "instrument_role": {"enum": ["index", "equity", "etf", "future", "crypto_spot", "fx", "other_tradable", "unknown"]},
+    "captured_at_ms": {"type": "integer", "minimum": 1},
+    "frequency_ms": {"type": "integer", "minimum": 1},
+    "timestamp_semantics": {"enum": ["bar_open", "bar_close", "event_time"]},
+    "price_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+    "quantity_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+    "price_unit": {"type": "string", "minLength": 1},
+    "quantity_unit": {"type": "string", "minLength": 1},
+    "calendar_id": {"type": "string", "minLength": 1},
+    "calendar_version": {"type": "string", "minLength": 1},
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_ts_ms", "end_ts_ms"],
+        "properties": {
+          "start_ts_ms": {"type": "integer", "minimum": 1},
+          "end_ts_ms": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "corporate_action_policy": {"enum": ["adjusted", "unadjusted", "not_applicable", "unknown"]}
+  },
+  "additionalProperties": false
+}

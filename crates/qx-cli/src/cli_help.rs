@@ -73,18 +73,25 @@ pub(crate) fn print_cli_help() {
 配置与运维入口：
   init [runtime.json] [--force]
       创建本地运行时配置及可复用的样例数据/调度文件。
-  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest> [--force]
+  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest|research-local|crypto-paper|crypto-sandbox-acceptance> [--force]
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
-  quickstart [项目目录] [--force]
-      一条命令跑完首跑链条：建 macd 项目 → doctor → backtest → report → status；
-      只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
+  quickstart [项目目录] [--strategy <name>] [--profile <builtin|ashare|ccxt>] [--days N] [--timeframe TF] [--as-of-ms UTC_MS] [--html] [--force]
+      一条命令跑完首跑链条：建内置策略项目 → doctor → backtest → report → status；
+      --strategy 可选 sma_cross、ema_cross、macd、rsi、bollinger、donchian_breakout、momentum、mean_reversion、grid、atr_trend、keltner_trend、vwap_reversion 或 volatility_breakout；
+      --profile ccxt 默认使用 OKX BTC 永续合约最近 30 天 1h 真实公开行情，可用 --exchange/--instrument/--days/--timeframe 调整；--as-of-ms 固定窗口上限以复现同一结束 K 线；只读，不加载密钥或提交订单。
+      CCXT 专属参数只能与 --profile ccxt 组合；最多 365 天、100000 根 Bar，月份周期不支持。
+      --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
   guide [researcher|strategy-author|operator|integrator]
       按角色打印可复制的上手步骤；不传角色时列出四条路径。
   doctor [runtime.json] [--json]
       一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
       因此不判运行健康，也不连接交易所、不发送订单。
+  doctor --capabilities [--json]
+      离线查看统一产品能力矩阵；用 --capability-id <ID> 查看支持限制与验收证据。
+      用 --operation balance.read|orders.read|positions.read|cashflows.read|funding.read|account_settings.read 查询私有读取范围。
+      静态登记不代表当前环境连通、凭据可用或沙盒验收通过。
   config explain [runtime.json] [--json]
       输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
   config validate [runtime.json]
@@ -97,15 +104,17 @@ pub(crate) fn print_cli_help() {
       统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
   status [runtime.json] [--json]
       查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
-  report [runtime.json|summary.json|run.multi-market-depth.json] [--json] [--html] [--evidence] [--against SUMMARY]... [--benchmark-bars BAR_FRAME] [--benchmark-calendar JSON] [--benchmark-csv PATH] [--xlsx PATH] [-o|--output PATH]
+  report [runtime.json|summary.json|run.multi-market-depth.json] [--json] [--html] [--evidence] [--against SUMMARY]... [--benchmark-bars BAR_FRAME] [--benchmark-calendar JSON] [--benchmark-csv PATH] [--strategy-diagnostics JSON] [--xlsx PATH] [-o|--output PATH]
       查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
       --html 写出 <stem>.report.html 与三张 SVG；-o/--output 可改输出前缀，需与 --html 同用。
       --against 可重复指定其他 summary，生成同标的、同数据指纹的横向指标排名；与 --html 同用时输出离线对照表。
       --benchmark-bars 输入基准 BarFrame，要求与权益曲线时间戳逐项精确对齐；按原始未复权 close 计算每 Bar 相对指标，不年化；可与 --evidence 同用并纳入可搬运证据包，也可与 --against 同用为每轮比较结果绑定同一基准。
       --benchmark-calendar 可选传入带来源与 calendar_id 的 A 股交易日历；严格验证基准/组合日线覆盖日历范围内每个交易日，拒绝缺日、非交易日或日内多条记录。
       --benchmark-csv 与 --benchmark-bars 同用时，导出逐 Bar 组合/基准收益序列及主动收益 CSV；结合 --against 时合并输出各轮序列并附 run_id。
+      --strategy-diagnostics 绑定诊断 JSON；核对策略、标的与数据身份，可导出到 HTML、JSON、XLSX；与 --evidence 同用时进入单次 Bar/多市场 Bar/多市场深度证据包。
       --xlsx 导出 Excel 工作簿；单轮报告含摘要、权益/持仓、成交、月度收益及可选基准序列，同输入对照另含排序与指标明细。
-      多市场深度运行摘要可直接导出逐市场质量 HTML/XLSX；--against 接受相同市场顺序和数据指纹的深度运行，输出排序对照。
+      多市场 Bar/深度报告可将已预计算诊断绑定到 HTML/JSON/XLSX 报告并筛选查看；XLSX 包含诊断摘要和可分段还原的完整 JSON。多市场 Bar 与深度 --against 的 --strategy-diagnostics 分别使用 schemas/multi-market-bar-diagnostic-comparison-v1.json 和 schemas/multi-market-depth-diagnostic-comparison-v1.json，按 run_id 为每次运行提供诊断数组；报告会重开摘要并重验输入身份。
+      单次 Bar、多市场 Bar 与多市场深度可将诊断附件随 EvidenceBundle 导出并离线校验；该校验验证文件摘要和身份，不重算诊断。多市场深度运行摘要可导出逐市场质量 HTML/XLSX；--against 接受相同市场顺序和数据指纹的深度运行，输出排序和可筛选诊断对照。
       --evidence 在复核链通过后再聚一份 <stem>.evidence.json（EvidenceBundle，generation=run）：把 RunManifest
       身份、四份产物指针、数据身份、配置与策略身份、模型假设、构建身份、验证级别、未验证清单与
       离线复算指引收进同一份文档，供「同一运行由 RunManifest 离线复算」用；只聚合不重算指标。
@@ -119,6 +128,20 @@ pub(crate) fn print_cli_help() {
       要求匹配代码版本，并逐字段核对重跑得到的 RunManifest。
   evidence pack-multi-market-run <run.multi-market.json>
       从已完成的多市场 Bar 回测产物、RunManifest、权益/成交副件与各市场输入生成 run EvidenceBundle。
+  evidence pack-multi-account-run <multi-account-result.json> --spec <multi-account-spec.json> --output-dir <DIR>
+      先对每个成功账户执行 report --evidence，再将批次结果、规格及所有账户便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-run <DIR> [--recompute]
+  evidence pack-multi-account-joint-run <multi-account-joint-result.json> --spec <multi-account-joint-spec.json> --output-dir <DIR>
+  evidence verify-multi-account-joint-run <DIR> [--recompute]
+      离线验真批次规格/结果身份、全部账户 EvidenceBundle、输入指纹与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence pack-multi-account-depth-run <multi-account-depth-result.json> --spec <multi-account-depth-spec.json> --output-dir <DIR>
+      将多账户 Tick/OrderBook 批次结果、规格与每个成功账户的便携 EvidenceBundle 原子打包。
+  evidence verify-multi-account-depth-run <DIR> [--recompute]
+      离线验真多账户深度输入与账户归属；--recompute 会在隔离目录独立重跑整个批次。
+  evidence recompute-experiment <experiment.json>
+      在匹配代码构建上复算单市场 Bar 参数网格的全部候选，并验证原始与重跑产物。
+  evidence recompute-depth-experiment <depth-experiment.json>
+      在匹配代码构建上复算单市场 Tick/OrderBook 参数网格的全部候选，并验证原始与重跑产物。
   evidence recompute-multi-market-experiment <experiment.multi-market-experiment.json>
       在匹配代码构建上复算 Bar 参数网格中的全部候选，并逐项比较结果与 RunManifest。
   evidence recompute-multi-market-depth-experiment <experiment.multi-market-depth-experiment.json>
@@ -155,6 +178,19 @@ pub(crate) fn print_cli_help() {
       并印进 [Strategy · Signal] 行；同一份配置在 backtest builtin 上必须给出同一套信号。
       可选数据质量清单须由 data-validate 针对同一文件生成，dataset-id/version 分别为
       strategy-bars:<instrument> 与 barframe-json-v1；运行前会核对内容 SHA-256 和数据身份。
+  strategy diagnose-depth <run.multi-market-depth.json> --output <diagnostics.json> [--html]
+      复验深度输入、质量清单和 RunManifest 后，从 Rust 内置策略配置生成多标的预热窗口与历史轨迹诊断。
+      --html 会继续复核并生成交互式 HTML 研究报告。外部策略和动态账户 sizing 暂不支持自动重建；
+      未来扰动明确标注为未执行，供应商 PIT 可见性标记未知。
+  strategy diagnose-multi-bar <run.multi-market.json> --output <diagnostics.json> [--html]
+      复验多市场 Bar 输入、质量清单和 RunManifest 后，为全部 Rust 内置策略槽生成未来扰动、预热轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入交互式研究报告；外部策略和动态账户 sizing 失败关闭，并受总 Bar 数和重放预算限制。
+  strategy diagnose-multi-account <multi-account-result.json> --spec <multi-account-spec.json> --output <diagnostics.json> [--html]
+      按账户身份重验并为成功的 Rust 内置 Bar 策略生成未来扰动、预热轨迹与 PIT 可见性诊断；失败账户不生成诊断。
+      所有成功账户诊断会合并成可复核附件，最多 32 个账户、累计 262,144 根 Bar、1 MiB 输出；--html 接入多账户交互报告。
+  strategy diagnose-bar <run.summary.json> --spec <backtest-spec.json> --output <diagnostics.json> [--html]
+      复验摘要、RunManifest、完整规格和 BarFrame 指纹，再重建 Rust 内置策略，生成未来扰动、预热窗口/轨迹与 PIT 可见性诊断。
+      --html 会把诊断接入现有交互式回测研究报告；动态账户 sizing 与多策略组合明确拒绝自动重建。
   backtest [runtime.json] [bar-frame.json] [market-spec.json]
       使用统一 Rust 撮合引擎运行跨语言策略回测。
   backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity] [--config <runtime.json>]
@@ -176,9 +212,10 @@ pub(crate) fn print_cli_help() {
       strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
       --root 会持久化两份腿级摘要/RunManifest/权益与成交 CSV、组合摘要与 EvidenceBundle；可用 report 导出 JSON/HTML/XLSX，并在同一组腿数据上比较不同运行。
       质量清单须成对提供；回测前逐腿核对源文件摘要、数据身份和质量字段，结果报告保留两腿各自的清单身份。
-  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
+  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>] [--use-public-default-fees]
       一次完成 CCXT OHLCV 获取、不可变 BarFrame 快照与 DatasetManifestV2 绑定、持久内置策略回测。
       交易所/交易对/timeframe/请求窗口写入来源 lineage，内容变化形成新数据身份；A 股段与费用口径同样生效。
+      --use-public-default-fees 使用 market metadata 的公开默认 maker/taker 费率；需两者均存在且可精确换算为整数 bp，账户自定义费率请用 runtime cost_rules_path。
   backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>] [--config <runtime.json>] [--dataset-manifest <manifest-v2.json>]
       深度档回测：--fill-tier 只认 l1 与 l2 两个值。l1 走 Tick 内核，帧里每一 snapshot 必须只有一档
       盘口（多一档即拒）；l2 走订单簿内核，按内核的 L2L3 档位吃掉帧里带的全部深度，因此没有第三个
@@ -200,9 +237,12 @@ pub(crate) fn print_cli_help() {
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证；每个 job 可选填 dataset_manifest，
       与 strategy backtest 一样复核数据身份、源文件摘要和质量报告。
   dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
-      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。
-  dataset-bundle <bundle.json> <data-dir> [bar-frame.json]
-      校验并持久化 DatasetBundleManifest；提供 BarFrame 时同时校验 bars fingerprint。
+      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。可追加
+      --snapshot-context <context.json> --timezone <tz>，把合并后的完整 BarFrame、v2 manifest
+      与 owner context 校验后幂等发布 DatasetSnapshotV1；同身份内容漂移会被拒绝。
+  dataset-bundle <bundle.json> <data-dir> [bar-frame.json] [--snapshot <DatasetSnapshotV1.json>]
+        校验并持久化 DatasetBundleManifest；含 bars 的 bundle 必须提供 BarFrame 与 DatasetSnapshotV1，核对精确字节、清单指纹和缺口。
+        bars snapshot 纳入 bundle fingerprint，并在策略回测时与实际 BarFrame 重核；无 snapshot 的旧 bundle 不具备执行资格。
   data-validate <bar-frame.json> <dataset-id> <version> <interval-ms> <output.json> [--timezone <tz>] [--json]
       只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
   data-validate-depth <depth-frame.json> --tier <l1|l2> <interval-ms> <output.json> [--timezone <tz>]
@@ -210,6 +250,9 @@ pub(crate) fn print_cli_help() {
       清单会记录 interval_ms，后续回测可据此独立复算 missing_intervals。
       output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
       --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
+  data-snapshot <data.json> <manifest.json> <context.json> <snapshot.json>
+      用 DatasetSnapshotContextV1 将 instrument role、采集语义、交易日历、精度/单位及公司行为口径绑定到清单；
+      发布前复核原始数据 SHA-256，output 只接受幂等相同内容。
   app <validate-dataset|backtest|verify> <spec.json>
       应用层用例入口（T2-2）：三条入口分别调 qx-app 的 validate_dataset / run_backtest / verify_run。
       validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测；数据不足是裁决不是错误。
@@ -218,12 +261,13 @@ pub(crate) fn print_cli_help() {
       成功时 stdout 只有一份 JSON；失败时 stderr 给出同一份 AppError JSON，与 Python/HTTP 两个入口
       逐字节可比（同一 use case、同一错误 code 与 correlation id）。这条链是同步 Bar 切片，不含
       market spec、A 股制度与跨语言策略——那些能力在 backtest builtin 上，两者互不替代。
-  plan <kind> <file> [--json]
+  plan <kind> <file> [--json|--template]
       按类型名读入并校验一份地基规格对象，印出身份、规格版本与稳定指纹；
-      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry。
-      --json 改印规范化正文；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
+      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry / canonical-run-spec。
+      --json 改印规范化正文；experiment / capability / schema-registry 支持 --template 写入占位模板，拒绝覆盖已有文件。
+      证据对象必须由真实运行或验收生成，不提供占位证据；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
   ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
-      拉取并冻结一份 CCXT 市场规格，供回测与实盘共用（需要 CCXT worker 依赖）。
+      拉取并冻结 CCXT 市场规格；同时按交易产品写入标的角色，供实盘角色门禁校验（需要 CCXT worker 依赖）。
 
 运行时与服务入口：
   serve [runtime.json]
@@ -253,8 +297,8 @@ pub(crate) fn print_cli_help() {
   ccxt-worker <runtime.json> <worker-id> <ccxt-config.json> [--once]
       运行 CCXT 执行 worker。
       执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情角色不受影响。
-  ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe]
-      下载一段 CCXT OHLCV 并写成标准 BarFrame 文件。
+  ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe] [--manifest <file>]
+      下载 CCXT OHLCV，冻结 BarFrame 并生成质量清单；默认清单路径为同目录 <output-stem>.manifest.json。
   outbox-relay <data-root> <nats-url> <subject-prefix> [limit]
       把文件 outbox 中的事件转发到 NATS（需 --features nats 构建）。
   outbox-relay-postgres <runtime.json> <nats-url> <subject-prefix> [limit]
@@ -283,8 +327,9 @@ pub(crate) fn print_cli_help() {
   ccxt-submit-order <runtime.json> <worker-id> <ccxt-config.json> <command.json>
       经公共 CCXT Worker 提交一条 SubmitOrder（Binance/OKX/Bybit 等由 exchange_id 决定），真实下单。
       CCXT 凭据只经环境变量名引用（写在 ccxt-config.json 的 credential_env），不进命令行/运行时配置。
-  paper-e2e [runtime.json]
-      跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
+  paper-e2e [runtime.json] [--quote-price-raw PRICE] [--quote-qty-raw QTY]
+      跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）；可用 raw 定点价格覆盖默认 99/100 报价，
+      覆盖时 bid 与 ask 相同，数量默认 1000 单位。
   paper-check [runtime.json]
       按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路；与 paper-e2e 一样注入
       一条固定合成 L1 报价（99/100），不接真实 feed。

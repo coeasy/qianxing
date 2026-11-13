@@ -1,0 +1,82 @@
+$ cargo check -p qx-runtime --target x86_64-unknown-linux-gnu --offline -j1
+exit_code=101
+
+[stdout]
+
+[stderr]
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v3.0.4
+   Compiling serde_derive v1.0.229
+    Checking memchr v2.8.3
+    Checking serde_json v1.0.151
+    Checking serde v1.0.229
+    Checking qx-core v0.3.0 (D:\aex_work\qianxing\crates\qx-core)
+    Checking qx-guanxing v0.3.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+   Compiling ring v0.17.14
+warning: ring@0.17.14: Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+warning: ring@0.17.14: Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+warning: ring@0.17.14: Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+warning: ring@0.17.14: Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+error: failed to run custom build command for `ring v0.17.14`
+
+Caused by:
+  process didn't exit successfully: `D:\aex_work\qianxing\target\debug\build\ring-35e4ac0e12b455a9\build-script-build` (exit code: 1)
+  --- stdout
+  cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR
+  cargo:rerun-if-env-changed=CARGO_PKG_NAME
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_MAJOR
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_MINOR
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_PATCH
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_PRE
+  cargo:rerun-if-env-changed=CARGO_MANIFEST_LINKS
+  cargo:rerun-if-env-changed=RING_PREGENERATE_ASM
+  cargo:rerun-if-env-changed=OUT_DIR
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENDIAN
+  cargo:rerun-if-env-changed=CC_x86_64-unknown-linux-gnu
+  CC_x86_64-unknown-linux-gnu = None
+  cargo:rerun-if-env-changed=CC_x86_64_unknown_linux_gnu
+  CC_x86_64_unknown_linux_gnu = None
+  cargo:rerun-if-env-changed=TARGET_CC
+  TARGET_CC = None
+  cargo:rerun-if-env-changed=CC
+  CC = None
+  cargo:rerun-if-env-changed=CROSS_COMPILE
+  CROSS_COMPILE = None
+  PATH = Some(D:\aex_work\qianxing\target\debug\deps;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\.codex\tmp\arg0-windows\codex-arg02Olrnn;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\libheif\libheif\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\jxrlib\jxrlib\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\override;D:\dev\miniforge3;D:\dev\miniforge3\Library\mingw-w64\bin;D:\dev\miniforge3\Library\usr\bin;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\bin;D:\dev\miniforge3\condabin;C:\Program Files\coreutils\bin;C:\Program Files\YunShu\utils;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3;D:\java\jdk-11.0.2\bin;D:\dev\Go\bin;C:\Program Files\Git\cmd;D:\dev\nodejs;C:\insolu\client001;C:\Program Files\CMake\bin;C:\Users\Administrator\.mimocode\bin;C:\Users\Administrator\AppData\Local\kdocs-cli;C:\Users\Administrator\scoop\shims;C:\Users\Administrator\.cargo\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps;D:\dev\MicrosoftVSCode\bin;C:\Users\Administrator\go\bin;C:\Users\Administrator\.local\bin;C:\Users\Administrator\AppData\Local\zazflow;C:\Users\Administrator\AppData\Local\azaflow;C:\Users\Administrator\.azaloop;D:\soft\WPS Office\12.9.0.27735\clitool;C:\Users\Administrator\AppData\Local\Programs\CodeBuddy CN\bin;C:\Users\Administrator\.qoder\bin\qodercli;C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links;C:\Users\Administrator\AppData\Roaming\npm;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\593bad775a30e636;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\08d187884f2330d1;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\bin)
+  cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+  cargo:warning=Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+  cargo:warning=Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=TARGET_CFLAGS
+  TARGET_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64_unknown_linux_gnu
+  CFLAGS_x86_64_unknown_linux_gnu = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64-unknown-linux-gnu
+  CFLAGS_x86_64-unknown-linux-gnu = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=TARGET_CFLAGS
+  TARGET_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64_unknown_linux_gnu
+  CFLAGS_x86_64_unknown_linux_gnu = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64-unknown-linux-gnu
+  CFLAGS_x86_64-unknown-linux-gnu = None
+  cargo:warning=Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+  cargo:warning=Compiler family detection failed due to error: ToolNotFound: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+
+  --- stderr
+
+
+  error occurred in cc-rs: failed to find tool "x86_64-linux-gnu-gcc": program not found (see https://docs.rs/cc/latest/cc/#compile-time-requirements for help)
+
+

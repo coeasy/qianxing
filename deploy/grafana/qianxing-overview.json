@@ -96,6 +96,149 @@
         { "expr": "sum(rate(qx_pipeline_transient_retries_total[5m]))", "legendFormat": "瞬时重试" },
         { "expr": "sum(rate(qx_pipeline_refreshes_total[5m]))", "legendFormat": "刷新" }
       ]
+    },
+    {
+      "id": 10,
+      "title": "持久运行 watcher 活跃量 / 上限",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        { "expr": "max(qx_app_run_watchers_active)", "legendFormat": "活跃 watcher" },
+        { "expr": "max(qx_app_run_watcher_capacity)", "legendFormat": "容量上限" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "持久运行 watcher 容量拒绝速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "targets": [
+        { "expr": "sum(rate(qx_app_run_watcher_rejections_total[5m]))", "legendFormat": "拒绝/秒" }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "行情 / 执行 / 对账延迟 P95（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, venue_id, worker) (rate(qx_ccxt_ohlcv_request_duration_seconds_bucket[5m])))", "legendFormat": "{{venue_id}} · OHLCV · {{worker}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, venue_id, worker, account, port) (rate(qx_gateway_port_operation_duration_seconds_bucket[5m])))", "legendFormat": "{{venue_id}} · {{port}} · {{worker}}" }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "任务 / 控制命令队列积压",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "targets": [
+        { "expr": "qx_job_queue_pending", "legendFormat": "可领取任务" },
+        { "expr": "qx_control_command_queue_pending", "legendFormat": "未确认命令" }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "队列最老等待年龄（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "targets": [
+        { "expr": "qx_job_queue_oldest_age_seconds", "legendFormat": "任务队列" },
+        { "expr": "qx_control_command_queue_oldest_age_seconds", "legendFormat": "控制命令队列" }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "未解决订单组 / 对账问题",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 64 },
+      "targets": [
+        { "expr": "sum by (account, venue) (qx_order_group_status{status=\"reconcile_required\"})", "legendFormat": "待人工对账 · {{account}} · {{venue}}" },
+        { "expr": "sum(qx_reconcile_order_issues)", "legendFormat": "最新报告未解决订单问题" },
+        { "expr": "qx_order_group_metrics_available", "legendFormat": "订单组指标可用" },
+        { "expr": "qx_reconcile_metrics_available", "legendFormat": "对账报告指标可用" }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "交易网关错误类别速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 64 },
+      "targets": [
+        { "expr": "sum by (venue_id, worker, account, port, class) (rate(qx_gateway_port_errors_total[5m]))", "legendFormat": "{{venue_id}} · {{port}} · {{class}}" }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "CCXT 行情限流重试速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
+      "targets": [
+        { "expr": "sum by (venue_id, worker) (rate(qx_ccxt_ohlcv_rate_limit_retries_total[5m]))", "legendFormat": "{{venue_id}} · {{worker}}" }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "持久队列指标采集可用性",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 },
+      "targets": [
+        { "expr": "qx_job_queue_metrics_available", "legendFormat": "任务队列" },
+        { "expr": "qx_control_command_queue_metrics_available", "legendFormat": "控制命令队列" }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "交易业务端口健康状态（0 异常 / 1 降级 / 2 健康）",
+      "type": "timeseries",
+      "description": "Unobserved 不会伪装成数值；无序列表示尚未观察到该端口。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 80 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "qx_gateway_port_business_status", "legendFormat": "{{venue_id}} · {{worker}} · {{account}} · {{port}}" }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "交易业务端口最近活动年龄（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
+      "targets": [
+        { "expr": "time() - qx_gateway_port_business_timestamp_seconds", "legendFormat": "{{venue_id}} · {{worker}} · {{account}} · {{port}}" }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "交易所私有流重连速率",
+      "type": "timeseries",
+      "description": "只累计 CCXT Pro 内部恢复后成功应答，以及 Rust worker 重建后的首次成功应答；失败尝试不计作成功重连。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
+      "targets": [
+        { "expr": "sum by (venue_id, worker, account, venue) (rate(qx_gateway_venue_reconnects_total[5m]))", "legendFormat": "{{venue_id}} · {{venue}} · {{account}}" }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "交易所私有流最后事件年龄（秒）",
+      "type": "timeseries",
+      "description": "只计算已观察到的正时间戳；无序列表示当前没有可用的事件时间证据。",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
+      "targets": [
+        { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds) and (qx_gateway_venue_last_event_timestamp_seconds > 0)", "legendFormat": "{{venue_id}} · {{venue}} · {{account}}" }
+      ]
     }
   ]
 }

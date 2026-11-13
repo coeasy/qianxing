@@ -1,0 +1,23 @@
+{
+  "OrderBook": {
+    "instrument": { "symbol": "ALTUSDT", "venue": "BINANCE" },
+    "ts": 10,
+    "sequence": 7,
+    "bids": [
+      {
+        "price_raw": 12,
+        "qty_raw": 0,
+        "price_exact": { "coefficient": "12345", "scale": 12 },
+        "qty_exact": { "coefficient": "5", "scale": 18 }
+      }
+    ],
+    "asks": [
+      {
+        "price_raw": 12,
+        "qty_raw": 0,
+        "price_exact": { "coefficient": "12346", "scale": 12 },
+        "qty_exact": { "coefficient": "6", "scale": 18 }
+      }
+    ]
+  }
+}

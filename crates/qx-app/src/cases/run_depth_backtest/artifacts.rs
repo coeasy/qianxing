@@ -8,9 +8,11 @@
 use super::super::kernels::{ORDER_BOOK_MATCHING_KERNEL, TICK_MATCHING_KERNEL};
 use crate::artifact_store::{
     account_base_source_label, persist_backtest_artifacts_with_summary, persist_run_manifest,
-    BacktestAccountBase, BacktestArtifacts as BacktestArtifactInput, BacktestInputProvenance,
-    BacktestSampleTimestamps, BacktestSignalParams, PortfolioFillAttribution,
+    write_backtest_artifact, BacktestAccountBase, BacktestArtifacts as BacktestArtifactInput,
+    BacktestInputProvenance, BacktestSampleTimestamps, BacktestSignalParams,
+    PortfolioFillAttribution,
 };
+use crate::cases::artifacts::event_trace_jsonl;
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::BacktestArtifacts;
 use crate::trade_facts::rejection_facts;
@@ -24,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// "每根 Bar 一点"去读一条逐快照的曲线。
 pub(super) const DEPTH_SAMPLE_UNIT: &str = "depth_snapshot";
 /// 深度链的运行期版本：进 `RunManifest.runtime_version`，证据包按它判"哪一代产物"。
-pub(super) const DEPTH_RUNTIME_VERSION: &str = "depth-backtest-v1";
+pub(crate) const DEPTH_RUNTIME_VERSION: &str = "depth-backtest-v1";
 /// 深度帧数据集的版本（与 `qx-data` 的注册口径同源）。
 pub(super) const DEPTH_FRAME_DATASET_VERSION: &str = qx_data::DEPTHFRAME_DATASET_VERSION;
 
@@ -151,7 +153,13 @@ fn depth_legacy_summary_fields(
     tier: &str,
     initial_cash_raw: i128,
     report: &OrderBookBacktestReport,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, AppError> {
+    let exact_metrics = report.exact_metrics_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("订单簿精确权益指标无效: {error}"),
+        )
+    })?;
     let mut fields = serde_json::json!({
         "run_id": run_id,
         "manifest_run_id": manifest.run_id,
@@ -161,6 +169,7 @@ fn depth_legacy_summary_fields(
         "tier": tier,
         "equity_points": report.equity.len() as u64,
         "final_equity_raw": report.final_equity(),
+        "metrics_exact": exact_metrics.clone(),
         "return_bps": report.return_bps,
         "max_drawdown_bps": report.max_drawdown_bps,
         "fees_raw": report.fees_raw,
@@ -175,13 +184,26 @@ fn depth_legacy_summary_fields(
     if let Some(market_spec) = spec.market_spec.as_ref() {
         fields["market_spec"] = serde_json::json!(market_spec);
     }
+    let funding_events_json = serde_json::to_vec(&spec.funding_events).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("深度历史资金费事件编码失败: {error}"),
+        )
+    })?;
+    fields["funding"] = serde_json::json!({
+        "funding_bps": spec.funding_bps,
+        "history_event_count": spec.funding_events.len(),
+        "history_events_sha256": qx_strategy::sha256_hex(&funding_events_json),
+        "settlement_count": exact_metrics["funding"]["settlement_count"],
+        "cashflow_by_currency": exact_metrics["funding"]["cashflow_by_currency"],
+    });
     if let Some(order_policy) = spec.order_policy.as_ref() {
         fields["order_policy"] = serde_json::json!(order_policy);
     }
     if let Some(market_making) = spec.market_making.as_ref() {
         fields["market_making"] = serde_json::json!(market_making);
     }
-    fields
+    Ok(fields)
 }
 
 pub(super) fn config_hash(
@@ -231,12 +253,14 @@ pub(super) struct DepthArtifactInput<'a> {
     /// 实际执行的策略身份：注入的自定义策略用自己的版本，内置策略用 `builtin-<kind>-v1`。
     pub strategy_id: &'a str,
     pub strategy_version: &'a str,
+    pub custom_strategies: &'a [crate::cases::StrategyArtifactIdentity],
+    pub effective_account_id: &'a str,
     pub account_id: Option<&'a str>,
     pub portfolio: Option<PortfolioFillAttribution>,
     pub context: &'a crate::RunContext,
 }
 
-/// 落盘结果：清单路径 + 四份产物路径 + 清单摘要（stdout 与证据包核对共用）。
+/// 落盘结果：清单路径 + 四份核心产物及事件轨迹路径 + 清单摘要（stdout 与证据包核对共用）。
 pub(super) struct PersistedDepthRun {
     pub manifest: RunManifest,
     pub artifacts: BacktestArtifacts,
@@ -263,7 +287,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
         None if spec.market_spec.is_some() => "trading-instrument-spec-v1".to_string(),
         None => "instrument-spec:none".to_string(),
     };
-    let manifest = report
+    let mut manifest = report
         .run_manifest(
             RunManifestIdentity {
                 run_id: &manifest_run_id,
@@ -281,8 +305,61 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
                 format!("Tick/OrderBook RunManifest 构建失败: {error}"),
             )
         })?;
+    let quality_manifest_fingerprint = input
+        .dataset_quality
+        .and_then(|quality| quality.get("manifest_fingerprint"))
+        .and_then(serde_json::Value::as_str);
+    let canonical_run_spec = super::canonical_spec::build_depth_canonical_run_spec(
+        spec,
+        input.custom_strategies,
+        input.context.code_commit(),
+        input.frame,
+        report,
+        DEPTH_RUNTIME_VERSION,
+        &instrument_spec_version,
+        input.risk_rule_set_version,
+        input.effective_account_id,
+        report.execution_model_descriptor.fee_bps,
+        quality_manifest_fingerprint,
+    )
+    .map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("构建深度 CanonicalRunSpec 失败: {error}"),
+        )
+    })?;
+    manifest.canonical_run_spec_json =
+        Some(canonical_run_spec.canonical_json().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("深度 CanonicalRunSpec 规范化失败: {error}"),
+            )
+        })?);
+    manifest.canonical_run_spec_fingerprint =
+        Some(canonical_run_spec.fingerprint().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("深度 CanonicalRunSpec 指纹失败: {error}"),
+            )
+        })?);
+    manifest.validate().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("深度 RunManifest 无效: {error}"),
+        )
+    })?;
     let root = PathBuf::from(&spec.output_dir);
     let manifest_path = persist_run_manifest(&root, &manifest)?;
+    let manifest_stem = manifest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("depth.run.json")
+        .strip_suffix(".run.json")
+        .unwrap_or("depth");
+    let event_trace_path = manifest_path.with_file_name(format!("{manifest_stem}.events.jsonl"));
+    let event_trace = event_trace_jsonl(report.event_log.events())?;
+    write_backtest_artifact(&event_trace_path, &event_trace, "深度事件轨迹")
+        .map_err(|error| AppError::new(AppErrorCategory::StorageFailure, error))?;
     let strategy_id = input.strategy_id.to_string();
     let run_id = spec.run_id.clone();
     let tier = spec.tier.clone();
@@ -291,7 +368,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
     // 交叉入口测试）。这些字段取自已构建的 RunManifest 与报告读数，不在此处重新推导；
     // 在摘要序列化**之前**并入，RunRecord 记住的摘要摘要才能与落盘字节一致。
     let legacy_summary_fields =
-        depth_legacy_summary_fields(spec, &manifest, &run_id, &tier, initial_cash_raw, report);
+        depth_legacy_summary_fields(spec, &manifest, &run_id, &tier, initial_cash_raw, report)?;
     let persisted_artifacts = persist_backtest_artifacts_with_summary(
         &manifest_path,
         &BacktestArtifactInput {
@@ -303,6 +380,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
             samples: input.frame.snapshots.len(),
             sample_ts: BacktestSampleTimestamps::Values(&report.snapshot_ts),
             equity: &report.equity,
+            equity_exact: Some(&report.equity_exact),
             positions: &report.positions,
             fills: &report.fills,
             execution_attempts: &report.execution_attempts,
@@ -316,6 +394,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
             issuer_capital_at_end: None,
             return_bps: report.return_bps,
             max_drawdown_bps: report.max_drawdown_bps,
+            max_drawdown_raw: report.max_drawdown_raw,
             fees_raw: report.fees_raw,
             turnover_raw: report.turnover_raw,
             final_equity_raw: report.final_equity(),
@@ -354,6 +433,7 @@ pub(super) fn persist(input: DepthArtifactInput<'_>) -> Result<PersistedDepthRun
         summary: summary_path.to_string_lossy().into_owned(),
         equity: equity_path.to_string_lossy().into_owned(),
         fills: fills_path.to_string_lossy().into_owned(),
+        event_trace: Some(event_trace_path.to_string_lossy().into_owned()),
     };
     Ok(PersistedDepthRun {
         manifest,

@@ -1,0 +1,11 @@
+$ python3 -m unittest discover -s python/tests -p test_strategy_capabilities.py
+exit_code=0
+
+[stdout]
+
+[stderr]
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 0.058s
+
+OK

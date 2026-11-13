@@ -13,6 +13,17 @@ pub struct StrategyBatchBacktestBinding {
     pub dataset_component_fingerprints: BTreeMap<String, String>,
 }
 
+/// Apply the canonical version used by built-in strategy run identity.
+pub fn normalize_builtin_strategy_version(
+    strategy: &mut qx_runtime::StrategyRuntimeConfig,
+) -> Result<(), String> {
+    if let Some(name) = strategy.builtin_strategy.as_deref() {
+        let kind = qx_strategy::BuiltinStrategyKind::parse(name)?;
+        strategy.version = format!("builtin-{}-v1", kind.name());
+    }
+    Ok(())
+}
+
 /// Freeze the declared strategy configurations and validate their DatasetBundle inputs once.
 /// Fingerprints are calculated before paths are resolved so portable run identity retains the
 /// user's declared relative paths while execution receives resolved paths.
@@ -20,7 +31,8 @@ pub fn strategy_batch_backtest_bindings(
     config: &RuntimeConfig,
     runtime_path: &Path,
     bars_manifest: &qx_data::DatasetManifest,
-    bars_len: usize,
+    bars_frame: &qx_datastruct::BarFrame,
+    bars_content_sha256: &str,
 ) -> Result<Vec<StrategyBatchBacktestBinding>, String> {
     let strategies = if config.strategies.is_empty() {
         vec![config.strategy.clone()]
@@ -29,7 +41,8 @@ pub fn strategy_batch_backtest_bindings(
     };
     strategies
         .into_iter()
-        .map(|strategy| {
+        .map(|mut strategy| {
+            normalize_builtin_strategy_version(&mut strategy)?;
             let strategy_id = strategy
                 .id
                 .clone()
@@ -60,9 +73,21 @@ pub fn strategy_batch_backtest_bindings(
                 let fingerprint = qx_app::dataset_bundle::verify_dataset_bundle_bars(
                     &bundle,
                     bars_manifest,
-                    bars_len,
+                    bars_frame.ts.len(),
                 )
                 .map_err(|error| error.message().to_string())?;
+                let snapshot = bundle.snapshots.get("bars").ok_or_else(|| {
+                    format!(
+                        "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: {strategy_id}"
+                    )
+                })?;
+                verify_bundle_bar_snapshot(
+                    snapshot,
+                    bars_manifest,
+                    bars_frame,
+                    bars_content_sha256,
+                )?;
+                let snapshot_sha256 = Some(snapshot.content_sha256()?);
                 verify_dataset_bundle_component_bindings(
                     &bundle,
                     &strategy_config.strategy,
@@ -96,6 +121,10 @@ pub fn strategy_batch_backtest_bindings(
                     .into_iter()
                     .map(|(kind, component)| (kind, component.dataset.fingerprint))
                     .collect();
+                if let Some(snapshot_sha256) = snapshot_sha256 {
+                    dataset_component_fingerprints
+                        .insert("dataset_snapshot_sha256".into(), snapshot_sha256);
+                }
             }
 
             Ok(StrategyBatchBacktestBinding {
@@ -107,6 +136,59 @@ pub fn strategy_batch_backtest_bindings(
             })
         })
         .collect()
+}
+
+fn verify_bundle_bar_snapshot(
+    snapshot: &qx_data::DatasetSnapshotV1,
+    bars_manifest: &qx_data::DatasetManifest,
+    bars_frame: &qx_datastruct::BarFrame,
+    bars_content_sha256: &str,
+) -> Result<(), String> {
+    snapshot.validate()?;
+    let manifest = &snapshot.manifest;
+    let instrument = bars_frame.instrument.to_string();
+    if manifest.tier != qx_data::DatasetTier::Bar
+        || !matches!(
+            snapshot.timestamp_semantics,
+            qx_data::DatasetTimestampSemantics::BarOpen
+                | qx_data::DatasetTimestampSemantics::BarClose
+        )
+        || manifest.instrument != instrument
+        || manifest.dataset.dataset_id != bars_manifest.dataset_id
+        || manifest.dataset.version != bars_manifest.version
+        || manifest.dataset.source != bars_manifest.source
+        || manifest.dataset.fingerprint != bars_manifest.fingerprint
+        || manifest.dataset.schema_version != bars_manifest.schema_version
+        || manifest.dataset.start_timestamp != bars_manifest.start_timestamp
+        || manifest.dataset.end_timestamp != bars_manifest.end_timestamp
+        || manifest.content_hash != bars_content_sha256
+        || manifest.quality_report.row_count != bars_frame.ts.len() as u64
+        || manifest.dataset.start_timestamp != bars_frame.ts.first().copied().unwrap_or(0)
+        || manifest.dataset.end_timestamp != bars_frame.ts.last().copied().unwrap_or(0)
+    {
+        return Err("策略 DatasetBundle bars snapshot does not bind to the exact BarFrame".into());
+    }
+    if snapshot.frequency_ms == 0 {
+        return Err("策略 DatasetBundle bars snapshot frequency_ms must be positive".into());
+    }
+    let mut gaps = Vec::new();
+    let mut missing = 0_u64;
+    for pair in bars_frame.ts.windows(2) {
+        let delta = pair[1] - pair[0];
+        missing = missing
+            .checked_add(delta.div_ceil(snapshot.frequency_ms) - 1)
+            .ok_or_else(|| "DatasetBundle snapshot gap count overflow".to_string())?;
+        if delta > snapshot.frequency_ms {
+            gaps.push(qx_data::DatasetCoverageGapV1 {
+                start_ts_ms: pair[0].saturating_add(snapshot.frequency_ms),
+                end_ts_ms: pair[1],
+            });
+        }
+    }
+    if snapshot.gaps != gaps || manifest.quality_report.missing_intervals != missing {
+        return Err("策略 DatasetBundle bars snapshot gaps do not match the BarFrame".into());
+    }
+    Ok(())
 }
 
 pub fn verify_dataset_bundle_component_bindings(
@@ -155,21 +237,30 @@ mod tests {
             &std::fs::read_to_string(&bars_path).expect("read BarFrame example"),
         )
         .expect("BarFrame example is valid");
-        let (bars, manifest) =
+        let (_bars, manifest) =
             qx_app::backtest_input_identity::barframe_dataset_identity(&bars_path, &frame)
                 .expect("BarFrame identity is valid");
         let mut runtime = RuntimeConfig::from_json(include_str!(
             "../../../../deploy/qianxing.runtime.example.json"
         ))
         .expect("runtime example config is valid");
+        runtime.strategy.id = None;
+        runtime.strategy.version = "user-declared-builtin-version".into();
+        runtime.strategy.builtin_strategy = Some("sma_cross".into());
         runtime.strategy.dataset_bundle_path =
             Some("qianxing.dataset-bundle.bar-frame.example.json".into());
 
-        let bindings =
-            strategy_batch_backtest_bindings(&runtime, &runtime_path, &manifest, bars.len())
-                .expect("one validated strategy binding should be returned");
+        let bindings = strategy_batch_backtest_bindings(
+            &runtime,
+            &runtime_path,
+            &manifest,
+            &frame,
+            &qx_data::sha256_hex_bytes(&std::fs::read(&bars_path).expect("read BarFrame bytes")),
+        )
+        .expect("one validated strategy binding should be returned");
         assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].strategy_id, runtime.strategy.version);
+        assert_eq!(bindings[0].strategy_id, "builtin-sma_cross-v1");
+        assert_eq!(bindings[0].config.strategy.version, "builtin-sma_cross-v1");
         assert_eq!(
             bindings[0].dataset_component_fingerprints.get("bars"),
             Some(&manifest.fingerprint)

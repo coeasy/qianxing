@@ -71,6 +71,9 @@ pub fn persist_multi_leg_run_artifacts(
         let manifest_path = persist_run_manifest(input.root, &manifest)
             .map_err(|error| error.message().to_string())?;
         let rejections = crate::trade_facts::rejection_facts(&report.event_log);
+        let summary_extra = serde_json::json!({
+            "metrics_exact": report.exact_metrics_json(),
+        });
         let account_base = BacktestAccountBase {
             cash: input.initial_cash[index],
             source: BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE,
@@ -86,6 +89,7 @@ pub fn persist_multi_leg_run_artifacts(
                 samples: frame.ts.len(),
                 sample_ts: input.sample_timestamps[index],
                 equity: &report.equity,
+                equity_exact: Some(&report.equity_exact),
                 positions: &report.positions,
                 fills: &report.fills,
                 execution_attempts: &report.execution_attempts,
@@ -99,6 +103,7 @@ pub fn persist_multi_leg_run_artifacts(
                 issuer_capital_at_end: report.issuer_capital_at(report.clock_end),
                 return_bps: report.return_bps,
                 max_drawdown_bps: report.max_drawdown_bps,
+                max_drawdown_raw: report.max_drawdown_raw,
                 fees_raw: report.fees_raw,
                 turnover_raw: report.turnover_raw,
                 final_equity_raw: report.final_equity(),
@@ -118,7 +123,7 @@ pub fn persist_multi_leg_run_artifacts(
                 dataset_quality: input.dataset_quality[index],
                 account_id: None,
                 portfolio: None,
-                summary_extra: None,
+                summary_extra: Some(&summary_extra),
             },
         )?;
         paths.push(summary_path);

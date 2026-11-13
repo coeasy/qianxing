@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-host-capability-ack-v1.json",
+  "title": "Strategy Host Capability Acknowledgment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "host_id",
+    "profile",
+    "strategy_contract_schema_version",
+    "supported",
+    "required_capabilities",
+    "ready"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "host_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_contract_schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "supported": {
+      "$ref": "strategy-host-capabilities-v1.json#/$defs/capability-list"
+    },
+    "required_capabilities": {
+      "$ref": "strategy-host-capabilities-v1.json#/$defs/capability-list"
+    },
+    "ready": {
+      "const": true
+    }
+  }
+}

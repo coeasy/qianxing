@@ -250,7 +250,7 @@ pub(crate) fn verify_multi_market_experiment_bundle(
                 index + 1
             ));
         }
-        super::super::verify_candidate_replay(&summary, &manifest)?;
+        super::super::verify_candidate_replay(&summary, &manifest, &summary_path)?;
         let outcome = resolved_candidates[index]
             .get_mut("outcome")
             .and_then(Value::as_object_mut)

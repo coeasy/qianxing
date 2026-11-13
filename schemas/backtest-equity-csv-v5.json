@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/backtest-equity-csv-v5.json",
+  "title": "Qianxing Indexed Backtest Equity CSV row v5",
+  "description": "Indexed backtest equity row with a legacy raw projection and a scale-aware exact equity value.",
+  "type": "object",
+  "required": [
+    "index",
+    "ts",
+    "equity_raw",
+    "equity_exact",
+    "position_raw"
+  ],
+  "properties": {
+    "index": {"type": "string", "pattern": "^[0-9]+$"},
+    "ts": {"type": "string", "pattern": "^[0-9]+$"},
+    "equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "equity_exact": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"},
+    "position_raw": {"type": "string", "pattern": "^-?[0-9]+$"}
+  },
+  "additionalProperties": false
+}

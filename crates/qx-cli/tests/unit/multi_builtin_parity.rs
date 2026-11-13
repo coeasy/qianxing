@@ -145,20 +145,23 @@ fn multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills() {
         "组合成交必须写出一份 spread attribution"
     );
     for summary_path in summaries {
-        let summary: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(summary_path).expect("读取多腿 v7 summary"),
-        )
-        .expect("多腿 v7 summary JSON 有效");
-        assert_eq!(summary["schema_version"], 7);
+        let summary: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(summary_path).expect("读取多腿 summary"))
+                .expect("多腿 summary JSON 有效");
         if summary["input"]["kind"] == "multi-barframe" {
+            assert_eq!(summary["schema_version"], 7, "组合摘要使用独立 v7 schema");
             assert!(summary["run_manifest"].as_str().is_some());
         } else {
+            assert_eq!(
+                summary["schema_version"], 8,
+                "腿级回测摘要使用当前 v8 schema"
+            );
             assert_eq!(summary["replay"]["log_digest"], summary["result_hash"]);
         }
         recompute_declared_backtest_input(&summary)
             .expect("report 复核单腿重放或组合输入与四份工件")
             .expect("单腿与组合 summary 均声明真实输入");
-        run_report(summary_path, true, false).expect("report 命令可复核并输出多腿 v7 summary");
+        run_report(summary_path, true, false).expect("report 命令可复核腿级与组合 summary");
     }
     let _ = std::fs::remove_dir_all(&root);
 }

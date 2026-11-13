@@ -1,0 +1,75 @@
+{
+  "checker": {
+    "after_log": ".task-tmp/r14_mdlinks_after.log",
+    "before_log": ".task-tmp/r14_mdlinks_before.log",
+    "broken_rows_before": 1,
+    "rc_after": 0,
+    "rc_before": 1,
+    "tracked_files_after": 58
+  },
+  "cited_run": {
+    "acceptance_id": "R12-AC01",
+    "log": "maturity/acceptance-artifacts/e8dcc722-6f75-45bc-b6ec-9f472d11bb83.log",
+    "log_bytes": 5325,
+    "log_sha256": "cc5b843d2f89589e3dd9147b0c0d18841e0ee95bb34a3472caf48c43a026200f",
+    "notes": "Full worker-host recovery after durable Unknown exercises Executed with a venue Accepted observation and Failed/Rejected with a post-failure clean report across file and SQLite; cursor stays fixed before resolution and commits after resolution.",
+    "outcome": "passed",
+    "recorded_at_utc": "2026-10-29T16:13:37.769892Z",
+    "run_id": "e8dcc722-6f75-45bc-b6ec-9f472d11bb83",
+    "source_tree_sha256": "a32279b4780980498c27d06e2422437e2cda767139a874977e8838352a9602ef",
+    "tree_sha256": "4c28307e5e5e9be186a7f51a345cac198bc3c1beef92c8e8c3ca257d58db7c6a"
+  },
+  "class_face": {
+    "artifact_links_after": 120,
+    "artifact_links_before": 120,
+    "dead_targets_after": 0,
+    "dead_targets_before": 1,
+    "label_target_mismatch_after": 0,
+    "label_target_mismatch_before": 0,
+    "uuid_labels_after": 46,
+    "uuid_labels_before": 46
+  },
+  "controls": {
+    "label_only_mutation_uuids": [
+      1,
+      1
+    ],
+    "shape_hits_on_label_only_mutation": 0,
+    "target_only_mutation_label": "e8dcc722-6f75-45bc-b6ec-9f472d11bb83",
+    "target_only_mutation_target": "00000000-0000-4000-8000-000000000000"
+  },
+  "doc": {
+    "bytes": 584551,
+    "bytes_after": 584551,
+    "crlf": 3183,
+    "line_index_1based": 258,
+    "lines": 3184,
+    "path": "docs/changelog/current.md",
+    "post_line_chars": 177,
+    "post_line_sha16": "9845cb83d3d6a081",
+    "pre_line_chars": 177,
+    "pre_line_sha16": "cc232ba6a4c059e1",
+    "sha16_after": "1095e5cd94f9a8bd",
+    "sha16_before": "0ddf106e0b8b29a8"
+  },
+  "plan_sha16": "1199a736b11af81f",
+  "pointer": {
+    "dead": "be0f3ba8-5d42-4460-a19f-2e218efd7b4a",
+    "dead_occurrences_after": 0,
+    "dead_occurrences_before": 2,
+    "new": "e8dcc722-6f75-45bc-b6ec-9f472d11bb83",
+    "new_occurrences_after": 2,
+    "new_occurrences_before": 0
+  },
+  "uuid_audit": {
+    "after_log": ".task-tmp/r14_uuid_audit_after.log",
+    "before_log": ".task-tmp/r14_uuid_audit_before.log",
+    "citations_total": 204,
+    "dead_rows_after": 0,
+    "dead_rows_before": 2,
+    "distinct_missing_after": 0,
+    "distinct_missing_before": 1,
+    "rc_after": 0,
+    "rc_before": 1
+  }
+}

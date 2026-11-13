@@ -11,9 +11,10 @@ use crate::admission::query_param;
 /// 它们在分派前共用 `ApiService::missing_projection_response` 那道 404（V13 R2 #191）；
 /// `/account/snapshot/diff` 不在列——它的定位符是 `base_hash`，投影缺失时
 /// `409 snapshot_base_not_found` 说的就是"这份基线不在这条链上"，不是账户不存在。
-pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 7] = [
+pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 8] = [
     "/account/snapshot",
     "/account/snapshot/envelope",
+    "/account/activity",
     "/account/orders",
     "/account/positions",
     "/account/balances",
@@ -23,30 +24,49 @@ pub(crate) const PROJECTION_SCOPED_ROUTES: [&str; 7] = [
 
 /// 现读模型的按账户收窄读面（V13 R31）：一条一格，写清这条入口认哪几把收窄键。
 ///
-/// 读的还是整份现读模型，`?account_id=`（对账报告还认 `?venue_id=`）只在结果集上过滤，
+/// 读的还是整份现读模型，`?account_id=` 与 `?venue_id=` 只在结果集上过滤，
 /// 不落到"某一份账户投影"。所以键形状合法但没有匹配条目时回 `200 []`，而不是投影那族的
 /// `404 account_projection_not_found`——两族的差别是刻意的：投影是 `(account_id, venue_id)`
-/// 键控的一份独立副本，没有这份副本就是"这个账户不在这份部署里"；账簿与对账报告是整本台账
-/// 加一轮对账结果，过滤不出条目只说明这一轮没有事实。
+/// 键控的一份独立副本，没有这份副本就是"这个账户不在这份部署里"；账簿、订单组和对账报告
+/// 是整本持久读模型，过滤不出条目只说明当前没有事实。
 ///
 /// 账簿那一格只认一把键不是取巧：`LedgerEntry` 没有 venue 字段，给它配第二把收窄键只会让
 /// 调用方以为按 venue 读过一遍。
-pub(crate) const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = [
+pub(crate) const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = [
     ("/account/ledger", &LEDGER_FILTER_PARAMS),
     ("/reconcile/reports", &REPORT_FILTER_PARAMS),
+    ("/account/order-groups", &REPORT_FILTER_PARAMS),
 ];
 
 /// 反过来：这两条读的是整份现读模型，且数据本身没有账户归属列（`JobRun` 是作业级、
 /// `AuditRecord` 是操作员级），没有任何收窄键。带查询串进来必须回 400 而不是照常 200——
-/// 按账户读请走 `/account/snapshot` 一族或 `MODEL_FILTER_ROUTES` 那两条（V13 R2 #205 / R31）。
+/// 按账户读请走 `/account/snapshot` 一族或 `MODEL_FILTER_ROUTES` 中的账户过滤入口（V13 R2 #205 / R31）。
 pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
 
 /// 带键读面认的两把收窄键。
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
+/// `/account/activity` combines a snapshot with a cursor-bounded account EventLog page,
+/// optionally narrowed by client/venue order identity or exact run/strategy/signal/intent context.
+const ACCOUNT_ACTIVITY_PARAMS: [&str; 12] = [
+    "account_id",
+    "venue_id",
+    "after",
+    "before",
+    "limit",
+    "client_order_id",
+    "exchange_order_id",
+    "run_id",
+    "strategy_id",
+    "signal_id",
+    "intent_id",
+    "correlation_id",
+];
 /// `/events` 与 `/events/live` 在收窄键之外还认游标。
 const EVENT_SCOPED_PARAMS: [&str; 3] = ["account_id", "venue_id", "after"];
 /// `/account/snapshot/diff` 的定位符是基线哈希，不是收窄键。
 const SNAPSHOT_DIFF_PARAMS: [&str; 3] = ["base_hash", "account_id", "venue_id"];
+/// `/account/portfolio` 收窄到显式配置的组合分组。
+const PORTFOLIO_FILTER_PARAMS: [&str; 2] = ["portfolio_id", "reporting_currency"];
 /// 账簿流水只有 `account_id` 一列。
 const LEDGER_FILTER_PARAMS: [&str; 1] = ["account_id"];
 /// 对账报告两条都有，可以单独按 venue 收窄。
@@ -61,6 +81,10 @@ pub(crate) fn accepted_query_params(route: &str) -> Option<&'static [&'static st
         return Some(params);
     }
     match route {
+        "/strategies/deployments" => Some(&["worker_id"]),
+        "/strategies/deployments/operations" => Some(&["operation_id"]),
+        "/account/activity" => Some(&ACCOUNT_ACTIVITY_PARAMS),
+        "/account/portfolio" => Some(&PORTFOLIO_FILTER_PARAMS),
         "/events" | "/events/live" => Some(&EVENT_SCOPED_PARAMS),
         "/account/snapshot/diff" => Some(&SNAPSHOT_DIFF_PARAMS),
         route if KEYLESS_READ_ROUTES.contains(&route) => Some(&[]),
@@ -129,9 +153,9 @@ pub(crate) fn scope_keeps_account(scope: Option<&ScopeFilter>, account_id: &str)
         .is_none_or(|wanted| wanted == account_id.trim())
 }
 
-/// 把收窄套在 `venue_id` 那一列上：没点名就全收。比较口径同 `scope_keeps_account`。
+/// 把收窄套在 `venue_id` 那一列上：没点名就全收。VenueId 按大写规范化，查询比较也忽略大小写。
 pub(crate) fn scope_keeps_venue(scope: Option<&ScopeFilter>, venue_id: &str) -> bool {
     scope
         .and_then(|filter| filter.venue_id.as_deref())
-        .is_none_or(|wanted| wanted == venue_id.trim())
+        .is_none_or(|wanted| wanted.eq_ignore_ascii_case(venue_id.trim()))
 }

@@ -50,24 +50,32 @@ pub fn run_evidence_assumption_rows(
     }];
     // 深度链没有 `FillModel`（内核不经过它），所以这一格缺席是正常的，不是漏填。
     if let Some(fill_model) = summary.get("fill_model") {
-        let model_name = fill_model
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("回测摘要的 fill_model.name 不是字符串")?;
-        let version = fill_model
-            .get("version")
-            .and_then(serde_json::Value::as_str);
+        let (model_name, version, source) = if let Some(legacy_name) = fill_model.as_str() {
+            (legacy_name, None, "summary-declared")
+        } else {
+            let model_name = fill_model
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("回测摘要的 fill_model.name 不是字符串")?;
+            let source = fill_model
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("回测摘要的 fill_model.source 不是字符串")?;
+            (
+                model_name,
+                fill_model
+                    .get("version")
+                    .and_then(serde_json::Value::as_str),
+                source,
+            )
+        };
         rows.push(RunEvidenceAssumption {
             name: "fill_model".to_string(),
             value: version.map_or_else(
                 || model_name.to_string(),
                 |version| format!("{model_name}@{version}"),
             ),
-            source: fill_model
-                .get("source")
-                .and_then(serde_json::Value::as_str)
-                .ok_or("回测摘要的 fill_model.source 不是字符串")?
-                .to_string(),
+            source: source.to_string(),
         });
         for (field, name) in [
             ("data_tier", "fill_model_data_tier"),
@@ -240,4 +248,36 @@ pub fn run_evidence_fidelity_classification(summary: &serde_json::Value) -> RunE
         }
     }
     fidelity
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_evidence_assumption_rows;
+    use serde_json::json;
+
+    fn base_summary(fill_model: serde_json::Value) -> serde_json::Value {
+        json!({
+            "matching_kernel": "bar-next-open-v1",
+            "fill_model": fill_model,
+            "account": {"initial_cash_raw": "100000", "source": "backtest-spec"},
+            "risk_rules": {"rule_set_version": "risk-v1", "source": "runtime-config"},
+            "execution_costs": {"source": "fee-schedule"},
+        })
+    }
+
+    #[test]
+    fn legacy_string_fill_model_keeps_its_declared_name() {
+        let rows = run_evidence_assumption_rows(&base_summary(json!("NextBarOpen"))).unwrap();
+        let fill = rows.iter().find(|row| row.name == "fill_model").unwrap();
+        assert_eq!(fill.value, "NextBarOpen");
+        assert_eq!(fill.source, "summary-declared");
+    }
+
+    #[test]
+    fn structured_fill_model_still_requires_source() {
+        let summary = base_summary(json!({"name": "NextBarOpen", "version": "v1"}));
+        assert!(run_evidence_assumption_rows(&summary)
+            .unwrap_err()
+            .contains("fill_model.source"));
+    }
 }

@@ -1,12 +1,12 @@
 //! #188 判据：控制面只受理真的有执行者的命令类型，且"有没有执行者"这条判定不漂移。
 //!
-//! 改前实况：`CommandKind` 八颗变体里有五颗（`ChangeRiskLimit` / `CancelOrder` /
+//! 改前实况：`CommandKind` 变体里有五颗（`ChangeRiskLimit` / `CancelOrder` /
 //! `ReconcileAccount` / `RetryJob` / `SwitchVenue`）在全仓没有任何派发者。提交入口照样
 //! 返回 `Accepted` 并把命令写进审计与队列，然后它永远停在那里 —— 运维读到"已受理"，
 //! 交易所、调度器那两侧什么都没有。现在提交入口按 `CommandKind::executed()` 裁决，
 //! 但判定式本身是一行手写的 `matches!`，它会腐坏，所以本文件钉住两侧：
 //!
-//! - **行为侧**：八颗逐个过真实提交入口 —— 三颗受理、五颗以 `Invalid` 拒绝，且拒绝时
+//! - **行为侧**：全部变体逐个过真实提交入口 —— 七颗受理、其余以 `Invalid` 拒绝，且拒绝时
 //!   既不写审计也不留待办（"拒绝"必须是真的没受理，而不是受理后再标失败）。
 //! - **源码侧**：`executed()` 为真的名字必须出现在生产派发者文件里；为假的名字在**任何**
 //!   生产源码里都不许以 `CommandKind::<名字>` 的形式出现。于是"加了派发者却忘了改判定式"
@@ -17,11 +17,12 @@
 
 use super::*;
 use qx_control::ControlError;
+use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use std::sync::OnceLock;
 
 /// 生产派发者名单按实际命令执行宿主登记，Venue runner 生命周期由 qx-service 持有。
 const EXECUTOR_SOURCES: [&str; 4] = [
-    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "crates/qx-cli/src/workers/strategy_worker/commands.rs",
     "crates/qx-service/src/paper_execution_host.rs",
     "crates/qx-service/src/binance_execution_host.rs",
     "crates/qx-service/src/ccxt_execution_host.rs",
@@ -81,6 +82,14 @@ fn dispatchers_of(kind_name: &str) -> Vec<String> {
     production_sources()
         .iter()
         .filter(|(_, source)| production_region(source).contains(&token))
+        // Contract parsing names a command kind but does not dispatch it. Executor coverage
+        // deliberately checks worker/service production sources only.
+        .filter(|(path, _)| {
+            !path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("crates/qx-control/src/lib.rs")
+        })
         .map(|(path, _)| {
             path.strip_prefix(&root)
                 .unwrap_or(path)
@@ -91,16 +100,53 @@ fn dispatchers_of(kind_name: &str) -> Vec<String> {
 }
 
 fn command(kind: CommandKind, id: u64) -> ControlCommand {
+    let (target, payload) = if kind == CommandKind::AmendOrder {
+        let order = Order {
+            client_id: id,
+            instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(2),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::Working,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        (
+            id.to_string(),
+            BTreeMap::from([
+                ("account_id".into(), "main".into()),
+                ("venue_id".into(), "BINANCE".into()),
+                ("order_json".into(), serde_json::to_string(&order).unwrap()),
+            ]),
+        )
+    } else if kind == CommandKind::CancelOrder || kind == CommandKind::CancelOrderGroup {
+        (
+            if kind == CommandKind::CancelOrder {
+                id.to_string()
+            } else {
+                format!("group-{id}")
+            },
+            BTreeMap::from([
+                ("account_id".into(), "main".into()),
+                ("venue_id".into(), "BINANCE".into()),
+            ]),
+        )
+    } else {
+        (format!("target-{id}"), BTreeMap::new())
+    };
     ControlCommand {
         command_id: id,
         request_id: format!("req-{id}"),
         operator_id: "ops".into(),
         reason: "executor coverage".into(),
         // Admin 能盖住任何一颗变体所需的权限，于是这里必然走到"有没有执行者"这一道裁决，
-        // 而不是先被权限闸门判掉 —— 那样五颗被拒的变体里有三颗根本到不了判定式。
+        // 而不是先被权限闸门判掉 —— 那样四颗被拒的变体里有三颗根本到不了判定式。
         kind,
-        target: format!("target-{id}"),
-        payload: BTreeMap::new(),
+        target,
+        payload,
         permission: Permission::Admin,
         dry_run: true,
     }
@@ -134,14 +180,21 @@ fn control_plane_accepts_only_the_kinds_that_have_an_executor() {
     }
     assert_eq!(
         accepted,
-        ["SubmitOrder", "PauseStrategy", "ResumeStrategy"],
+        [
+            "SubmitOrder",
+            "SubmitOrderGroup",
+            "AmendOrder",
+            "PauseStrategy",
+            "ResumeStrategy",
+            "CancelOrder",
+            "CancelOrderGroup"
+        ],
         "受理名单变了却没同步执行者：{accepted:?}"
     );
     assert_eq!(
         rejected,
         [
             "ChangeRiskLimit",
-            "CancelOrder",
             "ReconcileAccount",
             "RetryJob",
             "SwitchVenue"
@@ -217,8 +270,8 @@ fn command_kind_all_enumerates_every_variant_in_the_source() {
 
 /// 接口文档那两行名单必须与 `executed()` 说的同一件事。
 ///
-/// 判据按行取，不按全文子串：八颗的名字在文档里到处出现（`SubmitOrder` 更是贯穿全篇），
-/// 数子串等于不判。只认这两行前缀，且要求八颗里被点到的那些**恰好**等于该档的名单，
+/// 判据按行取，不按全文子串：命令名字在文档里到处出现（`SubmitOrder` 更是贯穿全篇），
+/// 数子串等于不判。只认这两行前缀，且要求变体里被点到的那些**恰好**等于该档的名单，
 /// 于是"给一颗改了档位而文档没跟着改"与"同一颗写进两行"都会红在那颗名字上。
 #[test]
 fn control_plane_acceptance_kinds_are_listed_in_the_ops_doc() {

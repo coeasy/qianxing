@@ -1,0 +1,7 @@
+$ python tools/check_console_browser_evidence.py maturity/evidence/console-browser-acceptance-2026-11-04.json
+exit_code=0
+
+[stdout]
+passed: packaged browser login/connect, revision create, deploy operation readback, deployment projection, and fail-closed readiness
+
+[stderr]

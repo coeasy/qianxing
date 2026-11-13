@@ -47,6 +47,7 @@ impl BarStrategy for SellWithoutInventory {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }
@@ -87,6 +88,7 @@ impl BarStrategy for PendingSpotSellStrategy {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect()
     }
@@ -128,6 +130,7 @@ impl BarStrategy for SameBarSpotSellStrategy {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
             .collect()
     }
@@ -146,10 +149,12 @@ fn spot_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

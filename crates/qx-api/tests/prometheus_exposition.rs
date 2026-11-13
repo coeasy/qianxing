@@ -54,7 +54,7 @@ fn parse_prometheus_exposition(body: &str) -> Vec<String> {
 /// `/metrics` 必须是逐行的 exposition 文本，而不是一行里塞着字面 `\n`。
 ///
 /// 这条判据守的是运维面的整读链：`deploy/prometheus/qianxing-alerts.yml` 里的告警按
-/// `qx_api_*` / `qx_worker_*` 查询，抓取端解析失败时告警是"永不触发"而不是"报错"，
+/// `qx_api_*` / `qx_app_run_*` / `qx_worker_*` 查询，抓取端解析失败时告警是"永不触发"而不是"报错"，
 /// 所以这个缺陷在服务端与告警侧都不会自己出声（V13 R2 第七遍，实测见 logs/s143_*）。
 #[test]
 fn metrics_body_is_line_separated_prometheus_exposition() {
@@ -75,6 +75,9 @@ fn metrics_body_is_line_separated_prometheus_exposition() {
             "qx_api_command_enqueue_failures_total",
             "qx_control_retired_commands_total",
             "qx_control_retired_audit_records_total",
+            "qx_app_run_watchers_active",
+            "qx_app_run_watcher_capacity",
+            "qx_app_run_watcher_rejections_total",
             "qx_worker_up{worker=\"relay\"}",
         ]
     );

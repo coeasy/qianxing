@@ -1,0 +1,14 @@
+$ cargo test -p qx-strategy --test legacy_c_abi_capability_load
+exit_code=0
+
+[stdout]
+
+running 1 test
+test legacy_plugin_without_optional_requirement_export_loads_empty_requirements_and_fails_closed_before_create ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+
+[stderr]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/legacy_c_abi_capability_load.rs (/target/debug/deps/legacy_c_abi_capability_load-beba74962b0f1fa4)

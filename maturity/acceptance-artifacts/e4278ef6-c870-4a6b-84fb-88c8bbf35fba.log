@@ -1,0 +1,7 @@
+$ python3 tools/accept_project_run_identity.py maturity/evidence/project-run-identity-macos.json
+exit_code=0
+
+[stdout]
+{"out": "/Users/runner/work/qianxing/qianxing/maturity/evidence/project-run-identity-macos.json", "evidence_kind": "macos_project_run_process_identity", "identity_checks": 5}
+
+[stderr]

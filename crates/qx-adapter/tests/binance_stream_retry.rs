@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use qx_adapter::{
-    run_binance_user_stream, BinanceStreamPoll, BinanceStreamRetryPolicy, BinanceUserStreamSession,
+    run_binance_user_stream, run_binance_user_stream_observing, BinanceStreamPoll,
+    BinanceStreamRetryPolicy, BinanceUserStreamSession,
 };
 
 struct FakeUserStream {
@@ -106,6 +107,27 @@ fn user_stream_runner_reconnects_after_session_or_callback_error() {
     assert_eq!(report.events, 1);
     assert_eq!(report.reconnects, 1);
     assert_eq!(slept, [Duration::from_millis(10)]);
+}
+
+#[test]
+fn user_stream_runner_reports_live_reconnect_count_including_the_terminal_boundary() {
+    let mut observed = Vec::new();
+    let failure = run_binance_user_stream_observing(
+        || {
+            Ok(FakeUserStream {
+                events: vec![Ok(BinanceStreamPoll::Closed)],
+            })
+        },
+        policy(2),
+        || false,
+        |_| {},
+        |_| Ok(()),
+        |reconnects| observed.push(reconnects),
+    )
+    .expect_err("a stream that never delivers must stop at its retry budget");
+
+    assert!(failure.contains("关闭"), "actual error: {failure}");
+    assert_eq!(observed, [1, 2, 3]);
 }
 
 /// 每轮都正常交付事件的长跑会话必须能越过 `max_reconnects`，且退避停在 base：

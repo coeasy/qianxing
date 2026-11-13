@@ -14,6 +14,7 @@ pub(crate) fn run_ccxt_market_worker(
 ) -> Result<(), String> {
     let runtime_config = read_runtime_config(&runtime_config_path)?;
     let live_specs = live_strategy_bar_specs(&runtime_config, &runtime_config_path, &worker)?;
+    let orderbook_instruments = live_strategy_order_book_instruments(&runtime_config, &worker)?;
     qx_service::ccxt_market_host::run_ccxt_market_worker(
         qx_service::ccxt_market_host::CcxtMarketWorkerInput {
             context,
@@ -23,6 +24,7 @@ pub(crate) fn run_ccxt_market_worker(
             python: python_interpreter(),
             runtime_config,
             live_specs,
+            orderbook_instruments,
             once,
         },
     )

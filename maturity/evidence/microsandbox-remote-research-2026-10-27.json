@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "microsandbox-remote-research-v1",
+  "generated_at_utc": "2026-10-26T22:28:58Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "provider_mode": "fake SDK"
+  },
+  "contract": {
+    "default_research_provider": "e2b",
+    "explicit_research_providers": ["e2b", "microsandbox", "opensandbox"],
+    "microsandbox_backends": ["local", "cloud"],
+    "image_identity": "OCI SHA-256 digest required",
+    "guest_network_policy": "Network.none / deny_all",
+    "provider_credentials": "host SDK backend only; not passed to guest command",
+    "failure_behavior": "cleanup and fail closed; no provider or local fallback",
+    "result_contract": "bounded archive; existing safe extraction and result validation"
+  },
+  "validation": [
+    {
+      "command": "python -m pytest -q python/tests/test_sandbox_execution.py python/tests/test_microsandbox_strategy_worker.py python/tests/test_cli_strategy_file.py",
+      "passed": 65,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest -q python/tests",
+      "passed": 526,
+      "skipped": 10,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing/sandbox_execution.py python/qianxing/cli.py python/tests/test_sandbox_execution.py",
+      "passed": true
+    },
+    {
+      "command": "python -m qianxing.cli remote-research --help",
+      "passed": true,
+      "providers": ["e2b", "microsandbox", "opensandbox"]
+    }
+  ],
+  "limitations": [
+    "Fake SDK tests do not verify Microsandbox Cloud or target-server microVM execution.",
+    "Provider-side resource enforcement, image identity, network isolation, capacity, cost, and long-job recovery require external acceptance.",
+    "llm-sandbox is not integrated."
+  ],
+  "release_status": "unpublished workspace"
+}

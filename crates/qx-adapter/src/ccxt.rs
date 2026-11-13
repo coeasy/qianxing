@@ -8,13 +8,15 @@ use crate::io_budget::{write_all_within, write_all_within_cancellable, Cancellab
 use crate::order_lifecycle::OrderLifecycle;
 use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
-    Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
-    QxError, QxResult, SCALE,
+    ConditionalOrderKind, ExactDecimal, Fill, FillFee, Fnv1a, MarginMode, Money, Order,
+    OrderGroupExecution, OrderGroupKind, OrderGroupLegRole, OrderGroupState, OrderPolicy,
+    OrderStatus, PositionMode, PositionSide, Price, Quantity, QxError, QxResult, Side, SCALE,
 };
-use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
+use qx_zhenlu::{Venue, VenueEvent, VenueOrderGroupSubmission, VenueOrderSnapshot};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod exact_sync;
 mod restore;
 use std::env;
 use std::fs;
@@ -187,7 +189,7 @@ impl CcxtProcessClient {
                 .recv_timeout(remaining.min(Duration::from_millis(20)))
             {
                 Ok(result) => {
-                    let line = result?;
+                    let line = self.response_line(result)?;
                     let response: Value = serde_json::from_str(&line)
                         .map_err(|error| format!("解析 CCXT Worker 响应失败: {error}"))?;
                     if response.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -216,6 +218,31 @@ impl CcxtProcessClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.stdin.take();
+    }
+
+    fn response_line(&mut self, result: Result<String, String>) -> Result<String, String> {
+        result.map_err(|error| format!("{error}（{}）", self.child_exit_diagnostic()))
+    }
+
+    fn child_exit_diagnostic(&mut self) -> String {
+        // 子进程关闭 stdout 与操作系统发布退出状态之间可能有极短竞态。有限采样
+        // 避免把已经退出的进程误报为仍运行，同时不让异常关闭的管道无限阻塞调用方。
+        let deadline = Instant::now() + Duration::from_millis(100);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    return match status.code() {
+                        Some(code) => format!("exit_code={code}"),
+                        None => "exit_status=terminated_by_signal".to_string(),
+                    };
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => return "exit_status=still_running".to_string(),
+                Err(error) => return format!("exit_status=unavailable: {error}"),
+            }
+        }
     }
 }
 
@@ -308,7 +335,7 @@ impl CcxtRpc for CcxtProcessClient {
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
         {
-            Ok(result) => result?,
+            Ok(result) => self.response_line(result)?,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
@@ -369,9 +396,40 @@ pub struct CcxtProcessVenue {
     remote_ids: BTreeMap<u64, String>,
     seen_trade_ids: BTreeMap<u64, BTreeSet<String>>,
     cumulative_costs: BTreeMap<u64, i128>,
+    cumulative_fees: BTreeMap<u64, BTreeMap<String, i128>>,
+    exact_cumulative_fees: BTreeMap<u64, BTreeMap<String, ExactDecimal>>,
 }
 
 impl OrderLifecycle for CcxtProcessVenue {}
+
+fn validate_ccxt_hedge_direction(order: &Order, policy: OrderPolicy) -> QxResult<()> {
+    if policy.position_mode != PositionMode::Hedge {
+        if policy.position_side != PositionSide::Net {
+            return Err(QxError::BusinessViolation(
+                "CCXT OneWay 订单的 position_side 必须为 Net".into(),
+            ));
+        }
+        return Ok(());
+    }
+    let is_close_side =
+        match (policy.position_side, order.side) {
+            (PositionSide::Long, qx_core::Side::Sell)
+            | (PositionSide::Short, qx_core::Side::Buy) => true,
+            (PositionSide::Long, qx_core::Side::Buy)
+            | (PositionSide::Short, qx_core::Side::Sell) => false,
+            (PositionSide::Net, _) => {
+                return Err(QxError::BusinessViolation(
+                    "CCXT Hedge 订单必须指定 Long 或 Short 仓位方向".into(),
+                ));
+            }
+        };
+    if policy.reduce_only != is_close_side {
+        return Err(QxError::BusinessViolation(
+            "CCXT Hedge 订单 side/reduce_only 与 position_side 不一致".into(),
+        ));
+    }
+    Ok(())
+}
 
 impl CcxtProcessVenue {
     pub fn new(id: impl Into<String>, rpc: Box<dyn CcxtRpc>) -> Self {
@@ -384,6 +442,8 @@ impl CcxtProcessVenue {
             remote_ids: BTreeMap::new(),
             seen_trade_ids: BTreeMap::new(),
             cumulative_costs: BTreeMap::new(),
+            cumulative_fees: BTreeMap::new(),
+            exact_cumulative_fees: BTreeMap::new(),
         }
     }
 
@@ -408,10 +468,72 @@ impl CcxtProcessVenue {
             .retain(|client_id, _| !evicted.contains(client_id));
         self.cumulative_costs
             .retain(|client_id, _| !evicted.contains(client_id));
+        self.cumulative_fees
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.exact_cumulative_fees
+            .retain(|client_id, _| !evicted.contains(client_id));
     }
 
     /// 拉取订单事实并生成增量成交/取消事件。该方法可由 REST 轮询或 CCXT Pro
     /// 用户流 worker 调用，二者都复用同一事实转换。
+    /// 当改单在途跨越进程重启时，仅在远端权威订单条款与持久请求完全相等后
+    /// 才采用新快照并继续常规成交归约；否则保留待对账状态，不重发改单。
+    pub fn reconcile_amendment(
+        &mut self,
+        current: &Order,
+        amended: &Order,
+        ts: u64,
+    ) -> QxResult<Option<Vec<VenueEvent>>> {
+        self.capabilities().require_query()?;
+        qx_zhenlu::oms::validate_amended_order(current, amended)?;
+        if self.orders.get(&current.client_id) != Some(current) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 本地订单快照与 EventLog 订单不一致，不能恢复改单".into(),
+            ));
+        }
+        let remote_id = self
+            .remote_ids
+            .get(&current.client_id)
+            .cloned()
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单缺少远端订单 ID".into()))?;
+        let result = self.call_or_reconcile(json!({
+            "op": "fetch_order",
+            "order_id": remote_id,
+            "instrument": current.instrument.to_string(),
+        }))?;
+        let remote = result
+            .get("order")
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单恢复查询缺少 order".into()))?;
+        if remote.get("order_id").and_then(Value::as_str) != Some(remote_id.as_str()) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT改单恢复查询的远端订单 ID 不匹配".into(),
+            ));
+        }
+        let amount_matches = remote
+            .get("amount_exact")
+            .and_then(Value::as_str)
+            .and_then(|value| ExactDecimal::parse(value).ok())
+            == Some(amended.quantity_decimal());
+        let price_matches = match amended.limit_price_decimal() {
+            Some(expected) => {
+                remote
+                    .get("price_exact")
+                    .and_then(Value::as_str)
+                    .and_then(|value| ExactDecimal::parse(value).ok())
+                    == Some(expected)
+            }
+            None => true,
+        };
+        if !amount_matches || !price_matches {
+            return Ok(None);
+        }
+
+        // The pending fact is the durable requested snapshot. Apply it before ingesting
+        // the authoritative fill delta so OMS validates any racing fill against new terms.
+        self.orders.insert(current.client_id, amended.clone());
+        self.sync_order(current.client_id, ts).map(Some)
+    }
+
     pub fn sync_order(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
         self.capabilities().require_query()?;
         let order = self
@@ -432,6 +554,9 @@ impl CcxtProcessVenue {
         let remote = result
             .get("order")
             .ok_or_else(|| QxError::ReconcileRequired("CCXT fetch_order 缺少 order".into()))?;
+        if order.exact_amounts.is_some() {
+            return self.sync_exact_order(client_order_id, ts, &order, &remote_id, remote);
+        }
         let filled = raw_i128(remote, "filled_raw")?;
         if filled < order.filled.raw() || filled > order.qty.raw() {
             return Err(QxError::ReconcileRequired(
@@ -445,7 +570,19 @@ impl CcxtProcessVenue {
             .to_ascii_lowercase();
         match remote_status.as_str() {
             "rejected" if filled == 0 => {
-                return Err(QxError::Permanent("CCXT 订单被交易所拒绝".into()));
+                if order.status.is_terminal() && order.status != OrderStatus::Rejected {
+                    return Err(QxError::ReconcileRequired(
+                        "CCXT 远端拒单与本地其他终态冲突".into(),
+                    ));
+                }
+                if let Some(local) = self.orders.get_mut(&client_order_id) {
+                    local.status = OrderStatus::Rejected;
+                }
+                return Ok(vec![VenueEvent::Rejected {
+                    client_order_id,
+                    reason: "CCXT 订单被交易所拒绝".into(),
+                    ts,
+                }]);
             }
             "rejected" => {
                 return Err(QxError::ReconcileRequired(
@@ -476,7 +613,7 @@ impl CcxtProcessVenue {
         }
         let mut events = Vec::new();
         let prior_filled = order.filled.raw();
-        let prior_cost = self
+        let mut prior_cost = self
             .cumulative_costs
             .get(&client_order_id)
             .copied()
@@ -485,9 +622,15 @@ impl CcxtProcessVenue {
             && prior_filled > 0
             && !self.cumulative_costs.contains_key(&client_order_id)
         {
-            return Err(QxError::ReconcileRequired(
-                "CCXT 增量成交缺少上一阶段累计成本，禁止按全量均价伪造增量价格".into(),
-            ));
+            // A process can restart after a partial fill but before the next reconciliation.
+            // Rebuild the old cumulative cost from the complete, order-filtered trade history;
+            // if that history cannot prove an exact quantity boundary, keep the order fail-closed.
+            prior_cost = self.recover_cumulative_cost_from_trades(
+                &order.instrument.to_string(),
+                &remote_id,
+                prior_filled,
+                filled,
+            )?;
         }
         let cumulative_cost = if filled > prior_filled {
             cumulative_cost_raw(remote, filled)?
@@ -506,6 +649,52 @@ impl CcxtProcessVenue {
                 "CCXT 累计成交成本不能回退".into(),
             ));
         }
+        let fee_raw = remote
+            .get("fee_raw")
+            .map(|value| raw_i128_value(value, "fee_raw"))
+            .transpose()?
+            .unwrap_or(0);
+        let fee_currency = remote
+            .get("fee_currency")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let mut cumulative_fee_rows = parse_fee_charges(remote)?;
+        if cumulative_fee_rows.is_empty() && fee_raw != 0 {
+            let currency = fee_currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|currency| !currency.is_empty())
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(
+                        "CCXT 返回非零成交费用但缺少币种，拒绝猜测费用单位".into(),
+                    )
+                })?
+                .to_ascii_uppercase();
+            cumulative_fee_rows.push(FillFee {
+                amount: Money::from_raw(fee_raw),
+                currency: Some(currency),
+                source_trade_ids: Vec::new(),
+            });
+        }
+        let mut next_fee_baseline = self
+            .cumulative_fees
+            .get(&client_order_id)
+            .cloned()
+            .unwrap_or_default();
+        let (fee_deltas, fee_trade_ids) = if !cumulative_fee_rows.is_empty() {
+            (
+                Self::cumulative_fee_delta(&mut next_fee_baseline, cumulative_fee_rows)?,
+                Vec::new(),
+            )
+        } else {
+            let (incremental, trade_ids) = self.incremental_trade_fee(
+                client_order_id,
+                &order.instrument.to_string(),
+                &remote_id,
+            )?;
+            Self::add_incremental_fees(&mut next_fee_baseline, &incremental)?;
+            (incremental, trade_ids)
+        };
         if filled > order.filled.raw() {
             if order.status.is_terminal() {
                 // 本地已终态（典型场景是撤单落地后远端又推进了成交）：这是本地与远端的
@@ -529,34 +718,16 @@ impl CcxtProcessVenue {
                 .and_then(|value| value.checked_div(delta_qty))
                 .filter(|price| *price > 0)
                 .ok_or_else(|| QxError::ReconcileRequired("CCXT 增量成交价格无效".into()))?;
-            let mut fee_raw = remote
-                .get("fee_raw")
-                .map(|value| raw_i128_value(value, "fee_raw"))
-                .transpose()?
-                .unwrap_or(0);
-            if fee_raw < 0 {
-                return Err(QxError::ReconcileRequired("CCXT 成交费用不能为负".into()));
-            }
-            let mut fee_currency = remote
-                .get("fee_currency")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            if fee_raw == 0 {
-                let (trade_fee, trade_currency) = self.incremental_trade_fee(
-                    client_order_id,
-                    &order.instrument.to_string(),
-                    &remote_id,
-                )?;
-                fee_raw = trade_fee;
-                if fee_currency.is_none() {
-                    fee_currency = trade_currency;
-                }
-            }
+            let (fill_fee_raw, fill_fee_currency) = if fee_deltas.len() == 1 {
+                (fee_deltas[0].amount.raw(), fee_deltas[0].currency.clone())
+            } else {
+                (0, None)
+            };
             let mut fill = Fill {
                 order_id: client_order_id,
                 qty: Quantity::from_raw(delta_qty),
                 price: Price::from_raw(price),
-                fee: Money::from_raw(fee_raw),
+                fee: Money::from_raw(fill_fee_raw),
                 ts,
                 account_id: order.account_id.clone(),
                 strategy_id: None,
@@ -565,13 +736,31 @@ impl CcxtProcessVenue {
                 venue_id: Some(self.id.clone()),
                 venue_order_id: Some(remote_id.clone()),
                 rule_version: None,
-                fee_currency,
+                fee_currency: fill_fee_currency,
+                fees: fee_deltas.clone(),
+                exact_fees: vec![],
+                exact_amounts: None,
             };
             order.trace_fill(&mut fill, Some(&self.id), Some(&remote_id));
-            events.push(VenueEvent::Fill(fill));
+            events.push(VenueEvent::Fill(Box::new(fill)));
+        } else if !fee_deltas.is_empty() {
+            events.push(VenueEvent::FeeAdjustment {
+                account_id: order.account_id.clone(),
+                venue_id: self.id.clone(),
+                order_id: client_order_id,
+                instrument: order.instrument.clone(),
+                fees: fee_deltas,
+                ts,
+            });
         }
         self.cumulative_costs
             .insert(client_order_id, cumulative_cost);
+        self.cumulative_fees
+            .insert(client_order_id, next_fee_baseline);
+        let seen = self.seen_trade_ids.entry(client_order_id).or_default();
+        for trade_id in fee_trade_ids {
+            Self::remember_fill(seen, trade_id);
+        }
         match remote_status.as_str() {
             "canceled" | "cancelled" | "expired"
                 if !order.status.is_terminal() && filled < order.qty.raw() =>
@@ -589,7 +778,7 @@ impl CcxtProcessVenue {
                 local.status = OrderStatus::Filled;
             } else if matches!(remote_status.as_str(), "canceled" | "cancelled" | "expired") {
                 local.status = OrderStatus::Cancelled;
-            } else if filled > 0 {
+            } else if filled > 0 && local.status != OrderStatus::CancelPending {
                 local.status = OrderStatus::PartiallyFilled;
             }
         }
@@ -660,14 +849,14 @@ impl CcxtProcessVenue {
         client_order_id: u64,
         instrument: &str,
         remote_order_id: &str,
-    ) -> QxResult<(i128, Option<String>)> {
+    ) -> QxResult<(Vec<FillFee>, Vec<String>)> {
         let result = match self.rpc.call(json!({
             "op": "fetch_my_trades",
             "instrument": instrument,
-            "params": {"order": remote_order_id},
+            "order_id": remote_order_id,
         })) {
             Ok(result) => result,
-            Err(error) if error.contains("[unsupported]") => return Ok((0, None)),
+            Err(error) if error.contains("[unsupported]") => return Ok((Vec::new(), Vec::new())),
             Err(error) => {
                 self.connected = false;
                 return Err(QxError::ReconcileRequired(format!(
@@ -679,34 +868,642 @@ impl CcxtProcessVenue {
             .get("trades")
             .and_then(Value::as_array)
             .ok_or_else(|| QxError::ReconcileRequired("CCXT trades 响应缺少 trades".into()))?;
-        let seen = self.seen_trade_ids.entry(client_order_id).or_default();
-        let mut fee = 0_i128;
-        let mut currency = None;
+        let seen = self.seen_trade_ids.get(&client_order_id);
+        let mut fees_by_currency = BTreeMap::<String, (i128, BTreeSet<String>)>::new();
+        let mut observed_trade_ids = BTreeSet::new();
+        let mut pending_trade_ids = BTreeSet::new();
         for trade in trades {
-            let Some(trade_id) = trade.get("trade_id").and_then(Value::as_str) else {
+            let Some(trade_id) = trade
+                .get("trade_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
                 return Err(QxError::ReconcileRequired(
                     "CCXT trade 缺少 trade_id".into(),
                 ));
             };
-            if !Self::remember_fill(seen, trade_id.to_string()) {
+            if seen.is_some_and(|seen| seen.contains(&trade_id))
+                || !observed_trade_ids.insert(trade_id.clone())
+            {
                 continue;
             }
-            let amount = raw_i128(trade, "fee_raw")?;
-            if amount < 0 {
-                return Err(QxError::ReconcileRequired("CCXT trade fee 不能为负".into()));
-            }
-            fee = fee
-                .checked_add(amount)
-                .ok_or_else(|| QxError::Invariant("CCXT 成交费用累计溢出".into()))?;
-            if currency.is_none() {
-                currency = trade
+            let mut trade_fees = parse_fee_charges(trade)?;
+            if trade_fees.is_empty() {
+                let amount = raw_i128(trade, "fee_raw")?;
+                let currency = trade
                     .get("fee_currency")
                     .and_then(Value::as_str)
-                    .map(str::to_string);
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_ascii_uppercase);
+                if amount != 0 {
+                    let currency = currency.ok_or_else(|| {
+                        QxError::ReconcileRequired(
+                            "CCXT 成交费用缺少币种，拒绝按结算币种猜测".into(),
+                        )
+                    })?;
+                    trade_fees.push(FillFee {
+                        amount: Money::from_raw(amount),
+                        currency: Some(currency),
+                        source_trade_ids: Vec::new(),
+                    });
+                }
+            }
+            let has_nonzero_fee = trade_fees.iter().any(|charge| charge.amount.raw() != 0);
+            for charge in trade_fees {
+                let currency = charge
+                    .currency
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|currency| !currency.is_empty())
+                    .ok_or_else(|| {
+                        QxError::ReconcileRequired(
+                            "CCXT 成交费用缺少币种，拒绝按结算币种猜测".into(),
+                        )
+                    })?
+                    .to_ascii_uppercase();
+                if charge.amount.raw() == 0 {
+                    continue;
+                }
+                let (total, source_trade_ids) = fees_by_currency.entry(currency).or_default();
+                *total = total
+                    .checked_add(charge.amount.raw())
+                    .ok_or_else(|| QxError::Invariant("CCXT 成交费用累计溢出".into()))?;
+                source_trade_ids.insert(trade_id.clone());
+            }
+            // Do not permanently consume a trade that currently reports no fee. Some venues
+            // attach commission details after the initial fill event; a later trade-fee query
+            // (for example on the next incremental fill) must be able to observe that charge.
+            if has_nonzero_fee {
+                pending_trade_ids.insert(trade_id);
             }
         }
-        Ok((fee, currency))
+        // Validate and aggregate the complete result before advancing the dedup ledger. If a
+        // malformed/mixed-currency trade is discovered midway, a later poll must see every
+        // trade again; otherwise the retry could emit a fill with the fee silently reduced to
+        // zero after the invalid row was already marked as consumed.
+        if let Some(prior_totals) = self.cumulative_fees.get(&client_order_id) {
+            for (currency, (amount, _)) in &fees_by_currency {
+                prior_totals
+                    .get(currency)
+                    .copied()
+                    .unwrap_or(0)
+                    .checked_add(*amount)
+                    .ok_or_else(|| QxError::Invariant("CCXT 累计手续费溢出".into()))?;
+            }
+        }
+        Ok((
+            fees_by_currency
+                .into_iter()
+                .filter(|(_, (amount, _))| *amount != 0)
+                .map(|(currency, (amount, source_trade_ids))| FillFee {
+                    amount: Money::from_raw(amount),
+                    currency: Some(currency),
+                    source_trade_ids: source_trade_ids.into_iter().collect(),
+                })
+                .collect(),
+            pending_trade_ids.into_iter().collect(),
+        ))
     }
+
+    fn recover_cumulative_cost_from_trades(
+        &mut self,
+        instrument: &str,
+        remote_order_id: &str,
+        prior_filled_raw: i128,
+        current_filled_raw: i128,
+    ) -> QxResult<i128> {
+        let result = match self.rpc.call(json!({
+            "op": "fetch_my_trades",
+            "instrument": instrument,
+            "order_id": remote_order_id,
+        })) {
+            Ok(result) => result,
+            Err(error) if error.contains("[unsupported]") => {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT 重启后部分成交订单缺少累计成本，且交易所不支持按订单读取逐笔成交；转人工对账".into(),
+                ));
+            }
+            Err(error) => {
+                self.connected = false;
+                return Err(QxError::ReconcileRequired(format!(
+                    "CCXT 恢复部分成交成本时逐笔成交查询结果未知: {error}"
+                )));
+            }
+        };
+        let trades = result
+            .get("trades")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                QxError::ReconcileRequired("CCXT 恢复部分成交成本时响应缺少 trades 数组".into())
+            })?;
+        if trades.is_empty() {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 恢复部分成交成本时没有订单逐笔成交记录".into(),
+            ));
+        }
+
+        let mut rows = Vec::with_capacity(trades.len());
+        for trade in trades {
+            let trade_id = trade
+                .get("trade_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(
+                        "CCXT 恢复部分成交成本时逐笔记录缺少 trade_id".into(),
+                    )
+                })?
+                .to_string();
+            let timestamp_ms = trade
+                .get("timestamp_ms")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(format!(
+                        "CCXT trade {trade_id} 缺少成交时间，无法恢复累计成本顺序"
+                    ))
+                })?;
+            let amount_raw = raw_i128(trade, "amount_raw")?;
+            let price_raw = raw_i128(trade, "price_raw")?;
+            if amount_raw <= 0 || price_raw <= 0 {
+                return Err(QxError::ReconcileRequired(format!(
+                    "CCXT trade {trade_id} 的数量或价格非法，无法恢复累计成本"
+                )));
+            }
+            let cost_raw = amount_raw
+                .checked_mul(price_raw)
+                .and_then(|value| value.checked_div(SCALE))
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(format!(
+                        "CCXT trade {trade_id} 的成交成本无法精确表示"
+                    ))
+                })?;
+            rows.push((timestamp_ms, trade_id, amount_raw, cost_raw));
+        }
+        rows.sort_by(|left, right| {
+            left.0.cmp(&right.0).then_with(|| {
+                match (left.1.parse::<u128>().ok(), right.1.parse::<u128>().ok()) {
+                    (Some(left), Some(right)) => left.cmp(&right),
+                    _ => left.1.cmp(&right.1),
+                }
+            })
+        });
+
+        let mut total_qty = 0_i128;
+        let mut total_cost = 0_i128;
+        let mut prior_cost = None;
+        for (_, trade_id, amount_raw, cost_raw) in rows {
+            if prior_cost.is_none() {
+                if total_qty == prior_filled_raw {
+                    prior_cost = Some(total_cost);
+                } else if total_qty < prior_filled_raw
+                    && total_qty
+                        .checked_add(amount_raw)
+                        .is_some_and(|next| next > prior_filled_raw)
+                {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "CCXT 本地已记成交量 {} 落在 trade {trade_id} 的逐笔数量内部，不能精确恢复成本",
+                        prior_filled_raw
+                    )));
+                }
+            }
+            total_qty = total_qty
+                .checked_add(amount_raw)
+                .ok_or_else(|| QxError::Invariant("CCXT trade 成交量累计溢出".into()))?;
+            total_cost = total_cost
+                .checked_add(cost_raw)
+                .ok_or_else(|| QxError::Invariant("CCXT trade 成交成本累计溢出".into()))?;
+        }
+        if total_qty != current_filled_raw {
+            return Err(QxError::ReconcileRequired(format!(
+                "CCXT 逐笔成交未覆盖当前订单数量：trade_qty={total_qty} remote_filled={current_filled_raw}"
+            )));
+        }
+        prior_cost
+            .or_else(|| (total_qty == prior_filled_raw).then_some(total_cost))
+            .ok_or_else(|| {
+                QxError::ReconcileRequired(format!(
+                    "CCXT 逐笔成交历史未能覆盖本地已记成交量 {prior_filled_raw}"
+                ))
+            })
+    }
+
+    /// Order fee fields are cumulative. Emit only the per-currency delta for this incremental
+    /// fill while remembering the latest cumulative total for the next poll.
+    fn cumulative_fee_delta(
+        prior: &mut BTreeMap<String, i128>,
+        cumulative: Vec<FillFee>,
+    ) -> QxResult<Vec<FillFee>> {
+        let mut deltas = Vec::new();
+        for charge in cumulative {
+            let currency = charge
+                .currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|currency| !currency.is_empty())
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT 累计手续费缺少币种".into()))?
+                .to_ascii_uppercase();
+            let previous = prior.get(&currency).copied().unwrap_or(0);
+            let delta = charge
+                .amount
+                .raw()
+                .checked_sub(previous)
+                .ok_or_else(|| QxError::Invariant("CCXT 手续费增量溢出".into()))?;
+            prior.insert(currency.clone(), charge.amount.raw());
+            if delta != 0 {
+                deltas.push(FillFee {
+                    amount: Money::from_raw(delta),
+                    currency: Some(currency),
+                    source_trade_ids: Vec::new(),
+                });
+            }
+        }
+        Ok(deltas)
+    }
+
+    /// Trade fees are already incremental; fold them into the cumulative baseline so a later
+    /// order snapshot that starts reporting total fees cannot charge those trades twice.
+    fn add_incremental_fees(
+        totals: &mut BTreeMap<String, i128>,
+        incremental: &[FillFee],
+    ) -> QxResult<()> {
+        for charge in incremental {
+            let currency = charge
+                .currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|currency| !currency.is_empty())
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT 成交手续费缺少币种".into()))?
+                .to_ascii_uppercase();
+            let total = totals.entry(currency).or_default();
+            *total = total
+                .checked_add(charge.amount.raw())
+                .ok_or_else(|| QxError::Invariant("CCXT 累计手续费溢出".into()))?;
+        }
+        Ok(())
+    }
+
+    fn amendment_params(&mut self, order: &Order) -> QxResult<serde_json::Map<String, Value>> {
+        let policy = order.policy.unwrap_or_default();
+        let settings = self.call_or_reconcile(json!({
+            "op": "fetch_contract_settings",
+            "instrument": order.instrument.to_string(),
+        }))?;
+        let contract = settings
+            .pointer("/settings/contract")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT 合约设置缺少 contract 标记".into()))?;
+        if contract {
+            if policy.margin_mode == MarginMode::Cash {
+                return Err(QxError::BusinessViolation(
+                    "CCXT 合约改单必须保留 Cross 或 Isolated 保证金模式".into(),
+                ));
+            }
+            let expected_position_mode = if policy.position_mode == PositionMode::Hedge {
+                "hedge"
+            } else {
+                "one_way"
+            };
+            let actual_position_mode = settings
+                .pointer("/settings/position_mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT position_mode 缺失".into()))?;
+            let expected_margin_mode = match policy.margin_mode {
+                MarginMode::Cross => "cross",
+                MarginMode::Isolated => "isolated",
+                MarginMode::Cash => unreachable!("cash contract policy rejected above"),
+            };
+            let actual_margin_mode = settings
+                .pointer("/settings/margin_mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT margin_mode 缺失".into()))?;
+            let long_leverage = settings
+                .pointer("/settings/leverage_long")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT long leverage 缺失".into()))?;
+            let short_leverage = settings
+                .pointer("/settings/leverage_short")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT short leverage 缺失".into()))?;
+            let leverage_matches = match (policy.position_mode, policy.position_side) {
+                (PositionMode::Hedge, PositionSide::Long) => long_leverage == policy.leverage,
+                (PositionMode::Hedge, PositionSide::Short) => short_leverage == policy.leverage,
+                (PositionMode::Hedge, PositionSide::Net) => false,
+                (PositionMode::OneWay, PositionSide::Net) => {
+                    long_leverage == policy.leverage && short_leverage == policy.leverage
+                }
+                (PositionMode::OneWay, PositionSide::Long | PositionSide::Short) => false,
+            };
+            if actual_position_mode != expected_position_mode
+                || actual_margin_mode != expected_margin_mode
+                || !leverage_matches
+            {
+                return Err(QxError::BusinessViolation(
+                    "CCXT 当前持仓/保证金/杠杆设置与改单订单策略不一致".into(),
+                ));
+            }
+        } else if policy.position_mode == PositionMode::Hedge
+            || policy.margin_mode != MarginMode::Cash
+            || policy.leverage != 1
+        {
+            return Err(QxError::BusinessViolation(
+                "CCXT 现货改单策略包含合约模式或大于 1x 杠杆".into(),
+            ));
+        }
+
+        let mut params = serde_json::Map::new();
+        let exchange_id = self.id.to_ascii_lowercase();
+        if contract {
+            let expected_margin_mode = match policy.margin_mode {
+                MarginMode::Cross => "cross",
+                MarginMode::Isolated => "isolated",
+                MarginMode::Cash => unreachable!("cash contract policy rejected above"),
+            };
+            let bitget_uta = if exchange_id == "bitget" {
+                Some(
+                    settings
+                        .pointer("/settings/uta")
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| {
+                            QxError::ReconcileRequired("Bitget UTA/Classic 标记缺失".into())
+                        })?,
+                )
+            } else {
+                None
+            };
+            if exchange_id == "okx" || (exchange_id == "bitget" && bitget_uta == Some(false)) {
+                params.insert(
+                    "marginMode".into(),
+                    Value::String(expected_margin_mode.to_string()),
+                );
+            }
+        }
+        if policy.reduce_only {
+            params.insert("reduceOnly".into(), Value::Bool(true));
+        }
+        if policy.post_only {
+            params.insert("postOnly".into(), Value::Bool(true));
+        }
+        if policy.position_mode == PositionMode::Hedge {
+            params.insert("hedged".into(), Value::Bool(true));
+        }
+        Ok(params)
+    }
+
+    fn amendment_request(
+        &self,
+        current: &Order,
+        amended: &Order,
+        params: serde_json::Map<String, Value>,
+    ) -> QxResult<Value> {
+        let remote_id = self
+            .remote_ids
+            .get(&current.client_id)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单缺少远端订单 ID".into()))?;
+        let order_type = if current.limit_price_decimal().is_some() {
+            "limit"
+        } else {
+            "market"
+        };
+        if amended.exact_amounts.is_some_and(|amounts| {
+            amounts.quote_budget.is_some()
+                || current.exact_amounts.map(|current| current.conditional)
+                    != Some(amounts.conditional)
+        }) {
+            return Err(QxError::BusinessViolation(
+                "CCXT 当前不对条件条款变更或 Quote Budget 单执行原生改单".into(),
+            ));
+        }
+        let amount = amended.quantity_decimal().to_string();
+        let price = amended.limit_price_decimal().map(|value| value.to_string());
+        Ok(json!({
+            "op": "edit_order",
+            "order_id": remote_id,
+            "instrument": current.instrument.to_string(),
+            "side": if matches!(current.side, qx_core::Side::Buy) { "buy" } else { "sell" },
+            "order_type": order_type,
+            "amount_exact": amount,
+            "price_exact": price,
+            "params": params,
+        }))
+    }
+}
+
+fn okx_algo_client_order_id(group_id: &str) -> String {
+    let mut hash = Fnv1a::new();
+    hash.write_text(group_id);
+    format!("QX{:016X}", hash.finish())
+}
+
+fn okx_oco_worker_request(group: &OrderGroupState) -> QxResult<Value> {
+    group
+        .validate_persisted()
+        .map_err(QxError::BusinessViolation)?;
+    if group.intent.kind != OrderGroupKind::Oco
+        || group.intent.execution != OrderGroupExecution::NativeRequired
+        || group.legs.len() != 2
+    {
+        return Err(QxError::BusinessViolation(
+            "OKX CCXT 当前仅接受 NativeRequired 的双腿 OCO 订单组".into(),
+        ));
+    }
+    let take_profit = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 缺少止盈腿".into()))?;
+    let stop_loss = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 缺少止损腿".into()))?;
+    let first = &take_profit.order;
+    if first.instrument.venue.as_str() != "OKX"
+        || stop_loss.order.instrument != first.instrument
+        || stop_loss.order.account_id != first.account_id
+        || stop_loss.order.side != first.side
+        || stop_loss.order.policy.unwrap_or_default() != first.policy.unwrap_or_default()
+    {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 子腿必须属于同一 OKX 标的、账户、方向和执行策略".into(),
+        ));
+    }
+    let exact = first
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 必须使用精确数量".into()))?;
+    if exact.quote_budget.is_some() || !exact.quantity.is_positive() {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 只接受正的 Base/Contract 数量，不接受 QuoteBudget".into(),
+        ));
+    }
+    let policy = first.policy.unwrap_or_default();
+    validate_ccxt_hedge_direction(first, policy)?;
+    let tp_amounts = take_profit
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 止盈腿缺少精确订单金额".into()))?;
+    let sl_amounts = stop_loss
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("OKX OCO 止损腿缺少精确订单金额".into()))?;
+    if tp_amounts.quantity != exact.quantity || sl_amounts.quantity != exact.quantity {
+        return Err(QxError::BusinessViolation(
+            "OKX OCO 两条保护腿数量必须与组数量一致".into(),
+        ));
+    }
+    let tp = tp_amounts
+        .conditional
+        .filter(|intent| intent.kind == ConditionalOrderKind::TakeProfit)
+        .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
+    let (tp_trigger, tp_price_type) =
+        tp.ok_or_else(|| QxError::BusinessViolation("OKX OCO 止盈腿缺少精确触发价".into()))?;
+    let sl = sl_amounts
+        .conditional
+        .filter(|intent| intent.kind == ConditionalOrderKind::StopLoss)
+        .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
+    let (sl_trigger, sl_price_type) =
+        sl.ok_or_else(|| QxError::BusinessViolation("OKX OCO 止损腿缺少精确触发价".into()))?;
+    let margin_mode = match policy.margin_mode {
+        MarginMode::Cash => None,
+        MarginMode::Cross => Some("cross"),
+        MarginMode::Isolated => Some("isolated"),
+    };
+    let position_mode = match policy.position_mode {
+        PositionMode::OneWay => "one_way",
+        PositionMode::Hedge => "hedge",
+    };
+    let position_side = match policy.position_side {
+        PositionSide::Net => "net",
+        PositionSide::Long => "long",
+        PositionSide::Short => "short",
+    };
+    let price_type = |value: Option<qx_core::TriggerPriceType>| match value
+        .unwrap_or(qx_core::TriggerPriceType::Last)
+    {
+        qx_core::TriggerPriceType::Last => "last",
+        qx_core::TriggerPriceType::Mark => "mark",
+        qx_core::TriggerPriceType::Index => "index",
+    };
+    Ok(json!({
+        "op": "create_order_group",
+        "kind": "oco",
+        "instrument": first.instrument.to_string(),
+        "side": if first.side == Side::Buy { "buy" } else { "sell" },
+        "amount_exact": exact.quantity.to_string(),
+        "take_profit_trigger_exact": tp_trigger.to_string(),
+        "take_profit_order_price_exact": tp_amounts.limit_price.map(|price| price.to_string()),
+        "take_profit_price_type": price_type(tp_price_type),
+        "stop_loss_trigger_exact": sl_trigger.to_string(),
+        "stop_loss_order_price_exact": sl_amounts.limit_price.map(|price| price.to_string()),
+        "stop_loss_price_type": price_type(sl_price_type),
+        "algo_client_order_id": okx_algo_client_order_id(&group.intent.group_id),
+        "risk_margin_mode": margin_mode,
+        "risk_position_mode": position_mode,
+        "risk_position_side": position_side,
+        "risk_reduce_only": policy.reduce_only,
+    }))
+}
+
+fn bitget_uta_oco_worker_request(group: &OrderGroupState) -> QxResult<Value> {
+    group
+        .validate_persisted()
+        .map_err(QxError::BusinessViolation)?;
+    if group.intent.kind != OrderGroupKind::Oco
+        || group.intent.execution != OrderGroupExecution::NativeRequired
+        || group.legs.len() != 2
+    {
+        return Err(QxError::BusinessViolation(
+            "Bitget UTA 当前仅接受 NativeRequired 的双腿 OCO 订单组".into(),
+        ));
+    }
+    let take_profit = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 缺少止盈腿".into()))?;
+    let stop_loss = group
+        .legs
+        .iter()
+        .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 缺少止损腿".into()))?;
+    let first = &take_profit.order;
+    if first.instrument.venue.as_str() != "BITGET"
+        || first.instrument.symbol().contains(':')
+        || stop_loss.order.instrument != first.instrument
+        || stop_loss.order.account_id != first.account_id
+        || stop_loss.order.side != first.side
+        || stop_loss.order.policy.unwrap_or_default() != first.policy.unwrap_or_default()
+    {
+        return Err(QxError::BusinessViolation(
+            "Bitget UTA OCO 子腿必须属于同一 Bitget Spot 标的、账户、方向和执行策略".into(),
+        ));
+    }
+    let exact = first
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 必须使用精确数量".into()))?;
+    if exact.quote_budget.is_some() || !exact.quantity.is_positive() {
+        return Err(QxError::BusinessViolation(
+            "Bitget OCO 只接受正的 Base 数量，不接受 QuoteBudget".into(),
+        ));
+    }
+    let policy = first.policy.unwrap_or_default();
+    if policy.position_mode != PositionMode::OneWay
+        || policy.position_side != PositionSide::Net
+        || policy.margin_mode != MarginMode::Cash
+        || policy.leverage != 1
+    {
+        return Err(QxError::BusinessViolation(
+            "Bitget UTA Spot OCO 不接受合约仓位、保证金或杠杆策略".into(),
+        ));
+    }
+    let tp_amounts = take_profit
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 止盈腿缺少精确金额".into()))?;
+    let sl_amounts = stop_loss
+        .order
+        .exact_amounts
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 止损腿缺少精确金额".into()))?;
+    if tp_amounts.quantity != exact.quantity || sl_amounts.quantity != exact.quantity {
+        return Err(QxError::BusinessViolation(
+            "Bitget OCO 两条保护腿数量必须与组数量一致".into(),
+        ));
+    }
+    if tp_amounts.conditional.is_some() {
+        return Err(QxError::BusinessViolation(
+            "Bitget UTA OCO 止盈腿必须是直接限价单".into(),
+        ));
+    }
+    let take_profit_price = tp_amounts
+        .limit_price
+        .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 止盈腿缺少限价".into()))?;
+    let sl = sl_amounts
+        .conditional
+        .filter(|intent| intent.kind == ConditionalOrderKind::StopLoss)
+        .and_then(|intent| Some((intent.trigger_price?, intent.trigger_price_type)));
+    let (stop_loss_trigger, stop_loss_price_type) =
+        sl.ok_or_else(|| QxError::BusinessViolation("Bitget OCO 止损腿缺少触发价".into()))?;
+    if stop_loss_price_type.is_some_and(|price_type| price_type != qx_core::TriggerPriceType::Last)
+    {
+        return Err(QxError::BusinessViolation(
+            "Bitget UTA Spot OCO 当前只支持 market 触发价".into(),
+        ));
+    }
+    let stop_loss_order_price = sl_amounts.limit_price;
+    Ok(json!({
+        "op": "create_order_group",
+        "kind": "oco",
+        "instrument": first.instrument.to_string(),
+        "side": if first.side == Side::Buy { "buy" } else { "sell" },
+        "amount_exact": exact.quantity.to_string(),
+        "take_profit_limit_price_exact": take_profit_price.to_string(),
+        "stop_loss_trigger_exact": stop_loss_trigger.to_string(),
+        "stop_loss_order_price_exact": stop_loss_order_price.map(|price| price.to_string()),
+    }))
 }
 
 impl Venue for CcxtProcessVenue {
@@ -716,6 +1513,195 @@ impl Venue for CcxtProcessVenue {
 
     fn capabilities(&self) -> &'static qx_zhenlu::venue_capabilities::VenueCapabilities {
         &qx_zhenlu::venue_capabilities::CCXT_PROCESS_VENUE_CAPABILITIES
+    }
+
+    fn validate_order_group(&mut self, group: &OrderGroupState) -> QxResult<()> {
+        if !self.id.eq_ignore_ascii_case("OKX") && !self.id.eq_ignore_ascii_case("BITGET") {
+            return Err(QxError::BusinessViolation(
+                "CCXT 原生订单组目前只实现 OKX 与 Bitget UTA OCO".into(),
+            ));
+        }
+        if !self.connected {
+            return Err(QxError::VenueState("CCXT Worker 未连接".into()));
+        }
+        if self.id.eq_ignore_ascii_case("OKX") {
+            okx_oco_worker_request(group).map(|_| ())
+        } else {
+            bitget_uta_oco_worker_request(group).map(|_| ())
+        }
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &OrderGroupState,
+        _ts: u64,
+    ) -> QxResult<VenueOrderGroupSubmission> {
+        self.validate_order_group(group)?;
+        if self.id.eq_ignore_ascii_case("BITGET") {
+            let response = self.call_or_reconcile(bitget_uta_oco_worker_request(group)?)?;
+            if let Some(rejection) = response.get("preflight_rejected") {
+                let class = rejection
+                    .get("class")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let message = rejection
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Bitget UTA OCO 下单预检失败");
+                return Err(match class {
+                    "invalid" | "unsupported" => QxError::BusinessViolation(message.into()),
+                    "retryable" => QxError::Transient(message.into()),
+                    "rate_limited" => QxError::ResourceExhausted(message.into()),
+                    _ => QxError::ReconcileRequired(message.into()),
+                });
+            }
+            let result = response.get("order_group").ok_or_else(|| {
+                QxError::ReconcileRequired("Bitget UTA OCO 响应缺少 order_group".into())
+            })?;
+            let strategy_order_id = result
+                .get("strategy_order_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired("Bitget UTA OCO 响应缺少策略订单 ID".into())
+                })?;
+            let expected_instrument = group
+                .legs
+                .first()
+                .map(|leg| leg.order.instrument.to_string())
+                .ok_or_else(|| QxError::BusinessViolation("Bitget OCO 不包含子腿".into()))?;
+            if result.get("instrument").and_then(Value::as_str)
+                != Some(expected_instrument.as_str())
+                || result.get("order_type").and_then(Value::as_str) != Some("oco")
+            {
+                return Err(QxError::ReconcileRequired(
+                    "Bitget UTA OCO 返回的标的或订单组类型与提交不匹配".into(),
+                ));
+            }
+            return Ok(VenueOrderGroupSubmission {
+                venue_group_id: Some(strategy_order_id.to_string()),
+                group_status: Some(qx_core::OrderGroupStatus::ReconcileRequired),
+                events: Vec::new(),
+            });
+        }
+        let expected_client_id = okx_algo_client_order_id(&group.intent.group_id);
+        let response = self.call_or_reconcile(okx_oco_worker_request(group)?)?;
+        if let Some(rejection) = response.get("preflight_rejected") {
+            let class = rejection
+                .get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = rejection
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("OKX OCO 下单预检失败");
+            let message = format!("OKX OCO 下单前预检 [{class}] {message}");
+            return Err(match class {
+                "invalid" | "unsupported" => QxError::BusinessViolation(message),
+                "retryable" => QxError::Transient(message),
+                "rate_limited" => QxError::ResourceExhausted(message),
+                _ => QxError::ReconcileRequired(message),
+            });
+        }
+        let result = response.get("order_group").ok_or_else(|| {
+            QxError::ReconcileRequired("CCXT OKX OCO 响应缺少 order_group".into())
+        })?;
+        let algo_id = result
+            .get("algo_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+            .ok_or_else(|| QxError::ReconcileRequired("OKX OCO 响应缺少有效 algo_id".into()))?;
+        let expected_instrument = group
+            .legs
+            .first()
+            .map(|leg| leg.order.instrument.to_string())
+            .ok_or_else(|| QxError::BusinessViolation("OKX OCO 不包含子腿".into()))?;
+        if result.get("algo_client_order_id").and_then(Value::as_str)
+            != Some(expected_client_id.as_str())
+            || result.get("instrument").and_then(Value::as_str)
+                != Some(expected_instrument.as_str())
+            || result.get("order_type").and_then(Value::as_str) != Some("oco")
+        {
+            return Err(QxError::ReconcileRequired(
+                "OKX OCO 返回的 algo client ID、标的或订单组类型与提交不匹配".into(),
+            ));
+        }
+        let group_status = match result.get("state").and_then(Value::as_str) {
+            Some("live") => qx_core::OrderGroupStatus::Active,
+            _ => qx_core::OrderGroupStatus::ReconcileRequired,
+        };
+        Ok(VenueOrderGroupSubmission {
+            venue_group_id: Some(algo_id.to_string()),
+            group_status: Some(group_status),
+            events: Vec::new(),
+        })
+    }
+
+    fn validate_instrument_spec(&mut self, spec: &qx_core::TradingInstrumentSpec) -> QxResult<()> {
+        let product = match spec.product {
+            qx_core::TradingProduct::Spot => "spot",
+            qx_core::TradingProduct::Margin => "margin",
+            qx_core::TradingProduct::Perpetual => "perpetual",
+            qx_core::TradingProduct::Future => "future",
+            qx_core::TradingProduct::Option => "option",
+        };
+        let exact_rules = spec.exact_rules.as_ref().map(|rules| {
+            json!({
+                "contract_size": rules.contract_size,
+                "price_tick": rules.price_tick,
+                "quantity_step": rules.quantity_step,
+                "minimum_quantity": rules.minimum_quantity,
+                "minimum_notional": rules.minimum_notional,
+            })
+        });
+        let response = self.stream_call(json!({
+            "op": "validate_market_spec",
+            "instrument": spec.instrument.to_string(),
+            "expected_spec": {
+                "product": product,
+                "base_currency": spec.base_currency.as_str(),
+                "quote_currency": spec.quote_currency.as_str(),
+                "settlement_currency": spec.settlement_currency.as_str(),
+                "contract_size_raw": spec.contract_size.to_string(),
+                "linear": spec.linear,
+                "inverse": spec.inverse,
+                "price_tick_raw": spec.price_tick.to_string(),
+                "qty_step_raw": spec.qty_step.to_string(),
+                "min_qty_raw": spec.min_qty.to_string(),
+                "min_notional_raw": spec.min_notional_raw.to_string(),
+                "max_leverage": spec.max_leverage,
+                "maintenance_margin_bps": spec.maintenance_margin_bps,
+                "exact_rules": exact_rules,
+            }
+        }))?;
+        if let Some(rejection) = response.get("market_spec_rejected") {
+            let class = rejection
+                .get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = rejection
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("交易所市场规格与冻结风控规格不一致");
+            let message = format!("CCXT 当前市场规格校验 [{class}] {message}");
+            return Err(match class {
+                "invalid" | "unsupported" => QxError::BusinessViolation(message),
+                "retryable" => QxError::Transient(message),
+                "rate_limited" => QxError::ResourceExhausted(message),
+                _ => QxError::Permanent(message),
+            });
+        }
+        if response
+            .get("market_spec_verified")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            Ok(())
+        } else {
+            Err(QxError::Permanent(
+                "CCXT Worker 未确认当前市场规格与冻结规格一致".into(),
+            ))
+        }
     }
 
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
@@ -731,78 +1717,234 @@ impl Venue for CcxtProcessVenue {
         if !self.connected {
             return Err(QxError::VenueState("CCXT Worker 未连接".into()));
         }
-        let order_type = if order.limit.is_some() {
+        let order_type = if order.limit_price_decimal().is_some() {
             "limit"
         } else {
             "market"
         };
         let mut params = serde_json::Map::new();
-        if let Some(policy) = order.policy {
-            if policy.leverage == 0 {
-                return Err(QxError::BusinessViolation("CCXT 订单杠杆必须大于 0".into()));
-            }
-            if policy.margin_mode == MarginMode::Cash && policy.leverage != 1 {
+        let policy = order.policy.unwrap_or_default();
+        validate_ccxt_hedge_direction(&order, policy)?;
+        if policy.leverage == 0 {
+            return Err(QxError::BusinessViolation("CCXT 订单杠杆必须大于 0".into()));
+        }
+        if policy.margin_mode == MarginMode::Cash && policy.leverage != 1 {
+            return Err(QxError::BusinessViolation(
+                "CCXT Cash 订单只能使用 1x 杠杆".into(),
+            ));
+        }
+
+        // Mode configuration is account-scoped or product-scoped on the exchanges. Never
+        // toggle it as an order side effect: verify the operator-configured account state before
+        // any write, and fail closed if policy and exchange disagree.
+        let settings = self.call_or_reconcile(json!({
+            "op": "fetch_contract_settings",
+            "instrument": order.instrument.to_string(),
+        }))?;
+        let is_contract = settings
+            .pointer("/settings/contract")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                QxError::ReconcileRequired("CCXT 合约设置查询缺少 contract 标记，拒绝提交".into())
+            })?;
+        if is_contract {
+            if policy.margin_mode == MarginMode::Cash {
                 return Err(QxError::BusinessViolation(
-                    "CCXT Cash 订单只能使用 1x 杠杆".into(),
+                    "合约订单必须显式选择 Cross 或 Isolated 保证金模式".into(),
                 ));
             }
-            if policy.margin_mode != MarginMode::Cash {
-                self.call_or_reconcile(json!({
-                    "op": "set_margin_mode",
-                    "instrument": order.instrument.to_string(),
-                    "margin_mode": match policy.margin_mode {
-                        MarginMode::Cross => "cross",
-                        MarginMode::Isolated => "isolated",
-                        MarginMode::Cash => "cash",
-                    },
-                }))?;
+            let expected_position_mode = if policy.position_mode == PositionMode::Hedge {
+                "hedge"
+            } else {
+                "one_way"
+            };
+            let actual_position_mode = settings
+                .pointer("/settings/position_mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(
+                        "CCXT 合约设置查询缺少 position_mode，拒绝提交".into(),
+                    )
+                })?;
+            if actual_position_mode != expected_position_mode {
+                return Err(QxError::BusinessViolation(format!(
+                    "交易所持仓模式为 {actual_position_mode}，订单要求 {expected_position_mode}；请先在账户侧配置一致"
+                )));
             }
-            if policy.leverage != 1 {
-                self.call_or_reconcile(json!({
-                    "op": "set_leverage",
-                    "instrument": order.instrument.to_string(),
-                    "leverage": policy.leverage,
-                    "margin_mode": match policy.margin_mode {
-                        MarginMode::Cross => "cross",
-                        MarginMode::Isolated => "isolated",
-                        MarginMode::Cash => "cash",
-                    },
-                }))?;
+            let expected_margin_mode = match policy.margin_mode {
+                MarginMode::Cross => "cross",
+                MarginMode::Isolated => "isolated",
+                MarginMode::Cash => unreachable!("cash contract policy rejected above"),
+            };
+            let actual_margin_mode = settings
+                .pointer("/settings/margin_mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired("CCXT 合约设置查询缺少 margin_mode，拒绝提交".into())
+                })?;
+            if actual_margin_mode != expected_margin_mode {
+                return Err(QxError::BusinessViolation(format!(
+                    "交易所保证金模式为 {actual_margin_mode}，订单要求 {expected_margin_mode}；请先在账户侧配置一致"
+                )));
             }
-            if policy.position_mode == PositionMode::Hedge || policy.margin_mode != MarginMode::Cash
-            {
-                self.call_or_reconcile(json!({
-                    "op": "set_position_mode",
-                    "hedged": policy.position_mode == PositionMode::Hedge,
-                    "instrument": order.instrument.to_string(),
-                }))?;
+            // OKX requires tdMode on every contract order, and Bitget Classic's CCXT mapping
+            // uses marginMode to select its v2 contract request. Bitget UTA v3 configures
+            // margin mode at account/position scope and does not accept the Classic field, so
+            // the worker must report which Bitget account path it verified.
+            let exchange_id = self.id.to_ascii_lowercase();
+            let bitget_uta = if exchange_id == "bitget" {
+                Some(
+                    settings
+                        .pointer("/settings/uta")
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| {
+                            QxError::ReconcileRequired(
+                                "Bitget 合约设置缺少 UTA/Classic 路径标记，拒绝提交".into(),
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
+            if exchange_id == "okx" || (exchange_id == "bitget" && bitget_uta == Some(false)) {
+                params.insert(
+                    "marginMode".into(),
+                    Value::String(expected_margin_mode.to_string()),
+                );
             }
+            let leverage_long = settings
+                .pointer("/settings/leverage_long")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(
+                        "CCXT 合约设置查询缺少有效 long leverage，拒绝提交".into(),
+                    )
+                })?;
+            let leverage_short = settings
+                .pointer("/settings/leverage_short")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired(
+                        "CCXT 合约设置查询缺少有效 short leverage，拒绝提交".into(),
+                    )
+                })?;
+            let leverage_matches = match (policy.position_mode, policy.position_side) {
+                (PositionMode::Hedge, PositionSide::Long) => leverage_long == policy.leverage,
+                (PositionMode::Hedge, PositionSide::Short) => leverage_short == policy.leverage,
+                (PositionMode::Hedge, PositionSide::Net) => false,
+                (PositionMode::OneWay, PositionSide::Net) => {
+                    leverage_long == policy.leverage && leverage_short == policy.leverage
+                }
+                (PositionMode::OneWay, PositionSide::Long | PositionSide::Short) => false,
+            };
+            if !leverage_matches {
+                return Err(QxError::BusinessViolation(format!(
+                    "交易所杠杆 long={leverage_long}x/short={leverage_short}x 与订单目标 {}x 不一致；请先在账户侧配置一致",
+                    policy.leverage
+                )));
+            }
+        } else if policy.position_mode == PositionMode::Hedge
+            || policy.margin_mode != MarginMode::Cash
+            || policy.leverage != 1
+        {
+            return Err(QxError::BusinessViolation(
+                "现货订单不支持 Hedge、保证金模式或大于 1x 杠杆".into(),
+            ));
+        }
+
+        if order.policy.is_some() {
+            // Keep reduceOnly as intent for CCXT to translate. In hedge mode CCXT uses the
+            // combination of `hedged` and `reduceOnly` to choose the correct Binance
+            // positionSide / OKX posSide / Bitget close leg, then omits or rewrites the field
+            // where the venue does not accept it.
             if policy.reduce_only {
                 params.insert("reduceOnly".into(), Value::Bool(true));
             }
             if policy.post_only {
                 params.insert("postOnly".into(), Value::Bool(true));
             }
-            match policy.position_side {
-                PositionSide::Long => {
-                    params.insert("positionSide".into(), Value::String("long".into()));
-                }
-                PositionSide::Short => {
-                    params.insert("positionSide".into(), Value::String("short".into()));
-                }
-                PositionSide::Net => {}
+            // Position fields are venue-specific. CCXT translates `hedged=true` into
+            // Binance positionSide, OKX posSide, or Bitget tradeSide/posSide and maps reduce-only
+            // closes correctly for each exchange.
+            if policy.position_mode == PositionMode::Hedge {
+                params.insert("hedged".into(), Value::Bool(true));
             }
         }
-        let result = self.call_or_reconcile(json!({
+        let mut request = json!({
             "op": "create_order",
             "instrument": order.instrument.to_string(),
             "side": if matches!(order.side, qx_core::Side::Buy) { "buy" } else { "sell" },
             "order_type": order_type,
-            "amount_raw": order.qty.raw(),
-            "price_raw": order.limit.map(|price| price.raw()),
+            "amount_raw": order.exact_amounts.is_none().then_some(order.qty.raw()),
+            "amount_exact": order.exact_amounts.map(|amounts| {
+                amounts.quote_budget.unwrap_or(amounts.quantity)
+            }),
+            "amount_unit": if order.is_quote_budget_order() {
+                "quote"
+            } else if is_contract {
+                "contracts"
+            } else {
+                "base"
+            },
+            "price_raw": order
+                .exact_amounts
+                .is_none()
+                .then(|| order.limit.map(|price| price.raw()))
+                .flatten(),
+            "price_exact": order.exact_amounts.and_then(|amounts| amounts.limit_price),
+            "risk_leverage": if is_contract { Some(policy.leverage) } else { None },
+            "risk_reduce_only": policy.reduce_only,
+            "risk_margin_mode": if is_contract {
+                Some(match policy.margin_mode {
+                    MarginMode::Cross => "cross",
+                    MarginMode::Isolated => "isolated",
+                    MarginMode::Cash => unreachable!("cash contract policy rejected above"),
+                })
+            } else {
+                None::<&str>
+            },
             "client_order_id": order.client_id.to_string(),
             "params": params,
-        }))?;
+        });
+        if let Some(conditional) = order.exact_amounts.and_then(|amounts| amounts.conditional) {
+            request["op"] = json!("create_conditional_order");
+            request["intent"] = json!(match conditional.kind {
+                qx_core::ConditionalOrderKind::Trigger => "trigger",
+                qx_core::ConditionalOrderKind::StopLoss => "stop_loss",
+                qx_core::ConditionalOrderKind::TakeProfit => "take_profit",
+                qx_core::ConditionalOrderKind::Trailing => "trailing",
+            });
+            request["trigger_price_exact"] = json!(conditional.trigger_price);
+            request["trigger_price_type"] =
+                json!(conditional.trigger_price_type.map(|kind| match kind {
+                    qx_core::TriggerPriceType::Last => "last",
+                    qx_core::TriggerPriceType::Mark => "mark",
+                    qx_core::TriggerPriceType::Index => "index",
+                }));
+            request["trailing_percent_exact"] = json!(conditional.trailing_percent);
+            request["trailing_amount_exact"] = json!(conditional.trailing_amount);
+            request["trailing_trigger_price_exact"] = json!(conditional.trailing_trigger_price);
+        }
+        let result = self.call_or_reconcile(request)?;
+        if let Some(preflight) = result.get("preflight_rejected") {
+            let class = preflight
+                .get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = preflight
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("CCXT 合约杠杆档位预检拒绝订单");
+            let message = format!("CCXT 下单前杠杆档位预检 [{class}] {message}");
+            return Err(match class {
+                "invalid" | "unsupported" => QxError::BusinessViolation(message),
+                "retryable" => QxError::Transient(message),
+                "rate_limited" => QxError::ResourceExhausted(message),
+                _ => QxError::Permanent(message),
+            });
+        }
         let remote = result
             .get("order")
             .ok_or_else(|| QxError::ReconcileRequired("CCXT create_order 缺少 order".into()))?;
@@ -814,6 +1956,8 @@ impl Venue for CcxtProcessVenue {
             .to_string();
         self.remote_ids.insert(order.client_id, remote_id.clone());
         self.cumulative_costs.remove(&order.client_id);
+        self.cumulative_fees.remove(&order.client_id);
+        self.exact_cumulative_fees.remove(&order.client_id);
         self.orders.insert(order.client_id, order.clone());
         let evicted = evict_stale_terminal_orders(&mut self.orders);
         self.forget_orders(&evicted);
@@ -824,6 +1968,106 @@ impl Venue for CcxtProcessVenue {
         }])
     }
 
+    fn validate_amendment(&mut self, current: &Order, amended: &Order) -> QxResult<()> {
+        qx_zhenlu::oms::validate_amended_order(current, amended)?;
+        if !self.connected {
+            return Err(QxError::VenueState("CCXT Worker 未连接".into()));
+        }
+        if self.orders.get(&current.client_id) != Some(current) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 本地订单快照与 EventLog 订单不一致，拒绝改单".into(),
+            ));
+        }
+        let params = self.amendment_params(current)?;
+        let request = self.amendment_request(current, amended, params)?;
+        let mut request = request;
+        request["op"] = json!("validate_edit_order");
+        let result = self.stream_call(request)?;
+        if result.get("validated").and_then(Value::as_bool) == Some(true) {
+            Ok(())
+        } else {
+            Err(QxError::ReconcileRequired(
+                "CCXT Worker 未确认改单预检".into(),
+            ))
+        }
+    }
+
+    fn amend(&mut self, current: &Order, amended: &Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        qx_zhenlu::oms::validate_amended_order(current, amended)?;
+        if self.orders.get(&current.client_id) != Some(current) {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 本地订单快照与 EventLog 订单不一致，拒绝改单".into(),
+            ));
+        }
+        let params = self.amendment_params(current)?;
+        let request = self.amendment_request(current, amended, params)?;
+        let expected_remote_id = self
+            .remote_ids
+            .get(&current.client_id)
+            .cloned()
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单缺少远端订单 ID".into()))?;
+        let result = self.stream_call(request)?;
+        let response_id = result
+            .pointer("/order/order_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                QxError::ReconcileRequired("CCXT edit_order 响应缺少远端订单 ID".into())
+            })?;
+        if response_id != expected_remote_id {
+            return Err(QxError::ReconcileRequired(
+                "CCXT edit_order 响应订单 ID 与目标订单不一致".into(),
+            ));
+        }
+
+        let confirmed = self.call_or_reconcile(json!({
+            "op": "fetch_order",
+            "order_id": expected_remote_id,
+            "instrument": current.instrument.to_string(),
+        }))?;
+        let remote = confirmed
+            .get("order")
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单后查询缺少 order".into()))?;
+        let remote_id = remote
+            .get("order_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单后查询缺少 order_id".into()))?;
+        let remote_amount_text = remote
+            .get("amount_exact")
+            .and_then(Value::as_str)
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT改单后查询缺少 amount_exact".into()))?;
+        let remote_amount = ExactDecimal::parse(remote_amount_text)
+            .map_err(|error| QxError::ReconcileRequired(format!("CCXT改单后数量非法: {error}")))?;
+        if remote_id != expected_remote_id || remote_amount != amended.quantity_decimal() {
+            return Err(QxError::ReconcileRequired(
+                "CCXT改单后查询的订单 ID/总量与请求不一致".into(),
+            ));
+        }
+        if let Some(expected_price) = amended.limit_price_decimal() {
+            let remote_price = remote
+                .get("price_exact")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    QxError::ReconcileRequired("CCXT改单后查询缺少 price_exact".into())
+                })?;
+            let remote_price = ExactDecimal::parse(remote_price).map_err(|error| {
+                QxError::ReconcileRequired(format!("CCXT改单后限价非法: {error}"))
+            })?;
+            if remote_price != expected_price {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT改单后查询的限价与请求不一致".into(),
+                ));
+            }
+        }
+
+        // Make the requested total quantity visible to the normal reconciliation path before
+        // querying the exchange. Any fill racing with editOrder is then checked against the
+        // amended total and emitted as a standard incremental fill fact.
+        self.orders.insert(current.client_id, amended.clone());
+        self.sync_order(current.client_id, ts)
+    }
+
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
         self.capabilities()
             .validate_cancel()
@@ -831,28 +2075,29 @@ impl Venue for CcxtProcessVenue {
         let order = self
             .orders
             .get(&client_order_id)
+            .cloned()
             .ok_or_else(|| QxError::Permanent("CCXT 本地订单不存在".into()))?;
         if order.status.is_terminal() {
             // 终态不再产生重复撤单事实。
             return Ok(Vec::new());
         }
-        Self::validate_cancel_state(order, "CCXT")?;
+        Self::validate_cancel_state(&order, "CCXT")?;
         let remote_id = self
             .remote_ids
             .get(&client_order_id)
+            .cloned()
             .ok_or_else(|| QxError::ReconcileRequired("CCXT 订单缺少 remote order id".into()))?;
         self.call_or_reconcile(json!({
             "op": "cancel_order",
             "order_id": remote_id,
             "instrument": order.instrument.to_string(),
         }))?;
-        if let Some(local) = self.orders.get_mut(&client_order_id) {
-            local.status = OrderStatus::Cancelled;
-        }
-        Ok(vec![VenueEvent::Cancelled {
-            client_order_id,
-            ts,
-        }])
+        // A successful cancel RPC is only an acknowledgement: the order may have filled
+        // concurrently, may still be working, or may be in a venue-specific cancel-pending
+        // state. Re-fetch the authoritative order and reuse the normal incremental fill and
+        // terminal-state reconciliation path. Never manufacture a local Cancelled fact from
+        // the cancel request response alone.
+        self.sync_order(client_order_id, ts)
     }
 
     fn snapshot(&self) -> Vec<VenueOrderSnapshot> {
@@ -862,6 +2107,7 @@ impl Venue for CcxtProcessVenue {
                 client_order_id: order.client_id,
                 status: order.status,
                 filled: order.filled,
+                filled_exact: order.exact_amounts.map(|amounts| amounts.filled),
             })
             .collect()
     }
@@ -880,6 +2126,42 @@ fn raw_i128(value: &Value, key: &str) -> QxResult<i128> {
         },
         |value| raw_i128_value(value, key),
     )
+}
+
+fn parse_fee_charges(value: &Value) -> QxResult<Vec<FillFee>> {
+    let Some(rows) = value.get("fees") else {
+        return Ok(Vec::new());
+    };
+    let rows = rows
+        .as_array()
+        .ok_or_else(|| QxError::ReconcileRequired("CCXT fees 必须是逐币种费用数组".into()))?;
+    let mut totals = BTreeMap::<String, i128>::new();
+    for row in rows {
+        let amount = raw_i128(row, "amount_raw")?;
+        if amount == 0 {
+            continue;
+        }
+        let currency = row
+            .get("currency")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|currency| !currency.is_empty())
+            .ok_or_else(|| QxError::ReconcileRequired("CCXT 非零手续费明细缺少币种".into()))?
+            .to_ascii_uppercase();
+        let total = totals.entry(currency).or_default();
+        *total = total
+            .checked_add(amount)
+            .ok_or_else(|| QxError::Invariant("CCXT 手续费按币种累计溢出".into()))?;
+    }
+    Ok(totals
+        .into_iter()
+        .filter(|(_, amount)| *amount != 0)
+        .map(|(currency, amount)| FillFee {
+            amount: Money::from_raw(amount),
+            currency: Some(currency),
+            source_trade_ids: Vec::new(),
+        })
+        .collect())
 }
 
 fn raw_i128_value(value: &Value, key: &str) -> QxResult<i128> {

@@ -1,0 +1,53 @@
+$ python tools/accept_backtest_metrics_contract.py
+exit_code=0
+
+[stdout]
+[1/5] cargo test -p qx-core --lib period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity --offline
+    Finished `test` profile [unoptimized] target(s) in 0.52s
+     Running unittests src\lib.rs (target\debug\deps\qx_core-70a83f3586f474f7.exe)
+
+running 1 test
+test performance::tests::period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 0.00s
+
+[2/5] cargo test -p qx-core --lib aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values --offline
+    Finished `test` profile [unoptimized] target(s) in 0.48s
+     Running unittests src\lib.rs (target\debug\deps\qx_core-70a83f3586f474f7.exe)
+
+running 1 test
+test benchmark::tests::aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 0.00s
+
+[3/5] cargo test -p qx-app --lib artifact_store::backtest_summary::metrics_definition_tests --offline
+   Compiling qx-app v0.3.0 (D:\aex_work\qianxing\crates\qx-app)
+    Finished `test` profile [unoptimized] target(s) in 6.37s
+     Running unittests src\lib.rs (target\debug\deps\qx_app-d92addc3767ef2b3.exe)
+
+running 1 test
+test artifact_store::backtest_summary::metrics_definition_tests::metrics_definition_is_versioned_and_discloses_period_and_fee_semantics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 165 filtered out; finished in 0.00s
+
+[4/5] cargo test -p qx-cli --bin qx-cli report_html::metric_definition_tests --offline
+    Finished `test` profile [unoptimized] target(s) in 0.75s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)
+
+running 1 test
+test report_html::metric_definition_tests::html_surfaces_versioned_metric_period_and_fee_basis ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 479 filtered out; finished in 0.00s
+
+[5/5] cargo test -p qx-cli --bin qx-cli report_xlsx::rows::metrics_projection_tests --offline
+    Finished `test` profile [unoptimized] target(s) in 0.73s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)
+
+running 1 test
+test report_xlsx::rows::metrics_projection_tests::overview_exports_versioned_metric_definitions_and_exact_fee_facts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 479 filtered out; finished in 0.00s
+
+backtest metrics contract: all five focused Rust checks passed
+
+[stderr]

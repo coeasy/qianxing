@@ -1,0 +1,12 @@
+$ target/r01-clean-install-windows/installed-venv/Scripts/python.exe tools/accept_concurrent_strategy_projects.py
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_simultaneous_projects_do_not_cross_import_or_resolve_each_others_data (python.tests.test_strategy_project_concurrency.ConcurrentStrategyProjectTests.test_simultaneous_projects_do_not_cross_import_or_resolve_each_others_data) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.510s
+
+OK

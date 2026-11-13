@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn corporate_action_published_after_trigger_is_not_applied_retroactively() {
+    let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "CNY", Money::from_i64(10_000), 1)
+        .unwrap();
+    let order = Order {
+        client_id: 1,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_i64(100),
+        limit: Some(Price::from_i64(10)),
+        status: OrderStatus::Filled,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: None,
+    };
+    ledger
+        .apply_fill(
+            &order,
+            &Fill {
+                order_id: 1,
+                qty: Quantity::from_i64(100),
+                price: Price::from_i64(10),
+                ts: 2,
+                ..Fill::default()
+            },
+            "CNY",
+        )
+        .unwrap();
+    let rules = AshareRuleConfig {
+        enabled: true,
+        corporate_actions: vec![AshareCorporateActionEvent {
+            ts: 10,
+            action_type: AshareCorporateActionType::CashDividend,
+            cash_dividend_raw: Money::from_i64(1).raw(),
+            published_at_ms: Some(11),
+            ..AshareCorporateActionEvent::default()
+        }],
+        ..AshareRuleConfig::default()
+    };
+    let schedule = AshareCorporateActionSchedule::new(&rules.corporate_actions);
+    let config = VirtualTradingConfig {
+        ashare_rules: Some(rules),
+        ..VirtualTradingConfig::default()
+    };
+    let mut log = EventLog::new();
+    let mut fills = Vec::new();
+    let bar = Bar::new(10, 10 * SCALE, 10 * SCALE, 10 * SCALE, 10 * SCALE, 1_000);
+    let mut state = VirtualExecution {
+        instrument: &instrument,
+        account_id: "main",
+        currency: "CNY",
+        multiplier: 1,
+        spec: None,
+        ledger: &mut ledger,
+        log: &mut log,
+        fills: &mut fills,
+        fee_engine: None,
+    };
+
+    apply_virtual_events(&config, Some(&schedule), &bar, &mut state).unwrap();
+
+    assert_eq!(
+        ledger.cash_dividend_entitlement_for("main", &instrument, "CNY"),
+        Money::ZERO,
+        "尚未公告的现金分红不能回填到公告前的登记时点"
+    );
+}
+
+#[test]
 fn timed_rights_issue_lifecycle_uses_record_date_and_expires_remaining_rights() {
     let instrument = InstrumentId::parse("000001.SZSE").unwrap();
     let rights = InstrumentId::parse("700001.SZSE").unwrap();
@@ -19,6 +92,7 @@ fn timed_rights_issue_lifecycle_uses_record_date_and_expires_remaining_rights() 
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(
@@ -110,6 +184,120 @@ fn timed_rights_issue_lifecycle_uses_record_date_and_expires_remaining_rights() 
 }
 
 #[test]
+fn explicit_rights_expiry_suppresses_the_timed_expiry_for_the_same_rights() {
+    let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+    let rights = InstrumentId::parse("700001.SZSE").unwrap();
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "CNY", Money::from_i64(10_000), 1)
+        .unwrap();
+    let source_order = Order {
+        client_id: 2,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_i64(100),
+        limit: Some(Price::from_i64(10)),
+        status: OrderStatus::Filled,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: None,
+    };
+    ledger
+        .apply_fill(
+            &source_order,
+            &Fill {
+                order_id: 2,
+                qty: Quantity::from_i64(100),
+                price: Price::from_i64(10),
+                ts: 2,
+                ..Fill::default()
+            },
+            "CNY",
+        )
+        .unwrap();
+
+    let record_ts = 10;
+    let ex_ts = 20;
+    let subscribe_ts = 30;
+    let expiry_ts = 40;
+    let rules = AshareRuleConfig {
+        enabled: true,
+        corporate_actions: vec![
+            AshareCorporateActionEvent {
+                ts: ex_ts,
+                record_ts: Some(record_ts),
+                subscription_start_ts: Some(subscribe_ts),
+                subscription_end_ts: Some(expiry_ts),
+                action_type: AshareCorporateActionType::RightsIssue,
+                rights_issue_price_raw: Price::from_i64(5).raw(),
+                rights_issue_ratio_num: 20 * SCALE,
+                rights_issue_ratio_den: 100 * SCALE,
+                rights_instrument: Some(rights.to_string()),
+                subscription_qty_raw: Quantity::from_i64(10).raw(),
+                ..AshareCorporateActionEvent::default()
+            },
+            AshareCorporateActionEvent {
+                ts: expiry_ts,
+                action_type: AshareCorporateActionType::RightsIssueExpiry,
+                rights_instrument: Some(rights.to_string()),
+                rights_expiry_qty_raw: Quantity::from_i64(10).raw(),
+                ..AshareCorporateActionEvent::default()
+            },
+        ],
+        ..AshareRuleConfig::default()
+    };
+    rules.validate().unwrap();
+    let schedule = AshareCorporateActionSchedule::new(&rules.corporate_actions);
+    let config = VirtualTradingConfig {
+        ashare_rules: Some(rules),
+        ..VirtualTradingConfig::default()
+    };
+    let mut log = EventLog::new();
+    let mut fills = Vec::new();
+    for ts in [record_ts, ex_ts, subscribe_ts, expiry_ts] {
+        let bar = Bar::new(ts, 10 * SCALE, 10 * SCALE, 10 * SCALE, 10 * SCALE, 1_000);
+        let mut state = VirtualExecution {
+            instrument: &instrument,
+            account_id: "main",
+            currency: "CNY",
+            multiplier: 1,
+            spec: None,
+            ledger: &mut ledger,
+            log: &mut log,
+            fills: &mut fills,
+            fee_engine: None,
+        };
+        apply_virtual_events(&config, Some(&schedule), &bar, &mut state).unwrap();
+    }
+
+    let expiry_entries = ledger
+        .entries()
+        .iter()
+        .filter(|entry| {
+            entry.kind == qx_core::LedgerEntryKind::RightsEntitlement
+                && entry.instrument.as_ref() == Some(&rights)
+                && entry.ts == expiry_ts
+                && entry.quantity.raw() < 0
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        expiry_entries.len(),
+        1,
+        "only the explicit expiry is applied"
+    );
+    assert_eq!(
+        expiry_entries[0].quantity.raw(),
+        -Quantity::from_i64(10).raw()
+    );
+    assert_eq!(
+        ledger.rights_entitlement_for("main", &rights),
+        Quantity::ZERO
+    );
+}
+
+#[test]
 fn timed_cash_dividend_pays_after_post_record_date_sale() {
     let instrument = InstrumentId::parse("000001.SZSE").unwrap();
     let mut ledger = Ledger::new();
@@ -127,6 +315,7 @@ fn timed_cash_dividend_pays_after_post_record_date_sale() {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     };
     ledger
         .apply_fill(

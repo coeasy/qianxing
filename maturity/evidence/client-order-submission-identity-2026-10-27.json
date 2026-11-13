@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "kind": "client-order-submission-identity-v1",
+  "generated_at_utc": "2026-10-26T17:55:52Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "rust_mode": "local"
+  },
+  "behavior": {
+    "identity_owner": "qx-core::Order::same_submission_identity",
+    "immutable_fields": [
+      "client_id",
+      "account_id",
+      "instrument",
+      "side",
+      "legacy quantity and limit",
+      "strategy trace",
+      "order policy",
+      "exact quantity",
+      "exact limit price",
+      "exact quote budget",
+      "exact market reference price"
+    ],
+    "mutable_fields_excluded": [
+      "status",
+      "legacy filled quantity",
+      "exact filled quantity",
+      "exact quote filled"
+    ],
+    "consumers": [
+      "PortExecutionService submit replay check",
+      "algorithm child recovery",
+      "multi-leg compensation recovery"
+    ],
+    "conflicts_rejected_before": [
+      "EventLog write",
+      "OMS write",
+      "Venue side effect"
+    ]
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-execution --lib",
+      "passed": 39,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p contract-tests --test recovery_and_replay -- --test-threads=1",
+      "passed": 3,
+      "failed": 0,
+      "environment": {
+        "TEMP": "target/test-temp",
+        "TMP": "target/test-temp"
+      }
+    },
+    {
+      "command": "rustfmt --edition 2021 --config skip_children=true --check on changed Rust files",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Local code and simulated Venue/file EventLog evidence only; no Binance, OKX, or Bitget network request was made.",
+    "Cross-node concurrency pressure, venue-side idempotency, and complete multi-leg compensation acceptance remain open.",
+    "This is unpublished workspace evidence."
+  ]
+}

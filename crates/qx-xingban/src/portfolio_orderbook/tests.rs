@@ -40,6 +40,7 @@ impl OrderBookStrategy for Probe {
             account_id: String::new(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         }])
     }
 
@@ -58,10 +59,14 @@ fn snapshot(ts: u64, ask: i64) -> OrderBookSnapshot {
         ts,
         sequence: ts,
         bids: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(ask - 2),
             qty: Quantity::from_i64(10),
         }],
         asks: vec![BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(ask),
             qty: Quantity::from_i64(10),
         }],

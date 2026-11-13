@@ -9,7 +9,14 @@ fn root() -> PathBuf {
         .and_then(Path::parent)
         .unwrap()
         .join("target")
-        .join(format!("multi-market-depth-quality-{}", std::process::id()));
+        .join(format!(
+            "multi-market-depth-quality-{}-{}",
+            std::process::id(),
+            module_path!().replace("::", "-")
+        ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("remove stale multi-market depth quality fixture");
+    }
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -106,13 +113,11 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
     let component = &json["generation"]["run"]["dataset"]["components"][0];
     assert!(component["manifest_fingerprint"].as_str().is_some());
     assert_eq!(component["quality_report"]["interval_ms"], 1000);
-    assert_eq!(
-        json["generation"]["run"]["artifacts"]
-            .as_array()
-            .unwrap()
-            .len(),
-        6
-    );
+    let artifacts = json["generation"]["run"]["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 8);
+    assert!(artifacts
+        .iter()
+        .any(|artifact| artifact["name"] == "equity_exact"));
     let xlsx = root.join("multi-market-depth-quality.xlsx");
     let xlsx_text = xlsx.to_string_lossy().into_owned();
     let report = cli(&[
@@ -134,6 +139,240 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
     assert!(html.contains("质量清单指纹"));
     assert!(html.contains(component["manifest_fingerprint"].as_str().unwrap()));
     assert!(xlsx.is_file() && std::fs::metadata(&xlsx).unwrap().len() > 0);
+
+    let mut altered_summary: Value =
+        serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let original_manifest_path = altered_summary
+        .pointer("/market_data/0/dataset_quality/manifest_path")
+        .and_then(Value::as_str)
+        .unwrap();
+    let duplicate_manifest_path = root.join("depth-quality-identical-copy.json");
+    std::fs::copy(original_manifest_path, &duplicate_manifest_path).unwrap();
+    altered_summary["market_data"][0]["dataset_quality"]["manifest_path"] =
+        json!(duplicate_manifest_path);
+    let altered_summary_path = root.join("multi-market-depth-quality-altered.json");
+    std::fs::write(
+        &altered_summary_path,
+        serde_json::to_vec(&altered_summary).unwrap(),
+    )
+    .unwrap();
+    let altered_summary_text = altered_summary_path.to_string_lossy().into_owned();
+    let rejected_rebound_manifest = cli(&["report", &altered_summary_text, "--json"]);
+    assert!(!rejected_rebound_manifest.status.success());
+    assert!(String::from_utf8_lossy(&rejected_rebound_manifest.stderr)
+        .contains("质量清单路径与 spec 不一致"));
+
+    let diagnostic_path = root.join("multi-market-depth-diagnostics.json");
+    let diagnostic_path_text = diagnostic_path.to_string_lossy().into_owned();
+    let generated = cli(&[
+        "strategy",
+        "diagnose-depth",
+        &summary_text,
+        "--output",
+        &diagnostic_path_text,
+        "--html",
+    ]);
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let diagnostics: Value =
+        serde_json::from_slice(&std::fs::read(&diagnostic_path).unwrap()).unwrap();
+    assert_eq!(diagnostics.as_array().unwrap().len(), 2);
+    assert_eq!(diagnostics[0]["lookahead"]["status"], "no_change_detected");
+    assert!(
+        diagnostics[0]["lookahead"]["perturbation_targets_checked"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert!(
+        diagnostics[0]["lookahead"]["decision_points_checked"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(
+        diagnostics[0]["data_visibility"]["status"],
+        "visibility_unknown"
+    );
+    assert_eq!(
+        diagnostics[0]["startup"]["windows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(diagnostics[0]["input_kind"], "depth_midpoint_bar");
+    let report_html_path =
+        summary.with_file_name(summary.file_name().unwrap().to_string_lossy().replace(
+            ".multi-market-depth.json",
+            ".multi-market-depth.report.html",
+        ));
+    let generated_html = std::fs::read_to_string(&report_html_path).unwrap();
+    assert!(generated_html.contains("no_change_detected"));
+    assert!(generated_html.contains("visibility_unknown"));
+    let attached_xlsx = root.join("multi-market-depth-diagnostics.xlsx");
+    let attached_xlsx_text = attached_xlsx.to_string_lossy().into_owned();
+    let attached = cli(&[
+        "report",
+        &summary_text,
+        "--strategy-diagnostics",
+        &diagnostic_path_text,
+        "--json",
+        "--html",
+        "--xlsx",
+        &attached_xlsx_text,
+    ]);
+    assert!(
+        attached.status.success(),
+        "{}",
+        String::from_utf8_lossy(&attached.stderr)
+    );
+    let attached_json: Value = serde_json::from_slice(&attached.stdout).unwrap();
+    assert_eq!(
+        attached_json["report"]["market_strategy_diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let attached_html = std::fs::read_to_string(
+        attached_json["generated_artifacts"]["html"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(attached_html.contains("diagnostic-filter"));
+    assert!(attached_html.contains("depth-quality-0"));
+    assert_eq!(
+        attached_json["generated_artifacts"]["xlsx"],
+        attached_xlsx_text
+    );
+    let mut attached_workbook =
+        zip::ZipArchive::new(std::fs::File::open(&attached_xlsx).unwrap()).unwrap();
+    let mut workbook_index = String::new();
+    attached_workbook
+        .by_name("xl/workbook.xml")
+        .unwrap()
+        .read_to_string(&mut workbook_index)
+        .unwrap();
+    assert!(workbook_index.contains("StrategyDiagnostics"));
+    assert!(workbook_index.contains("DiagnosticEvidence"));
+    let mut diagnostic_sheet = String::new();
+    attached_workbook
+        .by_name("xl/worksheets/sheet3.xml")
+        .unwrap()
+        .read_to_string(&mut diagnostic_sheet)
+        .unwrap();
+    assert!(diagnostic_sheet.contains("no_change_detected"));
+    let mut evidence_sheet = String::new();
+    attached_workbook
+        .by_name("xl/worksheets/sheet4.xml")
+        .unwrap()
+        .read_to_string(&mut evidence_sheet)
+        .unwrap();
+    assert!(evidence_sheet.contains("input_kind"));
+    assert!(evidence_sheet.contains("depth_midpoint_bar"));
+
+    let evidence_report = cli(&[
+        "report",
+        &summary_text,
+        "--strategy-diagnostics",
+        &diagnostic_path_text,
+        "--json",
+        "--evidence",
+    ]);
+    assert!(
+        evidence_report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evidence_report.stderr)
+    );
+    let evidence_report: Value = serde_json::from_slice(&evidence_report.stdout).unwrap();
+    let diagnostic_evidence = PathBuf::from(
+        evidence_report["generated_artifacts"]["evidence"]
+            .as_str()
+            .unwrap(),
+    );
+    let diagnostic_bundle: Value =
+        serde_json::from_slice(&std::fs::read(&diagnostic_evidence).unwrap()).unwrap();
+    let diagnostic_attachment = &diagnostic_bundle["generation"]["run"]["strategy_diagnostics"];
+    assert_eq!(
+        diagnostic_attachment["kind"],
+        "strategy-bias-diagnostics-depth-array"
+    );
+    assert_eq!(
+        diagnostic_attachment["input_sha256"],
+        qx_strategy::sha256_hex(&std::fs::read(&diagnostic_path).unwrap())
+    );
+    let evidence_text = diagnostic_evidence.to_string_lossy().into_owned();
+    let verified_diagnostic_bundle =
+        cli(&["evidence", "verify-run", &evidence_text, "--recompute"]);
+    assert!(
+        verified_diagnostic_bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified_diagnostic_bundle.stderr)
+    );
+    let portable_dir = root.join("portable-depth-diagnostics");
+    let portable_export = cli(&[
+        "evidence",
+        "export-run",
+        &evidence_text,
+        "--output-dir",
+        portable_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        portable_export.status.success(),
+        "{}",
+        String::from_utf8_lossy(&portable_export.stderr)
+    );
+    let portable_bundle = portable_dir.join("evidence.json");
+    let portable_text = portable_bundle.to_string_lossy().into_owned();
+    let portable_verified = cli(&["evidence", "verify-run", &portable_text]);
+    assert!(
+        portable_verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&portable_verified.stderr)
+    );
+    let portable_diagnostics = portable_dir.join("inputs/strategy-diagnostics.json");
+    let mut altered_diagnostics: Value =
+        serde_json::from_slice(&std::fs::read(&portable_diagnostics).unwrap()).unwrap();
+    altered_diagnostics[0]["input_events"] = json!(1);
+    let altered_bytes = serde_json::to_vec(&altered_diagnostics).unwrap();
+    std::fs::write(&portable_diagnostics, &altered_bytes).unwrap();
+    let mut altered_bundle: Value =
+        serde_json::from_slice(&std::fs::read(&portable_bundle).unwrap()).unwrap();
+    altered_bundle["generation"]["run"]["strategy_diagnostics"]["input_sha256"] =
+        json!(qx_strategy::sha256_hex(&altered_bytes));
+    std::fs::write(
+        &portable_bundle,
+        serde_json::to_vec_pretty(&altered_bundle).unwrap(),
+    )
+    .unwrap();
+    let rejected_identity = cli(&["evidence", "verify-run", &portable_text]);
+    assert!(!rejected_identity.status.success());
+    assert!(String::from_utf8_lossy(&rejected_identity.stderr).contains("事件数"));
+
+    let mut invalid_diagnostics = diagnostics.clone();
+    invalid_diagnostics[0]["input_events"] = json!(1);
+    let invalid_path = root.join("multi-market-depth-diagnostics-invalid.json");
+    std::fs::write(
+        &invalid_path,
+        serde_json::to_vec(&invalid_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let invalid_path_text = invalid_path.to_string_lossy().into_owned();
+    let rejected = cli(&[
+        "report",
+        &summary_text,
+        "--strategy-diagnostics",
+        &invalid_path_text,
+        "--json",
+    ]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("事件数"));
+
     let file = std::fs::File::open(&xlsx).unwrap();
     let mut workbook = zip::ZipArchive::new(file).unwrap();
     let mut quality_sheet = String::new();
@@ -210,6 +449,113 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
         .unwrap();
     assert!(ranking_sheet.contains("multi-market-depth-quality"));
     assert!(ranking_sheet.contains("multi-market-depth-quality-alt"));
+
+    let mut second_diagnostics = diagnostics.clone();
+    for diagnostic in second_diagnostics.as_array_mut().unwrap() {
+        let instrument = diagnostic["instrument"].as_str().unwrap();
+        let strategy_id = second_spec["markets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|market| market["instrument"].as_str() == Some(instrument))
+            .unwrap()["strategy"]["strategy_id"]
+            .as_str()
+            .unwrap();
+        diagnostic["strategy_id"] = json!(strategy_id);
+    }
+    let comparison_diagnostics_path = root.join("depth-comparison-diagnostics.json");
+    let comparison_diagnostics = json!({
+        "schema_version":1,
+        "kind":"qianxing-multi-market-depth-diagnostic-comparison",
+        "runs":[
+            {"run_id":"multi-market-depth-quality","diagnostics":diagnostics},
+            {"run_id":"multi-market-depth-quality-alt","diagnostics":second_diagnostics}
+        ]
+    });
+    std::fs::write(
+        &comparison_diagnostics_path,
+        serde_json::to_vec(&comparison_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let comparison_diagnostics_path_text =
+        comparison_diagnostics_path.to_string_lossy().into_owned();
+    let comparison_diagnostics_html = root.join("depth-comparison-diagnostics.html");
+    let comparison_diagnostics_html_text =
+        comparison_diagnostics_html.to_string_lossy().into_owned();
+    let comparison_diagnostics_xlsx = root.join("depth-comparison-diagnostics.xlsx");
+    let comparison_diagnostics_xlsx_text =
+        comparison_diagnostics_xlsx.to_string_lossy().into_owned();
+    let comparison_with_diagnostics = cli(&[
+        "report",
+        &summary_text,
+        "--against",
+        second_summary,
+        "--strategy-diagnostics",
+        &comparison_diagnostics_path_text,
+        "--json",
+        "--html",
+        "--xlsx",
+        &comparison_diagnostics_xlsx_text,
+        "--output",
+        &comparison_diagnostics_html_text,
+    ]);
+    assert!(
+        comparison_with_diagnostics.status.success(),
+        "{}",
+        String::from_utf8_lossy(&comparison_with_diagnostics.stderr)
+    );
+    let comparison_with_diagnostics_json: Value =
+        serde_json::from_slice(&comparison_with_diagnostics.stdout).unwrap();
+    let comparison_runs = comparison_with_diagnostics_json["report"]["runs"]
+        .as_array()
+        .unwrap();
+    assert_eq!(comparison_runs.len(), 2);
+    assert!(comparison_runs.iter().all(|run| {
+        run["market_strategy_diagnostics"]
+            .as_array()
+            .is_some_and(|items| {
+                !items.is_empty() && items.iter().all(|item| item["identity_bound"] == true)
+            })
+    }));
+    let comparison_html = std::fs::read_to_string(&comparison_diagnostics_html).unwrap();
+    assert!(comparison_html.contains("comparison-diagnostic-filter"));
+    assert!(comparison_html.contains("multi-market-depth-quality-alt"));
+    let mut diagnostic_workbook =
+        zip::ZipArchive::new(std::fs::File::open(&comparison_diagnostics_xlsx).unwrap()).unwrap();
+    let mut diagnostic_summary_sheet = String::new();
+    diagnostic_workbook
+        .by_name("xl/worksheets/sheet3.xml")
+        .unwrap()
+        .read_to_string(&mut diagnostic_summary_sheet)
+        .unwrap();
+    assert!(diagnostic_summary_sheet.contains("run_id"));
+    assert!(diagnostic_summary_sheet.contains("multi-market-depth-quality-alt"));
+
+    let mut incomplete_comparison_diagnostics = comparison_diagnostics.clone();
+    incomplete_comparison_diagnostics["runs"] =
+        json!([incomplete_comparison_diagnostics["runs"][0].clone()]);
+    let incomplete_diagnostics_path = root.join("depth-comparison-diagnostics-incomplete.json");
+    std::fs::write(
+        &incomplete_diagnostics_path,
+        serde_json::to_vec(&incomplete_comparison_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let incomplete_diagnostics_path_text =
+        incomplete_diagnostics_path.to_string_lossy().into_owned();
+    let rejected_incomplete_comparison = cli(&[
+        "report",
+        &summary_text,
+        "--against",
+        second_summary,
+        "--strategy-diagnostics",
+        &incomplete_diagnostics_path_text,
+        "--json",
+    ]);
+    assert!(!rejected_incomplete_comparison.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_incomplete_comparison.stderr).contains("run_id 集合")
+    );
+
     let evidence_text = evidence.to_string_lossy().into_owned();
     let verified = cli(&["evidence", "verify-run", &evidence_text, "--recompute"]);
     assert!(
@@ -217,4 +563,50 @@ fn multi_market_depth_quality_survives_evidence_pack_and_offline_recompute() {
         "{}",
         String::from_utf8_lossy(&verified.stderr)
     );
+
+    let portable_root = root.join("portable-depth-run");
+    let portable_root_text = portable_root.to_string_lossy().into_owned();
+    let exported = cli(&[
+        "evidence",
+        "export-run",
+        &evidence_text,
+        "--output-dir",
+        &portable_root_text,
+    ]);
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relocated_root = root.with_file_name(format!(
+        "multi-market-depth-quality-relocated-{}-{stamp}",
+        std::process::id()
+    ));
+    assert_eq!(relocated_root.parent(), root.parent());
+    assert!(!relocated_root.starts_with(&root));
+    std::fs::rename(&portable_root, &relocated_root)
+        .expect("move portable multi-market depth evidence outside source workspace");
+    std::fs::remove_dir_all(&root).expect("remove multi-market depth source workspace");
+
+    let relocated_evidence = relocated_root.join("evidence.json");
+    let relocated_evidence_text = relocated_evidence.to_string_lossy().into_owned();
+    let relocated_verified = cli(&[
+        "evidence",
+        "verify-run",
+        &relocated_evidence_text,
+        "--recompute",
+    ]);
+    assert!(
+        relocated_verified.status.success(),
+        "portable multi-market depth recompute must not depend on the source workspace: {}",
+        String::from_utf8_lossy(&relocated_verified.stderr)
+    );
+    let relocated_result: Value = serde_json::from_slice(&relocated_verified.stdout).unwrap();
+    assert_eq!(relocated_result["result_recomputed"], true);
+    std::fs::remove_dir_all(&relocated_root).expect("remove relocated evidence fixture");
 }

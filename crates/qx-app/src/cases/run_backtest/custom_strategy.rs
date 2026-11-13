@@ -1,10 +1,11 @@
 //! Strategy artifact identity and caller-supplied strategy entrypoint.
 
 use super::{
-    bar_strategy::run_backtest_inner_unchecked, run_backtest_inner_with_strategies,
-    spec_config_hash, BacktestSpec,
+    run_backtest_inner_for_experiment, run_backtest_inner_with_strategies, spec_config_hash,
+    BacktestSpec,
 };
 use crate::cases::attach;
+use crate::cases::experiment_search::{DrawdownPruningWindow, SearchBacktestAttempt};
 use crate::cases::guard::guard_panics;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
@@ -206,17 +207,19 @@ pub(in crate::cases) fn run_backtest_inner_with_experiment_strategy(
     cancellation: Option<&CancellationToken>,
     identity: StrategyArtifactIdentity,
     strategy: Box<dyn Strategy>,
-) -> Result<Option<BacktestOutcome>, AppError> {
+    pruning: Option<DrawdownPruningWindow>,
+) -> Result<SearchBacktestAttempt<BacktestOutcome>, AppError> {
     identity.validate_for_experiment(spec)?;
-    run_backtest_inner_unchecked(
+    run_backtest_inner_for_experiment(
         spec,
         context,
         cancellation,
         vec![InjectedStrategy { identity, strategy }],
+        pruning,
     )
 }
 
-pub(super) struct InjectedStrategy {
+pub(in crate::cases) struct InjectedStrategy {
     pub(super) identity: StrategyArtifactIdentity,
     pub(super) strategy: Box<dyn Strategy>,
 }

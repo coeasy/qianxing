@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "checked-financial-arithmetic-v1",
+  "generated_at_utc": "2026-10-26T18:37:07Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "rust_mode": "local",
+    "python": "local"
+  },
+  "behavior": {
+    "fee_notional_and_basis_points": "Checked arithmetic returns explicit errors for invalid inputs, rates, and overflow; built-in fee models validate their parameters.",
+    "backtest_accounting": "Single-market and shared-account order-book fee/turnover raw projections reject overflowing totals.",
+    "ashare_corporate_actions": "Cash flows, share ratios, rights-issue cash, reference-price division, and tick rounding reject overflow; point and series lookups propagate errors before matching.",
+    "spread_attribution": "Leg totals and cost-basis-point scaling reject overflow instead of emitting saturated totals.",
+    "source_api_changes": [
+      "FeeModel::commission and commission_for_side now return QxResult<i128>.",
+      "AshareRuleConfig::previous_close returns Result<Option<i128>, String>.",
+      "AshareRuleConfig::previous_close_series returns Result<Vec<Option<i128>>, String>."
+    ]
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-core --lib fee::tests -j 1",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-xingban -p qx-zhenlu --lib -j 1",
+      "passed": {
+        "qx-xingban": 206,
+        "qx-zhenlu": 58
+      },
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-xingban --test ashare_previous_close_series -j 1",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p contract-tests --test paper_accounting -j 1 (TEMP/TMP=target/test-temp)",
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "command": "cargo check -p qx-core -p qx-xingban -p qx-zhenlu -p qx-app -p contract-tests -j 1",
+      "passed": true
+    },
+    {
+      "command": "cargo check -p qx-xingban --benches -j 1",
+      "passed": true
+    },
+    {
+      "command": "rustfmt --edition 2021 --check --config skip_children=true (touched Rust files)",
+      "passed": true
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": true,
+      "shards": 4,
+      "named_checks": 228,
+      "duplicate_checks": 0
+    }
+  ],
+  "limitations": [
+    "No full-workspace test or release matrix was run.",
+    "No connected exchange, sandbox provider, capacity, or production acceptance was performed.",
+    "The Rust trait and A-share query return-type changes require downstream source updates and a compatible version bump before publishing."
+  ],
+  "release_status": "unpublished workspace"
+}

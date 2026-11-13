@@ -1,0 +1,13 @@
+PRE bin=38ae3a14075fb863 bundle=7d412448505daa4a(3123B) frame=07aca52393be3010(659B) expected_fp=dataset-bundle:099c5f20c38bc423
+SHOT landed chain_rc=0 steps=doctor=0,backtest=0,report=0,status=0 init_bytes_equal_deploy=3/3
+  STEP doctor rc=0 [Doctor] 检查配置、路径、策略输入与监督器可构建性（不启动 worker）
+  STEP backtest rc=0 [Strategy · Signal] source=config fast_window=2 slow_window=3 period=14 threshold_bps=0 \
+  STEP report rc=0 [Report] summary=D:\aex_work\qianxing\.task-tmp\test-tmp\ashare-landed-1793495933\landed\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_7e3232ec74de95ce1f62dc149694df921705e0fe506e5d628e7f0b954d9
+  STEP status rc=0 [Status] runtime=.task-tmp\test-tmp\ashare-landed-1793495933\landed\qianxing.runtime.json
+  READ [RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:7e3232ec74de95ce1f62dc149694df921705e0fe506e5d628e7f0b954d93e7aa:5b8f3e50261b83c0f06fe502 data_fingerprint=dataset-bundle:099c5f20c38bc423 result_hash=4d4d3e3ba1f18b87 digest=9ad63706
+SHOT corrupt rc=2 bundle_sha=d74b3d627ad5799e changed=True guard_text=True result_line_printed=False
+  READ [qx-cli · CLI] 统一策略回测失败: 策略 DatasetBundle bars snapshot does not bind to the exact BarFrame
+CHECKS total=7 failed=-
+FACE bundle_sha16=7d412448505daa4a frame_sha16=07aca52393be3010
+READINGS .task-tmp\r7_ashare_landed_readings.json
+ASHARE_LANDED_OK 文档五步在 landed 夹具上走通，改坏哈希仍被拦

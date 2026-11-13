@@ -1,0 +1,14 @@
+LEG r16_g2_pointers rc=1 seconds=40.60 bytes=1995
+SUMMARY_WRITTEN .task-tmp\r16_g2_summary.json
+R r16_g2_pointers_artifact_links=121
+R r16_g2_pointers_audit_exit=1
+R r16_g2_pointers_baseline=146
+R r16_g2_pointers_broken_everywhere=1
+R r16_g2_pointers_head_face=10
+R r16_g2_pointers_head_rows=10
+R r16_g2_pointers_local_only=146
+R r16_g2_pointers_other_links=25
+R r16_g2_pointers_rc=1
+R r16_g2_pointers_scanned_files=58
+R t_r16_g2_pointers=40.6
+legs_nonzero=r16_g2_pointers_rc

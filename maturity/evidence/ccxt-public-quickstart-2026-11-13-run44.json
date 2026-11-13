@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-13T16:26:03Z",
+  "source_revision": "0ede3c10bace570ac9fcf173288b553cc5cc004d",
+  "workflow": {
+    "name": "Public CCXT quickstart acceptance",
+    "run_id": 43460761813,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/43460761813",
+    "conclusion": "failure",
+    "scope": "Linux release wheel and bundled CLI; anonymous public market data, backtest, and HTML report. No credentials were supplied, no private APIs were called, and no orders were sent."
+  },
+  "shared_linux_release_artifact": {
+    "artifact_id": 14057540889,
+    "artifact_name": "qianxing-linux-release",
+    "github_sha256": "e753d3409e6540aa06cb4dc8d5664aa19e4e7b2d12e2695f4f80004914ec93ed",
+    "build_and_upload": "passed"
+  },
+  "common_window": {
+    "timeframe": "15m",
+    "as_of_ms": 1794586512488,
+    "credentials_loaded": false,
+    "orders_submitted": false
+  },
+  "exchange_results": [
+    {
+      "exchange": "okx",
+      "job_id": 132012094491,
+      "conclusion": "success",
+      "artifact_id": 14055798799,
+      "artifact_name": "public-ccxt-quickstart-okx",
+      "artifact_github_sha256": "d2e092f7007129f7c5fea8a0cca12bbfcfc4bc959420efa774ef2c33584b29e9",
+      "artifact_sha256_verified_locally": true,
+      "instrument": "BTC/USDT:USDT.OKX",
+      "requested_days": 180,
+      "bars": 17280,
+      "missing_intervals": 0,
+      "rejected_orders": 0,
+      "fills": 953,
+      "result_hash": "d0090e12aabe1062",
+      "html_report": "generated and uploaded"
+    },
+    {
+      "exchange": "bitget",
+      "job_id": 132012094566,
+      "conclusion": "success",
+      "artifact_id": 14055624215,
+      "artifact_name": "public-ccxt-quickstart-bitget",
+      "artifact_github_sha256": "e95c6a3b9622409c1f8b37a8a94b768f0821b65eef3d01f4e951eec28713f2db",
+      "artifact_sha256_verified_locally": true,
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "requested_days": 52,
+      "bars": 4992,
+      "missing_intervals": 0,
+      "rejected_orders": 0,
+      "fills": 260,
+      "result_hash": "e8ae11b082f0d529",
+      "html_report": "generated and uploaded"
+    },
+    {
+      "exchange": "binance",
+      "job_id": 132012094450,
+      "conclusion": "failure",
+      "artifact_id": 14055998573,
+      "artifact_name": "public-ccxt-quickstart-binance",
+      "artifact_github_sha256": "98258a9a907aed2515250ba5d7bbb52235af4ffcb53008373ca064e27a9efadc",
+      "artifact_sha256_verified_locally": false,
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "requested_days": 180,
+      "http_status": 451,
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "message": "Service unavailable from a restricted location according to Binance eligibility terms.",
+      "html_report": "not generated"
+    }
+  ],
+  "bitget_page_boundary_fix": {
+    "root_cause": "The Bitget historical candle endpoint returns candles after startTime. Advancing the cursor to the next interval skipped one candle at each 200-row page boundary.",
+    "remediation": "Overlap the next query at the prior page's last candle and accept only one identical boundary duplicate.",
+    "hosted_acceptance": "passed; 4,992 bars and zero missing intervals"
+  },
+  "scope_limitations": [
+    "The workflow overall failed because the South Central US hosted runner received Binance HTTP 451; this does not establish Binance API behavior in other eligible regions.",
+    "OKX and Bitget results prove anonymous public-data quickstart, backtest, and report generation only. They do not prove authenticated APIs, testnet/live execution, connector maturity, account-specific fees, or strategy profitability.",
+    "The public quickstart workflow failure does not change exchange capability maturity states."
+  ]
+}

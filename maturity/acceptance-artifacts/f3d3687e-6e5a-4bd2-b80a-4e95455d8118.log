@@ -1,0 +1,51 @@
+test_artifact_removed_after_indexing_prevents_success_terminal_state (python.tests.test_project_runs.ProjectRunTests.test_artifact_removed_after_indexing_prevents_success_terminal_state) ... ok
+test_cancel_before_start_does_not_invoke_callback_engine (python.tests.test_project_runs.ProjectRunTests.test_cancel_before_start_does_not_invoke_callback_engine) ... ok
+test_cancel_terminal_run_does_not_relabel_success (python.tests.test_project_runs.ProjectRunTests.test_cancel_terminal_run_does_not_relabel_success) ... ok
+test_cancel_while_running_waits_for_native_terminal_state (python.tests.test_project_runs.ProjectRunTests.test_cancel_while_running_waits_for_native_terminal_state) ... ok
+test_corrupt_receipt_is_reported_as_unreadable (python.tests.test_project_runs.ProjectRunTests.test_corrupt_receipt_is_reported_as_unreadable) ... ok
+test_error_envelope_keeps_sdk_policy_and_does_not_echo_action_codes (python.tests.test_project_runs.ProjectRunTests.test_error_envelope_keeps_sdk_policy_and_does_not_echo_action_codes) ... ok
+test_error_envelope_maps_unclassified_exceptions_without_losing_the_class_name (python.tests.test_project_runs.ProjectRunTests.test_error_envelope_maps_unclassified_exceptions_without_losing_the_class_name) ... ok
+test_failed_report_is_not_a_failed_backtest (python.tests.test_project_runs.ProjectRunTests.test_failed_report_is_not_a_failed_backtest) ... ok
+test_failure_and_preflight_error_are_durable_and_context_resets (python.tests.test_project_runs.ProjectRunTests.test_failure_and_preflight_error_are_durable_and_context_resets) ... ok
+test_keyboard_interrupt_requests_rust_cancel (python.tests.test_project_runs.ProjectRunTests.test_keyboard_interrupt_requests_rust_cancel) ... ok
+test_macos_process_identity_uses_process_start_time (python.tests.test_project_runs.ProjectRunTests.test_macos_process_identity_uses_process_start_time) ... ok
+test_missing_owner_is_interrupted_not_completed (python.tests.test_project_runs.ProjectRunTests.test_missing_owner_is_interrupted_not_completed) ... ok
+test_posix_never_retries_a_replace_permission_error (python.tests.test_project_runs.ProjectRunTests.test_posix_never_retries_a_replace_permission_error) ... ok
+test_preflight_runs_in_project_directory_even_from_other_cwd (python.tests.test_project_runs.ProjectRunTests.test_preflight_runs_in_project_directory_even_from_other_cwd) ... ok
+test_project_artifact_verification_detects_runtime_dependency_environment_change (python.tests.test_project_runs.ProjectRunTests.test_project_artifact_verification_detects_runtime_dependency_environment_change) ... ok
+test_project_cli_routes_to_cancellable_engine_and_retains_stdout (python.tests.test_project_runs.ProjectRunTests.test_project_cli_routes_to_cancellable_engine_and_retains_stdout) ... ok
+test_project_report_checks_artifacts_before_spawning_rust (python.tests.test_project_runs.ProjectRunTests.test_project_report_checks_artifacts_before_spawning_rust) ... ok
+test_project_report_delegates_to_rust_and_retains_run_status (python.tests.test_project_runs.ProjectRunTests.test_project_report_delegates_to_rust_and_retains_run_status) ... ok
+test_project_report_fails_if_frozen_strategy_bundle_changes_during_render (python.tests.test_project_runs.ProjectRunTests.test_project_report_fails_if_frozen_strategy_bundle_changes_during_render) ... ok
+test_project_report_failure_records_structured_error_envelope (python.tests.test_project_runs.ProjectRunTests.test_project_report_failure_records_structured_error_envelope) ... ok
+test_project_report_records_missing_renderer_without_running_a_substitute (python.tests.test_project_runs.ProjectRunTests.test_project_report_records_missing_renderer_without_running_a_substitute) ... ok
+test_project_report_refuses_to_overwrite_indexed_summary_or_run_receipt (python.tests.test_project_runs.ProjectRunTests.test_project_report_refuses_to_overwrite_indexed_summary_or_run_receipt) ... ok
+test_project_report_rejects_colliding_format_paths (python.tests.test_project_runs.ProjectRunTests.test_project_report_rejects_colliding_format_paths) ... ok
+test_project_report_rejects_unknown_format_before_spawning_rust (python.tests.test_project_runs.ProjectRunTests.test_project_report_rejects_unknown_format_before_spawning_rust) ... ok
+test_project_report_renders_formats_and_machine_readable_json (python.tests.test_project_runs.ProjectRunTests.test_project_report_renders_formats_and_machine_readable_json) ... ok
+test_project_report_resolves_symlink_alias_to_protected_input (python.tests.test_project_runs.ProjectRunTests.test_project_report_resolves_symlink_alias_to_protected_input) ... ok
+test_project_strategy_bundle_is_frozen_and_integrity_checked (python.tests.test_project_runs.ProjectRunTests.test_project_strategy_bundle_is_frozen_and_integrity_checked) ... ok
+test_receipt_indexes_artifacts_and_engine_events_without_changing_cwd (python.tests.test_project_runs.ProjectRunTests.test_receipt_indexes_artifacts_and_engine_events_without_changing_cwd) ... ok
+test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt (python.tests.test_project_runs.ProjectRunTests.test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt) ... FAIL
+test_receipt_write_retries_a_windows_sharing_violation (python.tests.test_project_runs.ProjectRunTests.test_receipt_write_retries_a_windows_sharing_violation) ... ok
+test_report_renderer_prefers_the_bundled_copy_and_never_falls_back_silently (python.tests.test_project_runs.ProjectRunTests.test_report_renderer_prefers_the_bundled_copy_and_never_falls_back_silently) ... ok
+test_reused_pid_with_different_start_identity_is_not_alive (python.tests.test_project_runs.ProjectRunTests.test_reused_pid_with_different_start_identity_is_not_alive) ... ok
+test_run_captures_bounded_stdout_and_stderr_apart_from_events (python.tests.test_project_runs.ProjectRunTests.test_run_captures_bounded_stdout_and_stderr_apart_from_events) ... ok
+test_run_id_traversal_rejected_and_event_tail_bounded (python.tests.test_project_runs.ProjectRunTests.test_run_id_traversal_rejected_and_event_tail_bounded) ... ok
+test_run_output_log_stops_at_the_configured_limit (python.tests.test_project_runs.ProjectRunTests.test_run_output_log_stops_at_the_configured_limit) ... ok
+test_runtime_import_hook_preserves_distribution_discovery (python.tests.test_project_runs.ProjectRunTests.test_runtime_import_hook_preserves_distribution_discovery) ... ok
+test_success_without_a_complete_artifact_set_is_recorded_as_failure (python.tests.test_project_runs.ProjectRunTests.test_success_without_a_complete_artifact_set_is_recorded_as_failure) ... ok
+
+======================================================================
+FAIL: test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt (python.tests.test_project_runs.ProjectRunTests.test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\python\tests\test_project_runs.py", line 108, in test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt
+    self.assertEqual(sleep.call_count, 11)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 12 != 11
+
+----------------------------------------------------------------------
+Ran 37 tests in 81.784s
+
+FAILED (failures=1)

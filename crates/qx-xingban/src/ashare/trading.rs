@@ -26,11 +26,20 @@ impl AshareCorporateActionSchedule {
         Self::build(actions, Some(bars))
     }
 
+    pub(crate) fn has_events_at(&self, actions: &[AshareCorporateActionEvent], ts: u64) -> bool {
+        self.events_at(actions, ts).next().is_some()
+    }
+
     fn build(actions: &[AshareCorporateActionEvent], bars: Option<&[Bar]>) -> Self {
         let mut explicit_rights_expiries = BTreeMap::<u64, BTreeSet<String>>::new();
         let mut by_timestamp = HashMap::<u64, Vec<usize>>::new();
         let mut bar_timestamp_by_action_timestamp = HashMap::new();
         for (index, event) in actions.iter().enumerate() {
+            // Suspension events gate fills directly through AshareRuleConfig and must not be
+            // dispatched to the ledger event path.
+            if event.action_type == AshareCorporateActionType::Suspension {
+                continue;
+            }
             let mut timestamps = [None; 5];
             let mut timestamp_count = 0;
             let mut scheduled_bar_timestamps = [None; 5];
@@ -74,10 +83,12 @@ impl AshareCorporateActionSchedule {
                     bar_timestamp_by_action_timestamp.get(&event.ts).copied(),
                     event.rights_instrument.as_ref(),
                 ) {
-                    explicit_rights_expiries
-                        .entry(bar_ts)
-                        .or_default()
-                        .insert(instrument.clone());
+                    if event.is_visible_at(bar_ts) {
+                        explicit_rights_expiries
+                            .entry(bar_ts)
+                            .or_default()
+                            .insert(instrument.clone());
+                    }
                 }
             }
         }
@@ -109,6 +120,7 @@ impl AshareCorporateActionSchedule {
             .into_iter()
             .flatten()
             .map(move |index| &actions[*index])
+            .filter(move |event| event.is_visible_at(ts))
     }
 
     pub(crate) fn has_explicit_rights_expiry(
@@ -149,10 +161,32 @@ impl AshareRuleConfig {
         let day_start = Self::day_key(ts)
             .saturating_mul(DAY_MS)
             .saturating_sub(SHANGHAI_OFFSET_MS);
+        let action_index = self
+            .corporate_actions
+            .partition_point(|event| event.ts < day_start);
+        let mut has_suspension_fact = false;
+        let mut suspension_visible = false;
+        for event in self.corporate_actions[action_index..]
+            .iter()
+            .take_while(|event| {
+                AshareRuleConfig::day_key(event.ts) == AshareRuleConfig::day_key(ts)
+            })
+            .filter(|event| event.action_type == AshareCorporateActionType::Suspension)
+        {
+            has_suspension_fact = true;
+            suspension_visible |= event.is_visible_at(ts);
+        }
+        let halted = if has_suspension_fact {
+            suspension_visible
+                || (ts != day_start && self.halted_timestamps.binary_search(&ts).is_ok())
+        } else {
+            self.halted_timestamps.binary_search(&ts).is_ok()
+                || self.halted_timestamps.binary_search(&day_start).is_ok()
+        };
         (self.trading_timestamps.is_empty() || self.trading_timestamps.binary_search(&ts).is_ok())
             && (self.trading_days.is_empty() || self.trading_days.binary_search(&day_start).is_ok())
             && (self.session_windows.is_empty() || ts == day_start || in_session)
-            && self.halted_timestamps.binary_search(&ts).is_err()
+            && !halted
     }
 
     pub(crate) fn bar_restrictions(
@@ -175,7 +209,9 @@ impl AshareRuleConfig {
     }
 
     pub fn day_key(ts: u64) -> u64 {
-        ts.saturating_add(SHANGHAI_OFFSET_MS) / DAY_MS
+        let utc_day = ts / DAY_MS;
+        let utc_day_remainder = ts % DAY_MS;
+        utc_day + u64::from(utc_day_remainder >= DAY_MS - SHANGHAI_OFFSET_MS)
     }
 
     /// 生效涨停带：配置未声明（0）时按板块表推导，声明值优先。
@@ -196,21 +232,40 @@ impl AshareRuleConfig {
         }
     }
 
-    pub fn limits(&self, previous_close: i128) -> (i128, i128) {
-        let up = previous_close.saturating_mul(i128::from(10_000 + self.effective_limit_up_bp()))
-            / 10_000;
-        let down = previous_close
-            .saturating_mul(i128::from(10_000 - self.effective_limit_down_bp()))
-            / 10_000;
-        (self.align_down(up), self.align_up(down))
+    pub fn limits(&self, previous_close: i128) -> Result<(i128, i128), String> {
+        if previous_close <= 0 || self.price_tick <= 0 {
+            return Err("涨跌停计算要求昨收价和最小价位为正".into());
+        }
+        let up_factor = 10_000_i128
+            .checked_add(i128::from(self.effective_limit_up_bp()))
+            .ok_or_else(|| "涨停带宽比例溢出".to_string())?;
+        let down_factor = 10_000_i128
+            .checked_sub(i128::from(self.effective_limit_down_bp()))
+            .filter(|factor| *factor >= 0)
+            .ok_or_else(|| "跌停带宽比例非法".to_string())?;
+        let up = checked_mul_div_floor(previous_close, up_factor, 10_000)?;
+        let down = checked_mul_div_floor(previous_close, down_factor, 10_000)?;
+        Ok((self.align_down(up)?, self.align_up(down)?))
     }
 
-    fn align_down(&self, value: i128) -> i128 {
-        value / self.price_tick * self.price_tick
+    fn align_down(&self, value: i128) -> Result<i128, String> {
+        (value / self.price_tick)
+            .checked_mul(self.price_tick)
+            .ok_or_else(|| "涨跌停价格向下对齐溢出".into())
     }
 
-    fn align_up(&self, value: i128) -> i128 {
-        (value + self.price_tick - 1) / self.price_tick * self.price_tick
+    fn align_up(&self, value: i128) -> Result<i128, String> {
+        let units = value / self.price_tick;
+        let units = if value % self.price_tick == 0 {
+            units
+        } else {
+            units
+                .checked_add(1)
+                .ok_or_else(|| "涨跌停价格向上取整溢出".to_string())?
+        };
+        units
+            .checked_mul(self.price_tick)
+            .ok_or_else(|| "涨跌停价格向上对齐溢出".into())
     }
 
     pub fn validate_order(
@@ -269,7 +324,10 @@ impl AshareRuleConfig {
         let Some(previous_close) = previous_close else {
             return false;
         };
-        let (up, down) = self.limits(previous_close);
+        let Ok((up, down)) = self.limits(previous_close) else {
+            // Invalid or unrepresentable limits must never make a fill look eligible.
+            return true;
+        };
         match side {
             Side::Buy => bar.open >= up && bar.high <= up && bar.low >= up,
             Side::Sell => bar.open <= down && bar.high <= down && bar.low >= down,
@@ -302,9 +360,35 @@ impl AshareRuleConfig {
     }
 }
 
+fn checked_mul_div_floor(value: i128, numerator: i128, denominator: i128) -> Result<i128, String> {
+    if value < 0 || numerator < 0 || denominator <= 0 {
+        return Err("涨跌停比例输入非法".into());
+    }
+    let quotient = value / denominator;
+    let remainder = value % denominator;
+    let whole = quotient
+        .checked_mul(numerator)
+        .ok_or_else(|| "涨跌停比例计算溢出".to_string())?;
+    let partial = remainder
+        .checked_mul(numerator)
+        .ok_or_else(|| "涨跌停比例余数计算溢出".to_string())?
+        / denominator;
+    whole
+        .checked_add(partial)
+        .ok_or_else(|| "涨跌停比例累计溢出".into())
+}
+
 #[cfg(test)]
 mod corporate_action_schedule_tests {
     use super::*;
+
+    #[test]
+    fn shanghai_day_key_handles_the_largest_timestamp_without_saturation() {
+        let quotient = u64::MAX / DAY_MS;
+        let remainder = u64::MAX % DAY_MS;
+        let expected = quotient + u64::from(remainder >= DAY_MS - SHANGHAI_OFFSET_MS);
+        assert_eq!(AshareRuleConfig::day_key(u64::MAX), expected);
+    }
 
     #[test]
     fn date_only_actions_resolve_to_the_first_bar_of_the_same_shanghai_day() {
@@ -331,6 +415,24 @@ mod corporate_action_schedule_tests {
             None,
             "an intraday action after the final bar must not be pulled backward"
         );
+    }
+
+    #[test]
+    fn action_published_after_the_bar_is_not_visible_to_its_schedule() {
+        let midnight = super::super::date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+        let first_bar_ts = midnight + 9 * 60 * 60 * 1_000 + 30 * 60 * 1_000;
+        let actions = [AshareCorporateActionEvent {
+            ts: midnight,
+            record_ts: Some(midnight),
+            action_type: AshareCorporateActionType::CashDividend,
+            published_at_ms: Some(first_bar_ts + 1),
+            ..AshareCorporateActionEvent::default()
+        }];
+        let bars = [Bar::new(first_bar_ts, 1, 1, 1, 1, 1)];
+        let schedule = AshareCorporateActionSchedule::for_bars(&actions, &bars);
+
+        assert!(schedule.events_at(&actions, first_bar_ts).next().is_none());
+        assert!(!schedule.has_events_at(&actions, first_bar_ts));
     }
 }
 

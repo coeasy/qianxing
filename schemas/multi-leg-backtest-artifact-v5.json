@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-leg-backtest-artifact-v5.json",
+  "title": "Qianxing MultiLegBacktestArtifact v5",
+  "description": "Persisted shared-account two-leg Bar run facts. v5 adds exact shared-equity samples and exact per-leg PnL while retaining the raw compatibility curve.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "account_id",
+    "strategy_id",
+    "strategy_version",
+    "primary_instrument",
+    "reference_instrument",
+    "data_fingerprint",
+    "config_hash",
+    "shared_result_hash",
+    "event_hash",
+    "clock_start",
+    "clock_end",
+    "run_manifest_path",
+    "spec",
+    "market_data",
+    "fill_model",
+    "effective_market_specs",
+    "shared_event_log",
+    "ledger_entries",
+    "equity_curve",
+    "equity_curve_exact",
+    "leg_pnl_exact"
+  ],
+  "properties": {
+    "schema_version": {"const": 5},
+    "run_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "strategy_source_sha256": {"type": ["string", "null"]},
+    "primary_instrument": {"type": "string", "minLength": 1},
+    "reference_instrument": {"type": "string", "minLength": 1},
+    "data_fingerprint": {"type": "string", "minLength": 1},
+    "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "shared_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "clock_start": {"type": "integer", "minimum": 0},
+    "clock_end": {"type": "integer", "minimum": 0},
+    "run_manifest_path": {"type": "string", "minLength": 1},
+    "spec": {"$ref": "multi-leg-backtest-spec-v1.json"},
+    "fill_model": {"enum": ["next_bar_open", "best_price", "one_tick_slippage"]},
+    "market_data": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["instrument", "path", "content_hash", "row_count", "start_ts_ms", "end_ts_ms", "dataset_manifest_path"],
+        "properties": {
+          "instrument": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "content_hash": {"type": "string", "minLength": 1},
+          "row_count": {"type": "integer", "minimum": 1},
+          "start_ts_ms": {"type": "integer", "minimum": 0},
+          "end_ts_ms": {"type": "integer", "minimum": 0},
+          "dataset_manifest_path": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "effective_market_specs": {"type": "object", "required": ["primary", "reference"]},
+    "shared_event_log": {"type": "array"},
+    "ledger_entries": {"type": "array"},
+    "equity_curve": {"type": "array"},
+    "equity_curve_exact": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000000,
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0},
+          {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"}
+        ],
+        "minItems": 3,
+        "maxItems": 3
+      }
+    },
+    "leg_pnl_exact": {
+      "type": "object",
+      "required": ["primary", "reference"],
+      "properties": {
+        "primary": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"},
+        "reference": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

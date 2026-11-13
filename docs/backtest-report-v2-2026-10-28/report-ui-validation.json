@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-28T15:08:32.718852+08:00",
+  "scope": "single-market HTML report layout and detailed readout",
+  "tests": {
+    "report_unit_tests_passed": 21,
+    "ashare_report_export_test_passed": 1,
+    "architecture_checks_passed": 6
+  },
+  "pages": {
+    "ashare": {
+      "html_sha256": "819351cb49f5e090e3f8b938d4b7e78215d17819b49930eb43702c015e6d8197",
+      "inline_javascript_blocks_valid": 3,
+      "fragment_links_resolve": true,
+      "external_resource_references": 0,
+      "utf8_replacement_characters": 0
+    },
+    "crypto": {
+      "html_sha256": "a347adb614f2bf7bce4b2fd69dabd6133168cea903f5be69f43ed8bdbc8f6f53",
+      "inline_javascript_blocks_valid": 3,
+      "fragment_links_resolve": true,
+      "external_resource_references": 0,
+      "utf8_replacement_characters": 0
+    }
+  },
+  "visual_review": {
+    "status": "blocked",
+    "reason": "Chrome browser request-header policy could not be loaded; IAB browser unavailable"
+  },
+  "remaining_work": [
+    "browser visual review at desktop and mobile widths",
+    "complete roadmap deployment/recovery/cross-host acceptance"
+  ]
+}

@@ -1,0 +1,12 @@
+tracked markdown files scanned: 58
+resolvable relative links in them: 426
+links into maturity/acceptance-artifacts/: 121
+tracked files under maturity/acceptance-artifacts/: 0
+links resolving only because the local disk has an untracked file: 146
+links broken on disk too (CI and locally): 0
+  LOCAL-ONLY maturity/acceptance-artifacts/ 121
+  LOCAL-ONLY docs 19
+  LOCAL-ONLY docs/hs300-sma-2010-present 2
+  LOCAL-ONLY maturity 2
+  LOCAL-ONLY schemas 2
+CI-FAITHFUL POINTER AUDIT FAILED: 146 local-only, 0 broken everywhere

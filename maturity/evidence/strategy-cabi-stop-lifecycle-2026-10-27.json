@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-cabi-stop-lifecycle-v1",
+  "generated_at_utc": "2026-10-26T21:54:00Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "rust_mode": "local"
+  },
+  "behavior": {
+    "static_cabi_no_reason": "StrategyStopContextV1 host_stop; v2 JSON callback preferred, v1 callback fallback retained",
+    "dynamic_library_no_reason": "StrategyStopReason shutdown",
+    "explicit_contextual_stop": "caller supplied reason and context are forwarded unchanged",
+    "vtable_layout_changed": false,
+    "python_runtime_worker_clean_eof": "shutdown",
+    "python_runtime_worker_input_or_protocol_error": "failed",
+    "python_runtime_worker_direct_adapter_close": "host_stop",
+    "python_runtime_per_run_terminal_reason": "completed/cancelled are not transported"
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-strategy stop_hooks_receive_default_host_stop_and_explicit_shutdown_reason --lib",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-strategy --lib -- --test-threads=1",
+      "passed": 71,
+      "failed": 0,
+      "environment_note": "TEMP and TMP pointed to the existing workspace .tmp directory because the default Windows temporary directory returned Access Denied"
+    },
+    {
+      "command": "cargo test -p qx-strategy --test stop_context_golden",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "shards": 4,
+      "duplicate_checks": 0
+    },
+    {
+      "command": "python -m py_compile tools/check_architecture.py",
+      "passed": true
+    },
+    {
+      "command": "python -m unittest python.tests.test_strategy_process_adapter",
+      "passed": 21,
+      "failed": 0
+    },
+    {
+      "command": "python -m unittest python.tests.test_strategy_base.BaseStrategyTests.test_rust_shared_stop_context_fixture_is_consumed_by_python_callback",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing_strategy/worker.py python/qianxing_strategy/base.py python/tests/test_strategy_process_adapter.py",
+      "passed": true
+    },
+    {
+      "command": "python -m py_compile python/tests/test_strategy_base.py",
+      "passed": true
+    },
+    {
+      "command": "git diff --check -- crates/qx-strategy/src/c_api.rs crates/qx-strategy/src/c_api/tests.rs tools/check_architecture.py maturity/artifact_migration.yaml",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Runtime worker does not receive per-run completed/cancelled terminal messages from its host.",
+    "No remote sandbox provider or live exchange was contacted.",
+    "Workspace-wide cargo fmt --all -- --check reports formatting differences across the accumulated working tree."
+  ],
+  "release_status": "unpublished workspace"
+}

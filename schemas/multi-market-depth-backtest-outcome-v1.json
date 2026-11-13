@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-market-depth-backtest-outcome-v1.json",
+  "title": "Qianxing MultiMarketDepthBacktestOutcome v1",
+  "type": "object",
+  "required": ["run_id", "account_id", "spec_fingerprint", "data_fingerprint", "shared_result_hash", "markets_total", "successful_fills", "pending_orders", "equity_points", "final_equity_raw", "return_bps", "max_drawdown_bps", "artifact_path"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "data_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "shared_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "markets_total": {"type": "integer", "minimum": 2, "maximum": 32},
+    "successful_fills": {"type": "integer", "minimum": 0},
+    "pending_orders": {"type": "integer", "minimum": 0},
+    "equity_points": {"type": "integer", "minimum": 1},
+    "final_equity_raw": {"oneOf": [{"type": "integer"}, {"type": "string", "pattern": "^-?[0-9]+$"}]},
+    "return_bps": {"type": "integer"},
+    "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "execution_models": {"type": "object", "additionalProperties": true},
+    "artifact_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_triggered_oco_child_cancel_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "5eb2c51a4274d54c3357822cac6f5865d2ffee3d",
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "temporary_directory": "target/test-tmp"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "qx-service",
+        "--",
+        "--test-threads=1"
+      ],
+      "environment": "TEMP and TMP point to target/test-tmp",
+      "exit_code": 0,
+      "selected_tests": 133,
+      "passed": 133,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "A reconciled OKX or Bitget native OCO may route cancellation of its single active child through the ordinary CCXT order-cancel path.",
+    "The active child's persisted remote order ID must match a numeric EventLog identity; the opposite leg must be terminal with zero fill; the group must be Active or PartiallyFilled and not behind a reconciliation barrier.",
+    "The cancellation result is synchronized back into the persisted order-group snapshot; snapshot persistence failures fence the group for reconciliation.",
+    "Ambiguous group membership, remote identity, peer state, or fill state remains rejected and fail-closed."
+  ],
+  "scope_limitations": [
+    "This is local Rust service test evidence. No OKX or Bitget private API was called, no order was placed or canceled, and no sandbox or production behavior was verified.",
+    "The new commit's GitHub Actions CI and public-data quickstart runs were still in progress when this record was written.",
+    "The feature remains implemented-unverified for both exchanges until authorized venue-specific lifecycle acceptance is completed."
+  ]
+}

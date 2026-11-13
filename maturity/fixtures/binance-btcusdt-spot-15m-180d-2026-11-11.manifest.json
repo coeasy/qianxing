@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "provider": "Binance public Spot REST API /api/v3/klines",
+  "symbol": "BTCUSDT",
+  "interval": "15m",
+  "interval_ms": 900000,
+  "days": 180,
+  "bars": 17280,
+  "first_open_time_ms": 1778850000000,
+  "last_open_time_ms": 1794401100000,
+  "exclusive_end_time_ms": 1794402000000,
+  "server_time_ms": 1794402026729,
+  "all_bars_closed": true,
+  "duplicates": 0,
+  "gaps": 0,
+  "raw_scale": 1000000000,
+  "frame_sha256": "d3032cefeb01493b9e3bbb656bab902feb43f3cce18a7678769b2ff7e54fcc03",
+  "frame_bytes": 1496114
+}

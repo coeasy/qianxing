@@ -14,10 +14,15 @@
 //! 不在这个出口里计的站点逐名登记在 `tests/pipeline_metrics_open_sites.rs` 的豁免名单里，并由那条
 //! 判据与本段双向核对 —— 名单改了文档不改、或者反过来，都会红：
 //! `open_account_pipeline`（统一入口委托）与 `open_runtime_pipeline`（共享底层打开器，不归单个 worker 进程）、
-//! `qx-service::api_host::hydrate_api_initial_state`、`query_api_models`、`load_api_account_snapshot_for_worker`、`qx-service::api_host::spawn_api_projection_bridge`、`handle_algo_execution_request`、
-//! `strategy_current_qty_for`、`strategy_account_context`（服务与读模型按请求各开一个只读 pipeline，
+//! `qx-service::api_host::hydrate_api_initial_state_with_market_specs`、`query_api_models`、`load_api_account_snapshot_for_worker_with_market_specs`、`qx-service::api_host::spawn_api_projection_bridge`、`handle_algo_execution_request`、
+//! `strategy_current_qty_for_account`、`strategy_current_qty_exact_for_account`、`strategy_account_context`、
+//! `collect_pending`（策略 worker 分别读取行情与账户 EventLog 的一次性只读快照）、
+//! `execution_updates_for_ranges`（策略重试分别按行情与账户 EventLog 的作业范围读取一次性只读快照）、
+//! `live_strategy_input_digest`（调度器读取最新行情 EventLog 生成策略输入触发摘要）、
+//! `populate_strategy_execution_positions`（策略服务按请求打开的只读持仓投影 pipeline，
 //! 存活期与「按 worker 进程累计」不符，接它要另立一份跨请求的身份），以及
-//! `run_paper_pipeline_once_with_report`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`
+//! `require_live_strategy_commands_resolved`（live admission 按策略轮次读取命令与账户 EventLog 的短生命周期只读快照），
+//! `run_paper_pipeline_once_with_quote`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`
 //! （一次性验收入口，不是长驻 worker：
 //! 给它们落 `.prom` 等于替一个已经退出的进程宣称健康。它们写入的事实照旧进 EventLog，
 //! 只是不在这族样本里 —— `paper-submit-order` 那条还会以 `paper-execution` 的名义领取租约，
@@ -32,6 +37,7 @@ use qx_runtime::{
     LiveEventPipeline, PipelineMetricsSnapshot, RuntimeConfig, PIPELINE_INGEST_WARNING_BUDGET_NS,
 };
 
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::worker_metrics::{prometheus_label, worker_metrics_path, write_worker_metrics};
 
 /// 一个 worker 进程自启动以来的 pipeline 计数累计量，以及它落盘的那份 `.prom`。
@@ -39,6 +45,7 @@ use crate::worker_metrics::{prometheus_label, worker_metrics_path, write_worker_
 pub struct PipelineMetricsReporter {
     worker_id: String,
     account_log: String,
+    venue_id: Option<String>,
     path: PathBuf,
     ingest_attempts: u64,
     ingested_events: u64,
@@ -50,14 +57,29 @@ pub struct PipelineMetricsReporter {
     ingest_duration_ns_max: u64,
     ingest_budget_warning_emitted: bool,
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
+    gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
+    ccxt_ohlcv_rate_limit_retries_total: Option<u64>,
+    ccxt_ohlcv_request_duration_buckets: [u64; 10],
+    ccxt_ohlcv_request_duration_count: u64,
+    ccxt_ohlcv_request_duration_ns_total: u128,
+    gateway_request_durations: BTreeMap<ExchangeGatewayPort, ([u64; 10], u64, u128)>,
+    gateway_error_categories: BTreeMap<(ExchangeGatewayPort, &'static str), u64>,
+    gateway_venue_reconnects: BTreeMap<String, u64>,
+    gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
 }
 
 impl PipelineMetricsReporter {
     pub fn new(config: &RuntimeConfig, worker_id: &str, account_log: &str) -> Self {
+        let venue_id = config
+            .workers
+            .iter()
+            .find(|worker| worker.id == worker_id)
+            .and_then(|worker| worker.venue_id.clone());
         Self {
             worker_id: worker_id.into(),
             account_log: account_log.into(),
+            venue_id,
             path: worker_metrics_path(config, worker_id),
             ..Default::default()
         }
@@ -136,6 +158,131 @@ impl PipelineMetricsReporter {
         self.warn_if_over_budget();
     }
 
+    /// Record a port-specific business observation; process heartbeats remain a separate signal.
+    pub(crate) fn observe_gateway_port_business_status(
+        &mut self,
+        port: ExchangeGatewayPort,
+        status: GatewayBusinessHealthStatus,
+        now_ms: u64,
+    ) {
+        if status.metric_value().is_some() {
+            self.gateway_business_status
+                .insert(port, (status, now_ms / 1_000));
+        }
+    }
+
+    /// Publish the worker-lifetime count of successful CCXT OHLCV rate-limit retries.
+    /// The caller accumulates per-response deltas across Python worker restarts.
+    pub(crate) fn observe_ccxt_ohlcv_rate_limit_retries(&mut self, total: u64) {
+        let observed = self
+            .ccxt_ohlcv_rate_limit_retries_total
+            .get_or_insert_default();
+        *observed = (*observed).max(total);
+    }
+
+    /// Record one completed OHLCV worker RPC, including retry backoff and failed responses.
+    pub(crate) fn observe_ccxt_ohlcv_request_duration(&mut self, duration_ns: u64) {
+        const BUCKETS_NS: [u64; 10] = [
+            10_000_000,
+            25_000_000,
+            50_000_000,
+            100_000_000,
+            250_000_000,
+            500_000_000,
+            1_000_000_000,
+            2_500_000_000,
+            5_000_000_000,
+            10_000_000_000,
+        ];
+        if let Some(index) = BUCKETS_NS.iter().position(|bound| duration_ns <= *bound) {
+            self.ccxt_ohlcv_request_duration_buckets[index] =
+                self.ccxt_ohlcv_request_duration_buckets[index].saturating_add(1);
+        }
+        self.ccxt_ohlcv_request_duration_count =
+            self.ccxt_ohlcv_request_duration_count.saturating_add(1);
+        self.ccxt_ohlcv_request_duration_ns_total = self
+            .ccxt_ohlcv_request_duration_ns_total
+            .saturating_add(u128::from(duration_ns));
+    }
+
+    /// Record a completed request or cycle for a fixed gateway port label.
+    pub(crate) fn observe_gateway_port_operation_duration(
+        &mut self,
+        port: ExchangeGatewayPort,
+        duration_ns: u64,
+    ) {
+        const BUCKETS_NS: [u64; 10] = [
+            10_000_000,
+            25_000_000,
+            50_000_000,
+            100_000_000,
+            250_000_000,
+            500_000_000,
+            1_000_000_000,
+            2_500_000_000,
+            5_000_000_000,
+            10_000_000_000,
+        ];
+        let (buckets, count, total_ns) = self.gateway_request_durations.entry(port).or_default();
+        if let Some(index) = BUCKETS_NS.iter().position(|bound| duration_ns <= *bound) {
+            buckets[index] = buckets[index].saturating_add(1);
+        }
+        *count = count.saturating_add(1);
+        *total_ns = total_ns.saturating_add(u128::from(duration_ns));
+    }
+
+    /// Count a fixed-cardinality error category for a gateway port.
+    pub(crate) fn observe_gateway_port_error_category(
+        &mut self,
+        port: ExchangeGatewayPort,
+        category: &str,
+    ) {
+        let category = match category {
+            "retryable" => "retryable",
+            "rate_limited" => "rate_limited",
+            "authentication" => "authentication",
+            "exchange" => "exchange",
+            "unsupported" => "unsupported",
+            "invalid" => "invalid",
+            "ambiguous" => "ambiguous",
+            "business_violation" => "business_violation",
+            "permanent" => "permanent",
+            "invariant" => "invariant",
+            _ => "unknown",
+        };
+        let count = self
+            .gateway_error_categories
+            .entry((port, category))
+            .or_default();
+        *count = count.saturating_add(1);
+    }
+
+    /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
+    /// participates in readiness or execution authorization.
+    pub(crate) fn observe_gateway_venue_reconnects(&mut self, venue_id: &str, total: u64) {
+        if venue_id.trim().is_empty() {
+            return;
+        }
+        let count = self
+            .gateway_venue_reconnects
+            .entry(venue_id.trim().to_ascii_uppercase())
+            .or_default();
+        *count = (*count).max(total);
+    }
+
+    /// Publish the latest observed venue-event timestamp in Unix milliseconds. Zero means
+    /// unobserved; adapters may use receive time when the source omits an event timestamp.
+    pub(crate) fn observe_gateway_venue_last_event(&mut self, venue_id: &str, timestamp_ms: u64) {
+        if venue_id.trim().is_empty() || timestamp_ms == 0 {
+            return;
+        }
+        let timestamp = self
+            .gateway_venue_last_event_seconds
+            .entry(venue_id.trim().to_ascii_uppercase())
+            .or_default();
+        *timestamp = (*timestamp).max(timestamp_ms / 1_000);
+    }
+
     fn warn_if_over_budget(&mut self) {
         if !self.ingest_budget_warning_emitted
             && self.ingest_duration_ns_max > PIPELINE_INGEST_WARNING_BUDGET_NS
@@ -176,13 +323,17 @@ impl PipelineMetricsReporter {
     ///
     /// 不带 `# HELP`/`# TYPE`，与 `worker-metrics/*.prom` 已有的那份正文同形态：抓取端按
     /// 样本名与值即可解析，`read_worker_metrics` 也是原样透传、只改写 `qx_worker_up` 那一行。
-    fn body(&self, up: bool, now_ms: u64) -> String {
+    pub(crate) fn body(&self, up: bool, now_ms: u64) -> String {
         let label = format!(
             "worker=\"{}\",account=\"{}\"",
             prometheus_label(&self.worker_id),
             prometheus_label(&self.account_log)
         );
-        format!(
+        let gateway_label = self.venue_id.as_deref().map_or_else(
+            || label.clone(),
+            |venue_id| format!("{label},venue_id=\"{}\"", prometheus_label(venue_id)),
+        );
+        let mut body = format!(
             "qx_worker_up{{{label}}} {}\n\
 qx_worker_heartbeat_timestamp_seconds{{{label}}} {}\n\
 qx_pipeline_ingest_attempts_total{{{label}}} {}\n\
@@ -207,7 +358,101 @@ qx_pipeline_ingest_budget_exceeded{{{label}}} {}\n",
             self.ingest_duration_ns_max as f64 / 1_000_000_000.0,
             PIPELINE_INGEST_WARNING_BUDGET_NS as f64 / 1_000_000_000.0,
             u8::from(self.ingest_duration_ns_max > PIPELINE_INGEST_WARNING_BUDGET_NS),
-        )
+        );
+        for (port, (status, timestamp_seconds)) in &self.gateway_business_status {
+            let port_label = port.metric_label();
+            let Some(value) = status.metric_value() else {
+                continue;
+            };
+            body.push_str(&format!(
+                "qx_gateway_port_business_status{{{gateway_label},port=\"{port_label}\"}} {value}\n\
+qx_gateway_port_business_timestamp_seconds{{{gateway_label},port=\"{port_label}\"}} {timestamp_seconds}\n"
+            ));
+        }
+        for (venue, reconnects) in &self.gateway_venue_reconnects {
+            body.push_str(&format!(
+                "qx_gateway_venue_reconnects_total{{{gateway_label},venue=\"{}\"}} {reconnects}\n",
+                prometheus_label(venue)
+            ));
+        }
+        for (port, (buckets, count, total_ns)) in &self.gateway_request_durations {
+            const BUCKETS: [(&str, u64); 10] = [
+                ("0.01", 10_000_000),
+                ("0.025", 25_000_000),
+                ("0.05", 50_000_000),
+                ("0.1", 100_000_000),
+                ("0.25", 250_000_000),
+                ("0.5", 500_000_000),
+                ("1", 1_000_000_000),
+                ("2.5", 2_500_000_000),
+                ("5", 5_000_000_000),
+                ("10", 10_000_000_000),
+            ];
+            let port_label = port.metric_label();
+            let port_labels = format!("{gateway_label},port=\"{port_label}\"");
+            let mut cumulative = 0_u64;
+            for ((bound_label, _), bucket_count) in BUCKETS.iter().zip(buckets) {
+                cumulative = cumulative.saturating_add(*bucket_count);
+                body.push_str(&format!(
+                    "qx_gateway_port_operation_duration_seconds_bucket{{{port_labels},le=\"{bound_label}\"}} {cumulative}\n"
+                ));
+            }
+            body.push_str(&format!(
+                "qx_gateway_port_operation_duration_seconds_bucket{{{port_labels},le=\"+Inf\"}} {count}\n\
+qx_gateway_port_operation_duration_seconds_sum{{{port_labels}}} {:.9}\n\
+qx_gateway_port_operation_duration_seconds_count{{{port_labels}}} {count}\n",
+                *total_ns as f64 / 1_000_000_000.0,
+            ));
+        }
+        for ((port, category), count) in &self.gateway_error_categories {
+            body.push_str(&format!(
+                "qx_gateway_port_errors_total{{{gateway_label},port=\"{}\",class=\"{category}\"}} {count}\n",
+                port.metric_label()
+            ));
+        }
+        if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
+            body.push_str(&format!(
+                "qx_ccxt_ohlcv_rate_limit_retries_total{{{gateway_label}}} {retries}\n"
+            ));
+        }
+        if self.ccxt_ohlcv_request_duration_count > 0 {
+            const BUCKETS: [(&str, u64); 10] = [
+                ("0.01", 10_000_000),
+                ("0.025", 25_000_000),
+                ("0.05", 50_000_000),
+                ("0.1", 100_000_000),
+                ("0.25", 250_000_000),
+                ("0.5", 500_000_000),
+                ("1", 1_000_000_000),
+                ("2.5", 2_500_000_000),
+                ("5", 5_000_000_000),
+                ("10", 10_000_000_000),
+            ];
+            let mut cumulative = 0_u64;
+            for ((bound_label, _), count) in
+                BUCKETS.iter().zip(self.ccxt_ohlcv_request_duration_buckets)
+            {
+                cumulative = cumulative.saturating_add(count);
+                body.push_str(&format!(
+                    "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{gateway_label},le=\"{bound_label}\"}} {cumulative}\n"
+                ));
+            }
+            body.push_str(&format!(
+                "qx_ccxt_ohlcv_request_duration_seconds_bucket{{{gateway_label},le=\"+Inf\"}} {}\n\
+qx_ccxt_ohlcv_request_duration_seconds_sum{{{gateway_label}}} {:.9}\n\
+qx_ccxt_ohlcv_request_duration_seconds_count{{{gateway_label}}} {}\n",
+                self.ccxt_ohlcv_request_duration_count,
+                self.ccxt_ohlcv_request_duration_ns_total as f64 / 1_000_000_000.0,
+                self.ccxt_ohlcv_request_duration_count,
+            ));
+        }
+        for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {
+            body.push_str(&format!(
+                "qx_gateway_venue_last_event_timestamp_seconds{{{gateway_label},venue=\"{}\"}} {timestamp_seconds}\n",
+                prometheus_label(venue)
+            ));
+        }
+        body
     }
 }
 
@@ -217,4 +462,303 @@ fn metric_delta(
     read: impl Fn(&PipelineMetricsSnapshot) -> u64,
 ) -> u64 {
     read(current).saturating_sub(previous.map_or(0, read))
+}
+
+pub(crate) fn ccxt_error_metric_category(error: &str) -> &'static str {
+    let category = error
+        .split_once("CCXT Worker [")
+        .and_then(|(_, tail)| tail.split_once(']'))
+        .map(|(category, _)| category);
+    match category {
+        Some("retryable") => "retryable",
+        Some("rate_limited") => "rate_limited",
+        Some("authentication") => "authentication",
+        Some("exchange") => "exchange",
+        Some("unsupported") => "unsupported",
+        Some("invalid") => "invalid",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway_execution_probe::GatewayExecutionProbeVenue;
+    use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, QxError, Side};
+    use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
+
+    #[test]
+    fn worker_metrics_publish_gateway_business_status_separately_from_process_health() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "market-data", "");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::MarketData,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::AccountQuery,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::Reconciliation,
+            GatewayBusinessHealthStatus::Degraded,
+            91_000,
+        );
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains("qx_worker_up{worker=\"market-data\",account=\"\"} 1"));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"market_data\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_timestamp_seconds{worker=\"market-data\",account=\"\",port=\"market_data\"} 91"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"account_query\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"reconciliation\"} 1"
+        ));
+        assert!(!body.contains("port=\"venue_execution\""));
+    }
+
+    #[test]
+    fn gateway_business_metrics_include_configured_venue_identity() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "paper-execution", "paper-main");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::VenueExecution,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"paper-execution\",account=\"paper-main\",venue_id=\"paper\",port=\"venue_execution\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_timestamp_seconds{worker=\"paper-execution\",account=\"paper-main\",venue_id=\"paper\",port=\"venue_execution\"} 91"
+        ));
+    }
+
+    #[test]
+    fn gateway_diagnostics_keep_configured_venue_identity_across_metric_families() {
+        let mut config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let worker = config.workers.first_mut().expect("fixture has a worker");
+        worker.id = "binance-market".into();
+        worker.venue_id = Some("binance-testnet".into());
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-market", "main");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::MarketData,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+        reporter
+            .observe_gateway_port_operation_duration(ExchangeGatewayPort::MarketData, 50_000_000);
+        reporter
+            .observe_gateway_port_error_category(ExchangeGatewayPort::MarketData, "rate_limited");
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(2);
+        reporter.observe_ccxt_ohlcv_request_duration(50_000_000);
+        reporter.observe_gateway_venue_reconnects("BINANCE", 2);
+        reporter.observe_gateway_venue_last_event("BINANCE", 91_000);
+
+        let body = reporter.body(true, 92_000);
+        for metric in [
+            "qx_gateway_port_business_status",
+            "qx_gateway_port_operation_duration_seconds_bucket",
+            "qx_gateway_port_errors_total",
+            "qx_ccxt_ohlcv_rate_limit_retries_total",
+            "qx_ccxt_ohlcv_request_duration_seconds_bucket",
+            "qx_gateway_venue_reconnects_total",
+            "qx_gateway_venue_last_event_timestamp_seconds",
+        ] {
+            let sample = body
+                .lines()
+                .find(|line| line.starts_with(&format!("{metric}{{")))
+                .unwrap_or_else(|| panic!("missing gateway metric family {metric}"));
+            assert!(
+                sample.contains("venue_id=\"binance-testnet\""),
+                "{metric} must identify its configured venue: {sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn worker_metrics_publish_venue_reconnects_and_latest_source_event_time() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-user-stream", "main");
+        reporter.observe_gateway_venue_reconnects("binance", 2);
+        reporter.observe_gateway_venue_reconnects("BINANCE", 1);
+        reporter.observe_gateway_venue_last_event("binance", 91_999);
+        reporter.observe_gateway_venue_last_event("binance", 89_000);
+        reporter.observe_gateway_venue_last_event("binance", 0);
+
+        let body = reporter.body(true, 100_000);
+        assert!(body.contains(
+            "qx_gateway_venue_reconnects_total{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_venue_last_event_timestamp_seconds{worker=\"binance-user-stream\",account=\"main\",venue=\"BINANCE\"} 91"
+        ));
+        assert_eq!(
+            body.matches("qx_gateway_venue_reconnects_total{").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn worker_metrics_publish_ccxt_ohlcv_rate_limit_retries_without_symbol_labels() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "okx-market", "");
+
+        let before_observation = reporter.body(true, 1_000);
+        assert!(!before_observation.contains("qx_ccxt_ohlcv_rate_limit_retries_total"));
+
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(2);
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(1);
+        let body = reporter.body(true, 2_000);
+
+        assert!(body.contains(
+            "qx_ccxt_ohlcv_rate_limit_retries_total{worker=\"okx-market\",account=\"\"} 2"
+        ));
+        assert!(!body.contains("instrument="));
+        assert_eq!(
+            body.matches("qx_ccxt_ohlcv_rate_limit_retries_total{")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn ccxt_error_metric_categories_are_whitelisted() {
+        assert_eq!(
+            ccxt_error_metric_category("CCXT Worker [authentication] invalid credential"),
+            "authentication"
+        );
+        assert_eq!(
+            ccxt_error_metric_category("request failed: CCXT Worker [rate_limited] backoff"),
+            "rate_limited"
+        );
+        assert_eq!(
+            ccxt_error_metric_category("private response includes secret data"),
+            "unknown"
+        );
+    }
+
+    struct ProbeVenue {
+        submit_result: Result<Vec<VenueEvent>, QxError>,
+    }
+
+    impl Venue for ProbeVenue {
+        fn id(&self) -> &str {
+            "BINANCE"
+        }
+
+        fn capabilities(&self) -> &'static qx_zhenlu::venue_capabilities::VenueCapabilities {
+            &qx_zhenlu::venue_capabilities::BINANCE_SPOT_VENUE_CAPABILITIES
+        }
+
+        fn submit(&mut self, _order: Order, _ts: u64) -> Result<Vec<VenueEvent>, QxError> {
+            self.submit_result.clone()
+        }
+
+        fn cancel(&mut self, _client_order_id: u64, _ts: u64) -> Result<Vec<VenueEvent>, QxError> {
+            self.submit_result.clone()
+        }
+
+        fn snapshot(&self) -> Vec<VenueOrderSnapshot> {
+            Vec::new()
+        }
+
+        fn connected(&self) -> bool {
+            true
+        }
+    }
+
+    fn probe_order() -> Order {
+        Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument"),
+            side: Side::Buy,
+            qty: Quantity::from_raw(1_000_000_000),
+            limit: Some(Price::from_raw(50_000_000_000)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "alpha".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        }
+    }
+
+    #[test]
+    fn venue_submit_boundary_writes_connector_result_status_to_gateway_metrics() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-exec", "alpha");
+        let venue = ProbeVenue {
+            submit_result: Ok(vec![VenueEvent::Accepted {
+                client_order_id: 1,
+                venue_order_id: "remote-1".into(),
+                ts: 91_000,
+            }]),
+        };
+        let mut venue = GatewayExecutionProbeVenue::new(venue, &mut reporter);
+        venue
+            .submit(probe_order(), 91_000)
+            .expect("connector accepted order");
+        drop(venue);
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_operation_duration_seconds_count{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\"} 1"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_operation_duration_seconds_bucket{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\",le=\"+Inf\"} 1"
+        ));
+    }
+
+    #[test]
+    fn venue_submit_boundary_counts_error_class_without_exporting_error_text() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-exec", "alpha");
+        let venue = ProbeVenue {
+            submit_result: Err(QxError::BusinessViolation(
+                "sensitive exchange response text".into(),
+            )),
+        };
+        let mut venue = GatewayExecutionProbeVenue::new(venue, &mut reporter);
+        assert!(venue.submit(probe_order(), 91_000).is_err());
+        drop(venue);
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_errors_total{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\",class=\"business_violation\"} 1"
+        ));
+        assert!(!body.contains("sensitive exchange response text"));
+    }
 }

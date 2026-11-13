@@ -1,0 +1,33 @@
+{
+  "context": [
+    "account_id",
+    "as_of",
+    "available_margin_exact",
+    "available_margin_raw",
+    "cash",
+    "cash_exact",
+    "data",
+    "data_fingerprint",
+    "positions",
+    "positions_exact",
+    "risk_state",
+    "strategy_id",
+    "strategy_version",
+    "venue_id"
+  ],
+  "fill": [
+    "account_id",
+    "fee",
+    "fee_currency",
+    "intent_id",
+    "order_id",
+    "price",
+    "qty",
+    "rule_version",
+    "signal_id",
+    "strategy_id",
+    "ts",
+    "venue_id",
+    "venue_order_id"
+  ]
+}

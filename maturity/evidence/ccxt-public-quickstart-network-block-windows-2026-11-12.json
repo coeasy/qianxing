@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-public-quickstart-network-block-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "Current Windows public market-data reachability for CCXT quickstart; no authenticated operations",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit": "592ffa48",
+    "cli_build_identity": "qianxing 0.4.0 (build 9eb342b-dirty, profile debug)",
+    "cli_sha256": "0feb06829225ac36d868f5f5658a36a42acea926838bf9bad7b8c1b6267249f1",
+    "ccxt_version": "4.5.89",
+    "ccxt_install": "isolated temporary target; global Python environment unchanged"
+  },
+  "verification": [
+    {
+      "command": "qx-cli quickstart .task-tmp/ccxt-e2e-binance-2026-11-12 --profile ccxt --days 1 --timeframe 1h --exchange binance --instrument BTC/USDT:USDT.BINANCE --html",
+      "result": "blocked_by_retryable_network_error",
+      "stages_passed": [
+        "project initialization",
+        "static doctor checks",
+        "public-only CCXT config creation"
+      ],
+      "failure_stage": "CCXT load_markets before OHLCV fetch",
+      "remote_endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "error_class": "retryable",
+      "orders_sent": false,
+      "credentials_loaded": false,
+      "dataset_snapshot_created": false,
+      "backtest_or_report_created": false
+    },
+    {
+      "command": "CCXT 4.5.89 anonymous load_markets probes for binanceusdm, okx, and bitget",
+      "result": "all_failed_before_market_data",
+      "probes": [
+        {
+          "exchange": "binanceusdm",
+          "error_class": "RequestTimeout",
+          "remote_endpoint": "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        },
+        {
+          "exchange": "okx",
+          "error_class": "NetworkError",
+          "remote_endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SPOT"
+        },
+        {
+          "exchange": "bitget",
+          "error_class": "NetworkError",
+          "remote_endpoint": "https://api.bitget.com/api/v2/spot/public/coins"
+        }
+      ],
+      "credentials_loaded": false,
+      "orders_sent": false
+    }
+  ],
+  "limitations": [
+    "This records one environment/time observation; it does not establish that the exchange public APIs are generally unavailable.",
+    "The integrated quickstart stopped before OHLCV retrieval, fee snapshot, backtest, and report; no public-data E2E capability is marked complete.",
+    "Windows debug and release CLI rebuild attempts in this session hit local page-file/LLVM memory limits; the runtime observation used the existing debug CLI executable and records its own build identity and hash."
+  ]
+}

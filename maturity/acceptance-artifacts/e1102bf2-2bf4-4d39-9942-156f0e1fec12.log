@@ -1,0 +1,41 @@
+$ cargo test -p qx-cli --bin qx-cli workers::strategy_worker:: --offline
+exit_code=0
+
+[stdout]
+
+running 28 tests
+test workers::strategy_worker::admission::live_command_resolution_tests::failed_command_resolves_only_with_terminal_venue_fact_and_post_failure_clean_report ... ok
+test workers::strategy_worker::execution_updates::replay::tests::account_snapshots_replay_for_non_python_strategy_hosts ... ok
+test workers::strategy_worker::execution_updates::replay::tests::c_abi_checkpoint_binding_tracks_verified_plugin_digest ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_advancement_is_monotonic_and_durable_shape_round_trips ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_fencing_uses_run_identity_and_rejects_only_stale_same_run_owners ... ok
+test workers::strategy_worker::execution_updates::replay::tests::execution_ranges_are_part_of_idempotency_without_changing_market_manifest ... ok
+test workers::strategy_worker::execution_updates::replay::tests::external_process_checkpoint_binding_tracks_artifact_digest_and_fails_closed ... ok
+test workers::strategy_worker::execution_updates::replay::tests::frozen_range_retry_replays_multiple_partial_fills_without_absorbing_new_tail ... ok
+test workers::strategy_worker::execution_updates::replay::tests::replay_emits_event_log_bound_fill_with_pre_fill_order_snapshot ... ok
+test workers::strategy_worker::execution_updates::replay::tests::replay_reconstructs_prior_order_state_and_emits_only_the_requested_strategy_range ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_v2_migrates_to_monotone_commit_generation ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_commit_generation_accepts_descending_stable_run_ids_and_fences_stale_snapshots ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_load_recovers_backup_after_interrupted_atomic_replace ... ok
+test workers::strategy_worker::execution_updates::replay::tests::class_checkpoint_and_execution_cursor_commit_as_one_recoverable_snapshot ... ok
+test workers::strategy_worker::prepared_finalize::live_finalize_gate_tests::cursor_finalize_is_blocked_until_live_command_resolution_completes ... ok
+test workers::strategy_worker::tests::account_only_native_strategy_collects_execution_update_batches ... ok
+test workers::strategy_worker::tests::existing_native_order_and_fill_callback_capabilities_still_collect_updates ... ok
+test workers::strategy_worker::execution_updates::replay::tests::failed_checkpoint_cursor_write_preserves_committed_state_and_cleans_temp_file ... ok
+test workers::strategy_worker::tests::live_strategy_checkpoint_requires_a_resolved_venue_order_fact ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_write_lock_rejects_an_owner_fenced_out_after_its_snapshot ... ok
+test workers::strategy_worker::tests::live_strategy_checkpoint_requires_executed_control_commands ... ok
+test workers::strategy_worker::tests::native_strategy_without_update_callbacks_does_not_collect_update_batches ... ok
+test workers::strategy_worker::tests::runtime_python_live_admission_requires_warmup_for_the_configured_instrument ... ok
+test workers::strategy_worker::tests::unresolved_live_intents_retry_after_the_job_lease_expires ... ok
+test workers::strategy_worker::execution_updates::replay::tests::prepared_evaluation_round_trips_and_recovers_interrupted_replace ... ok
+test workers::strategy_worker::tests::parallel_instances_with_the_same_worker_id_cannot_share_a_job_lease ... ok
+test workers::strategy_worker::prepared_command_replay::tests::durable_unknown_replay_waits_for_failed_command_venue_fact_and_clean_report ... ok
+test workers::strategy_worker::prepared_command_replay::tests::sqlite_live_replay_keeps_cursor_fixed_until_failed_command_is_reconciled ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 449 filtered out; finished in 0.08s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.88s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

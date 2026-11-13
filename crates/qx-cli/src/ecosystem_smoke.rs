@@ -151,6 +151,7 @@ pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> O
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -243,17 +244,19 @@ pub(crate) fn run_paper_smoke(print_output: bool) -> Result<(), String> {
     if !matches!(accepted.as_slice(), [VenueEvent::Accepted { .. }]) {
         return Err(format!("Paper 订单接受事件异常: {accepted:?}"));
     }
-    let events = venue.on_quote(
-        &instrument,
-        QuoteTick::new(
-            2,
-            Price::from_i64(99),
-            Quantity::from_i64(10),
-            Price::from_i64(100),
-            Quantity::from_i64(10),
-            1,
-        ),
-    );
+    let events = venue
+        .try_on_quote(
+            &instrument,
+            QuoteTick::new(
+                2,
+                Price::from_i64(99),
+                Quantity::from_i64(10),
+                Price::from_i64(100),
+                Quantity::from_i64(10),
+                1,
+            ),
+        )
+        .map_err(|error| format!("Paper 行情撮合失败: {error}"))?;
     if !matches!(events.as_slice(), [VenueEvent::Fill(_)]) {
         return Err(format!("Paper 报价成交事件异常: {events:?}"));
     }

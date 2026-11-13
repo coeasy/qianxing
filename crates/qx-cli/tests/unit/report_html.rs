@@ -3,6 +3,7 @@
 //! 相等」钉，无外链靠「出现 `http` 即红」钉，成交点靠「0 成交不画三角」钉。
 
 use super::*;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,7 +12,11 @@ fn temp_dir(tag: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("qx-report-{tag}-{nanos}"));
+    let dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("qx-cli-test-tmp")
+        .join(format!("qx-report-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -35,7 +40,7 @@ fn sample_summary() -> serde_json::Value {
             "dataset_version": "fixture-dataset-v1",
             "fingerprint": "abc123"
         },
-        "account": { "initial_cash_raw": "100000000000000", "source": "builtin-default" },
+        "account": { "initial_cash_raw": "100000000000000", "source": "builtin-default", "currency": "USDT" },
         "fills": 1,
         "execution_attempt_count": 1,
         "execution_attempts": [{
@@ -83,9 +88,52 @@ fn sample_equity() -> Vec<(i64, i128)> {
 fn sample_fills() -> Vec<FillPoint> {
     vec![FillPoint {
         ts: 1_700_086_400_000,
+        order_id: 42,
+        leg: None,
         qty_raw: 1_000_000_000,
         price_raw: 86_500_000_000,
+        fee_raw: Some(43_250_000),
+        qty_exact: None,
+        price_exact: None,
+        exact_fees_json: None,
+        account_id: Some("main".into()),
+        strategy_id: "strategy-macd".into(),
+        signal_id: Some("52".into()),
+        intent_id: Some("1".into()),
+        venue_id: None,
+        venue_order_id: None,
     }]
+}
+
+#[test]
+fn interactive_research_chart_is_offline_bounded_and_keeps_exact_raw_hover_values() {
+    let analysis = vec![
+        (1_700_000_000_000, 100_000_000_000_000, Some(0)),
+        (1_700_086_400_000, 100_050_000_000_000, Some(1_000_000_000)),
+        (1_700_172_800_000, 100_125_000_000_000, Some(500_000_000)),
+    ];
+    let html = interactive_research_chart(&analysis, &sample_fills(), 20);
+    assert!(html.contains("id=\"research-chart\""));
+    assert!(html.contains("data-series=\"equity\""));
+    assert!(html.contains("data-series=\"drawdown\""));
+    assert!(html.contains("data-series=\"position\""));
+    assert!(html.contains("100125000000000"));
+    assert!(html.contains("1000000000"));
+    assert!(html.contains("成交订单："));
+    assert!(html.contains("全部成交 '+20"));
+    assert!(html.contains("fillsByPoint=new Map()"));
+    assert!(html.contains("tip.textContent="));
+    assert!(html.contains("Math.max(0,Math.min(Math.max(0,rect.width-250),localX+12))"));
+    assert!(!html.contains("tip.innerHTML="));
+    assert!(
+        !html.contains("http"),
+        "report chart must not load remote resources"
+    );
+
+    let indices = sample_indices(10_000, MAX_INTERACTIVE_CHART_POINTS);
+    assert_eq!(indices.len(), MAX_INTERACTIVE_CHART_POINTS);
+    assert_eq!(indices.first(), Some(&0));
+    assert_eq!(indices.last(), Some(&9_999));
 }
 
 #[test]
@@ -119,6 +167,7 @@ fn report_output_flag_is_part_of_direct_cli_surface() {
 fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
     let (dir, summary) = current_summary_fixture("report-json-output");
     let html = dir.join("reports").join("chosen.html");
+    let xlsx = dir.join("reports").join("chosen.xlsx");
     let json_only = std::process::Command::new(qx_cli_binary())
         .arg("report")
         .arg(&summary)
@@ -133,6 +182,8 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
         .arg(&summary)
         .arg("--json")
         .arg("--html")
+        .arg("--xlsx")
+        .arg(&xlsx)
         .arg("-o")
         .arg(&html)
         .output()
@@ -147,6 +198,11 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
         report["generated_artifacts"]["html"],
         html.display().to_string()
     );
+    assert_eq!(
+        report["generated_artifacts"]["xlsx"],
+        xlsx.display().to_string()
+    );
+    assert!(xlsx.is_file(), "JSON 声明的 XLSX 必须真实落盘");
     for key in ["equity_svg", "fills_svg", "monthly_svg"] {
         let path = PathBuf::from(report["generated_artifacts"][key].as_str().unwrap());
         assert!(
@@ -155,6 +211,289 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
             path.display()
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn report_bundle_validation_failure_preserves_existing_outputs() {
+    let (dir, summary) = current_summary_fixture("report-bundle-rollback");
+    let report_dir = dir.join("custom-reports");
+    std::fs::create_dir_all(&report_dir).unwrap();
+    let html = report_dir.join("custom.html");
+    let xlsx = report_dir.join("custom.xlsx");
+    let equity_svg = report_dir.join("custom.equity.svg");
+    let fills_svg = report_dir.join("custom.fills.svg");
+    let monthly_svg = report_dir.join("custom.monthly.svg");
+    std::fs::write(&html, b"old html").unwrap();
+    std::fs::write(&xlsx, b"old xlsx").unwrap();
+    std::fs::write(&equity_svg, b"old equity").unwrap();
+    std::fs::create_dir(&monthly_svg).unwrap();
+
+    let output = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary)
+        .arg("--html")
+        .arg("--xlsx")
+        .arg(&xlsx)
+        .arg("-o")
+        .arg(&html)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "目录目标应使整份报告 bundle 拒绝发布"
+    );
+    assert_eq!(std::fs::read(&html).unwrap(), b"old html");
+    assert_eq!(std::fs::read(&xlsx).unwrap(), b"old xlsx");
+    assert_eq!(std::fs::read(&equity_svg).unwrap(), b"old equity");
+    assert!(!fills_svg.exists(), "验证失败时不应发布任何新图表");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn strategy_diagnostics_bind_to_verified_run_and_render_offline_findings() {
+    let (dir, summary_path) = current_summary_fixture("report-strategy-diagnostics");
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
+    let strategy_id = summary["strategy_id"].as_str().unwrap();
+    let instrument = summary["instrument"].as_str().unwrap();
+    let fingerprint = summary["input"]["fingerprint"].as_str().unwrap();
+    let diagnostics = serde_json::json!({
+        "schema_version": 1,
+        "kind": "qianxing-strategy-bias-diagnostics",
+        "strategy_id": strategy_id,
+        "instrument": instrument,
+        "data_fingerprint": fingerprint,
+        "as_of": 5,
+        "lookahead": {
+            "status": "potential_lookahead_detected",
+            "checks": [{
+                "decision_as_of": 4,
+                "perturbation_profile": "prices_up",
+                "future_perturbation_changed_decision": true,
+                "intermediate_state_changed": false,
+                "changed_decision_fields": ["target_qty"],
+                "intermediate_state_changed_fields": []
+            }]
+        },
+        "startup": {
+            "status": "startup_sensitive",
+            "windows": [{
+                "requested_bars": 3,
+                "available_bars": 3,
+                "changed_decision_fields": ["target_qty"],
+                "intermediate_state_changed_fields": []
+            }]
+        },
+        "data_visibility": {
+            "status": "potential_pit_bias_detected",
+            "adjustment_chain": {
+                "status": "potential_back_adjustment_lookahead",
+                "price_adjustment_basis": "backward_adjusted",
+                "examples": [{
+                    "price_entity_id": "TEST.SIM",
+                    "price_field": "bar.close_raw",
+                    "price_revision_available_at": 5,
+                    "action_field": "corporate_action.cash_dividend",
+                    "action_effective_at": 4,
+                    "affected_decision_points": 3,
+                    "pre_action_decision_points": 2,
+                    "potential_back_adjustment_lookahead": true
+                }]
+            },
+            "examples": {"future_value_unavailable": [{
+                "fact_id": "<script>alert(1)</script>",
+                "entity_id": "TEST.SIM",
+                "field": "corporate_action.cash_dividend",
+                "decision_at": 4,
+                "effective_at": 5,
+                "available_at": [5]
+            }]}
+        }
+    });
+    let diagnostic_path = dir.join("strategy-diagnostics.json");
+    std::fs::write(&diagnostic_path, serde_json::to_vec(&diagnostics).unwrap()).unwrap();
+    let html_path = dir.join("research-with-diagnostics.html");
+    let xlsx_path = dir.join("research-with-diagnostics.xlsx");
+    let output = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary_path)
+        .arg("--json")
+        .arg("--html")
+        .arg("--strategy-diagnostics")
+        .arg(&diagnostic_path)
+        .arg("--output")
+        .arg(&html_path)
+        .arg("--xlsx")
+        .arg(&xlsx_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "诊断绑定报告应成功: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["strategy_bias_diagnostics"]["data_visibility"]["status"],
+        "potential_pit_bias_detected"
+    );
+    let html = std::fs::read_to_string(&html_path).unwrap();
+    assert!(html.contains("策略正确性诊断"));
+    assert!(html.contains("id=\"diagnostic-filter\""));
+    assert!(html.contains("corporate_action.cash_dividend"));
+    assert!(html.contains("复权链"));
+    assert!(html.contains("非因果证明"));
+    assert!(html.contains("可能后复权前视: true"));
+    assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(!html.contains("<script>alert(1)</script>"));
+    let mut workbook = zip::ZipArchive::new(std::fs::File::open(&xlsx_path).unwrap()).unwrap();
+    let mut workbook_index = String::new();
+    workbook
+        .by_name("xl/workbook.xml")
+        .unwrap()
+        .read_to_string(&mut workbook_index)
+        .unwrap();
+    assert!(workbook_index.contains("StrategyDiagnostics"));
+    assert!(workbook_index.contains("DiagnosticEvidence"));
+    let mut worksheet_xml = String::new();
+    for index in 1..=12 {
+        if let Ok(mut sheet) = workbook.by_name(&format!("xl/worksheets/sheet{index}.xml")) {
+            sheet.read_to_string(&mut worksheet_xml).unwrap();
+        }
+    }
+    assert!(worksheet_xml.contains("potential_lookahead_detected"));
+    assert!(worksheet_xml.contains("corporate_action.cash_dividend"));
+
+    let evidence_output = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary_path)
+        .arg("--json")
+        .arg("--evidence")
+        .arg("--strategy-diagnostics")
+        .arg(&diagnostic_path)
+        .output()
+        .unwrap();
+    assert!(
+        evidence_output.status.success(),
+        "诊断报告应进入 EvidenceBundle: {}",
+        String::from_utf8_lossy(&evidence_output.stderr)
+    );
+    let evidence_report: serde_json::Value =
+        serde_json::from_slice(&evidence_output.stdout).unwrap();
+    let evidence_path = std::path::PathBuf::from(
+        evidence_report["run_evidence"]["path"]
+            .as_str()
+            .expect("report exposes EvidenceBundle path"),
+    );
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&evidence_path).unwrap()).unwrap();
+    let generation = &bundle["generation"]["run"];
+    assert_eq!(
+        generation["strategy_diagnostics"]["kind"],
+        "strategy-bias-diagnostics"
+    );
+    assert_eq!(
+        generation["strategy_diagnostics"]["input_sha256"],
+        qx_strategy::file_digest::sha256_file_hex(&diagnostic_path).unwrap()
+    );
+    let verified = std::process::Command::new(qx_cli_binary())
+        .arg("evidence")
+        .arg("verify-run")
+        .arg(&evidence_path)
+        .output()
+        .unwrap();
+    assert!(
+        verified.status.success(),
+        "诊断附件 EvidenceBundle 应离线验证: {}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+
+    let portable_dir = dir.join("portable-evidence-with-diagnostics");
+    let exported = std::process::Command::new(qx_cli_binary())
+        .arg("evidence")
+        .arg("export-run")
+        .arg(&evidence_path)
+        .arg("--output-dir")
+        .arg(&portable_dir)
+        .output()
+        .unwrap();
+    assert!(
+        exported.status.success(),
+        "含诊断附件的 EvidenceBundle 应可搬运: {}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let portable_bundle = portable_dir.join("evidence.json");
+    let portable: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&portable_bundle).unwrap()).unwrap();
+    assert_eq!(
+        portable["generation"]["run"]["strategy_diagnostics"]["input_path"],
+        "inputs/strategy-diagnostics.json"
+    );
+    let portable_verified = std::process::Command::new(qx_cli_binary())
+        .arg("evidence")
+        .arg("verify-run")
+        .arg(&portable_bundle)
+        .output()
+        .unwrap();
+    assert!(
+        portable_verified.status.success(),
+        "可搬运诊断 EvidenceBundle 应离线验证: {}",
+        String::from_utf8_lossy(&portable_verified.stderr)
+    );
+    let portable_diagnostics = portable_dir.join("inputs/strategy-diagnostics.json");
+    let mut tampered = std::fs::read(&portable_diagnostics).unwrap();
+    tampered.push(b' ');
+    std::fs::write(&portable_diagnostics, tampered).unwrap();
+    let tampered_verify = std::process::Command::new(qx_cli_binary())
+        .arg("evidence")
+        .arg("verify-run")
+        .arg(&portable_bundle)
+        .output()
+        .unwrap();
+    assert!(!tampered_verify.status.success());
+    assert!(String::from_utf8_lossy(&tampered_verify.stderr).contains("策略诊断 SHA-256"));
+
+    let mut wrong_identity = diagnostics.clone();
+    wrong_identity["data_fingerprint"] = serde_json::json!("different-data");
+    let wrong_identity_bytes = serde_json::to_vec(&wrong_identity).unwrap();
+    std::fs::write(&portable_diagnostics, &wrong_identity_bytes).unwrap();
+    let mut portable: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&portable_bundle).unwrap()).unwrap();
+    portable["generation"]["run"]["strategy_diagnostics"]["input_sha256"] =
+        serde_json::json!(qx_strategy::sha256_hex(&wrong_identity_bytes));
+    std::fs::write(
+        &portable_bundle,
+        serde_json::to_vec_pretty(&portable).unwrap(),
+    )
+    .unwrap();
+    let wrong_identity_verify = std::process::Command::new(qx_cli_binary())
+        .arg("evidence")
+        .arg("verify-run")
+        .arg(&portable_bundle)
+        .output()
+        .unwrap();
+    assert!(!wrong_identity_verify.status.success());
+    assert!(String::from_utf8_lossy(&wrong_identity_verify.stderr).contains("data_fingerprint"));
+
+    let mut wrong = diagnostics;
+    wrong["data_fingerprint"] = serde_json::json!("wrong-input");
+    let wrong_path = dir.join("wrong-diagnostics.json");
+    std::fs::write(&wrong_path, serde_json::to_vec(&wrong).unwrap()).unwrap();
+    let rejected_path = dir.join("rejected.html");
+    let rejected = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary_path)
+        .arg("--html")
+        .arg("--strategy-diagnostics")
+        .arg(&wrong_path)
+        .arg("--output")
+        .arg(&rejected_path)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("data_fingerprint"));
+    assert!(!rejected_path.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -181,10 +520,10 @@ fn report_has_no_external_resource_reference() {
 }
 
 #[test]
-fn zero_fills_draw_no_marker_and_each_fill_adds_one() {
+fn zero_fills_draw_no_marker_and_each_fill_adds_one_neutral_point() {
     let summary = sample_summary();
     let none = render(&summary, &sample_equity(), &[]);
-    assert_eq!(none.matches("<polygon").count(), 0, "0 成交不得画买卖点");
+    assert_eq!(none.matches("r=\"4\"").count(), 0, "0 成交不得画标记");
     assert!(
         none.contains("无成交数据"),
         "0 成交必须显式说明，而不是空白"
@@ -193,19 +532,53 @@ fn zero_fills_draw_no_marker_and_each_fill_adds_one() {
     let two = vec![
         FillPoint {
             ts: 1,
+            order_id: 1,
+            leg: None,
             qty_raw: 1_000_000_000,
             price_raw: 86_500_000_000,
+            fee_raw: Some(10),
+            qty_exact: None,
+            price_exact: None,
+            exact_fees_json: None,
+            account_id: None,
+            strategy_id: "buy".into(),
+            signal_id: None,
+            intent_id: None,
+            venue_id: None,
+            venue_order_id: None,
         },
         FillPoint {
             ts: 2,
+            order_id: 2,
+            leg: None,
             qty_raw: -1_000_000_000,
             price_raw: 87_000_000_000,
+            fee_raw: Some(10),
+            qty_exact: None,
+            price_exact: None,
+            exact_fees_json: None,
+            account_id: None,
+            strategy_id: "sell".into(),
+            signal_id: None,
+            intent_id: None,
+            venue_id: None,
+            venue_order_id: None,
         },
     ];
     let both = render(&summary, &sample_equity(), &two);
-    assert_eq!(both.matches("<polygon").count(), 2, "每笔成交一个标记");
-    // 买红卖绿（中国市场口径）。
-    assert!(both.contains("#c0392b") && both.contains("#1e8449"));
+    assert_eq!(both.matches("r=\"4\"").count(), 2, "每笔成交一个中性标记");
+    assert!(both.contains("方向未包含在成交产物中"));
+}
+
+#[test]
+fn report_includes_filterable_fill_facts_without_inventing_side_or_event_links() {
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
+    assert!(html.contains("id=\"fill-table\""));
+    assert!(html.contains("id=\"fill-filter\""));
+    assert!(html.contains("strategy-macd"));
+    assert!(html.contains("<td>42</td>"));
+    assert!(html.contains("<td>43250000</td>"));
+    assert!(html.contains("成交产物不含买卖方向"));
 }
 
 #[test]
@@ -218,20 +591,87 @@ fn cards_read_from_summary_fields_only() {
         "回撤卡应等于 metrics.max_drawdown_bps"
     );
     assert!(
-        html.contains("¥100125.00"),
+        html.contains("100125.00 USDT"),
         "期末权益应等于 metrics.final_equity_raw"
     );
     assert!(
-        html.contains("¥100000.00"),
+        html.contains("100000.00 USDT"),
         "期初本金应等于 account.initial_cash_raw"
     );
-    assert!(html.contains("¥0.04"), "手续费应等于 metrics.fees_raw");
+    assert!(html.contains("0.04 USDT"), "手续费应等于 metrics.fees_raw");
     for displayed in [">1.25<", ">1.75<", ">3.12<", ">0.67<", ">1.90<"] {
         assert!(
             html.contains(displayed),
             "风险比率卡必须读取 summary.metrics: {displayed}"
         );
     }
+}
+
+#[test]
+fn detailed_report_keeps_recorded_currency_exact_values_and_parameters() {
+    let mut summary = sample_summary();
+    summary["metrics_exact"] = serde_json::json!({
+        "equity": {"initial":"100000", "final":"100125.000000001", "return":"125.000000001"},
+        "turnover": {"currency":"USDT", "amount":"86.5"},
+        "fees_by_currency": {"USDT":"0.04325", "BNB":"0.00000001"}
+    });
+    summary["signal"] = serde_json::json!({"kind":"macd", "fast_window":5, "slow_window":20});
+    let html = render(&summary, &sample_equity(), &sample_fills());
+    assert!(html.contains("100125.000000001 USDT"));
+    assert!(html.contains("0.00000001 BNB / 0.04325 USDT"));
+    assert!(!html.contains('¥'));
+    assert!(html.contains("fast_window"));
+    assert!(html.contains("id=\"report-equity\""));
+    assert!(html.contains("id=\"download-summary\""));
+    assert!(html.contains("timeZone:'Asia/Shanghai'"));
+}
+
+#[test]
+fn report_navigation_links_resolve_to_existing_sections() {
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
+    for link in html.split("href=\"#").skip(1) {
+        let anchor = link.split('"').next().unwrap();
+        assert!(
+            html.contains(&format!("id=\"{anchor}\"")),
+            "missing navigation target {anchor}"
+        );
+    }
+}
+
+#[test]
+fn downloadable_summary_retains_source_json_without_script_injection() {
+    let mut summary = sample_summary();
+    summary["strategy_id"] = serde_json::json!("</script><img src=x onerror=alert(1)>");
+    let html = render(&summary, &sample_equity(), &sample_fills());
+    let payload = html
+        .split("id=\"verified-summary\">")
+        .nth(1)
+        .unwrap()
+        .split("</script>")
+        .next()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+        summary
+    );
+    assert!(!payload.contains('<'));
+    assert!(!html.contains("<img src=x"));
+}
+
+#[test]
+fn legacy_v5_summary_without_ashare_readout_renders_without_invented_facts() {
+    let mut summary = sample_summary();
+    summary["schema_version"] = serde_json::json!(5);
+    summary.as_object_mut().unwrap().remove("ashare_analysis");
+
+    let html = render(&summary, &sample_equity(), &sample_fills());
+
+    assert!(
+        !html.contains("A 股公司行为分析")
+            && !html.contains("发行人股本快照")
+            && !html.contains("权益余额（raw）"),
+        "v5 summaries predate the A-share readout and must not render invented values"
+    );
 }
 
 #[test]
@@ -246,7 +686,7 @@ fn write_report_html_lands_next_to_summary_and_rejects_bad_csv() {
     .unwrap();
     std::fs::write(
         dir.join("run.fills.csv"),
-        "order_id,ts,qty_raw,price_raw\n1,1500,1000000000,86500000000\n",
+        "order_id,ts,qty_raw,price_raw\n42,1500,1000000000,86500000000\n",
     )
     .unwrap();
     let out = write_report_html(&summary_path, &sample_summary(), None).unwrap();
@@ -268,7 +708,9 @@ fn write_report_html_lands_next_to_summary_and_rejects_bad_csv() {
         );
     }
     let html = std::fs::read_to_string(&out.html).unwrap();
-    assert_eq!(html.matches("<polygon").count(), 1);
+    assert_eq!(html.matches("r=\"4\"").count(), 1);
+    assert!(html.contains("id=\"research-chart\""));
+    assert!(html.contains("\"position_raw\":\"0\""));
     let first_artifacts = [&out.html, &out.equity_svg, &out.fills_svg, &out.monthly_svg]
         .map(|path| std::fs::read(path).unwrap());
     let second = write_report_html(&summary_path, &sample_summary(), None).unwrap();
@@ -304,6 +746,150 @@ fn write_report_html_lands_next_to_summary_and_rejects_bad_csv() {
 }
 
 #[test]
+fn multi_leg_equity_csv_reports_checked_combined_portfolio_curve() {
+    let dir = temp_dir("multi-leg-equity");
+    let path = dir.join("composition.equity.csv");
+    std::fs::write(
+        &path,
+        "index,ts,primary_equity_raw,reference_equity_raw\n0,1000,100,200\n1,2000,110,210\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 300, None), (2000, 320, None)]
+    );
+
+    std::fs::write(
+        &path,
+        "index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact\n0,1000,1000000000,2000000000,3000000000,3\n1,2000,1100000000,2100000000,3200000000,3.2\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 3_000_000_000, None), (2000, 3_200_000_000, None)]
+    );
+
+    std::fs::write(
+        &path,
+        "index,ts,primary_equity_raw,reference_equity_raw,equity_raw,equity_exact\n0,1000,1000000000,2000000000,3000000001,3\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("腿权益合计与 equity_raw 不一致"));
+
+    std::fs::write(
+        &path,
+        format!(
+            "index,ts,primary_equity_raw,reference_equity_raw\n0,1000,{},1\n",
+            i128::MAX
+        ),
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("多腿合并权益溢出"));
+}
+
+#[test]
+fn multi_account_equity_csv_keeps_its_position_series_in_reports() {
+    let dir = temp_dir("multi-account-equity");
+    let path = dir.join("account.equity.csv");
+    std::fs::write(
+        &path,
+        "ts,equity_raw,position_raw\n1000,100,0\n2000,110,5\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 100, Some(0)), (2000, 110, Some(5))]
+    );
+}
+
+#[test]
+fn exact_equity_csv_validates_raw_projection_and_preserves_position_column() {
+    let dir = temp_dir("exact-equity-csv");
+    let path = dir.join("exact.equity.csv");
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,0,0.0000000005,0\n1,2000,1,0.0000000015,2\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_equity_analysis_csv(&path).unwrap(),
+        vec![(1000, 0, Some(0)), (2000, 1, Some(2))]
+    );
+
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,1,0.0000000005,0\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("equity_raw 与 equity_exact 投影不一致"));
+
+    std::fs::write(
+        &path,
+        "index,ts,equity_raw,equity_exact,position_raw\n0,1000,0,not-a-decimal,0\n",
+    )
+    .unwrap();
+    assert!(read_equity_analysis_csv(&path)
+        .unwrap_err()
+        .contains("equity_exact 非法"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn report_loads_replay_verified_event_trace_and_rejects_tampering() {
+    let dir = temp_dir("event-trace");
+    let summary_path = dir.join("run.summary.json");
+    std::fs::write(&summary_path, "{}").unwrap();
+    std::fs::write(
+        dir.join("run.equity.csv"),
+        "index,ts,equity_raw,position_raw\n0,1000,100000000000000,0\n1,2000,100010000000000,0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("run.fills.csv"),
+        "order_id,ts,qty_raw,price_raw\n42,1500,1000000000,86500000000\n",
+    )
+    .unwrap();
+    let event = qx_core::Event::new(
+        1,
+        1_500,
+        3,
+        qx_core::EventKind::Submit {
+            client_order_id: 42,
+        },
+    );
+    let mut log = qx_core::EventLog::new();
+    log.append_checked(event.clone()).unwrap();
+    let mut summary = sample_summary();
+    summary["replay"]["log_digest"] = serde_json::json!(format!("{:016x}", log.digest()));
+    summary["replay"]["events"] = serde_json::json!(log.len());
+    std::fs::write(&summary_path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    let trace_path = dir.join("run.events.jsonl");
+    std::fs::write(
+        &trace_path,
+        format!("{}\n", serde_json::to_string(&event).unwrap()),
+    )
+    .unwrap();
+
+    let out = write_report_html(&summary_path, &summary, None).unwrap();
+    let html = std::fs::read_to_string(&out.html).unwrap();
+    assert!(html.contains("撮合与账簿事件追溯"));
+    assert!(html.contains("下载完整事件流 JSONL"));
+    assert!(html.contains("href=\"#event-1\""));
+    assert!(html.contains("id=\"event-1\""));
+
+    std::fs::write(&trace_path, "{}").unwrap();
+    let error = write_report_html(&summary_path, &summary, None).unwrap_err();
+    assert!(error.contains("JSON 无效") || error.contains("摘要不匹配"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
     let mut summary = sample_summary();
     summary["strategy_id"] = serde_json::json!("<script>alert(1)</script>");
@@ -311,7 +897,12 @@ fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
     let html = render(&summary, &sample_equity(), &sample_fills());
     assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     assert!(html.contains("&lt;img src=&quot;http://invalid&quot;&gt; &amp; more"));
-    assert!(!html.contains("<script"));
+    assert_eq!(
+        html.matches("<script>").count(),
+        3,
+        "只包含联动图与成交筛选的本地内联脚本"
+    );
+    assert!(!html.contains("<script>alert(1)</script>"));
     assert!(!html.contains("<img"));
 
     let dir = temp_dir("custom-output");

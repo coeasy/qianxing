@@ -1,0 +1,28 @@
+$ cargo test -p qx-runtime --lib pipeline::tests::failed_submit_reopens_as_unknown_and_requires_authoritative_rejection --offline -j1
+exit_code=0
+
+[stdout]
+
+running 1 test
+test pipeline::tests::failed_submit_reopens_as_unknown_and_requires_authoritative_rejection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 107 filtered out; finished in 0.05s
+
+
+[stderr]
+   Compiling qx-storage v0.4.0 (/tmp/qianxing-r10-final/crates/qx-storage)
+warning: could not load dep-graph from `/target/debug/incremental/qx_storage-3186a7rd9pury/s-ho02ffls8p-0xqw6ej-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-storage` (lib) generated 1 warning
+warning: could not load dep-graph from `/target/debug/incremental/qx_execution-22gpizwukdw3x/s-ho02ezm42p-0jjebm0-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-execution` (lib) generated 1 warning
+warning: could not load dep-graph from `/target/debug/incremental/qx_factor-1ipny1wdau3fo/s-ho02f028q4-0bue48m-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-factor` (lib) generated 1 warning
+   Compiling qx-runtime v0.4.0 (/tmp/qianxing-r10-final/crates/qx-runtime)
+warning: could not load dep-graph from `/target/debug/incremental/qx_runtime-1nz73z5onuohh/s-ho02fgp24u-1fanyp3-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-runtime` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.94s
+     Running unittests src/lib.rs (/target/debug/deps/qx_runtime-0fe83052a8b18250)

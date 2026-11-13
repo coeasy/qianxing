@@ -48,6 +48,8 @@ fn quantity_grid_rejects_sizing_modes_that_make_the_dimension_ineffective() {
             strategy_kinds: Vec::new(),
             split_plan: None,
             baselines: Vec::new(),
+            search: None,
+            cost_sensitivity: Vec::new(),
         };
         let error = spec.validate().expect_err("quantity is shadowed by sizing");
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
@@ -111,6 +113,8 @@ fn parameter_experiment_sweeps_kelly_fraction_with_versioned_sizing_identity() {
         strategy_kinds: Vec::new(),
         split_plan: None,
         baselines: Vec::new(),
+        search: None,
+        cost_sensitivity: Vec::new(),
     };
     let result =
         run_experiment(&spec, &research("kelly-fractions")).expect("Kelly fraction experiment");

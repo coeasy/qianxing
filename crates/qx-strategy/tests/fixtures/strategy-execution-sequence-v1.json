@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "name": "multi-account-multi-market-partial-fill-sequence",
+  "strategy_id": "update-test",
+  "account_id": "paper",
+  "instrument": "BTCUSDT.BINANCE",
+  "expected_callback_order": [
+    "paper:BTCUSDT.BINANCE:24:order_status",
+    "paper:BTCUSDT.BINANCE:24:fill",
+    "paper:BTCUSDT.BINANCE:25:order_status",
+    "paper:BTCUSDT.BINANCE:25:fill",
+    "paper-b:ETHUSDT.OKX:24:order_status",
+    "paper-b:ETHUSDT.OKX:24:fill"
+  ],
+  "events": [
+    {
+      "kind": "order_status",
+      "update": {
+        "schema_version": 1,
+        "event": "order_status",
+        "event_seq": 24,
+        "ts": 12,
+        "status": "partially_filled",
+        "order": {
+          "order_id": 7,
+          "account_id": "paper",
+          "instrument": "BTCUSDT.BINANCE",
+          "side": "Buy",
+          "qty_raw": 2000000000,
+          "filled_raw": 1000000000,
+          "strategy_id": "update-test"
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "update": {
+        "schema_version": 2,
+        "event": "fill",
+        "event_seq": 24,
+        "ts": 12,
+        "order": {
+          "order_id": 7,
+          "account_id": "paper",
+          "instrument": "BTCUSDT.BINANCE",
+          "side": "Buy",
+          "qty_raw": 2000000000,
+          "filled_raw": 0,
+          "strategy_id": "update-test"
+        },
+        "fill": {
+          "order_id": 7,
+          "qty": 1000000000,
+          "price": 100000000000,
+          "fee": 0,
+          "ts": 12,
+          "account_id": "paper",
+          "strategy_id": "update-test",
+          "signal_id": 3,
+          "intent_id": 4,
+          "venue_id": "BINANCE",
+          "venue_order_id": null,
+          "rule_version": null,
+          "fee_currency": null
+        }
+      }
+    },
+    {
+      "kind": "order_status",
+      "update": {
+        "schema_version": 1,
+        "event": "order_status",
+        "event_seq": 25,
+        "ts": 12,
+        "status": "filled",
+        "order": {
+          "order_id": 7,
+          "account_id": "paper",
+          "instrument": "BTCUSDT.BINANCE",
+          "side": "Buy",
+          "qty_raw": 2000000000,
+          "filled_raw": 2000000000,
+          "strategy_id": "update-test"
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "update": {
+        "schema_version": 2,
+        "event": "fill",
+        "event_seq": 25,
+        "ts": 12,
+        "order": {
+          "order_id": 7,
+          "account_id": "paper",
+          "instrument": "BTCUSDT.BINANCE",
+          "side": "Buy",
+          "qty_raw": 2000000000,
+          "filled_raw": 1000000000,
+          "strategy_id": "update-test"
+        },
+        "fill": {
+          "order_id": 7,
+          "qty": 1000000000,
+          "price": 101000000000,
+          "fee": 0,
+          "ts": 12,
+          "account_id": "paper",
+          "strategy_id": "update-test",
+          "signal_id": 3,
+          "intent_id": 4,
+          "venue_id": "BINANCE",
+          "venue_order_id": null,
+          "rule_version": null,
+          "fee_currency": null
+        }
+      }
+    },
+    {
+      "kind": "order_status",
+      "update": {
+        "schema_version": 1,
+        "event": "order_status",
+        "event_seq": 24,
+        "ts": 12,
+        "status": "partially_filled",
+        "order": {
+          "order_id": 7,
+          "account_id": "paper-b",
+          "instrument": "ETHUSDT.OKX",
+          "side": "Buy",
+          "qty_raw": 1000000000,
+          "filled_raw": 250000000,
+          "strategy_id": "update-test"
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "update": {
+        "schema_version": 2,
+        "event": "fill",
+        "event_seq": 24,
+        "ts": 12,
+        "order": {
+          "order_id": 7,
+          "account_id": "paper-b",
+          "instrument": "ETHUSDT.OKX",
+          "side": "Buy",
+          "qty_raw": 1000000000,
+          "filled_raw": 0,
+          "strategy_id": "update-test"
+        },
+        "fill": {
+          "order_id": 7,
+          "qty": 250000000,
+          "price": 200000000000,
+          "fee": 0,
+          "ts": 12,
+          "account_id": "paper-b",
+          "strategy_id": "update-test",
+          "signal_id": 3,
+          "intent_id": 4,
+          "venue_id": "OKX",
+          "venue_order_id": null,
+          "rule_version": null,
+          "fee_currency": null
+        }
+      }
+    }
+  ]
+}

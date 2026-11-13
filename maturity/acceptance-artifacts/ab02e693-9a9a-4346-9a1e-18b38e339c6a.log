@@ -1,0 +1,217 @@
+$ python3 tools/accept_backtest_metrics_contract.py
+exit_code=0
+
+[stdout]
+[1/6] cargo test -p qx-core --lib period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity --offline
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling crossbeam-utils v0.8.23
+   Compiling serde_core v1.0.229
+   Compiling syn v2.0.119
+   Compiling zerocopy v0.8.56
+   Compiling crossbeam-epoch v0.9.21
+   Compiling zerocopy-derive v0.8.56
+   Compiling syn v3.0.4
+   Compiling zmij v1.0.23
+   Compiling shlex v2.0.1
+   Compiling serde v1.0.229
+   Compiling autocfg v1.5.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling crossbeam-deque v0.8.8
+   Compiling cc v1.4.4
+   Compiling num-traits v0.2.19
+   Compiling serde_derive v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling cfg-if v1.0.4
+   Compiling rayon-core v1.13.0
+   Compiling either v1.18.0
+   Compiling libc v0.2.189
+   Compiling half v2.7.1
+   Compiling alloca v0.4.0
+   Compiling clap_lex v1.1.1
+   Compiling anstyle v1.0.14
+   Compiling memchr v2.8.3
+   Compiling plotters-backend v0.3.7
+   Compiling regex-syntax v0.8.11
+   Compiling ciborium-io v0.2.2
+   Compiling itoa v1.0.18
+   Compiling ciborium-ll v0.2.2
+   Compiling regex-automata v0.4.18
+   Compiling plotters-svg v0.3.7
+   Compiling clap_builder v4.6.7
+   Compiling itertools v0.13.0
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling criterion-plot v0.8.2
+   Compiling page_size v0.6.0
+   Compiling rayon v1.12.0
+   Compiling plotters v0.3.7
+   Compiling clap v4.6.7
+   Compiling regex v1.13.1
+   Compiling ciborium v0.2.2
+   Compiling tinytemplate v1.2.1
+   Compiling anes v0.1.6
+   Compiling oorandom v11.1.5
+   Compiling criterion v0.8.2
+   Compiling qx-core v0.4.0 (/tmp/qx-r08-clean/crates/qx-core)
+    Finished `test` profile [unoptimized] target(s) in 28.30s
+     Running unittests src/lib.rs (/target/debug/deps/qx_core-de3a68ac1289f558)
+
+running 1 test
+test performance::tests::period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 121 filtered out; finished in 0.00s
+
+[2/6] cargo test -p qx-core --lib aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values --offline
+    Finished `test` profile [unoptimized] target(s) in 0.09s
+     Running unittests src/lib.rs (/target/debug/deps/qx_core-de3a68ac1289f558)
+
+running 1 test
+test benchmark::tests::aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 121 filtered out; finished in 0.00s
+
+[3/6] cargo test -p qx-app --lib artifact_store::backtest_summary::metrics_definition_tests --offline
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.4
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling qx-core v0.4.0 (/tmp/qx-r08-clean/crates/qx-core)
+   Compiling ring v0.17.14
+   Compiling getrandom v0.2.17
+   Compiling qx-guanxing v0.4.0 (/tmp/qx-r08-clean/crates/qx-guanxing)
+   Compiling untrusted v0.9.0
+   Compiling qx-datastruct v0.4.0 (/tmp/qx-r08-clean/crates/qx-datastruct)
+   Compiling qx-data v0.4.0 (/tmp/qx-r08-clean/crates/qx-data)
+   Compiling libloading v0.8.9
+   Compiling memmap2 v0.9.11
+   Compiling qx-risk v0.4.0 (/tmp/qx-r08-clean/crates/qx-risk)
+   Compiling qx-zhenlu v0.4.0 (/tmp/qx-r08-clean/crates/qx-zhenlu)
+   Compiling qx-strategy v0.4.0 (/tmp/qx-r08-clean/crates/qx-strategy)
+   Compiling qx-app v0.4.0 (/tmp/qx-r08-clean/crates/qx-app)
+   Compiling qx-xingban v0.4.0 (/tmp/qx-r08-clean/crates/qx-xingban)
+   Compiling qx-provider v0.4.0 (/tmp/qx-r08-clean/crates/qx-provider)
+   Compiling qx-spec v0.4.0 (/tmp/qx-r08-clean/crates/qx-spec)
+   Compiling qx-control v0.4.0 (/tmp/qx-r08-clean/crates/qx-control)
+    Finished `test` profile [unoptimized] target(s) in 43.03s
+     Running unittests src/lib.rs (/target/debug/deps/qx_app-9b591ba0a1823b70)
+
+running 1 test
+test artifact_store::backtest_summary::metrics_definition_tests::metrics_definition_is_versioned_and_discloses_period_and_fee_semantics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 168 filtered out; finished in 0.00s
+
+[4/6] cargo test -p qx-cli --bin qx-cli report_html::metric_definition_tests --offline
+   Compiling syn v3.0.4
+   Compiling serde_derive v1.0.229
+   Compiling memchr v2.8.3
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling qx-core v0.4.0 (/tmp/qx-r08-clean/crates/qx-core)
+   Compiling version_check v0.9.5
+   Compiling qx-guanxing v0.4.0 (/tmp/qx-r08-clean/crates/qx-guanxing)
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling once_cell v1.21.4
+   Compiling qx-datastruct v0.4.0 (/tmp/qx-r08-clean/crates/qx-datastruct)
+   Compiling ahash v0.8.12
+   Compiling qx-data v0.4.0 (/tmp/qx-r08-clean/crates/qx-data)
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling qx-risk v0.4.0 (/tmp/qx-r08-clean/crates/qx-risk)
+   Compiling pkg-config v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling libsqlite3-sys v0.30.1
+   Compiling qx-zhenlu v0.4.0 (/tmp/qx-r08-clean/crates/qx-zhenlu)
+   Compiling digest v0.10.7
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling hashbrown v0.14.5
+   Compiling qx-control v0.4.0 (/tmp/qx-r08-clean/crates/qx-control)
+   Compiling zeroize v1.9.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling qx-strategy v0.4.0 (/tmp/qx-r08-clean/crates/qx-strategy)
+   Compiling hashlink v0.9.1
+   Compiling fallible-iterator v0.3.0
+   Compiling smallvec v1.16.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling bitflags v2.13.1
+   Compiling rusqlite v0.32.1
+   Compiling qx-spec v0.4.0 (/tmp/qx-r08-clean/crates/qx-spec)
+   Compiling qx-protocol v0.4.0 (/tmp/qx-r08-clean/crates/qx-protocol)
+   Compiling qx-scheduler v0.4.0 (/tmp/qx-r08-clean/crates/qx-scheduler)
+   Compiling rustls v0.23.43
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling qx-storage v0.4.0 (/tmp/qx-r08-clean/crates/qx-storage)
+   Compiling rustls-webpki v0.103.15
+   Compiling qx-execution v0.4.0 (/tmp/qx-r08-clean/crates/qx-execution)
+   Compiling qx-provider v0.4.0 (/tmp/qx-r08-clean/crates/qx-provider)
+   Compiling qx-factor v0.4.0 (/tmp/qx-r08-clean/crates/qx-factor)
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling subtle v2.6.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstream v1.0.0
+   Compiling qx-runtime v0.4.0 (/tmp/qx-r08-clean/crates/qx-runtime)
+   Compiling qx-xingban v0.4.0 (/tmp/qx-r08-clean/crates/qx-xingban)
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.20
+   Compiling crc32fast v1.5.2
+   Compiling strsim v0.11.1
+   Compiling qx-process-io v0.4.0 (/tmp/qx-r08-clean/crates/qx-process-io)
+   Compiling clap_builder v4.6.7
+   Compiling clap_derive v4.6.7
+   Compiling qx-app v0.4.0 (/tmp/qx-r08-clean/crates/qx-app)
+   Compiling webpki-roots v1.0.9
+   Compiling qx-genglu v0.4.0 (/tmp/qx-r08-clean/crates/qx-genglu)
+   Compiling thiserror-impl v2.0.20
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling zip v2.4.2
+   Compiling indexmap v2.14.2
+   Compiling qx-adapter v0.4.0 (/tmp/qx-r08-clean/crates/qx-adapter)
+   Compiling qx-api v0.4.0 (/tmp/qx-r08-clean/crates/qx-api)
+   Compiling clap v4.6.7
+   Compiling ciborium v0.2.2
+   Compiling qx-orchestrator v0.4.0 (/tmp/qx-r08-clean/crates/qx-orchestrator)
+   Compiling qx-cli v0.4.0 (/tmp/qx-r08-clean/crates/qx-cli)
+   Compiling tinytemplate v1.2.1
+   Compiling displaydoc v0.2.7
+   Compiling criterion v0.8.2
+   Compiling qx-service v0.4.0 (/tmp/qx-r08-clean/crates/qx-service)
+   Compiling qx-plugin v0.4.0 (/tmp/qx-r08-clean/crates/qx-plugin)
+    Finished `test` profile [unoptimized] target(s) in 1m 35s
+     Running unittests src/main.rs (/target/debug/deps/qx_cli-a8189795ce40f258)
+
+running 1 test
+test report_html::metric_definition_tests::html_surfaces_versioned_metric_period_and_fee_basis ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 496 filtered out; finished in 0.00s
+
+[5/6] cargo test -p qx-cli --bin qx-cli report_xlsx::rows::metrics_projection_tests --offline
+    Finished `test` profile [unoptimized] target(s) in 0.12s
+     Running unittests src/main.rs (/target/debug/deps/qx_cli-a8189795ce40f258)
+
+running 1 test
+test report_xlsx::rows::metrics_projection_tests::overview_exports_versioned_metric_definitions_and_exact_fee_facts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 496 filtered out; finished in 0.00s
+
+[6/6] cargo test -p qx-cli --bin qx-cli report_benchmark::tests::explicit_calendar_uses_daily_metric_names_and_labels --offline
+    Finished `test` profile [unoptimized] target(s) in 0.12s
+     Running unittests src/main.rs (/target/debug/deps/qx_cli-a8189795ce40f258)
+
+running 1 test
+test report_benchmark::tests::explicit_calendar_uses_daily_metric_names_and_labels ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 496 filtered out; finished in 0.03s
+
+backtest metrics contract: all six focused Rust checks passed
+
+[stderr]

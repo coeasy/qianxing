@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "kind": "self-hosted-sandbox-resource-and-image-policy-v1",
+  "generated_at_utc": "2026-10-26T18:06:57Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "rust_mode": "local",
+    "python": "local"
+  },
+  "behavior": {
+    "providers": ["opensandbox", "microsandbox"],
+    "applies_to": [
+      "OpenSandbox persistent Python strategy worker and remote-research batch execution",
+      "Microsandbox persistent Python strategy worker"
+    ],
+    "resource_request": {
+      "opensandbox": {
+        "cpu": "integer CPU count serialized as a string",
+        "memory": "MiB serialized as Kubernetes Mi quantity"
+      },
+      "microsandbox": {
+        "cpus": "integer CPU count",
+        "memory": "integer MiB"
+      }
+    },
+    "defaults": {
+      "opensandbox": {"cpu_count": 1, "memory_mib": 2048},
+      "microsandbox": {"cpu_count": 1, "memory_mib": 1024}
+    },
+    "bounds": {
+      "cpu_count": [1, 64],
+      "memory_mib": [512, 65536]
+    },
+    "image_reference": "OCI repository@sha256:<64 hexadecimal characters>; mutable tags rejected by OpenSandbox and Microsandbox host workers",
+    "metadata": [
+      "qianxing_resource_cpu",
+      "qianxing_resource_memory_mib"
+    ],
+    "network_egress": {
+      "opensandbox": "deny_all",
+      "microsandbox": "network none"
+    },
+    "failure_policy": "reject invalid bounds before sandbox creation; no local fallback"
+  },
+  "validation": [
+    {
+      "command": "python -m pytest -q python/tests/test_opensandbox_strategy_worker.py python/tests/test_microsandbox_strategy_worker.py python/tests/test_sandbox_execution.py",
+      "passed": 38,
+      "failed": 0,
+      "scope": [
+        "OpenSandbox persistent worker sends bounded resource limits and deny-all network policy",
+        "OpenSandbox batch research sends resource limits and reports requested values",
+        "Microsandbox sends CPU/memory limits and deny-all networking to microVM creation",
+        "CLI forwards explicit CPU/memory options",
+        "OpenSandbox and Microsandbox resource bounds fail before sandbox creation",
+        "OpenSandbox and Microsandbox reject mutable image tags before sandbox creation"
+      ]
+    },
+    {
+      "command": "cargo check -p qx-cli -j 1",
+      "passed": true
+    },
+    {
+      "command": "git diff --check and Python compileall for touched modules",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Provider SDKs were replaced with fake SDKs in tests; no connected OpenSandbox or Microsandbox service was contacted.",
+    "Evidence proves the host validates immutable image references and submits provider resource requests; it does not prove image signature/provenance or that a connected runtime enforces resource limits.",
+    "No isolation escape, long-session recovery, throughput, capacity, cost, or end-to-end live trading acceptance was performed.",
+    "Provider-neutral lifecycle and cross-provider audit contracts remain open under W9."
+  ],
+  "release_status": "unpublished workspace"
+}

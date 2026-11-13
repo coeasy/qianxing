@@ -1,0 +1,99 @@
+$ cargo test -p qx-storage --features postgres --offline -j1 -- --ignored
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test postgres::schema_migrations::postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed ... ok
+test postgres::schema_migrations::postgres_legacy_schema_adoption_recognizes_v1_v2_and_rejects_drift ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 1.72s
+
+
+running 1 test
+test postgres_control_transaction_completes_with_a_single_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.32s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test postgres_outbox_lease_fencing_and_retry_contract ... ok
+test postgres_transactional_consumer_projection_contract ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.34s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 1 test
+test postgres_event_log_and_outbox_commit_atomically_and_retry_idempotently ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+
+running 1 test
+test postgres_backends_share_the_persistent_queue_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.84s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+[stderr]
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.16s
+     Running unittests src\lib.rs (target\debug\deps\qx_storage-297e7b9a5d67b164.exe)
+     Running tests\control_audit_chain_wired.rs (target\debug\deps\control_audit_chain_wired-c4b71655b6f27edc.exe)
+     Running tests\nats_jetstream.rs (target\debug\deps\nats_jetstream-feb0d8b4379948b6.exe)
+     Running tests\nats_wait_budget.rs (target\debug\deps\nats_wait_budget-059961d2dd26d450.exe)
+     Running tests\outbox_backend_semantics.rs (target\debug\deps\outbox_backend_semantics-ea57afe70fb9722f.exe)
+     Running tests\outbox_projection_cursor.rs (target\debug\deps\outbox_projection_cursor-aca8116171b41775.exe)
+     Running tests\p1c_single_write_path_invariant.rs (target\debug\deps\p1c_single_write_path_invariant-a44c4e44a98b6119.exe)
+     Running tests\postgres_event_log_atomicity.rs (target\debug\deps\postgres_event_log_atomicity-6d8bd53927cb631e.exe)
+     Running tests\queue_backend_semantics.rs (target\debug\deps\queue_backend_semantics-f419dd344d8a4ff1.exe)
+     Running tests\segmented_event_log_recovery.rs (target\debug\deps\segmented_event_log_recovery-7c00ef450672e288.exe)
+     Running tests\snapshot_rows_persist.rs (target\debug\deps\snapshot_rows_persist-a15c41a6f9b63fdc.exe)
+     Running tests\sqlite_event_log.rs (target\debug\deps\sqlite_event_log-9f7ceebe20ead000.exe)
+     Running tests\state_envelope_consistency.rs (target\debug\deps\state_envelope_consistency-ad6364c64824e004.exe)
+   Doc-tests qx_storage

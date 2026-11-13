@@ -10,12 +10,182 @@ pub use comparison::{
 };
 pub use readout::{summary_block, summary_number, summary_text};
 
+use qx_core::{DecimalRounding, ExactDecimal};
 use qx_datastruct::BarFrame;
 use serde_json::{json, Value};
 use std::path::Path;
 
 const SHANGHAI_OFFSET_MS: u64 = 8 * 60 * 60 * 1_000;
 const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
+
+/// Recompute simple total return in basis points from verified initial and final equity.
+pub fn equity_total_return_bps_v1(
+    initial_equity_raw: i128,
+    final_equity_raw: i128,
+) -> Result<i32, String> {
+    if initial_equity_raw <= 0 {
+        return Err("权益收益的初始资金必须为正".into());
+    }
+    final_equity_raw
+        .checked_sub(initial_equity_raw)
+        .and_then(|pnl| pnl.checked_mul(10_000))
+        .and_then(|pnl| pnl.checked_div(initial_equity_raw))
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| "权益收益基点溢出或超出可表示范围".into())
+}
+
+/// Compute basis points from scale-aware equity without projecting onto the legacy 1e-9 grid.
+pub fn exact_ratio_bps_v1(
+    numerator: ExactDecimal,
+    denominator: ExactDecimal,
+) -> Result<i32, String> {
+    if !denominator.is_positive() {
+        return Err("精确权益基点分母必须为正数".into());
+    }
+    let ten_thousand = ExactDecimal::from_parts(10_000, 0)
+        .map_err(|error| format!("精确权益基点常量无效: {error}"))?;
+    let value = numerator
+        .checked_mul_at_scale(
+            ten_thousand,
+            ExactDecimal::MAX_SCALE,
+            DecimalRounding::TowardZero,
+        )
+        .and_then(|scaled| scaled.checked_div_at_scale(denominator, 0, DecimalRounding::TowardZero))
+        .map(ExactDecimal::coefficient)
+        .ok_or_else(|| "精确权益基点计算溢出".to_string())?;
+    i32::try_from(value).map_err(|_| "精确权益基点超出 i32 范围".into())
+}
+
+/// Recompute scale-aware total return in basis points from verified equity values.
+pub fn exact_equity_total_return_bps_v1(
+    initial_equity: ExactDecimal,
+    final_equity: ExactDecimal,
+) -> Result<i32, String> {
+    if !initial_equity.is_positive() {
+        return Err("精确权益收益的初始资金必须为正".into());
+    }
+    let pnl = final_equity
+        .checked_sub(initial_equity)
+        .ok_or_else(|| "精确权益收益差值溢出".to_string())?;
+    exact_ratio_bps_v1(pnl, initial_equity)
+}
+
+/// Recompute peak-to-trough drawdown from a scale-aware equity curve.
+pub fn exact_equity_max_drawdown_bps_v1(equity: &[ExactDecimal]) -> Result<u32, String> {
+    let mut peak = None::<ExactDecimal>;
+    let mut maximum = 0_u32;
+    for current in equity {
+        let current_peak = match peak {
+            None => *current,
+            Some(previous) => match previous.checked_cmp(*current) {
+                Some(std::cmp::Ordering::Less) => *current,
+                Some(_) => previous,
+                None => return Err("精确权益回撤高点比较溢出".into()),
+            },
+        };
+        peak = Some(current_peak);
+        if current_peak.is_positive() {
+            let drawdown = current_peak
+                .checked_sub(*current)
+                .ok_or_else(|| "精确权益回撤差值溢出".to_string())?;
+            let drawdown_bps = exact_ratio_bps_v1(drawdown, current_peak)?.clamp(0, 10_000) as u32;
+            maximum = maximum.max(drawdown_bps);
+        }
+    }
+    Ok(maximum)
+}
+
+/// Checked accumulator for principal-weighted returns over independently funded accounts.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WeightedReturnAccumulatorV1 {
+    weighted_numerator_raw: i128,
+    initial_cash_raw: i128,
+}
+
+impl WeightedReturnAccumulatorV1 {
+    /// Add one verified account return using its declared initial cash as the weight.
+    pub fn push(&mut self, return_bps: i32, initial_cash_raw: i128) -> Result<(), String> {
+        if initial_cash_raw <= 0 {
+            return Err("账户加权收益的初始资金必须为正".into());
+        }
+        let weighted = i128::from(return_bps)
+            .checked_mul(initial_cash_raw)
+            .ok_or_else(|| "账户加权收益乘法溢出".to_string())?;
+        self.weighted_numerator_raw = self
+            .weighted_numerator_raw
+            .checked_add(weighted)
+            .ok_or_else(|| "账户加权收益求和溢出".to_string())?;
+        self.initial_cash_raw = self
+            .initial_cash_raw
+            .checked_add(initial_cash_raw)
+            .ok_or_else(|| "账户加权收益本金求和溢出".to_string())?;
+        Ok(())
+    }
+
+    pub fn initial_cash_raw(self) -> i128 {
+        self.initial_cash_raw
+    }
+
+    /// Finish with integer-truncated basis points; no successful accounts yields `None`.
+    pub fn finish(self) -> Result<Option<i32>, String> {
+        if self.initial_cash_raw == 0 {
+            return Ok(None);
+        }
+        let value = self.weighted_numerator_raw / self.initial_cash_raw;
+        i32::try_from(value)
+            .map(Some)
+            .map_err(|_| "账户加权收益超出 i32 范围".into())
+    }
+}
+
+/// Recompute peak-to-trough drawdown in basis points from replay-verified equity values.
+///
+/// Overflow is treated conservatively as a full drawdown, matching the report contract used by
+/// persisted multi-leg and multi-market runs.
+pub fn equity_max_drawdown_bps_v1(equity_raw: &[i128]) -> u32 {
+    let mut peak = 0_i128;
+    let mut maximum = 0_u32;
+    for value in equity_raw {
+        peak = peak.max(*value);
+        if peak <= 0 || *value >= peak {
+            continue;
+        }
+        let drawdown = peak
+            .checked_sub(*value)
+            .and_then(|loss| loss.checked_mul(10_000))
+            .and_then(|loss| loss.checked_div(peak))
+            .unwrap_or(10_000)
+            .clamp(0, 10_000) as u32;
+        maximum = maximum.max(drawdown);
+    }
+    maximum
+}
+
+/// Recompute the legacy joint-account drawdown contract without a 100% cap.
+///
+/// This is the exact aggregation rule used by the joint-account backtest writer. Keeping the
+/// checked arithmetic here lets report readers independently verify the persisted curve without
+/// introducing a second implementation in an adapter.
+pub fn joint_equity_max_drawdown_bps_v1(equity: &[(u64, i128)]) -> Result<u32, String> {
+    let mut peak = 0_i128;
+    let mut maximum = 0_u128;
+    for (_, value) in equity {
+        peak = peak.max(*value);
+        if peak <= 0 {
+            continue;
+        }
+        let drawdown = peak
+            .checked_sub(*value)
+            .ok_or_else(|| "联合账户权益回撤溢出".to_string())?;
+        let bps = u128::try_from(drawdown)
+            .ok()
+            .and_then(|drawdown| drawdown.checked_mul(10_000))
+            .and_then(|scaled| scaled.checked_div(peak as u128))
+            .ok_or_else(|| "联合账户权益回撤无法表示".to_string())?;
+        maximum = maximum.max(bps);
+    }
+    u32::try_from(maximum).map_err(|_| "联合账户最大回撤超出 u32 范围".into())
+}
 
 /// Build the report projection for a portfolio series and an explicit benchmark BarFrame.
 ///
@@ -262,8 +432,12 @@ fn validate_daily_timestamps(
 
 #[cfg(test)]
 mod tests {
-    use super::{benchmark_analysis, validate_daily_timestamps};
-    use qx_core::InstrumentId;
+    use super::{
+        benchmark_analysis, equity_max_drawdown_bps_v1, equity_total_return_bps_v1,
+        exact_equity_max_drawdown_bps_v1, exact_equity_total_return_bps_v1,
+        validate_daily_timestamps, WeightedReturnAccumulatorV1,
+    };
+    use qx_core::{ExactDecimal, InstrumentId};
     use qx_datastruct::BarFrame;
     use qx_guanxing::DataSourceId;
     use serde_json::json;
@@ -271,6 +445,51 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
+
+    #[test]
+    fn equity_drawdown_uses_running_peak_and_fails_conservatively_on_overflow() {
+        assert_eq!(
+            equity_max_drawdown_bps_v1(&[10_000, 9_000, 11_000, 5_500]),
+            5_000
+        );
+        assert_eq!(equity_max_drawdown_bps_v1(&[100, -1]), 10_000);
+        assert_eq!(equity_max_drawdown_bps_v1(&[i128::MAX, i128::MIN]), 10_000);
+        assert_eq!(equity_max_drawdown_bps_v1(&[-10, -20, -5]), 0);
+    }
+
+    #[test]
+    fn equity_total_return_uses_checked_integer_arithmetic() {
+        assert_eq!(equity_total_return_bps_v1(10_000, 11_000), Ok(1_000));
+        assert_eq!(equity_total_return_bps_v1(10_000, 9_000), Ok(-1_000));
+        assert!(equity_total_return_bps_v1(0, 1).is_err());
+        assert!(equity_total_return_bps_v1(i128::MAX, i128::MIN).is_err());
+    }
+
+    #[test]
+    fn exact_equity_metrics_preserve_subnano_return_and_drawdown() {
+        let initial = ExactDecimal::parse("0.0000000019").unwrap();
+        let peak = ExactDecimal::parse("0.0000000020").unwrap();
+        assert_eq!(exact_equity_total_return_bps_v1(initial, peak), Ok(526));
+        assert_eq!(
+            exact_equity_max_drawdown_bps_v1(&[initial, peak, initial]),
+            Ok(500)
+        );
+        assert!(exact_equity_total_return_bps_v1(ExactDecimal::ZERO, peak).is_err());
+    }
+
+    #[test]
+    fn weighted_account_returns_use_principal_weights_and_checked_sums() {
+        let mut weighted = WeightedReturnAccumulatorV1::default();
+        weighted.push(1_000, 3).unwrap();
+        weighted.push(-500, 1).unwrap();
+        assert_eq!(weighted.initial_cash_raw(), 4);
+        assert_eq!(weighted.finish(), Ok(Some(625)));
+
+        assert!(weighted.push(100, 0).is_err());
+        let mut overflowing = WeightedReturnAccumulatorV1::default();
+        overflowing.push(1, i128::MAX).unwrap();
+        assert!(overflowing.push(1, 1).is_err());
+    }
 
     fn isolated_file(label: &str) -> PathBuf {
         static SERIAL: AtomicUsize = AtomicUsize::new(0);
@@ -313,6 +532,7 @@ mod tests {
             low_raw: vec![3_900_000_000; 3],
             close_raw: vec![4_000_000_000, 4_020_000_000, 4_040_000_000],
             volume_raw: vec![1_000; 3],
+            exact_ohlcv: None,
         };
         let portfolio = vec![
             (timestamps[0], 10_000_000_000_i128),

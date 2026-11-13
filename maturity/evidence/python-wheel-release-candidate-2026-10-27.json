@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "kind": "python-wheel-release-candidate-v1",
+  "generated_at_utc": "2026-10-27T09:15:04Z",
+  "source": {
+    "head_commit": "6e91839ab3fd3ae4db4d8f7e492d0f7ae4726e30",
+    "working_tree_changes_included": false
+  },
+  "environment": {
+    "os": "Windows 11 Pro build 22631",
+    "architecture": "AMD64",
+    "python_implementation": "CPython",
+    "python_version": "3.13.13"
+  },
+  "package": {
+    "name": "qianxing",
+    "version": "0.3.0",
+    "wheel": "qianxing-0.3.0-cp310-abi3-win_amd64.whl",
+    "wheel_sha256": "074e5b46965510f082b4b5eba764a2020de9c16fd99a87457f8519aa12c8265e",
+    "wheel_bytes": 5998534,
+    "native_payload": "qianxing_bridge/_qianxing_native.pyd",
+    "microsandbox_worker_payload": "qianxing_strategy/microsandbox_worker.py",
+    "microsandbox_optional_dependency": "microsandbox==0.7.11",
+    "microsandbox_optional_extra": "sandbox-microsandbox",
+    "base_install_loads_sandbox_sdk": false
+  },
+  "validation": {
+    "stable_abi_wheel_check": "passed",
+    "microsandbox_worker_and_extra_metadata": "passed",
+    "fresh_virtual_environment_install": "passed",
+    "installed_package_version": "0.3.0",
+    "wheel_smoke": {
+      "command": ".codex-tmp-build/qianxing-030-commit-venv/Scripts/python.exe tools/python_wheel_smoke.py <repository-root>",
+      "passed": true,
+      "builtin_strategies": 17,
+      "dataset_rows": 70,
+      "crypto_fills": 1,
+      "ashare_fills": 1,
+      "builtin_selection": "13/13",
+      "parameter_grid": "4/4",
+      "multi_account_runs": 2,
+      "multileg_fills": "1/2",
+      "depth_account_fills": 1,
+      "custom_strategy_fills": 1,
+      "verified_run": true
+    }
+  },
+  "limitations": [
+    "This candidate wheel covers Windows x64 and CPython 3.13 only; Linux, macOS and other Python release matrix legs remain unbuilt here.",
+    "The wheel was built from commit 6e91839ab3fd3ae4db4d8f7e492d0f7ae4726e30 and is not a published release artifact.",
+    "The Microsandbox guest runtime has not passed on this Windows boot: WHP is enabled but requires a restart before a local microVM can start."
+  ],
+  "release_status": "candidate_built_not_published"
+}

@@ -1,0 +1,181 @@
+$ cargo test -p qx-storage --features postgres --offline -j1
+exit_code=0
+
+[stdout]
+
+running 31 tests
+test postgres::schema_migrations::postgres_legacy_schema_adoption_recognizes_v1_v2_and_rejects_drift ... ignored, requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance
+test postgres::schema_migrations::postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed ... ignored, requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance
+test consumer_cursor::tests::consumer_cursor_accepts_forward_and_identical_replay ... ok
+test consumer_cursor::tests::consumer_cursor_rejects_regression_and_same_offset_fork ... ok
+test schema_migrations::tests::migration_plan_upgrades_v1_and_rejects_unknown_or_unversioned_data ... ok
+test state_envelope::tests::envelope_round_trips_and_rejects_corrupt_or_too_new_state ... ok
+test state_envelope::tests::an_unusable_lock_path_is_reported_as_io_not_as_contention ... ok
+test state_envelope::atomic_write_tests::atomic_file_write_flush_failure_preserves_destination_and_cleans_temp ... ok
+test state_envelope::tests::atomic_file_write_replaces_existing_destination ... ok
+test state_envelope::atomic_write_tests::atomic_file_write_reports_post_replace_fault_with_new_file_visible ... ok
+test segmented_event_log::crash_tests::synced_active_append_before_manifest_commit_recovers_and_retries ... ok
+test tests::audit_file_store_serializes_concurrent_appends_without_losing_tail ... ok
+test state_envelope::atomic_write_tests::atomic_file_write_faults_before_replace_keep_old_file_and_remove_temp ... ok
+test tests::file_job_queue_revalidates_forged_payload_before_claim ... ok
+test tests::control_state_round_trips_after_restart ... ok
+test tests::event_log_store_does_not_silently_overwrite_concurrent_extensions ... ok
+test tests::audit_sync_control_treats_a_longer_chain_as_idempotent_not_conflict ... ok
+test tests::audit_file_store_is_append_only_queryable_and_tamper_evident ... ok
+test tests::file_consumer_checkpoint_is_idempotent_and_dead_letters_after_retries ... ok
+test tests::file_job_queue_serializes_concurrent_claims_on_shared_filesystem ... ok
+test tests::json_state_store_round_trips_nested_report_atomically ... ok
+test tests::scheduler_state_round_trips_after_restart ... ok
+test tests::file_store_round_trips_and_rejects_path_escape ... ok
+test tests::control_command_queue_is_idempotent_and_fenced ... ok
+test tests::control_state_update_is_atomic_and_restores ... ok
+test tests::file_token_bucket_is_persistent_and_serializes_concurrent_consumers ... ok
+test tests::file_job_queue_is_idempotent_and_recoverable ... ok
+test tests::segmented_event_store_is_append_only_and_manifest_verified ... ok
+test tests::file_outbox_is_idempotent_fenced_and_retryable ... ok
+test tests::outbox_relay_publishes_then_acknowledges_and_retries_failures ... ok
+test state_envelope::atomic_write_tests::atomic_file_write_rename_failure_preserves_existing_destination ... ok
+
+test result: ok. 29 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 5 tests
+test postgres_control_transaction_completes_with_a_single_connection ... ignored, requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance
+test a_business_rejected_transaction_grows_neither_the_snapshot_nor_the_chain ... ok
+test a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history ... ok
+test every_committed_control_transaction_extends_the_durable_audit_chain ... ok
+test a_chain_trailing_the_snapshot_reheals_on_the_next_transaction ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test postgres_outbox_lease_fencing_and_retry_contract ... ignored, requires QX_TEST_POSTGRES_DSN
+test postgres_transactional_consumer_projection_contract ... ignored, requires QX_TEST_POSTGRES_DSN
+test outbox_attempt_budget_boundaries ... ok
+test consumer_scope::file_transactional_projection_failure_is_side_effect_free ... ok
+test file_transactional_consumer_projection_contract ... ok
+test file_consumer_contract ... ok
+test file_outbox_relay_unblocks_the_tail ... ok
+test file_outbox_relay_parked_count_ignores_the_page ... ok
+test consumer_scope::file_consumer_processed_scope_is_group_wide_across_partitions ... ok
+test file_outbox_relay_parks_events_after_the_attempt_budget ... ok
+test file_outbox_contract ... ok
+
+test result: ok. 9 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 2 tests
+test projection_rejects_names_the_shared_charset_rule_rejects ... ok
+test projection_cursor_skips_only_the_already_delivered_prefix ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test four_file_state_stores_share_one_envelope_io ... ok
+test attempt_counting_uses_the_single_policy_arithmetic ... ok
+test exponential_backoff_arithmetic_exists_once ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+
+running 1 test
+test postgres_event_log_and_outbox_commit_atomically_and_retry_idempotently ... ignored, requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test postgres_backends_share_the_persistent_queue_contract ... ignored, requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance
+test file_backends_share_the_persistent_queue_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 10 tests
+test committed_manifest_ignores_an_uncommitted_non_utf8_suffix ... ok
+test committed_segment_corruption_is_rejected_without_mutating_the_manifest ... ok
+test malformed_committed_segment_is_rejected_as_corruption ... ok
+test legacy_v1_manifest_reads_and_upgrades_to_v2_on_append ... ok
+test retry_rejects_a_divergent_uncommitted_tail ... ok
+test interrupted_active_tail_is_read_as_committed_prefix_and_retry_completes ... ok
+test partial_active_tail_append_is_ignored_until_retry_finishes_the_same_bytes ... ok
+test interrupted_new_segment_is_ignored_until_retry_publishes_manifest ... ok
+test independent_store_instances_serialize_divergent_extensions ... ok
+test writer_preserves_compact_jsonl_bytes_across_incremental_tail_append ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 1 test
+test file_snapshot_store_recovers_a_snapshot_that_has_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test envelope_rejects_future_schema_version_on_read ... ok
+test envelope_rejects_corrupt_state_files ... ok
+test envelope_keeps_on_disk_json_shapes ... ok
+test file_outbox_envelope_semantics_are_stable ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+[stderr]
+   Compiling syn v3.0.4
+   Compiling windows-sys v0.61.2
+   Compiling mio v1.2.3
+   Compiling socket2 v0.6.5
+   Compiling tokio v1.53.1
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling qx-core v0.3.0 (D:\aex_work\qianxing\crates\qx-core)
+   Compiling tokio-util v0.7.19
+   Compiling schannel v0.1.29
+   Compiling async-trait v0.1.92
+   Compiling tokio-postgres v0.7.18
+   Compiling native-tls v0.2.18
+   Compiling tokio-native-tls v0.3.1
+   Compiling postgres-native-tls v0.5.3
+   Compiling postgres v0.19.14
+   Compiling qx-protocol v0.3.0 (D:\aex_work\qianxing\crates\qx-protocol)
+   Compiling qx-scheduler v0.3.0 (D:\aex_work\qianxing\crates\qx-scheduler)
+   Compiling qx-control v0.3.0 (D:\aex_work\qianxing\crates\qx-control)
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+    Finished `test` profile [unoptimized] target(s) in 47.81s
+     Running unittests src\lib.rs (target\debug\deps\qx_storage-7b0fe74e9d506613.exe)
+     Running tests\control_audit_chain_wired.rs (target\debug\deps\control_audit_chain_wired-ca153686fddf4573.exe)
+     Running tests\nats_jetstream.rs (target\debug\deps\nats_jetstream-fb4787c3d44fe07c.exe)
+     Running tests\nats_wait_budget.rs (target\debug\deps\nats_wait_budget-2eceeac42ef0974b.exe)
+     Running tests\outbox_backend_semantics.rs (target\debug\deps\outbox_backend_semantics-7f33cb7e56e2f98c.exe)
+     Running tests\outbox_projection_cursor.rs (target\debug\deps\outbox_projection_cursor-2edcc3ec8b7395be.exe)
+     Running tests\p1c_single_write_path_invariant.rs (target\debug\deps\p1c_single_write_path_invariant-5a755f1f0d7cdf17.exe)
+     Running tests\postgres_event_log_atomicity.rs (target\debug\deps\postgres_event_log_atomicity-54b01497a9dcf961.exe)
+     Running tests\queue_backend_semantics.rs (target\debug\deps\queue_backend_semantics-cb3260a80f0f84d0.exe)
+     Running tests\segmented_event_log_recovery.rs (target\debug\deps\segmented_event_log_recovery-c619404e4a8dc7de.exe)
+     Running tests\snapshot_rows_persist.rs (target\debug\deps\snapshot_rows_persist-515f902c9ab8e8a9.exe)
+     Running tests\sqlite_event_log.rs (target\debug\deps\sqlite_event_log-411fa3fb8d5f62dd.exe)
+     Running tests\state_envelope_consistency.rs (target\debug\deps\state_envelope_consistency-7dabd85d5a926798.exe)
+   Doc-tests qx_storage

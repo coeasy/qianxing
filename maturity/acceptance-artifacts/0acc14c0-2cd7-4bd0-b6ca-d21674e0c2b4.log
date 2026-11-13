@@ -1,0 +1,15 @@
+$ cargo test -p qx-orchestrator --lib reconciliation_gate_tests --offline -j 1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test strategy_deployment::reconciliation_gate_tests::paper_rollback_and_resume_do_not_require_live_reconciliation ... ok
+test strategy_deployment::reconciliation_gate_tests::live_rollback_and_resume_gate_requires_matching_fresh_clean_reconciliation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.56s
+     Running unittests src\lib.rs (target\debug\deps\qx_orchestrator-31fc7e6fade6954f.exe)

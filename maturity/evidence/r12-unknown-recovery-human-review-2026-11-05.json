@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R12",
+  "acceptance_id": "R12-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "91ada453-d1ff-45f6-94c8-671ab338d96b",
+    "4481a82d-711c-4bcf-b0a2-124c77ea6a13",
+    "f185b2ae-9d66-44fa-af7e-2cb19a20dc6d",
+    "3b4814f7-6338-49e2-8dd8-e0f4b163f6dc",
+    "39a14c52-0911-43d7-a392-2798b6c1c17d",
+    "c0d8fb74-de3c-4917-8696-3c2c78a93297",
+    "e1102bf2-2bf4-4d39-9942-156f0e1fec12",
+    "221f0bc3-4974-4a99-ba96-ee83451d53e1",
+    "133058f2-74a1-4c69-9fb1-4bbc69b981a3",
+    "e8dcc722-6f75-45bc-b6ec-9f472d11bb83",
+    "0ed00dbe-1bb7-46fd-a002-9bbff7666603"
+  ],
+  "reviewed_artifacts": [
+    "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+    "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs",
+    "crates/qx-runtime/src/reconcile.rs",
+    "maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json",
+    "maturity/acceptance-artifacts/91ada453-d1ff-45f6-94c8-671ab338d96b.log",
+    "maturity/acceptance-artifacts/4481a82d-711c-4bcf-b0a2-124c77ea6a13.log",
+    "maturity/acceptance-artifacts/f185b2ae-9d66-44fa-af7e-2cb19a20dc6d.log",
+    "maturity/acceptance-artifacts/3b4814f7-6338-49e2-8dd8-e0f4b163f6dc.log",
+    "maturity/acceptance-artifacts/39a14c52-0911-43d7-a392-2798b6c1c17d.log",
+    "maturity/acceptance-artifacts/c0d8fb74-de3c-4917-8696-3c2c78a93297.log",
+    "maturity/acceptance-artifacts/e1102bf2-2bf4-4d39-9942-156f0e1fec12.log",
+    "maturity/acceptance-artifacts/221f0bc3-4974-4a99-ba96-ee83451d53e1.log",
+    "maturity/acceptance-artifacts/133058f2-74a1-4c69-9fb1-4bbc69b981a3.log",
+    "maturity/acceptance-artifacts/e8dcc722-6f75-45bc-b6ec-9f472d11bb83.log",
+    "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.log",
+    "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates.rs"
+  ],
+  "findings": [
+    "The six-boundary Paper process crash fixtures cover durable file and SQLite state and compare cursor/checkpoint recovery across restart.",
+    "The durable live replay fixtures reload Unknown PreparedEvaluation state, hold cursor progress while outcome is unresolved, and cover Accepted plus Failed/Rejected resolution after a clean reconciliation newer than the failure.",
+    "A separate-process recovery run injects process exit after durable Unknown and verifies the second worker process resolves the state without replaying an unsafe venue submit.",
+    "The live Failed command gate rejects unresolved, dirty, wrong-time, and nonterminal outcomes; the worker retains the journal and retries rather than finalizing cursor/checkpoint.",
+    "Windows local PostgreSQL 18.6 with a fresh database passes the same separate-process Unknown recovery fixture as files and SQLite. The fixture binds an EventLog cursor range, holds progress while submission outcome is unresolved, then advances the cursor after reconciliation and lease expiry."
+  ],
+  "limitations": [
+    "Venue outcomes and reconciliation are fixture-driven; no external venue or authorized testnet/live was used.",
+    "Linux process-recovery coverage remains pending.",
+    "PostgreSQL was exercised locally on Windows; Linux CI recovery remains pending. Venue outcomes and reconciliation are fixture-driven; no external venue or authorized testnet/live was used."
+  ]
+}

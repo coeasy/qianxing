@@ -19,8 +19,8 @@ use crate::worker_runtime::{run_binance_worker_inner, run_ccxt_worker_inner};
 use crate::{
     account_worker_settlement_currency, binance_event_log_name, catch_panic,
     ccxt_error_is_optional_derivatives_capability, load_binance_worker_auth, new_binance_venue,
-    pending_spread_recovery_groups, python_interpreter, read_runtime_config,
-    recover_spread_groups_for_venue, recovery_order_validator, required_account_event_log,
+    pending_spread_recovery_groups_for_account, python_interpreter, read_runtime_config,
+    recover_spread_groups_for_venue_until, recovery_order_validator, required_account_event_log,
     runtime_timestamp_ms, spread_recovery_poll_delay, validate_configured_market_specs,
     PipelineMetricsReporter, PipelineStorage, SpreadRecoveryContext,
 };
@@ -58,11 +58,26 @@ pub(crate) fn run_binance_spread_recovery_worker(
     let mut recovery_stalls = 0_u32;
     qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
-        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        let pending_before = pending_spread_recovery_groups_for_account(
+            &pipeline_storage.root,
+            &venue_id,
+            worker.account_id.as_deref(),
+        )?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
+            let active_orders = pipeline.orders();
+            qx_service::execution_capability_gate::require_active_orders_execution_capability(
+                active_orders.iter(),
+                &worker,
+                &runtime_config.environment,
+                &runtime_config_path,
+                qx_service::execution_capability_gate::ExecutionConnectorProfile::BinanceSpot,
+                true,
+                &mut pipeline,
+                now,
+            )?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut venue = new_binance_venue(&worker, auth)?;
             venue
@@ -76,9 +91,10 @@ pub(crate) fn run_binance_spread_recovery_worker(
                 .unwrap_or(0);
             let validator =
                 recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
+            let (_, diagnostics, stopped) = recover_spread_groups_for_venue_until(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
+                    account_id: worker.account_id.as_deref(),
                     venue_id: &venue_id,
                     accept_any_venue: false,
                     order_validator: Some(&validator),
@@ -88,13 +104,21 @@ pub(crate) fn run_binance_spread_recovery_worker(
                     source_seq: &mut source_seq,
                 },
                 venue,
+                || context.should_stop(),
             )?;
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            if stopped {
+                return Ok(1);
+            }
             metrics.absorb(&pipeline);
             // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
-            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            let pending_after = pending_spread_recovery_groups_for_account(
+                &pipeline_storage.root,
+                &venue_id,
+                worker.account_id.as_deref(),
+            )?;
             recovery_stalls = if pending_after >= pending_before {
                 recovery_stalls.saturating_add(1)
             } else {
@@ -184,11 +208,28 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
     let mut recovery_stalls = 0_u32;
     qx_service::worker_host::run_polling_worker(&context, once, || {
         let now = runtime_timestamp_ms();
-        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        let pending_before = pending_spread_recovery_groups_for_account(
+            &pipeline_storage.root,
+            &venue_id,
+            worker.account_id.as_deref(),
+        )?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            let active_orders = pipeline.orders();
+            qx_service::execution_capability_gate::require_active_orders_execution_capability(
+                active_orders.iter(),
+                &worker,
+                &runtime_config.environment,
+                &runtime_config_path,
+                qx_service::execution_capability_gate::ExecutionConnectorProfile::Ccxt {
+                    config_path: Path::new(&ccxt_config_path),
+                },
+                true,
+                &mut pipeline,
+                now,
+            )?;
             // 每轮扫描起一个 Python 子进程：只有过预算的重生才是有界的（V13 R2 #168c）。
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                 .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
@@ -201,9 +242,10 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
                 .unwrap_or(0);
             let validator =
                 recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
+            let (_, diagnostics, stopped) = recover_spread_groups_for_venue_until(
                 SpreadRecoveryContext {
                     root: &pipeline_storage.root,
+                    account_id: worker.account_id.as_deref(),
                     venue_id: &venue_id,
                     accept_any_venue: false,
                     order_validator: Some(&validator),
@@ -213,12 +255,20 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
                     source_seq: &mut source_seq,
                 },
                 venue,
+                || context.should_stop(),
             )?;
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            if stopped {
+                return Ok(1);
+            }
             metrics.absorb(&pipeline);
-            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            let pending_after = pending_spread_recovery_groups_for_account(
+                &pipeline_storage.root,
+                &venue_id,
+                worker.account_id.as_deref(),
+            )?;
             recovery_stalls = if pending_after >= pending_before {
                 recovery_stalls.saturating_add(1)
             } else {
@@ -244,7 +294,9 @@ pub(crate) fn run_ccxt_fetch_ohlcv(
     start_ms: u64,
     end_ms: u64,
     output_path: &Path,
+    manifest_path: Option<&Path>,
 ) -> Result<(), String> {
+    let interval_ms = timeframe_interval_ms(timeframe)?;
     let python = python_interpreter();
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)?;
     let result = client
@@ -259,19 +311,199 @@ pub(crate) fn run_ccxt_fetch_ohlcv(
     let frame = result
         .get("frame")
         .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
-    std::fs::write(
+    let acquisition_quality = result
+        .get("quality")
+        .ok_or_else(|| "CCXT OHLCV 响应缺少 K 线收盘质量信息".to_string())?;
+    let acquisition_cutoff_ms = acquisition_quality
+        .get("as_of_ms")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "CCXT OHLCV 响应的 as_of_ms 无效".to_string())?;
+    let excluded_unclosed_rows = acquisition_quality
+        .get("excluded_unclosed_rows")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "CCXT OHLCV 响应的 excluded_unclosed_rows 无效".to_string())?;
+    let manifest_path = manifest_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| default_dataset_manifest_path(output_path));
+    if manifest_path == output_path {
+        return Err("BarFrame 与 DatasetManifestV2 不能写入同一路径".into());
+    }
+    let frame_json = serde_json::to_vec_pretty(frame)
+        .map_err(|error| format!("编码 OHLCV 快照失败: {error}"))?;
+    let instrument = frame
+        .get("instrument")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "CCXT OHLCV 响应的 frame.instrument 无效".to_string())?;
+    let provider_source = frame
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "CCXT OHLCV 响应的 frame.source 无效".to_string())?;
+    let manifest = publish_ccxt_frame_with_manifest(
+        &frame_json,
+        instrument,
+        provider_source,
+        timeframe,
+        start_ms,
+        end_ms,
         output_path,
-        serde_json::to_string_pretty(frame)
-            .map_err(|error| format!("编码 OHLCV 快照失败: {error}"))?,
-    )
-    .map_err(|error| format!("写入 OHLCV 快照失败 {}: {error}", output_path.display()))?;
+        &manifest_path,
+        interval_ms,
+        acquisition_cutoff_ms,
+        excluded_unclosed_rows,
+    )?;
     println!(
-        "[CCXT · OHLCV] instrument={} timeframe={} output={} ✓",
+        "[CCXT · OHLCV] instrument={} timeframe={} rows={} duplicate={} out_of_order={} missing_intervals={} as_of_ms={} excluded_unclosed={} output={} manifest={} ✓",
         instrument,
         timeframe,
-        output_path.display()
+        manifest.quality_report.row_count,
+        manifest.quality_report.duplicate_rows,
+        manifest.quality_report.out_of_order_rows,
+        manifest.quality_report.missing_intervals,
+        manifest.quality_report.acquisition_cutoff_ms.unwrap_or_default(),
+        manifest.quality_report.excluded_unclosed_rows.unwrap_or_default(),
+        output_path.display(),
+        manifest_path.display(),
     );
+    for warning in manifest.warnings() {
+        eprintln!("[CCXT · OHLCV · 质量提示] {warning}");
+    }
     Ok(())
+}
+
+fn timeframe_interval_ms(timeframe: &str) -> Result<u64, String> {
+    let unit_start = timeframe
+        .find(|character: char| !character.is_ascii_digit())
+        .ok_or_else(|| format!("不支持的 CCXT timeframe: {timeframe}"))?;
+    let amount = timeframe[..unit_start]
+        .parse::<u64>()
+        .map_err(|_| format!("不支持的 CCXT timeframe: {timeframe}"))?;
+    let unit_ms = match &timeframe[unit_start..] {
+        "ms" => 1,
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 60 * 60_000,
+        "d" => 24 * 60 * 60_000,
+        "w" => 7 * 24 * 60 * 60_000,
+        unit => {
+            return Err(format!(
+                "CCXT timeframe {timeframe} 不是固定长度档位（单位 {unit}），无法生成准确质量清单"
+            ));
+        }
+    };
+    if amount == 0 {
+        return Err(format!("CCXT timeframe 必须为正整数: {timeframe}"));
+    }
+    amount
+        .checked_mul(unit_ms)
+        .ok_or_else(|| format!("CCXT timeframe 毫秒长度溢出: {timeframe}"))
+}
+
+fn default_dataset_manifest_path(frame_path: &Path) -> PathBuf {
+    let stem = frame_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("bars");
+    frame_path.with_file_name(format!("{stem}.manifest.json"))
+}
+
+fn publish_ccxt_frame_with_manifest(
+    frame_json: &[u8],
+    instrument: &str,
+    provider_source: &str,
+    timeframe: &str,
+    start_ms: u64,
+    end_ms: u64,
+    frame_path: &Path,
+    manifest_path: &Path,
+    interval_ms: u64,
+    acquisition_cutoff_ms: u64,
+    excluded_unclosed_rows: u64,
+) -> Result<qx_data::DatasetManifestV2, String> {
+    if frame_path == manifest_path {
+        return Err("BarFrame 与 DatasetManifestV2 不能写入同一路径".into());
+    }
+    static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let output_parent = frame_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(output_parent)
+        .map_err(|error| format!("创建 CCXT 数据输出目录失败: {error}"))?;
+    let temporary_root =
+        output_parent.join(format!(".qx-ccxt-bars-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&temporary_root)
+        .map_err(|error| format!("创建 CCXT 临时数据目录失败: {error}"))?;
+    let result = (|| {
+        let temporary_frame = temporary_root.join("bars.json");
+        let temporary_manifest = temporary_root.join("bars.manifest.json");
+        std::fs::write(&temporary_frame, frame_json)
+            .map_err(|error| format!("写入 CCXT 临时 BarFrame 失败: {error}"))?;
+        let dataset_key = format!("{provider_source}\n{instrument}\n{timeframe}");
+        let dataset_digest = qx_strategy::sha256_hex(dataset_key.as_bytes());
+        let dataset_id = format!("ccxt-{}", &dataset_digest[..16]);
+        let spec = qx_app::DatasetManifestValidationSpec::new(
+            temporary_frame.to_string_lossy(),
+            dataset_id,
+            format!("{timeframe}-{start_ms}-{end_ms}"),
+            interval_ms,
+            "UTC",
+            temporary_manifest.to_string_lossy(),
+        );
+        let context = qx_app::RunContext::new(
+            qx_app::CallerCapability::Research,
+            format!("ccxt-fetch-{timeframe}-{start_ms}-{end_ms}"),
+        );
+        let validation = qx_app::validate_dataset_manifest(&spec, &context)
+            .map_err(|error| format!("CCXT OHLCV 质量验证失败: {error}"))?;
+        let mut manifest = validation.manifest;
+        manifest.quality_report.acquisition_cutoff_ms = Some(acquisition_cutoff_ms);
+        manifest.quality_report.excluded_unclosed_rows = Some(excluded_unclosed_rows);
+        manifest.validate()?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("编码 CCXT 质量清单失败: {error}"))?;
+        // Check both immutable destinations before publishing either file. This prevents a
+        // known conflict on one sidecar from leaving its matching BarFrame behind (or vice
+        // versa). Each final rename remains atomic; cross-process pair transactions are not
+        // claimed here.
+        ensure_immutable_target(frame_path, frame_json)?;
+        ensure_immutable_target(manifest_path, &manifest_bytes)?;
+        qx_app::artifact_store::sink::publish_bytes(
+            frame_path,
+            frame_json,
+            qx_app::artifact_store::sink::PublishMode::Idempotent,
+        )
+        .map_err(|error| format!("发布 CCXT BarFrame {} 失败: {error}", frame_path.display()))?;
+        qx_app::artifact_store::sink::publish_bytes(
+            manifest_path,
+            &manifest_bytes,
+            qx_app::artifact_store::sink::PublishMode::Idempotent,
+        )
+        .map_err(|error| {
+            format!(
+                "发布 CCXT DatasetManifestV2 {} 失败: {error}",
+                manifest_path.display()
+            )
+        })?;
+        Ok(manifest)
+    })();
+    let _ = std::fs::remove_dir_all(&temporary_root);
+    result
+}
+
+fn ensure_immutable_target(path: &Path, payload: &[u8]) -> Result<(), String> {
+    match std::fs::read(path) {
+        Ok(existing) if existing == payload => Ok(()),
+        Ok(_) => Err(format!(
+            "同一数据集产物路径已存在不同内容: {}",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "检查已有数据集产物 {} 失败: {error}",
+            path.display()
+        )),
+    }
 }
 
 pub(crate) fn run_ccxt_market_spec(
@@ -281,13 +513,21 @@ pub(crate) fn run_ccxt_market_spec(
 ) -> Result<(), String> {
     let python = python_interpreter();
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)?;
+    run_ccxt_market_spec_with_client(&mut client, instrument, output_path)
+}
+
+pub(crate) fn run_ccxt_market_spec_with_client(
+    client: &mut CcxtProcessClient,
+    instrument: &str,
+    output_path: &Path,
+) -> Result<(), String> {
     let result = client
         .call(serde_json::json!({
             "op": "resolve_market",
             "instrument": instrument,
         }))
         .map_err(|error| format!("CCXT market spec 查询失败: {error}"))?;
-    let mut market = result
+    let market = result
         .get("market")
         .cloned()
         .ok_or_else(|| "CCXT market spec 响应缺少 market".to_string())?;
@@ -304,21 +544,77 @@ pub(crate) fn run_ccxt_market_spec(
         }
         Err(error) => return Err(format!("CCXT leverage tiers 查询失败: {error}")),
     };
-    if let Some(object) = market.as_object_mut() {
-        object.insert("leverage_tiers".into(), tiers);
-    }
-    std::fs::write(
+    let captured_at_unix_ms = unix_timestamp_ms()?;
+    let market = freeze_market_metadata(market, tiers, captured_at_unix_ms)?;
+    let payload = serde_json::to_vec_pretty(&market)
+        .map_err(|error| format!("编码 market spec 失败: {error}"))?;
+    qx_app::artifact_store::sink::publish_bytes(
         output_path,
-        serde_json::to_string_pretty(&market)
-            .map_err(|error| format!("编码 market spec 失败: {error}"))?,
+        &payload,
+        qx_app::artifact_store::sink::PublishMode::Idempotent,
     )
-    .map_err(|error| format!("写入 market spec 失败 {}: {error}", output_path.display()))?;
+    .map_err(|error| {
+        format!(
+            "发布冻结 market spec {} 失败: {error}",
+            output_path.display()
+        )
+    })?;
     println!(
         "[CCXT · MarketSpec] instrument={} output={} ✓",
         instrument,
         output_path.display()
     );
     Ok(())
+}
+
+fn unix_timestamp_ms() -> Result<u64, String> {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("读取系统 UTC 时间失败: {error}"))?;
+    u64::try_from(elapsed.as_millis()).map_err(|_| "系统 UTC 毫秒时间戳溢出".into())
+}
+
+fn freeze_market_metadata(
+    mut market: serde_json::Value,
+    tiers: serde_json::Value,
+    captured_at_unix_ms: u64,
+) -> Result<serde_json::Value, String> {
+    let object = market
+        .as_object_mut()
+        .ok_or_else(|| "CCXT market metadata 必须是 JSON object".to_string())?;
+    object.insert("leverage_tiers".into(), tiers);
+    let role = match object
+        .get("market_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "spot" | "margin" => "crypto_spot",
+        "swap" | "perpetual" | "future" | "futures" => "future",
+        _ => "unknown",
+    };
+    object.insert(
+        "dataset_instrument_role".into(),
+        serde_json::Value::String(role.into()),
+    );
+    let maker_rate = object
+        .get("maker_fee_rate")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let taker_rate = object
+        .get("taker_fee_rate")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    object.insert(
+        "fee_snapshot".into(),
+        serde_json::json!({
+            "source": "ccxt_market_metadata_default",
+            "captured_at_unix_ms": captured_at_unix_ms,
+            "account_specific": false,
+            "maker_rate": maker_rate,
+            "taker_rate": taker_rate,
+        }),
+    );
+    Ok(market)
 }
 
 #[cfg(test)]
@@ -344,6 +640,185 @@ mod tests {
             max_order_notional_raw: None,
             max_position_notional_raw: None,
         }
+    }
+
+    #[test]
+    fn fixed_ccxt_timeframes_have_exact_intervals_and_calendar_months_are_rejected() {
+        assert_eq!(timeframe_interval_ms("15m").unwrap(), 900_000);
+        assert_eq!(timeframe_interval_ms("2h").unwrap(), 7_200_000);
+        assert_eq!(timeframe_interval_ms("1w").unwrap(), 604_800_000);
+        assert!(timeframe_interval_ms("1M")
+            .unwrap_err()
+            .contains("固定长度档位"));
+        assert!(timeframe_interval_ms("0m").is_err());
+        assert!(timeframe_interval_ms("18446744073709551615w").is_err());
+    }
+
+    #[test]
+    fn ccxt_market_snapshot_freezes_default_fees_with_scope_and_capture_time() {
+        let market = freeze_market_metadata(
+            serde_json::json!({
+                "instrument": "BTCUSDT.BINANCE",
+                "market_type": "spot",
+                "maker_fee_rate": "0.0008",
+                "taker_fee_rate": "0.001"
+            }),
+            serde_json::json!([]),
+            1_800_000_000_000,
+        )
+        .unwrap();
+        assert_eq!(market["dataset_instrument_role"], "crypto_spot");
+        assert_eq!(
+            market["fee_snapshot"]["source"],
+            "ccxt_market_metadata_default"
+        );
+        assert_eq!(market["fee_snapshot"]["account_specific"], false);
+        assert_eq!(
+            market["fee_snapshot"]["captured_at_unix_ms"],
+            1_800_000_000_000u64
+        );
+        assert_eq!(market["fee_snapshot"]["maker_rate"], "0.0008");
+        assert_eq!(market["fee_snapshot"]["taker_rate"], "0.001");
+        assert_eq!(market["leverage_tiers"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn ccxt_frame_and_manifest_publish_as_immutable_quality_checked_inputs() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target/qx-cli-test-tmp")
+            .join(format!("ccxt-manifest-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let frame_path = root.join("bars.json");
+        let manifest_path = default_dataset_manifest_path(&frame_path);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "ccxt:binance:BTC/USDT:1m",
+            "ts": [60_000, 120_000, 180_000],
+            "open_raw": [10, 11, 12],
+            "high_raw": [12, 13, 14],
+            "low_raw": [9, 10, 11],
+            "close_raw": [11, 12, 13],
+            "volume_raw": [100, 101, 102]
+        }))
+        .unwrap();
+
+        let manifest = publish_ccxt_frame_with_manifest(
+            &payload,
+            "BTCUSDT.BINANCE",
+            "ccxt:binance:BTC/USDT:1m",
+            "1m",
+            60_000,
+            180_000,
+            &frame_path,
+            &manifest_path,
+            60_000,
+            200_000,
+            2,
+        )
+        .unwrap();
+        assert_eq!(manifest.quality_report.row_count, 3);
+        assert_eq!(manifest.quality_report.duplicate_rows, 0);
+        assert_eq!(manifest.quality_report.missing_intervals, 0);
+        assert_eq!(manifest.quality_report.acquisition_cutoff_ms, Some(200_000));
+        assert_eq!(manifest.quality_report.excluded_unclosed_rows, Some(2));
+        assert_eq!(
+            qx_data::DatasetManifestV2::from_json(
+                &std::fs::read_to_string(&manifest_path).unwrap()
+            )
+            .unwrap(),
+            manifest
+        );
+
+        let changed = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "ccxt:binance:BTC/USDT:1m",
+            "ts": [60_000, 120_000, 180_000],
+            "open_raw": [10, 11, 12],
+            "high_raw": [12, 13, 14],
+            "low_raw": [9, 10, 11],
+            "close_raw": [11, 12, 14],
+            "volume_raw": [100, 101, 102]
+        }))
+        .unwrap();
+        assert!(publish_ccxt_frame_with_manifest(
+            &changed,
+            "BTCUSDT.BINANCE",
+            "ccxt:binance:BTC/USDT:1m",
+            "1m",
+            60_000,
+            180_000,
+            &frame_path,
+            &manifest_path,
+            60_000,
+            200_000,
+            2,
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&frame_path).unwrap(), payload);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ccxt_manifest_conflict_does_not_leave_a_partial_bar_frame() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target/qx-cli-test-tmp")
+            .join(format!(
+                "ccxt-manifest-conflict-{}-{nonce}",
+                std::process::id()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let frame_path = root.join("bars.json");
+        let manifest_path = default_dataset_manifest_path(&frame_path);
+        std::fs::write(&manifest_path, b"different existing manifest").unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "ccxt:binance:BTC/USDT:1m",
+            "ts": [60_000, 120_000],
+            "open_raw": [10, 11],
+            "high_raw": [12, 13],
+            "low_raw": [9, 10],
+            "close_raw": [11, 12],
+            "volume_raw": [100, 101]
+        }))
+        .unwrap();
+
+        let error = publish_ccxt_frame_with_manifest(
+            &payload,
+            "BTCUSDT.BINANCE",
+            "ccxt:binance:BTC/USDT:1m",
+            "1m",
+            60_000,
+            120_000,
+            &frame_path,
+            &manifest_path,
+            60_000,
+            180_000,
+            1,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("不同内容"));
+        assert!(!frame_path.exists());
+        assert_eq!(
+            std::fs::read(&manifest_path).unwrap(),
+            b"different existing manifest"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

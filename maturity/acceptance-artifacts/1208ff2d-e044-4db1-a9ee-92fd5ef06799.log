@@ -1,0 +1,50 @@
+$ cargo test -p qx-cli --test cli_behavior_parity -- --test-threads=1
+exit_code=0
+
+[stdout]
+
+running 36 tests
+test ashare_report_product::ashare_runs_export_documents_and_compare_on_the_same_input ... ok
+test config_lock_conflict::config_lock_conflict_keeps_the_existing_artifact_unchanged ... ok
+test config_lock_replay_preserves_the_locked_artifact_bytes ... ok
+test data_validate_parity::bar_dataset_validation_replays_the_same_manifest_contract ... ok
+test dataset_bundle_parity::dataset_bundle_cli_replays_the_persisted_artifact_contract ... ok
+test dataset_ingest_parity::dataset_ingest_replays_the_same_persisted_data_contract ... ok
+test depth_dataset_validate::depth_dataset_validation_replays_both_tiers_and_persists_the_same_manifest ... ok
+test doctor_and_status_json_replay_the_same_fixed_runtime_contract ... ok
+test evidence_routes::evidence_subcommands_replay_missing_input_failures_without_side_effects ... ok
+test evidence_routes::single_market_bar_and_depth_experiments_recompute_all_candidates ... ok
+test evidence_routes::venue_acceptance_pack_rejects_the_recorded_skipped_testnet_window ... ok
+test evidence_routes::venue_evidence_sign_and_verify_replay_the_same_trusted_key_contract ... ok
+test external_adapter_fail_closed::binance_private_probe_rejects_malformed_runtime_before_network_io ... ok
+test external_adapter_fail_closed::binance_public_probe_rejects_unsupported_network_before_external_io ... ok
+test external_adapter_fail_closed::ccxt_snapshot_commands_reject_malformed_config_before_external_io ... ok
+test external_adapter_fail_closed::ccxt_submit_order_rejects_malformed_runtime_before_command_or_network_io ... ok
+test external_adapter_fail_closed::console_and_supervise_reject_malformed_runtime_before_starting_services ... ok
+test external_adapter_fail_closed::optional_storage_and_messaging_commands_reject_before_external_io ... ok
+test external_adapter_fail_closed::runtime_worker_and_service_commands_reject_invalid_config_before_side_effects ... ok
+test fast_backtest_parity::ashare_fast_backtest_replays_outputs_and_artifact_set ... ok
+test fast_backtest_parity::invalid_fast_backtest_manifest_replays_the_same_fail_closed_contract ... ok
+test fast_backtest_parity::multi_venue_fast_backtest_replays_parallel_jobs_and_artifact_set ... ok
+test full_health_readout::full_health_readout_replays_structured_json_and_paper_artifacts ... ok
+test plan_readout_parity::plan_rejections_replay_without_creating_artifacts ... ok
+test plan_readout_parity::plan_schema_registry_replays_a_read_only_json_contract ... ok
+test pure_local_entrypoints_replay_the_same_process_contract ... ok
+test quickstart_parity::init_replays_project_artifacts_and_rejects_overwrite_without_force ... ok
+test quickstart_parity::quickstart_replays_the_same_five_step_backtest_contract ... ok
+test readonly_json_entrypoints_replay_structured_contracts_without_artifacts ... ok
+test report_metrics_projection::report_cli_projects_one_verified_benchmark_analysis_to_json_html_xlsx_and_csv ... ok
+test run_paper_aliases_match_the_top_level_paper_process_contract ... ok
+test run_readonly_aliases_match_their_top_level_process_contracts ... ok
+test strategy_diagnose_bar_replays_verified_run_and_attaches_to_html_report ... ok
+test strategy_diagnose_depth_rejects_non_run_input ... ok
+test strategy_init_force_replay_keeps_the_project_artifact_contract ... ok
+test verify_json_parity::verify_json_replays_the_kernel_only_report_without_side_effects ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s
+
+
+[stderr]
+   Compiling qx-cli v0.4.0 (/tmp/qx-r08-clean/crates/qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.93s
+     Running tests/cli_behavior_parity.rs (/target/debug/deps/cli_behavior_parity-c353eed94b76c8d5)

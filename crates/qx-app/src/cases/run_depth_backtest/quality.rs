@@ -12,7 +12,7 @@ use qx_xingban::DepthFrame;
 use std::path::Path;
 
 /// 把清单读开、按本帧重算并逐项比对，返回摘要要写的那个 `dataset_quality` 块。
-pub(super) fn verified_depth_dataset_quality(
+pub(in crate::cases) fn verified_depth_dataset_quality(
     path: &Path,
     frame_path: &Path,
     frame: &DepthFrame,
@@ -24,12 +24,16 @@ pub(super) fn verified_depth_dataset_quality(
             &error,
         )
     })?;
-    let quality_manifest = qx_data::DatasetManifestV2::from_json(&payload).map_err(|error| {
-        AppError::new(
-            AppErrorCategory::InvalidInput,
-            format!("深度数据集质量清单 JSON 无效 {}: {error}", path.display()),
-        )
-    })?;
+    let (quality_manifest, snapshot) = qx_data::parse_dataset_manifest_or_snapshot(&payload)
+        .map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!(
+                    "深度数据集质量清单/快照 JSON 无效 {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
     let source_payload = std::fs::read(frame_path).map_err(|error| {
         AppError::from_io(&format!("读取深度数据帧 {}", frame_path.display()), &error)
     })?;
@@ -76,7 +80,7 @@ pub(super) fn verified_depth_dataset_quality(
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!("深度回测档位不支持质量清单: {other}"),
-            ))
+            ));
         }
     };
     let timestamps = frame
@@ -175,11 +179,18 @@ pub(super) fn verified_depth_dataset_quality(
             format!("深度数据集质量清单指纹计算失败 {}: {error}", path.display()),
         )
     })?;
+    let snapshot_sha256 = snapshot
+        .as_ref()
+        .map(qx_data::DatasetSnapshotV1::content_sha256)
+        .transpose()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
     Ok(serde_json::json!({
         "manifest_path": path.to_string_lossy(),
         "manifest_fingerprint": manifest_fingerprint,
         "content_hash": quality_manifest.content_hash,
         "quality_report": quality_manifest.quality_report,
         "manifest": quality_manifest,
+        "dataset_snapshot": snapshot,
+        "dataset_snapshot_sha256": snapshot_sha256,
     }))
 }

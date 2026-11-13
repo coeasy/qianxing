@@ -1,0 +1,731 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing-strategy-bias-diagnostics",
+  "strategy": "python/examples/strategy_causal_momentum.py",
+  "worker_kind": "python_module",
+  "strategy_id": "momentum-example",
+  "strategy_version": "1.0.0",
+  "data_fingerprint": "example-bars-v1",
+  "instrument": "TEST.SIM",
+  "as_of": 6,
+  "input_bars": 5,
+  "lookahead": {
+    "status": "no_change_detected",
+    "checks_run": 16,
+    "decision_points_checked": 4,
+    "checks_sampled": false,
+    "flagged_checks": 0,
+    "intermediate_state_flagged_checks": 0,
+    "intermediate_state_available": false,
+    "perturbation_profiles": [
+      "mixed_ohlcv",
+      "prices_up",
+      "prices_down",
+      "future_volume_zero"
+    ],
+    "checks": [
+      {
+        "visible_history_end_index": 0,
+        "decision_as_of": 2,
+        "perturbation_profile": "mixed_ohlcv",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 0,
+        "decision_as_of": 2,
+        "perturbation_profile": "prices_up",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 0,
+        "decision_as_of": 2,
+        "perturbation_profile": "prices_down",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 0,
+        "decision_as_of": 2,
+        "perturbation_profile": "future_volume_zero",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 2,
+          "expires_at": 2
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 1,
+        "decision_as_of": 3,
+        "perturbation_profile": "mixed_ohlcv",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 1,
+        "decision_as_of": 3,
+        "perturbation_profile": "prices_up",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 1,
+        "decision_as_of": 3,
+        "perturbation_profile": "prices_down",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 1,
+        "decision_as_of": 3,
+        "perturbation_profile": "future_volume_zero",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 3,
+          "expires_at": 3
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 2,
+        "decision_as_of": 4,
+        "perturbation_profile": "mixed_ohlcv",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 2,
+        "decision_as_of": 4,
+        "perturbation_profile": "prices_up",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 2,
+        "decision_as_of": 4,
+        "perturbation_profile": "prices_down",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 2,
+        "decision_as_of": 4,
+        "perturbation_profile": "future_volume_zero",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "counterfactual_decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 4,
+          "expires_at": 4
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 3,
+        "decision_as_of": 5,
+        "perturbation_profile": "mixed_ohlcv",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 3,
+        "decision_as_of": 5,
+        "perturbation_profile": "prices_up",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 3,
+        "decision_as_of": 5,
+        "perturbation_profile": "prices_down",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      },
+      {
+        "visible_history_end_index": 3,
+        "decision_as_of": 5,
+        "perturbation_profile": "future_volume_zero",
+        "future_perturbation_changed_decision": false,
+        "changed_decision_fields": [],
+        "intermediate_state_changed": false,
+        "intermediate_state_changed_fields": null,
+        "baseline_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "counterfactual_decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 5,
+          "expires_at": 5
+        },
+        "baseline_intermediate_state": null,
+        "counterfactual_intermediate_state": null
+      }
+    ],
+    "interpretation": "A changed decision, exported intermediate state, or diagnostic-state availability after modifying future OHLCV is evidence of potential lookahead. No changed decision is not proof that all future-data paths are absent."
+  },
+  "visible_bars_at_as_of": 5,
+  "startup": {
+    "status": "startup_sensitive",
+    "decision_as_of": 6,
+    "visible_bars": 5,
+    "excluded_future_bars": 0,
+    "reference_available_bars": 5,
+    "reference_history_complete": true,
+    "reference_window_bars": 5,
+    "changed_windows_bars": [
+      1
+    ],
+    "changed_fields_by_window": {
+      "1": [
+        "target_qty"
+      ]
+    },
+    "intermediate_state_available": false,
+    "intermediate_state_changed_windows_bars": [],
+    "intermediate_state_changed_fields_by_window": {},
+    "windows": [
+      {
+        "requested_bars": 1,
+        "available_bars": 1,
+        "history_truncated": true,
+        "requested_window_satisfied": true,
+        "decision": {
+          "target_qty": 0,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 6,
+          "expires_at": 6
+        },
+        "intermediate_state": null,
+        "changed_decision_fields": [
+          "target_qty"
+        ],
+        "intermediate_state_changed_fields": null
+      },
+      {
+        "requested_bars": 3,
+        "available_bars": 3,
+        "history_truncated": true,
+        "requested_window_satisfied": true,
+        "decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 6,
+          "expires_at": 6
+        },
+        "intermediate_state": null,
+        "changed_decision_fields": [],
+        "intermediate_state_changed_fields": null
+      },
+      {
+        "requested_bars": 5,
+        "available_bars": 5,
+        "history_truncated": false,
+        "requested_window_satisfied": true,
+        "decision": {
+          "target_qty": 1000000000,
+          "confidence": 1,
+          "priority": 0,
+          "intents": [],
+          "signal_id": 6,
+          "expires_at": 6
+        },
+        "intermediate_state": null,
+        "changed_decision_fields": [],
+        "intermediate_state_changed_fields": null
+      }
+    ],
+    "interpretation": "Different decisions or exported intermediate states across startup windows identify warmup sensitivity; only bars strictly before as_of are replayed; a reference window longer than visible history cannot establish stability at that requested length."
+  },
+  "data_visibility": {
+    "status": "potential_pit_bias_detected",
+    "ledger_source": "synthetic-provider-revision-history",
+    "ledger_fingerprint": "099bf8983966f0c117326b92a14b741021c65e01a0cf46892b2cf5e43184dc6f",
+    "fact_count": 3,
+    "decision_points_available": 5,
+    "decision_points_checked": 5,
+    "decision_points_sampled": false,
+    "fact_decision_checks": 15,
+    "affected_fact_counts": {
+      "future_value_unavailable": 2,
+      "revised_value_after_decision": 2,
+      "availability_unknown": 1
+    },
+    "affected_fact_decision_counts": {
+      "future_value_unavailable": 5,
+      "revised_value_after_decision": 4,
+      "availability_unknown": 5
+    },
+    "examples": {
+      "future_value_unavailable": [
+        {
+          "fact_id": "corp-action-cash-dividend-001",
+          "entity_id": "TEST.SIM",
+          "field": "corporate_action.cash_dividend_per_share",
+          "decision_at": 1,
+          "effective_at": 5,
+          "version_count": 2,
+          "available_at": [
+            4,
+            5
+          ]
+        },
+        {
+          "fact_id": "corp-action-cash-dividend-001",
+          "entity_id": "TEST.SIM",
+          "field": "corporate_action.cash_dividend_per_share",
+          "decision_at": 2,
+          "effective_at": 5,
+          "version_count": 2,
+          "available_at": [
+            4,
+            5
+          ]
+        },
+        {
+          "fact_id": "corp-action-cash-dividend-001",
+          "entity_id": "TEST.SIM",
+          "field": "corporate_action.cash_dividend_per_share",
+          "decision_at": 3,
+          "effective_at": 5,
+          "version_count": 2,
+          "available_at": [
+            4,
+            5
+          ]
+        },
+        {
+          "fact_id": "bar-close-001",
+          "entity_id": "TEST.SIM",
+          "field": "bar.close_raw",
+          "decision_at": 1,
+          "effective_at": 3,
+          "version_count": 2,
+          "available_at": [
+            3,
+            6
+          ]
+        },
+        {
+          "fact_id": "bar-close-001",
+          "entity_id": "TEST.SIM",
+          "field": "bar.close_raw",
+          "decision_at": 2,
+          "effective_at": 3,
+          "version_count": 2,
+          "available_at": [
+            3,
+            6
+          ]
+        }
+      ],
+      "revised_value_after_decision": [
+        {
+          "fact_id": "corp-action-cash-dividend-001",
+          "entity_id": "TEST.SIM",
+          "field": "corporate_action.cash_dividend_per_share",
+          "decision_at": 4,
+          "effective_at": 5,
+          "version_count": 2,
+          "available_at": [
+            4,
+            5
+          ]
+        },
+        {
+          "fact_id": "bar-close-001",
+          "entity_id": "TEST.SIM",
+          "field": "bar.close_raw",
+          "decision_at": 3,
+          "effective_at": 3,
+          "version_count": 2,
+          "available_at": [
+            3,
+            6
+          ]
+        },
+        {
+          "fact_id": "bar-close-001",
+          "entity_id": "TEST.SIM",
+          "field": "bar.close_raw",
+          "decision_at": 4,
+          "effective_at": 3,
+          "version_count": 2,
+          "available_at": [
+            3,
+            6
+          ]
+        },
+        {
+          "fact_id": "bar-close-001",
+          "entity_id": "TEST.SIM",
+          "field": "bar.close_raw",
+          "decision_at": 5,
+          "effective_at": 3,
+          "version_count": 2,
+          "available_at": [
+            3,
+            6
+          ]
+        }
+      ],
+      "availability_unknown": [
+        {
+          "fact_id": "fundamental-unknown-publication-time",
+          "entity_id": "TEST.SIM",
+          "field": "fundamental.eps",
+          "decision_at": 1,
+          "effective_at": 2,
+          "version_count": 1,
+          "available_at": [
+            null
+          ]
+        },
+        {
+          "fact_id": "fundamental-unknown-publication-time",
+          "entity_id": "TEST.SIM",
+          "field": "fundamental.eps",
+          "decision_at": 2,
+          "effective_at": 2,
+          "version_count": 1,
+          "available_at": [
+            null
+          ]
+        },
+        {
+          "fact_id": "fundamental-unknown-publication-time",
+          "entity_id": "TEST.SIM",
+          "field": "fundamental.eps",
+          "decision_at": 3,
+          "effective_at": 2,
+          "version_count": 1,
+          "available_at": [
+            null
+          ]
+        },
+        {
+          "fact_id": "fundamental-unknown-publication-time",
+          "entity_id": "TEST.SIM",
+          "field": "fundamental.eps",
+          "decision_at": 4,
+          "effective_at": 2,
+          "version_count": 1,
+          "available_at": [
+            null
+          ]
+        },
+        {
+          "fact_id": "fundamental-unknown-publication-time",
+          "entity_id": "TEST.SIM",
+          "field": "fundamental.eps",
+          "decision_at": 5,
+          "effective_at": 2,
+          "version_count": 1,
+          "available_at": [
+            null
+          ]
+        }
+      ]
+    },
+    "interpretation": "The final data snapshot contains values that were unavailable or materially revised after one or more historical decision times. Rebuild each decision from the latest version available by that time. Null availability timestamps remain unknown and do not count as evidence of safety."
+  }
+}

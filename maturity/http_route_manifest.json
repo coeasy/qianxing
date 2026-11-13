@@ -6,6 +6,10 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/account/activity"
+    },
+    {
+      "method": "GET",
       "path": "/account/balances"
     },
     {
@@ -14,7 +18,15 @@
     },
     {
       "method": "GET",
+      "path": "/account/order-groups"
+    },
+    {
+      "method": "GET",
       "path": "/account/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/account/portfolio"
     },
     {
       "method": "GET",
@@ -43,6 +55,10 @@
     {
       "method": "GET",
       "path": "/app/strategies"
+    },
+    {
+      "method": "GET",
+      "path": "/app/strategy-recipes"
     },
     {
       "method": "GET",
@@ -82,7 +98,35 @@
     },
     {
       "method": "GET",
+      "path": "/schema/account-snapshot-v2"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/account-snapshot-v3"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/account-snapshot-v4"
+    },
+    {
+      "method": "GET",
+      "path": "/schema/account-snapshot-v5"
+    },
+    {
+      "method": "GET",
       "path": "/schema/contract-matrix"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployment-nodes"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployments"
+    },
+    {
+      "method": "GET",
+      "path": "/strategies/deployments/operations"
     },
     {
       "method": "POST",
@@ -95,6 +139,10 @@
     {
       "method": "POST",
       "path": "/app/capabilities/providers/preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/app/capabilities/query"
     },
     {
       "method": "POST",
@@ -127,6 +175,10 @@
     {
       "method": "POST",
       "path": "/app/multi-account-depth-backtest/start"
+    },
+    {
+      "method": "POST",
+      "path": "/app/multi-account-joint-backtest"
     },
     {
       "method": "POST",
@@ -194,6 +246,26 @@
     },
     {
       "method": "POST",
+      "path": "/app/read-multi-account-joint-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-multi-leg-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-provider-depth-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/read-provider-report"
+    },
+    {
+      "method": "POST",
+      "path": "/app/research-artifacts"
+    },
+    {
+      "method": "POST",
       "path": "/app/run-depth-experiment"
     },
     {
@@ -251,6 +323,18 @@
     {
       "method": "POST",
       "path": "/control/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployment-nodes"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployments/operations"
+    },
+    {
+      "method": "POST",
+      "path": "/strategies/deployments/revisions"
     }
   ]
 }

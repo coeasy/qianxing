@@ -15,8 +15,49 @@
     "failed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
     "ranking": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/RankedCandidate"}},
-    "artifact_path": {"type": "string", "minLength": 1}
+    "artifact_path": {"type": "string", "minLength": 1},
+    "canonical_run_spec_json": {"type": "string", "minLength": 2},
+    "canonical_run_spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "input_data_fingerprint": {"type": "string", "minLength": 1},
+    "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "run_manifest": {"type": "string", "minLength": 1},
+    "run_record": {"type": "string", "minLength": 1},
+    "artifact_locations": {
+      "type": "object",
+      "required": ["experiment_report", "run_manifest"],
+      "properties": {
+        "experiment_report": {"type": "string", "minLength": 1},
+        "run_manifest": {"type": "string", "minLength": 1},
+        "experiment_input": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
   },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {"required": ["canonical_run_spec_json"]},
+          {"required": ["canonical_run_spec_fingerprint"]},
+          {"required": ["input_data_fingerprint"]}
+        ]
+      },
+      "then": {"required": ["canonical_run_spec_json", "canonical_run_spec_fingerprint", "input_data_fingerprint"]}
+    },
+    {
+      "if": {
+        "anyOf": [
+          {"required": ["result_hash"]},
+          {"required": ["run_manifest"]},
+          {"required": ["run_record"]},
+          {"required": ["artifact_locations"]}
+        ]
+      },
+      "then": {
+        "required": ["canonical_run_spec_json", "canonical_run_spec_fingerprint", "input_data_fingerprint", "result_hash", "run_manifest", "run_record", "artifact_locations"]
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "Candidate": {

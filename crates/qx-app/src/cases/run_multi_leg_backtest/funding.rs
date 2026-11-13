@@ -1,7 +1,7 @@
 use super::super::run_multi_leg_backtest_with_funding_provider::FundingRateProviderProvenance;
 use super::{invalid, invariant, AppError};
 use crate::{MultiLegBacktestSpec, MultiLegSignalBucket};
-use qx_core::{Fnv1a, InstrumentId, TradingInstrumentSpec};
+use qx_core::{InstrumentId, TradingInstrumentSpec};
 use qx_xingban::PortfolioBarSessionReport;
 use std::collections::BTreeMap;
 
@@ -19,29 +19,17 @@ pub(super) fn input_events(spec: &MultiLegBacktestSpec) -> Vec<serde_json::Value
     spec.funding_events
         .iter()
         .map(|event| {
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "instrument": event.instrument.to_string(),
                 "settlement_ts": event.settlement_ts,
                 "rate_bps": event.rate_bps,
-            })
+            });
+            if let Some(interval_ms) = event.funding_interval_ms {
+                value["funding_interval_ms"] = serde_json::json!(interval_ms);
+            }
+            value
         })
         .collect()
-}
-
-pub(super) fn hash_provider_source(
-    hasher: &mut Fnv1a,
-    source: Option<&FundingRateProviderProvenance>,
-) {
-    if let Some(source) = source {
-        hasher.write_text(&source.provider_id);
-        hasher.write_text(&source.provider_version);
-        hasher.write_text(&source.request_id);
-        hasher.write_text(&source.source_hash);
-        hasher.write_text(&source.query_hash);
-        for provider in &source.retry_chain {
-            hasher.write_text(provider);
-        }
-    }
 }
 
 pub(super) fn apply_artifact_metadata(

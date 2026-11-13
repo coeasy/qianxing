@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "manual_ccxt_public_mainnet_readonly_attempt",
+  "recorded_at_utc": "2026-10-22T15:15:11Z",
+  "outcome": "fail",
+  "venue": "binance",
+  "network": "mainnet_public_readonly",
+  "instrument": "BTC/USDT.BINANCE",
+  "command": "qx-cli backtest ccxt-builtin <public-config> macd BTC/USDT.BINANCE <rolling-14d-start-ms> <hour-boundary-end-ms> 1h deploy/qianxing.binance.spot.spec.json 1000000000 --config <runtime-config>",
+  "binary_sha256": "15bd28e187e08730b2225c600295bfae8285768fb2f22473767fa26bbacde488",
+  "config_sha256": "3ca9d27677ee4ee74ee906ae0734c5093f025cb5588535912435f5ff7c499530",
+  "runtime_sha256": "21ace6c5ca50c759951b550b73101a6972a9d2b0d10848e6e20c003ccf64ae68",
+  "credentials_present": false,
+  "orders_sent": false,
+  "network_accessed": true,
+  "stages": [
+    {
+      "name": "load_markets",
+      "status": "fail",
+      "observation": "CCXT request to https://api.binance.com/api/v3/exchangeInfo failed before market metadata was returned"
+    },
+    {
+      "name": "fetch_ohlcv",
+      "status": "skipped",
+      "observation": "not reached because load_markets failed"
+    },
+    {
+      "name": "backtest_and_snapshot",
+      "status": "skipped",
+      "observation": "no supplier bars were received or persisted"
+    }
+  ],
+  "transport_diagnostic": "A separate read-only request to the same public endpoint exceeded a 20-second client timeout in this environment.",
+  "protocol_fix_applied_before_attempt": "CCXT JSONL stdin/stdout explicitly use UTF-8 on Windows; focused CP1252 regression passes.",
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "reason": "Public read-only mainnet metadata attempt failed; no authenticated sandbox lifecycle was executed."
+  },
+  "scope": "Records a real provider connectivity attempt only. It does not establish field mapping, OHLCV boundary behavior, snapshot lineage, private account access, sandbox order acceptance, or production approval."
+}

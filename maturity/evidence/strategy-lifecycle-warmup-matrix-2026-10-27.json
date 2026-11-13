@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-normalized-cross-host-matrix-v1",
+  "generated_at_utc": "2026-10-27T07:09:16Z",
+  "fixture": "crates/qx-strategy/tests/fixtures/strategy-lifecycle-matrix-v1.json",
+  "scenario": {
+    "name": "Normalized market, update and lifecycle callback matrix",
+    "coverage": [
+      "Bar warmup and ready callback order",
+      "partial order/fill update sequence across two accounts",
+      "account and empty-position snapshots",
+      "exact-precision OrderBook and Timer events",
+      "versioned error callback and contextual stop callback",
+      "Python Runtime Bar checkpoint restart and account EventLog cursor replay",
+      "Python class callback failure rollback and retry from last committed checkpoint",
+      "C ABI checkpoint snapshot/restore round trip through a dynamically loaded C++ plugin",
+      "external-process JSONL checkpoint request/response and artifact-bound cursor recovery",
+      "Rust strategy worker cursor/checkpoint atomic persistence and write-failure recovery",
+      "per-process Strategy Job lease ownership and fresh-time fenced acknowledgement",
+      "unknown Trade event rejection and exact OrderBook v3 capability refusal without raw downgrade"
+    ],
+    "hosts": [
+      "Rust Strategy trait",
+      "Python strategy-file STRATEGY_CLASS via BaseStrategy Runtime adapter",
+      "C ABI/C++ dynamic host"
+    ],
+    "shared_fixture_arrays": [
+      "expected_normalized_callback_order",
+      "expected_execution_update_callbacks",
+      "expected_account_update_callbacks",
+      "expected_market_order_book_callbacks",
+      "expected_timer_callbacks",
+      "expected_error_callbacks",
+      "expected_stop_callbacks",
+      "expected_checkpoint_after_first_batch",
+      "expected_checkpoint_after_restart",
+      "expected_checkpoint_resume_callbacks",
+      "expected_account_checkpoint_after_first_batch",
+      "expected_account_checkpoint_after_restart",
+      "expected_account_checkpoint_resume_callbacks",
+      "unsupported_event_kind",
+      "unsupported_event_error_category",
+      "unsupported_exact_orderbook",
+      "expected_cpp_plugin_host_callback_order"
+    ]
+  },
+  "validation": {
+    "rust_strategy_crate": {
+      "command": "TEMP/TMP=target/qx-rust-test-temp cargo test -p qx-strategy --lib --offline -j 1 -- --test-threads=1",
+      "passed": 75,
+      "failed": 0,
+      "ignored": 0
+    },
+    "rust_matrix_consumers": {
+      "tests": [
+        "strategy_lifecycle_matrix_golden",
+        "execution_update_golden",
+        "account_update_golden",
+        "market_event_golden",
+        "strategy_error_golden",
+        "stop_context_golden"
+      ],
+      "passed": 9,
+      "failed": 0
+    },
+    "python_strategy_class": {
+      "command": "python -m pytest -q python/tests/test_strategy_base.py python/tests/test_strategy_process_adapter.py",
+      "passed": 64,
+      "failed": 0,
+      "file_loaded_matrix_test": "test_strategy_file_class_matches_shared_normalized_warmup_lifecycle_matrix"
+    },
+    "python_checkpoint_recovery": {
+      "passed": 2,
+      "failed": 0,
+      "fault_injection": "A resumed Bar callback mutates strategy state and then raises; the worker emits no checkpoint, rollback discards the failed in-memory batch, and retrying the same request from the last committed checkpoint reproduces the golden restart state.",
+      "tests": [
+        "test_class_checkpoint_restores_strategy_and_adapter_state_after_worker_restart",
+        "test_account_eventlog_cursor_checkpoint_skips_replay_after_worker_restart"
+      ]
+    },
+    "python_module_function_checkpoint_recovery": {
+      "command": "python -m pytest -q python/tests/test_strategy_base.py python/tests/test_strategy_process_adapter.py",
+      "passed": 4,
+      "failed": 0,
+      "suite_passed": 68,
+      "tests": [
+        "test_module_function_checkpoint_restores_state_across_worker_restart",
+        "test_module_function_checkpoint_rolls_back_failed_callback_mutations",
+        "test_module_function_requires_checkpoint_or_explicit_stateless_declaration",
+        "test_module_state_hooks_must_be_complete_and_consistent"
+      ],
+      "checks": [
+        "stateful module function resumes its JSON state after worker restart",
+        "callback mutation is rolled back after failure so the same input can be replayed",
+        "persistent bootstrap refuses undeclared module state before invoking on_event",
+        "stateless declaration emits empty state and state hooks must be paired and exclusive"
+      ]
+    },
+    "rust_python_module_worker_checkpoint_and_lease": {
+      "command": "cargo test -p qx-cli --bin qx-cli strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates --offline -j 1 --target-dir target/rust-workspace-error-v1 -- --test-threads=1",
+      "passed": 1,
+      "failed": 0,
+      "checks": [
+        "persistent Python module worker receives a bootstrap checkpoint",
+        "concurrent lease takeover is detected before cursor/checkpoint commit",
+        "old worker leaves the takeover owner's lease and replayable input intact"
+      ]
+    },
+    "rust_c_abi_checkpoint_recovery": {
+      "command": "cargo test -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1 checkpoint -- --test-threads=1",
+      "passed": 3,
+      "failed": 0,
+      "checks": [
+        "verified C ABI library SHA-256 is bound to the persisted strategy checkpoint",
+        "checkpoint and EventLog cursor commit together for class/native strategies",
+        "failed cursor write preserves the prior durable strategy state"
+      ]
+    },
+    "rust_persistent_checkpoint_bindings": {
+      "command": "cargo test -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1 checkpoint -- --test-threads=1",
+      "passed": 4,
+      "failed": 0,
+      "checks": [
+        "checkpoint/cursor atomic commit and failed-write recovery",
+        "verified C ABI library digest binding",
+        "external executable artifact/argument digest binding and fail-closed recovery"
+      ]
+    },
+    "external_process_checkpoint_recovery": {
+      "tests": {
+        "strategy_process_response_checkpoint_parser": {
+          "command": "cargo test -p qx-strategy --lib external_process_response_round_trips_durable_checkpoint --offline -j 1 -- --test-threads=1",
+          "passed": 1,
+          "failed": 0
+        },
+        "artifact_bound_cursor_recovery": {
+          "command": "cargo test -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1 external_process_checkpoint_binding_tracks_artifact_digest_and_fails_closed -- --test-threads=1",
+          "passed": 1,
+          "failed": 0
+        }
+      },
+      "checks": [
+        "persistent external executable requires a pinned artifact SHA-256",
+        "checkpoint identity mismatch after executable artifact change is rejected",
+        "checkpoint identity mismatch after external process argument change is rejected",
+        "non-checkpoint-capable runtime cannot ignore an existing committed checkpoint"
+      ]
+    },
+    "sandbox_module_function_checkpoint_rotation": {
+      "command": "python -m pytest -q python/tests/test_e2b_strategy_worker.py python/tests/test_microsandbox_strategy_worker.py python/tests/test_opensandbox_strategy_worker.py",
+      "passed": 40,
+      "failed": 0,
+      "providers": [
+        "e2b",
+        "microsandbox",
+        "opensandbox"
+      ],
+      "new_or_extended_tests": [
+        "test_e2b_module_function_checkpoint_allows_session_rotation",
+        "test_e2b_session_refuses_restart_without_checkpoint (no strategy spec)",
+        "test_microsandbox_module_function_checkpoint_allows_session_rotation",
+        "test_microsandbox_module_function_still_requires_checkpoint_to_rotate",
+        "test_opensandbox_module_function_checkpoint_allows_session_rotation",
+        "test_opensandbox_module_function_refuses_rotation_without_checkpoint"
+      ],
+      "checks": [
+        "module-function strategy can rotate without STRATEGY_SPEC_JSON when the host request carries a checkpoint",
+        "the checkpoint-bearing request is forwarded into the fresh provider session",
+        "a previously processed module function without a checkpoint is refused before its next event is sent",
+        "class and spec-backed provider rotation regressions continue to pass"
+      ],
+      "real_provider_acceptance": false
+    },
+    "llm_sandbox_remote_docker_worker": {
+      "command": "python -m pytest -q python/tests/test_llm_sandbox_strategy_worker.py python/tests/test_sandbox_audit.py",
+      "passed": 10,
+      "failed": 0,
+      "checks": [
+        "remote Docker endpoint requires mTLS and rejects URL credentials or plaintext HTTP",
+        "pinned image digest is bound to the resolved container image ID",
+        "Docker policy inspection checks deny-all network, CPU/memory/swap/pids, no added capabilities, non-root UID, read-only rootfs, tmpfs, and shared-memory size",
+        "strategy bundle is staged readable for the non-root guest and Qianxing/provider credentials stay on the host",
+        "persistent response framing, audit lifecycle, checkpoint-only session rotation, and fail-closed behavior"
+      ],
+      "rust_execution_policy": {
+        "command": "cargo test -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1 execution_policy -- --test-threads=1",
+        "passed": 4,
+        "failed": 0
+      },
+      "real_provider_acceptance": false
+    },
+    "python_full_suite_latest": {
+      "command": "python -m pytest -q python/tests",
+      "passed": 560,
+      "failed": 0,
+      "skipped": 10,
+      "wall_clock_seconds": 89.68,
+      "environment": "TEMP/TMP set to target/qx-python-test-temp"
+    },
+    "rust_strategy_worker_checkpoint_persistence": {
+      "passed": 2,
+      "failed": 0,
+      "tests": [
+        "class_checkpoint_and_execution_cursor_commit_as_one_recoverable_snapshot",
+        "failed_checkpoint_cursor_write_preserves_committed_state_and_cleans_temp_file"
+      ],
+      "checks": [
+        "checkpoint and EventLog cursor become one recoverable snapshot",
+        "failed write leaves in-memory and on-disk committed state unchanged",
+        "failed write removes the temporary cursor file",
+        "post-rename backup cleanup failure cannot be reported as an uncommitted transaction"
+      ]
+    },
+    "strategy_worker_lease_fencing": {
+      "passed": 8,
+      "failed": 0,
+      "tests": [
+        "parallel_instances_with_the_same_worker_id_cannot_share_a_job_lease",
+        "strategy_worker_rejects_lost_lease_before_cursor_commit_and_replays_updates",
+        "strategy_snapshot_staleness: six lease and stale-input gate cases"
+      ],
+      "checks": [
+        "same configured worker ID gets distinct process-scoped queue owners",
+        "second process cannot renew another process instance's active lease",
+        "lease ownership is renewed with current wall time after strategy evaluation and before cursor/checkpoint commit",
+        "a callback-time lease takeover is detected before cursor/checkpoint commit; the takeover owner's fencing lease remains intact and the input range remains replayable",
+        "stale-market acknowledgement revalidates the current fencing owner",
+        "a worker that lost its lease returns without acking or deleting the current owner's queued job"
+      ]
+    },
+    "qx_cli_full_test_environment_diagnostic": {
+      "initial_full_run": {
+        "passed": 404,
+        "failed": 50,
+        "exit_code": 101
+      },
+      "failure_causes": [
+        "Windows default TEMP/TMP path denied test fixture writes",
+        "CLI black-box tests found the qx-cli executable older than changed source files"
+      ],
+      "corrected_individual_reruns": {
+        "count": 50,
+        "passed": 50,
+        "failed": 0,
+        "environment": "TEMP/TMP set to target/qx-test-temp; qx-cli rebuilt; test working directory matched crates/qx-cli; replaced the obsolete ack-injection case with a concurrent lease-takeover case",
+        "full_suite_rerun": false
+      }
+    },
+    "qx_cli_full_test_latest": {
+      "command": "cargo test -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1 -- --test-threads=1",
+      "initial_full_run": {
+        "passed": 445,
+        "failed": 9,
+        "exit_code": 101
+      },
+      "failure_cause": "all nine failed black-box cases hit the explicit stale qx-cli.exe freshness guard because cargo test --bin rebuilt the test harness but not target/debug/qx-cli.exe",
+      "binary_rebuilt": "cargo build -p qx-cli --bin qx-cli --offline -j 1 --target-dir target/rust-workspace-error-v1",
+      "individual_reruns": {
+        "count": 9,
+        "passed": 9,
+        "failed": 0,
+        "test_names": [
+          "builtin_strategy_entries_match_the_printed_partition",
+          "config_explain_and_doctor_still_emit_machine_readable_json",
+          "config_subcommands_reject_the_json_flag_they_never_delivered",
+          "config_validate_keeps_its_human_pass_line",
+          "doctor_capability_query_filters_venue_product_and_account_mode",
+          "doctor_capability_query_rejects_unknown_ids_and_mixed_runtime_config_mode",
+          "doctor_exposes_the_offline_product_capability_catalog_and_detail_by_stable_id",
+          "json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs",
+          "strategy_diagnostics_bind_to_verified_run_and_render_offline_findings"
+        ]
+      },
+      "full_suite_rerun_after_binary_build": false
+    },
+    "unsupported_input_refusal": {
+      "unknown_event_rust_python": {
+        "passed": 2,
+        "failed": 0
+      },
+      "exact_orderbook_legacy_c_abi_refusal": {
+        "passed": 1,
+        "failed": 0,
+        "checks": [
+          "required v3 callback named in error",
+          "raw v1/v2 downgrade rejected"
+        ]
+      }
+    },
+    "cpp_release": {
+      "targets": [
+        "qianxing_strategy_update_contract",
+        "qianxing_strategy_example"
+      ],
+      "build": "passed",
+      "ctest": {
+        "passed": 3,
+        "failed": 0
+      }
+    },
+    "cpp_dynamic_c_abi_host": {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 --test cpp_plugin_host -- --ignored --test-threads=1",
+      "passed": 1,
+      "failed": 0,
+      "checks": [
+        "shared normalized callback trace across Bar, Book, Timer, errors, orders/fills, accounts, and stop",
+        "loaded C++ example advertises paired checkpoint exports and round-trips strategy-owned state"
+      ]
+    },
+    "cpp_jsonl_external_process_checkpoint": {
+      "configure": "cmake -S cpp -B target/qx-cpp-jsonl-check -DQX_BUILD_JSONL_EXAMPLE=ON",
+      "build": "cmake --build target/qx-cpp-jsonl-check --config Release --target qianxing_strategy_jsonl",
+      "binary_build": "passed",
+      "manual_jsonl_checkpoint_round_trip": "passed",
+      "separate_process_restart_round_trip": "passed; processed_requests restored across two independent launches: 4 -> 5 -> 6",
+      "checks": [
+        "input checkpoint schema v4 is accepted while output schema remains v1",
+        "processed_requests is restored from request checkpoint and incremented in response",
+        "response adapter_state identifies external-process mode"
+      ]
+    },
+    "rustfmt": "passed for all touched Rust API, worker, unit-test, and C++ host integration-test files",
+    "capability_catalog_check": "passed",
+    "architecture_fast": {
+      "shards": 4,
+      "named_checks": 228,
+      "duplicates": 0,
+      "wall_clock_seconds": 137.02,
+      "result": "passed"
+    },
+    "architecture_fast_module_checkpoint_followup": {
+      "shards": 4,
+      "named_checks": 228,
+      "duplicates": 0,
+      "wall_clock_seconds": 113.34,
+      "capability_catalog_check": "passed",
+      "result": "passed"
+    },
+    "architecture_fast_sandbox_rotation_followup": {
+      "shards": 4,
+      "named_checks": 228,
+      "duplicates": 0,
+      "wall_clock_seconds": 126.09,
+      "capability_catalog_check": "passed",
+      "result": "passed"
+    },
+    "architecture_fast_c_abi_checkpoint_followup": {
+      "shards": 4,
+      "named_checks": 228,
+      "duplicates": 0,
+      "wall_clock_seconds": 132.29,
+      "capability_catalog_check": "passed",
+      "result": "passed"
+    },
+  "architecture_fast_external_process_checkpoint_followup": {
+    "shards": 4,
+    "named_checks": 228,
+    "duplicates": 0,
+    "wall_clock_seconds": 126.97,
+    "capability_catalog_check": "passed",
+    "result": "passed"
+  },
+    "architecture_fast_llm_sandbox_followup": {
+      "shards": 4,
+      "named_checks": 228,
+      "duplicates": 0,
+      "wall_clock_seconds": 119.68,
+      "capability_catalog_check": "passed",
+      "result": "passed"
+    },
+    "git_diff_check": "passed for llm-sandbox worker/tests, Rust policy/host, regenerated capability catalogs, and evidence/docs"
+  },
+  "limitations": [
+    "Python class/module-function, C ABI and the external JSONL checkpoint protocol are covered; third-party process conformance, general Rust trait strategy state recovery, complete per-hook capability refusal, all host pairs for every callback, cross-backend cursor fencing, and full multi-worker persistence remain open W3 work. Strategy checkpoint/cursor persistence is not a global transaction with external order-command stores.",
+    "Dynamic C++ validation used the locally built example plugin and does not prove third-party plugin deployment behavior.",
+    "Real E2B, Microsandbox, OpenSandbox, or remote Docker llm-sandbox isolation, capacity, cost, and long-session recovery remain unverified."
+  ],
+  "release_status": "unpublished workspace; W3 and release gates remain open"
+}

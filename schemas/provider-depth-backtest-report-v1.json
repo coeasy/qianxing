@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/provider-depth-backtest-report-v1.json",
+  "title": "Qianxing ProviderDepthBacktestReport v1",
+  "description": "Verified shared depth report with the frozen Provider source, recomputed DepthFrame identity, DatasetManifestV2, and DatasetSnapshotV1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "report",
+    "provider_id",
+    "provider_version",
+    "request_id",
+    "retry_chain",
+    "source_hash",
+    "query_digest",
+    "depth_input_hash",
+    "manifest",
+    "dataset_snapshot",
+    "dataset_snapshot_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "report": {"$ref": "research-run-report-v1.json"},
+    "provider_id": {"type": "string", "minLength": 1},
+    "provider_version": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "retry_chain": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "query_digest": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "depth_input_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "manifest": {"$ref": "dataset-manifest-v2.json"},
+    "dataset_snapshot": {"$ref": "dataset-snapshot-v1.json"},
+    "dataset_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

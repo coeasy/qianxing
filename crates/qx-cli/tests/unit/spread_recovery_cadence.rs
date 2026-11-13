@@ -122,8 +122,8 @@ fn collect_recovery_scanners(dir: &Path, found: &mut Vec<PathBuf>) {
             continue;
         }
         let text = std::fs::read_to_string(&path).expect("源码可读");
-        // 只认调用形状（实参按引用取）：`spread.rs` 里那处定义的 `root: &Path` 不算扫描点。
-        if text.contains("pending_spread_recovery_groups(&") {
+        // 只认账户范围扫描器的调用形状；spread.rs 里的重导出不算扫描点。
+        if text.contains("pending_spread_recovery_groups_for_account(") {
             found.push(path);
         }
     }

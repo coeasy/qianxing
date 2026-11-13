@@ -5,6 +5,7 @@
 //! 没有 `.git` 的环境）时回落到 `unknown`；工作树有未提交改动时追加 `-dirty`，避免把
 //! "哈希相同"读成"代码相同"。未跟踪文件不参与构建，因此不会把工作树标脏。
 
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::Command;
 use std::{error::Error, io};
@@ -40,11 +41,50 @@ fn watch(path: Option<String>) {
     }
 }
 
-/// 把仓库 `deploy/` 顶层的示例配置烧进二进制（V13 第三十一遍 ②-b #266）。
+/// Fingerprint the complete JSON Schema catalog with a deterministic path/content encoding.
+fn schema_catalog_sha256() -> Result<String, Box<dyn Error>> {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR")?;
+    let schema_dir = Path::new(&manifest).join("..").join("..").join("schemas");
+    println!("cargo:rerun-if-changed={}", schema_dir.display());
+    let mut paths = std::fs::read_dir(&schema_dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| path.extension().and_then(|value| value.to_str()) == Some("json"));
+    paths.sort();
+    if paths.is_empty() {
+        return Err(
+            io::Error::new(io::ErrorKind::NotFound, "schemas/ contains no JSON schemas").into(),
+        );
+    }
+    let mut digest = Sha256::new();
+    for path in paths {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "schema filename is not valid UTF-8",
+                )
+            })?;
+        // `core.autocrlf` may expand LF files in a Windows worktree. Hash the
+        // logical JSON text with canonical LF endings so the build identity is
+        // stable between local path builds and clean Git checkouts.
+        let body = std::fs::read_to_string(&path)?.replace("\r\n", "\n");
+        digest.update((name.len() as u64).to_be_bytes());
+        digest.update(name.as_bytes());
+        digest.update((body.len() as u64).to_be_bytes());
+        digest.update(body.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+/// 把仓库 `deploy/` 内的 JSON 示例配置烧进二进制。
 ///
 /// `cargo install` 之后删掉 clone、或把单颗 exe 拷到另一台机器时，构建期源码树那一格候选根
-/// 就没了，运行时模板只能靠仓库——`init` 与几条只读入口当场跑不通。这一层让 `deploy/` 顶层
-/// 的全部示例配置（现读 53 份，由 `deploy/*.json` glob 决定，不硬编份数）随
+/// 就没了，运行时模板只能靠仓库——`init` 与几条只读入口当场跑不通。这一层让 `deploy/` 下
+/// 的全部示例配置（由递归目录清单决定，不硬编份数）随
 /// 二进制走；清单为空时构建直接失败，发布物不该带着"模板缺失"这件事悄悄出门。
 /// 清单同时给出内容签名（FNV-1a 覆盖每个名字与正文），运行期用它给落盘目录分桶，
 /// 因此"同一目录名、不同内容"的陈旧副本不可能被读到。
@@ -52,34 +92,22 @@ fn embed_deploy_templates() -> Result<(), Box<dyn Error>> {
     let manifest = std::env::var("CARGO_MANIFEST_DIR")?;
     let deploy = Path::new(&manifest).join("..").join("..").join("deploy");
     println!("cargo:rerun-if-changed={}", deploy.display());
-    let mut names: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&deploy)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        println!("cargo:rerun-if-changed={}", path.display());
-        names.push(name.to_string());
-    }
-    names.sort();
-    if names.is_empty() {
+    let mut templates = Vec::new();
+    collect_deploy_json(&deploy, &deploy, &mut templates)?;
+    templates.sort_by(|left: &(String, std::path::PathBuf), right| left.0.cmp(&right.0));
+    if templates.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "deploy/ 顶层没有 JSON 模板，构建产物不该缺这一层",
+            "deploy/ 下没有 JSON 模板，构建产物不该缺这一层",
         )
         .into());
     }
     let mut table =
-        String::from("// 由 build.rs 生成，勿手改：仓库 deploy/ 顶层 JSON 的构建期快照。\n");
+        String::from("// 由 build.rs 生成，勿手改：仓库 deploy/ 下 JSON 的构建期快照。\n");
     table.push_str("pub(crate) const DEPLOY_TEMPLATES: &[(&str, &str)] = &[\n");
     let mut signature: u64 = 0xcbf2_9ce4_8422_2325;
-    for name in &names {
-        let path = deploy.join(name);
-        let body = std::fs::read_to_string(&path)?;
+    for (name, path) in &templates {
+        let body = std::fs::read_to_string(path)?;
         let location = path.display().to_string();
         if location.contains('"') || name.contains('"') {
             return Err(io::Error::new(
@@ -103,6 +131,37 @@ fn embed_deploy_templates() -> Result<(), Box<dyn Error>> {
     ));
     let out_dir = std::env::var("OUT_DIR")?;
     std::fs::write(Path::new(&out_dir).join("deploy_templates.rs"), table)?;
+    Ok(())
+}
+
+/// Recursively collect JSON assets using deploy-root-relative, slash-separated names.
+/// Watching every directory catches additions and removals in nested template folders.
+fn collect_deploy_json(
+    root: &Path,
+    directory: &Path,
+    output: &mut Vec<(String, std::path::PathBuf)>,
+) -> io::Result<()> {
+    println!("cargo:rerun-if-changed={}", directory.display());
+    let mut entries = std::fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_deploy_json(root, &path, output)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            println!("cargo:rerun-if-changed={}", path.display());
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            let name = relative
+                .to_str()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "deploy path is not UTF-8")
+                })?
+                .replace('\\', "/");
+            output.push((name, path));
+        }
+    }
     Ok(())
 }
 
@@ -135,5 +194,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let value = std::env::var(variable).unwrap_or_else(|_| fallback.to_string());
         println!("cargo:rustc-env=QX_{directive}={value}");
     }
+    println!(
+        "cargo:rustc-env=QX_SCHEMA_CATALOG_SHA256={}",
+        schema_catalog_sha256()?
+    );
     Ok(())
 }

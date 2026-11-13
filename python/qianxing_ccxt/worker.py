@@ -20,6 +20,7 @@ from . import (
     CcxtConfig,
     CcxtConnectorError,
     CcxtErrorClass,
+    _exact_decimal_wire_text,
     CcxtExchangeClient,
     create_ccxt_pro_exchange,
     normalize_stream_event,
@@ -34,10 +35,38 @@ from . import (
 WS_RETRY_MAX_DELAY_MS = 8_000
 
 
+def _fee_rows(value: Any) -> list[dict[str, Any]]:
+    return [
+        {"amount_raw": amount_raw, "currency": currency}
+        for amount_raw, currency in value
+    ]
+
+
+def _order_wire(order: Any) -> dict[str, Any]:
+    payload = dict(order.__dict__)
+    payload["fees"] = _fee_rows(order.fees)
+    payload["exact_fees"] = [
+        {"amount": amount, "currency": currency}
+        for amount, currency in order.exact_fees
+    ]
+    return payload
+
+
+def _trade_wire(trade: Any) -> dict[str, Any]:
+    payload = dict(trade.__dict__)
+    payload["fees"] = _fee_rows(trade.fees)
+    payload["exact_fees"] = [
+        {"amount": amount, "currency": currency}
+        for amount, currency in trade.exact_fees
+    ]
+    return payload
+
+
 class CcxtJsonWorker:
     def __init__(self, client: CcxtExchangeClient, *, pro_exchange: Any | None = None):
         self.client = client
         self.pro_exchange = pro_exchange
+        self._pending_stream_reconnects = 0
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = str(request.get("op", "")).strip()
@@ -46,61 +75,379 @@ class CcxtJsonWorker:
             return {"markets": list(markets.values())}
         if operation == "resolve_market":
             market = self.client.resolve_market(str(request["instrument"]))
-            return {"market": market.__dict__}
+            # `instrument` is a derived property rather than a dataclass field, so it is
+            # absent from `__dict__`. Preserve the canonical identity in the JSONL contract
+            # for downstream market-spec freezing and venue-level validation.
+            market_payload = dict(market.__dict__)
+            market_payload["instrument"] = market.instrument
+            return {"market": market_payload}
         if operation == "fetch_ohlcv":
-            frame = self.client.fetch_ohlcv(
+            retries_before = self.client.market_data_rate_limit_retries_total
+            fetched = self.client.fetch_ohlcv_with_quality(
                 str(request["instrument"]),
                 timeframe=str(request.get("timeframe", "1m")),
                 start_ms=int(request["start_ms"]),
                 end_ms=int(request["end_ms"]),
                 limit=int(request.get("limit", 1_000)),
                 params=dict(request.get("params", {})),
+                as_of_ms=(int(request["as_of_ms"]) if request.get("as_of_ms") is not None else None),
             )
-            return {"frame": json.loads(frame.to_json())}
+            return {
+                "frame": json.loads(fetched["frame"].to_json()),
+                "quality": {
+                    "as_of_ms": fetched["as_of_ms"],
+                    "excluded_unclosed_rows": fetched["excluded_unclosed_rows"],
+                },
+                "rate_limit_retries": self.client.market_data_rate_limit_retries_total
+                - retries_before,
+            }
         if operation == "fetch_ticker":
             ticker = self.client.fetch_ticker(
                 str(request["instrument"]), params=dict(request.get("params", {}))
             )
             return {"ticker": ticker.__dict__}
-        if operation == "create_order":
-            order = self.client.create_order(
+        if operation == "fetch_order_book":
+            book = self.client.fetch_order_book(
                 str(request["instrument"]),
+                limit=int(request.get("limit", 20)),
+                params=dict(request.get("params", {})),
+            )
+            return {"order_book": book.__dict__}
+        if operation == "validate_market_spec":
+            try:
+                self.client.validate_live_market_spec(
+                    str(request["instrument"]), request.get("expected_spec")
+                )
+            except CcxtConnectorError as error:
+                return {
+                    "market_spec_rejected": {
+                        "class": error.error_class.value,
+                        "message": str(error),
+                    }
+                }
+            return {"market_spec_verified": True}
+        if operation == "create_order":
+            amount_unit = request.get("amount_unit")
+            if amount_unit not in {"base", "contracts", "quote"}:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 必须显式声明 amount_unit 为 base、contracts 或 quote",
+                )
+            instrument = str(request["instrument"])
+            market = self.client.resolve_market(instrument)
+            amount_exact_wire = request.get("amount_exact")
+            price_exact_wire = request.get("price_exact")
+            if amount_exact_wire is not None and request.get("amount_raw") is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 不能同时携带 amount_raw 与 amount_exact",
+                )
+            if price_exact_wire is not None and request.get("price_raw") is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order 不能同时携带 price_raw 与 price_exact",
+                )
+            amount_exact = (
+                None
+                if amount_exact_wire is None
+                else _exact_decimal_wire_text(amount_exact_wire, field="amount_exact")
+            )
+            price_exact = (
+                None
+                if price_exact_wire is None
+                else _exact_decimal_wire_text(price_exact_wire, field="price_exact")
+            )
+            if amount_unit == "quote" and not (
+                self.client.config.exchange_id.lower() == "bitget"
+                and not market.contract
+                and str(request.get("side", "")).lower() == "buy"
+                and str(request.get("order_type", "")).lower() == "market"
+                and amount_exact is not None
+                and request.get("amount_raw") is None
+                and price_exact is None
+                and request.get("price_raw") is None
+            ):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "amount_unit=quote 只支持 Bitget 现货精确市价买单",
+                )
+            if amount_unit != "quote" and amount_unit != (
+                "contracts" if market.contract else "base"
+            ):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    f"订单数量单位 {amount_unit!r} 与市场 {market.symbol} 不匹配",
+                )
+            risk_leverage = request.get("risk_leverage")
+            risk_reduce_only = request.get("risk_reduce_only", False)
+            risk_margin_mode = request.get("risk_margin_mode")
+            if not isinstance(risk_reduce_only, bool):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "create_order risk_reduce_only 必须为布尔值",
+                )
+            if market.contract:
+                if isinstance(risk_leverage, bool) or not isinstance(risk_leverage, int) or risk_leverage < 1:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "合约 create_order 必须显式声明正整数 risk_leverage",
+                    )
+                if risk_margin_mode not in {"cross", "isolated"}:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "合约 create_order 必须显式声明 risk_margin_mode 为 cross 或 isolated",
+                    )
+            elif risk_leverage is not None:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "现货 create_order 不应声明 risk_leverage",
+                )
+            amount_raw = None if amount_exact is not None else int(request["amount_raw"])
+            price_raw = (
+                None
+                if price_exact is not None or request.get("price_raw") is None
+                else int(request["price_raw"])
+            )
+            if market.contract:
+                try:
+                    params = dict(request.get("params", {}))
+                    hedged = params.get("hedged", False)
+                    if not isinstance(hedged, bool):
+                        raise CcxtConnectorError(
+                            CcxtErrorClass.INVALID,
+                            "合约 create_order params.hedged 必须为布尔值",
+                        )
+                    self.client.validate_contract_order_leverage_tier(
+                        instrument,
+                        side=str(request["side"]),
+                        hedged=hedged,
+                        amount_raw=amount_raw,
+                        amount_exact=amount_exact,
+                        price_raw=price_raw,
+                        price_exact=price_exact,
+                        leverage=risk_leverage,
+                        reduce_only=risk_reduce_only,
+                        margin_mode=risk_margin_mode,
+                    )
+                except CcxtConnectorError as error:
+                    return {
+                        "preflight_rejected": {
+                            "class": error.error_class.value,
+                            "message": str(error),
+                        }
+                    }
+            elif self.client.config.exchange_id.lower() == "binance":
+                try:
+                    self.client.validate_binance_spot_max_position(
+                        instrument,
+                        side=str(request["side"]),
+                        amount_unit=amount_unit,
+                        amount_raw=amount_raw,
+                        amount_exact=amount_exact,
+                    )
+                except CcxtConnectorError as error:
+                    return {
+                        "preflight_rejected": {
+                            "class": error.error_class.value,
+                            "message": str(error),
+                        }
+                    }
+            order = self.client.create_order(
+                instrument,
                 side=str(request["side"]),
                 order_type=str(request["order_type"]),
-                amount_raw=int(request["amount_raw"]),
-                price_raw=None
-                if request.get("price_raw") is None
-                else int(request["price_raw"]),
+                amount_raw=amount_raw,
+                amount_exact=amount_exact,
+                amount_unit=amount_unit,
+                price_raw=price_raw,
+                price_exact=price_exact,
+                risk_leverage=risk_leverage,
+                risk_reduce_only=risk_reduce_only,
+                risk_margin_mode=risk_margin_mode,
+                risk_preflight_verified=(
+                    market.contract or self.client.config.exchange_id.lower() == "binance"
+                ),
                 client_order_id=None
                 if request.get("client_order_id") is None
                 else str(request["client_order_id"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
+        if operation == "create_conditional_order":
+            order = self.client.create_conditional_order(
+                str(request["instrument"]),
+                intent=str(request["intent"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=request["amount_exact"],
+                amount_unit=str(request["amount_unit"]),
+                trigger_price_exact=request.get("trigger_price_exact"),
+                trigger_price_type=None
+                if request.get("trigger_price_type") is None
+                else str(request["trigger_price_type"]),
+                trailing_percent_exact=request.get("trailing_percent_exact"),
+                trailing_amount_exact=request.get("trailing_amount_exact"),
+                trailing_trigger_price_exact=request.get("trailing_trigger_price_exact"),
+                price_exact=request.get("price_exact"),
+                risk_leverage=request.get("risk_leverage"),
+                risk_reduce_only=request.get("risk_reduce_only", False),
+                risk_margin_mode=request.get("risk_margin_mode"),
+                client_order_id=None
+                if request.get("client_order_id") is None
+                else str(request["client_order_id"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"order": _order_wire(order)}
+        if operation == "create_bracket_order":
+            raise CcxtConnectorError(
+                CcxtErrorClass.UNSUPPORTED,
+                "Bracket 暂不可提交：该请求尚未接入 Rust 持久订单组与 OMS 对账",
+            )
+        if operation == "create_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只接受原生 OCO 订单组",
+                )
+            if (
+                self.client.config.exchange_id.lower() == "bitget"
+                and bool((self.client.config.options or {}).get("uta", False))
+            ):
+                group = self.client.create_bitget_uta_oco_order_group(
+                    str(request["instrument"]),
+                    side=str(request["side"]),
+                    amount_exact=str(request["amount_exact"]),
+                    take_profit_limit_price_exact=str(request["take_profit_limit_price_exact"]),
+                    stop_loss_trigger_exact=str(request["stop_loss_trigger_exact"]),
+                    stop_loss_order_price_exact=None
+                    if request.get("stop_loss_order_price_exact") is None
+                    else str(request["stop_loss_order_price_exact"]),
+                )
+                return {"order_group": group}
+            group = self.client.create_okx_oco_order_group(
+                str(request["instrument"]),
+                side=str(request["side"]),
+                amount_exact=str(request["amount_exact"]),
+                take_profit_trigger_exact=str(request["take_profit_trigger_exact"]),
+                take_profit_order_price_exact=None
+                if request.get("take_profit_order_price_exact") is None
+                else str(request["take_profit_order_price_exact"]),
+                take_profit_price_type=str(request["take_profit_price_type"]),
+                stop_loss_trigger_exact=str(request["stop_loss_trigger_exact"]),
+                stop_loss_order_price_exact=None
+                if request.get("stop_loss_order_price_exact") is None
+                else str(request["stop_loss_order_price_exact"]),
+                stop_loss_price_type=str(request["stop_loss_price_type"]),
+                algo_client_order_id=str(request["algo_client_order_id"]),
+                risk_margin_mode=None
+                if request.get("risk_margin_mode") is None
+                else str(request["risk_margin_mode"]),
+                risk_position_mode=str(request.get("risk_position_mode", "one_way")),
+                risk_position_side=str(request.get("risk_position_side", "net")),
+                risk_reduce_only=request.get("risk_reduce_only", False),
+            )
+            return {"order_group": group}
+        if operation == "fetch_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只查询原生 OCO 订单组",
+                )
+            if self.client.config.exchange_id.lower() == "bitget" and bool((self.client.config.options or {}).get("uta", False)):
+                group = self.client.fetch_bitget_uta_oco_order_group(
+                    str(request["instrument"]), strategy_order_id=str(request["strategy_order_id"])
+                )
+            else:
+                group = self.client.fetch_okx_oco_order_group(
+                    str(request["instrument"]),
+                    algo_id=None if request.get("algo_id") is None else str(request["algo_id"]),
+                    algo_client_order_id=None
+                    if request.get("algo_client_order_id") is None
+                    else str(request["algo_client_order_id"]),
+                )
+            return {"order_group": group}
+        if operation == "cancel_order_group":
+            if request.get("kind") != "oco":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "CCXT worker 当前只撤销原生 OCO 订单组",
+                )
+            if self.client.config.exchange_id.lower() == "bitget" and bool((self.client.config.options or {}).get("uta", False)):
+                group = self.client.cancel_bitget_uta_oco_order_group(
+                    str(request["instrument"]), strategy_order_id=str(request["strategy_order_id"])
+                )
+            else:
+                group = self.client.cancel_okx_oco_order_group(
+                    str(request["instrument"]), algo_id=str(request["algo_id"])
+                )
+            return {"order_group": group}
+        if operation == "edit_order":
+            order = self.client.edit_order(
+                str(request["order_id"]),
+                str(request["instrument"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"order": _order_wire(order)}
+        if operation == "validate_edit_order":
+            order = self.client.validate_edit_order(
+                str(request["order_id"]),
+                str(request["instrument"]),
+                side=str(request["side"]),
+                order_type=str(request["order_type"]),
+                amount_exact=str(request["amount_exact"]),
+                price_exact=None
+                if request.get("price_exact") is None
+                else str(request["price_exact"]),
+                params=dict(request.get("params", {})),
+            )
+            return {"validated": True, "order": _order_wire(order)}
         if operation == "fetch_order":
             order = self.client.fetch_order(
                 str(request["order_id"]),
                 str(request["instrument"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
         if operation == "fetch_my_trades":
-            trades = self.client.fetch_my_trades(
-                str(request["instrument"]),
-                since_ms=None if request.get("since_ms") is None else int(request["since_ms"]),
-                limit=None if request.get("limit") is None else int(request["limit"]),
-                params=dict(request.get("params", {})),
-            )
-            return {"trades": [trade.__dict__ for trade in trades]}
+            if request.get("order_id") is not None:
+                trades = self.client.fetch_order_trades(
+                    str(request["order_id"]),
+                    str(request["instrument"]),
+                    params=dict(request.get("params", {})),
+                )
+            else:
+                trades = self.client.fetch_my_trades(
+                    str(request["instrument"]),
+                    since_ms=None
+                    if request.get("since_ms") is None
+                    else int(request["since_ms"]),
+                    limit=None if request.get("limit") is None else int(request["limit"]),
+                    params=dict(request.get("params", {})),
+                )
+            return {"trades": [_trade_wire(trade) for trade in trades]}
         if operation == "cancel_order":
             order = self.client.cancel_order(
                 str(request["order_id"]),
                 str(request["instrument"]),
                 params=dict(request.get("params", {})),
             )
-            return {"order": order.__dict__}
+            return {"order": _order_wire(order)}
         if operation == "fetch_balance":
-            return {"balance": self.client.fetch_balance(params=dict(request.get("params", {})))}
+            balance = self.client.fetch_balance(params=dict(request.get("params", {})))
+            return {
+                "balance": balance,
+                "exact": self.client.exact_balance_fields(balance),
+            }
+        if operation == "fetch_contract_settings":
+            return {
+                "settings": self.client.fetch_contract_settings(str(request["instrument"]))
+            }
         if operation == "set_margin_mode":
             return {
                 "result": self.client.set_margin_mode(
@@ -115,6 +462,8 @@ class CcxtJsonWorker:
                     str(request["instrument"]),
                     int(request["leverage"]),
                     margin_mode=request.get("margin_mode"),
+                    position_mode=str(request.get("position_mode", "one_way")),
+                    position_side=str(request.get("position_side", "net")),
                     params=dict(request.get("params", {})),
                 )
             }
@@ -161,7 +510,7 @@ class CcxtJsonWorker:
             orders = self.client.fetch_open_orders(
                 request.get("instrument"), params=dict(request.get("params", {}))
             )
-            return {"orders": [order.__dict__ for order in orders]}
+            return {"orders": [_order_wire(order) for order in orders]}
         raise CcxtConnectorError(CcxtErrorClass.UNSUPPORTED, f"不支持的 CCXT Worker 操作: {operation}")
 
     async def handle_async(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -203,6 +552,9 @@ class CcxtJsonWorker:
             exchange_id=self.client.config.exchange_id,
             received_ts=request.get("received_ts"),
         )
+        if self._pending_stream_reconnects:
+            event["reconnects"] = self._pending_stream_reconnects
+            self._pending_stream_reconnects = 0
         if idle:
             event["idle"] = True
         return {"event": event}
@@ -233,6 +585,7 @@ class CcxtJsonWorker:
                 if delay_ms:
                     await asyncio.sleep(delay_ms / 1_000)
                 attempts += 1
+                self._pending_stream_reconnects += 1
 
     async def _close_pro_async(self) -> None:
         if self.pro_exchange is None:
@@ -288,6 +641,7 @@ def _config_from_file(path: Path) -> CcxtConfig:
 
     return CcxtConfig(
         exchange_id=str(value["exchange_id"]),
+        account_model=str(value.get("account_model", "")),
         api_key=env("api_key"),
         secret=env("secret"),
         password=env("password"),
@@ -297,6 +651,10 @@ def _config_from_file(path: Path) -> CcxtConfig:
         timeout_ms=int(value.get("timeout_ms", 30_000)),
         default_type=str(value.get("default_type", "spot")),
         options=dict(value.get("options", {})),
+        market_data_rate_limit_retries=int(value.get("market_data_rate_limit_retries", 3)),
+        market_data_rate_limit_backoff_ms=int(
+            value.get("market_data_rate_limit_backoff_ms", 1_000)
+        ),
         ws_max_retries=int(value.get("ws_max_retries", 3)),
         ws_retry_backoff_ms=int(value.get("ws_retry_backoff_ms", 250)),
     )
@@ -315,11 +673,70 @@ def serve(worker: CcxtJsonWorker, input_stream: TextIO, output_stream: TextIO) -
     asyncio.run(run())
 
 
+def serve_startup_error(
+    error_class: CcxtErrorClass,
+    message: str,
+    input_stream: TextIO,
+    output_stream: TextIO,
+) -> None:
+    """Keep the JSONL contract intact when the worker cannot initialize.
+
+    Rust starts the process before sending an RPC. If optional dependencies are missing (or the
+    config is invalid), an uncaught startup exception used to close stdout without a protocol
+    response. That made a local packaging error look like a venue timeout or a dead worker.
+    Respond once for each request until the owner closes stdin so pooled callers receive the same
+    actionable startup diagnostic on every call.
+    """
+    response = json.dumps(
+        {
+            "ok": False,
+            "error": {"class": error_class.value, "message": message},
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    for line in input_stream:
+        if not line.strip():
+            continue
+        output_stream.write(response)
+        output_stream.write("\n")
+        output_stream.flush()
+
+
 def main() -> int:
+    # The Rust side consumes a UTF-8 JSONL protocol. Windows console defaults can
+    # be a legacy code page (for example CP1252), so bind both protocol streams
+    # explicitly before reading requests or emitting responses.
+    for stream in (sys.stdin, sys.stdout):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
     parser = argparse.ArgumentParser(description="Qianxing public CCXT JSONL worker")
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args()
-    worker = CcxtJsonWorker(CcxtExchangeClient(_config_from_file(args.config)))
+    try:
+        worker = CcxtJsonWorker(CcxtExchangeClient(_config_from_file(args.config)))
+    except CcxtConnectorError as error:
+        serve_startup_error(error.error_class, str(error), sys.stdin, sys.stdout)
+        return 2
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        serve_startup_error(
+            CcxtErrorClass.INVALID,
+            f"CCXT Worker 配置读取或解析失败: {error}",
+            sys.stdin,
+            sys.stdout,
+        )
+        return 2
+    except Exception as error:
+        # Initialization errors can originate in third-party exchange constructors. Avoid
+        # forwarding their full messages because some libraries include credential-shaped data.
+        serve_startup_error(
+            CcxtErrorClass.UNKNOWN,
+            f"CCXT Worker 初始化失败: {type(error).__name__}",
+            sys.stdin,
+            sys.stdout,
+        )
+        return 2
     serve(worker, sys.stdin, sys.stdout)
     return 0
 

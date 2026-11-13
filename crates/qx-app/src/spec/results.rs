@@ -61,6 +61,10 @@ pub struct BacktestArtifacts {
     pub summary: String,
     pub equity: String,
     pub fills: String,
+    /// Optional replay-validated JSONL event trace. Current Bar and depth runs persist it;
+    /// older outcomes may omit it and remain readable by research clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_trace: Option<String>,
 }
 
 impl BacktestOutcome {

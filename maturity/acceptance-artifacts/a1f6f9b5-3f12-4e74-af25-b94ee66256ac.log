@@ -1,0 +1,25 @@
+$ cargo test -p qx-cli --bin qx-cli --features sqlite prepared_command_replay::tests:: --offline -j1
+exit_code=101
+
+[stdout]
+
+[stderr]
+   Compiling qx-data v0.3.0 (D:\aex_work\qianxing\crates\qx-data)
+   Compiling qx-spec v0.3.0 (D:\aex_work\qianxing\crates\qx-spec)
+   Compiling qx-provider v0.3.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-xingban v0.3.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling qx-app v0.3.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling qx-adapter v0.3.0 (D:\aex_work\qianxing\crates\qx-adapter)
+   Compiling qx-api v0.3.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-orchestrator v0.3.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling qx-service v0.3.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+error[E0432]: unresolved import `super::render_comparison_diagnostics`
+   --> crates\qx-cli\src\report_multi_market.rs:241:58
+    |
+241 |     use super::{parse_market_bar_comparison_diagnostics, render_comparison_diagnostics};
+    |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `render_comparison_diagnostics` in `report_multi_market`
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `qx-cli` (bin "qx-cli" test) due to 1 previous error

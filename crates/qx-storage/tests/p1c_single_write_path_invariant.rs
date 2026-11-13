@@ -145,11 +145,12 @@ fn attempt_counting_uses_the_single_policy_arithmetic() {
         ("postgres.rs", &postgres),
     ] {
         let normalized: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+        let inline_arithmetic = normalized.contains("attempts.saturating_add(1)")
+            || normalized.contains("attemptsASINTEGER)+1")
+            || (normalized.contains("attempts::numeric+1)::text")
+                && !normalized.contains("LEAST(attempts::numeric+1"));
         assert!(
-            !normalized.contains("attempts.saturating_add(1)")
-                && !normalized.contains("attemptsASINTEGER)+1")
-                && !(normalized.contains("attempts::numeric+1)::text")
-                    && !normalized.contains("LEAST(attempts::numeric+1")),
+            !inline_arithmetic,
             "{name} 的尝试计数必须收敛到统一口径，不得就地推导 +1 算术"
         );
     }

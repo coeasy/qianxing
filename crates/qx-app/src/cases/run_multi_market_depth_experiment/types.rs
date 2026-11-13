@@ -12,6 +12,7 @@ pub struct RunMultiMarketDepthExperimentSpec {
     pub experiment_id: String,
     pub target_strategy_id: String,
     pub base: MultiMarketDepthBacktestSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameter_space: Vec<ExperimentParameterSpace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub strategy_kinds: Vec<BuiltinStrategyKind>,
@@ -53,4 +54,18 @@ pub struct RunMultiMarketDepthExperimentResult {
     pub candidates: Vec<MultiMarketDepthExperimentCandidate>,
     pub ranking: Vec<MultiMarketDepthExperimentRankedCandidate>,
     pub artifact_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_data_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<BTreeMap<String, String>>,
 }

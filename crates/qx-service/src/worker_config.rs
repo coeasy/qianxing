@@ -58,6 +58,8 @@ pub fn venue_worker(
     if !(entry.is_bound)(&worker) {
         return Err(format!("worker {worker_id} {}", entry.venue_hint));
     }
+    crate::exchange_gateway::ExchangeGatewayRegistry::from_runtime_config(config)?
+        .require_worker_binding(worker_id)?;
     Ok(worker)
 }
 

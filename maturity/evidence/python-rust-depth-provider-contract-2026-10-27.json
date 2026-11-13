@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "kind": "python-rust-depth-provider-contract",
+  "generated_at_utc": "2026-10-26T22:18:19Z",
+  "environment": {
+    "os": "Windows 11",
+    "architecture": "x86_64",
+    "rust_mode": "offline"
+  },
+  "behavior": {
+    "raw_only_provider_frame": "DepthFrame v1",
+    "fully_exact_provider_frame": "DepthFrame v2",
+    "mixed_raw_and_exact_levels": "rejected",
+    "subnano_price_raw_projection": 0,
+    "subnano_quantity_raw_projection": 0,
+    "subnano_exact_sidecars_preserved": true,
+    "depth_spec_funding_fields": [
+      "funding_bps",
+      "funding_events"
+    ],
+    "backtest_spec_legacy_positional_arguments": {
+      "eighth": "seed",
+      "ninth": "schema_version"
+    }
+  },
+  "validation": [
+    {
+      "command": "cargo build -p qx-python",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest -q python/tests/test_protective_exit_contract.py python/tests/test_provider_sdk.py python/tests/test_sdk_layering.py",
+      "passed": 50,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest -q python/tests",
+      "passed": 517,
+      "skipped": 10,
+      "failed": 0
+    },
+    {
+      "command": "rustfmt --check crates/qx-python/src/provider_bridge.rs",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing/app.py python/tests/test_provider_sdk.py python/tests/test_sdk_layering.py",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "git diff --check for changed implementation, schema, and regression files",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "limitations": [
+    "Offline Rust/Python boundary acceptance only; no connected exchange or sandbox provider was contacted.",
+    "Does not close remote sandbox isolation, capacity, billing, real funding-history conformance, or release gates."
+  ]
+}

@@ -4,18 +4,30 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    compare_runs, plan_algo_execution, run_backtest, run_depth_backtest, run_depth_experiment,
-    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
-    run_multi_market_depth_backtest, validate_dataset, verify_depth_run, verify_run,
-    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestSpec, MultiLegBacktestSpec, MultiMarketBacktestSpec,
-    MultiMarketDepthBacktestSpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    compare_runs, plan_algo_execution, publish_dataset_snapshot, read_depth_run_report_v1,
+    read_multi_account_joint_report_v1_with_options, read_multi_account_report_v1,
+    read_multi_leg_event_report_page_v1, read_multi_leg_report_facts_v1,
+    read_multi_leg_research_report_v1, read_multi_market_depth_event_report_page_v1,
+    read_multi_market_depth_research_report_v1, read_multi_market_event_report_page_v1,
+    read_multi_market_research_report_v1, read_provider_backtest_report_v1,
+    read_provider_depth_backtest_report_v1, read_run_report_v1, run_backtest, run_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
+    run_multi_market_backtest, run_multi_market_depth_backtest, validate_dataset,
+    validate_dataset_manifest, validate_strategy_execution_preflight_v1, verify_depth_run,
+    verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
+    CompareRunsSpec, DatasetManifestValidationSpec, DatasetSnapshotPublicationSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec,
+    MultiAccountJointReportReadOptionsV1, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, ProviderBacktestOutcome,
+    ProviderDepthBacktestOutcome, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
     RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
+    StrategyExecutionPreflightSpecV1,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+mod account_query_preflight;
 mod ashare_corporate_actions;
 mod ashare_screen;
 mod capital_allocation;
@@ -34,7 +46,7 @@ pyo3::create_exception!(
     _qianxing_native,
     QxAppError,
     PyException,
-    "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
+    "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/reason_code/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
 );
 
 pub(crate) fn app_error(error: AppError) -> PyErr {
@@ -42,9 +54,9 @@ pub(crate) fn app_error(error: AppError) -> PyErr {
 }
 
 /// 调用上下文：与 CLI/HTTP 两侧同形（R 档 + 身份串当 correlation id）。
-/// Python cannot truthfully provide the CLI-only `QX_GIT_COMMIT` identity.
-fn research_context(correlation_id: &str) -> RunContext {
+pub(crate) fn research_context(correlation_id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, correlation_id)
+        .with_code_commit(env!("QX_GIT_COMMIT"))
 }
 
 #[pyfunction]
@@ -53,6 +65,204 @@ fn app_validate_dataset(spec_json: &str) -> PyResult<String> {
     validate_dataset(&spec, &research_context(&spec.dataset_id))
         .and_then(|verdict| verdict.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_validate_dataset_manifest(spec_json: &str) -> PyResult<String> {
+    let spec: DatasetManifestValidationSpec = serde_json::from_str(spec_json).map_err(|error| {
+        PyValueError::new_err(format!("DatasetManifestValidationSpec JSON 无效: {error}"))
+    })?;
+    let context = RunContext::new(CallerCapability::Research, &spec.dataset_id);
+    let result = validate_dataset_manifest(&spec, &context).map_err(app_error)?;
+    let manifest: serde_json::Value = serde_json::from_str(&result.manifest_json)
+        .map_err(|error| PyValueError::new_err(format!("manifest JSON 无法回读: {error}")))?;
+    let document = serde_json::json!({
+        "manifest": manifest,
+        "verified_existing": result.verified_existing,
+        "degraded_fingerprint": result.degraded_fingerprint,
+        "output_path": spec.output_path,
+    });
+    serde_json::to_string(&document)
+        .map_err(|error| PyValueError::new_err(format!("manifest 结果序列化失败: {error}")))
+}
+
+#[pyfunction]
+fn app_publish_dataset_snapshot(spec_json: &str) -> PyResult<String> {
+    let spec: DatasetSnapshotPublicationSpec =
+        serde_json::from_str(spec_json).map_err(|error| {
+            PyValueError::new_err(format!("DatasetSnapshotPublicationSpec JSON 无效: {error}"))
+        })?;
+    let context = RunContext::new(CallerCapability::Research, "dataset-snapshot");
+    let result = publish_dataset_snapshot(&spec, &context).map_err(app_error)?;
+    let document = serde_json::json!({
+        "snapshot": result.snapshot,
+        "snapshot_sha256": result.snapshot_sha256,
+        "output_path": result.output_path,
+        "verified_existing": result.verified_existing,
+    });
+    serde_json::to_string(&document)
+        .map_err(|error| PyValueError::new_err(format!("snapshot 结果序列化失败: {error}")))
+}
+
+#[pyfunction]
+fn app_validate_strategy_execution_preflight_v1(payload: &str) -> PyResult<String> {
+    let spec = StrategyExecutionPreflightSpecV1::from_json(payload).map_err(app_error)?;
+    let correlation_id = spec
+        .execution_spec
+        .get("run_id")
+        .or_else(|| spec.execution_spec.get("experiment_id"))
+        .or_else(|| {
+            spec.execution_spec
+                .get("base")
+                .and_then(|base| base.get("run_id"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            spec.strategy_manifest
+                .get("strategy_id")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("strategy-preflight");
+    let result = validate_strategy_execution_preflight_v1(&spec, &research_context(correlation_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&result).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_validate_strategy_project_v1(payload: &str) -> PyResult<String> {
+    let manifest =
+        qx_spec::StrategyProjectManifestV1::from_json(payload).map_err(PyValueError::new_err)?;
+    serde_json::to_string(&manifest).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_plan_strategy_runtime_v1(payload: &str) -> PyResult<String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        runtime: serde_json::Value,
+        worker_id: Option<String>,
+    }
+    let request: Request =
+        serde_json::from_str(payload).map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let config = qx_runtime::RuntimeConfig::from_json(&request.runtime.to_string())
+        .map_err(PyValueError::new_err)?;
+    let workers: Vec<_> = config
+        .workers
+        .iter()
+        .filter(|worker| {
+            worker.enabled
+                && worker.role == qx_runtime::WorkerRole::Strategy
+                && request
+                    .worker_id
+                    .as_deref()
+                    .is_none_or(|id| worker.id == id)
+        })
+        .collect();
+    if workers.len() != 1 {
+        return Err(PyValueError::new_err(format!(
+            "server plan requires exactly one enabled Strategy worker; found {}",
+            workers.len()
+        )));
+    }
+    let worker = workers[0];
+    let strategy = config
+        .strategy_for_worker(&worker.id)
+        .map_err(PyValueError::new_err)?;
+    let builtin_requirements = strategy
+        .builtin_strategy
+        .as_deref()
+        .map(qx_strategy::BuiltinStrategyKind::parse)
+        .transpose()
+        .map_err(PyValueError::new_err)?;
+    let scoped_account_updates = strategy.account_id.is_some() && strategy.venue_id.is_some();
+    let host_capabilities = if strategy.builtin_strategy.is_some() {
+        Some(qx_strategy::capabilities::StrategyHostCapabilitiesV1::builtin_rust())
+    } else if strategy.python_module.is_some() {
+        Some(match strategy.python_strategy_spec.as_ref() {
+            Some(spec) => {
+                let level = spec
+                    .get("data_level")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("bar");
+                qx_strategy::capabilities::StrategyHostCapabilitiesV1::runtime_python_class(
+                    level,
+                    scoped_account_updates,
+                )
+                .map_err(PyValueError::new_err)?
+            }
+            None => qx_strategy::capabilities::StrategyHostCapabilitiesV1::runtime_python_module_function(
+                scoped_account_updates,
+            ),
+        })
+    } else if strategy.external_executable.is_some() {
+        Some(
+            qx_strategy::capabilities::StrategyHostCapabilitiesV1::runtime_external_process(
+                scoped_account_updates,
+            ),
+        )
+    } else {
+        // C ABI support is determined by the verified dynamic library exports at worker
+        // startup. Static planning must not dlopen user code or claim an inferred catalog.
+        None
+    };
+    let configured_requirements = serde_json::to_value(&strategy.required_capabilities)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let configured_requirement_status = match host_capabilities.as_ref() {
+        Some(host) => match host.validate_required(&strategy.required_capabilities) {
+            Ok(()) => serde_json::json!({"status": "satisfied"}),
+            Err(reason) => serde_json::json!({"status": "unsupported", "reason": reason}),
+        },
+        None if strategy.c_abi_library.is_some() => serde_json::json!({
+            "status": "deferred_to_verified_library_load",
+            "reason": "C ABI support is derived from verified exports before plugin construction"
+        }),
+        None => serde_json::json!({
+            "status": "not_applicable",
+            "reason": "selected strategy path has no Strategy host catalog"
+        }),
+    };
+    let strategy_declared_requirement_status = if strategy.python_module.is_some() {
+        serde_json::json!({
+            "status": "not_imported",
+            "reason": "static planning does not import user Python source; worker checks STRATEGY_MANIFEST before handler construction"
+        })
+    } else if strategy.c_abi_library.is_some() {
+        serde_json::json!({
+            "status": "deferred_to_verified_library_load",
+            "reason": "optional C ABI required-capabilities declarations are inspected together with verified exports before plugin construction"
+        })
+    } else if let Some(kind) = builtin_requirements {
+        let declared: Vec<_> = kind
+            .required_capabilities()
+            .iter()
+            .map(|capability| capability.as_str())
+            .collect();
+        let validation = host_capabilities
+            .as_ref()
+            .ok_or_else(|| {
+                PyValueError::new_err("built-in host capability catalog is unavailable")
+            })?
+            .validate_required(kind.required_capabilities());
+        serde_json::json!({
+            "status": if validation.is_ok() { "satisfied" } else { "unsupported" },
+            "required_capabilities": declared,
+            "reason": validation.err()
+        })
+    } else {
+        serde_json::json!({"status": "not_declared"})
+    };
+    serde_json::to_string(&serde_json::json!({
+        "worker": worker,
+        "strategy": strategy,
+        "host_capabilities": host_capabilities,
+        "capability_negotiation": {
+            "configured_requirements": configured_requirements,
+            "configured_requirement_status": configured_requirement_status,
+            "strategy_declared_requirement_status": strategy_declared_requirement_status
+        }
+    }))
+    .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 #[derive(serde::Deserialize)]
@@ -103,6 +313,206 @@ fn app_verify_run(outcome_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn app_read_run_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = BacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report =
+        read_run_report_v1(&outcome, &research_context(&outcome.run_id)).map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_depth_run_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = DepthBacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report = read_depth_run_report_v1(&outcome, &research_context(&outcome.run_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_provider_backtest_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: ProviderBacktestOutcome = serde_json::from_str(outcome_json).map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("Provider Bar 回测结果 JSON 无效: {error}"),
+        ))
+    })?;
+    let report =
+        read_provider_backtest_report_v1(&outcome, &research_context(&outcome.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_provider_depth_backtest_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: ProviderDepthBacktestOutcome =
+        serde_json::from_str(outcome_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("Provider 深度回测结果 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_provider_depth_backtest_report_v1(
+        &outcome,
+        &research_context(&outcome.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_account_report_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome: serde_json::Value = serde_json::from_str(outcome_json).map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多账户结果 JSON 无效: {error}"),
+        ))
+    })?;
+    let batch_id = outcome
+        .get("batch_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("multi-account-report");
+    let report =
+        read_multi_account_report_v1(&outcome, &research_context(batch_id)).map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (outcome_json, options_json=None))]
+fn app_read_multi_account_joint_report_v1(
+    outcome_json: &str,
+    options_json: Option<&str>,
+) -> PyResult<String> {
+    let outcome: qx_app::MultiAccountJointBacktestOutcome = serde_json::from_str(outcome_json)
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("联合多账户结果 JSON 无效: {error}"),
+            ))
+        })?;
+    let options = options_json
+        .map(serde_json::from_str::<MultiAccountJointReportReadOptionsV1>)
+        .transpose()
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("联合账户报告分页选项 JSON 无效: {error}"),
+            ))
+        })?
+        .unwrap_or_default();
+    let report = read_multi_account_joint_report_v1_with_options(
+        &outcome,
+        &research_context(&outcome.run_id),
+        &options,
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_report_facts_v1(outcome_json: &str) -> PyResult<String> {
+    let outcome = MultiLegBacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    let report = read_multi_leg_report_facts_v1(&outcome, &research_context(&outcome.run_id))
+        .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiLegResearchReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多腿完整研究报告请求 JSON 无效: {error}"),
+        ))
+    })?;
+    let report =
+        read_multi_leg_research_report_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_leg_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiLegEventReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多腿事件报告读取请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report =
+        read_multi_leg_event_report_page_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketEventReportReadRequestV1 = serde_json::from_str(request_json)
+        .map_err(|error| {
+        app_error(AppError::new(
+            qx_app::AppErrorCategory::InvalidInput,
+            format!("多市场事件报告读取请求 JSON 无效: {error}"),
+        ))
+    })?;
+    let report = read_multi_market_event_report_page_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_depth_event_report_page_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketDepthEventReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场深度事件报告读取请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_multi_market_depth_event_report_page_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketResearchReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场完整研究报告请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report =
+        read_multi_market_research_report_v1(&request, &research_context(&request.outcome.run_id))
+            .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn app_read_multi_market_depth_research_report_v1(request_json: &str) -> PyResult<String> {
+    let request: qx_app::MultiMarketDepthResearchReportReadRequestV1 =
+        serde_json::from_str(request_json).map_err(|error| {
+            app_error(AppError::new(
+                qx_app::AppErrorCategory::InvalidInput,
+                format!("多市场深度完整研究报告请求 JSON 无效: {error}"),
+            ))
+        })?;
+    let report = read_multi_market_depth_research_report_v1(
+        &request,
+        &research_context(&request.outcome.run_id),
+    )
+    .map_err(app_error)?;
+    serde_json::to_string(&report).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
 fn app_compare_runs(spec_json: &str) -> PyResult<String> {
     let spec = CompareRunsSpec::from_json(spec_json).map_err(app_error)?;
     compare_runs(&spec, &research_context("compare-runs"))
@@ -131,7 +541,7 @@ fn app_start_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
     let spec = RunExperimentSpec::from_json(spec_json).map_err(app_error)?;
     let context = research_context(&spec.experiment_id);
     Ok(PyRunHandle {
-        inner: NativeRun::Experiment(spec.start(context)),
+        inner: NativeRun::Experiment(Box::new(spec.start(context))),
     })
 }
 
@@ -192,6 +602,23 @@ fn app_run_multi_market_backtest(spec_json: &str) -> PyResult<String> {
     run_multi_market_backtest(&spec, &research_context(&spec.run_id))
         .and_then(|outcome| outcome.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_run_multi_account_joint_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = MultiAccountJointBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    qx_app::run_multi_account_joint_backtest(&spec, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_account_joint_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = MultiAccountJointBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiAccountJoint(spec.start(context)),
+    })
 }
 
 #[pyfunction]
@@ -298,6 +725,7 @@ fn fingerprint_bars(payload: &str) -> PyResult<String> {
             low_raw: frame.low_raw[index],
             close_raw: frame.close_raw[index],
             volume_raw: frame.volume_raw[index],
+            exact_ohlcv: frame.exact_ohlcv.as_ref().map(|values| values[index]),
         })
         .collect::<Vec<_>>();
     qx_data::fingerprint_bars(&bars).map_err(PyValueError::new_err)
@@ -437,6 +865,13 @@ unsafe extern "C" fn drop_schema_capsule(capsule: *mut pyo3::ffi::PyObject) {
 
 #[pymodule]
 fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    module.add(
+        "__schema_catalog_sha256__",
+        env!("QX_SCHEMA_CATALOG_SHA256"),
+    )?;
+    module.add("__target_triple__", env!("QX_TARGET_TRIPLE"))?;
+    account_query_preflight::register(module)?;
     ashare_corporate_actions::register(module)?;
     error_classification::register(module)?;
     numeric_bridge::register(module)?;
@@ -448,12 +883,63 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
+    module.add_function(wrap_pyfunction!(app_validate_dataset_manifest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_publish_dataset_snapshot, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_validate_strategy_execution_preflight_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(app_validate_strategy_project_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(app_plan_strategy_runtime_v1, module)?)?;
     module.add_function(wrap_pyfunction!(app_assemble_dataset_bundle, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
     strategy_callback::register(module)?;
     multi_account::register(module)?;
     module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
+    module.add_function(wrap_pyfunction!(app_read_run_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(app_read_depth_run_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_provider_backtest_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_provider_depth_backtest_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(app_read_multi_account_report_v1, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_account_joint_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_report_facts_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_research_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_leg_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_depth_event_report_page_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_research_report_v1,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_read_multi_market_depth_research_report_v1,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     risk_parity::register(module)?;
     capital_allocation::register(module)?;
@@ -467,6 +953,14 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_run_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_market_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_run_multi_account_joint_backtest,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_start_multi_account_joint_backtest,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_market_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(
         app_run_multi_market_depth_backtest,

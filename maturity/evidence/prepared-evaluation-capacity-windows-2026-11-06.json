@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-11-06T08:23:09.2157015Z",
+  "source": {
+    "commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "dirty": true
+  },
+  "environment": {
+    "os": "Microsoft Windows 11 专业版",
+    "os_version": "10.0.22631",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "target": "x86_64-pc-windows-msvc",
+    "profile": "release",
+    "feature": "bench-prepared-evaluation"
+  },
+  "command": "cargo build --release -p qx-cli --features bench-prepared-evaluation -j 1; qx-cli bench-prepared-evaluation measure <path> <batch-size> 1000",
+  "workload": {
+    "iterations_per_batch": 1000,
+    "batch_sizes": [
+      32,
+      256,
+      1024
+    ],
+    "durability": "save_prepared_evaluation (atomic replace + file sync), then load_prepared_evaluation with digest validation",
+    "isolation": "local NTFS workspace under target",
+    "process_startup_in_timing": false
+  },
+  "measurements": [
+    {
+      "batch_size": 32,
+      "exit_code": 0,
+      "benchmark": {
+        "batch_size": 32,
+        "iterations": 1000,
+        "journal_bytes": 14156,
+        "read_p50_ms": 0.16670000000000001,
+        "read_p95_ms": 0.2049,
+        "result_run_id": 1000,
+        "write_p50_ms": 1.7225000000000001,
+        "write_p95_ms": 2.2573
+      },
+      "sampled_peak_working_set_bytes": 5763072
+    },
+    {
+      "batch_size": 256,
+      "exit_code": 0,
+      "benchmark": {
+        "batch_size": 256,
+        "iterations": 1000,
+        "journal_bytes": 109985,
+        "read_p50_ms": 0.5509999999999999,
+        "read_p95_ms": 0.7038,
+        "result_run_id": 1000,
+        "write_p50_ms": 2.3329,
+        "write_p95_ms": 2.9277
+      },
+      "sampled_peak_working_set_bytes": 6590464
+    },
+    {
+      "batch_size": 1024,
+      "exit_code": 0,
+      "benchmark": {
+        "batch_size": 1024,
+        "iterations": 1000,
+        "journal_bytes": 439558,
+        "read_p50_ms": 1.8877,
+        "read_p95_ms": 2.3498,
+        "result_run_id": 1000,
+        "write_p50_ms": 4.8405000000000005,
+        "write_p95_ms": 5.7355
+      },
+      "sampled_peak_working_set_bytes": 8663040
+    }
+  ],
+  "backup_recovery_sample": {
+    "batch_size": 256,
+    "journal_bytes": 109985,
+    "recovery_read_ms": 0.9646,
+    "recovered_from_backup": true
+  },
+  "memory_measurement": {
+    "metric": "sampled_peak_working_set_bytes",
+    "sample_interval_ms": 50,
+    "limitations": "external sampling may miss brief peaks; not process peak RSS certification"
+  },
+  "limitations": [
+    "Single local Windows machine and filesystem; results are observational, not statistical release thresholds.",
+    "No SQLite/PostgreSQL or cross-host load was measured.",
+    "No fixed production traffic mix, backlog replay, or end-to-end latency was measured."
+  ]
+}

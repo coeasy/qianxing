@@ -53,7 +53,7 @@ fn optional_money_field(snapshot: &AccountSnapshot, index: usize) -> Option<i128
 #[test]
 fn uncomputed_money_is_not_the_same_state_as_computed_zero() {
     for (index, name) in OPTIONAL_MONEY_FIELDS.iter().enumerate() {
-        let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+        let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
         let mut computed_zero = uncomputed.clone();
         set_optional_money_field(&mut computed_zero, index, Some(0));
         assert_eq!(
@@ -155,12 +155,14 @@ const POSITION_ROW_INSTRUMENT: &str = "BTCUSDT-PERP.BINANCE";
 pub(super) fn position_row(instrument: &str) -> PositionSnapshot {
     PositionSnapshot {
         instrument: InstrumentId::parse(instrument).expect("valid instrument"),
+        settlement_currency: None,
         quantity_raw: Quantity::from_i64(3).raw(),
         today_quantity_raw: Quantity::from_i64(3).raw(),
         average_price_raw: Price::from_i64(101).raw(),
         mark_price_raw: Price::from_i64(105).raw(),
         unrealized_pnl_raw: None,
         margin_raw: None,
+        exact_amounts: None,
     }
 }
 
@@ -187,7 +189,7 @@ fn position_money_field(row: &PositionSnapshot, index: usize) -> Option<i128> {
 fn uncomputed_position_money_is_not_the_same_state_as_computed_zero() {
     let instrument = InstrumentId::parse(POSITION_ROW_INSTRUMENT).expect("valid instrument");
     for (index, name) in OPTIONAL_POSITION_MONEY_FIELDS.iter().enumerate() {
-        let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+        let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
         uncomputed.equity_raw = Some(100);
         // 账户标量刻意算成 7：稳定 JSON 里同名的两处印字必须能分清谁是持仓行。
         uncomputed.margin_raw = Some(7);
@@ -315,7 +317,7 @@ fn default_position_row_reports_no_money() {
     let instrument = InstrumentId::parse(POSITION_ROW_INSTRUMENT).expect("valid instrument");
     let mut row = blank_row;
     row.instrument = instrument.clone();
-    let mut untouched = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+    let mut untouched = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
     untouched.equity_raw = Some(100);
     untouched.positions.insert(instrument.clone(), row);
     let mut reported_zero = untouched.clone();

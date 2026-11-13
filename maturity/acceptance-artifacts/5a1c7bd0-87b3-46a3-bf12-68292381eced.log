@@ -1,0 +1,8 @@
+md files scanned: 96
+files carrying uuid citations: 3
+uuid citations total: 204
+distinct uuids cited: 148
+distinct uuids missing on disk: 1
+DEAD CITATIONS: 2
+  DEAD docs/changelog/current.md:258 be0f3ba8-5d42-4460-a19f-2e218efd7b4a
+  DEAD docs/changelog/current.md:258 be0f3ba8-5d42-4460-a19f-2e218efd7b4a

@@ -71,6 +71,139 @@ fn config_explain_and_doctor_still_emit_machine_readable_json() {
     }
 }
 
+#[test]
+fn doctor_exposes_the_offline_product_capability_catalog_and_detail_by_stable_id() {
+    let summary = Command::new(qx_cli_binary())
+        .args(["doctor", "--capabilities", "--json"])
+        .output()
+        .expect("启动 qx-cli 能力目录查询失败");
+    let stderr = String::from_utf8_lossy(&summary.stderr);
+    assert_eq!(summary.status.code(), Some(0), "能力目录查询失败: {stderr}");
+    let summary_json: serde_json::Value =
+        serde_json::from_slice(&summary.stdout).expect("--json stdout 必须只有一份能力目录 JSON");
+    let entries = summary_json["capabilities"]
+        .as_array()
+        .expect("能力目录轻索引应为数组");
+    assert_eq!(entries.len(), 16);
+    assert!(entries
+        .iter()
+        .any(|entry| entry["id"] == "qx.venue.binance_spot"));
+
+    let detail = Command::new(qx_cli_binary())
+        .args([
+            "doctor",
+            "--capabilities",
+            "--capability-id",
+            "qx.venue.binance_spot",
+            "--json",
+        ])
+        .output()
+        .expect("启动 qx-cli 能力详情查询失败");
+    let stderr = String::from_utf8_lossy(&detail.stderr);
+    assert_eq!(detail.status.code(), Some(0), "能力详情查询失败: {stderr}");
+    let detail_json: serde_json::Value =
+        serde_json::from_slice(&detail.stdout).expect("能力详情 --json stdout 必须只有一份 JSON");
+    let capability = &detail_json["capability"];
+    assert_eq!(capability["id"], "qx.venue.binance_spot");
+    assert!(capability["matrix"]["limitations"].as_array().is_some());
+    assert!(capability["maturity_evidence"].as_array().is_some());
+}
+
+#[test]
+fn doctor_capability_query_filters_venue_product_and_account_mode() {
+    let output = Command::new(qx_cli_binary())
+        .args([
+            "doctor",
+            "--capabilities",
+            "--venue",
+            "BINANCE",
+            "--product",
+            "perpetual",
+            "--account-mode",
+            "hedge",
+            "--json",
+        ])
+        .output()
+        .expect("启动 qx-cli 交易范围能力查询失败");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "范围查询失败: {stderr}");
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("范围查询 --json 必须只有一份 JSON");
+    assert_eq!(result["schema_version"], 2);
+    assert_eq!(result["match_count"], 1);
+    let matched = &result["matches"][0];
+    assert_eq!(matched["capability_id"], "qx.venue.ccxt_process");
+    assert_eq!(matched["scope"]["venue"], "BINANCE");
+    assert_eq!(matched["scope"]["product"], "perpetual");
+    assert_eq!(matched["scope"]["account_mode"], "hedge");
+    assert_eq!(matched["scope"]["status"], "implemented-unverified");
+    assert_eq!(matched["capability"]["matrix"]["sandbox"], "unsupported");
+
+    let account_model = Command::new(qx_cli_binary())
+        .args([
+            "doctor",
+            "--capabilities",
+            "--venue",
+            "BITGET",
+            "--product",
+            "spot",
+            "--account-model",
+            "UTA",
+            "--margin-mode",
+            "cash",
+            "--json",
+        ])
+        .output()
+        .expect("启动 qx-cli 账户体系和保证金模式查询失败");
+    let stderr = String::from_utf8_lossy(&account_model.stderr);
+    assert_eq!(
+        account_model.status.code(),
+        Some(0),
+        "账户体系/保证金查询失败: {stderr}"
+    );
+    let result: serde_json::Value = serde_json::from_slice(&account_model.stdout)
+        .expect("账户体系/保证金查询 --json 必须只有一份 JSON");
+    assert_eq!(result["match_count"], 1);
+    assert_eq!(result["matches"][0]["scope"]["venue"], "BITGET");
+    assert_eq!(result["matches"][0]["scope"]["margin_modes"][0], "cash");
+}
+
+#[test]
+fn doctor_capability_query_rejects_unknown_ids_and_mixed_runtime_config_mode() {
+    let unknown = Command::new(qx_cli_binary())
+        .args([
+            "doctor",
+            "--capabilities",
+            "--capability-id",
+            "qx.venue.unknown",
+        ])
+        .output()
+        .expect("启动 qx-cli 未知能力 ID 查询失败");
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(
+        stderr.contains("能力 ID 不存在"),
+        "错误应指出未知 ID: {stderr}"
+    );
+
+    for arguments in [
+        vec!["doctor", "--capability-id", "qx.venue.binance_spot"],
+        vec!["doctor", "runtime.json", "--capabilities"],
+    ] {
+        let output = Command::new(qx_cli_binary())
+            .args(&arguments)
+            .output()
+            .expect("启动 qx-cli 参数冲突检查失败");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "参数组合必须在运行前被拒绝: {}\n{}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 /// 人读形状是门禁脚本的取数点，删旗标不能顺手改掉它。
 #[test]
 fn config_validate_keeps_its_human_pass_line() {

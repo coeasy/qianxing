@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-market-depth-research-report-v1.json",
+  "title": "Multi-market Depth Research Report V1",
+  "description": "Replay-verified bounded report for a shared-account multi-market L1/L2 run. Raw financial and book values are decimal strings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "account_id", "instrument", "spec_fingerprint", "custom_strategy_identities", "verification", "summary", "equity", "fills", "events", "markets"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "account_id": { "type": "string", "minLength": 1 },
+    "instrument": { "type": "string", "minLength": 1 },
+    "spec_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "custom_strategy_identities": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["strategy_id", "strategy_version", "source_sha256"],
+        "properties": {
+          "strategy_id": { "type": "string", "minLength": 1 },
+          "strategy_version": { "type": "string", "minLength": 1 },
+          "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "verification": { "$ref": "https://qianxing.local/schemas/verification-result-v1.json" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "equity": { "$ref": "#/$defs/equityRows" },
+    "fills": { "$ref": "#/$defs/fillRows" },
+    "events": { "$ref": "#/$defs/eventPage" },
+    "markets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/market" }
+    }
+  },
+  "$defs": {
+    "rows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "truncated": { "type": "boolean" },
+        "rows": { "type": "array" }
+      }
+    },
+    "equityRows": {
+      "allOf": [
+        { "$ref": "#/$defs/rows" },
+        {
+          "properties": {
+            "rows": {
+              "maxItems": 1000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["ts", "equity_raw", "equity_exact"],
+                "properties": {
+                  "ts": { "type": "string", "pattern": "^[0-9]+$" },
+                  "equity_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+                  "equity_exact": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "fillRows": {
+      "allOf": [
+        { "$ref": "#/$defs/rows" },
+        { "properties": { "rows": { "maxItems": 200, "items": { "type": "object" } } } }
+      ]
+    },
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_raw", "qty_raw"],
+      "properties": {
+        "price_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "qty_raw": { "type": "string", "pattern": "^-?[0-9]+$" }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ts", "sequence", "bids", "asks", "levels_truncated"],
+      "properties": {
+        "ts": { "type": "integer", "minimum": 0 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "bids": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/level" } },
+        "asks": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/level" } },
+        "levels_truncated": { "type": "boolean" }
+      }
+    },
+    "depth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "truncated": { "type": "boolean" },
+        "rows": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/snapshot" } }
+      }
+    },
+    "market": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instrument", "source", "content_hash", "data_fingerprint", "fill_count", "quality_status", "dataset_quality", "data_tier", "source_end_ts", "depth", "strategy_ids"],
+      "properties": {
+        "instrument": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "data_fingerprint": { "type": "string", "pattern": "^depth:(l1|l2):.+:[0-9a-f]{16}$" },
+        "fill_count": { "type": "integer", "minimum": 0 },
+        "quality_status": { "type": "string", "minLength": 1 },
+        "dataset_quality": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["manifest_fingerprint", "manifest_sha256", "quality_report", "status"],
+              "properties": {
+                "manifest_fingerprint": { "type": ["string", "null"], "minLength": 1 },
+                "manifest_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                "quality_report": { "type": "object" },
+                "status": { "enum": ["clean", "issues"] }
+              }
+            }
+          ]
+        },
+        "data_tier": { "enum": ["l1", "l2"] },
+        "source_end_ts": { "type": "integer", "minimum": 0 },
+        "depth": { "$ref": "#/$defs/depth" },
+        "strategy_ids": { "type": "array", "maxItems": 16, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "eventPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "run_id", "total", "offset", "truncated", "rows", "fill_count", "fill_sequence_sha256", "replayed_ledger_entries"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "total": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "rows": { "type": "array", "maxItems": 300, "items": { "type": "object" } },
+        "fill_count": { "type": "integer", "minimum": 0 },
+        "fill_sequence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "replayed_ledger_entries": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["run_id", "account_id", "settlement_currency", "markets_total", "execution_assumptions", "successful_fills", "fills", "pending_orders", "equity_points", "event_count", "account", "metrics", "result_hash", "data_fingerprint", "spec_fingerprint", "markets"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "account_id": { "type": "string" },
+        "settlement_currency": { "type": "string", "minLength": 1 },
+        "markets_total": { "type": "integer", "minimum": 2, "maximum": 32 },
+        "execution_assumptions": { "type": "object" },
+        "successful_fills": { "type": "integer", "minimum": 0 },
+        "fills": { "type": "integer", "minimum": 0 },
+        "pending_orders": { "type": "integer", "minimum": 0 },
+        "equity_points": { "type": "integer", "minimum": 1, "maximum": 5000000 },
+        "event_count": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "account": { "type": "object" },
+        "metrics": {
+          "type": "object",
+          "required": ["return_bps", "max_drawdown_bps", "final_equity_raw"],
+          "properties": {
+            "return_bps": { "type": "integer" },
+            "max_drawdown_bps": { "type": "integer", "minimum": 0 },
+            "final_equity_raw": { "type": "string", "pattern": "^-?[0-9]+$" }
+          }
+        },
+        "metrics_exact": {
+          "type": "object",
+          "properties": {
+            "equity": {
+              "type": "object",
+              "required": ["initial", "final", "return", "return_bps", "max_drawdown", "max_drawdown_bps"],
+              "properties": {
+                "initial": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+                "final": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+                "return": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+                "return_bps": { "type": "string", "pattern": "^-?[0-9]+$" },
+                "max_drawdown": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+                "max_drawdown_bps": { "type": "string", "pattern": "^[0-9]+$" },
+                "input_precision": { "type": "string", "minLength": 1 }
+              }
+            },
+            "turnover": {
+              "type": "object",
+              "required": ["amount", "currency"],
+              "properties": {
+                "amount": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+                "currency": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            },
+            "fees_by_currency": {
+              "type": "object",
+              "additionalProperties": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" }
+            },
+            "legacy_raw_projection": {
+              "type": "object",
+              "required": ["fees_raw", "turnover_raw"],
+              "properties": {
+                "fees_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+                "turnover_raw": { "type": "string", "pattern": "^-?[0-9]+$" }
+              },
+              "additionalProperties": false
+            },
+            "input_precision": { "type": "string", "minLength": 1 }
+          }
+        },
+        "result_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "data_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "spec_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "markets": { "type": "array", "minItems": 2, "maxItems": 32, "items": { "type": "object" } }
+      }
+    }
+  }
+}

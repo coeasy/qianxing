@@ -42,11 +42,21 @@ inline constexpr std::string_view kValidateDataset = "/app/validate-dataset";
 inline constexpr std::string_view kBacktest = "/app/backtest";
 inline constexpr std::string_view kProviderBacktest = "/app/provider-backtest";
 inline constexpr std::string_view kProviderDepthBacktest = "/app/provider-depth-backtest";
+inline constexpr std::string_view kReadProviderReport = "/app/read-provider-report";
+inline constexpr std::string_view kReadProviderDepthReport = "/app/read-provider-depth-report";
+inline constexpr std::string_view kReadMultiAccountJointReport =
+    "/app/read-multi-account-joint-report";
+inline constexpr std::string_view kReadMultiLegReport = "/app/read-multi-leg-report";
 inline constexpr std::string_view kBuiltinStrategyCatalog = "/app/strategies";
+inline constexpr std::string_view kBuiltinStrategyRecipes = "/app/strategy-recipes";
 inline constexpr std::string_view kApplicationCapabilities = "/app/capabilities";
+inline constexpr std::string_view kProductCapabilityQuery = "/app/capabilities/query";
 inline constexpr std::string_view kProviderPreflight = "/app/capabilities/providers/preflight";
 inline constexpr std::string_view kMultiAccountBacktest = "/app/multi-account-backtest";
 inline constexpr std::string_view kMultiAccountBacktestStart = "/app/multi-account-backtest/start";
+inline constexpr std::string_view kMultiAccountJointBacktest = "/app/multi-account-joint-backtest";
+inline constexpr std::string_view kMultiAccountJointBacktestStart =
+    "/app/multi-account-joint-backtest/start";
 inline constexpr std::string_view kMultiAccountDepthBacktest = "/app/multi-account-depth-backtest";
 inline constexpr std::string_view kMultiAccountDepthBacktestStart =
     "/app/multi-account-depth-backtest/start";
@@ -57,6 +67,7 @@ inline constexpr std::string_view kMultiMarketDepthBacktestStart = "/app/multi-m
 inline constexpr std::string_view kBacktestStart = "/app/backtest/start";
 inline constexpr std::string_view kVerify = "/app/verify";
 inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
+inline constexpr std::string_view kResearchArtifacts = "/app/research-artifacts";
 inline constexpr std::string_view kCompareRuns = "/app/compare-runs";
 inline constexpr std::string_view kPlanRiskParity = "/app/plan-risk-parity";
 inline constexpr std::string_view kPlanAlgoExecution = "/app/plan-algo-execution";
@@ -88,22 +99,28 @@ inline constexpr std::string_view kRunStatusTemplate = "/app/runs/{run_id}";
 inline constexpr std::string_view kRunEventsTemplate = "/app/runs/{run_id}/events";
 inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cancel";
 inline constexpr std::string_view kLiveEvents = "/events/live";
+inline constexpr std::string_view kAccountActivity = "/account/activity";
 
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 46> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 56> kDeclaredRoutes = {
     kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
+    kReadProviderReport, kReadProviderDepthReport, kReadMultiAccountJointReport,
+    kReadMultiLegReport,
     kMultiAccountBacktest,  kMultiAccountBacktestStart,
+    kMultiAccountJointBacktest, kMultiAccountJointBacktestStart,
     kMultiAccountDepthBacktest, kMultiAccountDepthBacktestStart,
     kMultiMarketBacktest,   kMultiMarketBacktestStart, kBuiltinStrategyCatalog,
+    kBuiltinStrategyRecipes,
     kMultiMarketDepthBacktest, kMultiMarketDepthBacktestStart,
     kApplicationCapabilities,
+    kProductCapabilityQuery,
     kProviderPreflight,
     kMultiMarketExperiment, kMultiMarketExperimentStart,
     kMultiMarketDepthExperiment, kMultiMarketDepthExperimentStart,
     kBacktestStart,         kVerify,
-    kVerifyDepth,           kCompareRuns,
+    kVerifyDepth,           kResearchArtifacts, kCompareRuns,
     kPlanRiskParity,
     kPlanAlgoExecution,
     kPlanCapitalAllocation,
@@ -116,8 +133,28 @@ inline constexpr std::array<std::string_view, 46> kDeclaredRoutes = {
     kMultiLegExperiment,    kMultiLegExperimentStart,
     kPaperCommands,         kLiveCommands,
     kRunStatusTemplate,     kRunEventsTemplate, kRunCancelTemplate,
-    kLiveEvents,
+    kLiveEvents, kAccountActivity,
 };
+
+inline std::string encode_query_component(std::string_view value) {
+    constexpr char hex[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(value.size());
+    for (const unsigned char byte : value) {
+        const bool unreserved = (byte >= 'a' && byte <= 'z') ||
+                                (byte >= 'A' && byte <= 'Z') ||
+                                (byte >= '0' && byte <= '9') || byte == '-' ||
+                                byte == '_' || byte == '.' || byte == '~';
+        if (unreserved) {
+            encoded.push_back(static_cast<char>(byte));
+        } else {
+            encoded.push_back('%');
+            encoded.push_back(hex[byte >> 4]);
+            encoded.push_back(hex[byte & 0x0F]);
+        }
+    }
+    return encoded;
+}
 
 // Fill the `{run_id}` placeholder of a declared template. The path the client
 // actually requests and the template the gate compares against the qx-api
@@ -160,8 +197,16 @@ public:
         return get(routes::kBuiltinStrategyCatalog);
     }
 
+    AppResponse builtin_strategy_recipes() const {
+        return get(routes::kBuiltinStrategyRecipes);
+    }
+
     AppResponse application_capabilities() const {
         return get(routes::kApplicationCapabilities);
+    }
+
+    AppResponse query_product_capability(std::string_view query_json) const {
+        return post(routes::kProductCapabilityQuery, query_json);
     }
 
     AppResponse provider_preflight(std::string_view data_request_json) const {
@@ -184,12 +229,36 @@ public:
         return post(routes::kProviderDepthBacktest, spec_json);
     }
 
+    AppResponse read_provider_run_report(std::string_view outcome_json) const {
+        return post(routes::kReadProviderReport, outcome_json);
+    }
+
+    AppResponse read_provider_depth_run_report(std::string_view outcome_json) const {
+        return post(routes::kReadProviderDepthReport, outcome_json);
+    }
+
+    AppResponse read_multi_account_joint_report(std::string_view outcome_json) const {
+        return post(routes::kReadMultiAccountJointReport, outcome_json);
+    }
+
+    AppResponse read_multi_leg_research_report(std::string_view request_json) const {
+        return post(routes::kReadMultiLegReport, request_json);
+    }
+
     AppResponse run_multi_account_backtest(std::string_view spec_json) const {
         return post(routes::kMultiAccountBacktest, spec_json);
     }
 
     AppResponse start_multi_account_backtest(std::string_view spec_json) const {
         return post(routes::kMultiAccountBacktestStart, spec_json);
+    }
+
+    AppResponse run_multi_account_joint_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountJointBacktest, spec_json);
+    }
+
+    AppResponse start_multi_account_joint_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountJointBacktestStart, spec_json);
     }
 
     AppResponse run_multi_account_depth_backtest(std::string_view spec_json) const {
@@ -331,12 +400,77 @@ public:
         return get(path);
     }
 
+    AppResponse get_account_activity(
+        std::string_view account_id, std::string_view venue_id,
+        std::optional<std::uint64_t> after = std::nullopt,
+        std::optional<std::uint64_t> before = std::nullopt,
+        std::uint32_t limit = 50,
+        std::optional<std::string_view> run_id = std::nullopt,
+        std::optional<std::string_view> strategy_id = std::nullopt,
+        std::optional<std::string_view> correlation_id = std::nullopt,
+        std::optional<std::string_view> signal_id = std::nullopt,
+        std::optional<std::string_view> intent_id = std::nullopt) const {
+        if (account_id.empty() || venue_id.empty()) {
+            return {400, R"({"error":"account_id and venue_id are required"})"};
+        }
+        if (after && before) {
+            return {400, R"({"error":"after and before are mutually exclusive"})"};
+        }
+        if (limit == 0 || limit > 300) {
+            return {400, R"({"error":"limit must be between 1 and 300"})"};
+        }
+        const auto is_blank = [](std::string_view value) {
+            for (const char ch : value) {
+                if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\f' &&
+                    ch != '\v') {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if ((run_id && is_blank(*run_id)) || (strategy_id && is_blank(*strategy_id)) ||
+            (correlation_id && is_blank(*correlation_id)) || (signal_id && is_blank(*signal_id)) ||
+            (intent_id && is_blank(*intent_id))) {
+            return {400, R"({"error":"run_id, strategy_id, signal_id, intent_id and correlation_id must be non-empty"})"};
+        }
+        std::string path(routes::kAccountActivity);
+        path += "?account_id=" + routes::encode_query_component(account_id);
+        path += "&venue_id=" + routes::encode_query_component(venue_id);
+        if (after) {
+            path += "&after=" + std::to_string(*after);
+        }
+        if (before) {
+            path += "&before=" + std::to_string(*before);
+        }
+        if (run_id) {
+            path += "&run_id=" + routes::encode_query_component(*run_id);
+        }
+        if (strategy_id) {
+            path += "&strategy_id=" + routes::encode_query_component(*strategy_id);
+        }
+        if (signal_id) {
+            path += "&signal_id=" + routes::encode_query_component(*signal_id);
+        }
+        if (intent_id) {
+            path += "&intent_id=" + routes::encode_query_component(*intent_id);
+        }
+        if (correlation_id) {
+            path += "&correlation_id=" + routes::encode_query_component(*correlation_id);
+        }
+        path += "&limit=" + std::to_string(limit);
+        return get(path);
+    }
+
     AppResponse cancel_run(std::string_view run_id) const {
         return post(run_cancel_path(run_id), "{}");
     }
 
     AppResponse verify_depth_run(std::string_view outcome_json) const {
         return post(routes::kVerifyDepth, outcome_json);
+    }
+
+    AppResponse research_artifacts(std::string_view outcome_json) const {
+        return post(routes::kResearchArtifacts, outcome_json);
     }
 
     // The body is a versioned TradeControlSpec. The Rust API authenticates the

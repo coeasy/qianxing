@@ -6,33 +6,33 @@
 schema_version: 1
 kind: backtest-baseline
 generated_by: tools/backtest_baseline.py
-generated_at_unix: 1791606474
+generated_at_unix: 1794003503
 environment:
   os: Windows
   arch: AMD64
-  python: 3.13.14
+  python: 3.13.13
   binary: qx-cli.exe
-  profile: debug
+  profile: release
 fixture:
   name: quickstart-bar-frame-btcusdt
-  data_fingerprint: dataset-bundle:8bf50b57f8204ab9
-  config_fingerprint: be3aca2d6056abaa8d003be2230fee5b001dad9ab33e4f996729588eb0276551
+  data_fingerprint: barframe:613fdc1dc0b779e7
+  config_fingerprint: c9a77cbf428448df460436fa38ea829450ed45feb45c4f8f3b8d112c90c20938
   inputs:
     qianxing.bar-frame.example.json: 6be98878c53b2b65e1cfd58314d271848e9746de370a35164b0f155c573cbf12
-    qianxing.binance.spot.spec.json: 6f10597c3e4ae9546ec928a4e7be9d0ce1c7762553486111e6fc55f63edbf9d1
-    qianxing.dataset-bundle.bar-frame.example.json: 3ca6c875ff39ed8d04e8206e701ffccc2fbfc2f1a4e5ccf7e841ca376cdcf3d4
-    qianxing.runtime.json: bd6535263eea6782afdfed1d80364585a58b2d1a936b7f620b7c6c6a7a355de4
-result_hash: 26fdd6b52d020700
+    qianxing.binance.spot.spec.json: 27552fe2e9a0077e2c10b2943dfa1c5e1574a4b38984d7eeda2122169c9ddf7b
+    qianxing.dataset-bundle.bar-frame.example.json: 84efc597267bbc85b5b0da7929535725497e0115c381dc92990fa7eda17ec11f
+    qianxing.runtime.json: d749632a061e285f85c62112234a9edbd558bc5c626942a35af26d36ca6701d9
+result_hash: 67c176977ad0f81d
 artifacts:
-  equity: 6856055f14a87f482c4d9f8dc3507a4fd6732d08243b77910df6c384028eedde
-  fills: 9f8f78cdb8c5fda870b65f4700c98ca68cc59b6953a306e72c97fe2852a0afa1
-  run_manifest: aedfd24426ce713883485e6e9ed8914a3330cf54b148031dfd1d936d3f31126d
-  summary: 98a1805d150299af3c5e53fac9768846c59a03e2d25a6a57c3389f8679e4ff95
+  equity: 0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c
+  fills: c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6
+  run_manifest: cffd9ffda641af0cce242bd819dd2871d863b23603271e272770747fa07960ac
+  summary: 049275cd47b76d64d02e49fb6ea20ac5dbaea2ccba98bd51e0eb326324c5cb88
 timing:
-  quickstart_seconds: 0.364
-  backtest_seconds: 0.324
+  quickstart_seconds: 0.519
+  backtest_seconds: 0.530
 memory:
-  peak_rss_bytes: 13041664
+  peak_rss_bytes: 9121792
   method: win32_GetProcessMemoryInfo_PeakWorkingSetSize
   sampling_interval_ms: 20
 notes: >-

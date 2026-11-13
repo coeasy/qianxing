@@ -18,6 +18,8 @@ pub enum Permission {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum CommandKind {
     SubmitOrder,
+    SubmitOrderGroup,
+    AmendOrder,
     PauseStrategy,
     ResumeStrategy,
     ChangeRiskLimit,
@@ -25,31 +27,46 @@ pub enum CommandKind {
     ReconcileAccount,
     RetryJob,
     SwitchVenue,
+    CancelOrderGroup,
 }
 
 impl CommandKind {
     fn required_permission(&self) -> Permission {
         match self {
             Self::RetryJob => Permission::Research,
-            Self::SubmitOrder | Self::ReconcileAccount => Permission::Trading,
-            Self::PauseStrategy | Self::ResumeStrategy | Self::CancelOrder => Permission::Trading,
+            Self::SubmitOrder
+            | Self::SubmitOrderGroup
+            | Self::AmendOrder
+            | Self::ReconcileAccount => Permission::Trading,
+            Self::PauseStrategy
+            | Self::ResumeStrategy
+            | Self::CancelOrder
+            | Self::CancelOrderGroup => Permission::Trading,
             Self::ChangeRiskLimit | Self::SwitchVenue => Permission::Admin,
         }
     }
 
-    /// 这一份构建里**真的有执行者**的命令类型：提交入口按它裁决，其余变体在仓内没有任何
+    /// 这一份构建里**真的有执行者**的命令类型：提交/改单/撤单 worker 按它裁决，其余变体在仓内没有任何
     /// 派发者，接受了只会以 `Accepted` 永远停在审计里（新增变体默认落在"拒绝"这一侧）。
     /// 判定式与执行者文件的对应关系由常驻用例 `control_command_kinds_match_executors` 钉住。
     pub fn executed(&self) -> bool {
         matches!(
             self,
-            Self::SubmitOrder | Self::PauseStrategy | Self::ResumeStrategy
+            Self::SubmitOrder
+                | Self::SubmitOrderGroup
+                | Self::AmendOrder
+                | Self::CancelOrder
+                | Self::CancelOrderGroup
+                | Self::PauseStrategy
+                | Self::ResumeStrategy
         )
     }
 
-    /// 全部 8 颗变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
-    pub const ALL: [CommandKind; 8] = [
+    /// 全部变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
+    pub const ALL: [CommandKind; 11] = [
         Self::SubmitOrder,
+        Self::SubmitOrderGroup,
+        Self::AmendOrder,
         Self::PauseStrategy,
         Self::ResumeStrategy,
         Self::ChangeRiskLimit,
@@ -57,10 +74,12 @@ impl CommandKind {
         Self::ReconcileAccount,
         Self::RetryJob,
         Self::SwitchVenue,
+        Self::CancelOrderGroup,
     ];
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlCommand {
     pub command_id: u64,
     pub request_id: String,
@@ -71,6 +90,178 @@ pub struct ControlCommand {
     pub payload: BTreeMap<String, String>,
     pub permission: Permission,
     pub dry_run: bool,
+}
+
+/// CancelOrder 的路由声明。账户和 venue 必须由实时 worker 再与 EventLog 中的权威订单核对。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelOrderTarget {
+    pub client_order_id: u64,
+    pub account_id: String,
+    pub venue_id: String,
+}
+
+/// CancelOrderGroup resolves its group ID against the worker's durable order-group store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelOrderGroupTarget {
+    pub group_id: String,
+    pub account_id: String,
+    pub venue_id: String,
+}
+
+fn parse_cancel_order_group_target(
+    command: &ControlCommand,
+) -> Result<CancelOrderGroupTarget, ControlError> {
+    if command.kind != CommandKind::CancelOrderGroup {
+        return Err(ControlError::Invalid(
+            "控制命令不是 CancelOrderGroup".into(),
+        ));
+    }
+    let group_id = command.target.trim();
+    if group_id.is_empty() || group_id.len() > 128 {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup target 必须是 1 至 128 字符的 group_id".into(),
+        ));
+    }
+    if command.payload.len() != 2
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+    {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup payload 必须且只能包含 account_id 和 venue_id".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "CancelOrderGroup account_id/venue_id 不能为空".into(),
+        ));
+    }
+    Ok(CancelOrderGroupTarget {
+        group_id: group_id.to_owned(),
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+    })
+}
+
+pub fn cancel_order_group_target_from_command(
+    command: &ControlCommand,
+) -> Result<CancelOrderGroupTarget, ControlError> {
+    command.validate()?;
+    parse_cancel_order_group_target(command)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AmendOrderTarget {
+    pub client_order_id: u64,
+    pub account_id: String,
+    pub venue_id: String,
+    pub order: Order,
+}
+
+fn parse_cancel_order_target(command: &ControlCommand) -> Result<CancelOrderTarget, ControlError> {
+    if command.kind != CommandKind::CancelOrder {
+        return Err(ControlError::Invalid("控制命令不是 CancelOrder".into()));
+    }
+    let client_order_id = command
+        .target
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            ControlError::Invalid("CancelOrder target 必须是正整数 client_order_id".into())
+        })?;
+    if command.payload.len() != 2
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+    {
+        return Err(ControlError::Invalid(
+            "CancelOrder payload 必须且只能包含 account_id 和 venue_id".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "CancelOrder account_id/venue_id 不能为空".into(),
+        ));
+    }
+    Ok(CancelOrderTarget {
+        client_order_id,
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+    })
+}
+
+/// Parse the explicit routing identity for a cancellation command. The execution worker must
+/// independently bind this identity to the authoritative order snapshot before contacting a venue.
+pub fn cancel_order_target_from_command(
+    command: &ControlCommand,
+) -> Result<CancelOrderTarget, ControlError> {
+    command.validate()?;
+    parse_cancel_order_target(command)
+}
+
+fn parse_amend_order_target(command: &ControlCommand) -> Result<AmendOrderTarget, ControlError> {
+    if command.kind != CommandKind::AmendOrder {
+        return Err(ControlError::Invalid("控制命令不是 AmendOrder".into()));
+    }
+    let client_order_id = command
+        .target
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| ControlError::Invalid("AmendOrder target 必须是正整数订单 ID".into()))?;
+    if command.payload.len() != 3
+        || !command.payload.contains_key("account_id")
+        || !command.payload.contains_key("venue_id")
+        || !command.payload.contains_key("order_json")
+    {
+        return Err(ControlError::Invalid(
+            "AmendOrder payload 必须且只能包含 account_id、venue_id、order_json".into(),
+        ));
+    }
+    let account_id = command.payload["account_id"].trim();
+    let venue_id = command.payload["venue_id"].trim();
+    if account_id.is_empty() || venue_id.is_empty() {
+        return Err(ControlError::Invalid(
+            "AmendOrder account_id/venue_id 不能为空".into(),
+        ));
+    }
+    let order: Order = serde_json::from_str(&command.payload["order_json"])
+        .map_err(|error| ControlError::Invalid(format!("AmendOrder order_json 非法: {error}")))?;
+    order.validate().map_err(|error| {
+        ControlError::Invalid(format!("AmendOrder order_json 校验失败: {error}"))
+    })?;
+    if order.client_id != client_order_id
+        || order.account_id != account_id
+        || !order
+            .instrument
+            .venue
+            .as_str()
+            .eq_ignore_ascii_case(venue_id)
+        || !matches!(
+            order.status,
+            OrderStatus::Accepted | OrderStatus::Working | OrderStatus::PartiallyFilled
+        )
+    {
+        return Err(ControlError::Invalid(
+            "AmendOrder target、账户、交易所或活动订单状态不匹配".into(),
+        ));
+    }
+    Ok(AmendOrderTarget {
+        client_order_id,
+        account_id: account_id.to_owned(),
+        venue_id: venue_id.to_owned(),
+        order,
+    })
+}
+
+pub fn amend_order_target_from_command(
+    command: &ControlCommand,
+) -> Result<AmendOrderTarget, ControlError> {
+    command.validate()?;
+    parse_amend_order_target(command)
 }
 
 impl ControlCommand {
@@ -85,6 +276,15 @@ impl ControlCommand {
         if !has_permission(self.permission, self.kind.required_permission()) {
             return Err(ControlError::Forbidden);
         }
+        if self.kind == CommandKind::CancelOrder {
+            parse_cancel_order_target(self)?;
+        }
+        if self.kind == CommandKind::CancelOrderGroup {
+            parse_cancel_order_group_target(self)?;
+        }
+        if self.kind == CommandKind::AmendOrder {
+            parse_amend_order_target(self)?;
+        }
         Ok(())
     }
 
@@ -93,11 +293,24 @@ impl ControlCommand {
     /// `permission` 是审计字段，不是认证凭据；生产入口必须把外部身份解析成
     /// `granted` 后调用本方法，不能只调用无身份的 `validate`。
     pub fn validate_as(&self, granted: Permission) -> Result<(), ControlError> {
-        self.validate()?;
         if !has_permission(granted, self.permission)
             || !has_permission(granted, self.kind.required_permission())
         {
             return Err(ControlError::Forbidden);
+        }
+        self.validate()?;
+        self.validate_submission_target()
+    }
+
+    fn validate_submission_target(&self) -> Result<(), ControlError> {
+        if matches!(
+            &self.kind,
+            CommandKind::PauseStrategy | CommandKind::ResumeStrategy
+        ) && self.target == "*"
+        {
+            return Err(ControlError::Invalid(
+                "strategy lifecycle commands require an explicit worker target".into(),
+            ));
         }
         Ok(())
     }
@@ -197,8 +410,38 @@ pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
     Ok(order)
 }
 
+/// Parse and bind an atomic OCO/Bracket intent to an audited control command.
+pub fn order_group_from_submit_command(
+    command: &ControlCommand,
+) -> QxResult<qx_core::OrderGroupIntent> {
+    command.validate().map_err(|error| {
+        QxError::BusinessViolation(format!("SubmitOrderGroup 控制命令非法: {error:?}"))
+    })?;
+    if command.kind != CommandKind::SubmitOrderGroup {
+        return Err(QxError::BusinessViolation(
+            "控制命令不是 SubmitOrderGroup".into(),
+        ));
+    }
+    if command.payload.len() != 1 || !command.payload.contains_key("order_group_json") {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrderGroup payload 必须且只能包含 order_group_json".into(),
+        ));
+    }
+    let group: qx_core::OrderGroupIntent =
+        serde_json::from_str(&command.payload["order_group_json"]).map_err(|error| {
+            QxError::BusinessViolation(format!("order_group_json 非法: {error}"))
+        })?;
+    group.validate().map_err(QxError::BusinessViolation)?;
+    if command.target != group.group_id {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrderGroup target 与 group_id 不一致".into(),
+        ));
+    }
+    Ok(group)
+}
+
 /// 控制面终态命令的保留上界。`commands` / `requests` / `audit` 三格只追加不退场，长跑进程
-/// 每受理一条命令就永久留下三处条目；越过上界按「终态时间最旧」退场（V13 R1-H 重落 V11 R5-1，
+/// 每受理一条命令就永久留下三处条目；越过上界按「终态审计写入顺序最早」退场（V13 R1-H 重落 V11 R5-1，
 /// 那份交付面被合流 c07ad22 按上游树整体裁定覆盖掉了）。
 ///
 /// 只退**终态**命令：`pending()` 靠 `finalized_command_ids()` 判待办，退掉一条未终态的命令等于
@@ -222,10 +465,23 @@ pub struct ControlPlane {
     commands: BTreeMap<u64, ControlCommand>,
     requests: BTreeMap<String, u64>,
     audit: Vec<AuditRecord>,
+    #[serde(default)]
+    strategy_lifecycle: BTreeMap<String, StrategyLifecycleRecord>,
+    #[serde(default)]
+    strategy_lifecycle_legacy_incomplete: bool,
     /// 累计退场量。`#[serde(default)]`：合流之前落盘的控制面 JSON 没有这一格，恢复时必须
     /// 读得回来，否则一次升级就拒读自己的历史。
     #[serde(default)]
     retired: RetirementSummary,
+}
+
+/// Latest successful lifecycle command, retained independently of bounded audit history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyLifecycleRecord {
+    pub paused: bool,
+    pub command_id: u64,
+    pub ts: u64,
 }
 
 impl ControlPlane {
@@ -254,6 +510,8 @@ impl ControlPlane {
         command: ControlCommand,
         ts: u64,
     ) -> Result<AuditRecord, ControlError> {
+        // Reject new ambiguous commands without making legacy stored commands unreadable.
+        command.validate_submission_target()?;
         // 只有提交入口裁决"有没有执行者"：`ControlCommand::validate` 同时被恢复路径调用，
         // 把这条规则放进 `validate` 会让历史队列里已存在的旧命令在重启时读不回来。
         if !command.kind.executed() {
@@ -293,6 +551,18 @@ impl ControlPlane {
         &self.audit
     }
 
+    pub fn strategy_lifecycle(&self, worker_id: &str) -> Option<&StrategyLifecycleRecord> {
+        self.strategy_lifecycle.get(worker_id)
+    }
+
+    /// Legacy snapshots with retired audit cannot prove the last lifecycle state.
+    /// Start unrecorded workers paused until an explicit resume establishes it.
+    pub fn strategy_pause_state(&self, worker_id: &str) -> Option<bool> {
+        self.strategy_lifecycle(worker_id)
+            .map(|state| state.paused)
+            .or_else(|| self.strategy_lifecycle_legacy_incomplete.then_some(true))
+    }
+
     /// 待办命令。判据与 `execute` 的 `AlreadyFinal` 同一口径：终态审计记录一旦落下，
     /// 这条命令就不再是待办。
     ///
@@ -324,7 +594,7 @@ impl ControlPlane {
         self.retire_overflow_with(FINALIZED_COMMAND_RETENTION)
     }
 
-    /// 上界之外的终态命令按终态时间最旧退场，命令、请求索引、审计记录三格同时删。
+    /// 上界之外的终态命令按终态审计记录的追加顺序最早退场，命令、请求索引、审计记录三格同时删。
     ///
     /// 第一句就是规模判据：`finalized ⊆ commands`，所以命令数没越过上界时终态数也不可能越过，
     /// 直接返回。少了这句，每次 `submit`/`execute` 都要重扫整段审计并重建一个 `BTreeSet`，
@@ -337,21 +607,17 @@ impl ControlPlane {
         if finalized.len() <= retention {
             return;
         }
-        // 每条终态命令至多一条终态记录（`execute` 对已终态命令回 `AlreadyFinal`），
-        // 所以「按终态记录的 ts 升序」就是「按退场优先级升序」，同 ts 按 command_id 定序。
-        let mut finalized_at: Vec<(u64, u64)> = self
+        // 系统时钟可能回拨或节点间有偏移，`ts` 不是追加顺序。审计向量保留了
+        // ControlPlane 接受记录的先后；按终态记录在此向量中的顺序退场，避免时钟漂移
+        // 让较新的命令先于较旧命令淘汰。`execute` 保证每条命令至多一条终态记录。
+        let finalized_in_order: Vec<u64> = self
             .audit
             .iter()
             .filter(|record| record.status.is_final())
-            .map(|record| (record.ts, record.command_id))
+            .map(|record| record.command_id)
             .collect();
-        finalized_at.sort_unstable();
-        let overflow = finalized_at.len() - retention;
-        let victims: BTreeSet<u64> = finalized_at
-            .into_iter()
-            .take(overflow)
-            .map(|(_, command_id)| command_id)
-            .collect();
+        let overflow = finalized_in_order.len() - retention;
+        let victims: BTreeSet<u64> = finalized_in_order.into_iter().take(overflow).collect();
         let mut removed_records = 0u64;
         self.audit.retain(|record| {
             if victims.contains(&record.command_id) {
@@ -407,6 +673,23 @@ impl ControlPlane {
             result_code,
             ts,
         };
+        if status == CommandStatus::Executed && !command.dry_run && command.target != "*" {
+            let paused = match command.kind {
+                CommandKind::PauseStrategy => Some(true),
+                CommandKind::ResumeStrategy => Some(false),
+                _ => None,
+            };
+            if let Some(paused) = paused {
+                self.strategy_lifecycle.insert(
+                    command.target.clone(),
+                    StrategyLifecycleRecord {
+                        paused,
+                        command_id,
+                        ts,
+                    },
+                );
+            }
+        }
         self.audit.push(record.clone());
         self.retire_overflow();
         Ok(record)
@@ -417,7 +700,13 @@ impl ControlPlane {
     }
 
     pub fn from_json(input: &str) -> Result<Self, String> {
-        let plane: Self = serde_json::from_str(input).map_err(|error| error.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        let legacy_lifecycle = value.get("strategy_lifecycle").is_none();
+        let mut plane: Self = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        if legacy_lifecycle && plane.retired.retired_commands > 0 {
+            plane.strategy_lifecycle_legacy_incomplete = true;
+        }
         for (command_id, command) in &plane.commands {
             if *command_id != command.command_id {
                 return Err("命令索引与 command_id 不一致".into());
@@ -477,6 +766,72 @@ impl ControlPlane {
                 return Err(format!("命令 {} 缺少审计记录", command_id));
             }
         }
+        // Migrate legacy documents from retained successful commands in execution order.
+        let mut latest = BTreeMap::new();
+        for record in &plane.audit {
+            let command = &plane.commands[&record.command_id];
+            if record.status != CommandStatus::Executed || command.dry_run || command.target == "*"
+            {
+                continue;
+            }
+            let paused = match command.kind {
+                CommandKind::PauseStrategy => true,
+                CommandKind::ResumeStrategy => false,
+                _ => continue,
+            };
+            latest.insert(
+                command.target.clone(),
+                StrategyLifecycleRecord {
+                    paused,
+                    command_id: record.command_id,
+                    ts: record.ts,
+                },
+            );
+        }
+        for (worker_id, record) in latest {
+            if let Some(stored) = plane.strategy_lifecycle.get(&worker_id) {
+                if plane.commands.contains_key(&stored.command_id) && stored != &record {
+                    return Err(format!(
+                        "strategy lifecycle state disagrees with audit for {worker_id}"
+                    ));
+                }
+            } else if legacy_lifecycle {
+                plane.strategy_lifecycle.insert(worker_id, record);
+            } else {
+                return Err(format!(
+                    "strategy lifecycle state is missing for {worker_id}"
+                ));
+            }
+        }
+        if plane
+            .strategy_lifecycle
+            .keys()
+            .any(|id| id.trim().is_empty() || id == "*")
+        {
+            return Err("strategy lifecycle state requires explicit worker IDs".into());
+        }
+        for (worker_id, state) in &plane.strategy_lifecycle {
+            if let Some(command) = plane.commands.get(&state.command_id) {
+                let kind_matches = if state.paused {
+                    command.kind == CommandKind::PauseStrategy
+                } else {
+                    command.kind == CommandKind::ResumeStrategy
+                };
+                if !kind_matches
+                    || command.dry_run
+                    || command.target != *worker_id
+                    || !plane.audit.iter().any(|record| {
+                        record.command_id == state.command_id
+                            && record.status == CommandStatus::Executed
+                            && record.ts == state.ts
+                    })
+                {
+                    return Err(format!(
+                        "invalid strategy lifecycle binding for {worker_id}"
+                    ));
+                }
+            }
+        }
         Ok(plane)
     }
 }
@@ -495,13 +850,150 @@ fn has_permission(actual: Permission, required: Permission) -> bool {
 mod tests {
     use super::*;
 
+    fn protection_order(
+        client_id: u64,
+        kind: qx_core::ConditionalOrderKind,
+        trigger: &str,
+    ) -> Order {
+        Order {
+            client_id,
+            instrument: qx_core::InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: qx_core::Side::Sell,
+            qty: qx_core::Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: qx_core::Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: Some(qx_core::ExactOrderAmounts {
+                quantity: qx_core::ExactDecimal::parse("0.01").unwrap(),
+                limit_price: None,
+                filled: qx_core::ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: qx_core::ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(qx_core::ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: Some(qx_core::TriggerPriceType::Last),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        }
+    }
+
+    #[test]
+    fn submit_order_group_command_binds_audited_target_and_group_payload() {
+        let group = qx_core::OrderGroupIntent::new(
+            "main-btc-protection",
+            qx_core::OrderGroupKind::Oco,
+            qx_core::OrderGroupExecution::NativeRequired,
+            vec![
+                qx_core::OrderGroupLegIntent {
+                    role: qx_core::OrderGroupLegRole::TakeProfit,
+                    order: protection_order(71, qx_core::ConditionalOrderKind::TakeProfit, "70000"),
+                },
+                qx_core::OrderGroupLegIntent {
+                    role: qx_core::OrderGroupLegRole::StopLoss,
+                    order: protection_order(72, qx_core::ConditionalOrderKind::StopLoss, "60000"),
+                },
+            ],
+        )
+        .unwrap();
+        let mut command = command(Permission::Trading);
+        command.kind = CommandKind::SubmitOrderGroup;
+        command.target = group.group_id.clone();
+        command.payload = BTreeMap::from([(
+            "order_group_json".into(),
+            serde_json::to_string(&group).unwrap(),
+        )]);
+
+        assert_eq!(order_group_from_submit_command(&command).unwrap(), group);
+        let mut mismatched = command;
+        mismatched.target = "another-group".into();
+        assert!(order_group_from_submit_command(&mismatched).is_err());
+    }
+
+    #[test]
+    fn cancel_order_group_command_binds_group_and_route_without_extra_payload() {
+        let mut command = command(Permission::Trading);
+        command.kind = CommandKind::CancelOrderGroup;
+        command.target = "main-btc-protection".into();
+        command.payload = BTreeMap::from([
+            ("account_id".into(), "main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]);
+        let target = cancel_order_group_target_from_command(&command).unwrap();
+        assert_eq!(target.group_id, "main-btc-protection");
+        assert_eq!(target.account_id, "main");
+        assert_eq!(target.venue_id, "BINANCE");
+
+        let mut extra = command.clone();
+        extra.payload.insert("order_id".into(), "71".into());
+        assert!(cancel_order_group_target_from_command(&extra).is_err());
+        let mut empty_group = command;
+        empty_group.target = "  ".into();
+        assert!(cancel_order_group_target_from_command(&empty_group).is_err());
+    }
+
+    fn amend_command(order: &Order) -> ControlCommand {
+        let mut value = command(Permission::Trading);
+        value.kind = CommandKind::AmendOrder;
+        value.target = order.client_id.to_string();
+        value.payload = BTreeMap::from([
+            ("account_id".into(), order.account_id.clone()),
+            (
+                "venue_id".into(),
+                order.instrument.venue.as_str().to_string(),
+            ),
+            ("order_json".into(), serde_json::to_string(order).unwrap()),
+        ]);
+        value
+    }
+
+    #[test]
+    fn amend_order_command_binds_target_route_and_active_order_snapshot() {
+        let order = Order {
+            client_id: 7,
+            instrument: qx_core::InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: qx_core::Side::Buy,
+            qty: qx_core::Quantity::from_i64(3),
+            limit: Some(qx_core::Price::from_i64(101)),
+            status: OrderStatus::PartiallyFilled,
+            filled: qx_core::Quantity::from_i64(1),
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let command = amend_command(&order);
+        let target = amend_order_target_from_command(&command).unwrap();
+        assert_eq!(target.client_order_id, 7);
+        assert_eq!(target.account_id, "main");
+        assert_eq!(target.venue_id, "BINANCE");
+        assert_eq!(target.order, order);
+
+        let mut mismatch = command.clone();
+        mismatch.target = "8".into();
+        assert!(amend_order_target_from_command(&mismatch).is_err());
+        let mut wrong_route = command.clone();
+        wrong_route.payload.insert("venue_id".into(), "OKX".into());
+        assert!(amend_order_target_from_command(&wrong_route).is_err());
+        let mut terminal = order;
+        terminal.status = OrderStatus::Filled;
+        assert!(amend_order_target_from_command(&amend_command(&terminal)).is_err());
+    }
+
     fn command(permission: Permission) -> ControlCommand {
         ControlCommand {
             command_id: 1,
             request_id: "req-1".into(),
             operator_id: "operator".into(),
             reason: "incident recovery".into(),
-            // PauseStrategy 而不是 CancelOrder：提交入口只接受有派发者的命令类型。
+            // PauseStrategy 有策略 worker 派发者；CancelOrder 也已由交易所执行 worker 派发。
             kind: CommandKind::PauseStrategy,
             target: "strategy-1".into(),
             payload: BTreeMap::new(),
@@ -526,6 +1018,13 @@ mod tests {
             plane.submit(duplicate_id, 12),
             Err(ControlError::DuplicateCommand(1))
         );
+    }
+
+    #[test]
+    fn control_command_wire_rejects_unknown_fields() {
+        let mut value = serde_json::to_value(command(Permission::Trading)).unwrap();
+        value["dry_rnu"] = serde_json::Value::Bool(false);
+        assert!(serde_json::from_value::<ControlCommand>(value).is_err());
     }
 
     #[test]
@@ -642,6 +1141,34 @@ mod tests {
         assert_eq!(restored.audit().len(), 4);
     }
 
+    #[test]
+    fn retirement_uses_audit_append_order_when_timestamps_move_backwards() {
+        let mut plane = ControlPlane::default();
+        for index in 1..=4u64 {
+            plane.submit(numbered(index), 100 + index).unwrap();
+        }
+        for (command_id, ts) in [(1, 400), (2, 300), (3, 200), (4, 100)] {
+            plane
+                .execute(command_id, ts, |_| Ok("APPLIED".into()))
+                .unwrap();
+        }
+
+        plane.retire_overflow_with(2);
+
+        assert!(
+            plane.command(1).is_none(),
+            "oldest finalized command must retire first"
+        );
+        assert!(
+            plane.command(2).is_none(),
+            "second-oldest finalized command must retire"
+        );
+        assert!(plane.command(3).is_some());
+        assert!(plane.command(4).is_some());
+        assert_eq!(plane.retirement().retired_commands, 2);
+        assert!(ControlPlane::from_json(&plane.to_json().unwrap()).is_ok());
+    }
+
     /// 未终态的命令永不退场：把它退掉等于静默丢掉一条已受理、还没人执行的命令。
     #[test]
     fn retirement_never_drops_a_pending_command() {
@@ -695,5 +1222,117 @@ mod tests {
         let restored = ControlPlane::from_json(&legacy).unwrap();
         assert_eq!(restored.retirement(), RetirementSummary::default());
         assert_eq!(restored.audit().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod durable_lifecycle_tests {
+    use super::*;
+
+    fn command(id: u64, kind: CommandKind, dry_run: bool) -> ControlCommand {
+        ControlCommand {
+            command_id: id,
+            request_id: format!("lifecycle-{id}"),
+            operator_id: "ops".into(),
+            reason: "lifecycle recovery".into(),
+            kind,
+            target: "worker-a".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run,
+        }
+    }
+
+    fn execute(plane: &mut ControlPlane, id: u64, kind: CommandKind, dry_run: bool, success: bool) {
+        plane.submit(command(id, kind, dry_run), id).unwrap();
+        plane
+            .execute(id, id, |_| {
+                if success {
+                    Ok("ok".into())
+                } else {
+                    Err("failed".into())
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn durable_lifecycle_survives_audit_retirement_and_restart() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        plane.retire_overflow_with(0);
+        assert!(plane.audit().is_empty());
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        assert!(restored.strategy_lifecycle("worker-a").unwrap().paused);
+        assert!(restored.strategy_lifecycle("worker-b").is_none());
+    }
+
+    #[test]
+    fn durable_lifecycle_legacy_retirement_requires_explicit_resume() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        plane.retire_overflow_with(0);
+        let mut value = serde_json::to_value(&plane).unwrap();
+        value.as_object_mut().unwrap().remove("strategy_lifecycle");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("strategy_lifecycle_legacy_incomplete");
+        let mut migrated = ControlPlane::from_json(&value.to_string()).unwrap();
+        assert_eq!(migrated.strategy_pause_state("worker-a"), Some(true));
+        execute(&mut migrated, 2, CommandKind::ResumeStrategy, false, true);
+        let restored = ControlPlane::from_json(&migrated.to_json().unwrap()).unwrap();
+        assert_eq!(restored.strategy_pause_state("worker-a"), Some(false));
+        assert_eq!(restored.strategy_pause_state("worker-b"), Some(true));
+    }
+
+    #[test]
+    fn durable_lifecycle_ignores_failed_and_dry_run_commands() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        execute(&mut plane, 2, CommandKind::ResumeStrategy, true, true);
+        execute(&mut plane, 3, CommandKind::ResumeStrategy, false, false);
+        assert_eq!(plane.strategy_lifecycle("worker-a").unwrap().command_id, 1);
+        execute(&mut plane, 4, CommandKind::ResumeStrategy, false, true);
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        assert!(!restored.strategy_lifecycle("worker-a").unwrap().paused);
+    }
+
+    #[test]
+    fn durable_lifecycle_migrates_legacy_and_rejects_conflicting_projection() {
+        let mut plane = ControlPlane::default();
+        execute(&mut plane, 1, CommandKind::PauseStrategy, false, true);
+        let mut value = serde_json::to_value(&plane).unwrap();
+        value.as_object_mut().unwrap().remove("strategy_lifecycle");
+        let migrated = ControlPlane::from_json(&value.to_string()).unwrap();
+        assert!(migrated.strategy_lifecycle("worker-a").unwrap().paused);
+        let mut value = serde_json::to_value(&migrated).unwrap();
+        value["strategy_lifecycle"]["worker-a"]["paused"] = false.into();
+        assert!(ControlPlane::from_json(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn durable_lifecycle_rejects_new_wildcard_without_breaking_legacy_reads() {
+        let mut plane = ControlPlane::default();
+        let mut wildcard = command(1, CommandKind::PauseStrategy, false);
+        wildcard.target = "*".into();
+        assert!(wildcard.validate().is_ok());
+        assert!(wildcard.validate_as(Permission::Trading).is_err());
+        assert!(plane.submit(wildcard.clone(), 1).is_err());
+        // A previously accepted wildcard remains readable but does not invent per-worker state.
+        let mut legacy = ControlPlane::default();
+        let accepted = AuditRecord {
+            command_id: 1,
+            request_id: wildcard.request_id.clone(),
+            operator_id: wildcard.operator_id.clone(),
+            command_digest: wildcard.digest(),
+            status: CommandStatus::Accepted,
+            result_code: "accepted".into(),
+            ts: 1,
+        };
+        legacy.requests.insert(wildcard.request_id.clone(), 1);
+        legacy.commands.insert(1, wildcard);
+        legacy.audit.push(accepted);
+        assert!(ControlPlane::from_json(&legacy.to_json().unwrap()).is_ok());
     }
 }

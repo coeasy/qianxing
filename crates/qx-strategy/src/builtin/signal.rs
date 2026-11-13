@@ -6,6 +6,38 @@ fn required_indicator<T>(value: Option<T>, name: &str) -> Result<T, String> {
 }
 
 impl BuiltinStrategy {
+    fn sma_cross_signal(&self) -> Result<Option<i8>, String> {
+        let fast_divisor =
+            i128::try_from(self.config.fast_window).map_err(|_| "SMA 快线窗口超出整数范围")?;
+        let slow_divisor =
+            i128::try_from(self.config.slow_window).map_err(|_| "SMA 慢线窗口超出整数范围")?;
+        let fast_previous = self
+            .previous_fast_sma_sum
+            .checked_div(fast_divisor)
+            .ok_or("SMA 快线前值计算溢出")?;
+        let fast_current = self
+            .fast_sma_sum
+            .checked_div(fast_divisor)
+            .ok_or("SMA 快线当前值计算溢出")?;
+        let slow_previous = self
+            .previous_slow_sma_sum
+            .checked_div(slow_divisor)
+            .ok_or("SMA 慢线前值计算溢出")?;
+        let slow_current = self
+            .slow_sma_sum
+            .checked_div(slow_divisor)
+            .ok_or("SMA 慢线当前值计算溢出")?;
+        Ok(
+            if fast_previous <= slow_previous && fast_current > slow_current {
+                Some(1)
+            } else if fast_previous >= slow_previous && fast_current < slow_current {
+                Some(-1)
+            } else {
+                None
+            },
+        )
+    }
+
     pub(super) fn signal(&mut self) -> Result<Option<i8>, String> {
         let required = self.required_bars();
         if self.bars.len() < required {
@@ -22,27 +54,15 @@ impl BuiltinStrategy {
                 _ => Err("双腿策略类型缺少信号实现".into()),
             };
         }
+        if self.config.kind == BuiltinStrategyKind::SmaCross {
+            return self.sma_cross_signal();
+        }
         self.close_scratch.clear();
         self.close_scratch
             .extend(self.bars.iter().map(|bar| bar.close));
         let closes = self.close_scratch.as_slice();
         let signal = match self.config.kind {
-            BuiltinStrategyKind::SmaCross => {
-                let fast_now = required_indicator(sma(closes, self.config.fast_window), "SMA")?;
-                let slow_now = required_indicator(sma(closes, self.config.slow_window), "SMA")?;
-                let previous = closes
-                    .get(..closes.len().saturating_sub(1))
-                    .ok_or("SMA 前一时点数据缺失")?;
-                let fast_prev = required_indicator(sma(previous, self.config.fast_window), "SMA")?;
-                let slow_prev = required_indicator(sma(previous, self.config.slow_window), "SMA")?;
-                if fast_prev <= slow_prev && fast_now > slow_now {
-                    Some(1)
-                } else if fast_prev >= slow_prev && fast_now < slow_now {
-                    Some(-1)
-                } else {
-                    None
-                }
-            }
+            BuiltinStrategyKind::SmaCross => unreachable!("SMA cross uses rolling sums"),
             BuiltinStrategyKind::EmaCross => {
                 let (fast_prev, fast_now) = required_indicator(
                     ema_previous_current(closes, self.config.fast_window),

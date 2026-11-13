@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing-ccxt-readonly-provider-backtest-acceptance",
+  "observed_at_utc": "2026-10-23T05:37:59.9130832+08:00",
+  "exchange": "binance",
+  "market_type": "spot",
+  "network": "official_spot_testnet",
+  "instrument": "BTC/USDT.BINANCE",
+  "access": {
+    "ccxt_version": "4.5.78",
+    "credentials_present": false,
+    "private_account_calls": false,
+    "orders_sent": false,
+    "market_data_calls": "anonymous public OHLCV and market metadata only"
+  },
+  "build": {
+    "version": "0.2.1",
+    "revision": "9b6fb9f-dirty",
+    "target": "x86_64-pc-windows-msvc",
+    "profile": "release",
+    "binary": "target/release/qx-cli.exe",
+    "binary_sha256": "450f317e0102e7e745bec9a11c70a359fb7feb6447d3314db3575f4718e9c000"
+  },
+  "steps": [
+    {
+      "name": "ccxt-fetch-ohlcv",
+      "outcome": "pass",
+      "details": "Fetched 14 one-minute Testnet bars and saved the BarFrame.",
+      "dataset_version": "barframe-json-v1+sha256:c1d342cf77e1a8d43cf4864139093929223d10b7f454f01121f6babf6508e5a1",
+      "data_fingerprint": "77ccf58a80e33165"
+    },
+    {
+      "name": "ccxt-market-spec",
+      "outcome": "pass",
+      "details": "Loaded Binance Spot Testnet market metadata and saved normalized market specification."
+    },
+    {
+      "name": "backtest-builtin-sma-cross",
+      "outcome": "pass",
+      "details": "Rust backtest completed from CCXT-sourced BarFrame and provider market specification.",
+      "bars": 14,
+      "result_hash": "eb1bbd01108c05f3"
+    },
+    {
+      "name": "same-content-backtest-replay",
+      "outcome": "pass",
+      "details": "Repeated the backtest with identical input; immutable dataset snapshot and result hash were reused.",
+      "result_hash": "eb1bbd01108c05f3"
+    },
+    {
+      "name": "refreshed-provider-snapshot",
+      "outcome": "pass",
+      "details": "A subsequent provider fetch returned 15 bars; a distinct content-addressed dataset version was registered and the second backtest completed.",
+      "dataset_version": "barframe-json-v1+sha256:967afb7a1377f1706de72df97b31233b2903e84bad86d2d3a9e57078c29940ac",
+      "data_fingerprint": "5f64f4e9dab81d09",
+      "result_hash": "7492a3d097d87553"
+    },
+    {
+      "name": "interactive-research-report",
+      "outcome": "pass",
+      "details": "Generated offline HTML and SVG artifacts after the CLI re-read and recomputed the Testnet BarFrame identity.",
+      "input_check": "verified",
+      "formats": [
+        "HTML",
+        "SVG"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-bars-2026-10-23.json",
+      "sha256": "34e50fdf2910d630bc8985834c4a852ba6502d21365d952a6b386f042751a19a",
+      "bytes": 1808,
+      "instrument": "BTC/USDT.BINANCE",
+      "source": "ccxt:binance:BTC/USDT:1m",
+      "bars": 14
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-bars-refresh-2026-10-23.json",
+      "sha256": "d1f01f84b405f7ad00d1a30066302cb036117dcc905e0f357bf88fbfa831738f",
+      "bytes": 1920,
+      "instrument": "BTC/USDT.BINANCE",
+      "source": "ccxt:binance:BTC/USDT:1m",
+      "bars": 15
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-market-spec-2026-10-23.json",
+      "sha256": "28d5b959a5a656a793faef84a365fcf73772ab6f5a1c00d31b5b18bb479cd073",
+      "bytes": 484,
+      "instrument": null,
+      "source": null,
+      "bars": null
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-research.html",
+      "sha256": "d9fbf5a7374d7ee56754612d26c3d654f2e96fa392084ffdf26391c86dd1116c",
+      "bytes": 23597
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-research.equity.svg",
+      "sha256": "7f574a8a0a37839461d3e0e2cb8bfca04a92e1bfae9802b1f137142e049d0986",
+      "bytes": 843
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-research.fills.svg",
+      "sha256": "c6cf94843f25d914766dd7e48b1d57eca66697d525034768ca284f213529e3ba",
+      "bytes": 218
+    },
+    {
+      "path": "maturity/evidence/binance-testnet-ccxt-research.monthly.svg",
+      "sha256": "882f9cd34894c65148e60071a3cc4e8600739603ab469e44bdc2b69f991f20ba",
+      "bytes": 2175
+    }
+  ],
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "reason": "Anonymous public data and deterministic backtest do not test authenticated account, order submission, recovery, or reconciliation."
+  },
+  "limitations": [
+    "No private account or order API was called.",
+    "No supplier revision-history ledger was provided; this run proves current anonymous OHLCV and market-spec ingestion, not historical PIT revision import.",
+    "Market data is real public Testnet data; backtest execution is local simulation, not live execution."
+  ],
+  "research_report": {
+    "outcome": "pass",
+    "input_identity_recomputed": null,
+    "verification": "verified",
+    "html": "maturity/evidence/binance-testnet-ccxt-research.html",
+    "assets": [
+      {
+        "path": "maturity/evidence/binance-testnet-ccxt-research.html",
+        "sha256": "d9fbf5a7374d7ee56754612d26c3d654f2e96fa392084ffdf26391c86dd1116c",
+        "bytes": 23597
+      },
+      {
+        "path": "maturity/evidence/binance-testnet-ccxt-research.equity.svg",
+        "sha256": "7f574a8a0a37839461d3e0e2cb8bfca04a92e1bfae9802b1f137142e049d0986",
+        "bytes": 843
+      },
+      {
+        "path": "maturity/evidence/binance-testnet-ccxt-research.fills.svg",
+        "sha256": "c6cf94843f25d914766dd7e48b1d57eca66697d525034768ca284f213529e3ba",
+        "bytes": 218
+      },
+      {
+        "path": "maturity/evidence/binance-testnet-ccxt-research.monthly.svg",
+        "sha256": "882f9cd34894c65148e60071a3cc4e8600739603ab469e44bdc2b69f991f20ba",
+        "bytes": 2175
+      }
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+examined path citations: 4617
+  exact tracked hit: 2685
+  case-mismatched (unique variant): 0
+  ambiguous (multiple variants): 0
+  local-only (untracked but on this disk): 150
+  dead (absent from the index and this disk): 1782
+closure exact+case+ambiguous+local+dead == examined: True
+distinct dead spellings: 906 -> distinct basenames: 764
+dead rows in changelog/archive prose: 1187
+dead rows in live documents: 595
+dead rows by cited directory (top 15):
+  DEAD-DIR logs 669
+  DEAD-DIR maturity 109
+  DEAD-DIR backtests 65
+  DEAD-DIR tests 52
+  DEAD-DIR qx-api\src 40
+  DEAD-DIR src 37
+  DEAD-DIR docs 35
+  DEAD-DIR qx-app\tests 31
+  DEAD-DIR qx-runtime\src 27
+  DEAD-DIR qx-adapter\src 24
+  DEAD-DIR crates\qx-cli\tests\unit 23
+  DEAD-DIR qx-app\src\tests 21
+  DEAD-DIR src\tests 19
+  DEAD-DIR .. 18
+  DEAD-DIR qx-cli\src 18
+  DEAD cpp/README.md:10 include/qianxing_app.hpp
+  DEAD cpp/README.md:22 include/qianxing_ring.hpp
+  DEAD cpp/README.md:5 include/qianxing_strategy.h
+  DEAD cpp/README.md:6 examples/jsonl_strategy.cpp
+  DEAD deploy/README.md:1339 logs/s770_pass32_paper_submit_terminal.txt
+  DEAD deploy/README.md:1379 logs/s377_pass17_probe_read_open.txt
+  DEAD deploy/README.md:1379 logs/s381_read_open_after.txt
+  DEAD deploy/README.md:1381 logs/s379_api_projection_before.txt
+  DEAD deploy/README.md:1381 logs/s380_api_projection_after.txt
+  DEAD deploy/README.md:1383 logs/s381_read_open_after.txt
+  DEAD deploy/README.md:1387 logs/s406_pass18_backend_switch_probe_before.txt
+  DEAD deploy/README.md:1389 logs/s407_pass18_backend_switch_probe_after.txt
+  DEAD deploy/README.md:1400 logs/s403_pass18_steady_probe_flat.txt
+  DEAD deploy/README.md:1400 logs/s404_pass18_steady_probe_segmented_vs_flat.txt
+  DEAD deploy/README.md:1400 logs/s405_pass18_steady_probe_cross_worker.txt
+  DEAD deploy/README.md:185 logs/s734_pass31_default_path_probe.txt
+  DEAD deploy/README.md:209 logs/s744_pass31_standalone_exe_probe.txt
+  DEAD deploy/README.md:210 logs/s752_pass31_standalone_fast_backtest.txt
+  DEAD deploy/README.md:213 logs/s743_pass31_builtin_layer_mutation.txt
+  DEAD deploy/README.md:213 logs/s753_pass31_funnel_mutation.txt
+  DEAD deploy/README.md:214 logs/s755_pass31_funnel_mutation.txt
+  DEAD deploy/README.md:216 logs/s756_pass31_lookup_parser_mutation.txt
+  DEAD deploy/README.md:217 logs/s779_pass32_lookup_mount_mutation.txt
+  DEAD deploy/README.md:41 logs/s686_pass28_release_surface_probe.txt
+  DEAD deploy/README.md:44 logs/s686_pass28_release_surface_probe.txt
+  DEAD deploy/README.md:44 logs/s686_pass28_release_surface_probe.txt
+  DEAD deploy/README.md:44 logs/s691_pass28_before_fix_error_wall.txt
+  DEAD deploy/README.md:549 logs/s523_pass22_probe_doc_routes.txt
+  DEAD deploy/README.md:549 logs/s531_pass22_doc_routes_after.txt
+  DEAD deploy/README.md:594 crates/qx-cli/src/pipeline_metrics_report.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:407 strategy_worker/admission.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:427 workers/strategy_worker/execution_updates/replay.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:429 execution_updates/prepared_evaluation.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:431 execution_updates/cursor_state.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:433 execution_updates/execution_facts.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:437 execution_updates/checkpoint.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:445 report_read/model.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:447 report_read/multi_market_events.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:449 report_read/standard.rs
+  DEAD docs/architecture-local-server-refactor-review-2026-10-28.md:451 report_read/single_event.rs
+dead rows printed: first 40 of 1782 (the whole roster is in the by-directory face)

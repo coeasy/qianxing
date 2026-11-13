@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "environment": "sandbox",
+  "api": {
+    "bind": "127.0.0.1:8080",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {},
+    "data_providers": [
+      {
+        "provider_id": "ccxt-okx-1m",
+        "version": "ccxt-history-v1",
+        "adapter": {
+          "kind": "ccxt",
+          "config_path": "qianxing.ccxt.exchange.example.json"
+        },
+        "data_kinds": [
+          "Bar"
+        ],
+        "asset_classes": [
+          "crypto"
+        ],
+        "frequencies": [
+          "1m"
+        ],
+        "auth_scope": "public",
+        "rate_limit_per_second": 5,
+        "freshness_seconds": 60,
+        "historical_start": 0,
+        "historical_end": 18446744073709551615,
+        "realtime": false,
+        "priority": 0,
+        "quality_score": 80,
+        "cost_score": 1
+      }
+    ]
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-okx-dryrun\\acceptance-data",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "ccxt-market-main",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.exchange.example.json",
+      "symbols": [
+        "BTC/USDT:USDT.OKX"
+      ],
+      "credential_env": null
+    },
+    {
+      "id": "ccxt-execution-main",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.exchange.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null,
+      "instrument_spec_path": "D:\\aex_work\\qianxing\\deploy\\qianxing.ccxt.okx.perpetual.spec.json"
+    },
+    {
+      "id": "ccxt-spread-recovery-main",
+      "role": "spread_recovery",
+      "enabled": false,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.exchange.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null,
+      "instrument_spec_path": "D:\\aex_work\\qianxing\\deploy\\qianxing.ccxt.okx.perpetual.spec.json"
+    },
+    {
+      "id": "ccxt-reconciler-main",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.exchange.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null
+    },
+    {
+      "id": "strategy-main",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": null,
+      "symbols": [
+        "BTC/USDT:USDT.OKX"
+      ],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-hedge",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": null,
+      "symbols": [
+        "BTC/USDT:USDT.OKX"
+      ],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-okx-dryrun\\scheduler.json",
+    "jobs_path": "D:\\aex_work\\qianxing\\deploy\\deploy\\qianxing.scheduler.jobs.example.json",
+    "job_queue_path": "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-okx-dryrun\\job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "version": "ccxt-strategy-v1",
+    "max_orders": 1000,
+    "account_id": "main",
+    "venue_id": "okx",
+    "instrument": "BTC/USDT:USDT.OKX",
+    "target_qty": 0,
+    "product": "perpetual",
+    "margin_mode": "cross",
+    "position_mode": "one_way",
+    "leverage": 3,
+    "allow_short": true
+  },
+  "strategies": [
+    {
+      "id": "strategy-main",
+      "version": "ccxt-strategy-v1",
+      "max_orders": 1000,
+      "account_id": "main",
+      "venue_id": "okx",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "target_qty": 0,
+      "live_enabled": true,
+      "live_timeframe": "1m",
+      "live_history_limit": 200,
+      "live_closed_only": true,
+      "builtin_strategy": "ema_cross",
+      "builtin_quantity": 1000000000,
+      "builtin_fast_window": 5,
+      "builtin_slow_window": 20,
+      "bars_snapshot_path": "data/qianxing-ccxt-live/btc-usdt-perp.bar-frame.json",
+      "product": "perpetual",
+      "margin_mode": "cross",
+      "position_mode": "one_way",
+      "leverage": 3,
+      "allow_short": true
+    },
+    {
+      "id": "strategy-hedge",
+      "version": "ccxt-hedge-v1",
+      "max_orders": 1000,
+      "account_id": "main",
+      "venue_id": "okx",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "target_qty": 0,
+      "live_enabled": true,
+      "live_timeframe": "1m",
+      "live_history_limit": 200,
+      "live_closed_only": true,
+      "builtin_strategy": "ema_cross",
+      "builtin_quantity": 1000000000,
+      "builtin_fast_window": 5,
+      "builtin_slow_window": 20,
+      "bars_snapshot_path": "data/qianxing-ccxt-live/btc-usdt-perp.bar-frame.json",
+      "product": "perpetual",
+      "margin_mode": "isolated",
+      "position_mode": "hedge",
+      "leverage": 3,
+      "allow_short": true
+    }
+  ],
+  "shutdown_timeout_ms": 30000
+}

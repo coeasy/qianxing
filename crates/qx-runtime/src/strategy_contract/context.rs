@@ -50,6 +50,9 @@ impl StrategyContext {
         request_id: impl Into<String>,
         instrument: &InstrumentId,
         bars: Option<StrategyContractBars>,
+        positions_exact: BTreeMap<String, String>,
+        cash_exact: BTreeMap<String, String>,
+        available_margin_exact: Option<String>,
     ) -> Result<StrategyContractInput, String> {
         let research_targets = self
             .research
@@ -68,11 +71,21 @@ impl StrategyContext {
             as_of: self.as_of,
             instrument: instrument.to_string(),
             positions: self.positions.clone(),
+            positions_exact,
             cash: self.cash.clone(),
+            cash_exact,
             available_margin_raw: self.available_margin_raw,
+            available_margin_exact,
             risk_state: self.risk_state.clone(),
             research_targets,
+            market_bars: BTreeMap::new(),
             bars,
+            execution_updates: Vec::new(),
+            fill_updates: Vec::new(),
+            strategy_checkpoint: None,
+            market_ticks: Vec::new(),
+            market_order_books: Vec::new(),
+            account_updates: Vec::new(),
         };
         input.validate()?;
         Ok(input)

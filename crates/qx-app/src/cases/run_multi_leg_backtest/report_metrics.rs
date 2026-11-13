@@ -1,59 +1,26 @@
 use super::{invalid, invariant, AppError};
-use qx_core::Fill;
-use qx_core::{Fnv1a, InstrumentId, Ledger, TradingInstrumentSpec};
-use qx_guanxing::Bar;
+use qx_core::{ExactDecimal, Fill, Fnv1a, InstrumentId};
 
-pub(super) struct LegReturnInput<'a> {
-    pub(super) ledger: &'a Ledger,
-    pub(super) account_id: &'a str,
-    pub(super) instrument: &'a InstrumentId,
-    pub(super) spec: &'a TradingInstrumentSpec,
-    pub(super) bars: &'a [Bar],
-    pub(super) fills: &'a [Fill],
-    pub(super) funding_raw: i128,
-    pub(super) initial_cash_raw: i128,
-}
-
-pub(super) fn leg_return_bps(input: LegReturnInput<'_>) -> Result<i32, AppError> {
-    let LegReturnInput {
-        ledger,
-        account_id,
-        instrument,
-        spec,
-        bars,
-        fills,
-        funding_raw,
-        initial_cash_raw,
-    } = input;
-    let position = ledger.position_for(account_id, instrument);
-    let unrealized = if position.quantity.raw() == 0 {
-        0
-    } else {
-        let mark = bars
-            .last()
-            .map(|bar| bar.close)
-            .ok_or_else(|| invalid("多腿最终估值缺少 Bar"))?;
-        spec.unrealized_pnl(position.quantity.raw(), position.average_entry.raw(), mark)
-            .map_err(invalid)?
-    };
-    let fees = fills
-        .iter()
-        .try_fold(0_i128, |sum, fill| sum.checked_add(fill.fee.raw()))
-        .ok_or_else(|| invalid("多腿腿级费用累计溢出"))?;
-    let pnl = position
-        .realized_pnl
-        .raw()
-        .checked_add(unrealized)
-        .and_then(|value| value.checked_sub(fees))
-        .and_then(|value| value.checked_sub(funding_raw))
-        .ok_or_else(|| invalid("多腿腿级盈亏溢出"))?;
+pub(super) fn leg_return_bps(
+    exact_pnl: ExactDecimal,
+    initial_cash_raw: i128,
+) -> Result<i32, AppError> {
     if initial_cash_raw <= 0 {
         return Err(invalid("多腿腿级收益分母必须为正"));
     }
-    pnl.checked_mul(10_000)
-        .and_then(|value| value.checked_div(initial_cash_raw))
-        .and_then(|value| i32::try_from(value).ok())
-        .ok_or_else(|| invalid("多腿腿级收益无法表示"))
+    let initial_cash = ExactDecimal::from_parts(initial_cash_raw, 9)
+        .map_err(|error| invalid(format!("多腿精确初始资金无效: {error}")))?;
+    crate::report_analysis::exact_ratio_bps_v1(exact_pnl, initial_cash).map_err(invalid)
+}
+
+pub(super) fn leg_return_bps_exact(
+    exact_pnl: ExactDecimal,
+    initial_cash_exact: ExactDecimal,
+) -> Result<i32, AppError> {
+    if !initial_cash_exact.is_positive() {
+        return Err(invalid("多腿精确腿级收益分母必须为正"));
+    }
+    crate::report_analysis::exact_ratio_bps_v1(exact_pnl, initial_cash_exact).map_err(invalid)
 }
 
 pub(super) fn fill_result_hash(

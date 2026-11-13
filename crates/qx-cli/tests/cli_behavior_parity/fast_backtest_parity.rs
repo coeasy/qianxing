@@ -19,6 +19,7 @@ fn copy_deploy_examples(root: &Path) {
             std::fs::write(target, bytes).expect("copy non-document JSON example");
             continue;
         };
+        let mut rewrite = false;
         if let Some(data_dir) = value
             .get_mut("storage")
             .and_then(serde_json::Value::as_object_mut)
@@ -30,10 +31,15 @@ fn copy_deploy_examples(root: &Path) {
             let isolated = root.join("data").join(suffix);
             value["storage"]["data_dir"] =
                 serde_json::Value::String(isolated.to_string_lossy().replace('\\', "/"));
+            rewrite = true;
         }
         std::fs::write(
             target,
-            serde_json::to_vec_pretty(&value).expect("serialize example"),
+            if rewrite {
+                serde_json::to_vec_pretty(&value).expect("serialize example")
+            } else {
+                bytes
+            },
         )
         .expect("write isolated deploy example");
     }
@@ -156,8 +162,6 @@ fn multi_venue_fast_backtest_replays_parallel_jobs_and_artifact_set() {
     let first = observe_in(&root, &args);
     clean_replay_root(&root);
     let second = observe_in(&root, &args);
-    let _ = std::fs::remove_dir_all(&root);
-
     assert_eq!(
         first.exit_code, 0,
         "multi-venue fast-backtest failed: {first:?}"
@@ -188,6 +192,7 @@ fn multi_venue_fast_backtest_replays_parallel_jobs_and_artifact_set() {
             >= 2,
         "each parallel job must persist its own RunManifest: {first:?}"
     );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

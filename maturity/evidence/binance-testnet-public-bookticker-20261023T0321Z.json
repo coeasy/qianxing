@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-public-bookticker-probe",
+  "outcome": "pass",
+  "network": "testnet",
+  "instrument": "BTCUSDT.BINANCE",
+  "operation": "anonymous read-only bookTicker",
+  "started_at_utc": "2026-10-23T03:21:43.4244588+00:00",
+  "finished_at_utc": "2026-10-23T03:21:44.9564961+00:00",
+  "duration_ms": 1530,
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "46405955f680169d465a94034e98b12895ffc974f5b3333891ea2e9e9e7a74c4",
+  "return_code": 0,
+  "credentials_present": false,
+  "orders_sent": false,
+  "quote": {
+    "bid_raw": 81716410000000,
+    "ask_raw": 81716420000000,
+    "bid_qty_raw": 1363830000,
+    "ask_qty_raw": 41276140000,
+    "ts": 1792725703719
+  },
+  "output": "牵星 Qianxing — 分级校准，量天定位\r\n\r\n[Binance · PublicProbe] network=testnet instrument=BTCUSDT.BINANCE bid_raw=81716410000000 ask_raw=81716420000000 bid_qty_raw=1363830000 ask_qty_raw=41276140000 ts=1792725703719",
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "reason": "anonymous public probe contains no private account, order, recovery, or reconciliation evidence"
+  }
+}

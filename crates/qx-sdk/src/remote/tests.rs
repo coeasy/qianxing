@@ -70,6 +70,21 @@ fn builtin_strategy_catalog_uses_the_shared_discovery_route() {
 }
 
 #[test]
+fn builtin_strategy_recipes_use_the_versioned_discovery_route() {
+    let transport = FakeTransport::default();
+    let client = RemoteApiClient::new(transport);
+    assert_eq!(
+        client.builtin_strategy_recipes().unwrap(),
+        serde_json::json!([])
+    );
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.as_slice(),
+        &[("/app/strategy-recipes".into(), String::new())]
+    );
+}
+
+#[test]
 fn application_capabilities_use_the_shared_runtime_discovery_route() {
     let client = RemoteApiClient::new(FakeTransport::default());
     assert_eq!(
@@ -80,6 +95,39 @@ fn application_capabilities_use_the_shared_runtime_discovery_route() {
     assert_eq!(
         calls.as_slice(),
         &[("/app/capabilities".into(), String::new())]
+    );
+}
+
+#[test]
+fn research_artifacts_uses_the_replay_verified_detail_route() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    let outcome = qx_app::BacktestOutcome {
+        run_id: "run-1".into(),
+        instrument: "BTCUSDT.BINANCE".into(),
+        result_hash: "result".into(),
+        data_fingerprint: "data".into(),
+        fills: 2,
+        equity_points: 3,
+        return_bps: 100,
+        max_drawdown_bps: 25,
+        artifacts: qx_app::BacktestArtifacts {
+            run_manifest: "manifest.json".into(),
+            summary: "summary.json".into(),
+            equity: "equity.csv".into(),
+            fills: "fills.csv".into(),
+            event_trace: Some("events.jsonl".into()),
+        },
+        account_id: None,
+    };
+    assert_eq!(
+        client.research_artifacts(&outcome).unwrap(),
+        serde_json::json!({"ok":true})
+    );
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(calls[0].0, "/app/research-artifacts");
+    assert_eq!(
+        serde_json::from_str::<Value>(&calls[0].1).unwrap(),
+        serde_json::to_value(outcome).unwrap()
     );
 }
 
@@ -147,6 +195,21 @@ fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
         interval_ms: 60_000,
         timezone: "UTC".into(),
         manifest_path: None,
+        snapshot_context: crate::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: crate::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 60_000,
+            timestamp_semantics: crate::DatasetTimestampSemantics::BarClose,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: crate::CorporateActionPolicy::NotApplicable,
+        },
     };
     let _ = client.run_provider_backtest_with_manifest(&spec).unwrap();
     let calls = client.transport.0.lock().unwrap();
@@ -186,6 +249,34 @@ fn multi_market_backtest_uses_sync_and_start_server_routes() {
     assert_eq!(
         serde_json::from_str::<Value>(&calls[0].1).unwrap()["run_id"],
         "remote-portfolio"
+    );
+}
+
+#[test]
+fn multi_account_joint_backtest_uses_sync_and_start_server_routes() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    let spec: qx_app::MultiAccountJointBacktestSpec = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "run_id": "remote-joint",
+        "settlement_currency": "USDT",
+        "seed": 7,
+        "output_dir": "runs",
+        "accounts": []
+    }))
+    .expect("spec schema deserializes before engine validation");
+    client.run_multi_account_joint_backtest(&spec).unwrap();
+    client.start_multi_account_joint_backtest(&spec).unwrap();
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        [
+            "/app/multi-account-joint-backtest",
+            "/app/multi-account-joint-backtest/start"
+        ]
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&calls[0].1).unwrap()["run_id"],
+        "remote-joint"
     );
 }
 

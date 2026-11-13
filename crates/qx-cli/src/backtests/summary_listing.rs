@@ -31,19 +31,41 @@ pub(crate) fn list_backtest_summary_paths(runs_dir: &Path) -> Result<Vec<PathBuf
             .then_with(|| left.cmp(right))
     });
     // Keep prior summaries readable, but when a schema-only upgrade reuses the same RunManifest,
-    // list only the newest versioned summary instead of showing each schema generation as a run.
-    let current_paths: std::collections::BTreeSet<PathBuf> = summaries
-        .iter()
-        .filter_map(|path| {
-            let name = path.file_name()?.to_str()?;
-            let stem = name.strip_suffix(".v7.summary.json")?;
-            Some([
-                path.with_file_name(format!("{stem}.v6.summary.json")),
-                path.with_file_name(format!("{stem}.summary.json")),
-            ])
-        })
-        .flatten()
-        .collect();
-    summaries.retain(|path| !current_paths.contains(path));
+    // list only the newest generation instead of showing each schema generation as a run.
+    let mut newest_generation_by_stem = std::collections::BTreeMap::<String, u32>::new();
+    for path in &summaries {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some((stem, generation)) = versioned_summary_stem(name) else {
+            continue;
+        };
+        newest_generation_by_stem
+            .entry(stem.to_owned())
+            .and_modify(|current| *current = (*current).max(generation))
+            .or_insert(generation);
+    }
+    summaries.retain(|path| {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            return true;
+        };
+        if let Some((stem, generation)) = versioned_summary_stem(name) {
+            return newest_generation_by_stem.get(stem) == Some(&generation);
+        }
+        name.strip_suffix(".summary.json")
+            .is_none_or(|stem| !newest_generation_by_stem.contains_key(stem))
+    });
     Ok(summaries)
+}
+
+fn versioned_summary_stem(name: &str) -> Option<(&str, u32)> {
+    let stem_and_generation = name.strip_suffix(".summary.json")?;
+    let (stem, generation) = stem_and_generation.rsplit_once(".v")?;
+    if stem.is_empty()
+        || generation.is_empty()
+        || !generation.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((stem, generation.parse().ok()?))
 }

@@ -30,9 +30,11 @@ fn portfolio_rejects_account_level_protective_exit_without_strategy_attribution(
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: 40_000_000_000_000,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: 40_000_000_000_000,
+            reserved_capital_exact: None,
             strategy: secondary,
         }],
     });
@@ -62,9 +64,13 @@ fn portfolio_spec_round_trips_with_a_pinned_nested_schema() {
     spec.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 1,
         primary_reserved_capital_raw: 40_000_000_000_000,
+        primary_reserved_capital_exact: Some(
+            qx_core::ExactDecimal::parse("40000.0000000005").unwrap(),
+        ),
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 2,
             reserved_capital_raw: 50_000_000_000_000,
+            reserved_capital_exact: Some(qx_core::ExactDecimal::parse("50000.0000000004").unwrap()),
             strategy: secondary,
         }],
     });
@@ -93,11 +99,46 @@ fn portfolio_spec_round_trips_with_a_pinned_nested_schema() {
         expected(&[
             "primary_priority",
             "primary_reserved_capital_raw",
+            "primary_reserved_capital_exact",
             "additional_strategies",
         ])
     );
     assert_eq!(
         keys(&portfolio["additional_strategies"][0]),
-        expected(&["priority", "reserved_capital_raw", "strategy"])
+        expected(&[
+            "priority",
+            "reserved_capital_raw",
+            "reserved_capital_exact",
+            "strategy",
+        ])
     );
+}
+
+#[test]
+fn portfolio_exact_budget_total_is_compared_to_raw_initial_cash_without_losing_subnano_value() {
+    let root = scratch("spec-portfolio-exact-budget-total");
+    let bars = root.join("bars.json").to_string_lossy().into_owned();
+    let mut spec = backtest_spec("portfolio-exact-budget-total", &bars, &root);
+    spec.initial_cash_raw = 1;
+    let mut secondary = BuiltinStrategySpec::new(BuiltinStrategyKind::Momentum, "momentum-2");
+    secondary.period = 4;
+    spec.portfolio = Some(PortfolioBacktestConfig {
+        primary_priority: 0,
+        primary_reserved_capital_raw: 0,
+        primary_reserved_capital_exact: Some(qx_core::ExactDecimal::parse("0.0000000006").unwrap()),
+        additional_strategies: vec![PortfolioStrategySpec {
+            priority: 1,
+            reserved_capital_raw: 0,
+            reserved_capital_exact: Some(qx_core::ExactDecimal::parse("0.0000000006").unwrap()),
+            strategy: secondary,
+        }],
+    });
+
+    let error = spec
+        .validate()
+        .expect_err("exact budgets total 1.2e-9 against 1e-9 raw-projected cash");
+    assert_eq!(error.category(), qx_app::AppErrorCategory::InvalidInput);
+    assert!(error
+        .message()
+        .contains("组合策略预算合计不得超过回测账户初始资金"));
 }

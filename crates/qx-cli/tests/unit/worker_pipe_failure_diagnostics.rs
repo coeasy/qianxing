@@ -144,10 +144,20 @@ fn oversized_input(rows: usize) -> StrategyContractInput {
         as_of: 1_700_000_000,
         instrument: "BTC/USDT.OKX".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: BTreeMap::new(),
         available_margin_raw: Some(100_000_000),
+        available_margin_exact: None,
         risk_state: "ready".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: Some(StrategyContractBars {
             source: "synthetic".into(),
             ts: (0..rows as u64)
@@ -158,6 +168,7 @@ fn oversized_input(rows: usize) -> StrategyContractInput {
             low_raw: vec![1_i128; rows],
             close_raw: vec![1_i128; rows],
             volume_raw: vec![1_i128; rows],
+            exact_ohlcv: None,
         }),
     }
 }

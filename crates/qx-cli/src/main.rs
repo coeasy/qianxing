@@ -5,6 +5,10 @@
 //! 2. 修改任一参数   → 结果哈希发生变化（不是恒定输出）
 //! 3. 决策只用 as_of(ts) 之前的数据（无前视偏差）
 
+// CLI orchestration functions deliberately keep their policy and artifact inputs visible.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use qx_adapter::{
     BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotVenue,
     HttpTransport, TlsHttpTransport,
@@ -110,9 +114,12 @@ mod report_equity_csv;
 mod report_fidelity;
 mod report_html;
 mod report_html_ashare;
+mod report_multi_account;
+mod report_multi_market;
 mod report_multi_market_depth;
 mod report_multi_market_depth_render;
 mod report_output_paths;
+mod report_publish;
 mod report_readout;
 mod report_svg;
 mod report_xlsx;
@@ -122,6 +129,9 @@ mod run_evidence_build_attestation;
 mod run_evidence_experiment_recompute;
 mod run_evidence_export;
 mod run_evidence_multi;
+mod run_evidence_multi_account;
+mod run_evidence_multi_account_depth;
+mod run_evidence_multi_account_joint;
 mod run_evidence_multi_market;
 mod run_evidence_recompute;
 mod run_evidence_verify;
@@ -135,8 +145,10 @@ mod storage_adopt;
 mod storage_adopt_args;
 mod strategy_binding;
 mod strategy_contract;
+mod strategy_diagnostics;
 mod strategy_host;
 mod strategy_live_state;
+mod strategy_multi_account_diagnostics;
 mod usage_errors;
 mod venue_evidence;
 mod venue_runtime;
@@ -165,6 +177,7 @@ pub(crate) use multi_leg::*;
 pub(crate) use panic_boundary::*;
 pub(crate) use path_resolution::*;
 pub(crate) use plan_commands::*;
+pub(crate) use project_manifest::*;
 #[cfg(test)]
 pub(crate) use qx_runtime::{
     read_capped_worker_line, record_stderr_tail, stderr_tail_note, STDERR_TAIL_LINES,
@@ -204,7 +217,7 @@ pub(crate) use worker_runtime::*;
 #[allow(unused_imports)] // 默认特性下 join 只由 NATS event pipeline 使用
 pub(crate) use worker_shutdown::*;
 
-use data_validate::{validate_dataset, validate_depth_dataset};
+use data_validate::{publish_dataset_snapshot, validate_dataset, validate_depth_dataset};
 #[cfg(test)]
 use dataset_commands::verify_dataset_bundle_binding;
 use dataset_commands::{run_dataset_bundle, run_dataset_ingest};
@@ -311,7 +324,7 @@ fn run_recovery_child(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Python 解释器解析：`QX_PYTHON` 环境变量优先，否则回落到 `python`。
+/// Python 解释器解析：`QX_PYTHON` 环境变量优先；默认按平台使用 PATH 上的解释器。
 ///
 /// CLI 里所有跨语言子进程（CCXT worker、Python/C++ 策略 worker）都从这里取解释器，
 /// 避免同一份运行时配置在不同 worker 下指向不同解释器。
@@ -323,9 +336,18 @@ fn python_interpreter() -> String {
 /// 占位桩（实测 `python --version` 无 stdout/stderr、退出码 49），只报"worker 已关闭输出"
 /// 无法区分"解释器不可用"与"策略代码报错"，所以回落必须在失败信息里说出来。
 pub(crate) fn python_interpreter_origin() -> (String, &'static str) {
-    match std::env::var("QX_PYTHON") {
-        Ok(value) if !value.trim().is_empty() => (value, "来自 QX_PYTHON"),
-        _ => ("python".into(), "QX_PYTHON 未设置，回落 PATH python"),
+    let configured = std::env::var("QX_PYTHON").ok();
+    python_interpreter_for(configured.as_deref(), cfg!(windows))
+}
+
+fn python_interpreter_for(configured: Option<&str>, is_windows: bool) -> (String, &'static str) {
+    if let Some(value) = configured.filter(|value| !value.trim().is_empty()) {
+        return (value.to_owned(), "来自 QX_PYTHON");
+    }
+    if is_windows {
+        ("python".into(), "QX_PYTHON 未设置，回落 PATH python")
+    } else {
+        ("python3".into(), "QX_PYTHON 未设置，回落 PATH python3")
     }
 }
 

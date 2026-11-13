@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "evidence_id": "binance-oco-native-list-cancel-adapter-path-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "Binance Spot OCO native order-list cancellation adapter request and response path",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "c0df779b"
+  },
+  "verification": [
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-adapter binance_oco_cancel_calls_native_list_endpoint_and_validates_both_children --lib",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "Venue::cancel sends DELETE to /api/v3/orderList using the persisted orderListId, deterministic listClientOrderId, and symbol",
+        "the adapter validates OCO list identity, ALL_DONE states, and both child reports before emitting the target child cancellation fact"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-adapter --lib",
+      "result": "passed",
+      "passed": 108,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "passed": 373,
+      "failed": 0,
+      "assertions": [
+        "all four architecture shards passed",
+        "the aggregate covers 373 named checks without duplicates"
+      ]
+    }
+  ],
+  "limitations": [
+    "The endpoint response is supplied by a local HTTP transport stub; no Binance API or Testnet request was made.",
+    "This verifies the adapter transport boundary and response reducer, not exchange permissions, live cancellation races, or restart recovery on Binance."
+  ]
+}

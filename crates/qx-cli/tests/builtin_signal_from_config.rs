@@ -40,10 +40,16 @@ fn temp_dir(label: &str) -> PathBuf {
 }
 
 fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-        .args(args)
-        .output()
-        .expect("启动 qx-cli 失败");
+    run_in(args, None)
+}
+
+fn run_in<A: AsRef<OsStr>>(args: &[A], current_dir: Option<&Path>) -> (i32, String, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+    command.args(args);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    let output = command.output().expect("启动 qx-cli 失败");
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -121,7 +127,15 @@ fn builtin(kind: &str, quantity: &str, config: Option<&Path>) -> (i32, String, S
     if let Some(config) = config {
         args.extend(["--config".into(), config.to_string_lossy().into_owned()]);
     }
-    run(&args)
+    if config.is_some() {
+        run(&args)
+    } else {
+        // The no-config fallback reads the repository's default runtime template, whose data_dir
+        // is relative. Give each baseline its own cwd so parallel integration tests cannot race
+        // while writing the same default artifact identity into deploy/data.
+        let root = temp_dir(&format!("default-{}", kind));
+        run_in(&args, Some(&root))
+    }
 }
 
 /// 窗口对：默认 5/20 在这 6 根 Bar 上永远不交叉，配置里的 2/3 会成交。
@@ -170,7 +184,11 @@ fn declared_period_and_threshold_each_move_the_result() {
     );
     let (code, rsi_short, err) = builtin("rsi", "100", Some(&short_rsi));
     assert_eq!(code, 0, "合法周期必须跑通: {err}");
-    assert_eq!(field(&rsi_short, "[Strategy · Backtest]", "fills"), "1");
+    assert_eq!(
+        field(&rsi_short, "[Strategy · Backtest]", "fills"),
+        "2",
+        "RSI 进场和长仓平仓都是实际成交"
+    );
     assert!(line_with(&rsi_short, "[Strategy · Signal]").contains("period=2"));
 
     let loose_grid = signal_config(&root, |value| {
@@ -290,6 +308,21 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
 fn both_bar_chains_read_the_same_declared_signal() {
     let root = temp_dir("same-signal");
     let config = signal_config(&root, |_| {});
+    // Both summaries preserve local provenance paths. The built-in route records its frozen
+    // runtime snapshot and canonical BarFrame path, while the strategy route records the source
+    // config and declared BarFrame path. Keep the artifact stores separate because this test checks
+    // behavior and event-hash parity, not byte identity of those invocation-specific reports.
+    let builtin_config = root.join("runtime.signal.builtin.json");
+    let mut builtin_runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).expect("读取同信号运行时配置失败"))
+            .expect("解析同信号运行时配置失败");
+    builtin_runtime["storage"]["data_dir"] =
+        serde_json::Value::String(root.join("builtin-data").to_string_lossy().into_owned());
+    std::fs::write(
+        &builtin_config,
+        serde_json::to_vec(&builtin_runtime).expect("编码内置链运行时配置失败"),
+    )
+    .expect("写入内置链独立运行时配置失败");
     let (code, strategy_chain, err) = run(&[
         "strategy".into(),
         "backtest".into(),
@@ -298,7 +331,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
         deploy(SPEC).to_string_lossy().into_owned(),
     ]);
     assert_eq!(code, 0, "策略链基线必须跑通: {err}");
-    let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&config));
+    let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&builtin_config));
     assert_eq!(code, 0, "内置链同一份配置必须跑通: {err}");
     let marker = "[Strategy · Backtest]".to_string();
     // 两条链都得真的成交：零成交下"逐项相等"可以永远成立，那就不是在核对同一套信号。
@@ -314,6 +347,11 @@ fn both_bar_chains_read_the_same_declared_signal() {
             "同一份配置在两条 Bar 链上的 {key} 不同，说明信号口径又分叉了"
         );
     }
+    assert_eq!(
+        field(&strategy_chain, "[Strategy · Backtest]", "result_hash"),
+        field(&builtin_chain, &marker, "result_hash"),
+        "同一份配置在两条 Bar 链上的业务结果与事件身份相同，结果哈希也必须一致"
+    );
     assert!(line_with(&builtin_chain, "[Strategy · Signal]").contains("source=config"));
     assert!(
         line_with(&strategy_chain, "[Strategy · Signal]").contains("source=config"),
@@ -371,8 +409,8 @@ fn depth_chain_applies_the_declared_signal() {
     assert_eq!(field(&tight, "[Depth · Backtest]", "fills"), "0");
     assert_eq!(
         field(&loose, "[Depth · Backtest]", "fills"),
-        "1",
-        "阈值放宽却不换成交，说明深度链仍用写死默认"
+        "3",
+        "阈值 0 信号应按实际逐笔成交记数，且结果必须不同于紧阈值"
     );
     assert_ne!(
         field(&tight, "[Depth · Backtest]", "result_hash"),

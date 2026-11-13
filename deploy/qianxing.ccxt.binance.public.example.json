@@ -9,5 +9,9 @@
   "default_type": "spot",
   "credential_env": null,
   "options": {},
-  "instruments": ["BTC/USDT.BINANCE", "ETH/USDT.BINANCE"]
+  "instruments": [
+    "BTC/USDT.BINANCE",
+    "ETH/USDT.BINANCE"
+  ],
+  "account_model": "spot"
 }

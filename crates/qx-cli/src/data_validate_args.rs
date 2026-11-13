@@ -26,3 +26,11 @@ pub(crate) struct DepthDatasetValidateArgs {
     pub(crate) timezone: String,
     pub(crate) output: PathBuf,
 }
+
+#[derive(Args)]
+pub(crate) struct DatasetSnapshotArgs {
+    pub(crate) data: PathBuf,
+    pub(crate) manifest: PathBuf,
+    pub(crate) context: PathBuf,
+    pub(crate) output: PathBuf,
+}

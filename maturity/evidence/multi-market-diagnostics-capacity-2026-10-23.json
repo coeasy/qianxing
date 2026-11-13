@@ -1,0 +1,1357 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "verified_multi_market_strategy_diagnostics_capacity",
+  "generated_at_utc": "2026-10-23T08:28:05Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "90011a5148a714d1e136830d8128f29ba2f92f284b633e7fb8037767ed1fd6ea",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "e0fc25d339b4c9ea5c0b8ccc0dd293d5dcf1f82a1aeed127fe84e33a4e11f1dc",
+  "benchmark_script_sha256": "1df85d0ca40a422a9d96e7f73d8019314195b4ad1afa7629b533ddb591f5f344",
+  "scenario": "verified shared-account multi-market Bar backtest followed by qx-cli strategy diagnose-multi-bar --html",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "workload_contract": {
+    "input": "synthetic crypto-spot BarFrames with one Rust built-in SMA strategy slot per market",
+    "measured_stage": "diagnose-multi-bar process, including artifact/input identity checks, replay verification, strategy replays, JSON and offline HTML generation",
+    "setup_stage": "the multi-market backtest is prepared once per workload and its elapsed time is recorded separately",
+    "fixed_diagnostic_context": "declared reserved capital and empty positions; not event-time account-state reconstruction",
+    "pit": "visibility_unknown without an independently verified provider revision/publication ledger"
+  },
+  "resource_measurement": {
+    "process_tree_peak_rss": "OS process counters plus optional psutil 10ms process-tree sampling",
+    "cpu_and_io": "process-tree counters when exposed by the host; null remains unavailable"
+  },
+  "limitations": [
+    "synthetic crypto-spot Bar data and built-in SMA strategy slots",
+    "one Rust strategy slot per market; no external strategy or dynamic sizing",
+    "fixed cash/empty positions diagnosis context does not reconstruct shared account state at each event",
+    "does not measure private supplier traffic, PIT publication history, Paper workers, long-running stability, or full product profiles",
+    "short-process process-tree sampling may miss transient RSS peaks"
+  ],
+  "workloads": [
+    {
+      "markets": 3,
+      "strategy_slots": 3,
+      "bars_per_market": 1000,
+      "total_strategy_bar_events": 3000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 346.11,
+      "setup_result_hash": "4fa7b0082a99e516",
+      "verified_summary_sha256": "719604105a831928e7c25246afbb5dce136ba2b35dd7f15ff2580d8a8201734e",
+      "primary_verified_input_bytes": 515556,
+      "diagnostic_wall_p50_ms": 524.04,
+      "diagnostic_wall_p95_ms": 846.517,
+      "peak_rss_bytes_max": 28348416,
+      "process_tree_peak_rss_bytes_max": 22257664,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.078,
+      "diagnostic_output_bytes": 86226,
+      "html_output_bytes": 488493,
+      "diagnostic_output_sha256": "d1c9ce3b0982234652511f04feb87c2d77c8dab797c0b4ab22ad4aa55f38f103",
+      "html_output_sha256": "c7a88b9a620392f326d6c21ad31bb9815af3ba24bd3c322eac10d893d09476f1",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 524.04,
+          "peak_rss_bytes": 28319744,
+          "process_tree_peak_rss_bytes": 20606976,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.078125,
+          "process_tree_io_read_bytes": 1966677,
+          "process_tree_io_write_bytes": 575357,
+          "diagnostic_output_bytes": 86226,
+          "diagnostic_output_sha256": "d1c9ce3b0982234652511f04feb87c2d77c8dab797c0b4ab22ad4aa55f38f103",
+          "html_output_bytes": 488493,
+          "html_output_sha256": "c7a88b9a620392f326d6c21ad31bb9815af3ba24bd3c322eac10d893d09476f1",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 846.517,
+          "peak_rss_bytes": 28119040,
+          "process_tree_peak_rss_bytes": 21532672,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.03125,
+          "process_tree_io_read_bytes": 1966677,
+          "process_tree_io_write_bytes": 575357,
+          "diagnostic_output_bytes": 86226,
+          "diagnostic_output_sha256": "d1c9ce3b0982234652511f04feb87c2d77c8dab797c0b4ab22ad4aa55f38f103",
+          "html_output_bytes": 488493,
+          "html_output_sha256": "c7a88b9a620392f326d6c21ad31bb9815af3ba24bd3c322eac10d893d09476f1",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 500.592,
+          "peak_rss_bytes": 28348416,
+          "process_tree_peak_rss_bytes": 22257664,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.078125,
+          "process_tree_io_read_bytes": 1966677,
+          "process_tree_io_write_bytes": 575357,
+          "diagnostic_output_bytes": 86226,
+          "diagnostic_output_sha256": "d1c9ce3b0982234652511f04feb87c2d77c8dab797c0b4ab22ad4aa55f38f103",
+          "html_output_bytes": 488493,
+          "html_output_sha256": "c7a88b9a620392f326d6c21ad31bb9815af3ba24bd3c322eac10d893d09476f1",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 4,
+      "strategy_slots": 4,
+      "bars_per_market": 1000,
+      "total_strategy_bar_events": 4000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 350.915,
+      "setup_result_hash": "45ba2d09e3d9082e",
+      "verified_summary_sha256": "31ced07d7f5b0b8a0957ce2764e4dc7b79c2ac0087ac00c04b5a3b228d9318a1",
+      "primary_verified_input_bytes": 686472,
+      "diagnostic_wall_p50_ms": 535.495,
+      "diagnostic_wall_p95_ms": 547.349,
+      "peak_rss_bytes_max": 34856960,
+      "process_tree_peak_rss_bytes_max": 33579008,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.125,
+      "diagnostic_output_bytes": 114967,
+      "html_output_bytes": 624505,
+      "diagnostic_output_sha256": "e507aa4ffb8731319d8a70945364af11ee392db7a1fc502789f0ee72abd9267f",
+      "html_output_sha256": "9685bd895cdfabf4d4f50b55a39b3eb4dca120215ac02df275a674a5fd3d0d42",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 535.495,
+          "peak_rss_bytes": 34721792,
+          "process_tree_peak_rss_bytes": 32464896,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.09375,
+          "process_tree_io_read_bytes": 2620103,
+          "process_tree_io_write_bytes": 115336,
+          "diagnostic_output_bytes": 114967,
+          "diagnostic_output_sha256": "e507aa4ffb8731319d8a70945364af11ee392db7a1fc502789f0ee72abd9267f",
+          "html_output_bytes": 624505,
+          "html_output_sha256": "9685bd895cdfabf4d4f50b55a39b3eb4dca120215ac02df275a674a5fd3d0d42",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 547.349,
+          "peak_rss_bytes": 34856960,
+          "process_tree_peak_rss_bytes": 26865664,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.125,
+          "process_tree_io_read_bytes": 2620103,
+          "process_tree_io_write_bytes": 740110,
+          "diagnostic_output_bytes": 114967,
+          "diagnostic_output_sha256": "e507aa4ffb8731319d8a70945364af11ee392db7a1fc502789f0ee72abd9267f",
+          "html_output_bytes": 624505,
+          "html_output_sha256": "9685bd895cdfabf4d4f50b55a39b3eb4dca120215ac02df275a674a5fd3d0d42",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 532.463,
+          "peak_rss_bytes": 34803712,
+          "process_tree_peak_rss_bytes": 33579008,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.125,
+          "process_tree_io_read_bytes": 2620103,
+          "process_tree_io_write_bytes": 115336,
+          "diagnostic_output_bytes": 114967,
+          "diagnostic_output_sha256": "e507aa4ffb8731319d8a70945364af11ee392db7a1fc502789f0ee72abd9267f",
+          "html_output_bytes": 624505,
+          "html_output_sha256": "9685bd895cdfabf4d4f50b55a39b3eb4dca120215ac02df275a674a5fd3d0d42",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 8,
+      "strategy_slots": 8,
+      "bars_per_market": 1000,
+      "total_strategy_bar_events": 8000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 383.128,
+      "setup_result_hash": "89a690f00e032d18",
+      "verified_summary_sha256": "0095ae10f90ca981e68a786a36701315a2c616662fe4c0b68d2f4c54e66a24e6",
+      "primary_verified_input_bytes": 1370146,
+      "diagnostic_wall_p50_ms": 724.764,
+      "diagnostic_wall_p95_ms": 728.819,
+      "peak_rss_bytes_max": 61739008,
+      "process_tree_peak_rss_bytes_max": 56266752,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.219,
+      "diagnostic_output_bytes": 229933,
+      "html_output_bytes": 1197825,
+      "diagnostic_output_sha256": "87da1eb8b8646c7c97f560e50a17975a759ad12660302b3e2f725eb749d88c34",
+      "html_output_sha256": "05466331ad62d2bc2df76caa6f7c7044e76d9f5c62c12b75b8b215e1d2083552",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 728.819,
+          "peak_rss_bytes": 61308928,
+          "process_tree_peak_rss_bytes": 47120384,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.265625,
+          "process_tree_io_read_bytes": 5232843,
+          "process_tree_io_write_bytes": 1428397,
+          "diagnostic_output_bytes": 229933,
+          "diagnostic_output_sha256": "87da1eb8b8646c7c97f560e50a17975a759ad12660302b3e2f725eb749d88c34",
+          "html_output_bytes": 1197825,
+          "html_output_sha256": "05466331ad62d2bc2df76caa6f7c7044e76d9f5c62c12b75b8b215e1d2083552",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 702.122,
+          "peak_rss_bytes": 61739008,
+          "process_tree_peak_rss_bytes": 56266752,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.140625,
+          "process_tree_io_read_bytes": 5232843,
+          "process_tree_io_write_bytes": 1428397,
+          "diagnostic_output_bytes": 229933,
+          "diagnostic_output_sha256": "87da1eb8b8646c7c97f560e50a17975a759ad12660302b3e2f725eb749d88c34",
+          "html_output_bytes": 1197825,
+          "html_output_sha256": "05466331ad62d2bc2df76caa6f7c7044e76d9f5c62c12b75b8b215e1d2083552",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 724.764,
+          "peak_rss_bytes": 61460480,
+          "process_tree_peak_rss_bytes": 48754688,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.21875,
+          "process_tree_io_read_bytes": 5232843,
+          "process_tree_io_write_bytes": 1428397,
+          "diagnostic_output_bytes": 229933,
+          "diagnostic_output_sha256": "87da1eb8b8646c7c97f560e50a17975a759ad12660302b3e2f725eb749d88c34",
+          "html_output_bytes": 1197825,
+          "html_output_sha256": "05466331ad62d2bc2df76caa6f7c7044e76d9f5c62c12b75b8b215e1d2083552",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 3,
+      "strategy_slots": 3,
+      "bars_per_market": 8000,
+      "total_strategy_bar_events": 24000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 433.343,
+      "setup_result_hash": "505aed663345ca7c",
+      "verified_summary_sha256": "b5f6d95a4735a22714bb53b3596068142eeefcd5abafd645d9d36ce228cc1291",
+      "primary_verified_input_bytes": 4101847,
+      "diagnostic_wall_p50_ms": 1517.951,
+      "diagnostic_wall_p95_ms": 1568.972,
+      "peak_rss_bytes_max": 100257792,
+      "process_tree_peak_rss_bytes_max": 95584256,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.625,
+      "diagnostic_output_bytes": 86064,
+      "html_output_bytes": 1285292,
+      "diagnostic_output_sha256": "b12ea47f060826d97e6e453facc8723af4dab74bd3f907ccdc7c41860fe9b900",
+      "html_output_sha256": "b47498bc8b3ac2ba5525d911fa395bfb0ddca7e301f57b9aefe96846e1e46969",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 1568.972,
+          "peak_rss_bytes": 100257792,
+          "process_tree_peak_rss_bytes": 95584256,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.5625,
+          "process_tree_io_read_bytes": 12234599,
+          "process_tree_io_write_bytes": 1371995,
+          "diagnostic_output_bytes": 86064,
+          "diagnostic_output_sha256": "b12ea47f060826d97e6e453facc8723af4dab74bd3f907ccdc7c41860fe9b900",
+          "html_output_bytes": 1285292,
+          "html_output_sha256": "b47498bc8b3ac2ba5525d911fa395bfb0ddca7e301f57b9aefe96846e1e46969",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 1498.709,
+          "peak_rss_bytes": 100171776,
+          "process_tree_peak_rss_bytes": 84549632,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.6875,
+          "process_tree_io_read_bytes": 12234599,
+          "process_tree_io_write_bytes": 1371995,
+          "diagnostic_output_bytes": 86064,
+          "diagnostic_output_sha256": "b12ea47f060826d97e6e453facc8723af4dab74bd3f907ccdc7c41860fe9b900",
+          "html_output_bytes": 1285292,
+          "html_output_sha256": "b47498bc8b3ac2ba5525d911fa395bfb0ddca7e301f57b9aefe96846e1e46969",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 1517.951,
+          "peak_rss_bytes": 99397632,
+          "process_tree_peak_rss_bytes": 86704128,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 0.625,
+          "process_tree_io_read_bytes": 12234599,
+          "process_tree_io_write_bytes": 1371995,
+          "diagnostic_output_bytes": 86064,
+          "diagnostic_output_sha256": "b12ea47f060826d97e6e453facc8723af4dab74bd3f907ccdc7c41860fe9b900",
+          "html_output_bytes": 1285292,
+          "html_output_sha256": "b47498bc8b3ac2ba5525d911fa395bfb0ddca7e301f57b9aefe96846e1e46969",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 4,
+      "strategy_slots": 4,
+      "bars_per_market": 8000,
+      "total_strategy_bar_events": 32000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 482.26,
+      "setup_result_hash": "6c78cbdb9136d79f",
+      "verified_summary_sha256": "0d42a45ce2b7782dfcb325efc8ff954af4170426dd3b358874328d92c0404cd8",
+      "primary_verified_input_bytes": 5468859,
+      "diagnostic_wall_p50_ms": 1876.497,
+      "diagnostic_wall_p95_ms": 1881.184,
+      "peak_rss_bytes_max": 123289600,
+      "process_tree_peak_rss_bytes_max": 123289600,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 1.125,
+      "diagnostic_output_bytes": 114751,
+      "html_output_bytes": 1374416,
+      "diagnostic_output_sha256": "6ae0e43b767c6d3a5f3638a6112603e6175ca953fb34ea4ecdc51327589dedf4",
+      "html_output_sha256": "321145d3051644b75d3a5e675a3a4686fed1d95499f84fe037cffd15b546fbab",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 1881.184,
+          "peak_rss_bytes": 123162624,
+          "process_tree_peak_rss_bytes": 115658752,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 1.09375,
+          "process_tree_io_read_bytes": 16311581,
+          "process_tree_io_write_bytes": 1489806,
+          "diagnostic_output_bytes": 114751,
+          "diagnostic_output_sha256": "6ae0e43b767c6d3a5f3638a6112603e6175ca953fb34ea4ecdc51327589dedf4",
+          "html_output_bytes": 1374416,
+          "html_output_sha256": "321145d3051644b75d3a5e675a3a4686fed1d95499f84fe037cffd15b546fbab",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 1876.497,
+          "peak_rss_bytes": 123289600,
+          "process_tree_peak_rss_bytes": 123289600,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 1.15625,
+          "process_tree_io_read_bytes": 16311581,
+          "process_tree_io_write_bytes": 1489806,
+          "diagnostic_output_bytes": 114751,
+          "diagnostic_output_sha256": "6ae0e43b767c6d3a5f3638a6112603e6175ca953fb34ea4ecdc51327589dedf4",
+          "html_output_bytes": 1374416,
+          "html_output_sha256": "321145d3051644b75d3a5e675a3a4686fed1d95499f84fe037cffd15b546fbab",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 1865.066,
+          "peak_rss_bytes": 123064320,
+          "process_tree_peak_rss_bytes": 116740096,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 1.125,
+          "process_tree_io_read_bytes": 16311581,
+          "process_tree_io_write_bytes": 1489806,
+          "diagnostic_output_bytes": 114751,
+          "diagnostic_output_sha256": "6ae0e43b767c6d3a5f3638a6112603e6175ca953fb34ea4ecdc51327589dedf4",
+          "html_output_bytes": 1374416,
+          "html_output_sha256": "321145d3051644b75d3a5e675a3a4686fed1d95499f84fe037cffd15b546fbab",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 8,
+      "strategy_slots": 8,
+      "bars_per_market": 8000,
+      "total_strategy_bar_events": 64000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 667.474,
+      "setup_result_hash": "0e57eb06072b59be",
+      "verified_summary_sha256": "bb7912818208ef0fcea030d58552673a643388b46cbde06c9b7144ded63d39bf",
+      "primary_verified_input_bytes": 10936917,
+      "diagnostic_wall_p50_ms": 3216.12,
+      "diagnostic_wall_p95_ms": 3218.706,
+      "peak_rss_bytes_max": 243331072,
+      "process_tree_peak_rss_bytes_max": 236933120,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 1.969,
+      "diagnostic_output_bytes": 229501,
+      "html_output_bytes": 1726660,
+      "diagnostic_output_sha256": "edaed5f6d654fdf1c46df7a58749586ec01def5b67cab0e29e9ed3e03fa9630f",
+      "html_output_sha256": "b0a41fb98a29faf4cb89846bf8ded1b04702c14c09e27ca65b8ed907f645cdef",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 3216.12,
+          "peak_rss_bytes": 243011584,
+          "process_tree_peak_rss_bytes": 235970560,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 2.046875,
+          "process_tree_io_read_bytes": 32619537,
+          "process_tree_io_write_bytes": 1956801,
+          "diagnostic_output_bytes": 229501,
+          "diagnostic_output_sha256": "edaed5f6d654fdf1c46df7a58749586ec01def5b67cab0e29e9ed3e03fa9630f",
+          "html_output_bytes": 1726660,
+          "html_output_sha256": "b0a41fb98a29faf4cb89846bf8ded1b04702c14c09e27ca65b8ed907f645cdef",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 3218.706,
+          "peak_rss_bytes": 243224576,
+          "process_tree_peak_rss_bytes": 236195840,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 1.96875,
+          "process_tree_io_read_bytes": 32619537,
+          "process_tree_io_write_bytes": 1956801,
+          "diagnostic_output_bytes": 229501,
+          "diagnostic_output_sha256": "edaed5f6d654fdf1c46df7a58749586ec01def5b67cab0e29e9ed3e03fa9630f",
+          "html_output_bytes": 1726660,
+          "html_output_sha256": "b0a41fb98a29faf4cb89846bf8ded1b04702c14c09e27ca65b8ed907f645cdef",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 3145.927,
+          "peak_rss_bytes": 243331072,
+          "process_tree_peak_rss_bytes": 236933120,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 1.78125,
+          "process_tree_io_read_bytes": 32619537,
+          "process_tree_io_write_bytes": 1956801,
+          "diagnostic_output_bytes": 229501,
+          "diagnostic_output_sha256": "edaed5f6d654fdf1c46df7a58749586ec01def5b67cab0e29e9ed3e03fa9630f",
+          "html_output_bytes": 1726660,
+          "html_output_sha256": "b0a41fb98a29faf4cb89846bf8ded1b04702c14c09e27ca65b8ed907f645cdef",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 3,
+      "strategy_slots": 3,
+      "bars_per_market": 64000,
+      "total_strategy_bar_events": 192000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 1104.244,
+      "setup_result_hash": "2c12b5e061c3c5b9",
+      "verified_summary_sha256": "1cc44384ba39ef339a10f4a81ed51092e37fb7154f10eaaf345a952f09aa53e3",
+      "primary_verified_input_bytes": 32841695,
+      "diagnostic_wall_p50_ms": 8207.528,
+      "diagnostic_wall_p95_ms": 8242.34,
+      "peak_rss_bytes_max": 642162688,
+      "process_tree_peak_rss_bytes_max": 642162688,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 4.953,
+      "diagnostic_output_bytes": 83934,
+      "html_output_bytes": 1297519,
+      "diagnostic_output_sha256": "b716d47374972f44d6fb9dbfaf408ae7038e843076acd69cdfbd90434867904f",
+      "html_output_sha256": "3c33b7d4da9a95f695bfaea67e2557c45b2dcb319db9108e3b86739fb5c88650",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 8207.528,
+          "peak_rss_bytes": 642109440,
+          "process_tree_peak_rss_bytes": 636055552,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 4.8125,
+          "process_tree_io_read_bytes": 94430945,
+          "process_tree_io_write_bytes": 1382098,
+          "diagnostic_output_bytes": 83934,
+          "diagnostic_output_sha256": "b716d47374972f44d6fb9dbfaf408ae7038e843076acd69cdfbd90434867904f",
+          "html_output_bytes": 1297519,
+          "html_output_sha256": "3c33b7d4da9a95f695bfaea67e2557c45b2dcb319db9108e3b86739fb5c88650",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 8242.34,
+          "peak_rss_bytes": 642162688,
+          "process_tree_peak_rss_bytes": 642162688,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 5.1875,
+          "process_tree_io_read_bytes": 94431273,
+          "process_tree_io_write_bytes": 1382098,
+          "diagnostic_output_bytes": 83934,
+          "diagnostic_output_sha256": "b716d47374972f44d6fb9dbfaf408ae7038e843076acd69cdfbd90434867904f",
+          "html_output_bytes": 1297519,
+          "html_output_sha256": "3c33b7d4da9a95f695bfaea67e2557c45b2dcb319db9108e3b86739fb5c88650",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 8100.382,
+          "peak_rss_bytes": 641835008,
+          "process_tree_peak_rss_bytes": 635686912,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 4.953125,
+          "process_tree_io_read_bytes": 94430945,
+          "process_tree_io_write_bytes": 1382098,
+          "diagnostic_output_bytes": 83934,
+          "diagnostic_output_sha256": "b716d47374972f44d6fb9dbfaf408ae7038e843076acd69cdfbd90434867904f",
+          "html_output_bytes": 1297519,
+          "html_output_sha256": "3c33b7d4da9a95f695bfaea67e2557c45b2dcb319db9108e3b86739fb5c88650",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 4,
+      "strategy_slots": 4,
+      "bars_per_market": 64000,
+      "total_strategy_bar_events": 256000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 1386.66,
+      "setup_result_hash": "d85e77d4c474f43a",
+      "verified_summary_sha256": "96cec4a862c2816840b8633b448503c7edb3acdfdcb3fb0cb21beac52a172da5",
+      "primary_verified_input_bytes": 43795317,
+      "diagnostic_wall_p50_ms": 10637.4,
+      "diagnostic_wall_p95_ms": 10662.701,
+      "peak_rss_bytes_max": 854032384,
+      "process_tree_peak_rss_bytes_max": 854032384,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 6.391,
+      "diagnostic_output_bytes": 111911,
+      "html_output_bytes": 1385783,
+      "diagnostic_output_sha256": "ef69cf6872ecbd08cdf49abbeaa7c35ba5974641f4b73c50557bf2ccbe792467",
+      "html_output_sha256": "73bf797c541d621fc535f45e1688acbebd977157e07fcf44f16294b57462835d",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 10662.701,
+          "peak_rss_bytes": 853913600,
+          "process_tree_peak_rss_bytes": 848781312,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 6.984375,
+          "process_tree_io_read_bytes": 125920031,
+          "process_tree_io_write_bytes": 1498339,
+          "diagnostic_output_bytes": 111911,
+          "diagnostic_output_sha256": "ef69cf6872ecbd08cdf49abbeaa7c35ba5974641f4b73c50557bf2ccbe792467",
+          "html_output_bytes": 1385783,
+          "html_output_sha256": "73bf797c541d621fc535f45e1688acbebd977157e07fcf44f16294b57462835d",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 10587.695,
+          "peak_rss_bytes": 853970944,
+          "process_tree_peak_rss_bytes": 853970944,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 6.390625,
+          "process_tree_io_read_bytes": 125920031,
+          "process_tree_io_write_bytes": 1498339,
+          "diagnostic_output_bytes": 111911,
+          "diagnostic_output_sha256": "ef69cf6872ecbd08cdf49abbeaa7c35ba5974641f4b73c50557bf2ccbe792467",
+          "html_output_bytes": 1385783,
+          "html_output_sha256": "73bf797c541d621fc535f45e1688acbebd977157e07fcf44f16294b57462835d",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 10637.4,
+          "peak_rss_bytes": 854032384,
+          "process_tree_peak_rss_bytes": 854032384,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 6.171875,
+          "process_tree_io_read_bytes": 125920031,
+          "process_tree_io_write_bytes": 1498339,
+          "diagnostic_output_bytes": 111911,
+          "diagnostic_output_sha256": "ef69cf6872ecbd08cdf49abbeaa7c35ba5974641f4b73c50557bf2ccbe792467",
+          "html_output_bytes": 1385783,
+          "html_output_sha256": "73bf797c541d621fc535f45e1688acbebd977157e07fcf44f16294b57462835d",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "markets": 8,
+      "strategy_slots": 8,
+      "bars_per_market": 64000,
+      "total_strategy_bar_events": 512000,
+      "repeats": 3,
+      "setup_backtest_wall_ms": 2756.969,
+      "setup_result_hash": "e08e4b1512b21f30",
+      "verified_summary_sha256": "f1bdb32477d068c2a4005850ac79992df06c06db39c55e8429a0d48abb8f815b",
+      "primary_verified_input_bytes": 87609815,
+      "diagnostic_wall_p50_ms": 20852.055,
+      "diagnostic_wall_p95_ms": 21122.229,
+      "peak_rss_bytes_max": 1700773888,
+      "process_tree_peak_rss_bytes_max": 1700773888,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 13.844,
+      "diagnostic_output_bytes": 223821,
+      "html_output_bytes": 1738547,
+      "diagnostic_output_sha256": "8b62350090a62ed2cb17ed9de4211e96b4daeae9b4d630865ccc57d05c00e478",
+      "html_output_sha256": "144bbc2ebf8fa85a72ef68dc6b97cb48339c9a0a9217cd491d6f86067c64e2d9",
+      "lookahead_statuses": [
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected",
+        "no_change_detected"
+      ],
+      "startup_statuses": [
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive",
+        "startup_sensitive"
+      ],
+      "pit_statuses": [
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown",
+        "visibility_unknown"
+      ],
+      "repeated_samples": [
+        {
+          "wall_ms": 20775.254,
+          "peak_rss_bytes": 1700773888,
+          "process_tree_peak_rss_bytes": 1700773888,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 13.84375,
+          "process_tree_io_read_bytes": 251876403,
+          "process_tree_io_write_bytes": 1963014,
+          "diagnostic_output_bytes": 223821,
+          "diagnostic_output_sha256": "8b62350090a62ed2cb17ed9de4211e96b4daeae9b4d630865ccc57d05c00e478",
+          "html_output_bytes": 1738547,
+          "html_output_sha256": "144bbc2ebf8fa85a72ef68dc6b97cb48339c9a0a9217cd491d6f86067c64e2d9",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 20852.055,
+          "peak_rss_bytes": 1700618240,
+          "process_tree_peak_rss_bytes": 1700618240,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 13.9375,
+          "process_tree_io_read_bytes": 251876403,
+          "process_tree_io_write_bytes": 1963014,
+          "diagnostic_output_bytes": 223821,
+          "diagnostic_output_sha256": "8b62350090a62ed2cb17ed9de4211e96b4daeae9b4d630865ccc57d05c00e478",
+          "html_output_bytes": 1738547,
+          "html_output_sha256": "144bbc2ebf8fa85a72ef68dc6b97cb48339c9a0a9217cd491d6f86067c64e2d9",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        },
+        {
+          "wall_ms": 21122.229,
+          "peak_rss_bytes": 1700171776,
+          "process_tree_peak_rss_bytes": 1700171776,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds": 12.71875,
+          "process_tree_io_read_bytes": 251876403,
+          "process_tree_io_write_bytes": 1963014,
+          "diagnostic_output_bytes": 223821,
+          "diagnostic_output_sha256": "8b62350090a62ed2cb17ed9de4211e96b4daeae9b4d630865ccc57d05c00e478",
+          "html_output_bytes": 1738547,
+          "html_output_sha256": "144bbc2ebf8fa85a72ef68dc6b97cb48339c9a0a9217cd491d6f86067c64e2d9",
+          "lookahead_statuses": [
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected",
+            "no_change_detected"
+          ],
+          "startup_statuses": [
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive",
+            "startup_sensitive"
+          ],
+          "pit_statuses": [
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown",
+            "visibility_unknown"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+LEG r17g2_mdlinks rc=0 seconds=1.13 bytes=51
+LEG r17g2_pointers rc=1 seconds=15.55 bytes=1939
+SUMMARY_WRITTEN D:\aex_work\qianxing\.task-tmp\r17g2_summary.json
+R r17g2_mdlinks_broken=0
+R r17g2_mdlinks_files=78
+R r17g2_mdlinks_rc=0
+R r17g2_pointers_artifact_links=121
+R r17g2_pointers_audit_exit=1
+R r17g2_pointers_baseline=146
+R r17g2_pointers_broken_everywhere=0
+R r17g2_pointers_head_face=10
+R r17g2_pointers_head_rows=10
+R r17g2_pointers_local_only=146
+R r17g2_pointers_other_links=25
+R r17g2_pointers_rc=0
+R r17g2_pointers_scanned_files=78
+R t_r17g2_mdlinks=1.13
+R t_r17g2_pointers=15.55
+legs_nonzero=-

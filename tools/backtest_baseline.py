@@ -213,8 +213,10 @@ def snapshot_from_output(output: str, project: Path) -> dict[str, Any]:
         "fills": Path(artifacts.group(3)),
         "run_manifest": manifest_path,
     }
+    # 记录文件的名字跟着 CLI 印出的产物名走：同一批产物共用实际 schema 版本中缀。
+    # 上一版这里拿 manifest 名直接换后缀，拼出的是没人写过的 `<stem>.record.json`。
     record_path = manifest_path.with_name(
-        manifest_path.name.replace(".run.json", ".record.json")
+        paths["summary"].name.replace("summary.json", "record.json")
     )
     for path in (*paths.values(), record_path):
         if not path.is_file():

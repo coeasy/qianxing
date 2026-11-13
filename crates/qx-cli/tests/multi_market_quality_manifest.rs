@@ -1,6 +1,10 @@
 use serde_json::{json, Value};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+#[path = "multi_market_depth_quality_manifest.rs"]
+mod multi_market_depth_quality_manifest;
 
 fn root() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9,6 +13,21 @@ fn root() -> PathBuf {
         .unwrap()
         .join("target")
         .join(format!("multi-market-quality-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+fn unique_root(name: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .join("target")
+        .join(format!("{name}-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -107,6 +126,391 @@ fn multi_market_quality_reports_survive_evidence_pack_and_offline_verification()
     );
     let outcome: Value = serde_json::from_slice(&run.stdout).unwrap();
     let summary = PathBuf::from(outcome["artifact_path"].as_str().unwrap());
+    let generated_diagnostics = root.join("multi-market-bar-diagnostics-generated.json");
+    let diagnose = cli(&[
+        "strategy",
+        "diagnose-multi-bar",
+        summary.to_str().unwrap(),
+        "--output",
+        generated_diagnostics.to_str().unwrap(),
+        "--html",
+    ]);
+    assert!(
+        diagnose.status.success(),
+        "{}",
+        String::from_utf8_lossy(&diagnose.stderr)
+    );
+    let generated: Value =
+        serde_json::from_slice(&std::fs::read(&generated_diagnostics).unwrap()).unwrap();
+    assert_eq!(generated.as_array().unwrap().len(), 3);
+    assert!(generated.as_array().unwrap().iter().all(|item| {
+        item["input_kind"] == "bar"
+            && item["input_bars"].as_u64().is_some_and(|count| count >= 2)
+            && item["lookahead"]["status"].as_str().is_some()
+            && item["startup"]["trajectory"]["status"].as_str().is_some()
+    }));
+    let report_name = summary.file_name().unwrap().to_string_lossy();
+    let generated_html = summary
+        .with_file_name(report_name.replace(".multi-market.json", ".multi-market.report.html"));
+    let generated_html = std::fs::read_to_string(generated_html).unwrap();
+    assert!(generated_html.contains("strategyDiagnostics"));
+    assert!(generated_html.contains("multi-quality-0"));
+    let protected_bar = root.join("market-0.json");
+    let protected_bytes = std::fs::read(&protected_bar).unwrap();
+    let overwrite = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--html",
+        "--output",
+        protected_bar.to_str().unwrap(),
+    ]);
+    assert!(!overwrite.status.success());
+    assert_eq!(std::fs::read(&protected_bar).unwrap(), protected_bytes);
+    let html = root.join("multi-market-report.html");
+    let xlsx = root.join("multi-market-report.xlsx");
+    let report = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--json",
+        "--html",
+        "--output",
+        html.to_str().unwrap(),
+        "--xlsx",
+        xlsx.to_str().unwrap(),
+    ]);
+    assert!(
+        report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let report_json: Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(report_json["report_kind"], "multi_market_bar");
+    assert_eq!(
+        report_json["report"]["markets"].as_array().unwrap().len(),
+        3
+    );
+    assert_eq!(
+        report_json["report"]["markets"][0]["quality_status"],
+        "verified"
+    );
+    assert_eq!(
+        report_json["report"]["instrument_equity_contributions"]["BTCUSDT.BINANCE"][0]
+            ["equity_index"],
+        0
+    );
+    assert!(report_json["report"]["events"]
+        .as_array()
+        .is_some_and(|events| !events.is_empty()));
+    assert!(report_json["report"]["event_log_digest"].as_str().is_some());
+    let rendered = std::fs::read_to_string(&html).unwrap();
+    assert!(rendered.contains("权益曲线"));
+    assert!(rendered.contains("按标的权益贡献"));
+    assert!(rendered.contains("contributionInstrument"));
+    assert!(rendered.contains("marketSearch"));
+    assert!(rendered.contains("fillSearch"));
+    assert!(rendered.contains("已验证事件时间线"));
+    assert!(rendered.contains("eventSearch"));
+    assert!(rendered.contains("eventLinks"));
+    assert!(rendered.contains("onmousemove"));
+    assert!(xlsx.is_file());
+
+    let run_artifact: Value = serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let quality_instrument = "BTCUSDT.BINANCE";
+    let original_quality_path = run_artifact
+        .pointer(&format!(
+            "/dataset_quality/{quality_instrument}/manifest_path"
+        ))
+        .and_then(Value::as_str)
+        .unwrap();
+    let duplicate_quality_path = root.join("market-0-quality-identical-copy.json");
+    std::fs::copy(original_quality_path, &duplicate_quality_path).unwrap();
+    let mut rebound_quality_artifact = run_artifact.clone();
+    rebound_quality_artifact["dataset_quality"][quality_instrument]["manifest_path"] =
+        json!(duplicate_quality_path);
+    let rebound_quality_path = root.join("multi-market-rebound-quality.json");
+    std::fs::write(
+        &rebound_quality_path,
+        serde_json::to_vec(&rebound_quality_artifact).unwrap(),
+    )
+    .unwrap();
+    let rebound_quality_path_text = rebound_quality_path.to_string_lossy().into_owned();
+    let rejected_rebound_quality = cli(&["report", &rebound_quality_path_text, "--json"]);
+    assert!(!rejected_rebound_quality.status.success());
+    assert!(String::from_utf8_lossy(&rejected_rebound_quality.stderr)
+        .contains("质量清单路径与 spec 不一致"));
+
+    let event_trace_path = PathBuf::from(run_artifact["event_trace_path"].as_str().unwrap());
+    let legacy_events = std::fs::read_to_string(event_trace_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let mut legacy_artifact = run_artifact.clone();
+    legacy_artifact["schema_version"] = json!(1);
+    legacy_artifact
+        .as_object_mut()
+        .unwrap()
+        .remove("event_trace_path");
+    legacy_artifact
+        .as_object_mut()
+        .unwrap()
+        .remove("event_count");
+    legacy_artifact["event_log"] = json!(legacy_events);
+    let legacy_summary = root.join("multi-market-legacy.json");
+    std::fs::write(
+        &legacy_summary,
+        serde_json::to_vec(&legacy_artifact).unwrap(),
+    )
+    .unwrap();
+    let legacy_report = cli(&["report", legacy_summary.to_str().unwrap(), "--json"]);
+    assert!(
+        legacy_report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legacy_report.stderr)
+    );
+    let legacy_report: Value = serde_json::from_slice(&legacy_report.stdout).unwrap();
+    assert_eq!(
+        legacy_report["report"]["event_count"],
+        json!(legacy_events.len())
+    );
+    assert_eq!(legacy_report["report"]["events_truncated"], false);
+
+    let contributions_path = PathBuf::from(
+        run_artifact["instrument_equity_contributions_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let mut altered_contributions: Value =
+        serde_json::from_slice(&std::fs::read(&contributions_path).unwrap()).unwrap();
+    for (instrument, delta) in [("BTCUSDT.BINANCE", 1_i128), ("ETHUSDT.BINANCE", -1_i128)] {
+        let rows = altered_contributions[instrument].as_array_mut().unwrap();
+        let last = rows.last_mut().unwrap();
+        let value = last["pnl_contribution_raw"]
+            .as_str()
+            .unwrap()
+            .parse::<i128>()
+            .unwrap()
+            .checked_add(delta)
+            .unwrap();
+        last["pnl_contribution_raw"] = json!(value.to_string());
+    }
+    let altered_contributions_path = root.join("multi-market-altered-contributions.json");
+    let altered_contributions_bytes = serde_json::to_vec(&altered_contributions).unwrap();
+    std::fs::write(&altered_contributions_path, &altered_contributions_bytes).unwrap();
+    let mut altered_manifest: Value = serde_json::from_slice(
+        &std::fs::read(run_artifact["run_manifest_path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    altered_manifest["input_components"]["derived:instrument-equity-contributions"] =
+        json!(qx_data::sha256_hex_bytes(&altered_contributions_bytes));
+    let altered_manifest_path = root.join("multi-market-altered-contributions.run.json");
+    std::fs::write(
+        &altered_manifest_path,
+        serde_json::to_vec(&altered_manifest).unwrap(),
+    )
+    .unwrap();
+    let mut altered_contribution_summary = run_artifact.clone();
+    altered_contribution_summary["instrument_equity_contributions_path"] =
+        json!(altered_contributions_path);
+    altered_contribution_summary["run_manifest_path"] = json!(altered_manifest_path);
+    let altered_contribution_summary_path =
+        root.join("multi-market-altered-contribution-summary.json");
+    std::fs::write(
+        &altered_contribution_summary_path,
+        serde_json::to_vec(&altered_contribution_summary).unwrap(),
+    )
+    .unwrap();
+    let altered_contribution_report = cli(&[
+        "report",
+        altered_contribution_summary_path.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!altered_contribution_report.status.success());
+    assert!(String::from_utf8_lossy(&altered_contribution_report.stderr)
+        .contains("期末盈亏贡献与重放账簿估值不一致"));
+
+    let diagnostics = run_artifact["spec"]["markets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|configured| {
+            let instrument = configured["instrument"].as_str().unwrap();
+            let market = run_artifact["market_data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|market| market["instrument"].as_str() == Some(instrument))
+                .unwrap();
+            let frame: Value =
+                serde_json::from_slice(&std::fs::read(market["path"].as_str().unwrap()).unwrap())
+                    .unwrap();
+            json!({
+                "schema_version": 1,
+                "kind": "qianxing-strategy-bias-diagnostics",
+                "strategy_id": configured["strategies"][0]["strategy"]["strategy_id"],
+                "instrument": instrument,
+                "data_fingerprint": market["content_hash"],
+                "input_kind": "bar",
+                "input_bars": market["row_count"],
+                "as_of": frame["ts"].as_array().unwrap().last().unwrap(),
+                "lookahead": {"status": "no_change_detected", "checks": []},
+                "startup": {"status": "stable_across_requested_windows", "divergences": []}
+            })
+        })
+        .collect::<Vec<_>>();
+    let diagnostics_path = root.join("multi-market-bar-diagnostics.json");
+    std::fs::write(&diagnostics_path, serde_json::to_vec(&diagnostics).unwrap()).unwrap();
+    let diagnostics_html = root.join("multi-market-with-diagnostics.html");
+    let diagnostics_xlsx = root.join("multi-market-with-diagnostics.xlsx");
+    let diagnostics_report = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--strategy-diagnostics",
+        diagnostics_path.to_str().unwrap(),
+        "--json",
+        "--html",
+        "--output",
+        diagnostics_html.to_str().unwrap(),
+        "--xlsx",
+        diagnostics_xlsx.to_str().unwrap(),
+    ]);
+    assert!(
+        diagnostics_report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics_report.stderr)
+    );
+    let bound_report: Value = serde_json::from_slice(&diagnostics_report.stdout).unwrap();
+    assert_eq!(
+        bound_report["report"]["market_strategy_diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let diagnostic_html = std::fs::read_to_string(&diagnostics_html).unwrap();
+    assert!(diagnostic_html.contains("strategyDiagnostics"));
+    assert!(diagnostic_html.contains("multi-quality-0"));
+    assert!(diagnostics_xlsx.is_file());
+    let mut diagnostics_workbook =
+        zip::ZipArchive::new(std::fs::File::open(&diagnostics_xlsx).unwrap()).unwrap();
+    let mut workbook_index = String::new();
+    diagnostics_workbook
+        .by_name("xl/workbook.xml")
+        .unwrap()
+        .read_to_string(&mut workbook_index)
+        .unwrap();
+    assert!(workbook_index.contains("StrategyDiagnostics"));
+    assert!(workbook_index.contains("DiagnosticEvidence"));
+    let mut evidence_sheet = String::new();
+    diagnostics_workbook
+        .by_name("xl/worksheets/sheet4.xml")
+        .unwrap()
+        .read_to_string(&mut evidence_sheet)
+        .unwrap();
+    assert!(evidence_sheet.contains("no_change_detected"));
+    let mut invalid_diagnostics = diagnostics;
+    invalid_diagnostics[0]["input_bars"] = json!(1);
+    let invalid_diagnostics_path = root.join("multi-market-bar-diagnostics-invalid.json");
+    std::fs::write(
+        &invalid_diagnostics_path,
+        serde_json::to_vec(&invalid_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let rejected_diagnostics = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--strategy-diagnostics",
+        invalid_diagnostics_path.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!rejected_diagnostics.status.success());
+    assert!(String::from_utf8_lossy(&rejected_diagnostics.stderr).contains("Bar 数量"));
+
+    let tampered_summary = summary.with_file_name("multi-market-tampered-events.json");
+    let mut tampered: Value = serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let original_event_trace = PathBuf::from(tampered["event_trace_path"].as_str().unwrap());
+    let tampered_event_trace = root.join("multi-market-tampered-events.jsonl");
+    let mut event_lines = std::fs::read_to_string(original_event_trace)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(
+        !event_lines.is_empty(),
+        "fixture must include an event trace"
+    );
+    event_lines.pop();
+    std::fs::write(&tampered_event_trace, event_lines.join("\n")).unwrap();
+    tampered["event_trace_path"] = json!(tampered_event_trace);
+    std::fs::write(&tampered_summary, serde_json::to_vec(&tampered).unwrap()).unwrap();
+    let tampered_report = cli(&["report", tampered_summary.to_str().unwrap(), "--json"]);
+    assert!(!tampered_report.status.success());
+    assert!(String::from_utf8_lossy(&tampered_report.stderr).contains("JSONL 事件流核验失败"));
+
+    let altered_fills_path = root.join("multi-market-altered-fills.json");
+    let mut altered: Value = serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let original_fills_path = altered["fills_path"].as_str().unwrap();
+    let mut altered_fills: Value =
+        serde_json::from_slice(&std::fs::read(original_fills_path).unwrap()).unwrap();
+    assert!(!altered_fills.as_array().unwrap().is_empty());
+    altered_fills[0]["price"] = json!(altered_fills[0]["price"].as_i64().unwrap() + 1);
+    std::fs::write(
+        &altered_fills_path,
+        serde_json::to_vec(&altered_fills).unwrap(),
+    )
+    .unwrap();
+    let altered_summary = summary.with_file_name("multi-market-altered-fill-summary.json");
+    altered["fills_path"] = json!(altered_fills_path);
+    std::fs::write(&altered_summary, serde_json::to_vec(&altered).unwrap()).unwrap();
+    let altered_report = cli(&["report", altered_summary.to_str().unwrap(), "--json"]);
+    assert!(!altered_report.status.success());
+    assert!(String::from_utf8_lossy(&altered_report.stderr).contains("成交 sidecar 核验失败"));
+
+    let second_spec = root.join("multi-market-second.json");
+    let mut second: Value = serde_json::from_slice(&std::fs::read(&spec).unwrap()).unwrap();
+    second["run_id"] = json!("multi-market-quality-cli-second");
+    second["output_dir"] = json!(root.join("runs-second"));
+    std::fs::write(&second_spec, second.to_string()).unwrap();
+    let second_run = cli(&[
+        "app",
+        "multi-market-backtest",
+        second_spec.to_str().unwrap(),
+    ]);
+    assert!(
+        second_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_run.stderr)
+    );
+    let second_outcome: Value = serde_json::from_slice(&second_run.stdout).unwrap();
+    let second_summary = second_outcome["artifact_path"].as_str().unwrap();
+    let comparison_html = root.join("multi-market-comparison.html");
+    let comparison = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--against",
+        second_summary,
+        "--json",
+        "--html",
+        "--output",
+        comparison_html.to_str().unwrap(),
+    ]);
+    assert!(
+        comparison.status.success(),
+        "{}",
+        String::from_utf8_lossy(&comparison.stderr)
+    );
+    let comparison_json: Value = serde_json::from_slice(&comparison.stdout).unwrap();
+    assert_eq!(
+        comparison_json["report_kind"],
+        "multi_market_bar_comparison"
+    );
+    assert_eq!(
+        comparison_json["report"]["runs"].as_array().unwrap().len(),
+        2
+    );
+    assert!(std::fs::read_to_string(comparison_html)
+        .unwrap()
+        .contains("同输入运行排名"));
     let package = cli(&[
         "evidence",
         "pack-multi-market-run",
@@ -139,6 +543,189 @@ fn multi_market_quality_reports_survive_evidence_pack_and_offline_verification()
         "{}",
         String::from_utf8_lossy(&verified.stderr)
     );
+
+    let run_artifact: Value = serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+    let diagnostics: Vec<Value> = run_artifact["spec"]["markets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|market| {
+            let instrument = market["instrument"].as_str().unwrap();
+            let source = run_artifact["market_data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|input| input["instrument"].as_str() == Some(instrument))
+                .unwrap();
+            let frame: Value =
+                serde_json::from_slice(&std::fs::read(source["path"].as_str().unwrap()).unwrap())
+                    .unwrap();
+            let strategy_id = market["strategies"][0]["strategy"]["strategy_id"]
+                .as_str()
+                .unwrap();
+            json!({
+                "schema_version": 1,
+                "kind": "qianxing-strategy-bias-diagnostics",
+                "strategy_id": strategy_id,
+                "instrument": instrument,
+                "data_fingerprint": source["content_hash"],
+                "as_of": frame["ts"].as_array().unwrap().last().unwrap(),
+                "input_bars": source["row_count"],
+                "lookahead": {"status":"no_change_detected"},
+                "startup": {"status":"stable_across_requested_windows"}
+            })
+        })
+        .collect();
+    let diagnostics_path = root.join("multi-market-strategy-diagnostics.json");
+    let diagnostics_bytes = serde_json::to_vec_pretty(&diagnostics).unwrap();
+    std::fs::write(&diagnostics_path, &diagnostics_bytes).unwrap();
+    let second_artifact: Value =
+        serde_json::from_slice(&std::fs::read(second_summary).unwrap()).unwrap();
+    let comparison_diagnostics = json!({
+        "schema_version": 1,
+        "kind": "qianxing-multi-market-bar-diagnostic-comparison",
+        "runs": [
+            {"run_id": run_artifact["spec"]["run_id"], "diagnostics": diagnostics},
+            {"run_id": second_artifact["spec"]["run_id"], "diagnostics": diagnostics}
+        ]
+    });
+    let comparison_diagnostics_path = root.join("multi-market-comparison-diagnostics.json");
+    std::fs::write(
+        &comparison_diagnostics_path,
+        serde_json::to_vec_pretty(&comparison_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let diagnostic_comparison_html = root.join("multi-market-diagnostic-comparison.html");
+    let diagnostic_comparison_xlsx = root.join("multi-market-diagnostic-comparison.xlsx");
+    let diagnostic_comparison = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--against",
+        second_summary,
+        "--strategy-diagnostics",
+        comparison_diagnostics_path.to_str().unwrap(),
+        "--json",
+        "--html",
+        "--output",
+        diagnostic_comparison_html.to_str().unwrap(),
+        "--xlsx",
+        diagnostic_comparison_xlsx.to_str().unwrap(),
+    ]);
+    assert!(
+        diagnostic_comparison.status.success(),
+        "{}",
+        String::from_utf8_lossy(&diagnostic_comparison.stderr)
+    );
+    let diagnostic_comparison_json: Value =
+        serde_json::from_slice(&diagnostic_comparison.stdout).unwrap();
+    let compared_runs = diagnostic_comparison_json["report"]["runs"]
+        .as_array()
+        .unwrap();
+    assert_eq!(compared_runs.len(), 2);
+    assert!(compared_runs
+        .iter()
+        .all(|run| run["market_strategy_diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.len() == diagnostics.len())));
+    let diagnostic_html = std::fs::read_to_string(diagnostic_comparison_html).unwrap();
+    assert!(diagnostic_html.contains("逐运行策略诊断对照"));
+    assert!(diagnostic_html.contains(run_artifact["spec"]["run_id"].as_str().unwrap()));
+    assert!(diagnostic_html.contains(second_artifact["spec"]["run_id"].as_str().unwrap()));
+    assert!(diagnostic_comparison_xlsx.is_file());
+
+    let incomplete_diagnostics_path =
+        root.join("multi-market-comparison-diagnostics-incomplete.json");
+    let mut incomplete_diagnostics = comparison_diagnostics.clone();
+    incomplete_diagnostics["runs"] = json!([comparison_diagnostics["runs"][0]]);
+    std::fs::write(
+        &incomplete_diagnostics_path,
+        serde_json::to_vec_pretty(&incomplete_diagnostics).unwrap(),
+    )
+    .unwrap();
+    let incomplete = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--against",
+        second_summary,
+        "--strategy-diagnostics",
+        incomplete_diagnostics_path.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!incomplete.status.success());
+    assert!(String::from_utf8_lossy(&incomplete.stderr)
+        .contains("run_id 集合必须与所有被比较运行完全一致"));
+    let report_with_evidence = cli(&[
+        "report",
+        summary.to_str().unwrap(),
+        "--json",
+        "--evidence",
+        "--strategy-diagnostics",
+        diagnostics_path.to_str().unwrap(),
+    ]);
+    assert!(
+        report_with_evidence.status.success(),
+        "{}",
+        String::from_utf8_lossy(&report_with_evidence.stderr)
+    );
+    let evidence_path =
+        summary.with_file_name("multi-market-quality-cli.strategy-diagnostics.evidence.json");
+    let evidence: Value = serde_json::from_slice(&std::fs::read(&evidence_path).unwrap()).unwrap();
+    assert_eq!(
+        evidence["generation"]["run"]["strategy_diagnostics"]["kind"],
+        "strategy-bias-diagnostics-array"
+    );
+    let verified = cli(&["evidence", "verify-run", evidence_path.to_str().unwrap()]);
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    let verified_json: Value = serde_json::from_slice(&verified.stdout).unwrap();
+    assert_eq!(verified_json["strategy_diagnostics_verified"], true);
+    assert_eq!(verified_json["verified_attachment_count"], 1);
+
+    let portable = root.join("portable-multi-market-run");
+    let exported = cli(&[
+        "evidence",
+        "export-run",
+        evidence_path.to_str().unwrap(),
+        "--output-dir",
+        portable.to_str().unwrap(),
+    ]);
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let portable_bundle = portable.join("evidence.json");
+    let portable_verified = cli(&["evidence", "verify-run", portable_bundle.to_str().unwrap()]);
+    assert!(
+        portable_verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&portable_verified.stderr)
+    );
+    let tampered = portable.join("inputs").join("strategy-diagnostics.json");
+    let mut tampered_bytes = std::fs::read(&tampered).unwrap();
+    tampered_bytes.push(b' ');
+    std::fs::write(&tampered, tampered_bytes).unwrap();
+    let rejected = cli(&["evidence", "verify-run", portable_bundle.to_str().unwrap()]);
+    assert!(!rejected.status.success());
+    let mut wrong_identity = diagnostics.clone();
+    wrong_identity[0]["data_fingerprint"] = json!("different-market-data");
+    let wrong_identity_bytes = serde_json::to_vec_pretty(&wrong_identity).unwrap();
+    std::fs::write(&tampered, &wrong_identity_bytes).unwrap();
+    let mut portable_evidence: Value =
+        serde_json::from_slice(&std::fs::read(&portable_bundle).unwrap()).unwrap();
+    portable_evidence["generation"]["run"]["strategy_diagnostics"]["input_sha256"] =
+        json!(qx_strategy::sha256_hex(&wrong_identity_bytes));
+    std::fs::write(
+        &portable_bundle,
+        serde_json::to_vec_pretty(&portable_evidence).unwrap(),
+    )
+    .unwrap();
+    let rejected_identity = cli(&["evidence", "verify-run", portable_bundle.to_str().unwrap()]);
+    assert!(!rejected_identity.status.success());
+    assert!(String::from_utf8_lossy(&rejected_identity.stderr).contains("data_fingerprint"));
 
     let experiment_spec = root.join("multi-market-experiment.json");
     std::fs::write(
@@ -205,4 +792,255 @@ fn multi_market_quality_reports_survive_evidence_pack_and_offline_verification()
         "{}",
         String::from_utf8_lossy(&bundle_verified.stderr)
     );
+}
+
+#[test]
+fn multi_market_run_evidence_recomputes_after_source_workspace_removal() {
+    let case_root = unique_root("multi-market-portable-recompute");
+    let source_root = case_root.join("source-workspace");
+    let inputs = source_root.join("inputs");
+    std::fs::create_dir_all(&inputs).unwrap();
+    let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let base_frame: Value = serde_json::from_slice(
+        &std::fs::read(deploy.join("qianxing.bar-frame.example.json")).unwrap(),
+    )
+    .unwrap();
+    let instruments = ["BTCUSDT.BINANCE", "ETHUSDT.BINANCE", "SOLUSDT.BINANCE"];
+    let mut markets = Vec::new();
+    for (index, instrument) in instruments.iter().enumerate() {
+        let frame_path = inputs.join(format!("market-{index}.bar-frame.json"));
+        let mut frame = base_frame.clone();
+        frame["instrument"] = json!(instrument);
+        std::fs::write(&frame_path, serde_json::to_vec(&frame).unwrap()).unwrap();
+        let mut market = json!({
+            "instrument": instrument,
+            "bars_path": frame_path,
+            "priority": index,
+            "market_spec": null,
+            "fee_schedule": null,
+            "strategies": [{
+                "priority": 0,
+                "reserved_capital_raw": 20_000_000_000_000_i128,
+                "strategy": {
+                    "kind": "sma_cross",
+                    "strategy_id": format!("portable-market-{index}"),
+                    "quantity_raw": 1_000_000_000_i128,
+                    "fast_window": 1,
+                    "slow_window": 3
+                }
+            }]
+        });
+        if index == 0 {
+            let quality_path = source_root.join("market-0.quality.json");
+            let validated = cli(&[
+                "data-validate",
+                frame_path.to_str().unwrap(),
+                "research:portable-market-0",
+                "daily-v1",
+                "1000",
+                quality_path.to_str().unwrap(),
+                "--timezone",
+                "UTC",
+            ]);
+            assert!(
+                validated.status.success(),
+                "generate dataset quality manifest: {}",
+                String::from_utf8_lossy(&validated.stderr)
+            );
+            market["dataset_manifest_path"] = json!(quality_path);
+        }
+        markets.push(market);
+    }
+    let spec_path = source_root.join("multi-market.json");
+    std::fs::write(
+        &spec_path,
+        json!({
+            "schema_version": 1,
+            "run_id": "multi-market-portable-source-removal",
+            "account_id": "portable-market-account",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000_i128,
+            "seed": 17,
+            "output_dir": source_root.join("runs"),
+            "markets": markets
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let run = cli(&["app", "multi-market-backtest", spec_path.to_str().unwrap()]);
+    assert!(
+        run.status.success(),
+        "multi-market backtest: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let outcome: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let summary = PathBuf::from(outcome["artifact_path"].as_str().unwrap());
+    let report = cli(&["report", summary.to_str().unwrap(), "--json", "--evidence"]);
+    assert!(
+        report.status.success(),
+        "create multi-market run EvidenceBundle: {}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let summary_name = summary.file_name().unwrap().to_string_lossy();
+    let evidence_name = summary_name.replace(".multi-market.json", ".evidence.json");
+    let source_evidence = summary.with_file_name(evidence_name);
+    assert!(
+        source_evidence.is_file(),
+        "run EvidenceBundle was not created"
+    );
+
+    let package = case_root.join("portable-package");
+    let exported = cli(&[
+        "evidence",
+        "export-run",
+        source_evidence.to_str().unwrap(),
+        "--output-dir",
+        package.to_str().unwrap(),
+    ]);
+    assert!(
+        exported.status.success(),
+        "export multi-market run EvidenceBundle: {}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let relocated = case_root.join("relocated-package");
+    std::fs::rename(&package, &relocated).unwrap();
+    std::fs::remove_dir_all(&source_root).unwrap();
+
+    let evidence = relocated.join("evidence.json");
+    let verified = cli(&[
+        "evidence",
+        "verify-run",
+        evidence.to_str().unwrap(),
+        "--recompute",
+    ]);
+    assert!(
+        verified.status.success(),
+        "relocated multi-market bundle must recompute with source workspace removed: {}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    let result: Value = serde_json::from_slice(&verified.stdout).unwrap();
+    assert_eq!(result["result_recomputed"], true);
+}
+
+#[test]
+fn one_and_two_market_run_evidence_recompute_after_relocation() {
+    let case_root = unique_root("multi-market-small-portable-recompute");
+    let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let base_frame: Value = serde_json::from_slice(
+        &std::fs::read(deploy.join("qianxing.bar-frame.example.json")).unwrap(),
+    )
+    .unwrap();
+
+    for market_count in [1_usize, 2] {
+        let source_root = case_root.join(format!("source-{market_count}"));
+        let inputs = source_root.join("inputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        let mut markets = Vec::new();
+        for (index, instrument) in ["BTCUSDT.BINANCE", "ETHUSDT.BINANCE"]
+            .into_iter()
+            .take(market_count)
+            .enumerate()
+        {
+            let frame_path = inputs.join(format!("market-{index}.bar-frame.json"));
+            let mut frame = base_frame.clone();
+            frame["instrument"] = json!(instrument);
+            std::fs::write(&frame_path, serde_json::to_vec(&frame).unwrap()).unwrap();
+            markets.push(json!({
+                "instrument": instrument,
+                "bars_path": frame_path,
+                "priority": index,
+                "market_spec": null,
+                "fee_schedule": null,
+                "strategies": [{
+                    "priority": 0,
+                    "reserved_capital_raw": 20_000_000_000_000_i128,
+                    "strategy": {
+                        "kind": "sma_cross",
+                        "strategy_id": format!("small-market-{market_count}-{index}"),
+                        "quantity_raw": 1_000_000_000_i128,
+                        "fast_window": 1,
+                        "slow_window": 3
+                    }
+                }]
+            }));
+        }
+        let spec_path = source_root.join("multi-market.json");
+        std::fs::write(
+            &spec_path,
+            json!({
+                "schema_version": 1,
+                "run_id": format!("multi-market-small-{market_count}"),
+                "account_id": format!("small-market-account-{market_count}"),
+                "settlement_currency": "USDT",
+                "initial_cash_raw": 100_000_000_000_000_i128,
+                "seed": 23,
+                "output_dir": source_root.join("runs"),
+                "markets": markets
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let run = cli(&["app", "multi-market-backtest", spec_path.to_str().unwrap()]);
+        assert!(
+            run.status.success(),
+            "{market_count}-market backtest: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let outcome: Value = serde_json::from_slice(&run.stdout).unwrap();
+        let artifact = PathBuf::from(outcome["artifact_path"].as_str().unwrap());
+        let packed = cli(&[
+            "evidence",
+            "pack-multi-market-run",
+            artifact.to_str().unwrap(),
+        ]);
+        assert!(
+            packed.status.success(),
+            "pack {market_count}-market evidence: {}",
+            String::from_utf8_lossy(&packed.stderr)
+        );
+        let evidence_name = artifact
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace(".multi-market.json", ".evidence.json");
+        let source_evidence = artifact.with_file_name(evidence_name);
+        let package = case_root.join(format!("package-{market_count}"));
+        let exported = cli(&[
+            "evidence",
+            "export-run",
+            source_evidence.to_str().unwrap(),
+            "--output-dir",
+            package.to_str().unwrap(),
+        ]);
+        assert!(
+            exported.status.success(),
+            "export {market_count}-market evidence: {}",
+            String::from_utf8_lossy(&exported.stderr)
+        );
+        let relocated = case_root.join(format!("relocated-{market_count}"));
+        std::fs::rename(&package, &relocated).unwrap();
+        std::fs::remove_dir_all(&source_root).unwrap();
+
+        let evidence = relocated.join("evidence.json");
+        let verified = cli(&[
+            "evidence",
+            "verify-run",
+            evidence.to_str().unwrap(),
+            "--recompute",
+        ]);
+        assert!(
+            verified.status.success(),
+            "relocated {market_count}-market bundle must recompute without the source workspace: {}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        let result: Value = serde_json::from_slice(&verified.stdout).unwrap();
+        assert_eq!(result["result_recomputed"], true);
+    }
 }

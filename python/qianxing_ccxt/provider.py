@@ -100,18 +100,25 @@ class CcxtProviderAdapter:
                         "low": low_raw,
                         "close": close_raw,
                         "volume": volume_raw,
+                        **(
+                            {"exact_ohlcv": frame.exact_ohlcv[index]}
+                            if frame.exact_ohlcv is not None
+                            else {}
+                        ),
                     },
                     separators=(",", ":"),
                 ),
             )
-            for timestamp, open_raw, high_raw, low_raw, close_raw, volume_raw in zip(
-                frame.ts,
-                frame.open_raw,
-                frame.high_raw,
-                frame.low_raw,
-                frame.close_raw,
-                frame.volume_raw,
-                strict=True,
+            for index, (timestamp, open_raw, high_raw, low_raw, close_raw, volume_raw) in enumerate(
+                zip(
+                    frame.ts,
+                    frame.open_raw,
+                    frame.high_raw,
+                    frame.low_raw,
+                    frame.close_raw,
+                    frame.volume_raw,
+                    strict=True,
+                )
             )
         )
         digest = hashlib.sha256(query_json.encode("utf-8")).hexdigest()[:16]

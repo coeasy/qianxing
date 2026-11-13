@@ -78,9 +78,7 @@ fn api_data_provider_configuration_is_explicit_and_fail_closed() {
         .contains("必须声明 Bar"));
 }
 
-/// 明文 API 的边界是**地址**，不是 `environment` 的措辞：明文面拿不到 operator 身份，
-/// `qx-api` 在没有装访问策略时直接把请求体里的 `permission` 当授予档位，所以
-/// `environment` 写成 paper/sandbox/testnet（仓库模板正在用的值）都不该等于"可以对外"。
+/// 明文 API 只服务 loopback 上的 paper 模拟。sandbox/testnet 的订单执行必须有 mTLS operator 身份。
 #[test]
 fn plaintext_api_is_confined_to_loopback_binds() {
     let mut routable = config();
@@ -131,6 +129,61 @@ fn plaintext_api_is_confined_to_loopback_binds() {
         !error.contains("明文 API 只能绑定回环地址"),
         "生产 mTLS 的拒绝理由不能来自这条明文闸门，实际报错: {error}"
     );
+}
+
+#[test]
+fn plaintext_api_is_only_allowed_for_paper_environment() {
+    for environment in ["sandbox", "testnet"] {
+        let mut config = config();
+        config.environment = environment.into();
+        let error = config.validate().unwrap_err();
+        assert!(
+            error.contains("明文 API 仅允许 paper 环境"),
+            "{environment} 明文 API 必须拒绝，实际报错: {error}"
+        );
+    }
+
+    let paper = config();
+    assert!(paper.validate().is_ok());
+
+    let mut paper_with_venue_worker = config();
+    paper_with_venue_worker.workers.push(WorkerConfig {
+        id: "testnet-execution".into(),
+        role: WorkerRole::Execution,
+        enabled: true,
+        account_id: Some("main".into()),
+        venue_id: Some("binance-testnet".into()),
+        endpoint: None,
+        symbols: Vec::new(),
+        settlement_currency: Some("USDT".into()),
+        credential_env: None,
+        credential_files: None,
+        instrument_spec_path: None,
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    });
+    assert!(paper_with_venue_worker
+        .validate()
+        .unwrap_err()
+        .contains("真实 sandbox/testnet worker 必须使用 mTLS"));
+
+    let mut sandbox_mtls = config();
+    sandbox_mtls.environment = "sandbox".into();
+    sandbox_mtls.api.transport = ApiTransport::Mtls;
+    sandbox_mtls.api.tls = Some(TlsPaths {
+        certificate_chain: "server.pem".into(),
+        private_key: "server.key".into(),
+        client_ca: "clients.pem".into(),
+    });
+    sandbox_mtls.api.operators.insert(
+        "ops".into(),
+        OperatorConfig {
+            permission: Permission::Trading,
+            certificate: "ops.pem".into(),
+        },
+    );
+    assert!(sandbox_mtls.validate().is_ok());
 }
 
 #[test]
@@ -388,6 +441,7 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         id: "main".into(),
         settlement_currency: Some("USD".into()),
         initial_cash_raw: Some(0),
+        portfolio_id: None,
     });
     assert!(invalid
         .validate()
@@ -399,6 +453,7 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         id: "main".into(),
         settlement_currency: Some("USD".into()),
         initial_cash_raw: Some(100_000),
+        portfolio_id: None,
     });
     unknown_binding.workers[0].account_id = Some("missing".into());
     assert!(unknown_binding
@@ -407,10 +462,12 @@ fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
         .contains("未声明的账户 missing"));
 
     let mut duplicated_funding = config();
+    configure_testnet_mtls(&mut duplicated_funding);
     duplicated_funding.accounts.push(AccountRuntimeConfig {
         id: "main".into(),
         settlement_currency: Some("USDT".into()),
         initial_cash_raw: Some(100_000),
+        portfolio_id: None,
     });
     duplicated_funding.workers[0].account_id = Some("main".into());
     for (id, venue) in [("paper-exec", "paper"), ("binance-exec", "binance")] {

@@ -22,10 +22,6 @@ pub enum DatasetComponentFormat {
     Arrow,
 }
 
-fn is_json_component_format(format: &DatasetComponentFormat) -> bool {
-    matches!(format, DatasetComponentFormat::Json)
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArrowFieldManifest {
     pub name: String,
@@ -108,7 +104,7 @@ impl DatasetManifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetComponentManifest {
     pub kind: String,
-    #[serde(default, skip_serializing_if = "is_json_component_format")]
+    #[serde(default)]
     pub format: DatasetComponentFormat,
     #[serde(flatten)]
     pub dataset: DatasetManifest,
@@ -147,6 +143,10 @@ pub struct DatasetBundleManifest {
     pub source: String,
     pub schema_version: u32,
     pub components: BTreeMap<String, DatasetComponentManifest>,
+    /// Metadata-bound market-data snapshots, keyed by the matching component kind.
+    /// Empty maps are omitted so legacy v1 bundle fingerprints remain stable.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub snapshots: BTreeMap<String, crate::DatasetSnapshotV1>,
 }
 
 impl DatasetBundleManifest {
@@ -161,6 +161,7 @@ impl DatasetBundleManifest {
             source: source.into(),
             schema_version: 1,
             components: BTreeMap::new(),
+            snapshots: BTreeMap::new(),
         }
     }
 
@@ -199,6 +200,33 @@ impl DatasetBundleManifest {
                 ));
             }
             component.validate()?;
+        }
+        for (kind, snapshot) in &self.snapshots {
+            let component = self.components.get(kind).ok_or_else(|| {
+                format!("dataset snapshot has no matching bundle component: {kind}")
+            })?;
+            snapshot.validate()?;
+            let expected_tier = match kind.as_str() {
+                "bars" => Some(crate::DatasetTier::Bar),
+                "l1" => Some(crate::DatasetTier::L1),
+                "l2" => Some(crate::DatasetTier::L2),
+                "l3" => Some(crate::DatasetTier::L3),
+                _ => None,
+            };
+            if expected_tier != Some(snapshot.manifest.tier)
+                || snapshot.manifest.dataset.dataset_id != component.dataset.dataset_id
+                || snapshot.manifest.dataset.version != component.dataset.version
+                || snapshot.manifest.dataset.source != component.dataset.source
+                || snapshot.manifest.dataset.fingerprint != component.dataset.fingerprint
+                || snapshot.manifest.dataset.schema_version != component.dataset.schema_version
+                || snapshot.manifest.dataset.start_timestamp != component.dataset.start_timestamp
+                || snapshot.manifest.dataset.end_timestamp != component.dataset.end_timestamp
+                || snapshot.manifest.quality_report.row_count != component.row_count
+            {
+                return Err(format!(
+                    "dataset snapshot identity does not match bundle component: {kind}"
+                ));
+            }
         }
         Ok(())
     }
@@ -256,6 +284,8 @@ impl JsonDatasetBundleStore {
     pub fn save(&self, bundle: &DatasetBundleManifest) -> Result<String, String> {
         bundle.validate()?;
         let path = self.path_for(&bundle.bundle_id, &bundle.version)?;
+        let _lock = qx_core::FileLock::acquire(path.with_extension("bundle.json.lock"))
+            .map_err(|error| format!("lock dataset bundle {} failed: {error}", path.display()))?;
         if path.exists() {
             let existing = self.load(&bundle.bundle_id, &bundle.version)?;
             if existing == *bundle {
@@ -268,22 +298,8 @@ impl JsonDatasetBundleStore {
         }
         let payload = serde_json::to_vec_pretty(bundle)
             .map_err(|error| format!("encode dataset bundle failed: {error}"))?;
-        let temporary = path.with_extension(format!("bundle.json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload).map_err(|error| {
-            format!(
-                "write dataset bundle {} failed: {error}",
-                temporary.display()
-            )
-        })?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path).map_err(|replacement| {
-                format!(
-                    "commit dataset bundle {} failed: initial={error}; replacement={replacement}",
-                    path.display()
-                )
-            })?;
-        }
+        qx_core::atomic_file::write_atomic_file(&path, &payload)
+            .map_err(|error| format!("commit dataset bundle {} failed: {error}", path.display()))?;
         bundle.fingerprint()
     }
 
@@ -358,6 +374,46 @@ mod tests {
     }
 
     #[test]
+    fn json_component_format_is_preserved_and_canonicalized_on_round_trip() {
+        let manifest = component("bars", "bars.daily");
+        let encoded = serde_json::to_string(&manifest).unwrap();
+        assert!(encoded.contains("\"format\":\"json\""));
+
+        let restored: DatasetComponentManifest = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored, manifest);
+        assert_eq!(serde_json::to_string(&restored).unwrap(), encoded);
+    }
+
+    #[test]
+    fn legacy_json_component_without_format_is_canonicalized() {
+        let mut value = serde_json::to_value(component("bars", "bars.daily")).unwrap();
+        value.as_object_mut().unwrap().remove("format");
+        let restored: DatasetComponentManifest = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.format, DatasetComponentFormat::Json);
+        assert!(serde_json::to_string(&restored)
+            .unwrap()
+            .contains("\"format\":\"json\""));
+    }
+
+    #[test]
+    fn legacy_bundle_without_json_format_uses_the_canonical_fingerprint() {
+        let mut current = DatasetBundleManifest::new("bundle", "v1", "test");
+        current
+            .add_component(component("bars", "bars.daily"))
+            .unwrap();
+        let canonical_fingerprint = current.fingerprint().unwrap();
+
+        let mut legacy = serde_json::to_value(&current).unwrap();
+        legacy["components"]["bars"]
+            .as_object_mut()
+            .unwrap()
+            .remove("format");
+        let restored: DatasetBundleManifest = serde_json::from_value(legacy).unwrap();
+
+        assert_eq!(restored.fingerprint().unwrap(), canonical_fingerprint);
+    }
+
+    #[test]
     fn arrow_dataset_manifest_validates_schema_and_round_trips() {
         let manifest = ArrowDatasetManifest {
             format: "arrow".into(),
@@ -426,6 +482,49 @@ mod tests {
         next_version.version = "run-2".into();
         assert!(store.save(&next_version).is_ok());
         assert!(store.load("../escape", "run-1").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_bundle_writers_cannot_replace_an_immutable_version() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-dataset-bundle-race-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = JsonDatasetBundleStore::new(&root).unwrap();
+        let mut first = DatasetBundleManifest::new("ashare.000001", "run-1", "mixed");
+        first
+            .add_component(component("bars", "bars.daily"))
+            .unwrap();
+        let mut second = first.clone();
+        second
+            .components
+            .get_mut("bars")
+            .unwrap()
+            .dataset
+            .fingerprint = "different-fingerprint".into();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let writers = [first.clone(), second.clone()].map(|bundle| {
+            let store = store.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.save(&bundle)
+            })
+        });
+        barrier.wait();
+        let outcomes = writers.map(|writer| writer.join().unwrap());
+
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(outcomes.iter().filter(|result| result.is_err()).count(), 1);
+        let persisted = store.load("ashare.000001", "run-1").unwrap();
+        assert!(persisted == first || persisted == second);
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

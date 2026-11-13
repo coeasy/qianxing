@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-10T05:08:25Z",
+  "source": {
+    "commit": "f72e4564b900350a5f9b14311ce6349f4d781583",
+    "worktree": "clean detached worktree at D:/aex_work/release-qianxing-0.4.0-f72e4564",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows build 22631",
+    "rust": "1.98.1 (48a229cea 2026-09-01)",
+    "python": "3.13.13",
+    "maturin": "1.15.0",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifact": {
+    "candidate_directory": "dist/release-candidate-v0.4.0-windows-x86_64-f72e4564",
+    "path": "dist/release-candidate-v0.4.0-windows-x86_64-f72e4564/qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+    "size_bytes": 22878449,
+    "sha256": "12b99d76b73158cf1edec2756be023b0df7033a22e0b58131f0ba6785bced1dd",
+    "embedded_cli_size_bytes": 44113920,
+    "embedded_cli_sha256": "773ab8feaed94f4b7cdb2a4570b9e1cb5847202c2004a6abd1ca135d5e491090",
+    "embedded_cli_identity": "qianxing 0.4.0 (build f72e456, target x86_64-pc-windows-msvc, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)",
+    "standalone_cli": {
+      "path": "dist/release-candidate-v0.4.0-windows-x86_64-f72e4564/qx-cli-v0.4.0-Windows-X64.exe",
+      "size_bytes": 44113920,
+      "sha256": "773ab8feaed94f4b7cdb2a4570b9e1cb5847202c2004a6abd1ca135d5e491090",
+      "checksum_file": "dist/release-candidate-v0.4.0-windows-x86_64-f72e4564/qx-cli-v0.4.0-Windows-X64.exe.sha256",
+      "version_check": "passed"
+    }
+  },
+  "checks": {
+    "release_cli_build": {
+      "command": "tools/build_python_wheel.ps1 -Python python -OutputDirectory dist/release-candidate-v0.4.0-windows-x86_64-f72e4564",
+      "result": "passed",
+      "identity_is_clean": true
+    },
+    "wheel_structure": {
+      "command": "python tools/check_python_wheel.py <candidate-directory>",
+      "result": "passed",
+      "native_extension": "qianxing_bridge/_qianxing_native.pyd",
+      "renderer": "qianxing/_bin/qx-cli.exe",
+      "stable_abi": true,
+      "embedded_cli_matches_standalone": true
+    },
+    "clean_install_and_smoke": {
+      "install": "python -m pip install --no-index --no-deps <wheel> into a fresh Python 3.13 venv",
+      "import_outside_source_tree": "passed",
+      "native_extension_available": true,
+      "smoke": "passed",
+      "summary": "strategies=17 rows=70 fills=1 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=true depth_account_overflow_preflight=true multileg=1/2 depth_fills=1 custom_fills=1 run_handle=succeeded verified=true"
+    },
+    "reproducible_wheel": {
+      "second_build": "passed",
+      "first_sha256": "12b99d76b73158cf1edec2756be023b0df7033a22e0b58131f0ba6785bced1dd",
+      "second_sha256": "12b99d76b73158cf1edec2756be023b0df7033a22e0b58131f0ba6785bced1dd",
+      "identical": true,
+      "command": "tools/build_python_wheel.ps1 against commit f72e4564b900350a5f9b14311ce6349f4d781583"
+    },
+    "standalone_quickstart": {
+      "result": "passed",
+      "steps": 5,
+      "project_files": 17,
+      "result_hash": "45038cdcb863b87f",
+      "network_accessed": false,
+      "orders_sent": false
+    }
+  },
+  "limitations": [
+    "Unpublished Windows candidate; no GitHub Release or PyPI upload was performed.",
+    "Candidate covers Windows x86_64 only; local macOS build/reproducibility is not covered by this artifact.",
+    "Authenticated venue credentials and production approval remain unavailable.",
+    "GitHub Actions run 42757064332 required retrying the Linux PostgreSQL lifecycle job; the retry succeeded and two local Podman reproductions passed, but the initial failure cause was not established."
+  ]
+}

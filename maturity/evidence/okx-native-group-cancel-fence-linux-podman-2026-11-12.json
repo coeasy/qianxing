@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "okx_native_group_cancel_fence_local_validation",
+  "generated_at_utc": "2026-11-12T05:41:51Z",
+  "source": {
+    "code_base_commit": "7cbbde4e",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-core/src/order_group.rs",
+      "crates/qx-cli/src/api_service/api_service_builder.rs",
+      "crates/qx-service/src/binance_execution_host.rs",
+      "crates/qx-service/src/binance_reconcile_host.rs",
+      "crates/qx-service/src/ccxt_execution_host.rs",
+      "crates/qx-zhenlu/src/lib.rs",
+      "crates/qx-zhenlu/tests/order_group_store.rs"
+    ]
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "dependency_resolution": "offline, locked"
+  },
+  "results": [
+    {
+      "command": "cargo check --offline --locked -j 2 -p qx-service -p qx-cli",
+      "passed": true
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-service native_group_commands_route_to_the_exact_ccxt_account_and_venue -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-zhenlu --test order_group_store native_group_cancel_fence_survives_store_reopen -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-core native_group_cancel_is_fenced_and_requires_an_untriggered_resource -- --nocapture",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "scope_limitations": [
+    "These local checks validate compile-time integration, exact worker routing, persisted cancel fencing across restart, and order-group state transitions only.",
+    "No OKX API call was made. OKX Testnet, private-stream lifecycle reduction, triggered child-order recovery, and full restart reconciliation remain unverified.",
+    "OKX native OCO remains unavailable for sandbox or production use until venue-level acceptance passes."
+  ]
+}

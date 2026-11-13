@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R08",
+  "acceptance_id": "R08-AC01",
+  "reviewed_at": "2026-11-13",
+  "decision": "accepted_for_windows_and_hosted_linux_acceptance",
+  "reviewed_run_ids": [
+    "384d1bb8-d922-4956-8f46-90ddfb32c36a",
+    "cc7997db-4f84-4bd9-874d-13610fea6008",
+    "12b03a25-8789-4290-aadd-cc69eb9abbc2",
+    "613599c9-e643-489c-8978-bbebb9206596",
+    "83b507fd-fce1-4ebe-917c-7835975a1bb8",
+    "f1aa248a-8b36-4451-8957-b5cf82d9bb44",
+    "acf8eed0-717a-42e5-8736-072d1c2ceeac",
+    "f138071d-fec5-48fc-8fc7-18bb513b4b2a",
+    "ae05325d-cbfb-43e8-9ac1-aab025ef2b3d",
+    "225eb562-0401-4fdb-8c23-030afef36d56",
+    "5d1f8dbd-de0a-4166-b618-60c598e7a69d",
+    "d838a78c-6ace-4503-b670-02f886792f49"
+  ],
+  "reviewed_artifacts": [
+    "crates/qx-strategy/src/capabilities.rs",
+    "crates/qx-strategy/tests/legacy_c_abi_capability_load.rs",
+    "crates/qx-cli/src/strategy_host/process_client.rs",
+    "crates/qx-cli/src/workers/strategy_worker.rs",
+    "crates/qx-cli/tests/unit/e2e_and_python_contract.rs",
+    "maturity/strategy-run-acceptance-v1.json",
+    "maturity/acceptance-artifacts/384d1bb8-d922-4956-8f46-90ddfb32c36a.log",
+    "maturity/acceptance-artifacts/cc7997db-4f84-4bd9-874d-13610fea6008.log",
+    "maturity/acceptance-artifacts/12b03a25-8789-4290-aadd-cc69eb9abbc2.log",
+    "maturity/acceptance-artifacts/613599c9-e643-489c-8978-bbebb9206596.log",
+    "maturity/acceptance-artifacts/83b507fd-fce1-4ebe-917c-7835975a1bb8.log",
+    "maturity/acceptance-artifacts/f1aa248a-8b36-4451-8957-b5cf82d9bb44.log",
+    ".github/workflows/ci.yml",
+    "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.log",
+    "maturity/acceptance-artifacts/acf8eed0-717a-42e5-8736-072d1c2ceeac.source-tree.json",
+    "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.log",
+    "maturity/acceptance-artifacts/f138071d-fec5-48fc-8fc7-18bb513b4b2a.source-tree.json",
+    "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.log",
+    "maturity/acceptance-artifacts/ae05325d-cbfb-43e8-9ac1-aab025ef2b3d.source-tree.json",
+    "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.log",
+    "maturity/acceptance-artifacts/225eb562-0401-4fdb-8c23-030afef36d56.source-tree.json",
+    "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.log",
+    "maturity/acceptance-artifacts/5d1f8dbd-de0a-4166-b618-60c598e7a69d.source-tree.json",
+    "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.log",
+    "maturity/acceptance-artifacts/d838a78c-6ace-4503-b670-02f886792f49.source-tree.json"
+  ],
+  "findings": [
+    "Windows acceptance covers host-profile catalog checks for Python file/class/module-function, built-in, C ABI, and external process hosts.",
+    "Negative cases reject unsupported capability requirements before strategy factory or handler dispatch; external-process tests also reject a mismatched host identity acknowledgment.",
+    "The legacy C ABI test confirms plugins without the optional requirement export remain compatible when requirements are empty, while unsupported FillUpdates fails before plugin creation.",
+    "Runtime Python class and module-function tests exercise production Runtime catalogs across the four supported transports; local backtest construction rejects Runtime-only requirements.",
+    "The built-in worker path accepts Bar for SMA and rejects unsupported Timer and MultiInstrument requirements before dispatch.",
+    "Hosted Linux CI run #595 now directly binds successful records for built-in dispatch, external-process acknowledgment and rejection, Runtime Python local-file/class/module-function negotiation across four transports, and legacy C ABI compatibility. The independent Linux Python worker manifest-negotiation records are also retained. Together with the previously reviewed Windows matrix, the platform host-capability acceptance criteria are met."
+  ],
+  "limitations": [
+    "The historical failed runs are not counted as passing evidence; the reviewed run IDs are the later successful corrections."
+  ]
+}

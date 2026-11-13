@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,12 +11,685 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qianxing_ccxt import CcxtConfig, CcxtConnectorError, CcxtErrorClass, CcxtExchangeClient
-from qianxing_ccxt.worker import CcxtJsonWorker, _config_from_file, serve
+from qianxing_ccxt import (
+    LIVE_MARKET_METADATA_MAX_AGE_SECONDS,
+    SUPPORTED_CCXT_VERSION,
+    CcxtConfig,
+    CcxtConnectorError,
+    CcxtErrorClass,
+    CcxtExchangeClient,
+)
+from qianxing_ccxt.worker import CcxtJsonWorker, _config_from_file, serve, serve_startup_error
 from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_jsonl_bracket_shortcut_fails_closed_before_exchange_call(self):
+        exchange = FakeExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+
+        result = json.loads(worker.handle_line(json.dumps({"op": "create_bracket_order"})))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["class"], "unsupported")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_jsonl_bitget_uta_oco_submit_uses_strategy_order_endpoint(self):
+        class BitgetUtaExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def private_uta_post_v3_trade_place_strategy_order(self, params):
+                self.calls.append(("private_uta_post_v3_trade_place_strategy_order", params))
+                return {"code": "00000", "data": {"orderId": "123456789"}}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(
+                    exchange_id="bitget",
+                    options={"defaultType": "spot", "uta": True},
+                ),
+                exchange=exchange,
+            )
+        )
+        request = {
+            "op": "create_order_group",
+            "kind": "oco",
+            "instrument": "BTC/USDT.BITGET",
+            "side": "sell",
+            "amount_exact": "0.5",
+            "take_profit_limit_price_exact": "110",
+            "stop_loss_trigger_exact": "90",
+            "stop_loss_order_price_exact": None,
+        }
+
+        result = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["order_group"]["strategy_order_id"], "123456789")
+        method, params = exchange.calls[-1]
+        self.assertEqual(method, "private_uta_post_v3_trade_place_strategy_order")
+        self.assertEqual(params["ocoParams"]["ocoLimitPrice"], "110")
+
+    def test_jsonl_bitget_uta_oco_query_and_cancel_use_strategy_identity(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                self.calls.append(("private_uta_get_v3_trade_unfilled_strategy_orders", params))
+                return {"code": "00000", "data": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT", "status": "pending"
+                }]}
+
+            def private_uta_post_v3_trade_cancel_strategy_order(self, params):
+                self.calls.append(("private_uta_post_v3_trade_cancel_strategy_order", params))
+                return {"code": "00000", "data": None}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        self.assertEqual(fetched["result"]["order_group"]["state"], "live")
+        cancelled = json.loads(worker.handle_line(json.dumps({
+            "op": "cancel_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(cancelled["ok"], cancelled)
+        self.assertEqual(cancelled["result"]["order_group"]["cancel_request_accepted"], "true")
+        self.assertEqual(exchange.calls[-1], (
+            "private_uta_post_v3_trade_cancel_strategy_order", {"orderId": "123456789"}
+        ))
+
+    def test_jsonl_bitget_uta_oco_query_recovers_cancelled_history_and_child_facts(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                self.calls.append(("unfilled", params))
+                return {"code": "00000", "data": []}
+
+            def private_uta_get_v3_trade_history_strategy_orders(self, params):
+                self.calls.append(("history", params))
+                return {"code": "00000", "data": {"list": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "status": "cancelled",
+                }], "cursor": 0}}
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                return {"code": "00000", "data": {"list": [{
+                    "subOrderId": "987654321", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "qty": "0.5", "cumExecQty": "0", "price": "110",
+                    "avgPrice": "0", "status": "cancelled",
+                }]}}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        group = fetched["result"]["order_group"]
+        self.assertEqual(group["state"], "canceled")
+        self.assertEqual(group["order_ids"], ["987654321"])
+        self.assertEqual(group["sub_orders"][0]["cum_exec_qty"], "0")
+        self.assertEqual(exchange.calls[-1][1:4], ("v3/trade/strategy-sub-orders", "uta", "GET"))
+
+    def test_jsonl_bitget_uta_triggered_oco_checks_authoritative_child_order_details(self):
+        class BitgetUtaExchange(FakeExchange):
+            def private_uta_get_v3_trade_unfilled_strategy_orders(self, params):
+                return {"code": "00000", "data": []}
+
+            def private_uta_get_v3_trade_history_strategy_orders(self, params):
+                return {"code": "00000", "data": {"list": [{
+                    "orderId": "123456789", "category": "SPOT", "symbol": "BTCUSDT",
+                    "side": "sell", "status": "success",
+                }], "cursor": 0}}
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "v3/trade/strategy-sub-orders":
+                    return {"code": "00000", "data": {"list": [
+                        {"subOrderId": "555", "category": "SPOT", "symbol": "BTCUSDT",
+                         "side": "sell", "qty": "0.5", "cumExecQty": "0.5",
+                         "price": "110", "avgPrice": "110", "status": "filled"},
+                        {"subOrderId": "556", "category": "SPOT", "symbol": "BTCUSDT",
+                         "side": "sell", "qty": "0.5", "cumExecQty": "0",
+                         "price": "0", "avgPrice": "0", "status": "cancelled"},
+                    ]}}
+                detail = {
+                    "555": {"orderId": "555", "category": "SPOT", "symbol": "BTCUSDT",
+                            "side": "sell", "qty": "0.5", "cumExecQty": "0.5",
+                            "price": "110", "orderType": "limit", "orderStatus": "filled"},
+                    "556": {"orderId": "556", "category": "SPOT", "symbol": "BTCUSDT",
+                            "side": "sell", "qty": "0.5", "cumExecQty": "0",
+                            "price": "0", "orderType": "market", "orderStatus": "cancelled"},
+                }[params["orderId"]]
+                return {"code": "00000", "data": detail}
+
+        exchange = BitgetUtaExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(exchange_id="bitget", options={"defaultType": "spot", "uta": True}), exchange=exchange
+        ))
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.BITGET",
+            "strategy_order_id": "123456789",
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        group = fetched["result"]["order_group"]
+        self.assertEqual(group["state"], "triggered")
+        self.assertEqual([child["order_type"] for child in group["sub_orders"]], ["limit", "market"])
+        self.assertEqual([child["detail_status"] for child in group["sub_orders"]], ["filled", "cancelled"])
+        self.assertEqual(
+            [call[1] for call in exchange.calls if call[0] == "request"],
+            ["v3/trade/strategy-sub-orders", "v3/trade/order-info", "v3/trade/order-info"],
+        )
+
+    def test_jsonl_okx_oco_submit_query_and_cancel_operations(self):
+        class OkxAlgoExchange(FakeExchange):
+            def amount_to_precision(self, symbol, value):
+                return str(value)
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+            def request(self, path, api, method, params):
+                self.calls.append(("request", path, api, method, params))
+                if path == "trade/order-algo" and method == "POST":
+                    return {"code": "0", "data": [{"algoId": "123456", "algoClOrdId": params["algoClOrdId"], "sCode": "0"}]}
+                if path == "trade/order-algo" and method == "GET":
+                    return {"code": "0", "data": [{
+                        "algoId": params["algoId"],
+                        "algoClOrdId": "QXGROUPABC123",
+                        "instId": "BTCUSDT",
+                        "ordType": "oco",
+                        "state": "live",
+                        "ordIdList": [],
+                    }]}
+                if path == "trade/cancel-algos":
+                    return {"code": "0", "data": [{"algoId": params[0]["algoId"], "sCode": "0"}]}
+                raise AssertionError((path, method))
+
+        exchange = OkxAlgoExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange))
+        request = {
+            "op": "create_order_group",
+            "kind": "oco",
+            "instrument": "BTC/USDT.OKX",
+            "side": "sell",
+            "amount_exact": "0.5",
+            "take_profit_trigger_exact": "110",
+            "take_profit_order_price_exact": "109.5",
+            "take_profit_price_type": "last",
+            "stop_loss_trigger_exact": "90",
+            "stop_loss_order_price_exact": None,
+            "stop_loss_price_type": "last",
+            "algo_client_order_id": "QXGROUPABC123",
+        }
+        submitted = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertTrue(submitted["ok"], submitted)
+        self.assertEqual(submitted["result"]["order_group"]["algo_id"], "123456")
+        fetched = json.loads(worker.handle_line(json.dumps({
+            "op": "fetch_order_group", "kind": "oco", "instrument": "BTC/USDT.OKX", "algo_id": "123456"
+        })))
+        self.assertTrue(fetched["ok"], fetched)
+        self.assertEqual(fetched["result"]["order_group"]["state"], "live")
+        cancelled = json.loads(worker.handle_line(json.dumps({
+            "op": "cancel_order_group", "kind": "oco", "instrument": "BTC/USDT.OKX", "algo_id": "123456"
+        })))
+        self.assertTrue(cancelled["ok"], cancelled)
+        self.assertEqual(cancelled["result"]["order_group"]["cancel_request_accepted"], "true")
+
+    def test_jsonl_conditional_submit_preserves_exact_decimal_wire_objects(self):
+        class FeatureExchange(FakeExchange):
+            def feature_value(self, symbol, operation, feature):
+                return True
+
+            def price_to_precision(self, symbol, value):
+                return str(value)
+
+        exchange = FeatureExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="okx"), exchange=exchange)
+        )
+        result = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_conditional_order",
+                        "instrument": "BTC/USDT.OKX",
+                        "intent": "stop_loss",
+                        "side": "sell",
+                        "order_type": "market",
+                        "amount_exact": {"coefficient": "2", "scale": 3},
+                        "amount_unit": "base",
+                        "trigger_price_exact": {"coefficient": "620005", "scale": 1},
+                        "trigger_price_type": "mark",
+                        "risk_reduce_only": False,
+                        "params": {},
+                    }
+                )
+            )
+        )
+
+        self.assertTrue(result["ok"], result)
+        request = next(call for call in exchange.calls if call[0] == "create_order")
+        self.assertEqual(request[4], "0.002")
+        self.assertEqual(request[6]["stopLossPrice"], "62000.5")
+
+    def test_jsonl_balance_response_carries_scale_aware_decimal_sidecar(self):
+        class BalanceExchange(FakeExchange):
+            def fetch_balance(self, params):
+                self.calls.append(("fetch_balance", params))
+                return {
+                    "free": {"PEPE": 0.000000000123},
+                    "used": {"PEPE": 0.0},
+                    "total": {"PEPE": 0.000000000123},
+                    "info": [],
+                }
+
+        exchange = BalanceExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        row = json.loads(worker.handle_line(json.dumps({"op": "fetch_balance"})))
+
+        self.assertTrue(row["ok"], row)
+        self.assertEqual(row["result"]["exact"]["free"]["PEPE"], "0.000000000123")
+        self.assertEqual(row["result"]["exact"]["used"]["PEPE"], "0")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_live_market_spec_check_accepts_match_and_reports_drift_without_write(self):
+        exchange = FakeExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        market = client.resolve_market("BTC/USDT:USDT.BINANCE")
+        expected_spec = {
+            "product": "perpetual",
+            "base_currency": "BTC",
+            "quote_currency": "USDT",
+            "settlement_currency": "USDT",
+            "contract_size_raw": str(market.contract_size_raw),
+            "linear": True,
+            "inverse": False,
+            "price_tick_raw": str(market.price_tick_raw),
+            "qty_step_raw": str(market.qty_step_raw),
+            "min_qty_raw": str(market.min_qty_raw),
+            "min_notional_raw": "0",
+            "max_leverage": 50,
+            "maintenance_margin_bps": 50,
+            # Rust serializes ExactDecimal as normalized coefficient + scale.
+            "exact_rules": {
+                "contract_size": {"coefficient": "1", "scale": 3},
+                "price_tick": {"coefficient": "1", "scale": 1},
+                "quantity_step": {"coefficient": "1", "scale": 0},
+                "minimum_quantity": {"coefficient": "1", "scale": 0},
+                "minimum_notional": {"coefficient": "0", "scale": 0},
+            },
+        }
+        worker = CcxtJsonWorker(client)
+
+        accepted = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "validate_market_spec",
+                        "instrument": "BTC/USDT:USDT.BINANCE",
+                        "expected_spec": expected_spec,
+                    }
+                )
+            )
+        )
+        self.assertTrue(accepted["ok"], accepted)
+        self.assertTrue(accepted["result"]["market_spec_verified"])
+
+        refreshed_markets = {
+            symbol: dict(row) for symbol, row in exchange.markets.items()
+        }
+        refreshed_markets["BTC/USDT:USDT"]["precision"] = dict(
+            refreshed_markets["BTC/USDT:USDT"]["precision"]
+        )
+        refreshed_markets["BTC/USDT:USDT"]["precision"]["amount"] = "2"
+        exchange.markets = refreshed_markets
+        client._markets_loaded_at = 0.0
+        with patch(
+            "qianxing_ccxt.time.monotonic",
+            return_value=float(LIVE_MARKET_METADATA_MAX_AGE_SECONDS + 1),
+        ):
+            rejected = json.loads(
+                worker.handle_line(
+                    json.dumps(
+                        {
+                            "op": "validate_market_spec",
+                            "instrument": "BTC/USDT:USDT.BINANCE",
+                            "expected_spec": expected_spec,
+                        }
+                    )
+                )
+            )
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertEqual(
+            rejected["result"]["market_spec_rejected"]["class"], "invalid"
+        )
+        self.assertIn("qty_step_raw", rejected["result"]["market_spec_rejected"]["message"])
+        self.assertTrue(
+            any(call[0] == "load_markets" and call[1] is True for call in exchange.calls)
+        )
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_jsonl_worker_requires_risk_leverage_for_contract_order(self):
+        exchange = FakeExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "BTC/USDT:USDT.BINANCE",
+                        "side": "buy",
+                        "order_type": "limit",
+                        "amount_raw": 1_000_000_000,
+                        "amount_unit": "contracts",
+                        "price_raw": 100_000_000_000,
+                    }
+                )
+            )
+        )
+        self.assertFalse(row["ok"])
+        self.assertIn("risk_leverage", row["error"]["message"])
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_binance_spot_max_position_counts_cross_pair_orders_before_submit(self):
+        class MaxPositionExchange(FakeExchange):
+            def __init__(self):
+                super().__init__()
+                self.markets["PEPE/USDT"]["info"]["filters"] = [
+                    {"filterType": "MAX_POSITION", "maxPosition": "0.000000006"}
+                ]
+                self.markets["PEPE/BTC"] = {
+                    "symbol": "PEPE/BTC",
+                    "id": "PEPEBTC",
+                    "base": "PEPE",
+                    "quote": "BTC",
+                    "type": "spot",
+                    "active": True,
+                    "info": {"filters": []},
+                    "precision": {"price": "0.00000001", "amount": "0.000000001"},
+                    "limits": {"amount": {"min": "0.000000001"}},
+                }
+                self.open_order_rows = [
+                    {
+                        "id": "cross-pair-order",
+                        "symbol": "PEPE/BTC",
+                        "side": "buy",
+                        "info": {
+                            "symbol": "PEPEBTC",
+                            "orderId": "42",
+                            "side": "BUY",
+                            "origQty": "0.000000004",
+                            "executedQty": "0.000000001",
+                        },
+                    }
+                ]
+
+            def fetch_balance(self, params):
+                self.calls.append(("fetch_balance", params))
+                return {
+                    "info": {
+                        "balances": [
+                            {"asset": "PEPE", "free": "0.000000001", "locked": "0.000000001"}
+                        ]
+                    }
+                }
+
+        exchange = MaxPositionExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "PEPE/USDT.BINANCE",
+                        "side": "buy",
+                        "order_type": "market",
+                        "amount_exact": "0.000000002",
+                        "amount_unit": "base",
+                    }
+                )
+            )
+        )
+
+        self.assertTrue(row["ok"], row)
+        self.assertEqual(row["result"]["preflight_rejected"]["class"], "invalid")
+        self.assertIn("MAX_POSITION 超限", row["result"]["preflight_rejected"]["message"])
+        operation_names = [call[0] for call in exchange.calls]
+        self.assertLess(operation_names.index("fetch_open_orders"), operation_names.index("fetch_balance"))
+        self.assertNotIn("create_order", operation_names)
+
+        with self.assertRaisesRegex(CcxtConnectorError, "MAX_POSITION 超限"):
+            worker.client.create_order(
+                "PEPE/USDT.BINANCE",
+                side="buy",
+                order_type="market",
+                amount_exact="0.000000002",
+                amount_unit="base",
+            )
+        self.assertNotIn("create_order", [call[0] for call in exchange.calls])
+
+        malformed_open_order = dict(exchange.open_order_rows[0])
+        malformed_open_order.pop("side")
+        malformed_info = dict(malformed_open_order["info"])
+        malformed_info.pop("side")
+        malformed_open_order["info"] = malformed_info
+        exchange.open_order_rows = [malformed_open_order]
+        with self.assertRaisesRegex(CcxtConnectorError, "缺少可识别的 side"):
+            worker.client.create_order(
+                "PEPE/USDT.BINANCE",
+                side="buy",
+                order_type="market",
+                amount_exact="0.000000002",
+                amount_unit="base",
+            )
+        self.assertNotIn("create_order", [call[0] for call in exchange.calls])
+
+    def test_jsonl_tier_rejection_is_reported_as_preflight_without_exchange_write(self):
+        exchange = FakeExchange()
+        exchange.leverage_tier_rows = [
+            {
+                "tier": 1,
+                "minNotional": "0",
+                "maxNotional": "0.3",
+                "maxLeverage": 20,
+            },
+            {
+                "tier": 2,
+                "minNotional": "0.3",
+                "maxNotional": "1000",
+                "maxLeverage": 5,
+            },
+        ]
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "BTC/USDT:USDT.BINANCE",
+                        "side": "buy",
+                        "order_type": "limit",
+                        "amount_raw": 2_000_000_000,
+                        "amount_unit": "contracts",
+                        "price_raw": 100_000_000_000,
+                        "risk_leverage": 10,
+                        "risk_reduce_only": False,
+                        "risk_margin_mode": "cross",
+                    }
+                )
+            )
+        )
+        self.assertTrue(row["ok"], row)
+        self.assertEqual(
+            row["result"]["preflight_rejected"]["class"], "invalid"
+        )
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_jsonl_bitget_hedge_preflight_uses_directional_position_sizes(self):
+        class HedgedBitgetExchange(FakeExchange):
+            def fetch_positions(self, symbols, params):
+                self.calls.append(("fetch_positions", symbols, params))
+                return [
+                    {
+                        "symbol": "BTC/USDT:USDT",
+                        "side": "long",
+                        "contracts": "10",
+                        "contractSize": "0.001",
+                        "markPrice": "100",
+                        "hedged": True,
+                    },
+                    {
+                        "symbol": "BTC/USDT:USDT",
+                        "side": "short",
+                        "contracts": "10",
+                        "contractSize": "0.001",
+                        "markPrice": "100",
+                        "hedged": True,
+                    },
+                ]
+
+        exchange = HedgedBitgetExchange()
+        exchange.leverage_tier_rows = [
+            {"tier": 1, "minNotional": "0", "maxNotional": "2", "maxLeverage": 20},
+            {"tier": 2, "minNotional": "2", "maxNotional": "1000", "maxLeverage": 5},
+        ]
+        exchange.open_order_rows = [
+            {
+                "id": "long-open",
+                "symbol": "BTC/USDT:USDT",
+                "status": "open",
+                "side": "buy",
+                "type": "limit",
+                "amount": "3",
+                "filled": "0",
+                "remaining": "3",
+                "price": "100",
+                "info": {"tradeSide": "open", "posSide": "long"},
+            },
+            {
+                "id": "short-open",
+                "symbol": "BTC/USDT:USDT",
+                "status": "open",
+                "side": "sell",
+                "type": "limit",
+                "amount": "2",
+                "filled": "0",
+                "remaining": "2",
+                "price": "100",
+                "info": {"tradeSide": "open", "posSide": "short"},
+            },
+        ]
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="bitget"), exchange=exchange)
+        )
+
+        def submit(params):
+            return json.loads(
+                worker.handle_line(
+                    json.dumps(
+                        {
+                            "op": "create_order",
+                            "instrument": "BTC/USDT:USDT.BITGET",
+                            "side": "buy",
+                            "order_type": "limit",
+                            "amount_raw": 5 * 1_000_000_000,
+                            "amount_unit": "contracts",
+                            "price_raw": 100 * 1_000_000_000,
+                            "risk_leverage": 10,
+                            "risk_reduce_only": False,
+                            "risk_margin_mode": "cross",
+                            "params": params,
+                        }
+                    )
+                )
+            )
+
+        hedged = submit({"hedged": True})
+        self.assertTrue(hedged["ok"], hedged)
+        self.assertEqual(hedged["result"]["order"]["order_id"], "order-1")
+
+        exchange.calls.clear()
+        one_way = submit({})
+        self.assertTrue(one_way["ok"], one_way)
+        self.assertEqual(one_way["result"]["preflight_rejected"]["class"], "invalid")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+    def test_startup_failures_keep_jsonl_response_contract_for_each_request(self):
+        output_stream = StringIO()
+        serve_startup_error(
+            CcxtErrorClass.UNSUPPORTED,
+            "未安装公共 ccxt；请安装 qianxing[ccxt] 或 ccxt 包",
+            StringIO('{"op":"fetch_ohlcv"}\n\n{"op":"fetch_ticker"}\n'),
+            output_stream,
+        )
+        rows = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(not row["ok"] for row in rows))
+        self.assertTrue(all(row["error"]["class"] == "unsupported" for row in rows))
+        self.assertTrue(all("qianxing[ccxt]" in row["error"]["message"] for row in rows))
+
+    def test_jsonl_protocol_stays_utf8_under_legacy_windows_console_encoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "public.json"
+            config_path.write_text(
+                json.dumps({"exchange_id": "binance", "sandbox": True, "credential_env": None}),
+                encoding="utf-8",
+            )
+            ccxt_package = Path(directory) / "ccxt"
+            ccxt_package.mkdir()
+            (ccxt_package / "__init__.py").write_text(
+                f"__version__ = {SUPPORTED_CCXT_VERSION!r}\n"
+                "class binance:\n"
+                "    def __init__(self, params): pass\n"
+                "    def set_sandbox_mode(self, enabled): pass\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "cp1252"
+            python_root = str(Path(__file__).resolve().parents[1])
+            env["PYTHONPATH"] = (
+                str(Path(directory))
+                + os.pathsep
+                + python_root
+                + os.pathsep
+                + env.get("PYTHONPATH", "")
+            )
+            result = subprocess.run(
+                [sys.executable, "-m", "qianxing_ccxt.worker", "--config", str(config_path)],
+                input=b'{"op":"not-supported"}\n',
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                check=False,
+                timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        response = json.loads(result.stdout.decode("utf-8"))
+        self.assertFalse(response["ok"])
+        self.assertIn("不支持的 CCXT Worker 操作", response["error"]["message"])
+
     def test_config_file_allows_public_exchange_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "public.json"
@@ -22,6 +697,7 @@ class CcxtWorkerTest(unittest.TestCase):
                 json.dumps(
                     {
                         "exchange_id": "binance",
+                        "account_model": "spot",
                         "sandbox": True,
                         "credential_env": None,
                     }
@@ -30,6 +706,7 @@ class CcxtWorkerTest(unittest.TestCase):
             )
             config = _config_from_file(path)
             self.assertEqual(config.exchange_id, "binance")
+            self.assertEqual(config.account_model, "spot")
             self.assertEqual(config.api_key, "")
             self.assertEqual(config.secret, "")
 
@@ -63,10 +740,189 @@ class CcxtWorkerTest(unittest.TestCase):
         rows = [json.loads(line) for line in output_stream.getvalue().splitlines()]
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["result"]["market"]["symbol"], "BTC/USDT")
+        self.assertEqual(rows[0]["result"]["market"]["instrument"], "BTC/USDT.BINANCE")
         self.assertTrue(rows[1]["ok"])
         self.assertEqual(rows[1]["result"]["frame"]["ts"], [1000, 1100, 1200])
         self.assertFalse(rows[2]["ok"])
         self.assertEqual(rows[2]["error"]["class"], "unsupported")
+
+    def test_jsonl_ohlcv_response_reports_rate_limit_retries_for_metrics(self):
+        class RateLimitExceeded(Exception):
+            pass
+
+        class RateLimitedOnceExchange(FakeExchange):
+            def __init__(self):
+                super().__init__()
+                self.failures = 1
+
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if self.failures:
+                    self.failures -= 1
+                    raise RateLimitExceeded("Too Many Requests")
+                return [[1000, 100, 101, 99, 100, 1]]
+
+        exchange = RateLimitedOnceExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(
+                    exchange_id="bitget",
+                    market_data_rate_limit_retries=1,
+                    market_data_rate_limit_backoff_ms=0,
+                ),
+                exchange=exchange,
+            )
+        )
+        response = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "fetch_ohlcv",
+                        "instrument": "BTCUSDT.BITGET",
+                        "start_ms": 1000,
+                        "end_ms": 1000,
+                        "as_of_ms": 61_000,
+                    }
+                )
+            )
+        )
+
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["rate_limit_retries"], 1)
+        self.assertEqual(response["result"]["frame"]["ts"], [1000])
+        self.assertEqual(response["result"]["quality"]["as_of_ms"], 61_000)
+        self.assertEqual(response["result"]["quality"]["excluded_unclosed_rows"], 0)
+
+    def test_jsonl_create_order_requires_amount_unit_and_rejects_spot_contracts(self):
+        exchange = FakeExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        request = {
+            "op": "create_order",
+            "instrument": "BTCUSDT.BINANCE",
+            "side": "buy",
+            "order_type": "limit",
+            "amount_raw": 1_000_000_000,
+            "price_raw": 100_000_000_000,
+        }
+        missing = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertFalse(missing["ok"])
+        self.assertEqual(missing["error"]["class"], "invalid")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+        request["amount_unit"] = "contracts"
+        mismatched = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertFalse(mismatched["ok"])
+        self.assertEqual(mismatched["error"]["class"], "invalid")
+        self.assertFalse(any(call[0] == "create_order" for call in exchange.calls))
+
+        request["amount_unit"] = "base"
+        accepted = json.loads(worker.handle_line(json.dumps(request)))
+        self.assertTrue(accepted["ok"], accepted)
+        self.assertEqual(sum(1 for call in exchange.calls if call[0] == "create_order"), 1)
+
+    def test_jsonl_exact_spot_amounts_round_trip_as_decimal_text(self):
+        exchange = FakeExchange()
+        market = exchange.markets["PEPE/USDT"]
+        market["precision"] = {"price": "0.0000000001", "amount": "0.0000000001"}
+        market["limits"] = {
+            "price": {"min": "0.0000000001"},
+            "amount": {"min": "0.0000000001"},
+        }
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        response = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "PEPE/USDT.BINANCE",
+                        "side": "buy",
+                        "order_type": "limit",
+                        "amount_unit": "base",
+                        "amount_raw": None,
+                        "amount_exact": {"coefficient": "2", "scale": 10},
+                        "price_raw": None,
+                        "price_exact": {"coefficient": "1", "scale": 0},
+                    }
+                )
+            )
+        )
+        self.assertTrue(response["ok"], response)
+        order = response["result"]["order"]
+        self.assertEqual(order["amount_exact"], "0.0000000002")
+        self.assertEqual(order["price_exact"], "1")
+        self.assertEqual(order["amount_raw"], 0)
+        submitted = next(call for call in exchange.calls if call[0] == "create_order")
+        self.assertEqual(submitted[4], "0.0000000002")
+        self.assertEqual(submitted[5], "1")
+
+    def test_jsonl_bitget_uta_quote_budget_preserves_tiny_quote_amount(self):
+        exchange = FakeExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(exchange_id="bitget", options={"uta": True}),
+                exchange=exchange,
+            )
+        )
+        response = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "PEPE/USDT.BITGET",
+                        "side": "buy",
+                        "order_type": "market",
+                        "amount_unit": "quote",
+                        "amount_exact": "0.00000001",
+                        "price_raw": None,
+                        "price_exact": None,
+                        "client_order_id": "qx-uta-budget-worker",
+                    }
+                )
+            )
+        )
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["order"]["amount_exact"], "0.00000001")
+        submitted = next(
+            call for call in exchange.calls if call[0] == "private_uta_post_v3_trade_place_order"
+        )[1]
+        self.assertEqual(submitted["qty"], "0.00000001")
+        self.assertEqual(submitted["category"], "SPOT")
+
+    def test_jsonl_exact_derivative_order_preflights_and_preserves_decimal_text(self):
+        exchange = FakeExchange()
+        market = exchange.markets["BTC/USDT:USDT"]
+        market["precision"] = {"price": "0.1", "amount": "0.0000000001"}
+        market["limits"]["amount"] = {"min": "0.0000000001"}
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        )
+        response = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "create_order",
+                        "instrument": "BTC/USDT:USDT.BINANCE",
+                        "side": "buy",
+                        "order_type": "limit",
+                        "amount_unit": "contracts",
+                        "amount_exact": {"coefficient": "1", "scale": 10},
+                        "price_exact": {"coefficient": "100", "scale": 0},
+                        "risk_leverage": 2,
+                        "risk_margin_mode": "cross",
+                    }
+                )
+            )
+        )
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["order"]["amount_exact"], "0.0000000001")
+        submitted = next(call for call in exchange.calls if call[0] == "create_order")
+        self.assertEqual(submitted[4], "0.0000000001")
+        self.assertTrue(any(call[0] == "fetch_leverage_tiers" for call in exchange.calls))
+        self.assertTrue(any(call[0] == "fetch_positions" for call in exchange.calls))
 
     def test_jsonl_worker_exposes_public_ccxt_pro_stream_events(self):
         worker = CcxtJsonWorker(
@@ -91,6 +947,7 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(event["stream"], "orders")
         self.assertEqual(event["received_ts"], 7)
         self.assertEqual(event["events"][0]["order_id"], "remote-1")
+        self.assertNotIn("reconnects", event)
 
     def test_watch_with_wait_ms_replies_idle_instead_of_letting_the_read_window_expire(self):
         class SilentPro(FakeProExchange):
@@ -255,6 +1112,7 @@ class CcxtWorkerTest(unittest.TestCase):
             )
         self.assertTrue(row["ok"])
         self.assertEqual(row["result"]["event"]["events"][0]["order_id"], "remote-1")
+        self.assertEqual(row["result"]["event"]["reconnects"], 1)
         factory.assert_called_once()
 
     def test_jsonl_worker_does_not_retry_authentication_error(self):

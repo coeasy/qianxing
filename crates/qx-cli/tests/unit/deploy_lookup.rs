@@ -270,7 +270,7 @@ fn the_funnel_names_the_other_copy_and_the_builtin_layer_brings_the_siblings() {
     }
 }
 
-/// 内置清单必须与仓库 `deploy/` 顶层的 JSON 名单逐名一致：少了意味着安装产物缺模板，
+/// 内置清单必须与仓库 `deploy/` 下的 JSON 名单逐名一致：少了意味着安装产物缺模板，
 /// 多了意味着仓库里删掉的那份还跟着二进制走。
 #[test]
 fn built_in_template_roster_matches_the_repository_deploy_folder() {
@@ -279,22 +279,31 @@ fn built_in_template_roster_matches_the_repository_deploy_folder() {
         .map(|(name, _)| (*name).to_string())
         .collect::<Vec<_>>();
     embedded.sort();
-    let mut on_disk = std::fs::read_dir(source_tree_root())
-        .expect("候选根里该有源码树的 deploy/")
-        .flatten()
-        .filter_map(|entry| {
+    fn collect_json(root: &Path, directory: &Path, output: &mut Vec<String>) {
+        for entry in std::fs::read_dir(directory)
+            .expect("deploy 子目录应可枚举")
+            .flatten()
+        {
             let path = entry.path();
-            let name = path.file_name()?;
-            if path.extension()?.to_str()? != "json" {
-                return None;
+            if path.is_dir() {
+                collect_json(root, &path, output);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                output.push(
+                    path.strip_prefix(root)
+                        .expect("模板应位于 deploy 根内")
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
             }
-            Some(name.to_string_lossy().into_owned())
-        })
-        .collect::<Vec<_>>();
+        }
+    }
+    let deploy_root = source_tree_root();
+    let mut on_disk = Vec::new();
+    collect_json(&deploy_root, &deploy_root, &mut on_disk);
     on_disk.sort();
     assert_eq!(
         embedded, on_disk,
-        "内置模板清单与仓库 deploy/ 顶层不同名（构建期快照过期或 deploy 面漂移）"
+        "内置模板清单与仓库 deploy/ 下的 JSON 不同名（构建期快照过期或 deploy 面漂移）"
     );
     assert!(
         DEPLOY_TEMPLATES
@@ -322,6 +331,15 @@ fn locate_deploy_file_falls_back_to_the_copy_shipped_in_the_binary() {
         std::fs::read(collapse_parent_segments(&source_tree_root().join(name)))
             .expect("读回仓库模板失败"),
         "内置那份与仓库那份内容不同——签名分桶没能挡住过期副本"
+    );
+    let dashboard = locate_deploy_file(&[], "grafana/qianxing-overview.json")
+        .expect("内置清单应包含 Grafana 概览面板");
+    assert!(dashboard.is_file(), "嵌套模板应按相对目录落盘");
+    assert_eq!(
+        std::fs::read(&dashboard).expect("读回内置 Grafana 面板失败"),
+        std::fs::read(source_tree_root().join("grafana/qianxing-overview.json"))
+            .expect("读回仓库 Grafana 面板失败"),
+        "内置 Grafana 面板必须与仓库源文件逐字节相同"
     );
     assert_eq!(
         locate_deploy_file(&[], "qianxing.r31-not-a-template.json"),

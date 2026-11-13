@@ -1,0 +1,39 @@
+$ cargo test -p qx-runtime --features sqlite --lib pipeline::tests::submission_worker_process_exit --offline -j1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test pipeline::tests::submission_worker_process_exit_before_venue_effect_still_requires_reconciliation ... ok
+test pipeline::tests::submission_worker_process_exit_after_venue_call_replays_pending_without_retry ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 110 filtered out; finished in 0.12s
+
+
+[stderr]
+   Compiling qx-core v0.4.0 (/tmp/qianxing-r10-final/crates/qx-core)
+   Compiling qx-guanxing v0.4.0 (/tmp/qianxing-r10-final/crates/qx-guanxing)
+   Compiling qx-datastruct v0.4.0 (/tmp/qianxing-r10-final/crates/qx-datastruct)
+   Compiling qx-risk v0.4.0 (/tmp/qianxing-r10-final/crates/qx-risk)
+   Compiling qx-control v0.4.0 (/tmp/qianxing-r10-final/crates/qx-control)
+   Compiling qx-zhenlu v0.4.0 (/tmp/qianxing-r10-final/crates/qx-zhenlu)
+   Compiling qx-data v0.4.0 (/tmp/qianxing-r10-final/crates/qx-data)
+   Compiling qx-scheduler v0.4.0 (/tmp/qianxing-r10-final/crates/qx-scheduler)
+   Compiling qx-protocol v0.4.0 (/tmp/qianxing-r10-final/crates/qx-protocol)
+   Compiling qx-storage v0.4.0 (/tmp/qianxing-r10-final/crates/qx-storage)
+   Compiling qx-strategy v0.4.0 (/tmp/qianxing-r10-final/crates/qx-strategy)
+   Compiling qx-spec v0.4.0 (/tmp/qianxing-r10-final/crates/qx-spec)
+   Compiling qx-execution v0.4.0 (/tmp/qianxing-r10-final/crates/qx-execution)
+warning: could not load dep-graph from `/target/debug/incremental/qx_execution-22gpizwukdw3x/s-ho02ezm42p-0jjebm0-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-execution` (lib) generated 1 warning
+   Compiling qx-factor v0.4.0 (/tmp/qianxing-r10-final/crates/qx-factor)
+warning: could not load dep-graph from `/target/debug/incremental/qx_factor-1ipny1wdau3fo/s-ho02f028q4-0bue48m-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-factor` (lib) generated 1 warning
+   Compiling qx-runtime v0.4.0 (/tmp/qianxing-r10-final/crates/qx-runtime)
+warning: could not load dep-graph from `/target/debug/incremental/qx_runtime-242pf4p4yn8qd/s-ho02f1h3j6-0462vmu-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-runtime` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.13s
+     Running unittests src/lib.rs (/target/debug/deps/qx_runtime-6e0bda6eaace1d45)

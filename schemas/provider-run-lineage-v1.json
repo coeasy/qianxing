@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/provider-run-lineage-v1.json",
+  "title": "Qianxing Provider Run Lineage v1",
+  "description": "Path-free Provider source identity embedded in CanonicalRunSpec.extensions.provider_lineage and mirrored into the Bar input summary for report verification.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "provider_id",
+    "provider_version",
+    "request_id",
+    "retry_chain",
+    "source_hash",
+    "query_digest",
+    "request_json",
+    "dataset_manifest_json",
+    "dataset_manifest_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "provider_version": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "retry_chain": {"type": "array", "items": {"type": "string"}},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "query_digest": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "request_json": {"type": "string", "minLength": 1},
+    "dataset_manifest_json": {"type": "string", "minLength": 1},
+    "dataset_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

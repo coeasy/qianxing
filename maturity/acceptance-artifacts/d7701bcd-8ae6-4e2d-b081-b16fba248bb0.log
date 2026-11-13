@@ -1,0 +1,80 @@
+  OK  changelog_sha_equals_last_booked_bytes disk=0ddf106e0b8b29a8 booked=0ddf106e0b8b29a8
+  OK  changelog_bytes_equals_last_booked_bytes disk=584551 booked=584551
+  OK  changelog_pure_crlf crlf=3183 lf=3183 cr=3183
+  OK  changelog_crlf_count_equals_booked_lines crlf=3183 booked=3183
+  OK  dead_uuid_lives_on_exactly_one_line lines=[257]
+  OK  dead_uuid_occurs_twice_on_that_line count=2
+  OK  line_matches_the_head_anchor chars=177
+  OK  line_matches_the_tail_anchor chars=177
+  OK  line_carries_exactly_two_artifact_refs prefix=1
+  OK  new_uuid_absent_from_page_before_write count=0
+  OK  pre_line_shape_needle_named_the_dead_uuid labels=['be0f3ba8-5d42-4460-a19f-2e218efd7b4a']
+  OK  new_target_log_exists_on_disk 
+  OK  new_target_source_tree_exists_on_disk 
+  OK  cited_log_exit_code_zero 
+  OK  cited_log_runs_the_suite 
+  OK  cited_log_declares_twenty_nine count=1
+  OK  cited_log_result_line_twenty_nine_pass 
+  OK  cited_log_has_no_failed_row failed=0 panic=0
+  OK  cited_log_names_the_process_restart_test 
+  OK  ledger_has_exactly_one_record_for_new_run count=1
+  OK  ledger_has_no_record_for_dead_run count=0
+  OK  ledger_record_outcome_passed outcome=passed
+  OK  ledger_record_acceptance_id id=R12-AC01
+  OK  ledger_record_command_is_the_suite 
+  OK  ledger_record_notes_cover_success_branch 
+  OK  ledger_record_notes_cover_failure_branch 
+  OK  ledger_record_notes_cover_cursor_discipline 
+  OK  ledger_record_artifacts_point_at_the_cited_log artifacts=2
+  OK  class_face_artifact_link_count_is_120 links=120
+  OK  class_face_label_uuid_count_is_46 labelled=46
+  OK  class_face_label_target_mismatch_is_zero mismatch=0
+  OK  class_face_dead_targets_is_exactly_one dead=1
+  OK  the_only_dead_target_is_this_one 
+  OK  checker_refuses_before_fix rc=1
+  OK  checker_prints_exactly_one_broken_link rows=1
+  OK  checker_broken_row_names_this_doc_and_line row=docs/changelog/current.md:258
+  OK  checker_broken_row_names_the_dead_uuid 
+  OK  uuid_audit_refuses_before_fix rc=1
+  OK  uuid_audit_header_count_matches_its_own_rows header=2 rows=2
+  OK  uuid_audit_dead_rows_equal_doc_occurrences rows=2 occurrences=2
+  OK  uuid_audit_dead_distinct_is_one distinct=1
+  OK  uuid_audit_citation_total_parsed total=204
+  OK  watched_sibling_citations_are_nonzero counts={'221f0bc3': 1, '133058f2': 0}
+  OK  staged_length_is_unchanged raw=584551 staged=584551
+  OK  staged_sha_differs 
+  OK  staged_line_count_unchanged lines=3184
+  OK  staged_has_no_dead_uuid 
+  OK  staged_has_new_uuid_twice 
+  OK  staged_line_shape_needle_names_the_new_uuid labels=['e8dcc722']
+WROTE sha 0ddf106e0b8b29a8 -> 1095e5cd94f9a8bd bytes 584551 -> 584551 line=258
+  OK  diff_is_one_line_only changed=1
+  OK  changed_line_is_the_target_line idx=[257]
+  OK  dead_uuid_gone_from_page count=0
+  OK  new_uuid_appears_twice count=2
+  OK  post_line_sha_is_the_staged_line_sha 
+  OK  post_line_head_untouched 
+  OK  post_line_tail_untouched 
+  OK  post_line_chars_unchanged before=177 after=177
+  OK  label_and_target_share_one_uuid labels=['e8dcc722-6f75-45bc-b6ec-9f472d11bb83']
+  OK  neighbour_lines_untouched ctx_differs_only_at_k
+  OK  line_count_unchanged before=3184 after=3184
+  OK  changelog_pure_crlf_after_write crlf=3183 lf=3183 cr=3183
+  OK  other_uuid_citations_untouched counts={'221f0bc3-4974-4a99-ba96-ee83451d53e1': 1, '133058f2-74a1-4c69-9fb1-4bbc69b981a3': 0}
+  OK  class_link_count_still_120 links=120
+  OK  class_label_uuid_still_46 labelled=46
+  OK  class_label_target_mismatch_still_zero mismatch=0
+  OK  class_dead_targets_now_zero dead=0
+  OK  checker_passes_after_fix rc=0
+  OK  checker_reports_zero_broken_after_fix 
+  OK  checker_tracked_file_count_parsed files=58
+  OK  uuid_audit_passes_after_fix rc=0
+  OK  uuid_audit_attests_full_resolution 
+  OK  uuid_audit_citation_total_unchanged before=204 after=204
+  OK  uuid_audit_dead_rows_now_zero rows=0
+  OK  uuid_audit_distinct_missing_now_zero distinct=0
+  OK  plan_doc_untouched now=1199a736b11af81f booked=1199a736b11af81f
+  OK  control_label_only_mutation_breaks_the_shape_needle shape=False dead=1 new=1
+  OK  control_target_only_mutation_breaks_label_parity label=e8dcc722 target=00000000
+  OK  disk_bytes_still_the_landed_payload 
+LANDED line=258 chars=177->177 gates=78 bad=0 sha16 0ddf106e0b8b29a8 -> 1095e5cd94f9a8bd

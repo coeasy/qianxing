@@ -72,6 +72,8 @@ fn balance_facts_stay_unique_across_a_reconciler_restart() {
             free: Money::from_i64(usdt),
             locked: Money::ZERO,
             borrowed: Money::ZERO,
+            net_cash_balance: None,
+            exact_amounts: None,
         }],
     };
     let log_name = "ccxt-main-okx-events";

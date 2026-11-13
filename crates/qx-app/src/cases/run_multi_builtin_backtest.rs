@@ -35,6 +35,7 @@ pub fn validate_multi_builtin_frames(
     primary: &BarFrame,
     reference: &BarFrame,
 ) -> Result<(), AppError> {
+    validate_multi_builtin_capabilities(kind)?;
     if quantity_raw <= 0 {
         return Err(invalid("多腿内置策略 quantity 必须为正整数"));
     }
@@ -57,6 +58,14 @@ pub fn validate_multi_builtin_frames(
         ));
     }
     Ok(())
+}
+
+fn validate_multi_builtin_capabilities(
+    kind: qx_strategy::BuiltinStrategyKind,
+) -> Result<(), AppError> {
+    qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_multi_builtin_rust()
+        .validate_required(kind.required_capabilities())
+        .map_err(invalid)
 }
 
 pub fn run_multi_builtin_backtest(
@@ -153,6 +162,7 @@ pub fn run_multi_builtin_backtest_with_inputs(
 }
 
 fn validate_multi_builtin_inputs(input: &MultiBuiltinBacktestInputs<'_>) -> Result<(), AppError> {
+    validate_multi_builtin_capabilities(input.strategy.kind)?;
     validate_multi_builtin_frames(
         input.strategy.kind,
         input.strategy.quantity_raw,
@@ -216,14 +226,24 @@ fn run_inner(
     spec.validate()?;
     let primary = read_frame(&spec.primary.bars_path, "主腿")?;
     let reference = read_frame(&spec.reference.bars_path, "对冲腿")?;
+    validate_multi_builtin_frames(
+        spec.strategy.kind,
+        spec.strategy.quantity_raw,
+        &primary,
+        &reference,
+    )?;
     if primary.instrument == reference.instrument {
         return Err(invalid("多腿内置回测要求两条腿使用不同标的"));
     }
     if primary.ts != reference.ts {
         return Err(invalid("多腿内置回测要求两条 BarFrame 的时间戳完全对齐"));
     }
-    let primary_bars: Vec<Bar> = (&primary).into();
-    let reference_bars: Vec<Bar> = (&reference).into();
+    let primary_bars: Vec<Bar> = primary
+        .bars()
+        .map_err(|error| invalid(format!("主腿 BarFrame exact OHLCV 无效: {error:?}")))?;
+    let reference_bars: Vec<Bar> = reference
+        .bars()
+        .map_err(|error| invalid(format!("对冲腿 BarFrame exact OHLCV 无效: {error:?}")))?;
     if primary_bars.len() < MIN_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
@@ -331,6 +351,7 @@ fn build_targets(
         reference_instrument: Some(reference.instrument.clone()),
         primary_policy: None,
         reference_policy: None,
+        allow_short: true,
     };
     strategy_config.validate().map_err(invalid)?;
     let mut strategy = BuiltinStrategy::new(strategy_config).map_err(invalid)?;
@@ -359,39 +380,62 @@ fn build_targets(
         ),
         cash,
         risk_state: "multi-leg-backtest".into(),
+        positions_exact: BTreeMap::new(),
+        cash_exact: BTreeMap::new(),
+        available_margin_exact: None,
     };
     strategy.on_init(&context).map_err(invalid)?;
-    let mut targets = TargetSchedules {
-        primary: BTreeMap::new(),
-        reference: BTreeMap::new(),
-    };
-    for (primary_bar, reference_bar) in primary_bars.iter().zip(reference_bars) {
-        context.as_of = primary_bar.ts;
-        let reference_decision = strategy
-            .on_event(&context, &bar_event(&reference.instrument, reference_bar))
-            .map_err(invalid)?;
-        record_targets(
-            &mut context,
-            &mut targets,
-            &reference_decision,
-            primary,
-            reference,
-            reference_bar.ts,
-        )?;
-        let primary_decision = strategy
-            .on_event(&context, &bar_event(&primary.instrument, primary_bar))
-            .map_err(invalid)?;
-        record_targets(
-            &mut context,
-            &mut targets,
-            &primary_decision,
-            primary,
-            reference,
-            primary_bar.ts,
-        )?;
+    if let Err(start_error) = strategy.on_start(&context) {
+        let stop_error = strategy.on_stop().err();
+        return Err(invalid(match stop_error {
+            Some(stop_error) => {
+                format!("多腿策略 on_start 失败: {start_error}; on_stop 也失败: {stop_error}")
+            }
+            None => format!("多腿策略 on_start 失败: {start_error}"),
+        }));
     }
-    strategy.on_stop().map_err(invalid)?;
-    Ok(targets)
+    let targets_result = (|| {
+        let mut targets = TargetSchedules {
+            primary: BTreeMap::new(),
+            reference: BTreeMap::new(),
+        };
+        for (primary_bar, reference_bar) in primary_bars.iter().zip(reference_bars) {
+            context.as_of = primary_bar.ts;
+            let reference_decision = strategy
+                .on_event(&context, &bar_event(&reference.instrument, reference_bar))
+                .map_err(invalid)?;
+            record_targets(
+                &mut context,
+                &mut targets,
+                &reference_decision,
+                primary,
+                reference,
+                reference_bar.ts,
+            )?;
+            let primary_decision = strategy
+                .on_event(&context, &bar_event(&primary.instrument, primary_bar))
+                .map_err(invalid)?;
+            record_targets(
+                &mut context,
+                &mut targets,
+                &primary_decision,
+                primary,
+                reference,
+                primary_bar.ts,
+            )?;
+        }
+        Ok(targets)
+    })();
+    let stop_result = strategy.on_stop().map_err(invalid);
+    match (targets_result, stop_result) {
+        (Ok(targets), Ok(())) => Ok(targets),
+        (Err(primary_error), Ok(())) => Err(primary_error),
+        (Ok(_), Err(stop_error)) => Err(stop_error),
+        (Err(primary_error), Err(stop_error)) => Err(AppError::new(
+            primary_error.category(),
+            format!("{primary_error}; 多腿策略 on_stop 失败: {stop_error}"),
+        )),
+    }
 }
 
 fn record_targets(
@@ -442,6 +486,7 @@ fn bar_event(instrument: &InstrumentId, bar: &Bar) -> MarketEvent {
         low_raw: bar.low,
         close_raw: bar.close,
         volume_raw: bar.volume,
+        exact_ohlcv: None,
     }
 }
 
@@ -485,6 +530,7 @@ impl BarStrategy for ScheduledTargetStrategy {
             account_id: self.account_id.clone(),
             trace: None,
             policy: self.policy,
+            exact_amounts: None,
         })
     }
 }

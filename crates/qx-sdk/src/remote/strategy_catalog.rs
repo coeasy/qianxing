@@ -15,12 +15,4 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
     fn get_strategy_catalog(&self) -> Result<Value, RemoteApiError> {
         self.get_discovery("/app/strategies")
     }
-
-    fn get_discovery(&self, path: &str) -> Result<Value, RemoteApiError> {
-        let response = self
-            .transport
-            .get(path)
-            .map_err(RemoteApiError::Transport)?;
-        Self::decode_response(response)
-    }
 }

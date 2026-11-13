@@ -1,0 +1,11 @@
+牵星 Qianxing — 分级校准，量天定位
+
+[Data · Dataset] dataset=strategy-bars:BTCUSDT.BINANCE version=barframe-json-v1 source=example-bars-v1 fingerprint=613fdc1dc0b779e7
+[Strategy · Signal] source=config fast_window=5 slow_window=20 period=14 threshold_bps=100 \
+             knobs=none declared_unused=builtin_fast_window,builtin_slow_window,builtin_period,builtin_threshold_bps
+[Strategy · Account] initial_cash_raw=100000000000000 account_base_source=builtin-default
+[Strategy · Backtest] strategy=strategy-macd instrument=BTCUSDT.BINANCE bars=70 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=67c176977ad0f81d
+[Strategy · Integrity] rejected_orders=0 rejection_reasons=none
+[RunManifest] run_id=strategy-backtest:strategy-macd:BTCUSDT.BINANCE:01a360af71f13bb1acdea809ec8a6357543556861651e9beef15712916a09ec4:3e87aa4e83179cb062a5cbb3 data_fingerprint=dataset-bundle:8bf50b57f8204ab9 result_hash=67c176977ad0f81d digest=2760a9a9632fa8d3
+[RunManifest] path=D:\workspace\qval-1028a\c2\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_01a360af71f13bb1acdea809ec8a6357543556861651e9beef15712916a09ec4_3e87aa4e83179cb062a5cbb3-2760a9a9632fa8d3.run.json
+[Artifacts] summary=D:\workspace\qval-1028a\c2\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_01a360af71f13bb1acdea809ec8a6357543556861651e9beef15712916a09ec4_3e87aa4e83179cb062a5cbb3-2760a9a9632fa8d3.v7.summary.json equity=D:\workspace\qval-1028a\c2\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_01a360af71f13bb1acdea809ec8a6357543556861651e9beef15712916a09ec4_3e87aa4e83179cb062a5cbb3-2760a9a9632fa8d3.v7.equity.csv fills=D:\workspace\qval-1028a\c2\data\qianxing\runs\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_01a360af71f13bb1acdea809ec8a6357543556861651e9beef15712916a09ec4_3e87aa4e83179cb062a5cbb3-2760a9a9632fa8d3.v7.fills.csv

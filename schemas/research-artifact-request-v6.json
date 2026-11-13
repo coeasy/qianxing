@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-request-v6.json",
+  "title": "Qianxing ResearchArtifactRequest v6",
+  "description": "Research artifact request including independently paged joint-account events keyed by exchange and account.",
+  "anyOf": [
+    {"$ref": "research-artifact-request-v5.json"},
+    {"$ref": "multi-account-joint-backtest-result-v1.json"},
+    {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"$ref": "multi-account-joint-backtest-result-v1.json"},
+        "joint_account_event_pages": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {"minLength": 1},
+          "additionalProperties": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {"minLength": 1},
+            "additionalProperties": {"$ref": "#/$defs/accountEventPage"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "accountEventPage": {
+      "type": "object",
+      "required": ["offset", "limit"],
+      "properties": {
+        "offset": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 300}
+      },
+      "additionalProperties": false
+    }
+  }
+}

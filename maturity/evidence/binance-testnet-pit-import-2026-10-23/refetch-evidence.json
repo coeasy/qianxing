@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-historical-public-snapshot-refetch",
+  "captured_at_utc": "2026-10-23T01:18:00Z",
+  "exchange": "binance",
+  "market_type": "spot",
+  "network": "official_spot_testnet",
+  "access": {
+    "credentials_present": false,
+    "private_account_calls": false,
+    "orders_sent": false
+  },
+  "query": {
+    "instrument": "BTC/USDT.BINANCE",
+    "source": "ccxt:binance:BTC/USDT:1m",
+    "timeframe": "1m",
+    "requested_start_ms": 1792709255979,
+    "requested_end_ms": 1792710155979,
+    "bars": 15,
+    "refetch_capture_time_ms": 1792718280722
+  },
+  "build": {
+    "binary": "target/release/qx-cli.exe",
+    "binary_sha256": "46405955f680169d465a94034e98b12895ffc974f5b3333891ea2e9e9e7a74c4"
+  },
+  "snapshot": {
+    "path": "maturity/evidence/binance-testnet-pit-import-2026-10-23/snapshot-3.json",
+    "sha256": "68a230e683309faefce14123de4b023b90a6d17d2d127b4018bb7713ef48e335",
+    "bytes": 1916,
+    "matches_first_capture": true
+  },
+  "pit_import": {
+    "ledger_path": "maturity/evidence/binance-testnet-pit-import-2026-10-23/pit-ledger-refetch.json",
+    "ledger_sha256": "52f5e0875f72ce054ea042c171a112294b7536e0e2991ef9bd75d742cad00146",
+    "facts": 75,
+    "facts_with_multiple_versions": 0,
+    "capture_semantics": "first capture time; not exchange publication time"
+  },
+  "limitations": [
+    "A repeated current fetch of a historical Testnet interval cannot prove the venue publication timestamp or its full revision history.",
+    "No authenticated account or order API was exercised.",
+    "Does not qualify to flip sandbox_tested."
+  ]
+}

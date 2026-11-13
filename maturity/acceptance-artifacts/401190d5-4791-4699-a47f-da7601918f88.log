@@ -1,0 +1,20 @@
+qianxing.runtime.binance-testnet.example.json	[FAIL] runtime_reference: worker binance-execution-main instrument_spec_path 与标的 BTCUSDT.BINANCE 预检失败: FAIL_CLOSED: live execution worker binance-execution-main 的 market spec 缺少签名角色目录 (BTCUSDT.BINANCE)
+qianxing.runtime.binance-testnet.example.json	[FAIL] worker binance-execution-main instrument_spec_path 与标的 BTCUSDT.BINANCE 预检失败: FAIL_CLOSED: live execution worker binance-execution-main 的 market spec 缺少签名角色目录 (BTCUSDT.BINANCE)
+qianxing.runtime.ccxt.example.json	[FAIL] runtime_reference: worker ccxt-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+qianxing.runtime.ccxt.example.json	[FAIL] worker ccxt-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+qianxing.runtime.multi-venue-arbitrage.example.json	[FAIL] runtime_reference: worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-arbitrage.example.json	[FAIL] runtime_reference: worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-arbitrage.example.json	[FAIL] worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-arbitrage.example.json	[FAIL] worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-contract.example.json	[FAIL] runtime_reference: worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-contract.example.json	[FAIL] runtime_reference: worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-contract.example.json	[FAIL] worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.multi-venue-contract.example.json	[FAIL] worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+qianxing.runtime.production.example.json	[FAIL] runtime_reference: worker binance-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+qianxing.runtime.production.example.json	[FAIL] runtime_reference: strategy.research_snapshot_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.json (configured=/var/lib/qianxing/research/production-strategy-v1.json)
+qianxing.runtime.production.example.json	[FAIL] runtime_reference: strategy.dataset_bundle_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.bundle.json (configured=/var/lib/qianxing/research/production-strategy-v1.bundle.json)
+qianxing.runtime.production.example.json	[FAIL] storage.data_dir: storage.data_dir 的父目录不存在: /var/lib/qianxing
+qianxing.runtime.production.example.json	[FAIL] worker binance-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+qianxing.runtime.production.example.json	[FAIL] strategy.research_snapshot_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.json (configured=/var/lib/qianxing/research/production-strategy-v1.json)
+qianxing.runtime.production.example.json	[FAIL] strategy.dataset_bundle_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.bundle.json (configured=/var/lib/qianxing/research/production-strategy-v1.bundle.json)
+qianxing.runtime.production.example.json	[FAIL] storage.data_dir 的父目录不存在: /var/lib/qianxing

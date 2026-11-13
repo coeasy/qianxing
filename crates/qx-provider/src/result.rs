@@ -437,6 +437,21 @@ impl ProviderResult {
             low_raw: bars.iter().map(|bar| bar.low).collect(),
             close_raw: bars.iter().map(|bar| bar.close).collect(),
             volume_raw: bars.iter().map(|bar| bar.volume).collect(),
+            exact_ohlcv: if bars.iter().any(|bar| bar.exact_ohlcv.is_some()) {
+                Some(
+                    bars.iter()
+                        .map(|bar| qx_core::ExactOhlcv {
+                            open: bar.open_exact(),
+                            high: bar.high_exact(),
+                            low: bar.low_exact(),
+                            close: bar.close_exact(),
+                            volume: bar.volume_exact(),
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            },
         };
         frame.validate().map_err(|error| {
             ProviderError::new(

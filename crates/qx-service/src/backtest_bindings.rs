@@ -173,6 +173,8 @@ pub fn depth_backtest_spec_from_runtime(
         queue_position_bps: 0,
         queue_position_model: qx_xingban::QueuePositionModel::default(),
         market_impact_bps: i128::from(input.market_impact_bps),
+        funding_bps: 0,
+        funding_events: Vec::new(),
         output_dir: input.root.to_string_lossy().into_owned(),
         strategy: strategy_spec,
         market_spec: input.market_spec,
@@ -537,8 +539,12 @@ mod tests {
             "../../../deploy/qianxing.bar-frame.pairs-reference.example.json"
         ))
         .expect("reference BarFrame is valid");
-        let primary_bars: Vec<qx_guanxing::Bar> = (&primary).into();
-        let reference_bars: Vec<qx_guanxing::Bar> = (&reference).into();
+        let primary_bars = primary
+            .bars()
+            .expect("primary BarFrame exact values are valid");
+        let reference_bars = reference
+            .bars()
+            .expect("reference BarFrame exact values are valid");
 
         let bindings =
             multi_builtin_backtest_bindings_from_runtime(MultiBuiltinBacktestBindingInput {

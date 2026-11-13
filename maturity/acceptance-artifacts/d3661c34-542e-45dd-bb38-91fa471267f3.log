@@ -1,0 +1,99 @@
+LEG r18A_fmt rc=0 seconds=7.12 bytes=0
+LEG r18A_cargo_unit rc=101 seconds=224.00 bytes=73724
+LEG r18A_arch rc=0 seconds=125.00 bytes=68
+LEG r18A_ledger rc=0 seconds=7.53 bytes=104
+LEG r18A_pyfull rc=0 seconds=490.72 bytes=1798
+LEG r18A_py_pr rc=0 seconds=81.90 bytes=6714
+LEG r18A_py_pair rc=0 seconds=0.41 bytes=2211
+LEG r18A_py_pair2 rc=0 seconds=4.07 bytes=4255
+LEG r18A_py_ashare rc=0 seconds=1.18 bytes=9012
+LEG r18A_py_contract rc=0 seconds=0.19 bytes=1609
+LEG r18A_ladder rc=0 seconds=0.26 bytes=265
+LEG r18A_py_native rc=0 seconds=164.01 bytes=701
+LEG r18A_pyc rc=0 seconds=0.45 bytes=0
+LEG r18A_diffcheck rc=0 seconds=0.88 bytes=24526
+LEG r18A_mdlinks rc=0 seconds=1.75 bytes=115
+LEG r18A_pointers rc=1 seconds=65.43 bytes=2711
+SUMMARY_WRITTEN .task-tmp\r18_gateA_summary.json
+R r18A_arch_checks=336
+R r18A_arch_rc=0
+R r18A_arch_seconds=124.38
+R r18A_arch_shards=4
+R r18A_diffcheck_lines=185
+R r18A_diffcheck_rc=0
+R r18A_fmt_diff_lines=0
+R r18A_fmt_rc=0
+R r18A_ladder_rc=0
+R r18A_ladder_tests=1
+R r18A_ledger_binds=132
+R r18A_ledger_range=R01–R23
+R r18A_ledger_rc=0
+R r18A_ledger_scenes=23
+R r18A_mdlinks_broken=0
+R r18A_mdlinks_citations_ambiguous=0
+R r18A_mdlinks_citations_bad=0
+R r18A_mdlinks_citations_examined=4617
+R r18A_mdlinks_files=78
+R r18A_mdlinks_rc=0
+R r18A_native_rc=0
+R r18A_native_tests=3
+R r18A_pointers_artifact_links=121
+R r18A_pointers_audit_exit=1
+R r18A_pointers_baseline=146
+R r18A_pointers_broken_everywhere=0
+R r18A_pointers_citation_baseline=36
+R r18A_pointers_citations_ambiguous=0
+R r18A_pointers_citations_build=114
+R r18A_pointers_citations_case_mismatched=0
+R r18A_pointers_citations_examined=4617
+R r18A_pointers_citations_gated=36
+R r18A_pointers_citations_local_only=150
+R r18A_pointers_head_face=10
+R r18A_pointers_head_rows=10
+R r18A_pointers_local_only=146
+R r18A_pointers_other_links=25
+R r18A_pointers_rc=0
+R r18A_pointers_scanned_files=78
+R r18A_py_ashare_rc=0
+R r18A_py_ashare_tests=55
+R r18A_py_contract_rc=0
+R r18A_py_contract_tests=6
+R r18A_py_failed_count=0
+R r18A_py_pair2_rc=0
+R r18A_py_pair2_tests=22
+R r18A_py_pair_rc=0
+R r18A_py_pair_tests=11
+R r18A_py_pr_rc=0
+R r18A_py_pr_tests=37
+R r18A_py_rc=0
+R r18A_py_seconds=488.937
+R r18A_py_skipped=5
+R r18A_py_tests=596
+R r18A_py_verdict=OK
+R r18A_pyc_files=56
+R r18A_pyc_rc=0
+R r18A_rust_unit_failed=20
+R r18A_rust_unit_ignored=0
+R r18A_rust_unit_passed=465
+R r18A_rust_unit_profile=release
+R r18A_rust_unit_rc=101
+R r18A_rust_unit_red_roster=20
+R r18A_rust_unit_verdict=FAILED
+R t_r18A_arch=125.0
+R t_r18A_cargo_unit=224.0
+R t_r18A_diffcheck=0.88
+R t_r18A_fmt=7.12
+R t_r18A_ladder=0.26
+R t_r18A_ledger=7.53
+R t_r18A_mdlinks=1.75
+R t_r18A_pointers=65.43
+R t_r18A_py_ashare=1.18
+R t_r18A_py_contract=0.19
+R t_r18A_py_native=164.01
+R t_r18A_py_pair=0.41
+R t_r18A_py_pair2=4.07
+R t_r18A_py_pr=81.9
+R t_r18A_pyc=0.45
+R t_r18A_pyfull=490.72
+legs_nonzero=r18A_rust_unit_rc
+gateA_rc=1

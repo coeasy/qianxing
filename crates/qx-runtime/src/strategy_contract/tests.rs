@@ -12,11 +12,30 @@ fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
         data_fingerprint: "bars-1".into(),
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
-        positions: BTreeMap::from([("BTCUSDT.BINANCE".into(), 2)]),
+        positions: BTreeMap::from([
+            ("BTCUSDT.BINANCE".into(), 2),
+            ("binance|subaccount|BTCUSDT.BINANCE".into(), 1),
+        ]),
+        positions_exact: BTreeMap::from([
+            ("BTCUSDT.BINANCE".into(), "0.0000000021".into()),
+            (
+                "binance|subaccount|BTCUSDT.BINANCE".into(),
+                "0.000000001".into(),
+            ),
+        ]),
         cash: BTreeMap::from([("USDT".into(), 100)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(90),
         risk_state: "verified".into(),
         research_targets: BTreeMap::from([("BTCUSDT.BINANCE".into(), 3)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: Some(StrategyContractBars {
             source: "snapshot-1".into(),
             ts: vec![9, 10],
@@ -25,6 +44,7 @@ fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
             low_raw: vec![1, 2],
             close_raw: vec![2, 3],
             volume_raw: vec![10, 11],
+            exact_ohlcv: None,
         }),
     };
     let restored = StrategyContractInput::from_json(&input.to_json().unwrap()).unwrap();
@@ -36,6 +56,7 @@ fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
         signal_id: 1,
         instrument: "BTCUSDT.BINANCE".into(),
         target_qty: 3,
+        target_qty_exact: None,
         confidence: 900,
         priority: 1,
         expires_at: 10,
@@ -46,6 +67,30 @@ fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
         StrategyContractOutput::from_json_for(&encoded, &input).unwrap(),
         output
     );
+    let exact_output = StrategyContractOutput {
+        target_qty: 0,
+        target_qty_exact: Some("-0.0000000001".into()),
+        ..output.clone()
+    };
+    let exact_json = exact_output.to_json_for(&input).unwrap();
+    assert_eq!(
+        StrategyContractOutput::from_json_for(&exact_json, &input).unwrap(),
+        exact_output
+    );
+    let mut conflicted_target = exact_output.clone();
+    conflicted_target.target_qty = 1;
+    assert!(conflicted_target
+        .validate_for(&input)
+        .unwrap_err()
+        .contains("target_qty 与 target_qty_exact"));
+    let mut conflicted_input = input.clone();
+    conflicted_input
+        .positions_exact
+        .insert("BTCUSDT.BINANCE".into(), "0.0000000031".into());
+    assert!(conflicted_input
+        .validate()
+        .unwrap_err()
+        .contains("raw 投影冲突"));
     let mut mismatched = output.clone();
     mismatched.request_id = "other".into();
     // 折叠成一句「与输入身份、标的或有效期不一致」时，最需要点名的那一格反而读不出来：
@@ -91,6 +136,72 @@ fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
 }
 
 #[test]
+fn strategy_contract_accepts_exact_bitget_quote_budget_as_separate_sizing_unit() {
+    let input = StrategyContractInput {
+        schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+        request_id: "request-1".into(),
+        strategy_id: "strategy-1".into(),
+        strategy_version: "v1".into(),
+        data_fingerprint: "bars-1".into(),
+        as_of: 10,
+        instrument: "BTCUSDT.BINANCE".into(),
+        positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
+        cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
+        available_margin_raw: Some(100),
+        risk_state: "verified".into(),
+        research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
+        bars: None,
+    };
+    let output = StrategyContractOutput {
+        schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+        request_id: "request-1".into(),
+        strategy_id: "strategy-1".into(),
+        signal_id: 1,
+        instrument: input.instrument.clone(),
+        target_qty: 0,
+        target_qty_exact: None,
+        confidence: 0,
+        priority: 0,
+        expires_at: 0,
+        intents: vec![StrategyContractIntent {
+            intent_id: 1,
+            instrument: "PEPE/USDT.BITGET".into(),
+            account_id: None,
+            side: "buy".into(),
+            qty_raw: 0,
+            qty_exact: None,
+            quote_budget_exact: Some("12.34000001".into()),
+            limit_price_raw: None,
+            limit_price_exact: None,
+            reduce_only: false,
+            post_only: false,
+            position_side: None,
+            margin_mode: None,
+            position_mode: None,
+            leverage: None,
+        }],
+    };
+    let wire = output.to_json_for(&input).unwrap();
+    assert_eq!(
+        StrategyContractOutput::from_json_for(&wire, &input).unwrap(),
+        output
+    );
+    let mut invalid = output;
+    invalid.intents[0].side = "sell".into();
+    assert!(invalid.validate_for(&input).is_err());
+}
+
+#[test]
 fn legacy_target_contract_emits_close_rebalance_for_zero_target() {
     let input = StrategyContractInput {
         schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
@@ -101,10 +212,20 @@ fn legacy_target_contract_emits_close_rebalance_for_zero_target() {
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::from([("BTCUSDT.BINANCE".into(), 2)]),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100),
         risk_state: "verified".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let output = StrategyContractOutput {
@@ -114,6 +235,7 @@ fn legacy_target_contract_emits_close_rebalance_for_zero_target() {
         signal_id: 1,
         instrument: input.instrument.clone(),
         target_qty: 0,
+        target_qty_exact: None,
         confidence: 1_000,
         priority: 0,
         expires_at: 10,
@@ -135,10 +257,20 @@ fn strategy_columnar_input_preserves_metadata_and_fixed_width_columns() {
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(90),
         risk_state: "verified".into(),
         research_targets: BTreeMap::from([("BTCUSDT.BINANCE".into(), 3)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: Some(StrategyContractBars {
             source: "snapshot-1".into(),
             ts: vec![9, 10],
@@ -147,6 +279,7 @@ fn strategy_columnar_input_preserves_metadata_and_fixed_width_columns() {
             low_raw: vec![1, 2],
             close_raw: vec![2, 3],
             volume_raw: vec![10, 11],
+            exact_ohlcv: None,
         }),
     };
     let encoded = encode_strategy_columnar_input(&input).unwrap();
@@ -166,6 +299,70 @@ fn strategy_columnar_input_preserves_metadata_and_fixed_width_columns() {
 }
 
 #[test]
+fn strategy_columnar_v2_preserves_exact_ohlcv_metadata() {
+    let mut input = StrategyContractInput {
+        schema_version: STRATEGY_CONTRACT_INPUT_V5_SCHEMA_VERSION,
+        request_id: "columnar-exact-1".into(),
+        strategy_id: "strategy-exact".into(),
+        strategy_version: "v1".into(),
+        data_fingerprint: "subnano-bars".into(),
+        as_of: 10,
+        instrument: "ALTUSDT.BINANCE".into(),
+        positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
+        cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
+        available_margin_raw: None,
+        risk_state: "verified".into(),
+        research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
+        bars: Some(StrategyContractBars {
+            source: "subnano-source".into(),
+            ts: vec![9],
+            open_raw: vec![0],
+            high_raw: vec![0],
+            low_raw: vec![0],
+            close_raw: vec![0],
+            volume_raw: vec![0],
+            exact_ohlcv: Some(vec![Some(qx_core::ExactOhlcv {
+                open: qx_core::ExactDecimal::parse("0.0000000005").unwrap(),
+                high: qx_core::ExactDecimal::parse("0.0000000005").unwrap(),
+                low: qx_core::ExactDecimal::parse("0.0000000005").unwrap(),
+                close: qx_core::ExactDecimal::parse("0.0000000005").unwrap(),
+                volume: qx_core::ExactDecimal::parse("0.0000000000005").unwrap(),
+            })]),
+        }),
+    };
+    input.schema_version = input.schema_version_for_features();
+    let encoded = encode_strategy_columnar_input(&input).unwrap();
+    assert_eq!(&encoded[..4], b"QXCB");
+    assert_eq!(
+        u16::from_le_bytes([encoded[4], encoded[5]]),
+        STRATEGY_COLUMNAR_EXACT_VERSION
+    );
+    assert_eq!(
+        u16::from_le_bytes([encoded[6], encoded[7]]),
+        STRATEGY_COLUMNAR_EXACT_OHLCV_FLAG
+    );
+    let metadata_len = u32::from_le_bytes(encoded[8..12].try_into().unwrap()) as usize;
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &encoded[STRATEGY_COLUMNAR_HEADER_LEN..STRATEGY_COLUMNAR_HEADER_LEN + metadata_len],
+    )
+    .unwrap();
+    assert_eq!(
+        metadata["__qx_bars_exact_ohlcv"][0]["close"]["coefficient"],
+        "5"
+    );
+}
+
+#[test]
 fn strategy_contract_accepts_multiple_order_intents() {
     let input = StrategyContractInput {
         schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
@@ -176,10 +373,20 @@ fn strategy_contract_accepts_multiple_order_intents() {
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100),
         risk_state: "ready".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let output = StrategyContractOutput {
@@ -189,6 +396,7 @@ fn strategy_contract_accepts_multiple_order_intents() {
         signal_id: 99,
         instrument: input.instrument.clone(),
         target_qty: 0,
+        target_qty_exact: None,
         confidence: 500,
         priority: 1,
         expires_at: 10,
@@ -196,9 +404,13 @@ fn strategy_contract_accepts_multiple_order_intents() {
             StrategyContractIntent {
                 intent_id: 1001,
                 instrument: "BTCUSDT.BINANCE".into(),
+                account_id: None,
                 side: "buy".into(),
                 qty_raw: 2,
+                qty_exact: None,
+                quote_budget_exact: None,
                 limit_price_raw: Some(100),
+                limit_price_exact: None,
                 reduce_only: false,
                 post_only: true,
                 position_side: Some("net".into()),
@@ -209,9 +421,13 @@ fn strategy_contract_accepts_multiple_order_intents() {
             StrategyContractIntent {
                 intent_id: 1002,
                 instrument: "ETHUSDT.BINANCE".into(),
+                account_id: None,
                 side: "sell".into(),
-                qty_raw: 1,
+                qty_raw: 0,
+                qty_exact: Some("1e-10".into()),
+                quote_budget_exact: None,
                 limit_price_raw: None,
+                limit_price_exact: Some("0.00000005".into()),
                 reduce_only: true,
                 post_only: false,
                 position_side: Some("net".into()),
@@ -224,6 +440,15 @@ fn strategy_contract_accepts_multiple_order_intents() {
     let encoded = output.to_json_for(&input).unwrap();
     let restored = StrategyContractOutput::from_json_for(&encoded, &input).unwrap();
     assert_eq!(restored, output);
+    let mut mixed_precision = restored.clone();
+    mixed_precision.intents[1].qty_raw = 1;
+    assert!(mixed_precision
+        .validate_for(&input)
+        .unwrap_err()
+        .contains("非法或重复"));
+    let mut unsupported_scale = restored.clone();
+    unsupported_scale.intents[1].qty_exact = Some("1e-19".into());
+    assert!(unsupported_scale.validate_for(&input).is_err());
     // 契约的 `intents` 上写着 `uniqueItems`，运行时兑现它的只有 `validate_for` 里那次
     // `intent_ids.insert`。这两条 intent 除 id 外完全不同，所以去掉那条判据后没有别的
     // 臂会顺手把它们拒掉——约束就此退成只剩文档。
@@ -246,10 +471,20 @@ fn strategy_output_decode_entry_rejects_foreign_schema_version() {
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(90),
         risk_state: "verified".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let output = StrategyContractOutput {
@@ -259,6 +494,7 @@ fn strategy_output_decode_entry_rejects_foreign_schema_version() {
         signal_id: 1,
         instrument: input.instrument.clone(),
         target_qty: 3,
+        target_qty_exact: None,
         confidence: 900,
         priority: 1,
         // 与 `as_of` 相等是"恰好到期仍可"那一格：判定写成 `<=` 就在这里当场红。
@@ -294,19 +530,29 @@ fn strategy_input_contract_refuses_an_unsupported_schema_version() {
         as_of: 10,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(90),
         risk_state: "verified".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let encoded = input.to_json().unwrap();
     // `schema_version` 是 `u32`，serde 对任何版本号都解得开，所以拒绝只能来自 validate 那一臂。
-    let foreign = encoded.replace("\"schema_version\":1", "\"schema_version\":7");
+    let foreign = encoded.replace("\"schema_version\":1", "\"schema_version\":10");
     assert_ne!(foreign, encoded, "版本号那一格没被改到，这条是一发空枪");
     let error = StrategyContractInput::from_json(&foreign).unwrap_err();
     assert!(
-        error.contains("schema_version=7") && error.contains("只认 1"),
-        "版本拒绝文案必须同时点名读到的版本（schema_version=7）与只认的版本（只认 1）；实际 {error}"
+        error.contains("schema_version=10") && error.contains("只认 1、2、3、4、5、6、7、8 和 9"),
+        "版本拒绝文案必须同时点名读到的版本（schema_version=10）与支持版本（只认 1 到 9）；实际 {error}"
     );
 }

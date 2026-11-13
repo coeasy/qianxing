@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-account-backtest-result-v2.json",
+  "title": "Qianxing MultiAccountBacktestResult v2",
+  "description": "Independent per-account Bar results with a parent RunManifest binding each successful child run and the aggregate summary. Failed accounts remain explicit; an all-failed result has a null parent manifest.",
+  "type": "object",
+  "required": ["schema_version", "batch_id", "settlement_currency", "spec_fingerprint", "runs", "summary", "run_manifest"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "batch_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+    "settlement_currency": {"type": "string", "minLength": 1},
+    "spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "runs": {"type": "array", "minItems": 2, "maxItems": 32, "items": {"$ref": "#/$defs/MultiAccountRunResult"}},
+    "summary": {"$ref": "#/$defs/MultiAccountBacktestSummary"},
+    "run_manifest": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/RunManifest"}
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "MultiAccountRunResult": {
+      "type": "object",
+      "required": ["account_id", "outcome", "error_json"],
+      "properties": {
+        "account_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$", "not": {"enum": [".", ".."]}},
+        "outcome": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/BacktestOutcome"}]},
+        "error_json": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "MultiAccountBacktestSummary": {
+      "type": "object",
+      "required": ["accounts_total", "accounts_succeeded", "accounts_failed", "successful_initial_cash_raw", "successful_fills", "weighted_return_bps", "complete"],
+      "properties": {
+        "accounts_total": {"type": "integer", "minimum": 2, "maximum": 32},
+        "accounts_succeeded": {"type": "integer", "minimum": 0, "maximum": 32},
+        "accounts_failed": {"type": "integer", "minimum": 0, "maximum": 32},
+        "successful_initial_cash_raw": {"type": "integer", "minimum": 0, "maximum": 170141183460469231731687303715884105727},
+        "successful_fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "weighted_return_bps": {"type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647},
+        "complete": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "BacktestOutcome": {
+      "type": "object",
+      "required": ["run_id", "instrument", "result_hash", "data_fingerprint", "fills", "equity_points", "return_bps", "max_drawdown_bps", "artifacts"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "instrument": {"type": "string", "minLength": 1},
+        "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "data_fingerprint": {"type": "string", "minLength": 1},
+        "fills": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "equity_points": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "artifacts": {"$ref": "#/$defs/BacktestArtifacts"},
+        "account_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "BacktestArtifacts": {
+      "type": "object",
+      "required": ["run_manifest", "summary", "equity", "fills"],
+      "properties": {
+        "run_manifest": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "equity": {"type": "string", "minLength": 1},
+        "fills": {"type": "string", "minLength": 1},
+        "event_trace": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "RunManifest": {
+      "type": "object",
+      "required": ["run_id", "code_commit", "config_hash", "data_fingerprint", "input_components", "clock_start", "clock_end", "global_seed", "determinism_mode", "result_hash", "strategy_version", "instrument_spec_version", "model_fingerprint", "input_event_hash", "output_event_hash", "runtime_version", "canonical_run_spec_json", "canonical_run_spec_fingerprint"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "code_commit": {"type": "string", "minLength": 1},
+        "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "data_fingerprint": {"type": "string", "minLength": 1},
+        "input_components": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "clock_start": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "clock_end": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "global_seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "determinism_mode": {"type": "boolean"},
+        "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "strategy_version": {"type": "string", "minLength": 1},
+        "instrument_spec_version": {"type": "string", "minLength": 1},
+        "model_fingerprint": {"type": "string", "minLength": 1},
+        "input_event_hash": {"type": "string", "minLength": 1},
+        "output_event_hash": {"type": "string", "minLength": 1},
+        "runtime_version": {"type": "string", "minLength": 1},
+        "canonical_run_spec_json": {"type": "string", "minLength": 1},
+        "canonical_run_spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -97,12 +97,5 @@ pub(super) fn validate_checkpoint(state: &AlgoExecutionState) -> Result<(), Stri
 }
 
 pub(super) fn same_child_identity(existing: &Order, expected: &Order) -> bool {
-    existing.client_id == expected.client_id
-        && existing.instrument == expected.instrument
-        && existing.side == expected.side
-        && existing.qty == expected.qty
-        && existing.limit == expected.limit
-        && existing.account_id == expected.account_id
-        && existing.trace == expected.trace
-        && existing.policy == expected.policy
+    existing.same_submission_identity(expected)
 }

@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "run_id": "strategy-backtest:strategy-builtin:BTCUSDT.BINANCE:3ed83a7f40f1112c4052c1b3f1c1c97e36104dd3408fcd398b36da904a357a7e:70f84c8e27ad1d9be96a3bd7",
+  "status": "completed",
+  "input_digest": "dataset-bundle:2c6b5ca63465f69f",
+  "code_identity": "4a70e85093906d1fc114970ec6349121dbcaa9f6-dirty:runtime-schema-1",
+  "config_fingerprint": "3ed83a7f40f1112c4052c1b3f1c1c97e36104dd3408fcd398b36da904a357a7e",
+  "started_at_ms": 1000,
+  "finished_at_ms": 70000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "artifact_id": "b3f80a0acfb79b706e81cc639684338fb71400ab64b1de6a1b583cc1b00a0d4a",
+      "kind": "backtest-summary-json",
+      "schema_version": 8,
+      "byte_len": 5314
+    },
+    {
+      "name": "equity",
+      "artifact_id": "1305abeb59dab831c5ed674bf29a609d9c9c0b1de8868c9ea98c8a5f490887a8",
+      "kind": "backtest-equity-csv",
+      "schema_version": 5,
+      "byte_len": 2662
+    },
+    {
+      "name": "fills",
+      "artifact_id": "142f2ac426855b2303e80af0e8ac0ee5befd4a1cd7bd3a8ad7c61dcb4cca8789",
+      "kind": "backtest-fills-csv",
+      "schema_version": 2,
+      "byte_len": 215
+    },
+    {
+      "name": "run_manifest",
+      "artifact_id": "bb8dd253e63d0ad3b3f26e78bb927927f264258196e995cf5e8d05c361208217",
+      "kind": "run-manifest-json",
+      "schema_version": 1,
+      "byte_len": 853
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

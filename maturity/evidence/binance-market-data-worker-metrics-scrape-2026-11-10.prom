@@ -1,0 +1,14 @@
+qx_worker_up{worker="binance-market-testnet",account=""} 0
+qx_worker_heartbeat_timestamp_seconds{worker="binance-market-testnet",account=""} 1794284874
+qx_pipeline_ingest_attempts_total{worker="binance-market-testnet",account=""} 74
+qx_pipeline_ingested_events_total{worker="binance-market-testnet",account=""} 74
+qx_pipeline_deduplicated_events_total{worker="binance-market-testnet",account=""} 0
+qx_pipeline_transient_retries_total{worker="binance-market-testnet",account=""} 0
+qx_pipeline_refreshes_total{worker="binance-market-testnet",account=""} 74
+qx_pipeline_failures_total{worker="binance-market-testnet",account=""} 0
+qx_pipeline_ingest_duration_seconds_total{worker="binance-market-testnet",account=""} 0.839722100
+qx_pipeline_ingest_duration_seconds_max{worker="binance-market-testnet",account=""} 0.079592300
+qx_pipeline_ingest_warning_budget_seconds{worker="binance-market-testnet",account=""} 0.100000000
+qx_pipeline_ingest_budget_exceeded{worker="binance-market-testnet",account=""} 0
+qx_gateway_port_business_status{worker="binance-market-testnet",account="",port="market_data"} 2
+qx_gateway_port_business_timestamp_seconds{worker="binance-market-testnet",account="",port="market_data"} 1794284874

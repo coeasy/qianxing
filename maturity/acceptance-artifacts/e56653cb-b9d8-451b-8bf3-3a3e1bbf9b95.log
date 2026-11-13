@@ -1,0 +1,12 @@
+control: pristine test file green, Ran 7 == 7 declared cases
+OK hot blind-anchor killed ['test_bare_file_name_is_not_a_path_citation']
+REPORT hot blind-anchor collateral reds=4 (blinding is allowed to redden a whole file)
+OK hot shape-drop killed ['test_bare_file_name_is_not_a_path_citation']
+REPORT hot shape-drop collateral reds=4 (blinding is allowed to redden a whole file)
+OK hot narrow-to-loose killed ['test_multiple_case_variants_are_left_unjudged']
+OK hot narrow-to-loose no collateral reds
+OK hot norm-off killed ['test_dot_slash_prefix_is_navigation_not_spelling']
+OK hot norm-off no collateral reds
+OK restored base runs green again (rc=0, sha 4ead5b9f9d3bea31)
+committed-test battery fired=4 killed=4 bad=0
+VERDICT OK

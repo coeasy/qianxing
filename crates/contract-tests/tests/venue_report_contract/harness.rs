@@ -32,10 +32,12 @@ pub(crate) fn spec() -> TradingInstrumentSpec {
         price_tick: STEP,
         qty_step: STEP,
         min_qty: STEP,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -51,6 +53,7 @@ pub(crate) fn order(client_id: u64, qty: i128, limit: i128, status: OrderStatus)
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -76,14 +79,7 @@ pub(crate) struct Contract {
 
 impl Contract {
     pub(crate) fn open(label: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-venue-report-{label}-{}-{nanos}",
-            std::process::id()
-        ));
+        let root = test_temp_root(&format!("venue-report-{label}"));
         let mut contract = Self {
             pipeline: LiveEventPipeline::open(&root, "events", "USDT").unwrap(),
             root,

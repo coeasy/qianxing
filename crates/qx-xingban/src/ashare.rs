@@ -233,9 +233,9 @@ pub struct AshareCorporateActionEvent {
     pub issuer_free_float_shares_raw: Option<i128>,
     #[serde(default)]
     pub source: String,
-    /// PIT 可见时间（epoch 毫秒），随快照携带供审计。唯一的判定发生在公司行为
-    /// JSON 加载闸门：信封带 `as_of` 时按 `published_at_ms <= as_of` 取舍，
-    /// 旧格式缺省为 `None`，此时无法证明可见性的事件一律 fail-closed 丢弃。
+    /// PIT 可见时间（epoch 毫秒），随快照携带供审计。严格 JSON 信封要求该字段；
+    /// 加载时的 `as_of` 会先过滤一次，回测事件调度还会按 Bar 时间再次过滤，避免
+    /// 后发布的公司行为进入更早的撮合。旧格式没有该字段时保留兼容行为。
     #[serde(default)]
     pub published_at_ms: Option<u64>,
     /// 数据源原始字段快照，仅用于审计和重放，不参与撮合语义。
@@ -447,6 +447,15 @@ impl Default for AshareCorporateActionEvent {
     }
 }
 
+impl AshareCorporateActionEvent {
+    /// Legacy rows without publication metadata retain their pre-PIT behavior. Strict JSON
+    /// documents require the timestamp, so their runtime path can fail closed against each Bar.
+    pub(crate) fn is_visible_at(&self, as_of_ms: u64) -> bool {
+        self.published_at_ms
+            .is_none_or(|published_at_ms| published_at_ms <= as_of_ms)
+    }
+}
+
 impl AshareBoard {
     pub fn default_limit_bp(self) -> i64 {
         match self {
@@ -627,7 +636,6 @@ impl AshareRuleConfig {
             }
             if parsed_type == AshareCorporateActionType::Suspension {
                 halted.push(ts);
-                continue;
             }
             let mut row_source: String = object
                 .get("source")
@@ -690,7 +698,10 @@ impl AshareRuleConfig {
         converted.sort_by_key(|event| event.ts);
         halted.sort_unstable();
         halted.dedup();
-        let applied_actions = converted.len();
+        let applied_actions = converted
+            .iter()
+            .filter(|event| event.action_type != AshareCorporateActionType::Suspension)
+            .count();
         let halted_count = halted.len();
         // 先在候选快照上校验，失败时不污染调用方已有的规则配置。
         let mut candidate = self.clone();
@@ -1184,7 +1195,7 @@ impl AshareRuleConfig {
             .iter()
             .filter(|event| {
                 event.action_type == AshareCorporateActionType::CapitalChange
-                    && until_ts.is_none_or(|until| event.ts <= until)
+                    && until_ts.is_none_or(|until| event.ts <= until && event.is_visible_at(until))
             })
             .map(|event| {
                 if event.issuer_total_shares_raw <= 0 {

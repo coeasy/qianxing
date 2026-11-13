@@ -2,10 +2,10 @@ use super::app_error;
 use pyo3::prelude::*;
 use qx_app::{
     AppError, BacktestOutcome, DepthBacktestOutcome, MultiAccountBacktestResult,
-    MultiAccountDepthBacktestResult, MultiLegBacktestOutcome, MultiMarketBacktestOutcome,
-    MultiMarketDepthBacktestOutcome, RunDepthExperimentResult, RunExperimentResult, RunHandle,
-    RunMultiLegExperimentResult, RunMultiMarketDepthExperimentResult,
-    RunMultiMarketExperimentResult, RunStatus,
+    MultiAccountDepthBacktestResult, MultiAccountJointBacktestOutcome, MultiLegBacktestOutcome,
+    MultiMarketBacktestOutcome, MultiMarketDepthBacktestOutcome, RunDepthExperimentResult,
+    RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
+    RunMultiMarketDepthExperimentResult, RunMultiMarketExperimentResult, RunStatus,
 };
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ pub(super) fn events_json(run: &NativeRun, after_seq: u64) -> Result<String, App
         NativeRun::MultiMarketDepthExperiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccount(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccountDepth(handle) => handle.events_json_after(after_seq),
+        NativeRun::MultiAccountJoint(handle) => handle.events_json_after(after_seq),
     }
 }
 
@@ -40,7 +41,7 @@ pub(super) enum NativeRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
     DepthExperiment(RunHandle<RunDepthExperimentResult>),
-    Experiment(RunHandle<RunExperimentResult>),
+    Experiment(Box<RunHandle<RunExperimentResult>>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
     MultiMarketDepth(RunHandle<MultiMarketDepthBacktestOutcome>),
@@ -49,6 +50,7 @@ pub(super) enum NativeRun {
     MultiMarketDepthExperiment(RunHandle<RunMultiMarketDepthExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
     MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
+    MultiAccountJoint(RunHandle<MultiAccountJointBacktestOutcome>),
 }
 
 #[pyclass(name = "RunHandle")]
@@ -73,6 +75,7 @@ impl PyRunHandle {
             NativeRun::MultiMarketDepthExperiment(handle) => handle.run_id(),
             NativeRun::MultiAccount(handle) => handle.run_id(),
             NativeRun::MultiAccountDepth(handle) => handle.run_id(),
+            NativeRun::MultiAccountJoint(handle) => handle.run_id(),
         }
     }
 
@@ -91,6 +94,7 @@ impl PyRunHandle {
             NativeRun::MultiMarketDepthExperiment(handle) => handle.status(),
             NativeRun::MultiAccount(handle) => handle.status(),
             NativeRun::MultiAccountDepth(handle) => handle.status(),
+            NativeRun::MultiAccountJoint(handle) => handle.status(),
         })
     }
 
@@ -108,6 +112,7 @@ impl PyRunHandle {
             NativeRun::MultiMarketDepthExperiment(handle) => handle.cancel(),
             NativeRun::MultiAccount(handle) => handle.cancel(),
             NativeRun::MultiAccountDepth(handle) => handle.cancel(),
+            NativeRun::MultiAccountJoint(handle) => handle.cancel(),
         }
     }
 
@@ -134,6 +139,7 @@ impl PyRunHandle {
                 NativeRun::MultiMarketDepthExperiment(handle) => handle.status(),
                 NativeRun::MultiAccount(handle) => handle.status(),
                 NativeRun::MultiAccountDepth(handle) => handle.status(),
+                NativeRun::MultiAccountJoint(handle) => handle.status(),
             };
             if matches!(
                 status,
@@ -208,6 +214,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiAccountDepth(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiAccountJoint(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()

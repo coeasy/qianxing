@@ -44,6 +44,28 @@ pub(crate) fn rerun_multi_barframe(
         &std::fs::read(summary_path).map_err(|error| format!("读取多腿摘要失败: {error}"))?,
     )
     .map_err(|error| format!("多腿摘要 JSON 无效: {error}"))?;
+    let mut input_paths = std::collections::BTreeMap::new();
+    for component in &dataset.components {
+        let role = match component.role.as_str() {
+            "primary" => "primary",
+            "reference" => "reference",
+            role => return Err(format!("未知多腿输入角色: {role}")),
+        };
+        let path = resolve(root, &component.path)?
+            .canonicalize()
+            .map_err(|error| format!("解析 {role} BarFrame 失败: {error}"))?;
+        let path_text = path.to_string_lossy().into_owned();
+        summary["input"]["legs"][role]["path"] = serde_json::Value::String(path_text.clone());
+        input_paths.insert(role, path_text);
+    }
+    let primary_path = input_paths
+        .get("primary")
+        .ok_or("EvidenceBundle 缺少 primary BarFrame 组件")?;
+    let reference_path = input_paths
+        .get("reference")
+        .ok_or("EvidenceBundle 缺少 reference BarFrame 组件")?;
+    summary["input"]["path"] =
+        serde_json::Value::String(format!("{primary_path}|{reference_path}"));
     for component in &dataset.components {
         let Some(manifest_path) = component.quality_manifest_path.as_deref() else {
             continue;
@@ -66,10 +88,10 @@ pub(crate) fn rerun_multi_barframe(
         summary["dataset_quality"]["legs"][role]["manifest_path"] =
             serde_json::Value::String(path.to_string_lossy().to_string());
     }
-    // Bundle verification already checked the immutable source RunRecord and summary digest.
-    // A portable bundle relocates quality-manifest paths in this in-memory copy, so it must not
-    // compare that relocated copy byte-for-byte with the source directory's RunRecord summary.
-    qx_app::artifact_store::recompute_multi_barframe_input_from_evidence(&summary)?;
+    // Bundle verification already checked the summary digest and RunManifest identity. A
+    // portable bundle relocates input/quality paths in this in-memory copy, so the evidence
+    // verifier uses the already-verified manifest instead of comparing against source paths.
+    qx_app::artifact_store::recompute_multi_barframe_input_from_evidence(&summary, expected)?;
     let strategy = summary
         .pointer("/strategy/kind")
         .and_then(serde_json::Value::as_str)

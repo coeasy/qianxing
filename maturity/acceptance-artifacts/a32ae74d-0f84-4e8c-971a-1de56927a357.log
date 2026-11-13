@@ -1,0 +1,15 @@
+$ target/r01-clean-install-windows-final/installed-venv/Scripts/python.exe -m unittest python.tests.test_project_run_disk_full -v
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_receipt_write_enospc_is_returned_and_never_persisted_as_success (python.tests.test_project_run_disk_full.ProjectRunDiskFullTests.test_receipt_write_enospc_is_returned_and_never_persisted_as_success) ... Project run: 24e3e6818ed54497bd1939811979c624
+ok
+test_result_write_enospc_is_persisted_as_failed (python.tests.test_project_run_disk_full.ProjectRunDiskFullTests.test_result_write_enospc_is_persisted_as_failed) ... Project run: 31f4f79e5843492fbfba1c1db5734f33
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.091s
+
+OK

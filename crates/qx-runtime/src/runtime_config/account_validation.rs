@@ -25,6 +25,16 @@ impl RuntimeConfig {
                     account.id
                 ));
             }
+            if account
+                .portfolio_id
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty() || value != value.trim())
+            {
+                return Err(format!(
+                    "Account[{}] portfolio_id 必须非空且不能带首尾空白",
+                    account.id
+                ));
+            }
         }
         if self.accounts.is_empty() {
             return Ok(());

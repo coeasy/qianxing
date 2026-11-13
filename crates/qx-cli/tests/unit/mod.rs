@@ -24,6 +24,7 @@ pub(crate) fn smoke_paper_risk_context() -> RiskContext {
         instrument_spec: Some(spec),
         max_order_notional_raw: None,
         max_position_notional_raw: None,
+        exact: None,
     }
 }
 
@@ -108,7 +109,7 @@ pub(crate) fn current_summary_fixture(label: &str) -> (PathBuf, PathBuf) {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let config = read_runtime_config(&template).expect("读取内置回测 runtime 模板");
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, label);
-    run_strategy_backtest(&runtime, &frame, None).expect("生成 v7 summary fixture");
+    run_strategy_backtest(&runtime, &frame, None).expect("生成 v8 summary fixture");
     let summary = list_backtest_summary_paths(&root.join("runs"))
         .expect("读取生成的 summary")
         .into_iter()
@@ -148,6 +149,109 @@ pub(crate) fn mk_worker(
     }
 }
 
+/// Write a live-test market spec with a deterministic, test-only signed role catalog and install
+/// its public key as the admission trust root. This keeps live risk tests focused on order
+/// admission while still exercising the production signature and instrument-binding checks.
+pub(crate) fn write_signed_market_spec_fixture(
+    root: &Path,
+    name: &str,
+    spec: &TradingInstrumentSpec,
+) -> PathBuf {
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const SEED: [u8; 32] = [0x5a; 32];
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time is after the Unix epoch")
+        .as_millis() as u64;
+    let role = match spec.product {
+        TradingProduct::Spot | TradingProduct::Margin => qx_data::DatasetInstrumentRole::CryptoSpot,
+        TradingProduct::Perpetual | TradingProduct::Future => {
+            qx_data::DatasetInstrumentRole::Future
+        }
+        TradingProduct::Option => qx_data::DatasetInstrumentRole::OtherTradable,
+    };
+    let instrument = spec.instrument.to_string();
+    let public_key_hex = qx_data::DatasetInstrumentRoleCatalogV1::ed25519_public_key_hex(&SEED)
+        .expect("test role signer key is valid");
+    let key_id = qx_data::sha256_hex_bytes(
+        &public_key_hex
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>(),
+    );
+    let mut roles = BTreeMap::new();
+    roles.insert(instrument.clone(), role);
+    let catalog = qx_data::DatasetInstrumentRoleCatalogV1::new_unsigned_dataset_role_catalog_v1(
+        format!("qx-cli-test-{name}"),
+        "qx-cli-test-supplier".into(),
+        "fixture-v1".into(),
+        now_ms,
+        now_ms.saturating_sub(1_000).max(1),
+        now_ms.saturating_add(86_400_000),
+        roles,
+    )
+    .sign_with_ed25519_seed(&SEED)
+    .expect("test role catalog signs");
+    let trusted = BTreeMap::from([(
+        key_id,
+        qx_data::DatasetRoleTrustedKeyV1 {
+            supplier_id: "qx-cli-test-supplier".into(),
+            public_key_hex,
+        },
+    )]);
+    std::env::set_var(
+        "QX_DATASET_ROLE_TRUSTED_PUBLIC_KEYS",
+        serde_json::to_string(&trusted).expect("serialize test trust root"),
+    );
+
+    let mut payload = serde_json::to_value(spec).expect("serialize market spec fixture");
+    payload["dataset_instrument_role"] = serde_json::to_value(role).unwrap();
+    payload["dataset_instrument_role_catalog"] = serde_json::to_value(catalog).unwrap();
+    let path = root.join(name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+    path
+}
+
+pub(crate) fn write_signed_market_spec_set_fixture(
+    root: &Path,
+    name: &str,
+    source: &Path,
+) -> PathBuf {
+    let mut payload: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(source).expect("read source market spec set"))
+            .expect("parse source market spec set");
+    let markets = payload["markets"]
+        .as_object_mut()
+        .expect("market spec set has markets object");
+    let entries = markets
+        .iter_mut()
+        .enumerate()
+        .map(|(index, (instrument, market))| {
+            let spec: TradingInstrumentSpec =
+                serde_json::from_value(market.clone()).expect("parse market spec");
+            assert_eq!(instrument, &spec.instrument.to_string());
+            let signed_path =
+                write_signed_market_spec_fixture(root, &format!("{name}.{index}.json"), &spec);
+            let signed: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(signed_path).expect("read signed market spec"),
+            )
+            .expect("parse signed market spec");
+            market["dataset_instrument_role"] = signed["dataset_instrument_role"].clone();
+            market["dataset_instrument_role_catalog"] =
+                signed["dataset_instrument_role_catalog"].clone();
+        })
+        .collect::<Vec<_>>();
+    drop(entries);
+    let path = root.join(name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+    path
+}
+
 /// 读取回测产物目录里的第一份摘要。风控与成本口径用例读的是同一批产物，
 /// 扫描 `runs/` 的写法只留一处，避免第二份实现把"没产物"误判成"通过"。
 pub(crate) fn read_first_backtest_summary(root: &Path) -> serde_json::Value {
@@ -181,6 +285,16 @@ pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
         .join("qianxing.binance.spot.spec.json")
 }
 
+/// API valuation fixtures use the same frozen BTCUSDT spot rule as the Paper worker.
+/// An empty spec map must leave equity/PnL absent because `BTCUSDT` alone cannot
+/// distinguish spot from a derivative contract.
+pub(crate) fn workspace_binance_spot_market_specs() -> BTreeMap<InstrumentId, TradingInstrumentSpec>
+{
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let spec: TradingInstrumentSpec = serde_json::from_str(&payload).unwrap();
+    BTreeMap::from([(spec.instrument.clone(), spec)])
+}
+
 /// 为账簿记账回归生成指定报价币种的现货规格。
 pub(crate) fn spot_spec_settled_in(dir: &Path, currency: &str) -> PathBuf {
     let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
@@ -209,10 +323,13 @@ pub(crate) fn workspace_source(rel: &str) -> String {
 /// 判据问的是"生产里有没有人读"，所以 `src/tests/` 与任何名为 `tests` 的目录都不算
 /// 读者 —— 用例读者是回归证明，按仓库口径另走"保留 + 登记 limitation"那条路。
 pub(crate) fn all_crate_production_sources() -> Vec<PathBuf> {
-    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("crates")];
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let mut stack = std::fs::read_dir(crates_dir.join("crates"))
+        .unwrap_or_else(|error| panic!("读取 crates 目录失败: {error}"))
+        .flatten()
+        .map(|entry| entry.path().join("src"))
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
     let mut files = Vec::new();
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -267,6 +384,13 @@ pub(crate) fn paper_runtime_config(data_dir: &Path) -> RuntimeConfig {
         .join("qianxing.runtime.paper-strategy.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let trading_days = data_dir.join("account-trading-days.json");
+    std::fs::write(
+        &trading_days,
+        r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+    )
+    .unwrap();
+    config.api.account_trading_days_path = Some(trading_days.to_string_lossy().into_owned());
     let spec = workspace_binance_spot_spec().to_string_lossy().into_owned();
     for worker in config.workers.iter_mut() {
         if worker.instrument_spec_path.is_some() {
@@ -382,26 +506,46 @@ fn assert_binary_fresh(binary: &Path) {
 }
 
 fn qx_cli_binary() -> PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+    if let Some(path) = std::env::var_os("QX_CLI_TEST_BINARY") {
         let binary = PathBuf::from(path);
+        assert!(
+            binary.is_file(),
+            "QX_CLI_TEST_BINARY 指向的 CLI 不存在: {}",
+            binary.display()
+        );
         assert_binary_fresh(&binary);
         return binary;
     }
-    let profile_dir = std::env::current_exe()
-        .expect("读取测试可执行文件路径失败")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("测试可执行文件应位于 target/<profile>/deps")
-        .to_path_buf();
-    let binary = profile_dir.join(if cfg!(windows) {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+        let binary = PathBuf::from(path);
+        // Some Cargo invocations expose an OUT_DIR-style path for bin unit tests
+        // without materializing that executable. Fall through to target/<profile>/qx-cli
+        // when the advertised path is absent; feature-matrix jobs build that binary first.
+        if binary.is_file() {
+            assert_binary_fresh(&binary);
+            return binary;
+        }
+    }
+    let test_executable = std::env::current_exe().expect("读取测试可执行文件路径失败");
+    let binary_name = if cfg!(windows) {
         "qx-cli.exe"
     } else {
         "qx-cli"
-    });
-    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
-    // 本 crate 的 `--bin` 单元测试里 `option_env!("CARGO_BIN_EXE_qx-cli")` 取不到值（它只喂给
-    // 集成测试壳），所以走的正是这条回落分支——也正是 `cargo test --bin` 不重链 binary 的那条路。
-    // 新鲜度只写在上面那条分支等于没写：定向跑子进程用例时会静默对着旧行为变绿（V11 S6）。
+    };
+    let binary = test_executable
+        .ancestors()
+        .find_map(|directory| {
+            let candidate = directory.join(binary_name);
+            (candidate.is_file() && directory.join("deps").is_dir()).then_some(candidate)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "未找到被测 binary {binary_name}，测试可执行文件为 {}",
+                test_executable.display()
+            )
+        });
+    // `cargo test --bin` 不重链 CLI executable；fallback 仍要检查 binary 新鲜度，
+    // 防止定向跑子进程用例时静默对着旧行为变绿（V11 S6）。
     assert_binary_fresh(&binary);
     binary
 }
@@ -452,6 +596,7 @@ mod parallel_run_isolation;
 mod pipeline_metrics_open_sites;
 mod pipeline_metrics_surface;
 mod project_manifest_init;
+mod python_interpreter;
 mod quickstart_file_budget;
 mod reconcile_worker_identity;
 mod reexport_zero_reader_surface;
@@ -461,6 +606,8 @@ mod risk_port_channel;
 mod run_entry_argument_honesty;
 mod run_evidence;
 mod runtime_api_worker_identity;
+mod runtime_capability_matrix;
+mod runtime_cors_warning;
 mod runtime_market_spec_preflight;
 mod scheduler_dispatch_support;
 mod scheduler_owner_routing;

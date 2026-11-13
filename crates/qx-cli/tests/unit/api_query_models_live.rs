@@ -21,10 +21,11 @@ fn file_backend_services_share_one_rate_limit_bucket() {
     let root = temp_cli_case_dir("api-shared-rate-limit");
     let first = live_api_service(&root);
     for attempt in 0..qx_api::DEFAULT_RATE_LIMIT_CAPACITY {
+        let response = first.handle("GET", "/health", "", 1);
         assert_eq!(
-            first.handle("GET", "/health", "", 1).status,
-            200,
-            "第 {attempt} 次请求仍在额度内"
+            response.status, 200,
+            "第 {attempt} 次请求仍在额度内，响应正文: {}",
+            response.body
         );
     }
     let second = live_api_service(&root);

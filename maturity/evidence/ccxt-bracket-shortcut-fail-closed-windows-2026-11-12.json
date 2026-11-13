@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-bracket-shortcut-fail-closed-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "Legacy Python CCXT Bracket entry rejection before exchange submission",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "b389cd02"
+  },
+  "verification": [
+    {
+      "command": "python -m pytest python/tests/test_ccxt.py python/tests/test_ccxt_worker.py -q",
+      "result": "passed",
+      "passed": 92,
+      "failed": 0,
+      "assertions": [
+        "direct CcxtExchangeClient.create_bracket_order reports UNSUPPORTED",
+        "JSONL create_bracket_order reports UNSUPPORTED",
+        "neither rejected path invokes the exchange create_order method"
+      ]
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "passed": 373,
+      "failed": 0,
+      "assertions": [
+        "all four architecture shards passed with no duplicate checks",
+        "the aggregate covers 373 named checks"
+      ],
+      "wall_clock_seconds": 282.44
+    }
+  ],
+  "limitations": [
+    "This removes an unsafe false-positive path; it does not implement native attached Bracket execution.",
+    "No Binance, OKX, or Bitget API request was made; connector maturity remains implemented-unverified."
+  ]
+}

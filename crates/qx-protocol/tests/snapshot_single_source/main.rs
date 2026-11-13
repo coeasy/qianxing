@@ -15,6 +15,7 @@ use qx_core::{
 };
 use qx_protocol::{
     AccountSnapshot, FillSnapshot, OrderSnapshot, PositionSnapshot, TransferSnapshot,
+    ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION,
 };
 use std::any::TypeId;
 use std::collections::BTreeMap;

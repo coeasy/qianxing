@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing-pit-ledger",
+  "source": "synthetic-provider-revision-history",
+  "facts": [
+    {
+      "fact_id": "corp-action-cash-dividend-001",
+      "entity_id": "TEST.SIM",
+      "field": "corporate_action.cash_dividend_per_share",
+      "effective_at": 5,
+      "versions": [
+        { "available_at": 4, "revision": "announcement-1", "value_fingerprint": "cash-0.10" },
+        { "available_at": 5, "revision": "correction-1", "value_fingerprint": "cash-0.12" }
+      ]
+    },
+    {
+      "fact_id": "bar-close-001",
+      "entity_id": "TEST.SIM",
+      "field": "bar.close_raw",
+      "effective_at": 3,
+      "versions": [
+        { "available_at": 3, "revision": "provider-v1", "value_fingerprint": "close-99" },
+        { "available_at": 6, "revision": "provider-correction", "value_fingerprint": "close-100" }
+      ]
+    },
+    {
+      "fact_id": "fundamental-unknown-publication-time",
+      "entity_id": "TEST.SIM",
+      "field": "fundamental.eps",
+      "effective_at": 2,
+      "versions": [
+        { "available_at": null, "revision": "provider-snapshot", "value_fingerprint": "eps-1" }
+      ]
+    }
+  ]
+}

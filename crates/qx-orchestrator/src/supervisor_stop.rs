@@ -4,6 +4,7 @@
 //! 正常停机时永远跑不到；这里把"收到终止请求"变成第二个出口，并给它设
 //! `shutdown_timeout_ms` 预算：预算内等 worker 按自己的停机令牌收尾，超预算才判定失败。
 
+#[cfg(test)]
 const POLL_INTERVAL_MS: u64 = 250;
 
 /// 一个子进程的退出结果：原始退出码与日志文字分开携带。
@@ -17,6 +18,7 @@ pub(crate) struct ProcessExit {
 
 /// 一个被托管的子进程；抽成 trait 是为了让等待阶梯能被用例驱动，不必真起进程。
 pub(crate) trait ManagedProcess {
+    #[cfg(test)]
     fn id(&self) -> &str;
 
     /// 轮询一次退出状态；已退出时返回原始码与文字描述。
@@ -45,6 +47,7 @@ pub(crate) enum SupervisorStop {
 /// 轮询子进程直到出现结论：故障退出、按停机请求全部退出、或停机超预算。
 ///
 /// `signalled`/`now_ms`/`sleep_ms` 全部注入，因此停机分支不需要真信号就能被用例驱动。
+#[cfg(test)]
 pub(crate) fn wait_for_children<P: ManagedProcess>(
     children: &mut [P],
     signalled: impl Fn() -> bool,
@@ -357,6 +360,7 @@ mod tests {
             id: "stop-channel-child".into(),
             child,
             stop_channel: Some(stop_channel),
+            log_drainers: Vec::new(),
         }];
         let started = std::time::Instant::now();
         let stop = wait_for_children(

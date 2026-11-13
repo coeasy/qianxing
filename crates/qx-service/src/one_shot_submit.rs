@@ -69,8 +69,13 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("qx-one-shot-submit-{}-{nonce}", std::process::id()));
+        // Keep test scratch under the workspace target tree. Some Windows hosts deny direct
+        // writes beneath the configured system Temp directory while permitting repository I/O.
+        let root = std::env::current_dir()
+            .expect("workspace current directory")
+            .join("target")
+            .join("qx-service-test-tmp")
+            .join(format!("qx-one-shot-submit-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create isolated control root");
         (
             ControlStateBackend::Files(JsonStateStore::new(root.join("control"))),

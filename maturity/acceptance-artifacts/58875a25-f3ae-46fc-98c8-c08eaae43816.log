@@ -1,0 +1,7 @@
+$ python3 benchmarks/run_strategy_worker_crash_recovery.py --backend postgres --runtime deploy/qianxing.runtime.paper-strategy.example.json --binary target/debug/qx-cli --output maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json
+exit_code=0
+
+[stdout]
+{"out": "/tmp/qx-r08-clean/maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json", "recovery_count": 6, "passed": true}
+
+[stderr]

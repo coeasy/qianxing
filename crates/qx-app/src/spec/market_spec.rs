@@ -1,6 +1,8 @@
 use crate::error::{AppError, AppErrorCategory};
-use crate::spec::{BacktestMarginConfig, BacktestMarginTier};
-use qx_core::{InstrumentId, TradingInstrumentSpec, TradingProduct};
+use crate::spec::{BacktestContractMarginTier, BacktestMarginConfig, BacktestMarginTier};
+use qx_core::{
+    ExactDecimal, ExactTradingRules, InstrumentId, TradingInstrumentSpec, TradingProduct,
+};
 use serde_json::Value;
 
 pub const CCXT_MARKET_SPEC_VERSION: &str = "ccxt-market-spec-v1";
@@ -29,7 +31,7 @@ pub fn backtest_market_spec_binding(
 
     Ok(BacktestMarketSpecBinding {
         spec: Some(market_spec_from_value(instrument, market)?),
-        app_margin_model: Some(backtest_margin_model_from_market(market)),
+        app_margin_model: Some(backtest_margin_model_from_market(market)?),
         source: market_spec_source_label(market),
     })
 }
@@ -77,6 +79,16 @@ fn ccxt_market_to_spec(
     instrument: &InstrumentId,
     market: &Value,
 ) -> Result<TradingInstrumentSpec, AppError> {
+    if let Some(exchange_id) = market.get("exchange_id").and_then(Value::as_str) {
+        if !exchange_id.trim().is_empty()
+            && !exchange_id.eq_ignore_ascii_case(instrument.venue.as_str())
+        {
+            return Err(invalid(format!(
+                "CCXT market exchange_id {exchange_id} 与 InstrumentId venue {} 不一致",
+                instrument.venue
+            )));
+        }
+    }
     let market_type = market
         .get("market_type")
         .and_then(Value::as_str)
@@ -129,25 +141,18 @@ fn ccxt_market_to_spec(
         }
         None => 1,
     };
-    let maintenance_margin_bps = match market
-        .get("maintenance_margin_bps")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    {
-        Some(value) if value <= 10_000 => value,
-        Some(value) => {
-            return Err(invalid(format!(
-                "CCXT market maintenance_margin_bps 非法: {value}"
-            )));
+    let maintenance_margin_bps = match market.get("maintenance_margin_bps") {
+        Some(value) if !value.is_null() => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value <= 10_000)
+            .ok_or_else(|| invalid(format!("CCXT market maintenance_margin_bps 非法: {value}")))?,
+        _ if product.is_derivative() => {
+            ccxt_first_tier_maintenance_margin_bps(market).ok_or_else(|| {
+                declared_field_problem("maintenance_margin_bps", "衍生品维持保证金率", "500bp")
+            })?
         }
-        None if product.is_derivative() => {
-            return Err(declared_field_problem(
-                "maintenance_margin_bps",
-                "衍生品维持保证金率",
-                "500bp",
-            ));
-        }
-        None => 0,
+        _ => 0,
     };
     Ok(TradingInstrumentSpec {
         instrument: instrument.clone(),
@@ -161,11 +166,72 @@ fn ccxt_market_to_spec(
         price_tick: declared_raw_number(market, "price_tick_raw", "一档价格精度")?,
         qty_step: declared_raw_number(market, "qty_step_raw", "数量步长")?,
         min_qty: declared_raw_number(market, "min_qty_raw", "最小下单量")?,
+        min_notional_raw: optional_nonnegative_raw(market, "min_notional_raw")?.unwrap_or(0),
         max_leverage,
         maintenance_margin_bps,
         valid_from: 0,
         valid_to: market.get("expiry_ms").and_then(Value::as_u64),
+        exact_rules: exact_rules_from_ccxt(market)?,
     })
+}
+
+/// CCXT may omit a market-level maintenance margin rate while returning a complete
+/// leverage-tier schedule. In that case, use the first tier only as the baseline
+/// `TradingInstrumentSpec` value; the backtest margin model still consumes the full
+/// tier schedule for notional-dependent calculations. Refuse to infer a baseline when
+/// the first tier does not start at zero exposure or omits its own rate.
+fn ccxt_first_tier_maintenance_margin_bps(market: &Value) -> Option<u32> {
+    let first_tier = market.get("leverage_tiers")?.as_array()?.first()?;
+    let min_notional = first_tier.get("min_notional_raw")?.as_u64()?;
+    if min_notional != 0 {
+        return None;
+    }
+    first_tier
+        .get("maintenance_margin_bps")?
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value <= 10_000)
+}
+
+fn exact_rules_from_ccxt(market: &Value) -> Result<Option<ExactTradingRules>, AppError> {
+    let Some(value) = market.get("exact_rules") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid("CCXT market exact_rules 必须是 object"))?;
+    let parse = |field: &str| -> Result<ExactDecimal, AppError> {
+        let value = object
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid(format!("CCXT market exact_rules 缺少十进制字段 {field}")))?;
+        ExactDecimal::parse(value)
+            .map_err(|error| invalid(format!("CCXT market exact_rules.{field} 非法: {error}")))
+    };
+    Ok(Some(ExactTradingRules {
+        contract_size: parse("contract_size")?,
+        price_tick: parse("price_tick")?,
+        quantity_step: parse("quantity_step")?,
+        minimum_quantity: parse("minimum_quantity")?,
+        minimum_notional: parse("minimum_notional")?,
+    }))
+}
+
+fn optional_nonnegative_raw(market: &Value, key: &str) -> Result<Option<i128>, AppError> {
+    let Some(value) = market.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let raw = raw_i128(market, key)?;
+    if raw < 0 {
+        return Err(invalid(format!("CCXT market {key} 不能为负数")));
+    }
+    Ok(Some(raw))
 }
 
 fn declared_raw_number(market: &Value, key: &str, what: &str) -> Result<i128, AppError> {
@@ -203,49 +269,111 @@ fn declared_field_problem(key: &str, what: &str, fallback: &str) -> AppError {
 }
 
 /// Convert normalized CCXT leverage bands into the serializable application margin binding.
-pub fn backtest_margin_model_from_market(market: &Value) -> BacktestMarginConfig {
-    let Some(rows) = market.get("leverage_tiers").and_then(Value::as_array) else {
-        return BacktestMarginConfig::NoMargin;
+pub fn backtest_margin_model_from_market(market: &Value) -> Result<BacktestMarginConfig, AppError> {
+    let product = market.get("product").and_then(Value::as_str).unwrap_or("");
+    let Some(rows) = market
+        .get("leverage_tiers")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+    else {
+        if product != "spot" && !product.is_empty() {
+            return Err(invalid(
+                "衍生品 CCXT market 缺少杠杆档位，拒绝使用无保证金模型",
+            ));
+        }
+        return Ok(BacktestMarginConfig::NoMargin);
     };
-    let tiers = rows
-        .iter()
-        .filter_map(|row| {
-            let max_notional = row
-                .get("max_notional_raw")
-                .and_then(Value::as_i64)
-                .map(i128::from)
-                .or_else(|| {
-                    row.get("max_notional_raw")
-                        .and_then(Value::as_u64)
-                        .map(i128::from)
-                })
-                .unwrap_or(i128::MAX);
-            let initial_bp = row
-                .get("initial_margin_bps")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let maintenance_bp = row
-                .get("maintenance_margin_bps")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let max_leverage = row
-                .get("max_leverage")
-                .and_then(Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok());
-            (max_notional > 0 && initial_bp >= 0 && maintenance_bp >= 0).then_some(
-                BacktestMarginTier {
-                    max_notional,
+    let first = &rows[0];
+    let exposure_unit = first
+        .get("exposure_unit")
+        .and_then(Value::as_str)
+        .unwrap_or("quote_notional");
+    if rows.iter().any(|row| {
+        row.get("exposure_unit")
+            .and_then(Value::as_str)
+            .unwrap_or("quote_notional")
+            != exposure_unit
+    }) {
+        return Err(invalid("CCXT market 杠杆档位混用了不同敞口单位"));
+    }
+    if exposure_unit == "contracts" {
+        let tiers = rows
+            .iter()
+            .map(|row| {
+                let max_contracts = ccxt_tier_i128(row, "max_notional_raw")
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少合法上限"))?;
+                let initial_bp = row
+                    .get("initial_margin_bps")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少初始保证金率"))?;
+                let maintenance_bp = row
+                    .get("maintenance_margin_bps")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| invalid("CCXT 合约数杠杆档位缺少维持保证金率"))?;
+                let max_leverage = ccxt_tier_leverage(row)?;
+                Ok(BacktestContractMarginTier {
+                    max_contracts,
                     initial_bp,
                     maintenance_bp,
                     max_leverage,
-                },
-            )
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let config = BacktestMarginConfig::ContractTiers { tiers };
+        config.validate().map_err(invalid)?;
+        return Ok(config);
+    }
+    if exposure_unit != "quote_notional" {
+        return Err(invalid(format!(
+            "CCXT market 杠杆档位敞口单位不支持: {exposure_unit}"
+        )));
+    }
+    let tiers = rows
+        .iter()
+        .map(|row| {
+            let max_notional = ccxt_tier_i128(row, "max_notional_raw")
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少合法上限"))?;
+            let initial_bp = row
+                .get("initial_margin_bps")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少初始保证金率"))?;
+            let maintenance_bp = row
+                .get("maintenance_margin_bps")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("CCXT 名义额杠杆档位缺少维持保证金率"))?;
+            let max_leverage = ccxt_tier_leverage(row)?;
+            Ok(BacktestMarginTier {
+                max_notional,
+                initial_bp,
+                maintenance_bp,
+                max_leverage,
+            })
         })
-        .collect::<Vec<_>>();
-    if tiers.is_empty() {
-        BacktestMarginConfig::NoMargin
-    } else {
-        BacktestMarginConfig::Tiers { tiers }
+        .collect::<Result<Vec<_>, AppError>>()?;
+    let config = BacktestMarginConfig::Tiers { tiers };
+    config.validate().map_err(invalid)?;
+    Ok(config)
+}
+
+fn ccxt_tier_i128(row: &Value, key: &str) -> Option<i128> {
+    match row.get(key)? {
+        Value::Null => Some(i128::MAX),
+        value => value
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| value.as_u64().map(i128::from)),
+    }
+}
+
+fn ccxt_tier_leverage(row: &Value) -> Result<Option<u32>, AppError> {
+    match row.get("max_leverage") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .map(Some)
+            .ok_or_else(|| invalid("CCXT 杠杆档位最大杠杆必须为正整数")),
     }
 }
 
@@ -299,5 +427,180 @@ mod binding_tests {
             Some(BacktestMarginConfig::NoMargin)
         );
         assert_eq!(binding.source, PRODUCT_MARKET_SPEC_VERSION);
+    }
+
+    #[test]
+    fn ccxt_snapshot_preserves_small_ticks_tiers_and_exchange_identity() {
+        let instrument = InstrumentId::parse("BTC/USDT:USDT.OKX").expect("valid instrument");
+        let market = serde_json::json!({
+            "exchange_id": "okx",
+            "symbol": "BTC/USDT:USDT",
+            "market_id": "BTC-USDT-SWAP",
+            "base": "BTC",
+            "quote": "USDT",
+            "market_type": "swap",
+            "active": true,
+            "contract": true,
+            "linear": true,
+            "inverse": false,
+            "contract_size_raw": 1_000_000_000_i64,
+            "settle": "USDT",
+            "expiry_ms": null,
+            "price_tick_raw": 1,
+            "qty_step_raw": 1_000,
+            "min_qty_raw": 1_000,
+            "min_notional_raw": 5_000_000_000_i64,
+            "max_qty_raw": null,
+            "max_leverage": 20,
+            "maintenance_margin_bps": 50,
+            "leverage_tiers": [{
+                "symbol": "BTC/USDT:USDT",
+                "tier": 1,
+                "min_notional_raw": 0,
+                "max_notional_raw": 100_000_000_000_000_i64,
+                "initial_margin_bps": 1_000,
+                "maintenance_margin_bps": 50,
+                "max_leverage": 20
+            }]
+        });
+
+        let binding = backtest_market_spec_binding(&instrument, Some(&market))
+            .expect("normalized CCXT snapshot binds into the product contract");
+        let spec = binding.spec.expect("product spec");
+        assert_eq!(spec.price_tick, 1);
+        assert_eq!(spec.qty_step, 1_000);
+        assert_eq!(spec.min_notional_raw, 5_000_000_000);
+        assert_eq!(spec.product, TradingProduct::Perpetual);
+        assert!(matches!(
+            binding.app_margin_model,
+            Some(BacktestMarginConfig::Tiers { .. })
+        ));
+
+        let mut market_without_market_level_rate = market.clone();
+        market_without_market_level_rate
+            .as_object_mut()
+            .expect("market object")
+            .remove("maintenance_margin_bps");
+        let tiered_binding =
+            backtest_market_spec_binding(&instrument, Some(&market_without_market_level_rate))
+                .expect("the zero-exposure tier provides the baseline MMR");
+        assert_eq!(
+            tiered_binding
+                .spec
+                .as_ref()
+                .map(|spec| spec.maintenance_margin_bps),
+            Some(50)
+        );
+        assert!(matches!(
+            tiered_binding.app_margin_model,
+            Some(BacktestMarginConfig::Tiers { .. })
+        ));
+
+        let mut contract_unit_market = market.clone();
+        contract_unit_market["leverage_tiers"][0]["exposure_unit"] =
+            Value::String("contracts".into());
+        let contract_binding =
+            backtest_market_spec_binding(&instrument, Some(&contract_unit_market))
+                .expect("contract-count tiers bind without comparing them as quote notional");
+        assert!(matches!(
+            contract_binding.app_margin_model,
+            Some(BacktestMarginConfig::ContractTiers { ref tiers })
+                if tiers[0].max_contracts == 100_000_000_000_000_i128
+        ));
+
+        let mut invalid_unit_market = market.clone();
+        invalid_unit_market["leverage_tiers"][0]["exposure_unit"] =
+            Value::String("unknown_units".into());
+        assert!(backtest_market_spec_binding(&instrument, Some(&invalid_unit_market)).is_err());
+
+        let mut incomplete_tier_market = contract_unit_market.clone();
+        incomplete_tier_market["leverage_tiers"][0]
+            .as_object_mut()
+            .expect("tier object")
+            .remove("maintenance_margin_bps");
+        assert!(backtest_market_spec_binding(&instrument, Some(&incomplete_tier_market)).is_err());
+
+        let mut unbounded_tier_market = contract_unit_market;
+        unbounded_tier_market["leverage_tiers"][0]["max_notional_raw"] = Value::Null;
+        assert!(backtest_market_spec_binding(&instrument, Some(&unbounded_tier_market)).is_ok());
+
+        let mut missing_base_tier = market_without_market_level_rate.clone();
+        missing_base_tier["leverage_tiers"] = serde_json::json!([{
+            "symbol": "BTC/USDT:USDT",
+            "tier": 2,
+            "min_notional_raw": 1,
+            "max_notional_raw": 100_000_000_000_000_i64,
+            "initial_margin_bps": 1_000,
+            "maintenance_margin_bps": 50,
+            "max_leverage": 20
+        }]);
+        assert!(market_spec_from_value(&instrument, &missing_base_tier)
+            .unwrap_err()
+            .message()
+            .contains("maintenance_margin_bps"));
+
+        let mut wrong_venue = market.clone();
+        wrong_venue["exchange_id"] = serde_json::Value::String("bitget".into());
+        assert!(market_spec_from_value(&instrument, &wrong_venue)
+            .unwrap_err()
+            .message()
+            .contains("venue OKX 不一致"));
+
+        let mut negative_minimum = market;
+        negative_minimum["min_notional_raw"] = serde_json::json!(-1);
+        assert!(market_spec_from_value(&instrument, &negative_minimum)
+            .unwrap_err()
+            .message()
+            .contains("不能为负数"));
+    }
+
+    #[test]
+    fn ccxt_snapshot_preserves_sub_nano_exact_rules() {
+        let instrument = InstrumentId::parse("TINY/USDT.BINANCE").expect("valid instrument");
+        let market = serde_json::json!({
+            "exchange_id": "binance",
+            "symbol": "TINY/USDT",
+            "market_id": "TINYUSDT",
+            "base": "TINY",
+            "quote": "USDT",
+            "market_type": "spot",
+            "active": true,
+            "contract": false,
+            "linear": false,
+            "inverse": false,
+            "contract_size_raw": "1000000000",
+            "settle": null,
+            "expiry_ms": null,
+            "price_tick_raw": "1",
+            "qty_step_raw": "1",
+            "min_qty_raw": "1",
+            "min_notional_raw": null,
+            "max_leverage": 1,
+            "maintenance_margin_bps": 0,
+            "exact_rules": {
+                "contract_size": "1",
+                "price_tick": "0.0000000001",
+                "quantity_step": "0.0000000001",
+                "minimum_quantity": "0.0000000001",
+                "minimum_notional": "5"
+            }
+        });
+
+        let spec = market_spec_from_value(&instrument, &market).expect("exact market spec");
+        let rules = spec.exact_rules.expect("scale-aware market rules");
+        assert_eq!(rules.contract_size, ExactDecimal::parse("1").unwrap());
+        assert_eq!(
+            rules.price_tick,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(
+            rules.quantity_step,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(
+            rules.minimum_quantity,
+            ExactDecimal::parse("0.0000000001").unwrap()
+        );
+        assert_eq!(rules.minimum_notional, ExactDecimal::parse("5").unwrap());
     }
 }

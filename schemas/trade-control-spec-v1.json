@@ -20,7 +20,7 @@
         "request_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "operator_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "reason": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
-        "kind": {"enum": ["SubmitOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit", "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue"]},
+        "kind": {"enum": ["SubmitOrder", "SubmitOrderGroup", "AmendOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit", "CancelOrder", "CancelOrderGroup", "ReconcileAccount", "RetryJob", "SwitchVenue"]},
         "target": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "payload": {"type": "object", "additionalProperties": {"type": "string"}},
         "permission": {"enum": ["ReadOnly", "Research", "Trading", "Admin"]},

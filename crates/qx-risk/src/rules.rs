@@ -9,7 +9,7 @@ use crate::{
     OrderRiskContext, OrderRiskDecision, MAX_POSITION_NOTIONAL_MESSAGE,
     MAX_POSITION_NOTIONAL_MISSING_SPEC_MESSAGE, ORDER_RISK_RULE_SET_VERSION,
 };
-use qx_core::{Order, QxError, QxResult, Side, SCALE};
+use qx_core::{ExactDecimal, Order, QxError, QxResult, Side, SCALE};
 
 /// 单条静态风控规则。
 ///
@@ -29,11 +29,37 @@ impl RiskRule for MaxQtyRule {
     fn name(&self) -> &'static str {
         "MaxQty"
     }
-    fn check(&self, _context: &OrderRiskContext, order: &Order) -> QxResult<()> {
-        if order.qty.raw() > self.max_qty {
+    fn check(&self, context: &OrderRiskContext, order: &Order) -> QxResult<()> {
+        let exceeds = if let Some(amounts) = order.exact_amounts {
+            let maximum = ExactDecimal::from_parts(self.max_qty, 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            let quantity = if let Some(budget) = amounts.quote_budget {
+                let spec = context.instrument_spec.as_ref().ok_or_else(|| {
+                    QxError::BusinessViolation(
+                        "quote_budget 数量上限校验缺少 TradingInstrumentSpec".into(),
+                    )
+                })?;
+                let price = context
+                    .exact
+                    .as_ref()
+                    .and_then(|facts| facts.reference_price)
+                    .ok_or_else(|| {
+                        QxError::BusinessViolation("quote_budget 数量上限校验缺少精确参考价".into())
+                    })?;
+                spec.base_quantity_for_quote_budget(budget, price)?
+            } else {
+                amounts.quantity
+            };
+            quantity
+                .checked_cmp(maximum)
+                .is_some_and(|ordering| ordering.is_gt())
+        } else {
+            order.qty.raw() > self.max_qty
+        };
+        if exceeds {
             return Err(QxError::BusinessViolation(format!(
                 "单笔数量 {} 超过上限 {}",
-                order.qty.raw(),
+                order.quantity_decimal(),
                 self.max_qty
             )));
         }
@@ -54,6 +80,33 @@ impl RiskRule for MaxNotionalRule {
         "MaxNotional"
     }
     fn check(&self, context: &OrderRiskContext, order: &Order) -> QxResult<()> {
+        if order.exact_amounts.is_some() {
+            let exact = context.exact.as_ref().ok_or_else(|| {
+                QxError::BusinessViolation("精确名义额规则缺少精确账户风险事实".into())
+            })?;
+            let price = order
+                .limit_price_decimal()
+                .or(exact.reference_price)
+                .ok_or_else(|| {
+                    QxError::BusinessViolation("精确市价单缺少名义额风控参考价".into())
+                })?;
+            let spec = context.instrument_spec.as_ref().ok_or_else(|| {
+                QxError::BusinessViolation(MAX_POSITION_NOTIONAL_MISSING_SPEC_MESSAGE.into())
+            })?;
+            let (_, projected_gross_notional) =
+                context.project_exposure_exact(spec, order, price, exact.position)?;
+            let limit = ExactDecimal::from_parts(self.max_notional, 9)
+                .map_err(|error| QxError::Invariant(error.into()))?;
+            if projected_gross_notional
+                .checked_cmp(limit)
+                .is_some_and(|ordering| ordering.is_gt())
+            {
+                return Err(QxError::BusinessViolation(
+                    MAX_POSITION_NOTIONAL_MESSAGE.into(),
+                ));
+            }
+            return Ok(());
+        }
         let price = order
             .limit
             .or(context.reference_price)
@@ -83,7 +136,20 @@ impl RiskRule for NoShortRule {
         "NoShort"
     }
     fn check(&self, context: &OrderRiskContext, order: &Order) -> QxResult<()> {
-        if matches!(order.side, Side::Sell) && order.qty.raw() > context.position.net_qty {
+        let sells_more_than_position = if let Some(amounts) = order.exact_amounts {
+            let exact = context.exact.as_ref().ok_or_else(|| {
+                QxError::BusinessViolation("精确 NoShort 规则缺少精确持仓事实".into())
+            })?;
+            let current = exact.position.active_qty_for(order);
+            current.is_negative()
+                || amounts
+                    .quantity
+                    .checked_cmp(current)
+                    .is_none_or(|ordering| ordering.is_gt())
+        } else {
+            order.qty.raw() > context.position.net_qty
+        };
+        if matches!(order.side, Side::Sell) && sells_more_than_position {
             return Err(QxError::BusinessViolation("禁止卖空".into()));
         }
         Ok(())
@@ -196,6 +262,43 @@ impl RuleSet {
         violations: Vec<String>,
     ) -> OrderRiskDecision {
         let policy = order.policy.unwrap_or_default();
+        if let Some(amounts) = order.exact_amounts {
+            let exact = context.exact.as_ref();
+            let price = amounts
+                .limit_price
+                .or_else(|| exact.and_then(|facts| facts.reference_price));
+            let projected_position_raw = exact
+                .zip(price)
+                .zip(context.instrument_spec.as_ref())
+                .and_then(|((facts, price), spec)| {
+                    context
+                        .project_exposure_exact(spec, order, price, facts.position)
+                        .ok()
+                        .and_then(|(quantity, _)| quantity.to_raw(9).ok())
+                });
+            let projected_margin_raw = exact
+                .zip(price)
+                .zip(context.instrument_spec.as_ref())
+                .and_then(|((facts, price), spec)| {
+                    facts
+                        .projected_initial_margin
+                        .or_else(|| {
+                            spec.initial_margin_exact(amounts.quantity, price, policy.leverage)
+                                .ok()
+                        })
+                        .and_then(|margin| margin.to_raw(9).ok())
+                });
+            return OrderRiskDecision {
+                allowed: violations.is_empty(),
+                violations,
+                // The legacy projection cannot represent sub-nano values. Return `None`
+                // instead of silently presenting them as zero.
+                projected_position_raw,
+                projected_margin_raw,
+                reference_price_raw: price.and_then(|price| price.to_raw(9).ok()),
+                rule_set_version: self.version.clone(),
+            };
+        }
         let reference_price = order.limit.or(context.reference_price);
         let signed_delta = match order.side {
             Side::Buy => Some(order.qty.raw()),

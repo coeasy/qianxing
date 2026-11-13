@@ -1,15 +1,29 @@
 use super::validation::is_identity_token;
 use crate::error::{AppError, AppErrorCategory};
-use crate::spec::{BacktestSpec, BACKTEST_SPEC_SCHEMA_VERSION};
+use crate::spec::{BacktestSpec, BACKTEST_SPEC_EXACT_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION};
 
 pub(super) fn validate(spec: &BacktestSpec) -> Result<(), AppError> {
-    if spec.schema_version != BACKTEST_SPEC_SCHEMA_VERSION {
+    if !matches!(
+        spec.schema_version,
+        BACKTEST_SPEC_SCHEMA_VERSION | BACKTEST_SPEC_EXACT_SCHEMA_VERSION
+    ) {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
             format!(
-                "BacktestSpec schema_version={} 本版本只认 {}",
-                spec.schema_version, BACKTEST_SPEC_SCHEMA_VERSION
+                "BacktestSpec schema_version={} 本版本只认 {} 或 {}",
+                spec.schema_version,
+                BACKTEST_SPEC_SCHEMA_VERSION,
+                BACKTEST_SPEC_EXACT_SCHEMA_VERSION
             ),
+        ));
+    }
+    if (spec.schema_version == BACKTEST_SPEC_SCHEMA_VERSION && spec.initial_cash_exact.is_some())
+        || (spec.schema_version == BACKTEST_SPEC_EXACT_SCHEMA_VERSION
+            && spec.initial_cash_exact.is_none())
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "BacktestSpec v1 只接受 initial_cash_raw；v2 必须提供 initial_cash_exact",
         ));
     }
     for (field, value) in [
@@ -44,13 +58,37 @@ pub(super) fn validate(spec: &BacktestSpec) -> Result<(), AppError> {
             "BacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
         ));
     }
+    if spec
+        .asset_class
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty() || value.trim() != value)
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "BacktestSpec.asset_class 若在场必须是无首尾空白的非空字符串",
+        ));
+    }
     if qx_core::InstrumentId::parse(&spec.instrument).is_none() {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
             format!("BacktestSpec.instrument 非法: {}", spec.instrument),
         ));
     }
-    if spec.initial_cash_raw <= 0 {
+    if let Some(amount) = spec.initial_cash_exact {
+        let projection = amount
+            .checked_mul_at_scale(
+                qx_core::ExactDecimal::ONE,
+                9,
+                qx_core::DecimalRounding::TowardZero,
+            )
+            .and_then(|value| value.to_raw(9).ok());
+        if !amount.is_positive() || projection != Some(spec.initial_cash_raw) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BacktestSpec.initial_cash_exact 必须为正，且 initial_cash_raw 必须等于向零投影值",
+            ));
+        }
+    } else if spec.initial_cash_raw <= 0 {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
             "BacktestSpec.initial_cash_raw 必须为正",
@@ -170,7 +208,11 @@ pub(super) fn validate(spec: &BacktestSpec) -> Result<(), AppError> {
                 "策略组合暂不支持账户净持仓级 protective_exit，避免退出成交无法归属到策略持仓",
             ));
         }
-        portfolio.validate(&spec.strategy, spec.initial_cash_raw)?;
+        portfolio.validate(
+            &spec.strategy,
+            spec.initial_cash_raw,
+            spec.initial_cash_exact,
+        )?;
     }
     Ok(())
 }

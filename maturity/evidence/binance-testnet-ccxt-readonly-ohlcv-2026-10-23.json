@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-ccxt-readonly-ohlcv",
+  "outcome": "pass",
+  "network": "testnet",
+  "exchange": "binance",
+  "ccxt_version": "4.5.78",
+  "python": "3.13.13",
+  "python_executable": "D:\\dev\\miniforge3\\python.exe",
+  "symbol": "BTC/USDT",
+  "timeframe": "1m",
+  "limit": 3,
+  "rows": [
+    [
+      1792703700000,
+      81459.83,
+      81459.83,
+      81456.0,
+      81456.0,
+      0.21921
+    ],
+    [
+      1792703760000,
+      81456.0,
+      81516.01,
+      81456.0,
+      81512.75,
+      0.28376
+    ],
+    [
+      1792703820000,
+      81512.75,
+      81512.75,
+      81512.74,
+      81512.75,
+      0.03347
+    ]
+  ],
+  "data_sha256": "80933a7360fe123ea224a1b8cd107525db01447d344c8ac33ed3c8a4fb86d12c",
+  "started_at_utc": "2026-10-22T21:17:26.752990+00:00",
+  "finished_at_utc": "2026-10-22T21:17:28.124197+00:00",
+  "duration_ms": 1366.091,
+  "credentials_present": false,
+  "credentials_used": false,
+  "private_account_calls": false,
+  "orders_sent": false,
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "reason": "anonymous public OHLCV proves read-only data reachability only; no private account, order, recovery, or reconciliation evidence"
+  }
+}

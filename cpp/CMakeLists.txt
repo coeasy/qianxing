@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(qianxing_strategy_sdk VERSION 0.2.1 LANGUAGES CXX)
+project(qianxing_strategy_sdk VERSION 0.4.0 LANGUAGES CXX)
+
+if(MSVC)
+    # Project sources and comments are UTF-8; do not let the active Windows
+    # code page reinterpret them during compilation.
+    add_compile_options(/utf-8)
+endif()
 
 include(CTest)
 include(GNUInstallDirs)
@@ -19,13 +25,20 @@ target_include_directories(qianxing_app_client_smoke PRIVATE ${CMAKE_CURRENT_SOU
 target_compile_features(qianxing_app_client_smoke PRIVATE cxx_std_17)
 add_test(NAME qianxing_app_client_smoke COMMAND qianxing_app_client_smoke)
 
+add_executable(qianxing_strategy_update_contract tests/strategy_update_contract.cpp)
+target_include_directories(qianxing_strategy_update_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(qianxing_strategy_update_contract PRIVATE cxx_std_17)
+add_test(NAME qianxing_strategy_update_contract COMMAND qianxing_strategy_update_contract)
+
 # These contract checks use assert(); keep the checks active in optimized builds.
 if(MSVC)
     target_compile_options(qianxing_ring_smoke PRIVATE /UNDEBUG)
     target_compile_options(qianxing_app_client_smoke PRIVATE /UNDEBUG)
+    target_compile_options(qianxing_strategy_update_contract PRIVATE /UNDEBUG)
 else()
     target_compile_options(qianxing_ring_smoke PRIVATE -UNDEBUG)
     target_compile_options(qianxing_app_client_smoke PRIVATE -UNDEBUG)
+    target_compile_options(qianxing_strategy_update_contract PRIVATE -UNDEBUG)
 endif()
 
 add_library(qianxing_strategy_example SHARED examples/momentum_strategy.cpp)

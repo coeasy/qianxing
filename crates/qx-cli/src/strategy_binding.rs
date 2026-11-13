@@ -1,21 +1,27 @@
 //! 策略绑定：策略当前持仓读取与跨语言契约输入装配。
 
+mod contract_input;
+#[allow(unused_imports)]
+pub(crate) use contract_input::{
+    build_strategy_contract_input, build_strategy_contract_input_with_execution_updates,
+    build_strategy_contract_input_with_market_events,
+    build_strategy_contract_input_with_market_ticks, build_strategy_contract_input_with_updates,
+};
+
 use crate::{
-    account_event_log_name, event_log_exists, invoke_builtin_strategy, invoke_c_abi_strategy,
-    invoke_python_strategy, invoke_python_strategy_with_client, load_strategy_contract_bars,
-    native_strategy_context, open_account_pipeline, runtime_path, strategy_account_context,
-    strategy_target_qty, validate_research_snapshot_binding, PythonStrategyClient,
-    StrategyProcessClient,
+    account_event_log_name, event_log_exists, invoke_builtin_strategy, invoke_python_strategy,
+    invoke_python_strategy_with_client, native_strategy_context, open_account_pipeline,
+    strategy_target_qty, PythonStrategyClient, StrategyProcessClient,
 };
-use qx_core::InstrumentId;
-use qx_factor::StrategyResearchSnapshot;
+use qx_core::{ExactDecimal, InstrumentId, PositionSide};
 use qx_runtime::{
-    OutboxRecovery, RuntimeConfig, StrategyContext, StrategyContractInput, StrategyContractOutput,
-    WorkerConfig,
+    OutboxRecovery, RuntimeConfig, StrategyContractInput, StrategyContractOutput, WorkerConfig,
 };
-use qx_strategy::DynamicCAbiStrategy;
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use qx_strategy::contract::{
+    StrategyCheckpointV1, StrategyContractMarketOrderBookV1, StrategyContractMarketTickV1,
+};
+use qx_strategy::{DynamicCAbiStrategy, StrategyFillUpdateV2, StrategyOrderStatusUpdate};
+use std::path::Path;
 
 pub(crate) fn validate_ccxt_worker_binding(
     worker: &WorkerConfig,
@@ -96,6 +102,15 @@ pub(crate) fn strategy_current_qty_for(
     let Some(account_id) = config.strategy.account_id.as_deref() else {
         return Ok(0);
     };
+    strategy_current_qty_for_account(root, config, account_id, instrument)
+}
+
+pub(crate) fn strategy_current_qty_for_account(
+    root: &Path,
+    config: &RuntimeConfig,
+    account_id: &str,
+    instrument: &InstrumentId,
+) -> Result<i128, String> {
     // 多交易所套利的每条 intent 可以属于不同 venue；优先按
     // InstrumentId 的 venue 读取，不能把所有腿都误读成策略主腿。
     // 兼容旧的 paper/测试账户：历史配置可能把事件写入 strategy.venue_id
@@ -109,7 +124,10 @@ pub(crate) fn strategy_current_qty_for(
     };
     let log_name = if event_log_exists(config, root, &instrument_log_name)? {
         instrument_log_name
-    } else if let Some(configured_venue) = config.strategy.venue_id.as_deref() {
+    } else if config.strategy.account_id.as_deref() == Some(account_id) {
+        let Some(configured_venue) = config.strategy.venue_id.as_deref() else {
+            return Ok(0);
+        };
         let Some(configured_log_name) = account_event_log_name(account_id, configured_venue) else {
             return Ok(0);
         };
@@ -130,98 +148,54 @@ pub(crate) fn strategy_current_qty_for(
         .raw())
 }
 
-pub(crate) fn build_strategy_contract_input(
+pub(crate) fn strategy_current_qty_exact_for(
     root: &Path,
     config: &RuntimeConfig,
     instrument: &InstrumentId,
-    request_id: &str,
-    now: u64,
-) -> Result<StrategyContractInput, String> {
-    let account_id = config
-        .strategy
-        .account_id
-        .clone()
-        .ok_or_else(|| "Python Strategy 必须配置 account_id".to_string())?;
-    let venue_id = config
-        .strategy
-        .venue_id
-        .clone()
-        .ok_or_else(|| "Python Strategy 必须配置 venue_id".to_string())?;
-    if let Some(configured) = config.strategy.research_snapshot_path.as_deref() {
-        let candidate = runtime_path(root, configured);
-        let path = if candidate.exists() {
-            candidate
-        } else {
-            PathBuf::from(configured)
-        };
-        let research = StrategyResearchSnapshot::from_json(
-            &std::fs::read_to_string(&path).map_err(|error| {
-                format!(
-                    "读取 Python Strategy research snapshot 失败 {}: {error}",
-                    path.display()
-                )
-            })?,
-        )
-        .map_err(|error| format!("Python Strategy research snapshot JSON 无效: {error:?}"))?;
-        validate_research_snapshot_binding(root, &config.strategy, &research)?;
-        let research_as_of = research.as_of;
-        let data_fingerprint = research.candidate.config.data_fingerprint.clone();
-        let (positions, cash, available_margin_raw, risk_state) =
-            strategy_account_context(root, config, instrument)?;
-        let context = StrategyContext {
-            strategy_id: config
-                .strategy
-                .id
-                .clone()
-                .unwrap_or_else(|| config.strategy.version.clone()),
-            strategy_version: config.strategy.version.clone(),
-            data_fingerprint,
-            as_of: research.as_of,
-            research,
-            account_id,
-            venue_id,
-            positions,
-            cash,
-            available_margin_raw,
-            risk_state,
-        };
-        context
-            .validate(now, config.is_production())
-            .map_err(|error| format!("Python StrategyContext 校验失败: {error}"))?;
-        let bars = load_strategy_contract_bars(root, config, instrument, research_as_of)?
-            .map(|(bars, _, _)| bars);
-        return context.to_contract_input(request_id, instrument, bars);
-    }
+) -> Result<String, String> {
+    let Some(account_id) = config.strategy.account_id.as_deref() else {
+        return Ok(ExactDecimal::ZERO.to_string());
+    };
+    strategy_current_qty_exact_for_account(root, config, account_id, instrument)
+}
 
-    let (positions, cash, available_margin_raw, risk_state) =
-        strategy_account_context(root, config, instrument)?;
-    let bars = load_strategy_contract_bars(root, config, instrument, now)?;
-    let (bars, data_fingerprint, as_of) = if let Some((bars, data_fingerprint, as_of)) = bars {
-        (Some(bars), data_fingerprint, as_of)
+pub(crate) fn strategy_current_qty_exact_for_account(
+    root: &Path,
+    config: &RuntimeConfig,
+    account_id: &str,
+    instrument: &InstrumentId,
+) -> Result<String, String> {
+    let venue_id = instrument.venue.to_string();
+    let Some(instrument_log_name) = account_event_log_name(account_id, &venue_id) else {
+        return Err(format!(
+            "Strategy 当前精确持仓暂不支持 venue_id={}；请先接入该 Venue 的账户事件归约",
+            venue_id
+        ));
+    };
+    let log_name = if event_log_exists(config, root, &instrument_log_name)? {
+        instrument_log_name
+    } else if config.strategy.account_id.as_deref() == Some(account_id) {
+        let Some(configured_venue) = config.strategy.venue_id.as_deref() else {
+            return Ok(ExactDecimal::ZERO.to_string());
+        };
+        let Some(configured_log_name) = account_event_log_name(account_id, configured_venue) else {
+            return Ok(ExactDecimal::ZERO.to_string());
+        };
+        if event_log_exists(config, root, &configured_log_name)? {
+            configured_log_name
+        } else {
+            return Ok(ExactDecimal::ZERO.to_string());
+        }
     } else {
-        (None, "runtime-config-v1".into(), now.max(1))
+        return Ok(ExactDecimal::ZERO.to_string());
     };
-    let input = StrategyContractInput {
-        schema_version: qx_runtime::STRATEGY_CONTRACT_SCHEMA_VERSION,
-        request_id: request_id.to_string(),
-        strategy_id: config
-            .strategy
-            .id
-            .clone()
-            .unwrap_or_else(|| config.strategy.version.clone()),
-        strategy_version: config.strategy.version.clone(),
-        data_fingerprint,
-        as_of,
-        instrument: instrument.to_string(),
-        positions,
-        cash,
-        available_margin_raw,
-        risk_state,
-        research_targets: BTreeMap::from([(instrument.to_string(), config.strategy.target_qty)]),
-        bars,
-    };
-    input.validate()?;
-    Ok(input)
+    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
+        .map_err(|error| format!("恢复 Strategy 精确持仓 EventLog 失败: {error}"))?;
+    Ok(pipeline
+        .ledger()
+        .position_for_side_exact(account_id, instrument, PositionSide::Net)
+        .quantity
+        .to_string())
 }
 
 /// 五家策略后端的选择梯：按声明的后端算出目标仓位，走契约后端时连同契约输出一起带回。
@@ -234,6 +208,7 @@ pub(crate) struct StrategyContractClients<'a> {
     pub(crate) external_client: &'a mut Option<StrategyProcessClient>,
     pub(crate) native_client: &'a mut Option<DynamicCAbiStrategy>,
     pub(crate) native_initialized: &'a mut bool,
+    pub(crate) runtime_config_path: &'a Path,
 }
 
 pub(crate) fn evaluate_strategy_contract(
@@ -242,40 +217,199 @@ pub(crate) fn evaluate_strategy_contract(
     instrument: &InstrumentId,
     run_id: u64,
     now: u64,
+    execution_updates: &[StrategyOrderStatusUpdate],
+    fill_updates: &[StrategyFillUpdateV2],
+    market_ticks: &[StrategyContractMarketTickV1],
+    market_order_books: &[StrategyContractMarketOrderBookV1],
+    account_updates: &[qx_strategy::contract::StrategyAccountUpdateV1],
+    strategy_checkpoint: Option<&qx_strategy::contract::StrategyCheckpointV1>,
     clients: StrategyContractClients<'_>,
-) -> Result<(i128, Option<StrategyContractOutput>), String> {
+) -> Result<
+    (
+        i128,
+        Option<StrategyContractOutput>,
+        Option<qx_strategy::contract::StrategyCheckpointV1>,
+    ),
+    String,
+> {
     let StrategyContractClients {
         python_client,
         external_client,
         native_client,
         native_initialized,
+        runtime_config_path,
     } = clients;
     let request_id = run_id.to_string();
-    Ok(if config.strategy.builtin_strategy.is_some() {
-        let output = invoke_builtin_strategy(root, config, instrument, &request_id, now)?;
-        (output.target_qty, Some(output))
-    } else if let Some(module) = config.strategy.python_module.as_deref() {
-        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
-        let output = if let Some(client) = python_client.as_mut() {
-            invoke_python_strategy_with_client(client, &input)?
+    let (target_qty, output, checkpoint) =
+        if config.strategy.builtin_strategy.is_some() {
+            let output = invoke_builtin_strategy(
+                root,
+                config,
+                Some(runtime_config_path),
+                instrument,
+                &request_id,
+                now,
+            )?;
+            (output.target_qty, Some(output), None)
+        } else if let Some(module) = config.strategy.python_module.as_deref() {
+            let mut input = build_strategy_contract_input_with_market_events(
+                root,
+                config,
+                instrument,
+                &request_id,
+                now,
+                execution_updates,
+                fill_updates,
+                market_ticks,
+                market_order_books,
+            )?;
+            attach_strategy_account_updates(&mut input, account_updates)?;
+            if let Some(checkpoint) = strategy_checkpoint {
+                input.strategy_checkpoint = Some(checkpoint.clone());
+            } else if config.strategy.python_strategy_spec.is_none()
+                && python_client
+                    .as_ref()
+                    .is_some_and(PythonStrategyClient::expects_strategy_checkpoint)
+            {
+                input.strategy_checkpoint = Some(StrategyCheckpointV1 {
+                    schema_version: qx_strategy::contract::STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+                    strategy_id: input.strategy_id.clone(),
+                    strategy_version: input.strategy_version.clone(),
+                    adapter_state: serde_json::json!({
+                        "schema_version": 1,
+                        "state_mode": "bootstrap"
+                    }),
+                    strategy_state: serde_json::json!({}),
+                });
+            }
+            input.schema_version = input.schema_version_for_features();
+            input.validate()?;
+            let output = if let Some(client) = python_client.as_mut() {
+                invoke_python_strategy_with_client(client, &input)?
+            } else {
+                invoke_python_strategy(module, &input, config.strategy.python_timeout_ms)?
+            };
+            let checkpoint = python_client
+                .as_mut()
+                .and_then(PythonStrategyClient::take_strategy_checkpoint);
+            (output.target_qty, Some(output), checkpoint)
+        } else if let Some(client) = external_client.as_mut() {
+            let mut input = build_strategy_contract_input_with_execution_updates(
+                root,
+                config,
+                instrument,
+                &request_id,
+                now,
+                execution_updates,
+                fill_updates,
+            )?;
+            attach_strategy_account_updates(&mut input, account_updates)?;
+            if client.expects_strategy_checkpoint() {
+                input.strategy_checkpoint = Some(strategy_checkpoint.cloned().unwrap_or_else(
+                    || StrategyCheckpointV1 {
+                        schema_version: qx_strategy::contract::STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+                        strategy_id: input.strategy_id.clone(),
+                        strategy_version: input.strategy_version.clone(),
+                        adapter_state: serde_json::json!({
+                            "schema_version": 1,
+                            "state_mode": "bootstrap"
+                        }),
+                        strategy_state: serde_json::json!({}),
+                    },
+                ));
+                input.schema_version = input.schema_version_for_features();
+                input.validate()?;
+            }
+            let output = client.request(&input)?;
+            let checkpoint = client.take_strategy_checkpoint();
+            if checkpoint.as_ref().is_some_and(|checkpoint| {
+                checkpoint
+                    .adapter_state
+                    .get("state_mode")
+                    .and_then(serde_json::Value::as_str)
+                    != Some("external-process")
+            }) {
+                return Err("external Strategy checkpoint adapter_state 不匹配".into());
+            }
+            (output.target_qty, Some(output), checkpoint)
+        } else if let Some(client) = native_client.as_mut() {
+            let mut input = build_strategy_contract_input_with_execution_updates(
+                root,
+                config,
+                instrument,
+                &request_id,
+                now,
+                execution_updates,
+                fill_updates,
+            )?;
+            attach_strategy_account_updates(&mut input, account_updates)?;
+            if client.supports_state_checkpoint() {
+                input.strategy_checkpoint = Some(strategy_checkpoint.cloned().unwrap_or_else(
+                    || StrategyCheckpointV1 {
+                        schema_version: qx_strategy::contract::STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+                        strategy_id: input.strategy_id.clone(),
+                        strategy_version: input.strategy_version.clone(),
+                        adapter_state: serde_json::json!({
+                            "schema_version": 1,
+                            "state_mode": "c-abi"
+                        }),
+                        strategy_state: serde_json::json!({}),
+                    },
+                ));
+                input.schema_version = input.schema_version_for_features();
+                input.validate()?;
+            }
+            let context = native_strategy_context(&config.strategy, &input)?;
+            let event = qx_strategy::MarketEvent::Timer {
+                name: format!("job:{run_id}"),
+                ts: now,
+            };
+            let output = crate::invoke_c_abi_strategy_with_execution_updates(
+                client,
+                native_initialized,
+                &context,
+                &input,
+                &event,
+                execution_updates,
+                fill_updates,
+                account_updates,
+            )?;
+            let checkpoint = if client.supports_state_checkpoint() {
+                let strategy_state = client.snapshot_strategy_checkpoint()?;
+                let checkpoint = StrategyCheckpointV1 {
+                    schema_version: qx_strategy::contract::STRATEGY_CHECKPOINT_SCHEMA_VERSION,
+                    strategy_id: input.strategy_id.clone(),
+                    strategy_version: input.strategy_version.clone(),
+                    adapter_state: serde_json::json!({
+                        "schema_version": 1,
+                        "state_mode": "c-abi"
+                    }),
+                    strategy_state,
+                };
+                checkpoint.validate_for_input(&input)?;
+                Some(checkpoint)
+            } else {
+                None
+            };
+            (output.target_qty, Some(output), checkpoint)
         } else {
-            invoke_python_strategy(module, &input, config.strategy.python_timeout_ms)?
+            (
+                strategy_target_qty(root, config, instrument, now)?,
+                None,
+                None,
+            )
         };
-        (output.target_qty, Some(output))
-    } else if let Some(client) = external_client.as_mut() {
-        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
-        let output = client.request(&input)?;
-        (output.target_qty, Some(output))
-    } else if let Some(client) = native_client.as_mut() {
-        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
-        let context = native_strategy_context(&config.strategy, &input)?;
-        let event = qx_strategy::MarketEvent::Timer {
-            name: format!("job:{run_id}"),
-            ts: now,
-        };
-        let output = invoke_c_abi_strategy(client, native_initialized, &context, &input, &event)?;
-        (output.target_qty, Some(output))
-    } else {
-        (strategy_target_qty(root, config, instrument, now)?, None)
-    })
+    Ok((target_qty, output, checkpoint))
+}
+
+fn attach_strategy_account_updates(
+    input: &mut StrategyContractInput,
+    account_updates: &[qx_strategy::contract::StrategyAccountUpdateV1],
+) -> Result<(), String> {
+    input.account_updates = account_updates.to_vec();
+    if let Some(update_as_of) = input.account_updates.iter().map(|update| update.ts).max() {
+        input.as_of = input.as_of.max(update_as_of);
+    }
+    input.schema_version = input.schema_version_for_features();
+    input.validate()
 }

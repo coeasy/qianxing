@@ -14,7 +14,7 @@
 //! 3. 构建期源码树的 `deploy/`——开发机上 `cargo run` 的形状（这台机器上没有源码树时它不存在，
 //!    于是自动退出查找，不会让安装产物指向一台不存在的开发机）；
 //! 4. 当前工作目录的 `deploy/`——在仓库根里逐条敲命令的形状；
-//! 5. 二进制里的内置模板清单（构建期由 `build.rs` 快照 `deploy/` 顶层的 JSON）——需要时把
+//! 5. 二进制里的内置模板清单（构建期由 `build.rs` 递归快照 `deploy/` 下的 JSON）——需要时把
 //!    **整份清单**落进当前用户的临时目录，按清单内容签名分桶。`cargo install` 后删掉 clone、或把
 //!    单颗 exe 拷到别处时，前四格可能一格都不剩，这一层让 `init` 与只读入口仍有模板可读（#266）。
 //!    落整份而不是只落被点名的那一个：`fast-backtest` 的 manifest 里 jobs 按**同级文件名**引用
@@ -168,6 +168,11 @@ fn materialise_templates(dir: &Path) {
         let target = dir.join(name);
         if target.is_file() {
             continue;
+        }
+        if let Some(parent) = target.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                continue;
+            }
         }
         let staging = dir.join(format!("{}.{}.part", name, std::process::id()));
         if write_whole_file(&staging, payload) {

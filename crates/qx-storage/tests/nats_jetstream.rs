@@ -9,8 +9,9 @@
 #![cfg(feature = "nats")]
 
 use qx_storage::{
-    FileConsumerStateStore, NatsJetStreamConsumer, NatsJetStreamPublisher, NatsWaitBudget,
-    OutboxEvent, OutboxPublisher,
+    ConsumerEngine, ConsumerOutcome, ConsumerProjection, FileConsumerStateStore,
+    NatsJetStreamConsumer, NatsJetStreamPublisher, NatsWaitBudget, OutboxEvent, OutboxPublisher,
+    TransactionalConsumerStateStore,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -41,7 +42,7 @@ fn temp_root(label: &str) -> PathBuf {
 fn broker(label: &str) -> (String, String, String, String) {
     let required = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("{key} must be set"));
     let prefix = required("QX_TEST_NATS_SUBJECT_PREFIX");
-    let stream_name_prefix = prefix.replace('.', "-").replace('_', "-");
+    let stream_name_prefix = prefix.replace(['.', '_'], "-");
     let stream = format!("{}-STREAM", stream_name_prefix.to_ascii_uppercase());
     let url = required("QX_TEST_NATS_URL");
     let consumer = format!("qx-acceptance-{label}");
@@ -74,6 +75,7 @@ fn provision(url: &str, stream: &str, consumer: &str, subject_prefix: &str) {
                 name: Some(consumer.into()),
                 filter_subject: filter,
                 max_deliver: 10,
+                ack_wait: Duration::from_secs(1),
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
                 ..Default::default()
             })
@@ -103,10 +105,11 @@ fn deprovision(url: &str, stream: &str, consumer: &str) {
     }
 }
 
-fn with_context<F, Fut>(url: &str, work: F) -> Result<(), String>
+fn with_context<F, Fut, T>(url: &str, work: F) -> Result<T, String>
 where
     F: FnOnce(async_nats::jetstream::Context) -> Fut,
-    Fut: std::future::Future<Output = Result<(), String>>,
+    Fut: std::future::Future<Output = Result<T, String>>,
+    T: Send + 'static,
 {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -119,6 +122,119 @@ where
         let context = async_nats::jetstream::new(client);
         work(context).await
     })
+}
+
+/// Simulate a process exit after the transactional projection/checkpoint commit
+/// but before the JetStream ACK reaches the broker. The broker redelivers after
+/// `ack_wait`; the durable event-id marker must turn that delivery into a
+/// duplicate and the reducer must not run a second time.
+#[test]
+#[ignore = "requires QX_TEST_NATS_URL and QX_TEST_NATS_SUBJECT_PREFIX"]
+fn nats_redelivery_after_projection_commit_before_ack_is_idempotent() {
+    use futures_util::StreamExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let run = format!("{}-{}", std::process::id(), now_nanos());
+    let (url, stream, consumer_name, subject_prefix) = broker(&run);
+    let publisher =
+        NatsJetStreamPublisher::connect(&url, &subject_prefix, NatsWaitBudget::default())
+            .expect("connect NATS publisher");
+    let root = temp_root("redelivery-before-ack");
+    let store = FileConsumerStateStore::new(&root);
+    let event = event(format!("{run}-event",), 1, &format!("trace-{run}"));
+    publisher
+        .publish(&event)
+        .expect("JetStream must persist the event before delivery");
+
+    // Pull the first delivery with a raw client and intentionally drop it
+    // without ACKing, just as the consumer process would on abrupt exit.
+    let (delivered, offset) = with_context(&url, {
+        let stream = stream.clone();
+        let consumer_name = consumer_name.clone();
+        move |context| async move {
+            let mut messages = context
+                .get_stream(stream)
+                .await
+                .map_err(|error| error.to_string())?
+                .get_consumer(&consumer_name)
+                .await
+                .map_err(|error| error.to_string())?
+                .fetch()
+                .max_messages(1)
+                .expires(Duration::from_secs(3))
+                .messages()
+                .await
+                .map_err(|error| error.to_string())?;
+            let message = messages
+                .next()
+                .await
+                .ok_or_else(|| "JetStream pull returned no message".to_string())?
+                .map_err(|error| error.to_string())?;
+            let info = message.info().map_err(|error| error.to_string())?;
+            let offset = info.stream_sequence;
+            let event = serde_json::from_slice::<OutboxEvent>(&message.payload)
+                .map_err(|error| error.to_string())?;
+            drop(message);
+            drop(messages);
+            Ok((event, offset))
+        }
+    })
+    .expect("first delivery must be readable");
+    assert_eq!(delivered, event);
+
+    // Persist the business projection and processed marker. Returning from this
+    // point while omitting ACK is the crash boundary under test.
+    let reducer_calls = Arc::new(AtomicUsize::new(0));
+    let engine = ConsumerEngine::new(store.clone(), &run, 3).expect("consumer engine");
+    let first_calls = Arc::clone(&reducer_calls);
+    assert_eq!(
+        engine
+            .consume_with_projection(&delivered, offset, 1, 10, move |event, checkpoint| {
+                first_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ConsumerProjection::for_checkpoint(
+                    checkpoint,
+                    event.partition_key.clone(),
+                    "{\"applied\":true}",
+                ))
+            })
+            .expect("projection/checkpoint commit must succeed"),
+        ConsumerOutcome::Applied
+    );
+    assert!(store
+        .load_projection(&run, "acceptance")
+        .expect("projection read")
+        .is_some());
+
+    // Let the explicit one-second ack deadline expire, then reconnect through
+    // the production adapter. The second delivery must be recognized as a
+    // duplicate, ACKed, and leave the reducer call count unchanged.
+    std::thread::sleep(Duration::from_millis(1_250));
+    let consumer = NatsJetStreamConsumer::connect(
+        &url,
+        &stream,
+        &consumer_name,
+        &run,
+        3,
+        NatsWaitBudget::default(),
+    )
+    .expect("connect durable consumer after simulated restart");
+    let duplicate_calls = Arc::clone(&reducer_calls);
+    let report = consumer
+        .consume_batch_with_projection(store.clone(), 11, 1, move |_, _| {
+            duplicate_calls.fetch_add(1, Ordering::SeqCst);
+            Err("duplicate delivery must not invoke reducer".into())
+        })
+        .expect("redelivery must be consumed and acknowledged");
+    assert_eq!(
+        report.received, 1,
+        "the unacked message must be redelivered"
+    );
+    assert_eq!(report.duplicates, 1);
+    assert_eq!(report.ack_failures, 0);
+    assert_eq!(reducer_calls.load(Ordering::SeqCst), 1);
+
+    let _ = std::fs::remove_dir_all(root);
+    deprovision(&url, &stream, &consumer_name);
 }
 
 /// Publish the same business event under a fresh broker message ID so the

@@ -242,49 +242,50 @@ fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
         source.contains("CcxtChannelBudgets::market_rpc()"),
         "行情 worker 不再持有重连预算"
     );
-    // 1 处初次 spawn + ticker/OHLCV 两个失败分支各 1 处预算内重生。
+    // 1 处初次 spawn + ticker/order-book/OHLCV 三个失败分支各 1 处预算内重生。
     assert_eq!(
         source.matches("CcxtProcessClient::spawn(").count(),
-        3,
+        4,
         "spawn 点数目变了：新增的重生点必须带预算，否则会退回无限重启子进程"
     );
     assert_eq!(
         source
             .matches("reconnect_budget.note_failure(&channel)?")
             .count(),
-        2,
-        "两个失败分支不是都按通道过预算"
+        3,
+        "三个行情失败分支不是都按通道过预算"
     );
     assert_eq!(
         source
             .matches("reconnect_budget.note_success(&channel)")
             .count(),
-        2,
+        3,
         "成功应答不再复位连续失败计数，偶发失败会累计成误判"
     );
-    // 带 `&channel` 的两处各有 1 处 `let channel` 赋值，共 4 处含 "channel" 的行。
+    // ticker/order-book/OHLCV 三处各自命名通道，否则会把该链放回共享预算。
     assert_eq!(
         source.matches("let channel = format!(").count(),
-        2,
-        "两个循环各自命名自己的通道，缺一个就等于把那条链放回共享预算"
+        3,
+        "三个行情循环各自命名自己的通道，缺一个就等于把那条链放回共享预算"
     );
     assert!(
         source.contains("\"fetch_ticker:{instrument}\"")
+            && source.contains("\"fetch_order_book:{instrument}\"")
             && source.contains("\"fetch_ohlcv:{}\", spec.instrument"),
-        "通道键必须带上 op 与 instrument，否则两类调用会互相销账"
+        "通道键必须带上 op 与 instrument，否则不同行情调用会互相销账"
     );
     assert!(
         !source.contains("reconnect_budget.note_failure()?")
             && !source.contains("reconnect_budget.note_success()"),
         "不带通道键的预算调用回来了：健康 symbol 会替死掉的 symbol 清零"
     );
-    // 专职恢复之外，运维还要看得见"离放弃还有几次"：两个失败分支都得把本通道的
+    // 专职恢复之外，运维还要看得见"离放弃还有几次"：三个失败分支都得把本通道的
     // 连续次数写进 Degraded 明细，否则这个计数只有用例读得到。
     assert_eq!(
         source
             .matches("reconnect_budget.consecutive_failures(&channel)")
             .count(),
-        2,
+        3,
         "按通道记账的连续次数没上报，放弃前最后几次在健康快照里是隐形的"
     );
     assert!(

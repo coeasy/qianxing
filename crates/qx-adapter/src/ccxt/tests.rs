@@ -1,5 +1,10 @@
 use super::*;
-use qx_core::{InstrumentId, MarginMode, OrderPolicy, PositionMode, PositionSide, Quantity, Side};
+use qx_core::{
+    ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts, InstrumentId,
+    MarginMode, Order, OrderGroupExecution, OrderGroupIntent, OrderGroupKind, OrderGroupLegIntent,
+    OrderGroupLegRole, OrderPolicy, OrderStatus, PositionMode, PositionSide, Quantity, Side,
+    TriggerPriceType,
+};
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -68,6 +73,190 @@ fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
     // 不写字段时仍按默认 30 秒，不受下界改动影响。
     assert_eq!(read("{}").unwrap(), 30_000);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn okx_oco_group_request_is_one_native_algo_with_exact_tp_and_sl_legs() {
+    let instrument = InstrumentId::parse("BTC/USDT.OKX").unwrap();
+    let leg = |client_id: u64,
+               role: OrderGroupLegRole,
+               kind: ConditionalOrderKind,
+               trigger: &str,
+               price: Option<&str>| OrderGroupLegIntent {
+        role,
+        order: Order {
+            client_id,
+            instrument: instrument.clone(),
+            side: Side::Sell,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: Some(OrderPolicy {
+                reduce_only: true,
+                ..OrderPolicy::default()
+            }),
+            exact_amounts: Some(ExactOrderAmounts {
+                quantity: ExactDecimal::parse("0.5").unwrap(),
+                limit_price: price.map(|value| ExactDecimal::parse(value).unwrap()),
+                filled: ExactDecimal::ZERO,
+                quote_budget: None,
+                quote_filled: ExactDecimal::ZERO,
+                market_reference_price: None,
+                conditional: Some(ConditionalOrderIntent {
+                    kind,
+                    trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: Some(TriggerPriceType::Mark),
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                }),
+            }),
+        },
+    };
+    let group = qx_core::OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            "protective-btc-group-1",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                leg(
+                    9101,
+                    OrderGroupLegRole::TakeProfit,
+                    ConditionalOrderKind::TakeProfit,
+                    "110.5",
+                    Some("110.4"),
+                ),
+                leg(
+                    9102,
+                    OrderGroupLegRole::StopLoss,
+                    ConditionalOrderKind::StopLoss,
+                    "90.25",
+                    None,
+                ),
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let request = okx_oco_worker_request(&group).unwrap();
+    assert_eq!(request["op"], "create_order_group");
+    assert_eq!(request["kind"], "oco");
+    assert_eq!(request["instrument"], "BTC/USDT.OKX");
+    assert_eq!(request["amount_exact"], "0.5");
+    assert_eq!(request["take_profit_trigger_exact"], "110.5");
+    assert_eq!(request["take_profit_order_price_exact"], "110.4");
+    assert_eq!(request["take_profit_price_type"], "mark");
+    assert_eq!(request["stop_loss_trigger_exact"], "90.25");
+    assert_eq!(request["stop_loss_order_price_exact"], Value::Null);
+    assert_eq!(request["stop_loss_price_type"], "mark");
+    assert_eq!(
+        request["algo_client_order_id"],
+        okx_algo_client_order_id("protective-btc-group-1")
+    );
+
+    let mut venue = CcxtProcessVenue::new("okx", Box::new(FakeRpc { calls: Vec::new() }));
+    let submission = venue.submit_order_group(&group, 123).unwrap();
+    assert_eq!(submission.venue_group_id.as_deref(), Some("123456"));
+    assert_eq!(
+        submission.group_status,
+        Some(qx_core::OrderGroupStatus::Active)
+    );
+    assert!(submission.events.is_empty());
+}
+
+#[test]
+fn bitget_uta_oco_group_request_is_limit_tp_plus_market_trigger_sl() {
+    let instrument = InstrumentId::parse("BTC/USDT.BITGET").unwrap();
+    let take_profit = Order {
+        client_id: 9201,
+        instrument: instrument.clone(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: Some(OrderPolicy::default()),
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.5").unwrap(),
+            limit_price: Some(ExactDecimal::parse("110").unwrap()),
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: None,
+        }),
+    };
+    let stop_loss = Order {
+        client_id: 9202,
+        instrument,
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: Some(OrderPolicy::default()),
+        exact_amounts: Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.5").unwrap(),
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(ConditionalOrderIntent {
+                kind: ConditionalOrderKind::StopLoss,
+                trigger_price: Some(ExactDecimal::parse("90").unwrap()),
+                trigger_price_type: Some(TriggerPriceType::Last),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    };
+    let group = qx_core::OrderGroupState::from_intent(
+        OrderGroupIntent::new(
+            "bitget-protective-btc-1",
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit,
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss,
+                },
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let request = bitget_uta_oco_worker_request(&group).unwrap();
+    assert_eq!(request["op"], "create_order_group");
+    assert_eq!(request["instrument"], "BTC/USDT.BITGET");
+    assert_eq!(request["amount_exact"], "0.5");
+    assert_eq!(request["take_profit_limit_price_exact"], "110");
+    assert_eq!(request["stop_loss_trigger_exact"], "90");
+    assert_eq!(request["stop_loss_order_price_exact"], Value::Null);
+
+    let mut venue = CcxtProcessVenue::new("bitget", Box::new(FakeRpc { calls: Vec::new() }));
+    let submission = venue.submit_order_group(&group, 123).unwrap();
+    assert_eq!(submission.venue_group_id.as_deref(), Some("987654321"));
+    assert_eq!(
+        submission.group_status,
+        Some(qx_core::OrderGroupStatus::ReconcileRequired),
+        "Bitget OCO must not become active until the strategy resource is re-queried"
+    );
+    assert!(submission.events.is_empty());
 }
 
 struct FakeRpc {
@@ -140,10 +329,47 @@ fn ccxt_process_client_cancels_a_child_waiting_for_an_rpc_response() {
     );
 }
 
+#[test]
+fn ccxt_process_client_reports_abnormal_worker_exit_status_on_eof() {
+    use std::process::{Command, Stdio};
+
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let child = Command::new(python)
+        .args(["-u", "-c", "import sys; sys.stdin.readline(); sys.exit(7)"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Python is required by the workspace test environment");
+    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-exit-fixture")
+        .expect("piped child attaches to the bounded RPC bridge");
+
+    let error = client
+        .call(json!({"op": "crash"}))
+        .expect_err("an exited worker cannot produce an RPC response");
+    assert!(
+        error.contains("提交结果未知"),
+        "safety outcome lost: {error}"
+    );
+    assert!(
+        error.contains("exit_code=7"),
+        "exit status missing: {error}"
+    );
+}
+
 impl CcxtRpc for FakeRpc {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         self.calls.push(request.clone());
         match request.get("op").and_then(Value::as_str) {
+            Some("fetch_contract_settings") => Ok(json!({
+                "settings": {"contract": false, "symbol": "BTC/USDT"}
+            })),
             Some("create_order") => Ok(json!({
                 "order": {"order_id": "remote-1", "status": "open", "filled_raw": 0}
             })),
@@ -155,6 +381,16 @@ impl CcxtRpc for FakeRpc {
                     "average_raw": 100_000_000_000i64,
                     "fee_raw": 1_000_000_000i64,
                     "fee_currency": "USDT"
+                }
+            })),
+            Some("create_order_group") => Ok(json!({
+                "order_group": {
+                    "algo_id": if request["instrument"] == "BTC/USDT.BITGET" { "" } else { "123456" },
+                    "algo_client_order_id": request.get("algo_client_order_id"),
+                    "strategy_order_id": if request["instrument"] == "BTC/USDT.BITGET" { "987654321" } else { "" },
+                    "instrument": request["instrument"],
+                    "order_type": "oco",
+                    "state": if request["instrument"] == "BTC/USDT.BITGET" { "submitting" } else { "live" }
                 }
             })),
             _ => Ok(json!({})),
@@ -174,12 +410,73 @@ fn order() -> Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
 #[test]
+fn ccxt_rejected_remote_order_emits_a_replayable_rejection_fact() {
+    struct RejectedRpc;
+    impl CcxtRpc for RejectedRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "remote-rejected", "status": "open", "filled_raw": 0}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {"order_id": "remote-rejected", "status": "rejected", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(RejectedRpc));
+    venue.submit(order(), 10).unwrap();
+    let events = venue.sync_order(7, 11).unwrap();
+    assert!(matches!(
+        events.as_slice(),
+        [VenueEvent::Rejected {
+            client_order_id: 7,
+            reason,
+            ts: 11
+        }] if reason == "CCXT 订单被交易所拒绝"
+    ));
+    assert_eq!(venue.snapshot()[0].status, OrderStatus::Rejected);
+}
+
+#[test]
 fn ccxt_process_venue_submits_and_syncs_fill_without_custom_exchange_protocol() {
-    let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
+    let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    struct CapturingRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for CapturingRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "remote-1", "status": "open", "filled_raw": 0}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-1",
+                        "status": "closed",
+                        "filled_raw": 2_000_000_000i64,
+                        "average_raw": 100_000_000_000i64,
+                        "fee_raw": 1_000_000_000i64,
+                        "fee_currency": "USDT"
+                    }
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(CapturingRpc(Arc::clone(&calls))));
     assert!(matches!(
         venue.submit(order(), 10).unwrap()[0],
         VenueEvent::Accepted { .. }
@@ -196,6 +493,15 @@ fn ccxt_process_venue_submits_and_syncs_fill_without_custom_exchange_protocol() 
         venue.snapshot()[0].filled.raw(),
         Quantity::from_i64(2).raw()
     );
+    let calls = calls.lock().unwrap();
+    let create = calls
+        .iter()
+        .find(|call| call["op"] == "create_order")
+        .unwrap();
+    assert_eq!(create["amount_unit"], "base");
+    assert!(create["risk_leverage"].is_null());
+    assert_eq!(create["risk_reduce_only"], false);
+    assert!(create["risk_margin_mode"].is_null());
 }
 
 #[test]
@@ -227,6 +533,159 @@ fn ccxt_rejects_invalid_lifecycle_orders_before_worker_rpc() {
 }
 
 #[test]
+fn ccxt_spot_submit_preserves_exact_amounts_in_worker_rpc() {
+    struct CapturingRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for CapturingRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "remote-exact-7", "status": "open", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(CapturingRpc(Arc::clone(&calls))));
+    let mut exact = order();
+    exact.qty = Quantity::ZERO;
+    exact.limit = None;
+    exact.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+        limit_price: Some(ExactDecimal::parse("100.0000000001").unwrap()),
+        filled: ExactDecimal::ZERO,
+        market_reference_price: None,
+        quote_budget: None,
+        quote_filled: Default::default(),
+        conditional: None,
+    });
+
+    assert!(matches!(
+        venue.submit(exact, 10).unwrap()[0],
+        VenueEvent::Accepted { .. }
+    ));
+    let calls = calls.lock().unwrap();
+    let create = calls
+        .iter()
+        .find(|call| call["op"] == "create_order")
+        .unwrap();
+    assert_eq!(create["amount_unit"], "base");
+    assert_eq!(create["amount_exact"]["coefficient"], "1");
+    assert_eq!(create["amount_exact"]["scale"], 10);
+    assert_eq!(create["price_exact"]["coefficient"], "1000000000001");
+    assert_eq!(create["price_exact"]["scale"], 10);
+    assert!(create["amount_raw"].is_null());
+    assert!(create["price_raw"].is_null());
+}
+
+#[test]
+fn ccxt_conditional_order_intent_reaches_the_conditional_worker_operation() {
+    struct CapturingRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for CapturingRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_conditional_order") => Ok(json!({
+                    "order": {"order_id": "remote-trigger-7", "status": "open", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(CapturingRpc(Arc::clone(&calls))));
+    let mut conditional = order();
+    conditional.qty = Quantity::ZERO;
+    conditional.limit = None;
+    conditional.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.002").unwrap(),
+        limit_price: None,
+        filled: ExactDecimal::ZERO,
+        market_reference_price: Some(ExactDecimal::parse("65000").unwrap()),
+        quote_budget: None,
+        quote_filled: ExactDecimal::ZERO,
+        conditional: Some(ConditionalOrderIntent {
+            kind: ConditionalOrderKind::StopLoss,
+            trigger_price: Some(ExactDecimal::parse("62000.5").unwrap()),
+            trigger_price_type: Some(TriggerPriceType::Mark),
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        }),
+    });
+
+    assert!(matches!(
+        venue.submit(conditional, 10).unwrap()[0],
+        VenueEvent::Accepted { .. }
+    ));
+    let calls = calls.lock().unwrap();
+    let create = calls
+        .iter()
+        .find(|call| call["op"] == "create_conditional_order")
+        .unwrap();
+    assert_eq!(create["intent"], "stop_loss");
+    assert_eq!(create["trigger_price_type"], "mark");
+    assert_eq!(create["trigger_price_exact"]["coefficient"], "620005");
+    assert_eq!(create["trigger_price_exact"]["scale"], 1);
+}
+
+#[test]
+fn ccxt_exact_market_risk_reference_is_not_sent_as_an_order_price() {
+    struct CapturingRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for CapturingRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "remote-market-exact-7", "status": "open", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(CapturingRpc(Arc::clone(&calls))));
+    let mut exact = order();
+    exact.qty = Quantity::ZERO;
+    exact.limit = None;
+    exact.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+        limit_price: None,
+        filled: ExactDecimal::ZERO,
+        market_reference_price: Some(ExactDecimal::parse("0.0000000009").unwrap()),
+        quote_budget: None,
+        quote_filled: Default::default(),
+        conditional: None,
+    });
+
+    assert!(matches!(
+        venue.submit(exact, 10).unwrap()[0],
+        VenueEvent::Accepted { .. }
+    ));
+    let calls = calls.lock().unwrap();
+    let create = calls
+        .iter()
+        .find(|call| call["op"] == "create_order")
+        .unwrap();
+    assert_eq!(create["order_type"], "market");
+    assert_eq!(create["price_exact"], Value::Null);
+    assert_eq!(create["price_raw"], Value::Null);
+}
+
+#[test]
 fn ccxt_restore_is_idempotent_and_rejects_order_identity_rebinding() {
     let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
     let first = order();
@@ -252,6 +711,145 @@ fn ccxt_restore_is_idempotent_and_rejects_order_identity_rebinding() {
         Some("remote-7")
     );
     assert!(!venue.remote_ids.contains_key(&8));
+}
+
+#[test]
+fn ccxt_restore_preserves_exact_fee_baseline_and_seen_trade_ids() {
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
+    let exact_fees: BTreeMap<String, ExactDecimal> = [(
+        "PEPE".to_string(),
+        ExactDecimal::parse("0.0000000001").unwrap(),
+    )]
+    .into_iter()
+    .collect();
+    let trade_ids: BTreeSet<String> = ["trade-1".to_string()].into_iter().collect();
+
+    venue
+        .restore_order_with_exact_fee_state(
+            order(),
+            "remote-exact-fee",
+            BTreeMap::new(),
+            exact_fees.clone(),
+            trade_ids.clone(),
+        )
+        .unwrap();
+
+    assert_eq!(venue.exact_cumulative_fees.get(&7), Some(&exact_fees));
+    assert_eq!(venue.seen_trade_ids.get(&7), Some(&trade_ids));
+}
+
+#[test]
+fn ccxt_exact_sync_preserves_cancel_pending_during_partial_fill_and_emits_exact_trade_fills() {
+    struct ExactSyncRpc {
+        order_fetches: usize,
+    }
+    impl CcxtRpc for ExactSyncRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_order") => {
+                    self.order_fetches += 1;
+                    let complete = self.order_fetches >= 2;
+                    Ok(json!({"order": {
+                        "order_id": "remote-exact",
+                        "status": if complete { "closed" } else { "partially_filled" },
+                        "amount_raw": 0,
+                        "filled_raw": 0,
+                        "amount_exact": "0.0000000002",
+                        "filled_exact": if complete { "0.0000000002" } else { "0.0000000001" },
+                        "exact_fees": [{
+                            "amount": if complete { "0.000000000000000002" } else { "0.000000000000000001" },
+                            "currency": "PEPE"
+                        }]
+                    }}))
+                }
+                Some("fetch_my_trades") => {
+                    let mut trades = vec![json!({
+                        "trade_id": "trade-exact-1",
+                        "timestamp_ms": 100,
+                        "amount_raw": 0,
+                        "price_raw": 0,
+                        "amount_exact": "0.0000000001",
+                        "price_exact": "0.00000001",
+                        "exact_fees": [{
+                            "amount": "0.000000000000000001",
+                            "currency": "PEPE"
+                        }]
+                    })];
+                    if self.order_fetches >= 2 {
+                        trades.push(json!({
+                            "trade_id": "trade-exact-2",
+                            "timestamp_ms": 101,
+                            "amount_raw": 0,
+                            "price_raw": 0,
+                            "amount_exact": "0.0000000001",
+                            "price_exact": "0.00000001",
+                            "exact_fees": [{
+                                "amount": "0.000000000000000001",
+                                "currency": "PEPE"
+                            }]
+                        }));
+                    }
+                    Ok(json!({"trades": trades}))
+                }
+                op => panic!("unexpected CCXT op: {op:?}"),
+            }
+        }
+    }
+
+    let mut precise_order = order();
+    precise_order.qty = Quantity::ZERO;
+    precise_order.limit = None;
+    precise_order.status = OrderStatus::Accepted;
+    precise_order.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("0.0000000002").unwrap(),
+        limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+        filled: ExactDecimal::ZERO,
+        market_reference_price: None,
+        quote_budget: None,
+        quote_filled: Default::default(),
+        conditional: None,
+    });
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(ExactSyncRpc { order_fetches: 0 }));
+    venue.restore_order(precise_order, "remote-exact").unwrap();
+    venue.orders.get_mut(&7).unwrap().status = OrderStatus::CancelPending;
+
+    let first = venue.sync_order(7, 100).unwrap();
+    assert_eq!(first.len(), 1);
+    let VenueEvent::Fill(first_fill) = &first[0] else {
+        panic!("exact partial response must emit an exact fill")
+    };
+    assert_eq!(
+        first_fill.exact_amounts.unwrap().quantity,
+        ExactDecimal::parse("0.0000000001").unwrap()
+    );
+    assert_eq!(first_fill.qty, Quantity::ZERO);
+    assert_eq!(
+        venue.orders.get(&7).unwrap().status,
+        OrderStatus::CancelPending
+    );
+    assert_eq!(
+        first_fill.exact_fees[0].amount,
+        ExactDecimal::parse("0.000000000000000001").unwrap()
+    );
+
+    let second = venue.sync_order(7, 101).unwrap();
+    assert_eq!(second.len(), 1);
+    let VenueEvent::Fill(second_fill) = &second[0] else {
+        panic!("exact completion response must emit only the unseen trade")
+    };
+    assert_eq!(
+        second_fill.exact_fees[0].amount,
+        ExactDecimal::parse("0.000000000000000001").unwrap()
+    );
+    assert_eq!(
+        venue.orders.get(&7).unwrap().filled_decimal(),
+        ExactDecimal::parse("0.0000000002").unwrap()
+    );
+    assert_eq!(venue.orders.get(&7).unwrap().status, OrderStatus::Filled);
+    assert_eq!(
+        venue.exact_cumulative_fees.get(&7).unwrap().get("PEPE"),
+        Some(&ExactDecimal::parse("0.000000000000000002").unwrap())
+    );
 }
 
 #[test]
@@ -288,6 +886,9 @@ fn ccxt_process_venue_enriches_missing_order_fee_from_incremental_trades() {
     impl CcxtRpc for TradeFeeRpc {
         fn call(&mut self, request: Value) -> Result<Value, String> {
             match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
                 Some("create_order") => Ok(json!({
                     "order": {"order_id": "remote-fee", "status": "open", "filled_raw": 0}
                 })),
@@ -339,18 +940,24 @@ fn ccxt_incremental_trade_fee_deduplicates_replayed_trade_ids() {
     }
 
     let mut venue = CcxtProcessVenue::new("okx", Box::new(ReplayedTradeRpc));
+    let (first_fees, first_trade_ids) = venue
+        .incremental_trade_fee(7, "BTC/USDT", "remote-7")
+        .unwrap();
     assert_eq!(
-        venue
-            .incremental_trade_fee(7, "BTC/USDT", "remote-7")
-            .unwrap(),
-        (2_000_000_000, Some("USDT".into()))
+        first_fees,
+        vec![qx_core::FillFee {
+            amount: qx_core::Money::from_raw(2_000_000_000),
+            currency: Some("USDT".into()),
+            source_trade_ids: vec!["trade-once".into()],
+        }]
     );
-    assert_eq!(
-        venue
-            .incremental_trade_fee(7, "BTC/USDT", "remote-7")
-            .unwrap(),
-        (0, None)
-    );
+    for trade_id in first_trade_ids {
+        CcxtProcessVenue::remember_fill(venue.seen_trade_ids.entry(7).or_default(), trade_id);
+    }
+    let (second_fees, _) = venue
+        .incremental_trade_fee(7, "BTC/USDT", "remote-7")
+        .unwrap();
+    assert_eq!(second_fees, Vec::<qx_core::FillFee>::new());
     assert_eq!(venue.seen_trade_ids[&7].len(), 1);
 }
 
@@ -363,6 +970,9 @@ fn ccxt_partial_sync_uses_incremental_price_from_cumulative_average() {
     impl CcxtRpc for PartialRpc {
         fn call(&mut self, request: Value) -> Result<Value, String> {
             match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false, "symbol": "BTC/USDT"}
+                })),
                 Some("create_order") => Ok(json!({
                     "order": {"order_id": "partial-1", "status": "open", "filled_raw": 0}
                 })),
@@ -375,7 +985,8 @@ fn ccxt_partial_sync_uses_incremental_price_from_cumulative_average() {
                                 "status": "open",
                                 "filled_raw": 1_000_000_000_i64,
                                 "average_raw": 100_000_000_000_i64,
-                                "fee_raw": 1
+                                "fee_raw": 1,
+                                "fee_currency": "USDT"
                             }
                         }))
                     } else {
@@ -385,7 +996,8 @@ fn ccxt_partial_sync_uses_incremental_price_from_cumulative_average() {
                                 "status": "closed",
                                 "filled_raw": 2_000_000_000_i64,
                                 "average_raw": 110_000_000_000_i64,
-                                "fee_raw": 2
+                                "fee_raw": 2,
+                                "fee_currency": "USDT"
                             }
                         }))
                     }
@@ -419,6 +1031,9 @@ struct StatusRpc {
 impl CcxtRpc for StatusRpc {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         match request.get("op").and_then(Value::as_str) {
+            Some("fetch_contract_settings") => Ok(json!({
+                "settings": {"contract": false, "symbol": "BTC/USDT"}
+            })),
             Some("create_order") => Ok(json!({
                 "order": {"order_id": "status-1", "status": "open", "filled_raw": 0}
             })),
@@ -428,7 +1043,8 @@ impl CcxtRpc for StatusRpc {
                     "status": self.status,
                     "filled_raw": self.filled_raw,
                     "average_raw": 100_000_000_000_i64,
-                    "fee_raw": 1
+                    "fee_raw": 1,
+                    "fee_currency": "USDT"
                 }
             })),
             _ => Ok(json!({})),
@@ -512,6 +1128,29 @@ fn ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill() {
 }
 
 #[test]
+fn ccxt_partial_fill_during_cancel_pending_keeps_cancel_until_remote_cancel() {
+    let mut venue = CcxtProcessVenue::new(
+        "binance",
+        Box::new(StatusRpc {
+            status: "open",
+            filled_raw: 1_000_000_000,
+        }),
+    );
+    venue.submit(order(), 10).unwrap();
+    venue.orders.get_mut(&7).unwrap().status = OrderStatus::CancelPending;
+
+    let events = venue.sync_order(7, 11).unwrap();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Fill(_))));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
+    assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
+    assert_eq!(venue.snapshot()[0].status, OrderStatus::CancelPending);
+}
+
+#[test]
 fn ccxt_order_policy_is_translated_before_create_order() {
     let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
     struct PolicyRpc {
@@ -520,16 +1159,26 @@ fn ccxt_order_policy_is_translated_before_create_order() {
     impl CcxtRpc for PolicyRpc {
         fn call(&mut self, request: Value) -> Result<Value, String> {
             self.calls.lock().unwrap().push(request.clone());
-            if request.get("op").and_then(Value::as_str) == Some("create_order") {
-                Ok(json!({
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {
+                        "contract": true,
+                        "symbol": "BTC/USDT:USDT",
+                        "position_mode": "hedge",
+                        "margin_mode": "isolated",
+                        "leverage_long": 3,
+                        "leverage_short": 3
+                    }
+                })),
+                Some("create_order") => Ok(json!({
                     "order": {"order_id": "policy-1", "status": "open", "filled_raw": 0}
-                }))
-            } else {
-                Ok(json!({}))
+                })),
+                _ => Ok(json!({})),
             }
         }
     }
     let mut requested = order();
+    requested.side = Side::Sell;
     requested.policy = Some(OrderPolicy {
         reduce_only: true,
         position_side: PositionSide::Long,
@@ -546,16 +1195,403 @@ fn ccxt_order_policy_is_translated_before_create_order() {
     );
     venue.submit(requested, 10).unwrap();
     let calls = calls.lock().unwrap();
-    assert!(calls.iter().any(|call| call["op"] == "set_margin_mode"));
-    assert!(calls.iter().any(|call| call["op"] == "set_leverage"));
-    assert!(calls.iter().any(|call| call["op"] == "set_position_mode"));
+    assert!(calls
+        .iter()
+        .any(|call| call["op"] == "fetch_contract_settings"));
+    assert!(!calls.iter().any(|call| call["op"] == "set_leverage"));
+    assert!(!calls.iter().any(|call| call["op"] == "set_margin_mode"));
+    assert!(!calls.iter().any(|call| call["op"] == "set_position_mode"));
     let create = calls
         .iter()
         .find(|call| call["op"] == "create_order")
         .unwrap();
     assert_eq!(create["params"]["reduceOnly"], true);
     assert_eq!(create["params"]["postOnly"], true);
-    assert_eq!(create["params"]["positionSide"], "long");
+    assert_eq!(create["params"]["hedged"], true);
+    assert_eq!(create["risk_leverage"], 3);
+    assert_eq!(create["risk_reduce_only"], true);
+    assert_eq!(create["risk_margin_mode"], "isolated");
+    assert!(create["params"].get("positionSide").is_none());
+    assert_eq!(create["amount_unit"], "contracts");
+}
+
+#[test]
+fn ccxt_native_amend_preflights_without_writing_then_confirms_remote_terms() {
+    let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    struct AmendRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for AmendRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {"contract": false}
+                })),
+                Some("validate_edit_order") => Ok(json!({
+                    "validated": true,
+                    "order": {"order_id": "remote-7"}
+                })),
+                Some("edit_order") => Ok(json!({
+                    "order": {"order_id": "remote-7"}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "3",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "101",
+                        "fee_raw": 0
+                    }
+                })),
+                Some("fetch_my_trades") => Ok(json!({"trades": []})),
+                other => panic!("unexpected amend RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(AmendRpc(Arc::clone(&calls))));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    venue.validate_amendment(&current, &amended).unwrap();
+    {
+        let calls = calls.lock().unwrap();
+        assert!(calls.iter().any(|call| call["op"] == "validate_edit_order"));
+        assert!(!calls.iter().any(|call| call["op"] == "edit_order"));
+    }
+
+    let facts = venue.amend(&current, &amended, 20).unwrap();
+    assert!(facts.is_empty());
+    assert_eq!(venue.orders.get(&7), Some(&amended));
+    let calls = calls.lock().unwrap();
+    let edit = calls
+        .iter()
+        .find(|call| call["op"] == "edit_order")
+        .unwrap();
+    assert_eq!(edit["order_id"], "remote-7");
+    assert_eq!(edit["amount_exact"], "3");
+    assert_eq!(edit["price_exact"], "101");
+    assert!(calls.iter().any(|call| call["op"] == "fetch_order"));
+}
+
+#[test]
+fn ccxt_amend_request_preserves_conditional_terms_and_rejects_trigger_changes() {
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    current.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("2").unwrap(),
+        limit_price: Some(ExactDecimal::parse("100").unwrap()),
+        filled: ExactDecimal::ZERO,
+        quote_budget: None,
+        quote_filled: ExactDecimal::ZERO,
+        market_reference_price: None,
+        conditional: Some(ConditionalOrderIntent {
+            kind: ConditionalOrderKind::StopLoss,
+            trigger_price: Some(ExactDecimal::parse("90").unwrap()),
+            trigger_price_type: Some(TriggerPriceType::Mark),
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        }),
+    });
+    let mut amended = current.clone();
+    amended.exact_amounts.as_mut().unwrap().quantity = ExactDecimal::parse("3").unwrap();
+
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
+    venue
+        .remote_ids
+        .insert(current.client_id, "remote-7".into());
+    let request = venue
+        .amendment_request(&current, &amended, serde_json::Map::new())
+        .unwrap();
+    assert_eq!(request["amount_exact"], "3");
+
+    amended
+        .exact_amounts
+        .as_mut()
+        .unwrap()
+        .conditional
+        .as_mut()
+        .unwrap()
+        .trigger_price = Some(ExactDecimal::parse("89").unwrap());
+    assert!(venue
+        .amendment_request(&current, &amended, serde_json::Map::new())
+        .is_err());
+}
+
+#[test]
+fn ccxt_reconciler_confirms_a_persisted_amendment_without_resubmitting_it() {
+    let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    struct RecoveryRpc(Arc<Mutex<Vec<Value>>>);
+    impl CcxtRpc for RecoveryRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.0.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "3",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "101",
+                        "fee_raw": 0
+                    }
+                })),
+                Some("fetch_my_trades") => Ok(json!({"trades": []})),
+                other => panic!("unexpected reconcile RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(RecoveryRpc(Arc::clone(&calls))));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    let facts = venue
+        .reconcile_amendment(&current, &amended, 30)
+        .unwrap()
+        .expect("remote order matches the durable amendment request");
+
+    assert!(facts.is_empty());
+    assert_eq!(venue.orders.get(&7), Some(&amended));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["op"] == "fetch_order")
+            .count(),
+        2
+    );
+    assert!(!calls.iter().any(|call| call["op"] == "edit_order"));
+}
+
+#[test]
+fn ccxt_reconciler_keeps_amendment_pending_when_remote_terms_do_not_match() {
+    struct UnchangedRpc;
+    impl CcxtRpc for UnchangedRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "remote-7",
+                        "status": "open",
+                        "amount_exact": "2",
+                        "filled_exact": "0",
+                        "filled_raw": 0,
+                        "price_exact": "100",
+                        "fee_raw": 0
+                    }
+                })),
+                other => panic!("unexpected reconcile RPC {other:?}: {request}"),
+            }
+        }
+    }
+
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(UnchangedRpc));
+    venue.restore_order(current.clone(), "remote-7").unwrap();
+
+    assert!(venue
+        .reconcile_amendment(&current, &amended, 30)
+        .unwrap()
+        .is_none());
+    assert_eq!(venue.orders.get(&7), Some(&current));
+}
+
+#[test]
+fn ccxt_tier_preflight_rejection_is_not_treated_as_an_unknown_submission() {
+    struct PreflightRejectRpc;
+    impl CcxtRpc for PreflightRejectRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {
+                        "contract": true,
+                        "symbol": "BTC/USDT:USDT",
+                        "position_mode": "one_way",
+                        "margin_mode": "cross",
+                        "leverage_long": 3,
+                        "leverage_short": 3
+                    }
+                })),
+                Some("create_order") => Ok(json!({
+                    "preflight_rejected": {
+                        "class": "invalid",
+                        "message": "合计名义额超过杠杆档位"
+                    }
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    let mut requested = order();
+    requested.instrument = InstrumentId::parse("BTC/USDT:USDT.BINANCE").unwrap();
+    requested.policy = Some(OrderPolicy {
+        reduce_only: false,
+        position_side: PositionSide::Net,
+        margin_mode: MarginMode::Cross,
+        position_mode: PositionMode::OneWay,
+        leverage: 3,
+        post_only: false,
+    });
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(PreflightRejectRpc));
+
+    let error = venue.submit(requested, 10).unwrap_err();
+
+    assert!(matches!(error, QxError::BusinessViolation(_)));
+    assert!(
+        venue.connected(),
+        "known preflight rejection must keep the worker connected"
+    );
+    assert!(
+        venue.snapshot().is_empty(),
+        "preflight rejection must not cache an order"
+    );
+}
+
+#[test]
+fn ccxt_live_market_spec_drift_is_a_deterministic_pre_submit_rejection() {
+    struct MarketSpecDriftRpc {
+        calls: Arc<Mutex<Vec<Value>>>,
+    }
+    impl CcxtRpc for MarketSpecDriftRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.calls.lock().unwrap().push(request);
+            Ok(json!({
+                "market_spec_rejected": {
+                    "class": "invalid",
+                    "message": "qty_step_raw 冻结值 1000000000 与实时值 2000000000 不一致"
+                }
+            }))
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut venue = CcxtProcessVenue::new(
+        "binance",
+        Box::new(MarketSpecDriftRpc {
+            calls: Arc::clone(&calls),
+        }),
+    );
+    let spec = qx_core::TradingInstrumentSpec {
+        instrument: InstrumentId::parse("BTC/USDT:USDT.BINANCE").unwrap(),
+        product: qx_core::TradingProduct::Perpetual,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: 1_000_000,
+        linear: true,
+        inverse: false,
+        price_tick: 100_000_000,
+        qty_step: 1_000_000_000,
+        min_qty: 1_000_000_000,
+        min_notional_raw: 0,
+        max_leverage: 50,
+        maintenance_margin_bps: 50,
+        valid_from: 0,
+        valid_to: None,
+        exact_rules: Some(qx_core::ExactTradingRules {
+            contract_size: qx_core::ExactDecimal::parse("0.001").unwrap(),
+            price_tick: qx_core::ExactDecimal::parse("0.1").unwrap(),
+            quantity_step: qx_core::ExactDecimal::parse("1").unwrap(),
+            minimum_quantity: qx_core::ExactDecimal::parse("1").unwrap(),
+            minimum_notional: qx_core::ExactDecimal::ZERO,
+        }),
+    };
+
+    let error = venue.validate_instrument_spec(&spec).unwrap_err();
+
+    assert!(matches!(error, QxError::BusinessViolation(_)));
+    assert!(
+        venue.connected(),
+        "known market-spec drift must not disconnect worker"
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["op"], "validate_market_spec");
+    assert_eq!(calls[0]["expected_spec"]["qty_step_raw"], "1000000000");
+    assert_eq!(
+        calls[0]["expected_spec"]["exact_rules"]["contract_size"]["coefficient"],
+        "1"
+    );
+    assert_eq!(
+        calls[0]["expected_spec"]["exact_rules"]["contract_size"]["scale"],
+        3
+    );
+}
+
+#[test]
+fn bitget_uta_contract_order_omits_classic_margin_mode_parameter() {
+    struct BitgetRpc {
+        calls: Arc<Mutex<Vec<Value>>>,
+        uta: bool,
+    }
+    impl CcxtRpc for BitgetRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            self.calls.lock().unwrap().push(request.clone());
+            match request.get("op").and_then(Value::as_str) {
+                Some("fetch_contract_settings") => Ok(json!({
+                    "settings": {
+                        "contract": true,
+                        "uta": self.uta,
+                        "symbol": "BTC/USDT:USDT",
+                        "position_mode": "one_way",
+                        "margin_mode": "isolated",
+                        "leverage_long": 3,
+                        "leverage_short": 3
+                    }
+                })),
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "uta-1", "status": "open", "filled_raw": 0}
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+    for (uta, expect_margin_mode) in [(true, false), (false, true)] {
+        let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let mut requested = order();
+        requested.instrument = InstrumentId::parse("BTC/USDT:USDT.BITGET").unwrap();
+        requested.policy = Some(OrderPolicy {
+            reduce_only: false,
+            position_side: PositionSide::Net,
+            margin_mode: MarginMode::Isolated,
+            position_mode: PositionMode::OneWay,
+            leverage: 3,
+            post_only: false,
+        });
+        let rpc = BitgetRpc {
+            calls: Arc::clone(&calls),
+            uta,
+        };
+        let mut venue = CcxtProcessVenue::new("bitget", Box::new(rpc));
+        venue.submit(requested, 10).unwrap();
+        let calls = calls.lock().unwrap();
+        let create = calls
+            .iter()
+            .find(|call| call["op"] == "create_order")
+            .unwrap();
+        assert_eq!(create["amount_unit"], "contracts");
+        assert_eq!(
+            create["params"].get("marginMode").is_some(),
+            expect_margin_mode
+        );
+    }
 }
 
 #[path = "tests/lifecycle_cancel.rs"]

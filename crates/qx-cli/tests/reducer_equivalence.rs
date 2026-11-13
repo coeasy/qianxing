@@ -61,17 +61,20 @@ fn spot_spec() -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
 /// 线性永续：每张合约 0.01 BTC，与现货的现金语义路径不同。
 fn perpetual_spec() -> TradingInstrumentSpec {
     TradingInstrumentSpec {
-        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+        instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"))
+            .expect("valid instrument fixture"),
         product: TradingProduct::Perpetual,
         base_currency: "BTC".into(),
         quote_currency: CURRENCY.into(),
@@ -82,10 +85,12 @@ fn perpetual_spec() -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 10,
         maintenance_margin_bps: 50,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     }
 }
 
@@ -117,6 +122,7 @@ impl BarStrategy for BuyTwice {
             account_id: ACCOUNT.into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }
@@ -189,6 +195,7 @@ fn replay_in_live(
                     account_id: ACCOUNT.into(),
                     trace: None,
                     policy: None,
+                    exact_amounts: None,
                 },
                 fill.ts,
             )

@@ -44,3 +44,34 @@ fn explicit_account_ownership_reaches_engine_result_summary_and_verification() {
         .expect_err("账户不同是不同运行身份，不允许覆盖同一 run_id");
     assert_eq!(error.category(), AppErrorCategory::Conflict);
 }
+
+#[test]
+fn exact_starting_capital_survives_run_ledger_report_and_replay() {
+    let root = scratch("bt-exact-capital");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let output_dir = root.join("out");
+    let exact = qx_core::ExactDecimal::parse("100000.0000000001").expect("exact decimal");
+    let spec = backtest_spec("run-exact-capital", &bars, &output_dir)
+        .with_initial_cash_exact(exact)
+        .expect("v2 spec");
+
+    let outcome = run_backtest(&spec, &research("run-exact-capital")).expect("回测跑通");
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&outcome.artifacts.summary).expect("summary exists"),
+    )
+    .expect("summary JSON");
+    assert_eq!(summary["account"]["initial_cash_raw"], "100000000000000");
+    assert_eq!(
+        summary["account"]["initial_cash_exact"],
+        "100000.0000000001"
+    );
+    assert_eq!(
+        summary["metrics_exact"]["equity"]["initial"],
+        "100000.0000000001"
+    );
+    assert!(
+        verify_run(&outcome, &research("run-exact-capital"))
+            .expect("replay verification")
+            .verified
+    );
+}

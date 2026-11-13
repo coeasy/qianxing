@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "kind": "portfolio-exact-budget",
+  "generated_at_utc": "2026-10-26T16:43:50Z",
+  "environment": {
+    "os": "Windows 11",
+    "architecture": "x86_64",
+    "rust_mode": "offline"
+  },
+  "behavior": {
+    "budget_exact": "0.0000000012",
+    "budget_raw_projection": "0.000000001",
+    "required_order_notional": "0.0000000011",
+    "result": "accepted",
+    "legacy_budget_exact": "0.000000001",
+    "legacy_budget_result": "rejected",
+    "multi_market_overallocation_delta": "0.0000000005",
+    "multi_market_overallocation_result": "rejected"
+  },
+  "validation": [
+    {
+      "command": "cargo check -p qx-xingban -p qx-app --offline -j 1",
+      "passed": true
+    },
+    {
+      "command": "cargo test -p qx-app --no-run --offline -j 1",
+      "passed": true,
+      "compiled_test_targets": 34
+    },
+    {
+      "command": "cargo test -p qx-api --no-run --offline -j 1",
+      "passed": true,
+      "compiled_test_targets": 14
+    },
+    {
+      "command": "cargo test -p qx-sdk --no-run --offline -j 1",
+      "passed": true,
+      "compiled_test_targets": 5
+    },
+    {
+      "command": "cargo test -p qx-xingban --lib --offline -j 1",
+      "passed": 200,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test portfolio_spec --test portfolio_backtest --test depth_backtest --test depth_sizing --test multi_market_backtest --offline -j 1",
+      "passed": 25,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest python/tests/test_sdk_layering.py -q",
+      "passed": 39,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "shards": 4,
+      "duplicates": 0,
+      "wall_seconds": 109.15
+    },
+    {
+      "command": "git diff --check",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "MultiMarket initial cash is still configured at legacy raw precision.",
+    "Cross-currency strategy budget conversion, recovery/export, complete language golden coverage, external sandbox acceptance, and capacity acceptance remain open.",
+    "This evidence is local and offline; no exchange or sandbox provider was contacted, and no release was published."
+  ]
+}

@@ -18,6 +18,19 @@ pub(crate) fn require_fresh_live_balance_snapshot(
     )
 }
 
+pub(crate) fn require_no_unresolved_live_order_operations(
+    worker: &WorkerConfig,
+    pipeline: &LiveEventPipeline,
+) -> Result<(), String> {
+    qx_service::risk_host::require_no_unresolved_live_order_operations(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        pipeline,
+        None,
+    )
+}
+
 pub(crate) fn worker_risk_context(
     worker: &WorkerConfig,
     order: &Order,

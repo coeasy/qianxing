@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "purpose": "Hosted CI acceptance for the 0.4.0 release candidate branch",
+  "source": {
+    "commit": "3e92babbfde35284b6da44c14bf31fcf6b95d433",
+    "branch": "codex/release-windows-longpaths",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/3",
+    "run_id": 42685651313,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/42685651313",
+    "event": "pull_request"
+  },
+  "result": {
+    "workflow_conclusion": "success",
+    "jobs_total": 33,
+    "jobs_succeeded": 33,
+    "jobs_failed": 0,
+    "jobs_cancelled": 0
+  },
+  "acceptance": {
+    "python_wheels": {
+      "platforms": ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "python_versions": ["3.10", "3.11", "3.12", "3.13"],
+      "jobs_succeeded": 12,
+      "checks": [
+        "native extension and wheel build",
+        "stable-ABI tag and payload audit",
+        "installed wheel import outside source tree",
+        "Python tests against built extension"
+      ]
+    },
+    "macos": {
+      "python_3_12_wheel_job": "success",
+      "r07_process_identity": "success",
+      "r17_metrics_and_report_contract": "success",
+      "r19_cli_behavior_and_ownership": "success",
+      "r19_cli_behavior_parity": "success",
+      "artifact": {
+        "name": "process-identity-acceptance-macos-py312",
+        "id": 13706108683,
+        "sha256": "83e7259015cdafb59b28a2a3d9885117e325319fcb1ab404e7be41ce9ab617b7"
+      }
+    },
+    "linux_postgres_and_storage_recovery": {
+      "job": "Strategy durable storage and recovery (Linux)",
+      "conclusion": "success",
+      "validated_steps": [
+        "PostgreSQL Paper deployment lifecycle",
+        "PostgreSQL supervisor restart with Python checkpoint",
+        "4096-entry JobQueue capacity on file, SQLite, and PostgreSQL",
+        "4096-entry ControlCommandQueue capacity on file, SQLite, and PostgreSQL",
+        "six worker crash boundaries on file, SQLite, and PostgreSQL"
+      ],
+      "artifact": {
+        "name": "strategy-storage-recovery-linux",
+        "id": 13704274109,
+        "sha256": "58cb545dd80224b843473f9c90ae470e49cbbb59a7a4a94dce3125609dc4678b"
+      }
+    },
+    "backend_service_contracts": {
+      "conclusion": "success",
+      "validated_steps": [
+        "PostgreSQL and NATS JetStream storage contracts",
+        "Live Unknown recovery across file, SQLite, and PostgreSQL process restarts",
+        "PostgreSQL cursor import/fencing and deployment blob recovery",
+        "NATS adapter contracts"
+      ]
+    },
+    "linux_clean_install": {
+      "ubuntu_python_3_12": "success",
+      "acceptance_step": "Clean Linux wheel and CLI acceptance (R01 + R20)",
+      "artifact": {
+        "name": "clean-install-acceptance-linux-py312",
+        "id": 13704842032,
+        "sha256": "4d24f057f8a3138d8764f35083f5829e835ab57b67a40534e01673cb53e08540"
+      }
+    },
+    "performance_baseline": {
+      "job_conclusion": "success",
+      "artifact": {
+        "name": "performance-baseline",
+        "id": 13706272606,
+        "sha256": "ecd6133edc877fae16f9e093052f121de17d2fba6d464acc541a5ce824876584"
+      }
+    },
+    "venue_testnet": {
+      "offline_fail_closed_checks": "success",
+      "authenticated_testnet_roundtrip": "skipped",
+      "reason": "Testnet credentials were not available to the workflow."
+    }
+  },
+  "release_boundary": {
+    "tag_workflow_run": false,
+    "github_release_published": false,
+    "pypi_release_published": false,
+    "production_approval": false,
+    "notes": "This pull-request CI run validates the source revision and hosted acceptance jobs. It does not create tag release artifacts or establish vendor authorization, authenticated testnet, or production approval."
+  }
+}

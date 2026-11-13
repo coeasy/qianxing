@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-cabi-exact-context-v2",
+  "generated_at_utc": "2026-10-27T03:15:53Z",
+  "scope": {
+    "contract": "Optional C ABI qx_strategy_on_context_v2 exact account/position sidecar",
+    "exact_fields": ["positions_exact", "cash_exact", "available_margin_exact"],
+    "legacy_behavior": "Continue when the exact state is losslessly represented by the 1e-9 v1 projection; otherwise fail closed before a strategy callback when the v2 export is absent."
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 -- --test-threads=1 (TEMP/TMP set to target/qx-strategy-test-tmp)",
+      "passed": 83,
+      "failed": 0,
+      "ignored": 1,
+      "details": "The sole ignored test requires a C++ shared-library fixture; that path was separately exercised below. The exact-context test also proves the host does not call plugin on_init after legacy-loss rejection or a failing v2 context callback."
+    },
+    {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 c_abi_exact_context_v2_preserves_sub_nano_account_state_and_legacy_fails_closed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cmake --build build/cpp --config Release --target qianxing_strategy_update_contract && cmake --build build/cpp --config Release --target qianxing_strategy_example",
+      "passed": true
+    },
+    {
+      "command": "ctest --test-dir build/cpp -C Release -R qianxing_strategy_update_contract --output-on-failure",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-strategy --offline -j 1 --target-dir target/rust-workspace-error-v1 --test cpp_plugin_host -- --ignored",
+      "passed": 1,
+      "failed": 0,
+      "details": "Rust host loaded the built C++ shared plugin; 16 exact context updates included position 1e-18, cash 7e-18 and margin 9e-18."
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "passed": 228,
+      "failed": 0,
+      "details": "4 shards, full named-check coverage, no duplicates; completed in 134.96 seconds."
+    },
+    {
+      "command": "Validate strategy-context-v2 JSON Schema against shared golden fixture",
+      "passed": true
+    },
+    {
+      "command": "rustfmt --edition 2021 --check on the four touched Rust files; git diff --check on implementation/docs",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "The full architecture gate passed, but the repository-wide cargo fmt check still reports formatting differences in other qx-strategy files; the four files touched for this change pass rustfmt individually.",
+    "This closes only the C ABI StrategyContext sidecar; it does not close all C++ DTOs or the cross-host lifecycle golden matrix.",
+    "Cross-currency exact budgets, restoration/export, provider source precision, real exchange acceptance, and real remote sandbox acceptance remain open."
+  ],
+  "release_status": "unpublished workspace"
+}

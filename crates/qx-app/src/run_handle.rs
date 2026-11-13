@@ -51,6 +51,9 @@ pub enum RunEventKind {
 #[serde(deny_unknown_fields)]
 pub struct RunEvent {
     pub seq: u64,
+    /// Stable idempotency/correlation key derived from `(run_id, seq)`.
+    #[serde(default)]
+    pub event_id: String,
     pub run_id: String,
     pub kind: RunEventKind,
     pub status: RunStatus,
@@ -67,12 +70,20 @@ pub struct RunObservation {
 }
 
 fn push_event(events: &mut Vec<RunEvent>, run_id: &str, kind: RunEventKind, status: RunStatus) {
+    let seq = events.len() as u64 + 1;
     events.push(RunEvent {
-        seq: events.len() as u64 + 1,
+        seq,
+        event_id: event_id(run_id, seq),
         run_id: run_id.to_string(),
         kind,
         status,
     });
+}
+
+/// Stable across SDKs and persistence reloads; run IDs are already unique in
+/// their registry, and sequence numbers are contiguous within one run.
+pub fn event_id(run_id: &str, seq: u64) -> String {
+    format!("{run_id}:{seq}")
 }
 
 /// A clonable cancellation signal passed into the Rust engine loop.
@@ -361,8 +372,21 @@ mod tests {
         assert_eq!(events[0].kind, RunEventKind::Started);
         assert_eq!(events[1].kind, RunEventKind::Succeeded);
         assert_eq!(events[1].seq, 2);
+        assert_eq!(events[0].event_id, "run-success:1");
+        assert_eq!(events[1].event_id, "run-success:2");
         assert_eq!(handle.events_after(1), vec![events[1].clone()]);
         assert!(handle.events_after(2).is_empty());
+    }
+
+    #[test]
+    fn event_ids_are_stable_from_run_identity_and_exclusive_sequence() {
+        assert_eq!(event_id("stable-run", 7), "stable-run:7");
+        let mut handle = RunHandle::spawn("stable-run", |_| Ok(Some(())));
+        assert_eq!(handle.wait(), RunStatus::Succeeded);
+        let before = handle.events_after(0);
+        let after = handle.events_after(1);
+        assert_eq!(after, vec![before[1].clone()]);
+        assert_eq!(after[0].event_id, event_id(&after[0].run_id, after[0].seq));
     }
 
     #[test]

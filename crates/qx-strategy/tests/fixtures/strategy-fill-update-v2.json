@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "event": "fill",
+  "event_seq": 9,
+  "ts": 10,
+  "order": {
+    "order_id": 7,
+    "account_id": "paper",
+    "instrument": "BTCUSDT.BINANCE",
+    "side": "Buy",
+    "qty_raw": 2000000000,
+    "filled_raw": 1000000000,
+    "strategy_id": "update-test"
+  },
+  "fill": {
+    "order_id": 7,
+    "qty": 1000000000,
+    "price": 100000000000,
+    "fee": 0,
+    "ts": 10,
+    "account_id": "paper",
+    "strategy_id": "update-test",
+    "signal_id": 3,
+    "intent_id": 4,
+    "venue_id": "BINANCE",
+    "venue_order_id": null,
+    "rule_version": null,
+    "fee_currency": null
+  }
+}

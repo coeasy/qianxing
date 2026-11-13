@@ -7,7 +7,7 @@
 
 use qx_core::{InstrumentId, Order, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
-use qx_strategy::{Strategy, StrategyContext};
+use qx_strategy::{Strategy, StrategyContext, StrategyErrorStage, StrategyStopReason};
 
 use crate::{
     BookLevel, DataTier, DepthBarStrategy, DepthFrame, OrderBookBacktestConfig,
@@ -24,6 +24,19 @@ mod strategies;
 use adapter::TickAdapter;
 
 pub trait TickStrategy {
+    fn on_start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn on_stop(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Reason-aware stop hook; legacy strategies keep their no-argument callback.
+    fn on_stop_with_reason(&mut self, _reason: StrategyStopReason) -> Result<(), String> {
+        self.on_stop()
+    }
+
     fn on_tick(&mut self, tick: &QuoteTick, position: i128) -> Result<Vec<Order>, String>;
 
     fn on_tick_actions(
@@ -53,6 +66,9 @@ pub struct NativeTickStrategy<S: Strategy> {
     pub strategy: S,
     pub context: StrategyContext,
     pub instrument: InstrumentId,
+    initialized: bool,
+    history_requirements: Option<qx_strategy::StrategyHistoryRequirements>,
+    zero_warmup_notified: bool,
 }
 
 impl<S: Strategy> NativeTickStrategy<S> {
@@ -61,11 +77,43 @@ impl<S: Strategy> NativeTickStrategy<S> {
             strategy,
             context,
             instrument,
+            initialized: false,
+            history_requirements: None,
+            zero_warmup_notified: false,
         }
     }
 
     pub fn initialize(&mut self) -> Result<(), String> {
-        self.strategy.on_init(&self.context)
+        if self.initialized {
+            return Ok(());
+        }
+        let init = self.strategy.on_init(&self.context);
+        qx_strategy::notify_strategy_callback_result(
+            &mut self.strategy,
+            &self.context,
+            StrategyErrorStage::Initialization,
+            Some(self.context.as_of),
+            Some(&self.instrument),
+            init,
+        )?;
+        let history_requirements = self.strategy.history_requirements();
+        let requirements = qx_strategy::notify_strategy_callback_result(
+            &mut self.strategy,
+            &self.context,
+            StrategyErrorStage::HistoryRequirements,
+            Some(self.context.as_of),
+            Some(&self.instrument),
+            history_requirements,
+        )?;
+        self.history_requirements = Some(requirements);
+        self.initialized = true;
+        if requirements.warmup_bars > 0 {
+            return Err(
+                "NativeTickStrategy 不支持 warmup_bars；该字段按 Bar 计数，不能按 Tick 数替代"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -74,6 +122,9 @@ pub fn depth_frame_to_ticks(frame: &DepthFrame) -> Result<Vec<QuoteTick>, String
     frame.validate()?;
     let mut ticks = Vec::with_capacity(frame.snapshots.len());
     for snapshot in &frame.snapshots {
+        if snapshot.has_exact_levels() {
+            return Err("L1 Tick adapter 尚未支持精确盘口，拒绝回退到 1e-9 兼容投影".into());
+        }
         if !crate::orderbook::has_l1_shape(snapshot) {
             return Err(format!(
                 "L1 档位回测只接受一档盘口，实际 bid={} ask={} (ts={})",
@@ -112,6 +163,8 @@ pub type TickBacktestReport = OrderBookBacktestReport;
 pub struct TickBacktestEngine {
     config: TickBacktestConfig,
     execution_model: Option<OrderBookExecutionModel>,
+    funding_bps: i64,
+    funding_events: Vec<qx_core::FundingRateEvent>,
 }
 
 impl TickBacktestEngine {
@@ -119,11 +172,25 @@ impl TickBacktestEngine {
         Self {
             config,
             execution_model: None,
+            funding_bps: 0,
+            funding_events: Vec::new(),
         }
     }
 
     pub fn with_execution_model(mut self, model: OrderBookExecutionModel) -> Self {
         self.execution_model = Some(model);
+        self
+    }
+
+    /// Apply a constant rate at each normalized UTC eight-hour funding boundary.
+    pub fn with_funding_bps(mut self, rate_bps: i64) -> Self {
+        self.funding_bps = rate_bps;
+        self
+    }
+
+    /// Apply exchange-provided historical funding rates at their declared settlement times.
+    pub fn with_funding_events(mut self, events: Vec<qx_core::FundingRateEvent>) -> Self {
+        self.funding_events = events;
         self
     }
 
@@ -171,11 +238,15 @@ impl TickBacktestEngine {
             risk: self.config.risk,
             data_tier: DataTier::L1,
         };
+        let funding_bps = self.funding_bps;
+        let funding_events = self.funding_events;
         let mut adapter = TickAdapter {
             strategy,
             instrument: self.config.instrument,
         };
-        let engine = OrderBookBacktestEngine::new(config);
+        let engine = OrderBookBacktestEngine::new(config)
+            .with_funding_bps(funding_bps)
+            .with_funding_events(funding_events);
         let engine = match self.execution_model {
             Some(model) => engine.with_execution_model(model),
             None => engine,
@@ -201,10 +272,14 @@ impl TickBacktestEngine {
             ts: tick.ts,
             sequence: tick.source_seq,
             bids: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.bid,
                 qty: tick.bid_qty,
             }],
             asks: vec![BookLevel {
+                price_exact: None,
+                qty_exact: None,
                 price: tick.ask,
                 qty: tick.ask_qty,
             }],
@@ -216,7 +291,215 @@ impl TickBacktestEngine {
 mod tests {
     use super::*;
     use qx_core::{OrderStatus, Price, Quantity, Side};
-    use qx_strategy::{StrategyOrderIntent, STRATEGY_API_VERSION};
+    use qx_strategy::{
+        StrategyErrorStage, StrategyErrorV1, StrategyOrderIntent, STRATEGY_API_VERSION,
+    };
+    use std::sync::{Arc, Mutex};
+
+    struct TickErrorObserver(Arc<Mutex<Vec<StrategyErrorV1>>>);
+
+    impl Strategy for TickErrorObserver {
+        fn on_event(
+            &mut self,
+            _context: &StrategyContext,
+            _event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            Err("original tick callback failure".into())
+        }
+
+        fn on_error(&mut self, error: &StrategyErrorV1) -> Result<(), String> {
+            self.0.lock().unwrap().push(error.clone());
+            Err("diagnostic observer failure must be ignored".into())
+        }
+    }
+
+    #[test]
+    fn native_tick_strategy_reports_event_failure_without_replacing_original_error() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut strategy = NativeTickStrategy::new(
+            TickErrorObserver(Arc::clone(&observed)),
+            StrategyContext {
+                strategy_id: "tick-error".into(),
+                strategy_version: "test-v1".into(),
+                account_id: "main".into(),
+                venue_id: "BINANCE".into(),
+                data_fingerprint: "tick-error-fixture".into(),
+                as_of: 1,
+                positions: std::collections::BTreeMap::new(),
+                cash: std::collections::BTreeMap::new(),
+                available_margin_raw: None,
+                risk_state: "backtest".into(),
+                positions_exact: std::collections::BTreeMap::new(),
+                cash_exact: std::collections::BTreeMap::new(),
+                available_margin_exact: None,
+            },
+            instrument.clone(),
+        );
+        TickStrategy::on_start(&mut strategy).unwrap();
+
+        let error = TickStrategy::on_tick(
+            &mut strategy,
+            &QuoteTick::new(
+                7,
+                Price::from_i64(99),
+                Quantity::from_i64(2),
+                Price::from_i64(100),
+                Quantity::from_i64(2),
+                7,
+            ),
+            0,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "original tick callback failure");
+        let errors = observed.lock().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].stage, StrategyErrorStage::MarketEvent);
+        assert_eq!(errors[0].strategy_id, "tick-error");
+        assert_eq!(errors[0].timestamp, Some(7));
+        assert_eq!(errors[0].instrument.as_deref(), Some("BTCUSDT.BINANCE"));
+        assert_eq!(errors[0].message, "original tick callback failure");
+    }
+
+    struct BarWarmupOnly;
+
+    impl Strategy for BarWarmupOnly {
+        fn history_requirements(&self) -> Result<qx_strategy::StrategyHistoryRequirements, String> {
+            Ok(qx_strategy::StrategyHistoryRequirements { warmup_bars: 2 })
+        }
+
+        fn on_event(
+            &mut self,
+            _context: &StrategyContext,
+            _event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            Err("BarWarmupOnly must not receive Tick events".into())
+        }
+    }
+
+    #[test]
+    fn native_tick_strategy_rejects_bar_warmup_requirements() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let mut strategy = NativeTickStrategy::new(
+            BarWarmupOnly,
+            StrategyContext {
+                strategy_id: "tick-warmup".into(),
+                strategy_version: "test-v1".into(),
+                account_id: "main".into(),
+                venue_id: "BINANCE".into(),
+                data_fingerprint: "tick-warmup".into(),
+                as_of: 1,
+                positions: std::collections::BTreeMap::new(),
+                cash: std::collections::BTreeMap::new(),
+                available_margin_raw: None,
+                risk_state: "backtest".into(),
+                positions_exact: std::collections::BTreeMap::new(),
+                cash_exact: std::collections::BTreeMap::new(),
+                available_margin_exact: None,
+            },
+            instrument,
+        );
+        let error = TickStrategy::on_start(&mut strategy).unwrap_err();
+        assert!(error.contains("不能按 Tick 数替代"));
+    }
+
+    struct TickDepthWarmupBuy {
+        ready: bool,
+    }
+
+    impl Strategy for TickDepthWarmupBuy {
+        fn history_requirements(&self) -> Result<qx_strategy::StrategyHistoryRequirements, String> {
+            Ok(qx_strategy::StrategyHistoryRequirements { warmup_bars: 2 })
+        }
+
+        fn on_warmup_complete(
+            &mut self,
+            _context: &StrategyContext,
+            instrument: Option<&InstrumentId>,
+            observed_bars: u64,
+        ) -> Result<(), String> {
+            assert!(instrument.is_some());
+            assert_eq!(observed_bars, 2);
+            self.ready = true;
+            Ok(())
+        }
+
+        fn on_event(
+            &mut self,
+            context: &StrategyContext,
+            event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            let instrument = event.instrument().cloned().ok_or("missing instrument")?;
+            Ok(StrategyDecision {
+                schema_version: STRATEGY_API_VERSION,
+                request_id: format!("tick-depth:{}", event.ts()),
+                strategy_id: context.strategy_id.clone(),
+                signal_id: event.ts(),
+                confidence: 1,
+                priority: 0,
+                expires_at: 0,
+                intents: if self.ready {
+                    vec![StrategyOrderIntent {
+                        intent_id: event.ts(),
+                        instrument,
+                        side: Side::Buy,
+                        qty: Quantity::from_i64(1),
+                        limit: None,
+                        policy: None,
+                        reduce_only: false,
+                        post_only: false,
+                        qty_exact: None,
+                        limit_price_exact: None,
+                        quote_budget: None,
+                    }]
+                } else {
+                    Vec::new()
+                },
+            })
+        }
+    }
+
+    #[test]
+    fn depth_bar_over_tick_adapter_applies_warmup_lifecycle() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let mut strategy = DepthBarStrategy::new(
+            TickDepthWarmupBuy { ready: false },
+            StrategyContext {
+                strategy_id: "tick-depth-warmup".into(),
+                strategy_version: "test-v1".into(),
+                account_id: "main".into(),
+                venue_id: "BINANCE".into(),
+                data_fingerprint: "tick-depth-warmup".into(),
+                as_of: 1,
+                positions: std::collections::BTreeMap::new(),
+                cash: std::collections::BTreeMap::new(),
+                available_margin_raw: None,
+                risk_state: "backtest".into(),
+                positions_exact: std::collections::BTreeMap::new(),
+                cash_exact: std::collections::BTreeMap::new(),
+                available_margin_exact: None,
+            },
+            instrument,
+        );
+        let ticks = (1..=3)
+            .map(|ts| {
+                QuoteTick::new(
+                    ts,
+                    Price::from_i64(99 + ts as i64),
+                    Quantity::from_i64(2),
+                    Price::from_i64(100 + ts as i64),
+                    Quantity::from_i64(2),
+                    ts,
+                )
+            })
+            .collect::<Vec<_>>();
+        let report = TickBacktestEngine::new(l1_config(RiskGate::conservative_default()))
+            .run(&ticks, &mut strategy)
+            .unwrap();
+        assert_eq!(report.fills.len(), 1);
+        assert_eq!(report.fills[0].ts, 3);
+    }
 
     struct BuyOnce {
         done: bool,
@@ -239,6 +522,7 @@ mod tests {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             }])
         }
     }
@@ -284,6 +568,8 @@ mod tests {
 
     fn level(price: i64, qty: i64) -> BookLevel {
         BookLevel {
+            price_exact: None,
+            qty_exact: None,
             price: Price::from_i64(price),
             qty: Quantity::from_i64(qty),
         }
@@ -301,7 +587,7 @@ mod tests {
 
     fn frame(snapshots: Vec<OrderBookSnapshot>) -> DepthFrame {
         DepthFrame {
-            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            schema_version: DepthFrame::LEGACY_SCHEMA_VERSION,
             source: "fixture:tick-test".into(),
             instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
             snapshots,
@@ -434,6 +720,10 @@ mod tests {
                     policy: None,
                     reduce_only: false,
                     post_only: false,
+
+                    qty_exact: None,
+                    limit_price_exact: None,
+                    quote_budget: None,
                 }],
             })
         }
@@ -450,6 +740,9 @@ mod tests {
             venue_id: "paper".into(),
             data_fingerprint: "tick-1".into(),
             as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             positions: std::collections::BTreeMap::new(),
             cash: std::collections::BTreeMap::new(),
             available_margin_raw: Some(10_000),

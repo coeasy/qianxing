@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R20",
+  "acceptance_id": "R20-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "4c6f80f7-7224-475a-bfc5-d6eca9b2e49d",
+    "12ce0218-749c-4e95-be9a-8c74efed1255",
+    "2dedb286-ab53-4978-9af1-a8d739af42ab"
+  ],
+  "reviewed_artifacts": [
+    "maturity/acceptance-artifacts/4c6f80f7-7224-475a-bfc5-d6eca9b2e49d.log",
+    "maturity/acceptance-artifacts/12ce0218-749c-4e95-be9a-8c74efed1255.log",
+    "tools/accept_clean_install.py",
+    "python/pyproject.toml",
+    "crates/qx-cli/src/main.rs",
+    "maturity/schema-registry.json",
+    "docs/installation.md",
+    "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.log",
+    "maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.source-tree.json"
+  ],
+  "findings": [
+    "The Windows CPython 3.12.13 clean mixed-wheel install verifies SDK doctor schema/capability match, offline qx-cli installation, quickstart, 13 Python examples, and strategy callback contract.",
+    "The CPython 3.13 clean wheel/CLI run independently confirms native and CLI target compatibility, schema match, documented examples, and quickstart.",
+    "The Windows Python 3.13 clean wheel/CLI run also passed using the built abi3 wheel, verifying imports, capability catalog, schemas, documented examples, and quickstart."
+  ],
+  "limitations": [
+    "Ubuntu Python 3.12 clean wheel/CLI acceptance remains pending."
+  ]
+}

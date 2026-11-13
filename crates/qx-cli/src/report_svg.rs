@@ -163,8 +163,8 @@ fn max_drawdown_span(equity: &[i128]) -> Option<(usize, usize)> {
     best.map(|(peak, trough, _)| (peak, trough))
 }
 
-/// 成交点图：价格轴上的买/卖标记。`fills` = `(ts, qty_raw, price_raw)`；`qty_raw > 0` 记买（红），
-/// `< 0` 记卖（绿）。空成交**不画任何三角**——0 成交时画出假买卖点比没有图更糟。
+/// 成交价格标记。`Fill` 不携带订单方向，因此不从数量符号推断买卖；每笔成交使用中性圆点。
+/// 空成交不画任何标记。
 pub(crate) fn fills_svg(fills: &[(u64, i128, i128)]) -> String {
     if fills.is_empty() {
         return empty_svg("成交");
@@ -191,25 +191,13 @@ pub(crate) fn fills_svg(fills: &[(u64, i128, i128)]) -> String {
         top_label = money(max),
         bottom_label = money(min),
     );
-    for (index, (_, qty, price)) in fills.iter().enumerate() {
+    for (index, (_, _qty, price)) in fills.iter().enumerate() {
         let cx = x_at(index, fills.len());
         let cy = map(*price, min, max, bottom, top);
-        let (color, direction) = if *qty >= 0 { (RED, -1) } else { (GREEN, 1) };
-        // 上三角=买（顶点朝上），下三角=卖（顶点朝下）。
-        let (a, b, c) = if direction < 0 {
-            (
-                format!("{cx},{}", cy - 6),
-                format!("{},{}", cx - 4, cy + 3),
-                format!("{},{}", cx + 4, cy + 3),
-            )
-        } else {
-            (
-                format!("{cx},{}", cy + 6),
-                format!("{},{}", cx - 4, cy - 3),
-                format!("{},{}", cx + 4, cy - 3),
-            )
-        };
-        let _ = write!(svg, "<polygon points=\"{a} {b} {c}\" fill=\"{color}\"/>");
+        let _ = write!(
+            svg,
+            "<circle cx=\"{cx}\" cy=\"{cy}\" r=\"4\" fill=\"{MUTED}\"/>"
+        );
     }
     svg.push_str("</svg>");
     svg

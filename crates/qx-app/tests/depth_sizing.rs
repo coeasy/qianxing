@@ -88,9 +88,11 @@ fn depth_spot_cash_fraction_and_portfolio_member_sizing_are_supported() {
     request.portfolio = Some(PortfolioBacktestConfig {
         primary_priority: 0,
         primary_reserved_capital_raw: request.initial_cash_raw / 2,
+        primary_reserved_capital_exact: None,
         additional_strategies: vec![PortfolioStrategySpec {
             priority: 1,
             reserved_capital_raw: request.initial_cash_raw / 2,
+            reserved_capital_exact: None,
             strategy: {
                 let mut strategy =
                     BuiltinStrategySpec::new(BuiltinStrategyKind::Momentum, "depth-momentum-kelly");

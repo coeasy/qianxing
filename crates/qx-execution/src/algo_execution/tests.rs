@@ -35,10 +35,19 @@ impl OrderStore for MemoryOms {
 impl EventAppender for MemoryOms {
     fn append_execution_event(&mut self, envelope: ExecutionEventEnvelope) -> Result<(), String> {
         match envelope.event {
+            ExecutionEvent::OrderAmendmentPending { .. } => {}
+            ExecutionEvent::OrderAmended { order, .. } => {
+                self.find_mut(order.client_id)?.clone_from(&order);
+            }
             ExecutionEvent::Accepted {
                 client_order_id, ..
             } => {
                 self.find_mut(client_order_id)?.status = OrderStatus::Accepted;
+            }
+            ExecutionEvent::Rejected {
+                client_order_id, ..
+            } => {
+                self.find_mut(client_order_id)?.status = OrderStatus::Rejected;
             }
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
                 let order = self.find_mut(fill.order_id)?;
@@ -49,6 +58,9 @@ impl EventAppender for MemoryOms {
                     OrderStatus::PartiallyFilled
                 };
             }
+            ExecutionEvent::CancelPending { client_order_id } => {
+                self.find_mut(client_order_id)?.status = OrderStatus::CancelPending;
+            }
             ExecutionEvent::Cancelled { client_order_id } => {
                 self.find_mut(client_order_id)?.status = OrderStatus::Cancelled;
             }
@@ -56,6 +68,7 @@ impl EventAppender for MemoryOms {
                 self.find_mut(client_order_id)?.status = OrderStatus::Unknown;
             }
             ExecutionEvent::MarketQuote { .. } => {}
+            ExecutionEvent::FeeAdjustment { .. } => {}
         }
         Ok(())
     }
@@ -90,6 +103,10 @@ impl VenuePort for TestVenue {
 
     fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
         qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
     }
 
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String> {
@@ -149,6 +166,7 @@ fn parent_order(quantity_raw: i128) -> Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 
@@ -185,10 +203,12 @@ fn market_spec(qty_step: i128, min_qty: i128) -> qx_core::TradingInstrumentSpec 
         price_tick: 1,
         qty_step,
         min_qty,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 0,
         valid_to: None,
+        exact_rules: None,
     }
 }
 

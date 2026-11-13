@@ -35,6 +35,7 @@ fn runtime_relative_paths_resolve_from_runtime_config_directory() {
     let mut strategy = StrategyRuntimeConfig {
         external_executable: Some("../strategy/bin/strategy.exe".into()),
         python_module: Some("../python/strategy.py".into()),
+        python_strategy_spec: None,
         target_snapshot_path: Some("../research/target.json".into()),
         research_snapshot_path: Some("../research/bundle.json".into()),
         dataset_bundle_path: Some("../research/dataset.bundle.json".into()),

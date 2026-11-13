@@ -36,10 +36,30 @@ int main() {
     assert(observed_method == "GET");
     assert(observed_path == "/app/strategies");
 
+    const auto strategy_recipes = client.builtin_strategy_recipes();
+    assert(strategy_recipes.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/app/strategy-recipes");
+
     const auto capabilities = client.application_capabilities();
     assert(capabilities.ok());
     assert(observed_method == "GET");
     assert(observed_path == "/app/capabilities");
+
+    const std::string capability_query = R"({"capability_id":"qx.venue.binance_spot"})";
+    const auto product_capability = client.query_product_capability(capability_query);
+    assert(product_capability.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/capabilities/query");
+    assert(observed_body == capability_query);
+
+    const std::string scope_query =
+        R"({"venue":"BINANCE","product":"perpetual","account_mode":"hedge"})";
+    const auto scoped_capabilities = client.query_product_capability(scope_query);
+    assert(scoped_capabilities.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/capabilities/query");
+    assert(observed_body == scope_query);
 
     const std::string provider_request =
         R"({"kind":"Bar","asset_class":"crypto","instrument_set":["BTCUSDT.BINANCE"],"field_set":["close"],"frequency":"1m","adjustment":"none","quality_policy":"strict","start":1,"end":10,"as_of":10})";
@@ -48,6 +68,35 @@ int main() {
     assert(observed_method == "POST");
     assert(observed_path == "/app/capabilities/providers/preflight");
     assert(observed_body == provider_request);
+
+    const std::string provider_bar_outcome = R"({"outcome":{"run_id":"provider-bar"}})";
+    const auto provider_bar_report = client.read_provider_run_report(provider_bar_outcome);
+    assert(provider_bar_report.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/read-provider-report");
+    assert(observed_body == provider_bar_outcome);
+
+    const std::string provider_depth_outcome = R"({"outcome":{"run_id":"provider-depth"}})";
+    const auto provider_depth_report =
+        client.read_provider_depth_run_report(provider_depth_outcome);
+    assert(provider_depth_report.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/read-provider-depth-report");
+    assert(observed_body == provider_depth_outcome);
+
+    const std::string joint_outcome = R"({"run_id":"joint"})";
+    const auto joint_report = client.read_multi_account_joint_report(joint_outcome);
+    assert(joint_report.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/read-multi-account-joint-report");
+    assert(observed_body == joint_outcome);
+
+    const std::string multi_leg_request = R"({"schema_version":1,"outcome":{"run_id":"multi-leg"}})";
+    const auto multi_leg_report = client.read_multi_leg_research_report(multi_leg_request);
+    assert(multi_leg_report.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/read-multi-leg-report");
+    assert(observed_body == multi_leg_request);
 
     const auto multi_market = client.run_multi_market_backtest(spec);
     assert(multi_market.ok());
@@ -122,6 +171,30 @@ int main() {
     assert(observed_method == "GET");
     assert(observed_path == "/events/live");
 
+    const auto activity = client.get_account_activity("account 1", "binance/spot", 42,
+                                                       std::nullopt, 100);
+    assert(activity.ok());
+    assert(observed_method == "GET");
+    assert(observed_path ==
+           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&after=42&limit=100");
+    const auto filtered_activity = client.get_account_activity(
+        "account 1", "binance/spot", std::nullopt, std::nullopt, 50,
+        "run/4", "mean reversion", "order-submit/4", "signal 7", "intent/9");
+    assert(filtered_activity.ok());
+    assert(observed_path ==
+           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&signal_id=signal%207&intent_id=intent%2F9&correlation_id=order-submit%2F4&limit=50");
+    const auto invalid_activity = client.get_account_activity("account-1", "okx", 1, 2, 50);
+    assert(invalid_activity.status == 400);
+    assert(observed_path ==
+           "/account/activity?account_id=account%201&venue_id=binance%2Fspot&run_id=run%2F4&strategy_id=mean%20reversion&signal_id=signal%207&intent_id=intent%2F9&correlation_id=order-submit%2F4&limit=50");
+    const auto invalid_run_filter = client.get_account_activity(
+        "account-1", "okx", std::nullopt, std::nullopt, 50, "");
+    assert(invalid_run_filter.status == 400);
+    const auto invalid_signal_filter = client.get_account_activity(
+        "account-1", "okx", std::nullopt, std::nullopt, 50, std::nullopt,
+        std::nullopt, std::nullopt, " ");
+    assert(invalid_signal_filter.status == 400);
+
     const auto risk_parity = client.plan_risk_parity(spec);
     assert(risk_parity.ok());
     assert(observed_path == "/app/plan-risk-parity");
@@ -145,6 +218,16 @@ int main() {
     const auto started_multi_account = client.start_multi_account_backtest(spec);
     assert(started_multi_account.ok());
     assert(observed_path == "/app/multi-account-backtest/start");
+    assert(observed_body == spec);
+
+    const auto joint_multi_account = client.run_multi_account_joint_backtest(spec);
+    assert(joint_multi_account.ok());
+    assert(observed_path == "/app/multi-account-joint-backtest");
+    assert(observed_body == spec);
+
+    const auto started_joint_multi_account = client.start_multi_account_joint_backtest(spec);
+    assert(started_joint_multi_account.ok());
+    assert(observed_path == "/app/multi-account-joint-backtest/start");
     assert(observed_body == spec);
 
     const auto multi_account_depth = client.run_multi_account_depth_backtest(depth_spec);
@@ -213,6 +296,11 @@ int main() {
     const auto depth_verification = client.verify_depth_run(spec);
     assert(depth_verification.ok());
     assert(observed_path == "/app/verify-depth");
+    assert(observed_body == spec);
+
+    const auto research_artifacts = client.research_artifacts(spec);
+    assert(research_artifacts.ok());
+    assert(observed_path == "/app/research-artifacts");
     assert(observed_body == spec);
 
     const auto paper = client.submit_paper_command(spec);

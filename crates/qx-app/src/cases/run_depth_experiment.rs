@@ -1,10 +1,11 @@
 //! Bounded parameter experiments over the shared Rust Tick/OrderBook use case.
 
-use super::artifacts::write_text;
+use super::artifacts::read_text;
 use super::experiment_grid::{
     apply_depth_parameters, expand_grid, normalized_strategy, validate_depth_grid,
     validate_experiment_id,
 };
+use super::experiment_spec_artifact::{serialize_experiment_input, write_spec_artifact};
 use super::guard::guard_panics;
 use super::run_depth_backtest::{run_inner, run_inner_with_experiment_strategy};
 use super::{attach, ExperimentParameterSpace};
@@ -15,9 +16,19 @@ use crate::{
 };
 use qx_core::Fnv1a;
 use qx_strategy::{BuiltinStrategyKind, Strategy};
+use qx_xingban::DepthFrame;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+mod identity;
+mod persistence;
+use identity::build_depth_experiment_canonical_run_spec;
+use persistence::{
+    existing_result, persist_depth_experiment_result, validate_depth_experiment_result,
+    verify_depth_experiment_candidate_outcomes,
+};
 
 pub const RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
 
@@ -214,19 +225,36 @@ pub struct RunDepthExperimentResult {
     pub candidates: Vec<DepthExperimentCandidate>,
     pub ranking: Vec<DepthExperimentRankedCandidate>,
     pub artifact_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_data_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<BTreeMap<String, String>>,
 }
 
 impl RunDepthExperimentResult {
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
-        serde_json::from_str(payload).map_err(|error| {
+        let result: Self = serde_json::from_str(payload).map_err(|error| {
             AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("RunDepthExperimentResult JSON 无法读取: {error}"),
             )
-        })
+        })?;
+        validate_depth_experiment_result(&result)?;
+        Ok(result)
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
+        validate_depth_experiment_result(self)?;
         serde_json::to_string(self)
             .map_err(|error| invariant(format!("RunDepthExperimentResult 序列化失败: {error}")))
     }
@@ -286,14 +314,80 @@ fn run_depth_experiment_inner(
         fingerprint.write_text(&identity.source_sha256);
     }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
+    let spec_json = spec.to_json()?;
+    let persisted_input = serialize_experiment_input(&spec_json, context.code_commit(), identity)?;
+    let frame_payload = read_text(&spec.base.depth_path)?;
+    let frame = DepthFrame::from_json(&frame_payload).map_err(|error| {
+        invalid(format!(
+            "深度参数实验 DepthFrame 校验失败 {}: {error}",
+            spec.base.depth_path
+        ))
+    })?;
+    if frame.snapshots.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::FidelityInsufficient,
+            "Tick/OrderBook 参数实验至少需要一份盘口快照",
+        ));
+    }
+    let input_data_fingerprint = format!("depth-frame-fnv1a64:{:016x}", frame.input_hash());
+    let quality = spec
+        .base
+        .quality_manifest_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .map(|path| {
+            super::run_depth_backtest::quality::verified_depth_dataset_quality(
+                path,
+                std::path::Path::new(&spec.base.depth_path),
+                &frame,
+                &spec.base.tier,
+            )
+        })
+        .transpose()?;
+    let quality_fingerprint = quality
+        .as_ref()
+        .and_then(|quality| quality.get("manifest_fingerprint"))
+        .and_then(Value::as_str);
+    let canonical_spec = build_depth_experiment_canonical_run_spec(
+        spec,
+        &spec_json,
+        &frame,
+        identity,
+        quality_fingerprint,
+        context,
+    )?;
+    let canonical_json = canonical_spec
+        .canonical_json()
+        .map_err(|error| invariant(format!("深度实验 CanonicalRunSpec 规范化失败: {error}")))?;
+    let canonical_fingerprint = canonical_spec
+        .fingerprint()
+        .map_err(|error| invariant(format!("深度实验 CanonicalRunSpec 指纹失败: {error}")))?;
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
     let artifact_path = root
         .join(format!("{}.depth-experiment.json", spec.experiment_id))
         .to_string_lossy()
         .into_owned();
+    let spec_artifact_path = root
+        .join(format!("{}.depth-experiment.spec.json", spec.experiment_id))
+        .to_string_lossy()
+        .into_owned();
     match std::fs::read_to_string(&artifact_path) {
         Ok(existing) => {
-            return existing_result(&existing, &spec_fingerprint, &spec.experiment_id).map(Some)
+            let existing = existing_result(
+                &existing,
+                &spec_fingerprint,
+                &canonical_json,
+                &canonical_fingerprint,
+                &input_data_fingerprint,
+                quality_fingerprint,
+                &spec.experiment_id,
+                context,
+                &canonical_spec,
+                &root,
+                &spec_artifact_path,
+                &persisted_input,
+            )?;
+            return Ok(Some(existing));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有深度参数实验报告", &error)),
@@ -431,7 +525,7 @@ fn run_depth_experiment_inner(
     let result = RunDepthExperimentResult {
         schema_version: RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
         experiment_id: spec.experiment_id.clone(),
-        spec_fingerprint,
+        spec_fingerprint: spec_fingerprint.clone(),
         total_candidates: total,
         completed_candidates: candidates.len(),
         succeeded_candidates,
@@ -439,37 +533,56 @@ fn run_depth_experiment_inner(
         candidates,
         ranking,
         artifact_path: artifact_path.clone(),
+        canonical_run_spec_json: Some(canonical_json.clone()),
+        canonical_run_spec_fingerprint: Some(canonical_fingerprint.clone()),
+        input_data_fingerprint: Some(input_data_fingerprint.clone()),
+        result_hash: None,
+        run_manifest: None,
+        run_record: None,
+        artifact_locations: None,
     };
     if cancellation.is_some_and(CancellationToken::is_cancelled) {
         return Ok(None);
     }
-    let report_json = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建深度参数实验产物目录", &error))?;
-    if let Err(write_error) = write_text(&artifact_path, &report_json) {
-        if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
-            return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)
-                .map(Some);
+    write_spec_artifact(&spec_artifact_path, &persisted_input, "深度参数实验")?;
+    verify_depth_experiment_candidate_outcomes(
+        &result,
+        context,
+        &input_data_fingerprint,
+        quality_fingerprint,
+    )?;
+    let persisted = match persist_depth_experiment_result(
+        result,
+        &canonical_spec,
+        &root,
+        &artifact_path,
+        &spec_artifact_path,
+    ) {
+        Ok(persisted) => persisted,
+        Err(write_error) => {
+            if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
+                let recovered = existing_result(
+                    &existing,
+                    &spec_fingerprint,
+                    &canonical_json,
+                    &canonical_fingerprint,
+                    &input_data_fingerprint,
+                    quality_fingerprint,
+                    &spec.experiment_id,
+                    context,
+                    &canonical_spec,
+                    &root,
+                    &spec_artifact_path,
+                    &persisted_input,
+                )?;
+                return Ok(Some(recovered));
+            }
+            return Err(write_error);
         }
-        return Err(write_error);
-    }
-    Ok(Some(result))
-}
-
-fn existing_result(
-    payload: &str,
-    expected_fingerprint: &str,
-    experiment_id: &str,
-) -> Result<RunDepthExperimentResult, AppError> {
-    let previous = RunDepthExperimentResult::from_json(payload)?;
-    if previous.experiment_id != experiment_id || previous.spec_fingerprint != expected_fingerprint
-    {
-        return Err(AppError::new(
-            AppErrorCategory::Conflict,
-            format!("experiment_id {experiment_id} 已绑定不同 Tick/OrderBook 实验规格"),
-        ));
-    }
-    Ok(previous)
+    };
+    Ok(Some(persisted))
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
