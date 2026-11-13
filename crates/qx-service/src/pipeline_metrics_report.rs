@@ -62,6 +62,7 @@ pub struct PipelineMetricsReporter {
     ccxt_ohlcv_request_duration_count: u64,
     ccxt_ohlcv_request_duration_ns_total: u128,
     gateway_request_durations: BTreeMap<ExchangeGatewayPort, ([u64; 10], u64, u128)>,
+    gateway_error_categories: BTreeMap<(ExchangeGatewayPort, &'static str), u64>,
     gateway_venue_reconnects: BTreeMap<String, u64>,
     gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
@@ -223,6 +224,32 @@ impl PipelineMetricsReporter {
         *total_ns = total_ns.saturating_add(u128::from(duration_ns));
     }
 
+    /// Count a fixed-cardinality error category for a gateway port.
+    pub(crate) fn observe_gateway_port_error_category(
+        &mut self,
+        port: ExchangeGatewayPort,
+        category: &str,
+    ) {
+        let category = match category {
+            "retryable" => "retryable",
+            "rate_limited" => "rate_limited",
+            "authentication" => "authentication",
+            "exchange" => "exchange",
+            "unsupported" => "unsupported",
+            "invalid" => "invalid",
+            "ambiguous" => "ambiguous",
+            "business_violation" => "business_violation",
+            "permanent" => "permanent",
+            "invariant" => "invariant",
+            _ => "unknown",
+        };
+        let count = self
+            .gateway_error_categories
+            .entry((port, category))
+            .or_default();
+        *count = count.saturating_add(1);
+    }
+
     /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
     /// participates in readiness or execution authorization.
     pub(crate) fn observe_gateway_venue_reconnects(&mut self, venue_id: &str, total: u64) {
@@ -363,6 +390,12 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
 qx_gateway_port_operation_duration_seconds_sum{{{port_labels}}} {:.9}\n\
 qx_gateway_port_operation_duration_seconds_count{{{port_labels}}} {count}\n",
                 *total_ns as f64 / 1_000_000_000.0,
+            ));
+        }
+        for ((port, category), count) in &self.gateway_error_categories {
+            body.push_str(&format!(
+                "qx_gateway_port_errors_total{{{label},port=\"{}\",class=\"{category}\"}} {count}\n",
+                port.metric_label()
             ));
         }
         if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
@@ -593,5 +626,28 @@ mod tests {
         assert!(body.contains(
             "qx_gateway_port_operation_duration_seconds_bucket{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\",le=\"+Inf\"} 1"
         ));
+    }
+
+    #[test]
+    fn venue_submit_boundary_counts_error_class_without_exporting_error_text() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "binance-exec", "alpha");
+        let venue = ProbeVenue {
+            submit_result: Err(QxError::BusinessViolation(
+                "sensitive exchange response text".into(),
+            )),
+        };
+        let mut venue = GatewayExecutionProbeVenue::new(venue, &mut reporter);
+        assert!(venue.submit(probe_order(), 91_000).is_err());
+        drop(venue);
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_errors_total{worker=\"binance-exec\",account=\"alpha\",port=\"venue_execution\",class=\"business_violation\"} 1"
+        ));
+        assert!(!body.contains("sensitive exchange response text"));
     }
 }

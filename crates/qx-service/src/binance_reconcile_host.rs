@@ -232,6 +232,10 @@ where
             );
         }
         if result.is_err() {
+            metrics.observe_gateway_port_error_category(
+                ExchangeGatewayPort::Reconciliation,
+                "unknown",
+            );
             let now_ms = runtime_timestamp_ms();
             metrics.observe_gateway_port_business_status(
                 ExchangeGatewayPort::AccountQuery,

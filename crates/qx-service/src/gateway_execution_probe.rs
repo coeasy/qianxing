@@ -25,12 +25,17 @@ impl<'a, V> GatewayExecutionProbeVenue<'a, V> {
         status: GatewayBusinessHealthStatus,
         observed_ts_ms: u64,
         duration: std::time::Duration,
+        error_category: Option<&'static str>,
     ) {
         self.metrics.observe_gateway_port_business_status(
             ExchangeGatewayPort::VenueExecution,
             status,
             observed_ts_ms,
         );
+        if let Some(category) = error_category {
+            self.metrics
+                .observe_gateway_port_error_category(ExchangeGatewayPort::VenueExecution, category);
+        }
         self.metrics.observe_gateway_port_operation_duration(
             ExchangeGatewayPort::VenueExecution,
             duration.as_nanos().min(u128::from(u64::MAX)) as u64,
@@ -66,14 +71,24 @@ impl<V: Venue> Venue for GatewayExecutionProbeVenue<'_, V> {
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
         let started = Instant::now();
         let result = self.venue.submit(order, ts);
-        self.observe(execution_result_status(&result), ts, started.elapsed());
+        self.observe(
+            execution_result_status(&result),
+            ts,
+            started.elapsed(),
+            result.as_ref().err().map(execution_error_category),
+        );
         result
     }
 
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
         let started = Instant::now();
         let result = self.venue.cancel(client_order_id, ts);
-        self.observe(execution_result_status(&result), ts, started.elapsed());
+        self.observe(
+            execution_result_status(&result),
+            ts,
+            started.elapsed(),
+            result.as_ref().err().map(execution_error_category),
+        );
         result
     }
 
@@ -84,7 +99,12 @@ impl<V: Venue> Venue for GatewayExecutionProbeVenue<'_, V> {
     fn amend(&mut self, current: &Order, amended: &Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
         let started = Instant::now();
         let result = self.venue.amend(current, amended, ts);
-        self.observe(execution_result_status(&result), ts, started.elapsed());
+        self.observe(
+            execution_result_status(&result),
+            ts,
+            started.elapsed(),
+            result.as_ref().err().map(execution_error_category),
+        );
         result
     }
 
@@ -104,6 +124,18 @@ fn execution_result_status<T>(result: &QxResult<T>) -> GatewayBusinessHealthStat
             GatewayBusinessHealthStatus::Unhealthy
         }
         Err(_) => GatewayBusinessHealthStatus::Degraded,
+    }
+}
+
+fn execution_error_category(error: &QxError) -> &'static str {
+    match error.contract().code {
+        ErrorCode::Transient => "retryable",
+        ErrorCode::Permanent => "permanent",
+        ErrorCode::Ambiguous | ErrorCode::ReconcileRequired => "ambiguous",
+        ErrorCode::VenueState => "exchange",
+        ErrorCode::ResourceExhausted => "rate_limited",
+        ErrorCode::BusinessViolation => "business_violation",
+        ErrorCode::Invariant => "invariant",
     }
 }
 
