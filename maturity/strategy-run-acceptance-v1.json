@@ -20769,6 +20769,244 @@
         }
       ],
       "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "14766ed3-fab3-464c-b414-53e34d298337",
+      "acceptance_id": "R04-AC01",
+      "recorded_at_utc": "2026-11-13T04:13:43.002409Z",
+      "source_revision": "9902d02054d057e027fd89b612dc50141b04608b",
+      "source_tree_sha256": "6311d6952d1c44e4f559193a61f314d94cc9eabe603992fcade23fd5de4ed284",
+      "source_manifest": "maturity/acceptance-artifacts/14766ed3-fab3-464c-b414-53e34d298337.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_process_tree.py",
+        "--output",
+        "maturity/evidence/strategy-preflight-process-tree-linux.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_process_tree.py",
+          "sha256": "33908ed6bda1ec244635e3a8213b1b3eb3c944dfa5b07e3c8cf03da35439184b"
+        },
+        {
+          "path": "python/qianxing/process_tree.py",
+          "sha256": "9b5f68e3c39c237b7f3712c94c1f8aa472df757133aca6c8c33ffc4266015941"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/14766ed3-fab3-464c-b414-53e34d298337.log",
+          "sha256": "629348ab05398cad6b0672d55670d79c1380f3c3bdaabd1ffede232b23bcc91a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/14766ed3-fab3-464c-b414-53e34d298337.source-tree.json",
+          "sha256": "219196341b82fe7d4297ea58737a26b9ff305b1a2895529af4805babdb9c4c20"
+        }
+      ],
+      "notes": "Linux preflight cleanup after normal return and timeout, plus explicit verification that a new-session child escapes process-group ownership and is then reaped by the acceptance fixture"
+    },
+    {
+      "run_id": "f9290418-53f7-4181-a81c-eaf252ca9f01",
+      "acceptance_id": "R07-AC01",
+      "recorded_at_utc": "2026-11-13T04:13:43.435607Z",
+      "source_revision": "9902d02054d057e027fd89b612dc50141b04608b",
+      "source_tree_sha256": "2034529582aa50a413cb077e767185d249f3d79acb66d2ad431e9e3a1dd531e1",
+      "source_manifest": "maturity/acceptance-artifacts/f9290418-53f7-4181-a81c-eaf252ca9f01.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_project_run_identity.py",
+        "maturity/evidence/project-run-identity-linux.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_project_run_identity.py",
+          "sha256": "08c6f66ceecb65312e28ac64f60a463a5691624108396d871e235129651f477d"
+        },
+        {
+          "path": "python/qianxing/project_runs.py",
+          "sha256": "7c4fd6967a5c3b7d544eacad40fa37cd810cda0e555e96bb388fcb87fa8c3b2e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/f9290418-53f7-4181-a81c-eaf252ca9f01.log",
+          "sha256": "4772bdd910b6bf2c31fb0d2989e897b0d43d4fb0f41fe1f7326d237db10f9c55"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/f9290418-53f7-4181-a81c-eaf252ca9f01.source-tree.json",
+          "sha256": "b443a4ab2b06afc91ee91c9a9fc6be01e679bfa6b9cf502794250e777738bfad"
+        }
+      ],
+      "notes": "Native Linux /proc identity is stable for a live PID, rejects a stale process-start identity, and reports the reaped owner as dead"
+    },
+    {
+      "run_id": "5f3c6b9e-1186-4df4-a0c4-6ffaf7a1fec3",
+      "acceptance_id": "R08-AC01",
+      "recorded_at_utc": "2026-11-13T04:13:43.821097Z",
+      "source_revision": "9902d02054d057e027fd89b612dc50141b04608b",
+      "source_tree_sha256": "5fa5cfb3d214a1706e75b4f27d850fcb822e66ba823ffac1385d6e40e5b4f98c",
+      "source_manifest": "maturity/acceptance-artifacts/5f3c6b9e-1186-4df4-a0c4-6ffaf7a1fec3.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "python/tests",
+        "-p",
+        "test_strategy_capabilities.py"
+      ],
+      "inputs": [
+        {
+          "path": "python/qianxing_strategy/worker.py",
+          "sha256": "efef2ceca817646496a01231c03a4e5d24ddd2094e2d190fcfc0f30f7645ab1f"
+        },
+        {
+          "path": "python/tests/test_strategy_capabilities.py",
+          "sha256": "43b9ee0505b77f8b54a286a64ce808a0142694d691066afa5490bc180a70fe47"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5f3c6b9e-1186-4df4-a0c4-6ffaf7a1fec3.log",
+          "sha256": "12bdacea3926e2707d185a12322ab29c7f5600d8ea4c83d796d63589e09c3864"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5f3c6b9e-1186-4df4-a0c4-6ffaf7a1fec3.source-tree.json",
+          "sha256": "49ab61885db0518f49b679a43e427f4a0ba78d72778d388d22f97784b7f89963"
+        }
+      ],
+      "notes": "Linux Python strategy host accepts compatible manifests and rejects malformed, duplicate, unknown, or unsupported capability requirements before construction"
+    },
+    {
+      "run_id": "e7e21439-7942-4607-bbc3-a04d0c1de8fd",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-13T04:20:45.752151Z",
+      "source_revision": "9902d02054d057e027fd89b612dc50141b04608b",
+      "source_tree_sha256": "5fa5cfb3d214a1706e75b4f27d850fcb822e66ba823ffac1385d6e40e5b4f98c",
+      "source_manifest": "maturity/acceptance-artifacts/e7e21439-7942-4607-bbc3-a04d0c1de8fd.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r01",
+        "--cli-root",
+        "/home/runner/work/_temp/qx-clean-install-shared-cli",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "python/tests/test_app_use_cases.py",
+          "sha256": "f04e5da2c35bf7c3501161585f086c752a9b7a6afd3b8fb7d58601ce518ab08b"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/e7e21439-7942-4607-bbc3-a04d0c1de8fd.log",
+          "sha256": "50af36df23b592f1de1d07f50f0a773e9954ec0bc0eb278eb4bb674fb883c4b1"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/e7e21439-7942-4607-bbc3-a04d0c1de8fd.source-tree.json",
+          "sha256": "49ab61885db0518f49b679a43e427f4a0ba78d72778d388d22f97784b7f89963"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution"
+    },
+    {
+      "run_id": "2106364d-b7fb-4394-a106-e0c39cfd0164",
+      "acceptance_id": "R20-AC01",
+      "recorded_at_utc": "2026-11-13T04:20:48.511820Z",
+      "source_revision": "9902d02054d057e027fd89b612dc50141b04608b",
+      "source_tree_sha256": "5fa5cfb3d214a1706e75b4f27d850fcb822e66ba823ffac1385d6e40e5b4f98c",
+      "source_manifest": "maturity/acceptance-artifacts/2106364d-b7fb-4394-a106-e0c39cfd0164.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r20",
+        "--cli-root",
+        "/home/runner/work/_temp/qx-clean-install-shared-cli",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "docs/installation.md",
+          "sha256": "8c810035020148f63083b2c9594d4239db2e0f339360534d48c111291746aa4a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/2106364d-b7fb-4394-a106-e0c39cfd0164.log",
+          "sha256": "30e94a03b6d38d2edc8523af3ef279ea1d1a28ce13ff474427cc41f88a9a4560"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/2106364d-b7fb-4394-a106-e0c39cfd0164.source-tree.json",
+          "sha256": "49ab61885db0518f49b679a43e427f4a0ba78d72778d388d22f97784b7f89963"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
