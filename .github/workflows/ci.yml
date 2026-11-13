@@ -455,6 +455,18 @@ jobs:
               raise SystemExit(f"expected one installed native extension, found {extensions}")
           shutil.copy2(extensions[0], Path("python/qianxing_bridge") / extensions[0].name)
           PY
+      - name: Install pinned CCXT for venue request-shape contracts
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python -m pip install --quiet "ccxt==4.5.89"
+      - name: Verify CCXT version matches the adapter contract
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: >-
+          python -c "import ccxt; from qianxing_ccxt import SUPPORTED_CCXT_VERSION;
+          assert ccxt.__version__ == SUPPORTED_CCXT_VERSION,
+          f'CCXT {ccxt.__version__} does not match adapter contract {SUPPORTED_CCXT_VERSION}'"
+      - name: Pinned CCXT venue request-shape contracts
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python -m unittest discover -s python/tests -p test_ccxt_request_shape.py -v
       - name: Python suite against the built extension
         shell: bash
         run: |
