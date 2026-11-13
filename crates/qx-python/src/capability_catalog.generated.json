@@ -7,8 +7,8 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "3ddc7d07934d9725451d8a726115570df05276cc9fa4437fdcb528dcff9fcfbb",
-    "maturity/capabilities.yaml": "a9b51722d555aa893777c98a87f91e5eadd0bd93d28ecf13461f1ea0604a29f4",
+    "maturity/capability-matrix.yaml": "8eea10d47686e4777fb66ee329f3ef5f87475219ccc76422b0cfc08f39fbf4d0",
+    "maturity/capabilities.yaml": "c2dceb79b928fe8f069c674f685df54b0f20ef3a84a04e615e5df9971ab0eb5b",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -1175,7 +1175,7 @@
           "ccxt-fetch-ohlcv 默认生成不可变 BarFrame 与 DatasetManifestV2 质量/来源清单；页内或跨页重复时间戳、小数时间戳会 fail closed，避免静默覆盖或截断。它不提供上游历史修订账本；实时订阅与统一启动预检仍未贯通",
           "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明",
           "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified",
-          "CI run 43382383244 已在 Linux 上完成 OKX、Bitget 30 天 1h 真实公开行情→质量清单→公开默认费率→回测→HTML 报告；Bitget 样本回测为 0 fills，策略有效性未证明。Binance 仍因该 runner 的公共 exchangeInfo 返回 HTTP 451 地区资格限制而未取数。真实公开数据快启只证明只读研究链，不证明私有 API、testnet/live 下单或交易所连接器成熟度"
+          "CI run 43382383244 已在 Linux 上完成 OKX、Bitget 30 天 1h 真实公开行情→质量清单→公开默认费率→回测→HTML 报告；Bitget 虽生成报告但 46 个策略订单因缺少最小名义金额校验参考价而被拒，0 fills 不能解释为无交易信号。当前分支补充订单级参考价传递并新增 Linux 验收零拒单门禁，需等待新 run 证明修复。Binance 仍因该 runner 的公共 exchangeInfo 返回 HTTP 451 地区资格限制而未取数。真实公开数据快启只证明只读研究链，不证明私有 API、testnet/live 下单或交易所连接器成熟度"
         ],
         "next_gate": "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
       },
@@ -1936,7 +1936,7 @@
             "maturity/evidence/ccxt-okx-public-ohlcv-probe-2026-10-23.json records an anonymous OKX public 1m OHLCV request timing out after 10 seconds through the Release CLI; no credentials, orders or dataset writes were involved, so the result is only a failed reachability attempt and does not satisfy a supplier profile",
             "maturity/evidence/binance-testnet-public-recheck-20261023T010208Z.meta.json records a fresh anonymous Release CLI fetch of 60 Binance Spot Testnet BTC/USDT 1m bars, with data and binary SHA-256; no credentials, private account calls, or orders were used, so it is a current public-market-data smoke only",
             "maturity/evidence/binance-testnet-pit-import-2026-10-23/refetch-evidence.json records a third anonymous Release CLI fetch of the same 15 historical Testnet bars; its BarFrame SHA-256 matches the first captures and the rebuilt PIT ledger has 75 facts with zero multi-version facts. This verifies repeat-read stability for one window only; it does not establish vendor publication time, revision history, or authenticated sandbox acceptance",
-            "maturity/evidence/ccxt-public-quickstart-2026-11-13.json records an artifact-digest-verified hosted Linux release-wheel and CLI run; OKX and Bitget completed real public 30-day 1h OHLCV, quality manifest, public default fees, backtest, and HTML report with 720 bars and no gaps; Bitget emitted zero fills. Binance could not load public markets because this hosted runner received HTTP 451 restricted-location eligibility at exchangeInfo, and no credentials or orders were used.",
+            "maturity/evidence/ccxt-public-quickstart-2026-11-13.json records an artifact-digest-verified hosted Linux release-wheel and CLI run; OKX and Bitget completed real public 30-day 1h OHLCV, quality manifest, public default fees, backtest, and HTML report with 720 bars and no gaps; the Bitget summary shows 46 order rejections for missing minimum-notional reference price and zero fills, so this run does not show that the strategy produced no signals. Binance could not load public markets because this hosted runner received HTTP 451 restricted-location eligibility at exchangeInfo, and no credentials or orders were used.",
             "tools/backtest_acceptance.py creates `report --evidence` bundles for every crypto quickstart and A-share example rerun, then requires `evidence verify-run` before recording the five artifact SHA-256 values; same-directory reruns compare bundle bytes and independent directories compare normalized bundle contents with referenced artifact digests rebound after verification; maturity/backtest_acceptance.yaml and maturity/ashare_example_backtest_acceptance.yaml record verified bundle hashes; python/tests/test_backtest_acceptance.py checks path/config normalization without erasing run identity"
           ],
           "limitations_count": 2

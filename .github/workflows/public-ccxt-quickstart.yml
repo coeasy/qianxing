@@ -11,6 +11,7 @@ on:
       - "crates/qx-cli/src/report_command.rs"
       - "crates/qx-cli/src/report_html.rs"
       - "crates/qx-cli/src/worker_entry.rs"
+      - "crates/qx-xingban/src/backtest/**"
       - "crates/qx-adapter/src/ccxt.rs"
       - "python/qianxing_ccxt/**"
       - "tools/build_python_wheel.sh"
@@ -101,6 +102,19 @@ jobs:
           PY
           report="$(find "$project" "$home" -type f -name '*.report.html' -size +0c -print -quit)"
           test -n "$report"
+          summary="$(find "$project" -type f -name '*.summary.json' -size +0c -print -quit)"
+          test -n "$summary"
+          python - "$summary" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert int(summary["bars"]) > 0, summary
+          assert int(summary["rejected_orders"]) == 0, summary.get("rejection_reasons")
+          quality = summary["dataset_quality"]["quality_report"]
+          assert int(quality["missing_intervals"]) == 0, quality
+          PY
           printf 'exchange=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$INSTRUMENT" "$report" \
             > "$ACCEPTANCE_ROOT/$EXCHANGE/result.txt"
           sha256sum "$cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"

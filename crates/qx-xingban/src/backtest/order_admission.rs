@@ -318,8 +318,12 @@ pub(crate) fn admit_orders(
             .limit_price_decimal()
             .unwrap_or_else(|| raw_decimal(visible_close));
         let reference_price = exact_to_raw(reference_price_exact, DecimalRounding::Ceiling)?;
-        if quote_budget.is_some() {
-            if let Some(amounts) = order.exact_amounts.as_mut() {
+        if let Some(amounts) = order.exact_amounts.as_mut() {
+            if amounts.limit_price.is_none() && amounts.market_reference_price.is_none() {
+                // Carry the same as-of-visible mark used by risk admission into the
+                // execution/matching phase. Exact market orders need it again for
+                // venue min-notional validation; without it, a valid order can be
+                // rejected after admission when the frozen spec has a positive floor.
                 amounts.market_reference_price = Some(reference_price_exact);
             }
         }

@@ -49,7 +49,7 @@
       "input_data_hash": "f8e215d3cb594a33",
       "report_html_present": true,
       "orders_sent": false,
-      "notes": "Pipeline and report succeeded, but the default EMA-cross run emitted no fills on this data window."
+      "notes": "The uploaded summary reports 46 rejected orders, all with BUSINESS_VIOLATION for a missing verifiable reference price during minimum-notional validation. The zero-fill result is therefore an order-admission failure and does not show that EMA-cross produced no signals."
     },
     {
       "exchange": "binance",

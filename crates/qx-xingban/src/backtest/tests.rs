@@ -436,7 +436,7 @@ mod test_cases {
     }
 
     #[test]
-    fn bar_backtest_admits_fills_and_books_subnano_strategy_quantity() {
+    fn bar_backtest_admits_exact_market_orders_with_min_notional_using_visible_close() {
         let instrument = InstrumentId::parse("T.SIM").unwrap();
         let mut config = simple_config();
         config.fee = Box::new(MakerTakerFeeModel {
@@ -465,7 +465,7 @@ mod test_cases {
                 price_tick: qx_core::ExactDecimal::parse("0.000000001").unwrap(),
                 quantity_step: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
                 minimum_quantity: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
-                minimum_notional: qx_core::ExactDecimal::ZERO,
+                minimum_notional: qx_core::ExactDecimal::parse("0.00000000005").unwrap(),
             }),
         });
         let context = qx_strategy::StrategyContext {
@@ -503,8 +503,24 @@ mod test_cases {
 
         let expected = qx_core::ExactDecimal::parse("0.000000000001").unwrap();
         assert_replay_matches(&report);
+        assert!(!report
+            .event_log
+            .events()
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::Rejected { .. })));
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].quantity_decimal(), expected);
+        let risk_decision = report
+            .event_log
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::OrderRiskDecision { decision } => Some(decision),
+                _ => None,
+            })
+            .expect("exact market order records its risk reference price");
+        assert!(risk_decision.allowed);
+        assert_eq!(risk_decision.reference_price_raw, Some(100 * SCALE));
         assert_eq!(
             report.fills[0].exact_fees[0].currency.as_deref(),
             Some("USD")

@@ -473,7 +473,7 @@
         "production_approved"
       ],
       "limitations": [
-        "ccxt_live_provider_profile_not_recorded：CCXT builtin 已将 OHLCV 规范化帧固化为内容寻址快照，并按 exchange/source、market、timeframe、requested range 和内容摘要生成 DatasetManifestV2；离线 CLI 回归覆盖质量清单及持久报告绑定。真实交易所 profile 尚未记录，交易所后续修订通过内容版本变化呈现，不承诺原始 API 响应可重取 （状态：未收口；收口门：在授权的真实行情数据 profile 上验证字段映射、边界和稳定重跑；未排期原因：当前只验证离线 worker 合同）",
+        "ccxt_public_provider_profile_only_partially_recorded：CCXT builtin 的 Linux hosted release-wheel quickstart 已记录真实 OKX 与 Bitget 公开行情 profile，并复核 720 根 1h Bar、零间隔缺口、公开默认费率、回测摘要和 HTML 报告；Bitget 样例中 46 个策略订单因缺少最小名义金额校验参考价而被拒，0 fills 不能解释为无交易信号。当前分支补充订单级参考价传递并新增 Linux 验收零拒单门禁，需等待新 run 证明修复。Binance 当前 hosted runner 在公开 exchangeInfo 收到 HTTP 451，未完成行情链。此证据只证明指定窗口的公开只读研究链，不覆盖 authenticated/private API、数据供应商修订/发布时间、testnet/live 订单或真实交易可用性 （状态：未收口；收口门：在合法可访问环境记录 Binance 同等公开 profile，并分别取得三家授权 sandbox 生命周期证据；未排期原因：Binance runner 区域限制且无三家授权 Sandbox 订单窗口）",
         "capability_level_is_capped_at_l2：本地 run generation 只到 L2；L3/L4（沙盒/生产）必须由统一 EvidenceBundle 的 venue generation 与真实窗口支撑，构建器今天只声明 L1 （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
       ]
     },
