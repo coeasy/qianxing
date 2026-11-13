@@ -889,6 +889,27 @@ fn execute_ccxt_queued_cancel(
     Ok(result)
 }
 
+fn is_active_native_group_member(
+    group: &qx_core::OrderGroupState,
+    client_order_id: u64,
+    account_id: &str,
+    venue_id: &str,
+) -> bool {
+    !matches!(
+        group.status,
+        qx_core::OrderGroupStatus::Cancelled | qx_core::OrderGroupStatus::Rejected
+    ) && group.legs.iter().any(|leg| {
+        leg.order.client_id == client_order_id
+            && leg.order.account_id == account_id
+            && leg
+                .order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(venue_id)
+    })
+}
+
 fn is_reconciled_triggered_oco_child(
     group: &qx_core::OrderGroupState,
     client_order_id: u64,
@@ -976,6 +997,24 @@ fn execute_ccxt_queued_amend(
         settlement_currency,
     )?;
     let target_id = prepared.target.client_order_id;
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+    let group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    for group_id in group_store.group_ids()? {
+        let Some(group) = group_store.load(&group_id)? else {
+            continue;
+        };
+        if is_active_native_group_member(
+            &group,
+            target_id,
+            &prepared.target.account_id,
+            &prepared.target.venue_id,
+        ) {
+            return Ok(Err(format!(
+                "改单目标 {target_id} 属于活动原生订单组 {}；组级改单与子腿快照同步尚未实现，拒绝改变交易所状态",
+                group.intent.group_id
+            )));
+        }
+    }
     let target_remote_id = prepared.pipeline.venue_order_id(target_id).ok_or_else(|| {
         format!("CCXT 改单目标 {target_id} 在账户 EventLog 中缺少 remote order id")
     })?;
@@ -1892,7 +1931,7 @@ mod cancel_route_tests {
     use super::{
         bitget_group_has_no_child_exposure, ccxt_amend_matches_worker, ccxt_cancel_matches_worker,
         ccxt_cancel_order_group_matches_worker, ccxt_submit_order_group_matches_worker,
-        is_reconciled_triggered_oco_child,
+        is_active_native_group_member, is_reconciled_triggered_oco_child,
     };
     use qx_control::{CommandKind, ControlCommand, Permission};
     use qx_core::{
@@ -2097,6 +2136,21 @@ mod cancel_route_tests {
         assert!(!bitget_group_has_no_child_exposure(&serde_json::json!({
             "order_ids": ["1"], "sub_orders": []
         })));
+    }
+
+    #[test]
+    fn active_native_group_children_cannot_bypass_group_amendment_state() {
+        let submit = order_group_submit("main", "OKX");
+        let intent: OrderGroupIntent =
+            serde_json::from_str(submit.payload.get("order_group_json").unwrap()).unwrap();
+        let mut group = OrderGroupState::from_intent(intent).unwrap();
+        group.status = qx_core::OrderGroupStatus::Active;
+
+        assert!(is_active_native_group_member(&group, 31, "main", "OKX"));
+        assert!(!is_active_native_group_member(&group, 31, "other", "OKX"));
+        assert!(!is_active_native_group_member(&group, 31, "main", "BITGET"));
+        group.status = qx_core::OrderGroupStatus::Cancelled;
+        assert!(!is_active_native_group_member(&group, 31, "main", "OKX"));
     }
 
     #[test]
