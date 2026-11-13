@@ -45,6 +45,7 @@ use crate::worker_metrics::{prometheus_label, worker_metrics_path, write_worker_
 pub struct PipelineMetricsReporter {
     worker_id: String,
     account_log: String,
+    venue_id: Option<String>,
     path: PathBuf,
     ingest_attempts: u64,
     ingested_events: u64,
@@ -70,9 +71,15 @@ pub struct PipelineMetricsReporter {
 
 impl PipelineMetricsReporter {
     pub fn new(config: &RuntimeConfig, worker_id: &str, account_log: &str) -> Self {
+        let venue_id = config
+            .workers
+            .iter()
+            .find(|worker| worker.id == worker_id)
+            .and_then(|worker| worker.venue_id.clone());
         Self {
             worker_id: worker_id.into(),
             account_log: account_log.into(),
+            venue_id,
             path: worker_metrics_path(config, worker_id),
             ..Default::default()
         }
@@ -322,6 +329,10 @@ impl PipelineMetricsReporter {
             prometheus_label(&self.worker_id),
             prometheus_label(&self.account_log)
         );
+        let gateway_label = self.venue_id.as_deref().map_or_else(
+            || label.clone(),
+            |venue_id| format!("{label},venue_id=\"{}\"", prometheus_label(venue_id)),
+        );
         let mut body = format!(
             "qx_worker_up{{{label}}} {}\n\
 qx_worker_heartbeat_timestamp_seconds{{{label}}} {}\n\
@@ -354,8 +365,8 @@ qx_pipeline_ingest_budget_exceeded{{{label}}} {}\n",
                 continue;
             };
             body.push_str(&format!(
-                "qx_gateway_port_business_status{{{label},port=\"{port_label}\"}} {value}\n\
-qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {timestamp_seconds}\n"
+                "qx_gateway_port_business_status{{{gateway_label},port=\"{port_label}\"}} {value}\n\
+qx_gateway_port_business_timestamp_seconds{{{gateway_label},port=\"{port_label}\"}} {timestamp_seconds}\n"
             ));
         }
         for (venue, reconnects) in &self.gateway_venue_reconnects {
@@ -514,6 +525,28 @@ mod tests {
             "qx_gateway_port_business_status{worker=\"market-data\",account=\"\",port=\"reconciliation\"} 1"
         ));
         assert!(!body.contains("port=\"venue_execution\""));
+    }
+
+    #[test]
+    fn gateway_business_metrics_include_configured_venue_identity() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "paper-execution", "paper-main");
+        reporter.observe_gateway_port_business_status(
+            ExchangeGatewayPort::VenueExecution,
+            GatewayBusinessHealthStatus::Healthy,
+            91_000,
+        );
+
+        let body = reporter.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_business_status{worker=\"paper-execution\",account=\"paper-main\",venue_id=\"paper\",port=\"venue_execution\"} 2"
+        ));
+        assert!(body.contains(
+            "qx_gateway_port_business_timestamp_seconds{worker=\"paper-execution\",account=\"paper-main\",venue_id=\"paper\",port=\"venue_execution\"} 91"
+        ));
     }
 
     #[test]

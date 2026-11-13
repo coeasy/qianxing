@@ -1590,6 +1590,7 @@ Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，�
 过期、交易所 gateway 业务端口不健康/持续降级、Outbox 发布失败、Consumer 死信和 ACK 失败，
 也会在持久订单组读取失败或订单组需要对账时告警。`qx_gateway_port_business_status` 的数值为
 `0=unhealthy`、`1=degraded`、`2=healthy`；`unobserved` 不导出样本，不能据此判断为 healthy。
+该指标带配置中的 `venue_id`、worker、account 与 port 标签，便于区分同一运行环境中的多个交易所。
 例如执行端口的成功响应为 healthy，确定性拒绝为 degraded，远端结果未知或需要对账为 unhealthy；
 具体原因仍须查看 `/ready` 的 `exchange_gateways` 诊断、worker 日志及订单对账报告。处理 unhealthy
 告警时先确认账户和端口，检查是否有待对账订单/订单组，并在结果明确前不要重放不确定的下单请求。

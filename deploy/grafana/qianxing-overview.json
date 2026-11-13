@@ -208,7 +208,7 @@
         "overrides": []
       },
       "targets": [
-        { "expr": "qx_gateway_port_business_status", "legendFormat": "{{worker}} · {{account}} · {{port}}" }
+        { "expr": "qx_gateway_port_business_status", "legendFormat": "{{venue_id}} · {{worker}} · {{account}} · {{port}}" }
       ]
     },
     {
