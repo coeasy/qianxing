@@ -66,6 +66,7 @@ class CcxtJsonWorker:
     def __init__(self, client: CcxtExchangeClient, *, pro_exchange: Any | None = None):
         self.client = client
         self.pro_exchange = pro_exchange
+        self._pending_stream_reconnects = 0
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = str(request.get("op", "")).strip()
@@ -546,6 +547,9 @@ class CcxtJsonWorker:
             exchange_id=self.client.config.exchange_id,
             received_ts=request.get("received_ts"),
         )
+        if self._pending_stream_reconnects:
+            event["reconnects"] = self._pending_stream_reconnects
+            self._pending_stream_reconnects = 0
         if idle:
             event["idle"] = True
         return {"event": event}
@@ -576,6 +580,7 @@ class CcxtJsonWorker:
                 if delay_ms:
                     await asyncio.sleep(delay_ms / 1_000)
                 attempts += 1
+                self._pending_stream_reconnects += 1
 
     async def _close_pro_async(self) -> None:
         if self.pro_exchange is None:

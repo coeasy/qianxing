@@ -71,6 +71,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         .unwrap_or(0);
     let mut reconnect_budget = CcxtReconnectBudget::default();
     let mut reconnects_total = 0_u64;
+    let mut outer_reconnect_pending = false;
     let mut idle_windows = 0_u64;
     loop {
         if context.should_stop() {
@@ -108,7 +109,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                 let backoff = reconnect_budget
                     .note_failure()
                     .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
-                reconnects_total = reconnects_total.saturating_add(1);
+                outer_reconnect_pending = true;
                 context.mark(
                     ServiceStatus::Degraded,
                     format!(
@@ -122,7 +123,6 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                     GatewayBusinessHealthStatus::Degraded,
                     received_ts,
                 );
-                metrics.observe_gateway_venue_reconnects(&venue_id, reconnects_total);
                 metrics.publish_if_due(true, received_ts);
                 context.sleep_ms(backoff.as_millis() as u64);
                 if context.should_stop() {
@@ -142,6 +142,12 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             .ok_or_else(|| "CCXT Pro watch_orders 响应缺少 event".to_string())?;
         if event.get("stream").and_then(serde_json::Value::as_str) != Some("orders") {
             return Err("CCXT Pro 用户流返回了非 orders 事件".into());
+        }
+        let recovered_sessions =
+            ccxt_user_stream_recovered_sessions(event, &mut outer_reconnect_pending);
+        if recovered_sessions > 0 {
+            reconnects_total = reconnects_total.saturating_add(recovered_sessions);
+            metrics.observe_gateway_venue_reconnects(&venue_id, reconnects_total);
         }
         metrics.observe_gateway_port_business_status(
             ExchangeGatewayPort::PrivateOrderStream,
@@ -350,6 +356,17 @@ fn latest_ccxt_user_event_timestamp_ms(
     )
 }
 
+fn ccxt_user_stream_recovered_sessions(
+    event: &serde_json::Value,
+    outer_reconnect_pending: &mut bool,
+) -> u64 {
+    let internal_reconnects = event
+        .get("reconnects")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    internal_reconnects.saturating_add(u64::from(std::mem::take(outer_reconnect_pending)))
+}
+
 fn runtime_timestamp_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -360,7 +377,10 @@ fn runtime_timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{latest_ccxt_user_event_timestamp_ms, validate_ccxt_user_stream_worker};
+    use super::{
+        ccxt_user_stream_recovered_sessions, latest_ccxt_user_event_timestamp_ms,
+        validate_ccxt_user_stream_worker,
+    };
     use qx_runtime::WorkerConfig;
 
     fn worker(role: &str, enabled: bool, venue_id: &str) -> WorkerConfig {
@@ -412,5 +432,30 @@ mod tests {
             ),
             Some(500)
         );
+    }
+
+    #[test]
+    fn ccxt_user_stream_counts_only_recovered_sessions() {
+        let mut outer_pending = false;
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(
+                &serde_json::json!({"reconnects": 2}),
+                &mut outer_pending,
+            ),
+            2
+        );
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(&serde_json::json!({}), &mut outer_pending,),
+            0
+        );
+        outer_pending = true;
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(
+                &serde_json::json!({"reconnects": 2}),
+                &mut outer_pending,
+            ),
+            3
+        );
+        assert!(!outer_pending);
     }
 }

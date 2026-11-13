@@ -944,6 +944,7 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(event["stream"], "orders")
         self.assertEqual(event["received_ts"], 7)
         self.assertEqual(event["events"][0]["order_id"], "remote-1")
+        self.assertNotIn("reconnects", event)
 
     def test_watch_with_wait_ms_replies_idle_instead_of_letting_the_read_window_expire(self):
         class SilentPro(FakeProExchange):
@@ -1108,6 +1109,7 @@ class CcxtWorkerTest(unittest.TestCase):
             )
         self.assertTrue(row["ok"])
         self.assertEqual(row["result"]["event"]["events"][0]["order_id"], "remote-1")
+        self.assertEqual(row["result"]["event"]["reconnects"], 1)
         factory.assert_called_once()
 
     def test_jsonl_worker_does_not_retry_authentication_error(self):

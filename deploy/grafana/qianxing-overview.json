@@ -224,6 +224,7 @@
       "id": 21,
       "title": "交易所私有流重连速率",
       "type": "timeseries",
+      "description": "只累计 CCXT Pro 内部恢复后成功应答，以及 Rust worker 重建后的首次成功应答；失败尝试不计作成功重连。",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
       "targets": [
         { "expr": "sum by (worker, account, venue) (rate(qx_gateway_venue_reconnects_total[5m]))", "legendFormat": "{{venue}} · {{account}}" }
