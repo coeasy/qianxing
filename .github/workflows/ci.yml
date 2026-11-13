@@ -31,6 +31,12 @@ jobs:
           go-version: "1.24.x"
       - name: Validate workflow syntax and expressions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+      - name: Validate Prometheus alert expressions
+        run: >-
+          docker run --rm --entrypoint=/bin/promtool
+          --volume "$GITHUB_WORKSPACE/deploy/prometheus:/etc/prometheus:ro"
+          mirror.gcr.io/prom/prometheus:v3.16.0
+          check rules /etc/prometheus/qianxing-alerts.yml
       - name: Check tracked Markdown links and path casing
         run: python tools/check_markdown_links.py
       - name: Validate strategy refactor work-package ledger
