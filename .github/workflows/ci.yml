@@ -996,7 +996,9 @@ jobs:
               --binary target/debug/qx-cli \
               --output "maturity/evidence/strategy-worker-crash-recovery-linux-${backend}.json"
           done
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux durable recovery evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: strategy-storage-recovery-linux
           path: |
