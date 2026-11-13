@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-13T12:30:00Z",
+  "source_revision": "2172504591099094462aa901e968e337ff763800",
+  "workflow": {
+    "name": "Public CCXT quickstart acceptance",
+    "run_id": 43423299346,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/43423299346",
+    "head_sha": "2172504591099094462aa901e968e337ff763800",
+    "conclusion": "failure",
+    "scope": "Linux release wheel and bundled CLI; real public market data, backtest, and HTML report. No credentials were supplied, no private APIs were called, and no orders were sent.",
+    "interpretation": "OKX and Bitget jobs completed successfully. Binance public exchange initialization was blocked by the hosted runner's HTTP 451 restricted-location eligibility response; this is not a Binance testnet or live acceptance result."
+  },
+  "exchange_results": [
+    {
+      "exchange": "okx",
+      "job_id": 131878359873,
+      "conclusion": "success",
+      "artifact_id": 14035542480,
+      "artifact_name": "public-ccxt-quickstart-okx",
+      "artifact_github_sha256": "031e82b4ff3ab7e00fd7e9659be98b714a672caa9a144d7d294eae782ddfd2a8",
+      "artifact_sha256_verified_locally": false,
+      "report_artifact_uploaded": true,
+      "orders_sent": false
+    },
+    {
+      "exchange": "bitget",
+      "job_id": 131878360307,
+      "conclusion": "success",
+      "artifact_id": 14035507588,
+      "artifact_name": "public-ccxt-quickstart-bitget",
+      "artifact_github_sha256": "8bcccfd9c201633d470a4a17961af506460a64e59e8fdd7931c9f5d5d697fb11",
+      "artifact_sha256_verified_locally": false,
+      "report_artifact_uploaded": true,
+      "orders_sent": false
+    },
+    {
+      "exchange": "binance",
+      "job_id": 131878360242,
+      "conclusion": "failure",
+      "artifact_id": 14036970234,
+      "artifact_name": "public-ccxt-quickstart-binance",
+      "artifact_github_sha256": "34eb2df87bb0b61aad7942b64155c261da33499743d9dbdbb0e64e14c6288e61",
+      "artifact_sha256_verified_locally": false,
+      "report_artifact_uploaded": false,
+      "blocked_by": "HTTP 451 restricted-location eligibility at the public Binance API",
+      "orders_sent": false
+    }
+  ],
+  "scope_limitations": [
+    "The artifact digests are GitHub Actions metadata and have not been independently verified against downloaded ZIP bytes.",
+    "The successful OKX and Bitget public-data research paths do not prove private API, testnet/live order execution, connector maturity, or strategy profitability.",
+    "Binance remains unverified in this runner because of the location eligibility response; no alternate endpoint or bypass was used."
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-13T12:47:23Z",
+  "source_revision": "2172504591099094462aa901e968e337ff763800",
+  "workflow": {
+    "name": "CI",
+    "run_number": 628,
+    "run_id": 43423299339,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/43423299339",
+    "status_at_capture": "completed",
+    "conclusion_at_capture": "success",
+    "job_counts_at_capture": { "total": 37, "success": 37, "in_progress": 0, "failure": 0 }
+  },
+  "release_gate_jobs": [
+    { "name": "Rust core", "conclusion": "success" },
+    { "name": "Build Python wheel (ubuntu-latest)", "conclusion": "success", "artifact_id": 14035716840, "artifact_github_sha256": "95a87338ba81e0d9561c79f8364abd85eab6028da5f3ad2e6f49bab552a951f4", "artifact_sha256_verified_locally": false },
+    { "name": "Build Python wheel (macos-latest)", "conclusion": "success", "artifact_id": 14037196337, "artifact_github_sha256": "ff5bbca78ca7b82ad41fff579c491a1b5ee9d56da126cda9d1b2cb2c97bd398e", "artifact_sha256_verified_locally": false },
+    { "name": "Build Python wheel (windows-latest)", "conclusion": "success", "artifact_id": 14036986830, "artifact_github_sha256": "e183ad5f34b160eb8d8227d62d83ec886e5f311de0079129ff4d60e7ae192065", "artifact_sha256_verified_locally": false },
+    { "name": "Blocking registered performance regressions", "conclusion": "success", "artifact_id": 14037590398, "artifact_github_sha256": "1b27b6ece4f03b00b61eb5d88bf3470dac0acde713698f3235170505574128a6", "artifact_sha256_verified_locally": false },
+    { "name": "Strategy durable storage and recovery (Linux)", "conclusion": "success", "artifact_id": 14036805375, "artifact_github_sha256": "8d61c1e3784951712e1b31bb0fbc6d9a380f22d3534be1fe63187105d1a4da28", "artifact_sha256_verified_locally": false },
+    { "name": "Backend service contracts", "conclusion": "success" },
+    { "name": "Runtime and Paper contracts", "conclusion": "success" },
+    { "name": "Architecture invariants aggregate", "conclusion": "success" },
+    { "name": "GitHub Actions workflow validation", "conclusion": "success" },
+    { "name": "Venue acceptance (Binance testnet)", "conclusion": "success", "live_testnet_acceptance": "skipped; credentials unavailable" },
+    { "name": "Python wheel consumer matrix", "scope": "Ubuntu, macOS, and Windows with Python 3.10 through 3.13", "conclusion": "success", "evidence": "all 12 OS/Python combinations passed, including Windows clean-install and macOS CLI behavior/ownership acceptance" },
+    { "name": "Python wheel (windows-latest, Python 3.12)", "conclusion": "success", "evidence": "Windows clean-install wheel and CLI acceptance passed; artifact 14038023664" },
+    { "name": "Python wheel (macos-latest, Python 3.12)", "conclusion": "success", "evidence": "macOS CLI behavior and ownership tests passed; platform process-identity acceptance evidence uploaded as artifact 14038373139" }
+  ],
+  "active_jobs": [],
+  "limitations": [
+    "All 37 jobs completed successfully. The workflow run conclusion is success.",
+    "GitHub artifact digests are metadata only and have not been independently checked against downloaded archive bytes.",
+    "A skipped Binance testnet acceptance due to missing credentials is not testnet or live venue evidence."
+  ]
+}
