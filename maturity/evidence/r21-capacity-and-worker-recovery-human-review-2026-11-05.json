@@ -4,7 +4,7 @@
   "work_package": "R21",
   "acceptance_id": "R21-AC01",
   "reviewed_at": "2026-11-05",
-  "decision": "accepted_for_windows_local_acceptance",
+  "decision": "accepted_for_windows_and_hosted_linux_acceptance",
   "reviewed_run_ids": [
     "a325d500-2b85-4831-9c0f-6288be192764",
     "7c6ddfa8-9f79-4da0-86dc-418ca33a50f1",
@@ -15,7 +15,16 @@
     "8a6bc31a-8bad-46fc-a778-9a3e207fd8be",
     "7649b9e8-aef9-4e8b-b5ad-c484d9110c59",
     "e7c8960a-f0fc-4b2e-82be-f806bc8bf40e",
-    "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4"
+    "1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4",
+    "2dfc1d9c-d219-48fb-8e5c-a7791d86540e",
+    "5a701be8-2bf5-488d-a3d1-954a103f44a4",
+    "ca9ce099-778a-43b4-84e8-8fce494a3580",
+    "545fd223-71c5-41d6-8f3a-14c274a2b341",
+    "0a2234b3-6708-44aa-b81c-e9e324da6e5f",
+    "d33b67b4-f994-4716-8238-77fc5d79991b",
+    "0af231d1-cf7d-4b4d-ae1b-50e3902f3b92",
+    "25e4ed37-2926-4dfc-95e6-234490479e01",
+    "aa1c7988-44c2-4dc0-82ce-05e90d831c1b"
   ],
   "reviewed_artifacts": [
     "maturity/evidence/prepared-evaluation-capacity-2026-10-29.json",
@@ -36,16 +45,25 @@
     "maturity/acceptance-artifacts/8a6bc31a-8bad-46fc-a778-9a3e207fd8be.log",
     "maturity/acceptance-artifacts/7649b9e8-aef9-4e8b-b5ad-c484d9110c59.log",
     "maturity/acceptance-artifacts/e7c8960a-f0fc-4b2e-82be-f806bc8bf40e.log",
-    "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log"
+    "maturity/acceptance-artifacts/1d99448a-81cf-4d86-b6d6-82ecb7a8b2c4.log",
+    "maturity/evidence/job-queue-capacity-linux-file.json",
+    "maturity/evidence/job-queue-capacity-linux-sqlite.json",
+    "maturity/evidence/job-queue-capacity-linux-postgres.json",
+    "maturity/evidence/control-command-queue-capacity-linux-file.json",
+    "maturity/evidence/control-command-queue-capacity-linux-sqlite.json",
+    "maturity/evidence/control-command-queue-capacity-linux-postgres.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-file.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json",
+    "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
   ],
   "findings": [
     "Windows file/SQLite/PostgreSQL queue acceptance fills JobQueue and ControlCommandQueue to the configured 4096 pending-record cap, rejects overflow, and acknowledges the queued records.",
     "ControlCommandQueue tests reject commands exceeding 16 KiB; SQLite and PostgreSQL queue runs record the owner-matched worker batch and acknowledgement counts.",
     "The PostgreSQL capacity evidence records p50/p95 enqueue latency and process RSS for this Windows 11 host; values are environment-specific measurements.",
-    "File, SQLite, and PostgreSQL Paper worker evidence covers six dispatch-to-ack crash/restart boundaries with idempotent recovery."
+    "File, SQLite, and PostgreSQL Paper worker evidence covers six dispatch-to-ack crash/restart boundaries with idempotent recovery.",
+    "Hosted Ubuntu CI run #590 independently matches the Podman-reviewed queue semantics for file, SQLite, and PostgreSQL: all three reach 4,096 pending entries, acknowledge all 4,096, reject overflow (and ControlCommandQueue oversize input), and recover all six worker crash boundaries. CI records are bound to R21-AC01; performance figures remain host-specific."
   ],
   "limitations": [
-    "Linux acceptance remains outstanding.",
     "Capacity/latency/RSS numbers describe the recorded Windows host and run configuration; they are not portable performance guarantees.",
     "Crash recovery uses Paper fixtures and does not demonstrate live venue recovery."
   ]

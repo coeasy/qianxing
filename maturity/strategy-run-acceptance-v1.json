@@ -4,14 +4,18 @@
     {
       "acceptance_id": "R01-AC01",
       "work_package": "R01",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Build and install SDK/native wheel and CLI in clean Windows/Linux environments; capture doctor outputs proving version, schema digest, and target compatibility."
       ],
       "required_artifacts": [
         "Evidence for R01: python/tests/test_app_use_cases.py",
         "maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.log",
-        "maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.source-tree.json"
+        "maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.source-tree.json",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.log",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.source-tree.json",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.log",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.source-tree.json"
       ]
     },
     {
@@ -101,7 +105,7 @@
     {
       "acceptance_id": "R07-AC01",
       "work_package": "R07",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Exercise disk-full failures at result and receipt writes; use a higher-resolution macOS process-start source with explicit fallback precision, then verify the Windows/Linux/macOS status matrix on native hosts."
       ],
@@ -113,7 +117,9 @@
         "maturity/acceptance-artifacts/af7564e8-9a37-4ba2-be7b-2f7a353b6e53.log",
         "maturity/acceptance-artifacts/af7564e8-9a37-4ba2-be7b-2f7a353b6e53.source-tree.json",
         "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.log",
-        "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.source-tree.json"
+        "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.source-tree.json",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.log",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.source-tree.json"
       ]
     },
     {
@@ -219,7 +225,7 @@
     {
       "acceptance_id": "R11-AC02",
       "work_package": "R11",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "On hosted Linux, terminate a child process after every PreparedEvaluation atomic replacement boundary, then recover a complete digest-valid old or new journal without losing the durable decision."
       ],
@@ -264,7 +270,7 @@
     {
       "acceptance_id": "R13-AC01",
       "work_package": "R13",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Define and authorize checkpoint converters for strategy identity changes; bind complete behavior-affecting strategy configuration into checkpoint identity, then require account/venue reconciliation before rollback or resumed live admission."
       ],
@@ -397,7 +403,9 @@
         "crates/qx-cli/src/report_multi_market_depth/diagnostics.rs",
         "maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log",
         "maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.source-tree.json",
-        "maturity/evidence/r17-benchmark-human-review-2026-11-04.json"
+        "maturity/evidence/r17-benchmark-human-review-2026-11-04.json",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.log",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.source-tree.json"
       ]
     },
     {
@@ -430,7 +438,7 @@
     {
       "acceptance_id": "R19-AC01",
       "work_package": "R19",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Extract by behavior owner and enforce dependency direction while preserving public compatibility imports.",
         "Keep multi-account Bar evidence result/spec identity checks and source EvidenceBundle identity checks under a dedicated validation module, preserving the existing pack/verify ordering.",
@@ -641,24 +649,32 @@
         "maturity/acceptance-artifacts/98b1b96e-a50c-409a-81fd-3727b0dedaef.source-tree.json",
         "crates/qx-cli/src/cli/worker_command.rs",
         "maturity/acceptance-artifacts/b709f7d6-c533-409e-84ff-ccc06ba8f563.log",
-        "maturity/acceptance-artifacts/b709f7d6-c533-409e-84ff-ccc06ba8f563.source-tree.json"
+        "maturity/acceptance-artifacts/b709f7d6-c533-409e-84ff-ccc06ba8f563.source-tree.json",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.log",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.log",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json"
       ]
     },
     {
       "acceptance_id": "R20-AC01",
       "work_package": "R20",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Build and install wheels/CLI in clean supported environments and verify imports, examples, schemas, and capabilities."
       ],
       "required_artifacts": [
-        "Evidence for R20: docs/installation.md"
+        "Evidence for R20: docs/installation.md",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.log",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.source-tree.json",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.log",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.source-tree.json"
       ]
     },
     {
       "acceptance_id": "R21-AC01",
       "work_package": "R21",
-      "status": "planned",
+      "status": "accepted",
       "acceptance_criteria": [
         "Record versioned p50/p95, RSS, journal size, and recovery behavior for bounded PreparedEvaluation batches; fill configured file/SQLite/PostgreSQL JobQueues and ControlCommandQueues to their exact unacknowledged caps; prove overflow and oversized ControlCommand rejection without losing pending records; verify owner-matched worker batches; acknowledge all benchmark records; verify PostgreSQL transactional storage and six isolated Paper worker crash/restart boundaries with idempotent recovery. Linux acceptance remains open."
       ],
@@ -18699,6 +18715,1059 @@
         }
       ],
       "notes": "Linux CLI behavior-parity integration target preserves report and facade compatibility"
+    },
+    {
+      "run_id": "906a5c89-7e05-4da1-b380-197b882da992",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-13T02:01:33.283885Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "cdcbc29f34842acaac18b5ec34f58b8fd799f6ce76962f08c45285ed80df37ed",
+      "source_manifest": "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r01",
+        "--cli-root",
+        "/home/runner/work/_temp/qx-clean-install-shared-cli",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "python/tests/test_app_use_cases.py",
+          "sha256": "f04e5da2c35bf7c3501161585f086c752a9b7a6afd3b8fb7d58601ce518ab08b"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.log",
+          "sha256": "d8b4ba1ed3f9dbdb6e1301812650ab606bac045924d7f56061b9ed5ce1c696c9"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.source-tree.json",
+          "sha256": "a822917aade9be011e5204fd099a92a731102a7c7ecacc62cae4fadd17f6f2ba"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution"
+    },
+    {
+      "run_id": "de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2",
+      "acceptance_id": "R20-AC01",
+      "recorded_at_utc": "2026-11-13T02:01:37.316545Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "cdcbc29f34842acaac18b5ec34f58b8fd799f6ce76962f08c45285ed80df37ed",
+      "source_manifest": "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.12.16",
+        "python_executable": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_clean_install.py",
+        "--python",
+        "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+        "--work-dir",
+        "/home/runner/work/_temp/qx-clean-install-r20",
+        "--cli-root",
+        "/home/runner/work/_temp/qx-clean-install-shared-cli",
+        "--wheel",
+        "dist/qianxing-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "docs/installation.md",
+          "sha256": "8c810035020148f63083b2c9594d4239db2e0f339360534d48c111291746aa4a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.log",
+          "sha256": "af260c071f86e8753d770e965c8991808779a4e20a0915f013a30052fee642b6"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.source-tree.json",
+          "sha256": "a822917aade9be011e5204fd099a92a731102a7c7ecacc62cae4fadd17f6f2ba"
+        }
+      ],
+      "notes": "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
+    },
+    {
+      "run_id": "27640e0e-63db-416c-80db-e3f691c5b6e7",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-13T02:10:20.519555Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8125cffd5b6c46e2747a1c8bc5a10d440f59fe82f0eca250b9b22b6fe1b1c19",
+      "source_manifest": "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "2025Server",
+        "machine": "AMD64",
+        "python_version": "3.12.10",
+        "python_executable": "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/accept_clean_install.py",
+        "--python",
+        "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe",
+        "--work-dir",
+        "D:\\a\\_temp\\qx-clean-install-r01",
+        "--cli-root",
+        "D:\\a\\_temp\\qx-clean-install-shared-cli",
+        "--wheel",
+        "D:\\a\\qianxing\\qianxing\\dist\\qianxing-0.4.0-cp310-abi3-win_amd64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "python/tests/test_app_use_cases.py",
+          "sha256": "f04e5da2c35bf7c3501161585f086c752a9b7a6afd3b8fb7d58601ce518ab08b"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.log",
+          "sha256": "6bd9bbcfa5b89c178709cc830274697b4e8b724163aee7e2a003426edb404bf6"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.source-tree.json",
+          "sha256": "07c7e1240f75a1ab1315696add4ac68d6fdd09696ddce9ba661de45c9c2c8269"
+        }
+      ],
+      "notes": "Clean Windows Python 3.12 wheel/CLI install; doctor verifies native/CLI schema match and quickstart/example execution"
+    },
+    {
+      "run_id": "2a987d15-f9d9-4b71-b0d5-d0640d7da559",
+      "acceptance_id": "R20-AC01",
+      "recorded_at_utc": "2026-11-13T02:10:27.664228Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8125cffd5b6c46e2747a1c8bc5a10d440f59fe82f0eca250b9b22b6fe1b1c19",
+      "source_manifest": "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "2025Server",
+        "machine": "AMD64",
+        "python_version": "3.12.10",
+        "python_executable": "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/accept_clean_install.py",
+        "--python",
+        "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe",
+        "--work-dir",
+        "D:\\a\\_temp\\qx-clean-install-r20",
+        "--cli-root",
+        "D:\\a\\_temp\\qx-clean-install-shared-cli",
+        "--wheel",
+        "D:\\a\\qianxing\\qianxing\\dist\\qianxing-0.4.0-cp310-abi3-win_amd64.whl"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_clean_install.py",
+          "sha256": "87f50d540b58fd2d97c1fd1b833f57964857930a649e395411b0551c2734708c"
+        },
+        {
+          "path": "tools/test_accept_clean_install.py",
+          "sha256": "6867acef246250aec358052fabfc80a1e9215ee573fabb81eb6ca9417c01c5b4"
+        },
+        {
+          "path": "docs/installation.md",
+          "sha256": "8c810035020148f63083b2c9594d4239db2e0f339360534d48c111291746aa4a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.log",
+          "sha256": "fcee22c21154fd4ad02ed90a7a25d3dc1cee27cba69f355f20dc4016018baba9"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.source-tree.json",
+          "sha256": "07c7e1240f75a1ab1315696add4ac68d6fdd09696ddce9ba661de45c9c2c8269"
+        }
+      ],
+      "notes": "Clean Windows Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
+    },
+    {
+      "run_id": "389e6bd8-1289-4d6a-b80d-f3cb81ad1c55",
+      "acceptance_id": "R07-AC01",
+      "recorded_at_utc": "2026-11-13T01:53:30.541272Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8125cffd5b6c46e2747a1c8bc5a10d440f59fe82f0eca250b9b22b6fe1b1c19",
+      "source_manifest": "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_project_run_identity.py",
+        "maturity/evidence/project-run-identity-macos.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_project_run_identity.py",
+          "sha256": "08c6f66ceecb65312e28ac64f60a463a5691624108396d871e235129651f477d"
+        },
+        {
+          "path": "python/qianxing/project_runs.py",
+          "sha256": "7c4fd6967a5c3b7d544eacad40fa37cd810cda0e555e96bb388fcb87fa8c3b2e"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.log",
+          "sha256": "473e61ab5566e80547f028259ab19571c2d1b70aaa2cc8aa781217aa6b01134b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.source-tree.json",
+          "sha256": "07c7e1240f75a1ab1315696add4ac68d6fdd09696ddce9ba661de45c9c2c8269"
+        }
+      ],
+      "notes": "Native macOS proc_pidinfo verifies microsecond process-start precision, the real ps fallback reports one-second precision, and both paths reject stale process identities"
+    },
+    {
+      "run_id": "a1ab9a45-9ec1-4cb5-ab32-927880076be6",
+      "acceptance_id": "R17-AC01",
+      "recorded_at_utc": "2026-11-13T01:56:09.222433Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "902d463a02b1506ca84072aed53b491a0726a9e09b2546bf932badd2275ea785",
+      "source_manifest": "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_backtest_metrics_contract.py"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_backtest_metrics_contract.py",
+          "sha256": "7b9164d571574783c0f732e0190f2d9bfbc446cdf99820eef62de0079c5b61d9"
+        },
+        {
+          "path": "crates/qx-core/src/performance.rs",
+          "sha256": "089fbe40585a2c9557a3549b9b074bf2591de2e2038fe04ac5047be5bdec1fff"
+        },
+        {
+          "path": "crates/qx-app/src/artifact_store/backtest_summary.rs",
+          "sha256": "dc08a552ed25301b11f49775c004c61b8001f8b574b29696468c6fb012c34fc9"
+        },
+        {
+          "path": "crates/qx-cli/src/report_html.rs",
+          "sha256": "75daf5f23a11d7b60b70cdcf2d72412f84948b9ba39639f4cca2584a192b60c8"
+        },
+        {
+          "path": "crates/qx-cli/src/report_xlsx/rows.rs",
+          "sha256": "28b9c70480d13c3bd8974d72cf5edc53bd7a506e159b6efb0551d063ba5d8406"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.log",
+          "sha256": "68ea2da8ab99f37e9f915e0b100bf78a2a87205bae66d222ab1163be7a76a194"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.source-tree.json",
+          "sha256": "f6213ebe9bf3fc950c3f5fe9171993f8d7645d2710b9ed635b977d27f01a0eab"
+        }
+      ],
+      "notes": "macOS focused Rust metric and report projections preserve daily labels and exact large-value precision"
+    },
+    {
+      "run_id": "f40b33b5-1523-4dda-ad40-8f29577a7733",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-13T02:02:59.704117Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "902d463a02b1506ca84072aed53b491a0726a9e09b2546bf932badd2275ea785",
+      "source_manifest": "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "env",
+        "QX_CLI_TEST_BINARY=/Users/runner/work/qianxing/qianxing/target/debug/qx-cli",
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/cli.rs",
+          "sha256": "c82304187f46aa50ffa7b30209edbc09f6bec0a4ce76cd087c78aac868d0f3f1"
+        },
+        {
+          "path": "crates/qx-cli/src/cli_command_manifest.json",
+          "sha256": "c2b05fc36e0ec19e37d9ced26d3ab4c2b6c7f800130b4957a1d112583f636d03"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "5874427ff30013e8f78b354e241480f0c13d9069c27f3062cb658f4646c611ac"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "82fe733b7ed6d8148a50e08d0709aed9742b1cb73acf9b1b1971af5f8d079904"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.log",
+          "sha256": "a08b3508e2b4139df78b0a4f551111e1b65c40cb1dd0e52b48ff11831bef8443"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
+          "sha256": "f6213ebe9bf3fc950c3f5fe9171993f8d7645d2710b9ed635b977d27f01a0eab"
+        }
+      ],
+      "notes": "macOS qx-cli unit suite uses the freshly built Cargo target binary explicitly and verifies CLI facade routing and compatibility"
+    },
+    {
+      "run_id": "be79b8bb-48da-4364-b842-d4644f2db454",
+      "acceptance_id": "R19-AC01",
+      "recorded_at_utc": "2026-11-13T02:03:23.073770Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "902d463a02b1506ca84072aed53b491a0726a9e09b2546bf932badd2275ea785",
+      "source_manifest": "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json",
+      "environment": {
+        "system": "Darwin",
+        "release": "25.6.0",
+        "machine": "arm64",
+        "python_version": "3.12.10",
+        "python_executable": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--test",
+        "cli_behavior_parity",
+        "--",
+        "--test-threads=1"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity.rs",
+          "sha256": "5874427ff30013e8f78b354e241480f0c13d9069c27f3062cb658f4646c611ac"
+        },
+        {
+          "path": "crates/qx-cli/tests/cli_behavior_parity/report_metrics_projection.rs",
+          "sha256": "82fe733b7ed6d8148a50e08d0709aed9742b1cb73acf9b1b1971af5f8d079904"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.log",
+          "sha256": "a0d52bbdc0d94c5b76ceebab3b04b17999f75568de3d26e29f36e0eadab9f3e4"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json",
+          "sha256": "f6213ebe9bf3fc950c3f5fe9171993f8d7645d2710b9ed635b977d27f01a0eab"
+        }
+      ],
+      "notes": "macOS CLI behavior-parity integration target preserves report and facade compatibility"
+    },
+    {
+      "run_id": "ced4a197-2cd0-42aa-b82f-04b7af3f25ad",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-13T01:36:12.355005Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8125cffd5b6c46e2747a1c8bc5a10d440f59fe82f0eca250b9b22b6fe1b1c19",
+      "source_manifest": "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_deployment_lifecycle.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--runtime-template",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--openssl",
+        "/usr/bin/openssl",
+        "--storage-backend",
+        "postgres",
+        "--evidence-out",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_deployment_lifecycle.py",
+          "sha256": "5e03fa9f47de50d86e292441045fd59eb0142766a3ff1fb8b48712cfef5ae10b"
+        },
+        {
+          "path": "tools/check_strategy_deployment_lifecycle_evidence.py",
+          "sha256": "ebc50f13381219fbf725100c1906151561b3cc616e5e6d5a6c9f5f9d28e800e5"
+        },
+        {
+          "path": "crates/qx-orchestrator/src/strategy_deployment.rs",
+          "sha256": "d3f48e278912174fb907a0a0c58e48d659d1ddd7ad6f7f499631d518ecee7bb1"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        },
+        {
+          "path": "crates/qx-runtime/src/strategy_deployment_store.rs",
+          "sha256": "7daf73e55456df70f61b37665d00b31734d84b07878439f1b98649b4727e0e7a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.log",
+          "sha256": "a24eb9e6558e380d1e16e75b705a545b9c117ed5548602f0a059b79e43dac61b"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.source-tree.json",
+          "sha256": "07c7e1240f75a1ab1315696add4ac68d6fdd09696ddce9ba661de45c9c2c8269"
+        }
+      ],
+      "notes": "Linux PostgreSQL Paper lifecycle: deploy, pause/resume, rollback, failed replacement restoration, and stop through the authenticated console and real supervisor"
+    },
+    {
+      "run_id": "ec01abc9-6749-46a7-94dd-328ed070bef0",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-13T01:37:12.802356Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "26fddf7404f0c080374382e6f63980d71adaf0227e45ae1d9e05416c4ccb858a",
+      "source_manifest": "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "tools/accept_strategy_deployment_lifecycle.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--runtime-template",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--openssl",
+        "/usr/bin/openssl",
+        "--storage-backend",
+        "postgres",
+        "--evidence-out",
+        "maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json"
+      ],
+      "inputs": [
+        {
+          "path": "tools/accept_strategy_deployment_lifecycle.py",
+          "sha256": "5e03fa9f47de50d86e292441045fd59eb0142766a3ff1fb8b48712cfef5ae10b"
+        },
+        {
+          "path": "tools/check_strategy_deployment_lifecycle_evidence.py",
+          "sha256": "ebc50f13381219fbf725100c1906151561b3cc616e5e6d5a6c9f5f9d28e800e5"
+        },
+        {
+          "path": "crates/qx-orchestrator/src/lib.rs",
+          "sha256": "6a21fdb900e9477b190f675256c1dfff6d5720e20019f1894de4a0facbceb8d7"
+        },
+        {
+          "path": "crates/qx-runtime/src/supervision/shutdown.rs",
+          "sha256": "4bdab3d3398d057d13edca567a7f844c13eb1ab7a3a8359223a8c43e06aeccd6"
+        },
+        {
+          "path": "python/tests/fixtures/runtime_checkpoint_process_strategy.py",
+          "sha256": "50ae40db2605dd7dd0d958504bc12a3be9c58f1bafe4291fc6589ea08779ef3b"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.log",
+          "sha256": "52e6296ef87124d53d9343d77f99c79e17eb10436722e2f711445c842787f7d6"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.source-tree.json",
+          "sha256": "4c3ee06c822b408e6343749e4079f03d1fac075640f0620b42bf0f942eaaa382"
+        }
+      ],
+      "notes": "Linux PostgreSQL Paper supervisor restart commits and restores a Python strategy checkpoint across supervisor and worker PID changes with clean stdin EOF shutdown"
+    },
+    {
+      "run_id": "2dfc1d9c-d219-48fb-8e5c-a7791d86540e",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:37:48.227575Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "6788e8d2decd723b4753b2b7b2c6307a44041c2015ebf8c3768c3ff485398736",
+      "source_manifest": "maturity/acceptance-artifacts/2dfc1d9c-d219-48fb-8e5c-a7791d86540e.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "file",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/2dfc1d9c-d219-48fb-8e5c-a7791d86540e.log",
+          "sha256": "92198b539e6f7194318ec7a48fd65f3bb27b47b7658b2996781dac78bd477dc0"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/2dfc1d9c-d219-48fb-8e5c-a7791d86540e.source-tree.json",
+          "sha256": "e996dffa6d417fd9773760e556930c2cb54e796a845d6d26bb8ac97f4c3c95cd"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: file; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "5a701be8-2bf5-488d-a3d1-954a103f44a4",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:38:21.509385Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "84f48d90241b598d470e3e0767ffca139af7c15dd21910df5e734b4a589ee697",
+      "source_manifest": "maturity/acceptance-artifacts/5a701be8-2bf5-488d-a3d1-954a103f44a4.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "sqlite",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/5a701be8-2bf5-488d-a3d1-954a103f44a4.log",
+          "sha256": "a389997e11d0acd24a6c5fbc9b0fbf183b2eaaf82078ccc3470f936fc5989a5a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/5a701be8-2bf5-488d-a3d1-954a103f44a4.source-tree.json",
+          "sha256": "96e9eaf170a7d71083c7d723fed834ee4a2e69c150ca094657429709ce14bed6"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: sqlite; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "ca9ce099-778a-43b4-84e8-8fce494a3580",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:38:58.492262Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8ed5b933b3f3aa20889ea788d95410d4da4c661e4a19aaaf74dded5ceb5ec77",
+      "source_manifest": "maturity/acceptance-artifacts/ca9ce099-778a-43b4-84e8-8fce494a3580.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--queue-only",
+        "--queue-backend",
+        "postgres",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/job-queue-capacity-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/ca9ce099-778a-43b4-84e8-8fce494a3580.log",
+          "sha256": "0eadaf123b109f9f7de06bf224186f710f25a0375774b4084a69955b17f76204"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/ca9ce099-778a-43b4-84e8-8fce494a3580.source-tree.json",
+          "sha256": "42e4c6e356f1e57635f128d0d4399b568e204acf72b3fda1f96ee7c3e50def05"
+        }
+      ],
+      "notes": "Linux durable JobQueue capacity: postgres; 4096 pending limit, overflow rejection, owner batch and acknowledgement"
+    },
+    {
+      "run_id": "545fd223-71c5-41d6-8f3a-14c274a2b341",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:39:12.722773Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "bffe00a922425949b6aa6721eed04814ec36c194e27f37fbb471ac820a378ec0",
+      "source_manifest": "maturity/acceptance-artifacts/545fd223-71c5-41d6-8f3a-14c274a2b341.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "file",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "25d568fe377e54c46f86f0ee8a6ba4616aa882cb74586d0dbf172feaaf5a8bbb"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/545fd223-71c5-41d6-8f3a-14c274a2b341.log",
+          "sha256": "f72915014d207d1ca1619bbf4774d46d1a2620d92e58e2a44980f6edbe08ee49"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/545fd223-71c5-41d6-8f3a-14c274a2b341.source-tree.json",
+          "sha256": "fa2f56d697d6ce9fbf5fc0f9169ccfb478a9a2a7966f5b7a6aa212660d92a9a0"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: file; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "0a2234b3-6708-44aa-b81c-e9e324da6e5f",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:39:44.378665Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "a424b67430c8ac2150af1b5fb0bde6c5c13ac75a2ed8aaa7fa1d673259e66fcb",
+      "source_manifest": "maturity/acceptance-artifacts/0a2234b3-6708-44aa-b81c-e9e324da6e5f.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "sqlite",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "25d568fe377e54c46f86f0ee8a6ba4616aa882cb74586d0dbf172feaaf5a8bbb"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0a2234b3-6708-44aa-b81c-e9e324da6e5f.log",
+          "sha256": "2553b6e17c7e6609539a53d2824271d07b9f6348cc844e0caab8100c160463ec"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0a2234b3-6708-44aa-b81c-e9e324da6e5f.source-tree.json",
+          "sha256": "0cacbf2aa598ad7d1cbb9a9d402eb9713ce77b20224e08e0771751ff5de234f3"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: sqlite; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "d33b67b4-f994-4716-8238-77fc5d79991b",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:40:16.827856Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "eacc6448797ed66dfa126d0674aa30dfad52a48009da29700dca2a12b55724d0",
+      "source_manifest": "maturity/acceptance-artifacts/d33b67b4-f994-4716-8238-77fc5d79991b.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_prepared_evaluation_capacity.py",
+        "--binary",
+        "target/debug/qx-cli",
+        "--control-queue-only",
+        "--queue-backend",
+        "postgres",
+        "--queue-capacity",
+        "4096",
+        "--out",
+        "maturity/evidence/control-command-queue-capacity-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_prepared_evaluation_capacity.py",
+          "sha256": "5d47a31b759a19f771fb70d28c4b53ddf6d83ddd688f62b787f951757bb804fe"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        },
+        {
+          "path": "crates/qx-storage/src/control_queue.rs",
+          "sha256": "25d568fe377e54c46f86f0ee8a6ba4616aa882cb74586d0dbf172feaaf5a8bbb"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/d33b67b4-f994-4716-8238-77fc5d79991b.log",
+          "sha256": "124b7aa71a12f5ebe94cbea1832ac4b7349dda021a1c032a239429bdf733d96f"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/d33b67b4-f994-4716-8238-77fc5d79991b.source-tree.json",
+          "sha256": "ec189ef4b6a7c83321eae121eab175606a228183b4cf1f190322d52d2c992a5b"
+        }
+      ],
+      "notes": "Linux ControlCommandQueue capacity: postgres; 4096 pending limit, overflow and oversized rejection, acknowledgement"
+    },
+    {
+      "run_id": "0af231d1-cf7d-4b4d-ae1b-50e3902f3b92",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:40:38.236924Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "7c996ef769d15ad1bd22c18baf740aa049a873d21f60194e8877be6689a97736",
+      "source_manifest": "maturity/acceptance-artifacts/0af231d1-cf7d-4b4d-ae1b-50e3902f3b92.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "file",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-file.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/0af231d1-cf7d-4b4d-ae1b-50e3902f3b92.log",
+          "sha256": "5bb4c741d0c9673262f22c33562ef140001e01383f4d73a9f55e59b23ec4185a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/0af231d1-cf7d-4b4d-ae1b-50e3902f3b92.source-tree.json",
+          "sha256": "250a06e3ea9e6551eb49480c5781bddab7707a8dd355e3755759e70ac2142aed"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: file; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "25e4ed37-2926-4dfc-95e6-234490479e01",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:40:59.354699Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "f630911f97d909e0cb693f441209a9d935d6bcb3086e812cf7f3660241a99371",
+      "source_manifest": "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "sqlite",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-sqlite.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.log",
+          "sha256": "a09827c1324afc3ff232d4d1eab4b738317d95eb1173cd7baa65c19e6c89d346"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.source-tree.json",
+          "sha256": "d02721034c83f533e36f1e0433b91dfc938bb8e1f6f78f93c9cb290dc92f4fba"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: sqlite; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "aa1c7988-44c2-4dc0-82ce-05e90d831c1b",
+      "acceptance_id": "R21-AC01",
+      "recorded_at_utc": "2026-11-13T01:42:11.370133Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e518b018de8f089ad210997c068095667977e36b313c19041004b0c8e59aa806",
+      "source_manifest": "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "python3",
+        "benchmarks/run_strategy_worker_crash_recovery.py",
+        "--backend",
+        "postgres",
+        "--runtime",
+        "deploy/qianxing.runtime.paper-strategy.example.json",
+        "--binary",
+        "target/debug/qx-cli",
+        "--output",
+        "maturity/evidence/strategy-worker-crash-recovery-linux-postgres.json"
+      ],
+      "inputs": [
+        {
+          "path": "benchmarks/run_strategy_worker_crash_recovery.py",
+          "sha256": "7e6d53ef00b0952ad4cc63aa428e95469706ef87c00e31602064e2cc0a0e1697"
+        },
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker.rs",
+          "sha256": "ec66a6d74363479bfcb7858e0a203eb5c88855d7fbd3b08a373624254c3c173c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "d82beac5013c5c8f42ee763397365db838474063e76864c625a6d5d2cf16b850"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.log",
+          "sha256": "2bdd6e74ed937dbd35680f3825f20b09d9b6db1ea887175816e8736dfc00ab9d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.source-tree.json",
+          "sha256": "fb2a8f373cce3607c63fb2b9ee777b11924fe9a4d906c03900c91395865ea464"
+        }
+      ],
+      "notes": "Linux Paper Strategy worker crash/restart: postgres; six persistence boundaries and idempotent recovery"
+    },
+    {
+      "run_id": "39e4b16c-4319-4224-ad1a-95757b1929f4",
+      "acceptance_id": "R11-AC02",
+      "recorded_at_utc": "2026-11-13T01:42:24.642905Z",
+      "source_revision": "bed90c14899d97cbbee355730cac2f3d47225d8f",
+      "source_tree_sha256": "e8125cffd5b6c46e2747a1c8bc5a10d440f59fe82f0eca250b9b22b6fe1b1c19",
+      "source_manifest": "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.source-tree.json",
+      "environment": {
+        "system": "Linux",
+        "release": "7.0.0-1019-azure",
+        "machine": "x86_64",
+        "python_version": "3.14.4",
+        "python_executable": "/usr/bin/python3"
+      },
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "qx-cli",
+        "--bin",
+        "qx-cli",
+        "workers::strategy_worker::execution_updates::prepared_evaluation::crash_recovery_tests::save_crash_boundaries_recover_a_valid_record",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs",
+          "sha256": "155c84ddc929bd0a16cf570ac971b39115dd4767e57a71269da2c19bbfbe039a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.log",
+          "sha256": "d51e39604f0a5f95e09204f794aedcb56d9602824cb3b7fa81271432a899b7ea"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.source-tree.json",
+          "sha256": "07c7e1240f75a1ab1315696add4ac68d6fdd09696ddce9ba661de45c9c2c8269"
+        }
+      ],
+      "notes": "Hosted Linux process exits after every PreparedEvaluation atomic replacement boundary; recovery returns a complete digest-valid old or new journal"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

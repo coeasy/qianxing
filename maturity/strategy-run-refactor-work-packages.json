@@ -3,11 +3,11 @@
     {
       "id": "R01",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Linux Python 3.12 clean wheel/CLI acceptance is reviewed and source-bound; Windows clean wheel plus CLI acceptance is still needed to close the cross-platform install contract."
+        "No remaining R01 acceptance gaps; keep the cross-platform clean wheel/CLI acceptance wired into CI."
       ],
-      "next_action": "Add a clean Windows wheel/CLI acceptance and bind its source manifest; retain the Linux acceptance as the release baseline.",
+      "next_action": "Preserve Windows/Linux clean install, doctor, documented example, and quickstart checks as release regressions.",
       "code_paths": [
         "python/tests/test_app_use_cases.py",
         "tools/accept_clean_install.py"
@@ -25,7 +25,11 @@
         "maturity/acceptance-artifacts/5ee99dfe-ed22-49b9-8b8f-cb28b9945a51.source-tree.json",
         "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
         "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.log",
-        "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.source-tree.json"
+        "maturity/acceptance-artifacts/741168f9-5d94-4587-a08e-73ed5ed9c6a6.source-tree.json",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.log",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.source-tree.json",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.log",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.source-tree.json"
       ]
     },
     {
@@ -151,11 +155,11 @@
     {
       "id": "R07",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Native macOS proc_pidinfo and real ps fallback acceptance now pass; bind a fresh full hosted macOS matrix after CI dependency-cache repair to ensure the platform suite reaches all focused checks."
+        "No remaining R07 acceptance gaps: disk-full/process identity coverage and native Windows, Linux, and macOS checks pass in hosted CI."
       ],
-      "next_action": "Re-run hosted macOS acceptance after the cargo fetch fix and preserve the native identity acceptance evidence.",
+      "next_action": "Keep the disk-full and platform process-identity matrix wired into CI.",
       "code_paths": [
         "python/qianxing/project_runs.py",
         "python/tests/test_project_runs.py",
@@ -178,7 +182,9 @@
         "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.log",
         "maturity/acceptance-artifacts/b19985c1-30aa-4ce1-8489-df728fd3a02e.source-tree.json",
         "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.log",
-        "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.source-tree.json"
+        "maturity/acceptance-artifacts/e4278ef6-c870-4a6b-84fb-88c8bbf35fba.source-tree.json",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.log",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.source-tree.json"
       ]
     },
     {
@@ -378,9 +384,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu PR CI pass six-boundary worker recovery across file, SQLite, and PostgreSQL with persisted cursor assertions. Separate atomic journal-boundary acceptance R11-AC02 is now registered in the hosted Rust core job; its result and artifact review remain open."
+        "R11-AC02 atomic journal boundary recovery passed hosted Linux. R11-AC01 remains unaccepted as a distinct ledger scenario; its six-boundary hosted Linux evidence is currently bound to R21-AC01 alongside the previously reviewed Windows evidence."
       ],
-      "next_action": "Review the current hosted Linux R11-AC02 atomic journal crash-boundary record and the R11/R21 durable recovery artifacts against the Podman results.",
+      "next_action": "Bind the six-boundary worker recovery records to R11-AC01 with a distinct acceptance run or explicitly reconcile its scope with R21-AC01.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
@@ -418,7 +424,9 @@
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.log",
+        "maturity/acceptance-artifacts/39e4b16c-4319-4224-ad1a-95757b1929f4.source-tree.json"
       ]
     },
     {
@@ -481,9 +489,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass PostgreSQL Paper lifecycle and supervisor checkpoint restart; hosted evidence validators pass. Authoritative full live-readiness evidence remains open."
+        "Paper deployment lifecycle and PostgreSQL supervisor checkpoint restart now pass hosted Linux acceptance; authoritative full live-readiness evidence remains open."
       ],
-      "next_action": "Review strategy-storage-recovery-linux from PR CI #423 and bind authoritative live-readiness evidence.",
+      "next_action": "Bind externally reviewed live-readiness evidence when authorized venue/testnet credentials and trust roots are available.",
       "code_paths": [
         ".github/workflows/ci.yml",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/checkpoint.rs",
@@ -555,7 +563,11 @@
         "maturity/acceptance-artifacts/0e4ce680-40b1-41c4-be16-04c221d5d901.source-tree.json",
         "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.log",
         "maturity/acceptance-artifacts/aa76cf92-4efd-48ee-93c8-46cc74245d9e.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.log",
+        "maturity/acceptance-artifacts/ced4a197-2cd0-42aa-b82f-04b7af3f25ad.source-tree.json",
+        "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.log",
+        "maturity/acceptance-artifacts/ec01abc9-6749-46a7-94dd-328ed070bef0.source-tree.json"
       ]
     },
     {
@@ -696,9 +708,9 @@
       "title": null,
       "status": "complete",
       "blockers": [
-        "No current R17 acceptance gap remains: Linux and macOS focused metric/report contracts pass on the same PR merge revision; retain these source-bound records as the parity baseline."
+        "No current R17 acceptance gap remains: Linux and macOS metric/report contracts pass on the same PR merge revision."
       ],
-      "next_action": "Keep the versioned metrics/report projection and cross-platform parity checks in CI when report schemas or cost/performance metrics change.",
+      "next_action": "Keep versioned metrics and report projections in CI when schemas or performance accounting change.",
       "code_paths": [
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
@@ -772,7 +784,9 @@
         "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.log",
         "maturity/acceptance-artifacts/64e99707-69e2-4584-85cd-ad44ac4275f7.source-tree.json",
         "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.log",
-        "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.source-tree.json"
+        "maturity/acceptance-artifacts/79dbafdb-5d15-4b7c-a8fc-d4a8186c6e55.source-tree.json",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.log",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.source-tree.json"
       ]
     },
     {
@@ -819,11 +833,11 @@
     {
       "id": "R19",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Latest hosted macOS R19 run compiled successfully but 10 subprocess-oriented unit tests failed because Cargo exposed an OUT_DIR test path and the binary-discovery fallback did not locate qx-cli. The workflow now resolves the binary through cargo metadata and sets QX_CLI_TEST_BINARY; a hosted rerun is required."
+        "No current R19 acceptance gap remains: macOS CLI unit and behavior-parity checks pass with the explicit test-binary path."
       ],
-      "next_action": "Push the explicit macOS test-binary path fix and bind passing macOS R19 unit and behavior-parity results.",
+      "next_action": "Preserve CLI facade routing, ownership, and behavior-parity checks on macOS and other supported platforms.",
       "code_paths": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "python/qianxing/client_trading.py",
@@ -1240,17 +1254,21 @@
         "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.log",
         "maturity/acceptance-artifacts/bde88a3b-938a-465d-8700-1bad4f4927b8.source-tree.json",
         "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.log",
-        "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.source-tree.json"
+        "maturity/acceptance-artifacts/19d294fd-e239-48b6-9778-1b00e47e7e52.source-tree.json",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.log",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.log",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json"
       ]
     },
     {
       "id": "R20",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Linux Python 3.12 validates package imports, schemas, documented examples, quickstart, and CLI install; Windows documented quickstart acceptance remains unbound."
+        "No remaining R20 acceptance gaps; keep the cross-platform clean wheel/CLI acceptance wired into CI."
       ],
-      "next_action": "Add a clean Windows quickstart acceptance, then re-evaluate whether the documented install paths are release-ready on both supported desktop platforms.",
+      "next_action": "Preserve Windows/Linux clean install, doctor, documented example, and quickstart checks as release regressions.",
       "code_paths": [
         "tools/accept_clean_install.py",
         "crates/qx-cli/src/init_project.rs",
@@ -1270,17 +1288,21 @@
         "maturity/acceptance-artifacts/e9cb8bdb-26f7-42c8-ac57-af3525ca6ef6.source-tree.json",
         "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
         "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.log",
-        "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.source-tree.json"
+        "maturity/acceptance-artifacts/1801b783-6442-4e8c-a487-0764af4f5af6.source-tree.json",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.log",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.source-tree.json",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.log",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.source-tree.json"
       ]
     },
     {
       "id": "R21",
       "title": null,
-      "status": "partial",
+      "status": "complete",
       "blockers": [
-        "Debian 12 Podman and hosted Ubuntu PR CI #423 pass 4,096-entry capacity on file, SQLite, and PostgreSQL plus six worker crash boundaries. The uploaded capacity/recovery artifact still needs comparison with the Podman results."
+        "No R21 acceptance failures remain; external exchange authorization and live-readiness evidence are tracked separately under R23."
       ],
-      "next_action": "Compare the capacity and recovery evidence in strategy-storage-recovery-linux from PR CI #423 with the Podman results, then bind the comparison.",
+      "next_action": "No remaining R21 acceptance gaps. Live venue authorization, external testnet lifecycle, and live-readiness evidence are tracked separately under R23.",
       "code_paths": [
         "crates/qx-storage/src/lib.rs",
         "crates/qx-storage/src/job_queue.rs",
@@ -1376,7 +1398,25 @@
         "maturity/acceptance-artifacts/38a7eec0-165d-4749-a2c8-d30e67be702c.source-tree.json",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.log",
         "maturity/acceptance-artifacts/58875a25-f3ae-46fc-98c8-c08eaae43816.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/acceptance-artifacts/2dfc1d9c-d219-48fb-8e5c-a7791d86540e.log",
+        "maturity/acceptance-artifacts/2dfc1d9c-d219-48fb-8e5c-a7791d86540e.source-tree.json",
+        "maturity/acceptance-artifacts/5a701be8-2bf5-488d-a3d1-954a103f44a4.log",
+        "maturity/acceptance-artifacts/5a701be8-2bf5-488d-a3d1-954a103f44a4.source-tree.json",
+        "maturity/acceptance-artifacts/ca9ce099-778a-43b4-84e8-8fce494a3580.log",
+        "maturity/acceptance-artifacts/ca9ce099-778a-43b4-84e8-8fce494a3580.source-tree.json",
+        "maturity/acceptance-artifacts/545fd223-71c5-41d6-8f3a-14c274a2b341.log",
+        "maturity/acceptance-artifacts/545fd223-71c5-41d6-8f3a-14c274a2b341.source-tree.json",
+        "maturity/acceptance-artifacts/0a2234b3-6708-44aa-b81c-e9e324da6e5f.log",
+        "maturity/acceptance-artifacts/0a2234b3-6708-44aa-b81c-e9e324da6e5f.source-tree.json",
+        "maturity/acceptance-artifacts/d33b67b4-f994-4716-8238-77fc5d79991b.log",
+        "maturity/acceptance-artifacts/d33b67b4-f994-4716-8238-77fc5d79991b.source-tree.json",
+        "maturity/acceptance-artifacts/0af231d1-cf7d-4b4d-ae1b-50e3902f3b92.log",
+        "maturity/acceptance-artifacts/0af231d1-cf7d-4b4d-ae1b-50e3902f3b92.source-tree.json",
+        "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.log",
+        "maturity/acceptance-artifacts/25e4ed37-2926-4dfc-95e6-234490479e01.source-tree.json",
+        "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.log",
+        "maturity/acceptance-artifacts/aa1c7988-44c2-4dc0-82ce-05e90d831c1b.source-tree.json"
       ]
     },
     {
@@ -1399,9 +1439,10 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows qx-cli unit suite passes 486/486 and serialized behavior parity passes 36/36; Debian 12 Linux cargo test --workspace --all-targets --locked --offline passed on source revision 07505ae. GitHub Actions run 417 passed the Rust workspace tests but exposed runtime-data pollution from the CLI dispatch fixture, Python wheel test setup, Python 3.10 import-cache cleanup, Windows/Linux source digest portability, and the intentionally unprovisioned Binance testnet trust catalog. Local fix verification now passes: Linux qx-cli unit and integration targets, the CLI runtime-data isolation check, all four architecture shards (1,624 checks), and the Windows Python suite (608 tests, 7 skipped). The hosted rerun is pending. Hosted macOS-native acceptance, licensed-data, authorized venue, and live-readiness evidence remain pending."
+        "GitHub Actions PR CI run #590 passed 37/37 jobs on source head 378bae84: Linux/Windows/macOS wheel matrices, Linux performance and durable-storage gates, R01/R20 clean installs, macOS R07/R17/R19, and pinned CCXT request contracts (8/8).",
+        "Licensed provenance-backed HS300 data, authorized venue/testnet credentials and trust roots, and externally reviewed live-readiness evidence remain unavailable; Binance testnet acceptance therefore remains skipped when credentials are absent."
       ],
-      "next_action": "Push the locally validated fixes and review the new hosted CI run; then add hosted macOS-native acceptance evidence and retain licensed-data, authorized venue, and live-readiness gates until their evidence exists.",
+      "next_action": "After licensed data and authorized OKX/Binance/Bitget testnet credentials are provisioned, run venue-specific order/recovery/reconciliation acceptance; keep live-readiness claims gated on reviewed external evidence.",
       "code_paths": [
         "maturity/strategy-run-acceptance-v1.json",
         "schemas/strategy-run-acceptance-v1.json",
@@ -1480,7 +1521,23 @@
         "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.log",
         "maturity/acceptance-artifacts/0b3bcd13-2456-47ac-8a0c-ab1ebaea9549.source-tree.json",
         "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.log",
-        "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.source-tree.json"
+        "maturity/acceptance-artifacts/b539f851-f41f-4bf7-8e26-ad7ceda68b3c.source-tree.json",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.log",
+        "maturity/acceptance-artifacts/906a5c89-7e05-4da1-b380-197b882da992.source-tree.json",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.log",
+        "maturity/acceptance-artifacts/de7ae9b9-8bf6-4c85-bcb3-cef6fa994fa2.source-tree.json",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.log",
+        "maturity/acceptance-artifacts/27640e0e-63db-416c-80db-e3f691c5b6e7.source-tree.json",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.log",
+        "maturity/acceptance-artifacts/2a987d15-f9d9-4b71-b0d5-d0640d7da559.source-tree.json",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.log",
+        "maturity/acceptance-artifacts/389e6bd8-1289-4d6a-b80d-f3cb81ad1c55.source-tree.json",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.log",
+        "maturity/acceptance-artifacts/a1ab9a45-9ec1-4cb5-ab32-927880076be6.source-tree.json",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.log",
+        "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.log",
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json"
       ]
     }
   ],
