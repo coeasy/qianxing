@@ -4,6 +4,49 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  - name: unhealthy gateway ports page an operator and healthy ports stay quiet
+    interval: 1m
+    input_series:
+      - series: 'qx_gateway_port_business_status{worker="okx-user-stream",account="main",port="private_order_stream"}'
+        values: '0 0 0'
+      - series: 'qx_gateway_port_business_status{worker="binance-exec",account="main",port="venue_execution"}'
+        values: '2 2 2'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: QianxingGatewayPortUnhealthy
+        exp_alerts:
+          - exp_labels:
+              worker: okx-user-stream
+              account: main
+              port: private_order_stream
+              severity: critical
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing exchange gateway port is unhealthy
+              description: worker=okx-user-stream account=main port=private_order_stream is unhealthy.
+      - eval_time: 1m
+        alertname: QianxingGatewayPortDegraded
+        exp_alerts: []
+
+  - name: sustained gateway degradation raises a warning
+    interval: 1m
+    input_series:
+      - series: 'qx_gateway_port_business_status{worker="bitget-user-stream",account="main",port="private_order_stream"}'
+        values: '1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: QianxingGatewayPortDegraded
+        exp_alerts:
+          - exp_labels:
+              worker: bitget-user-stream
+              account: main
+              port: private_order_stream
+              severity: warning
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing exchange gateway port is degraded
+              description: worker=bitget-user-stream account=main port=private_order_stream remains degraded.
+
   - name: durable order groups requiring reconciliation page an operator
     interval: 1m
     input_series:

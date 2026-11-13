@@ -31,6 +31,26 @@ groups:
           summary: "Qianxing worker metrics file is stale"
           description: "worker={{ $labels.worker }} has no fresh metrics sample."
 
+      - alert: QianxingGatewayPortUnhealthy
+        expr: qx_gateway_port_business_status == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing exchange gateway port is unhealthy"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} port={{ $labels.port }} is unhealthy."
+
+      - alert: QianxingGatewayPortDegraded
+        expr: qx_gateway_port_business_status == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: qianxing
+        annotations:
+          summary: "Qianxing exchange gateway port is degraded"
+          description: "worker={{ $labels.worker }} account={{ $labels.account }} port={{ $labels.port }} remains degraded."
+
       - alert: QianxingOutboxPublishFailures
         expr: increase(qx_outbox_relay_publish_failures_total[5m]) > 0
         for: 1m
