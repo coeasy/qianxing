@@ -250,6 +250,10 @@ pub struct AccountActivityEventContextCoverageV1 {
     pub with_correlation_id: u64,
     pub with_non_account_run_id: u64,
     pub with_strategy_id: u64,
+    #[serde(default)]
+    pub with_signal_id: u64,
+    #[serde(default)]
+    pub with_intent_id: u64,
     pub with_client_order_id: u64,
     pub with_exchange_order_id: u64,
 }
@@ -266,6 +270,12 @@ impl AccountActivityEventContextCoverageV1 {
         }
         if !context.strategy_id.trim().is_empty() {
             self.with_strategy_id = self.with_strategy_id.saturating_add(1);
+        }
+        if !context.signal_id.trim().is_empty() {
+            self.with_signal_id = self.with_signal_id.saturating_add(1);
+        }
+        if !context.intent_id.trim().is_empty() {
+            self.with_intent_id = self.with_intent_id.saturating_add(1);
         }
         let (client_order_id, exchange_order_id) = order_ids_for_event(event);
         if client_order_id.is_some() {
@@ -965,6 +975,8 @@ mod tests {
         accepted.correlation_id = "corr-abc".into();
         accepted.metadata.context.run_id = "run-7".into();
         accepted.metadata.context.strategy_id = "momentum".into();
+        accepted.metadata.context.signal_id = "signal-7".into();
+        accepted.metadata.context.intent_id = "intent-7".into();
 
         let report = read_account_activity_report_v1(
             &snapshot(),
@@ -999,6 +1011,8 @@ mod tests {
             report.completeness.event_context_coverage.with_strategy_id,
             1
         );
+        assert_eq!(report.completeness.event_context_coverage.with_signal_id, 1);
+        assert_eq!(report.completeness.event_context_coverage.with_intent_id, 1);
         assert_eq!(
             report
                 .completeness
@@ -1065,6 +1079,30 @@ mod tests {
             decoded.event_context_coverage,
             AccountActivityEventContextCoverageV1::default()
         );
+
+        let mut old_coverage = serde_json::to_value(AccountActivityEventContextCoverageV1 {
+            total_events: 2,
+            with_correlation_id: 1,
+            with_non_account_run_id: 1,
+            with_strategy_id: 1,
+            with_signal_id: 0,
+            with_intent_id: 0,
+            with_client_order_id: 1,
+            with_exchange_order_id: 0,
+        })
+        .unwrap();
+        old_coverage
+            .as_object_mut()
+            .unwrap()
+            .remove("with_signal_id");
+        old_coverage
+            .as_object_mut()
+            .unwrap()
+            .remove("with_intent_id");
+        let decoded: AccountActivityEventContextCoverageV1 =
+            serde_json::from_value(old_coverage).unwrap();
+        assert_eq!(decoded.with_signal_id, 0);
+        assert_eq!(decoded.with_intent_id, 0);
     }
 
     #[test]

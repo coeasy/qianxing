@@ -146,6 +146,8 @@
         "with_correlation_id": { "type": "integer", "minimum": 0 },
         "with_non_account_run_id": { "type": "integer", "minimum": 0 },
         "with_strategy_id": { "type": "integer", "minimum": 0 },
+        "with_signal_id": { "type": "integer", "minimum": 0 },
+        "with_intent_id": { "type": "integer", "minimum": 0 },
         "with_client_order_id": { "type": "integer", "minimum": 0 },
         "with_exchange_order_id": { "type": "integer", "minimum": 0 }
       }

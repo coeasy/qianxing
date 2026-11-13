@@ -84,6 +84,8 @@ test("account activity filters run, strategy, signal, and intent context through
               with_correlation_id: 3,
               with_non_account_run_id: 2,
               with_strategy_id: 3,
+              with_signal_id: 1,
+              with_intent_id: 1,
               with_client_order_id: 2,
               with_exchange_order_id: 1,
             },
@@ -108,6 +110,77 @@ test("account activity filters run, strategy, signal, and intent context through
   assert.equal(context.state.activityPage.available_total, 0);
   assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /3\/4 correlation/);
   assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /2\/4 非账户 run/);
+  assert.match(reportedRows.find(([label]) => label === "事件上下文覆盖")[1], /1\/4 signal · 1\/4 intent/);
+});
+
+test("legacy coverage reports distinguish missing signal and intent counters", async () => {
+  const elements = new Map([
+    ["account-activity-account-id", { value: "account-1" }],
+    ["account-activity-venue-id", { value: "OKX" }],
+    ["account-activity-client-order-id", { value: "" }],
+    ["account-activity-exchange-order-id", { value: "" }],
+    ["account-activity-run-id", { value: "" }],
+    ["account-activity-strategy-id", { value: "" }],
+    ["account-activity-signal-id", { value: "" }],
+    ["account-activity-intent-id", { value: "" }],
+    ["account-activity-correlation-id", { value: "" }],
+    ["account-activity-meta", {}],
+    ["account-activity-prev", { disabled: false }],
+    ["account-activity-next", { disabled: false }],
+  ]);
+  let reportedRows = [];
+  const context = {
+    state: {
+      activityRequestSeq: 0,
+      activityAccountId: null,
+      activityVenueId: null,
+      activityClientOrderId: null,
+      activityExchangeOrderId: null,
+      activityRunId: null,
+      activityStrategyId: null,
+      activitySignalId: null,
+      activityIntentId: null,
+      activityCorrelationId: null,
+      activityAfter: null,
+      activityBefore: null,
+      activitySelectionDirty: false,
+    },
+    API_PATHS: { accountActivity: "/account/activity" },
+    URLSearchParams,
+    $(id) { return elements.get(id); },
+    rows(_target, pairs) { reportedRows = pairs; },
+    fillTable() {},
+    tsText() { return "—"; },
+    cellText() { return "—"; },
+    async getJson() {
+      return {
+        status: 200,
+        ok: true,
+        body: {
+          identity: { account_id: "account-1", venue_id: "OKX" },
+          events: { rows: [], available_total: 0, has_older: false, has_newer: false },
+          completeness: {
+            event_context_coverage: {
+              total_events: 2,
+              with_correlation_id: 1,
+              with_non_account_run_id: 1,
+              with_strategy_id: 1,
+              with_client_order_id: 1,
+              with_exchange_order_id: 0,
+            },
+          },
+        },
+      };
+    },
+  };
+  vm.runInNewContext(
+    `${source.slice(from, to)}\nglobalThis.refreshAccountActivity = refreshAccountActivity;`,
+    context,
+  );
+  await context.refreshAccountActivity();
+  const coverage = reportedRows.find(([label]) => label === "事件上下文覆盖")[1];
+  assert.match(coverage, /signal 未提供/);
+  assert.match(coverage, /intent 未提供/);
 });
 
 test("a stale account activity response cannot replace the latest selection", async () => {

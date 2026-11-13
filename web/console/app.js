@@ -698,6 +698,11 @@ async function refreshAccountActivity() {
   const eventPage = report.events || {};
   const completeness = report.completeness || {};
   const contextCoverage = completeness.event_context_coverage;
+  const optionalCoverageText = (field, label) => (
+    contextCoverage && Object.prototype.hasOwnProperty.call(contextCoverage, field)
+      ? `${contextCoverage[field]}/${contextCoverage.total_events ?? 0} ${label}`
+      : `${label} 未提供`
+  );
   state.activityPage = eventPage;
   const countText = (name) => {
     const group = report[name] || {};
@@ -709,7 +714,7 @@ async function refreshAccountActivity() {
     ["余额字段完整度", ["equity", "available", "margin", "fees", "funding"].map((key) => `${key}:${completeness[`${key}_reported`] === true ? "有" : "无"}`).join(" · ")],
     ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
     ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
-    ["事件上下文覆盖", contextCoverage ? `${contextCoverage.with_correlation_id ?? 0}/${contextCoverage.total_events ?? 0} correlation · ${contextCoverage.with_non_account_run_id ?? 0}/${contextCoverage.total_events ?? 0} 非账户 run · ${contextCoverage.with_strategy_id ?? 0}/${contextCoverage.total_events ?? 0} strategy · ${contextCoverage.with_client_order_id ?? 0}/${contextCoverage.total_events ?? 0} client order · ${contextCoverage.with_exchange_order_id ?? 0}/${contextCoverage.total_events ?? 0} exchange order` : "旧版报告未提供"],
+    ["事件上下文覆盖", contextCoverage ? `${contextCoverage.with_correlation_id ?? 0}/${contextCoverage.total_events ?? 0} correlation · ${contextCoverage.with_non_account_run_id ?? 0}/${contextCoverage.total_events ?? 0} 非账户 run · ${contextCoverage.with_strategy_id ?? 0}/${contextCoverage.total_events ?? 0} strategy · ${optionalCoverageText("with_signal_id", "signal")} · ${optionalCoverageText("with_intent_id", "intent")} · ${contextCoverage.with_client_order_id ?? 0}/${contextCoverage.total_events ?? 0} client order · ${contextCoverage.with_exchange_order_id ?? 0}/${contextCoverage.total_events ?? 0} exchange order` : "旧版报告未提供"],
     ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""}${eventPage.exchange_order_id ? ` · exchange_order_id=${eventPage.exchange_order_id}` : ""}${eventPage.run_id ? ` · run_id=${eventPage.run_id}` : ""}${eventPage.strategy_id ? ` · strategy_id=${eventPage.strategy_id}` : ""}${eventPage.signal_id ? ` · signal_id=${eventPage.signal_id}` : ""}${eventPage.intent_id ? ` · intent_id=${eventPage.intent_id}` : ""}${eventPage.correlation_id ? ` · correlation_id=${eventPage.correlation_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
   ]);
   fillTable("account-activity-events-table", {
