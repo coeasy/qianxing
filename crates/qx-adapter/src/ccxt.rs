@@ -1269,12 +1269,13 @@ impl CcxtProcessVenue {
         } else {
             "market"
         };
-        if amended
-            .exact_amounts
-            .is_some_and(|amounts| amounts.conditional.is_some() || amounts.quote_budget.is_some())
-        {
+        if amended.exact_amounts.is_some_and(|amounts| {
+            amounts.quote_budget.is_some()
+                || current.exact_amounts.map(|current| current.conditional)
+                    != Some(amounts.conditional)
+        }) {
             return Err(QxError::BusinessViolation(
-                "CCXT 当前不对条件单或 Quote Budget 单执行原生改单".into(),
+                "CCXT 当前不对条件条款变更或 Quote Budget 单执行原生改单".into(),
             ));
         }
         let amount = amended.quantity_decimal().to_string();

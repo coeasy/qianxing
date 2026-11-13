@@ -82,8 +82,9 @@ pub use self::order::{
     ExactOrderAmounts, Fill, FillFee, Order, OrderStatus, OrderTrace, Side, TriggerPriceType,
 };
 pub use self::order_group::{
-    OrderGroupExecution, OrderGroupIntent, OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole,
-    OrderGroupLegState, OrderGroupState, OrderGroupStatus, ORDER_GROUP_SCHEMA_VERSION,
+    OrderGroupAmendment, OrderGroupAmendmentPhase, OrderGroupExecution, OrderGroupIntent,
+    OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole, OrderGroupLegState, OrderGroupState,
+    OrderGroupStatus, ORDER_GROUP_SCHEMA_VERSION,
 };
 pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};

@@ -194,10 +194,29 @@ pub enum OrderGroupStatus {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct OrderGroupAmendment {
+    pub operation_id: String,
+    pub prior_status: OrderGroupStatus,
+    pub prior_order: Order,
+    pub requested_order: Order,
+    pub phase: OrderGroupAmendmentPhase,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderGroupAmendmentPhase {
+    Pending,
+    Confirmed,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OrderGroupLegState {
     pub role: OrderGroupLegRole,
     pub order: Order,
     pub venue_order_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amendment: Option<OrderGroupAmendment>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -221,6 +240,7 @@ impl OrderGroupState {
                 role: leg.role,
                 order: leg.order.clone(),
                 venue_order_id: None,
+                amendment: None,
             })
             .collect();
         Ok(Self {
@@ -336,6 +356,167 @@ impl OrderGroupState {
         self.status = OrderGroupStatus::ReconcileRequired;
     }
 
+    pub fn has_pending_amendment(&self) -> bool {
+        self.legs.iter().any(|leg| {
+            leg.amendment
+                .as_ref()
+                .is_some_and(|amendment| amendment.phase == OrderGroupAmendmentPhase::Pending)
+        })
+    }
+
+    /// Persist the requested child terms and fence all group operations before
+    /// the caller writes the account amendment-pending fact or touches a venue.
+    pub fn begin_child_amendment(
+        &mut self,
+        client_order_id: u64,
+        operation_id: String,
+        requested_order: Order,
+    ) -> Result<(), String> {
+        if self.intent.kind != OrderGroupKind::Oco
+            || self.intent.execution != OrderGroupExecution::NativeRequired
+            || self.legs.len() != 2
+            || self.venue_group_id.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("仅已创建的原生 OCO 可改单子腿".into());
+        }
+        if !matches!(
+            self.status,
+            OrderGroupStatus::Active | OrderGroupStatus::PartiallyFilled
+        ) {
+            return Err(format!("订单组 {:?} 当前不允许改单", self.status));
+        }
+        if operation_id.trim().is_empty() {
+            return Err("订单组改单 operation_id 不能为空".into());
+        }
+        let peer = self
+            .legs
+            .iter()
+            .find(|other| other.order.client_id != client_order_id)
+            .ok_or_else(|| "原生 OCO 缺少对侧腿".to_string())?;
+        if !matches!(
+            peer.order.status,
+            OrderStatus::Cancelled | OrderStatus::Expired
+        ) || order_has_fill(&peer.order)
+        {
+            return Err("改单前必须确认原生 OCO 对侧腿已终止且零成交".into());
+        }
+        let leg = self
+            .legs
+            .iter_mut()
+            .find(|leg| leg.order.client_id == client_order_id)
+            .ok_or_else(|| format!("订单组不存在子腿 {client_order_id}"))?;
+        if leg.venue_order_id.as_deref().is_none_or(str::is_empty) {
+            return Err("订单组子腿必须先有已确认的交易所订单 ID 才能改单".into());
+        }
+        if leg.amendment.as_ref().is_some_and(|amendment| {
+            amendment.phase == OrderGroupAmendmentPhase::Pending
+                || amendment.operation_id == operation_id
+        }) {
+            return Err("订单组子腿存在未决或已记录的重复改单，必须先对账".into());
+        }
+        if leg.order.status.is_terminal()
+            || !leg.order.same_amendment_lineage(&requested_order)
+            || leg.order.same_submission_identity(&requested_order)
+            || leg.order.exact_amounts.map(|amounts| amounts.conditional)
+                != requested_order
+                    .exact_amounts
+                    .map(|amounts| amounts.conditional)
+            || leg.order.status != requested_order.status
+            || leg.order.filled != requested_order.filled
+            || leg.order.exact_amounts.map(|amounts| amounts.filled)
+                != requested_order.exact_amounts.map(|amounts| amounts.filled)
+        {
+            return Err("订单组改单请求与当前子腿身份、状态或累计成交不一致".into());
+        }
+        requested_order.validate()?;
+        let prior_status = self.status;
+        leg.amendment = Some(OrderGroupAmendment {
+            operation_id,
+            prior_status,
+            prior_order: leg.order.clone(),
+            requested_order,
+            phase: OrderGroupAmendmentPhase::Pending,
+        });
+        self.status = OrderGroupStatus::ReconcileRequired;
+        Ok(())
+    }
+
+    /// Commit venue-confirmed terms. The group stays fenced if the venue or OMS
+    /// snapshot does not match the durable amendment request.
+    pub fn confirm_child_amendment(
+        &mut self,
+        operation_id: &str,
+        snapshot: Order,
+    ) -> Result<(), String> {
+        if self.status != OrderGroupStatus::ReconcileRequired {
+            return Err("订单组改单确认必须处于待对账屏障内".into());
+        }
+        let leg = self
+            .legs
+            .iter_mut()
+            .find(|leg| leg.order.client_id == snapshot.client_id)
+            .ok_or_else(|| format!("订单组不存在子腿 {}", snapshot.client_id))?;
+        let amendment = leg
+            .amendment
+            .as_mut()
+            .ok_or_else(|| "订单组子腿没有待确认改单".to_string())?;
+        let prior_status = amendment.prior_status;
+        let prior_order_status = amendment.prior_order.status;
+        if amendment.operation_id != operation_id
+            || amendment.phase != OrderGroupAmendmentPhase::Pending
+            || !snapshot.same_submission_identity(&amendment.requested_order)
+            || (snapshot.status != prior_order_status
+                && !prior_order_status.can_transition_to(snapshot.status))
+            || snapshot.filled.raw() < amendment.prior_order.filled.raw()
+            || snapshot
+                .exact_amounts
+                .zip(amendment.prior_order.exact_amounts)
+                .is_some_and(|(next, prior)| {
+                    next.filled
+                        .checked_cmp(prior.filled)
+                        .is_none_or(std::cmp::Ordering::is_lt)
+                })
+        {
+            return Err("订单组改单确认与持久请求或成交事实不一致".into());
+        }
+        amendment.phase = OrderGroupAmendmentPhase::Confirmed;
+        leg.order = snapshot;
+        self.status = prior_status;
+        self.recompute_status();
+        Ok(())
+    }
+
+    /// Release a pre-venue amendment fence only when the authoritative OMS
+    /// snapshot still has the original terms. Used after proving no pending
+    /// amendment fact was written to the account EventLog.
+    pub fn abort_child_amendment(
+        &mut self,
+        operation_id: &str,
+        snapshot: &Order,
+    ) -> Result<(), String> {
+        let leg = self
+            .legs
+            .iter_mut()
+            .find(|leg| leg.order.client_id == snapshot.client_id)
+            .ok_or_else(|| format!("订单组不存在子腿 {}", snapshot.client_id))?;
+        let amendment = leg
+            .amendment
+            .as_ref()
+            .ok_or_else(|| "订单组子腿没有待中止改单".to_string())?;
+        if amendment.operation_id != operation_id
+            || amendment.phase != OrderGroupAmendmentPhase::Pending
+            || !snapshot.same_submission_identity(&amendment.prior_order)
+        {
+            return Err("订单组改单不能安全中止：操作 ID 或原始订单条款不匹配".into());
+        }
+        let prior_status = amendment.prior_status;
+        leg.amendment = None;
+        leg.order = snapshot.clone();
+        self.status = prior_status;
+        self.recompute_status();
+        Ok(())
+    }
+
     pub fn validate_persisted(&self) -> Result<(), String> {
         if self.schema_version != ORDER_GROUP_SCHEMA_VERSION {
             return Err(format!(
@@ -361,8 +542,50 @@ impl OrderGroupState {
                 .find(|leg| leg.role == intended.role)
                 .ok_or_else(|| format!("持久订单组缺少 {:?} 腿", intended.role))?;
             state.order.validate()?;
-            if !state.order.same_submission_identity(&intended.order) {
-                return Err(format!("持久订单组 {:?} 腿与原始意图不一致", intended.role));
+            if !state.order.same_amendment_lineage(&intended.order) {
+                return Err(format!(
+                    "持久订单组 {:?} 腿与原始订单身份不一致",
+                    intended.role
+                ));
+            }
+            match state.amendment.as_ref() {
+                None if !state.order.same_submission_identity(&intended.order) => {
+                    return Err(format!("持久订单组 {:?} 腿与原始意图不一致", intended.role));
+                }
+                Some(amendment) => {
+                    if amendment.operation_id.trim().is_empty()
+                        || !matches!(
+                            amendment.prior_status,
+                            OrderGroupStatus::Active | OrderGroupStatus::PartiallyFilled
+                        )
+                        || !amendment
+                            .prior_order
+                            .same_amendment_lineage(&intended.order)
+                        || !amendment
+                            .requested_order
+                            .same_amendment_lineage(&intended.order)
+                        || amendment.requested_order.validate().is_err()
+                    {
+                        return Err(format!("持久订单组 {:?} 腿含非法改单记录", intended.role));
+                    }
+                    match amendment.phase {
+                        OrderGroupAmendmentPhase::Pending
+                            if self.status == OrderGroupStatus::ReconcileRequired
+                                && state.order.same_submission_identity(&amendment.prior_order) => {
+                        }
+                        OrderGroupAmendmentPhase::Confirmed
+                            if state
+                                .order
+                                .same_submission_identity(&amendment.requested_order) => {}
+                        _ => {
+                            return Err(format!(
+                                "持久订单组 {:?} 腿的改单阶段与当前订单快照不一致",
+                                intended.role
+                            ));
+                        }
+                    }
+                }
+                None => {}
             }
             if state
                 .venue_order_id
@@ -502,6 +725,25 @@ impl OrderGroupState {
         if self.status != OrderGroupStatus::ReconcileRequired {
             return Err("订单组当前不需要对账".into());
         }
+        if self.has_pending_amendment() {
+            let pending = self.legs.iter().find_map(|leg| {
+                leg.amendment
+                    .as_ref()
+                    .filter(|amendment| amendment.phase == OrderGroupAmendmentPhase::Pending)
+                    .map(|amendment| (leg.order.client_id, amendment.clone()))
+            });
+            if let Some((client_order_id, amendment)) = pending {
+                if snapshot.client_id == client_order_id
+                    && snapshot.same_submission_identity(&amendment.requested_order)
+                {
+                    return self.confirm_child_amendment(&amendment.operation_id, snapshot);
+                }
+                if snapshot.client_id == client_order_id {
+                    return Err("订单组改单结果仍未确认，保留待对账屏障".into());
+                }
+                return self.record_snapshot_during_reconciliation(snapshot, venue_order_id);
+            }
+        }
         if snapshot.status == OrderStatus::Unknown {
             return Err("对账快照仍为 Unknown，订单组继续保持待对账".into());
         }
@@ -531,6 +773,17 @@ impl OrderGroupState {
     ) -> Result<(), String> {
         if self.status != OrderGroupStatus::ReconcileRequired {
             return Err("订单组当前不处于待对账状态".into());
+        }
+        let confirmed_amendment = self
+            .legs
+            .iter()
+            .find(|leg| leg.order.client_id == snapshot.client_id)
+            .and_then(|leg| leg.amendment.as_ref())
+            .filter(|amendment| amendment.phase == OrderGroupAmendmentPhase::Pending)
+            .filter(|amendment| snapshot.same_submission_identity(&amendment.requested_order))
+            .map(|amendment| amendment.operation_id.clone());
+        if let Some(operation_id) = confirmed_amendment {
+            return self.confirm_child_amendment(&operation_id, snapshot);
         }
         let previous = self.clone();
         self.status = OrderGroupStatus::Submitting;
@@ -920,6 +1173,118 @@ mod tests {
         assert_eq!(group.status, OrderGroupStatus::Active);
         assert_eq!(group.venue_group_id.as_deref(), Some("okx-algo-123"));
         assert!(group.legs.iter().all(|leg| leg.venue_order_id.is_none()));
+    }
+
+    fn reconciled_triggered_oco() -> OrderGroupState {
+        let mut group = oco_state();
+        group.status = OrderGroupStatus::Active;
+        group.venue_group_id = Some("900001".into());
+        let active = group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .unwrap();
+        active.order.status = OrderStatus::Working;
+        active.venue_order_id = Some("700001".into());
+        let peer = group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+            .unwrap();
+        peer.order.status = OrderStatus::Cancelled;
+        group
+    }
+
+    fn amended_trigger_order(group: &OrderGroupState) -> Order {
+        let mut order = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .unwrap()
+            .order
+            .clone();
+        order.exact_amounts.as_mut().unwrap().quantity = ExactDecimal::parse("0.012").unwrap();
+        order
+    }
+
+    #[test]
+    fn triggered_native_oco_child_amendment_is_durably_fenced_and_confirmed() {
+        let mut group = reconciled_triggered_oco();
+        let requested = amended_trigger_order(&group);
+        let mut changed_trigger = group.legs[0].order.clone();
+        changed_trigger
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap()
+            .trigger_price = Some(ExactDecimal::parse("69000").unwrap());
+        assert!(group
+            .begin_child_amendment(1, "control:amend:21:1".into(), changed_trigger)
+            .is_err());
+        assert_eq!(group.status, OrderGroupStatus::Active);
+        group
+            .begin_child_amendment(1, "control:amend:22:1".into(), requested.clone())
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::ReconcileRequired);
+        assert!(group.has_pending_amendment());
+        assert!(group.validate_persisted().is_ok());
+        assert!(group
+            .begin_child_amendment(1, "control:amend:23:1".into(), requested.clone())
+            .is_err());
+
+        let mut confirmed = requested;
+        let mut invalid_transition = confirmed.clone();
+        invalid_transition.status = OrderStatus::Cancelled;
+        assert!(group
+            .confirm_child_amendment("control:amend:22:1", invalid_transition)
+            .is_err());
+        confirmed.status = OrderStatus::PartiallyFilled;
+        confirmed.exact_amounts.as_mut().unwrap().filled = ExactDecimal::parse("0.002").unwrap();
+        group
+            .confirm_child_amendment("control:amend:22:1", confirmed)
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::PeerCancelRequired);
+        assert!(!group.has_pending_amendment());
+        assert_eq!(
+            group
+                .legs
+                .iter()
+                .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+                .unwrap()
+                .order
+                .exact_amounts
+                .unwrap()
+                .quantity,
+            ExactDecimal::parse("0.012").unwrap()
+        );
+        assert!(group.validate_persisted().is_ok());
+    }
+
+    #[test]
+    fn triggered_native_oco_child_amendment_can_abort_only_before_terms_change() {
+        let mut group = reconciled_triggered_oco();
+        let original = group
+            .legs
+            .iter()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .unwrap()
+            .order
+            .clone();
+        let requested = amended_trigger_order(&group);
+        group
+            .begin_child_amendment(1, "control:amend:24:1".into(), requested)
+            .unwrap();
+        group
+            .abort_child_amendment("control:amend:24:1", &original)
+            .unwrap();
+
+        assert_eq!(group.status, OrderGroupStatus::Active);
+        assert!(!group.has_pending_amendment());
+        assert!(group.validate_persisted().is_ok());
     }
 
     #[test]

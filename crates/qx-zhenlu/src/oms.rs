@@ -224,7 +224,8 @@ impl Oms {
 
     /// Replace the live OMS terms after an authoritative venue amendment fact.
     /// The client order identity, routing, policy, lifecycle state, and cumulative fills
-    /// are immutable; only total quantity and a same-kind limit price may change.
+    /// are immutable; total quantity, same-kind limit price, and conditional trigger terms
+    /// may change when the venue supports that amendment shape.
     pub fn validate_amendment(&self, amended: &Order) -> QxResult<()> {
         let current = self
             .orders
@@ -287,6 +288,13 @@ pub fn validate_amended_order(current: &Order, amended: &Order) -> QxResult<()> 
 
     match (current.exact_amounts, amended.exact_amounts) {
         (Some(old), Some(new)) => {
+            let conditional_changed = match (old.conditional, new.conditional) {
+                (Some(current), Some(amended)) => {
+                    current.kind == amended.kind && current != amended
+                }
+                (None, None) => false,
+                _ => false,
+            };
             if old.filled != new.filled
                 || new
                     .quantity
@@ -295,9 +303,12 @@ pub fn validate_amended_order(current: &Order, amended: &Order) -> QxResult<()> 
                 || old.quote_budget != new.quote_budget
                 || old.quote_filled != new.quote_filled
                 || old.market_reference_price != new.market_reference_price
-                || old.conditional != new.conditional
+                || (old.conditional.is_some() != new.conditional.is_some())
+                || (old.conditional != new.conditional && !conditional_changed)
                 || old.limit_price.is_some() != new.limit_price.is_some()
-                || (old.quantity == new.quantity && old.limit_price == new.limit_price)
+                || (old.quantity == new.quantity
+                    && old.limit_price == new.limit_price
+                    && !conditional_changed)
             {
                 return Err(QxError::ReconcileRequired(format!(
                     "精确订单 {} 的改单事实改动了成交、预算、风控参考或订单种类",
@@ -346,7 +357,8 @@ impl qx_core::OrderFillBook for Oms {
 mod tests {
     use super::*;
     use qx_core::{
-        ExactDecimal, ExactFillAmounts, ExactOrderAmounts, InstrumentId, OrderTrace, Side,
+        ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactFillAmounts,
+        ExactOrderAmounts, InstrumentId, OrderTrace, Side, TriggerPriceType,
     };
 
     fn order() -> Order {
@@ -404,6 +416,59 @@ mod tests {
         no_op.qty = Quantity::from_i64(1);
         assert!(oms.amend_replayed(no_op).is_err());
         assert_eq!(oms.get(1), Some(&before_invalid));
+    }
+
+    #[test]
+    fn exact_conditional_amendment_changes_trigger_terms_without_changing_order_kind() {
+        let mut current = order();
+        current.status = OrderStatus::Working;
+        current.qty = Quantity::ZERO;
+        current.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.01").unwrap(),
+            limit_price: None,
+            filled: ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(ConditionalOrderIntent {
+                kind: ConditionalOrderKind::StopLoss,
+                trigger_price: Some(ExactDecimal::parse("60000").unwrap()),
+                trigger_price_type: Some(TriggerPriceType::Mark),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        });
+
+        let mut amended = current.clone();
+        amended
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap()
+            .trigger_price = Some(ExactDecimal::parse("59000").unwrap());
+        validate_amended_order(&current, &amended).unwrap();
+
+        let mut changed_kind = amended.clone();
+        changed_kind
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .conditional
+            .as_mut()
+            .unwrap()
+            .kind = ConditionalOrderKind::TakeProfit;
+        assert!(validate_amended_order(&current, &changed_kind).is_err());
+
+        let mut changed_contract = amended;
+        changed_contract
+            .exact_amounts
+            .as_mut()
+            .unwrap()
+            .quote_budget = Some(ExactDecimal::parse("100").unwrap());
+        assert!(validate_amended_order(&current, &changed_contract).is_err());
     }
 
     #[test]

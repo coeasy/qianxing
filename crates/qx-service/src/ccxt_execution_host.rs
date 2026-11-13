@@ -889,33 +889,13 @@ fn execute_ccxt_queued_cancel(
     Ok(result)
 }
 
-fn is_active_native_group_member(
-    group: &qx_core::OrderGroupState,
-    client_order_id: u64,
-    account_id: &str,
-    venue_id: &str,
-) -> bool {
-    !matches!(
-        group.status,
-        qx_core::OrderGroupStatus::Cancelled | qx_core::OrderGroupStatus::Rejected
-    ) && group.legs.iter().any(|leg| {
-        leg.order.client_id == client_order_id
-            && leg.order.account_id == account_id
-            && leg
-                .order
-                .instrument
-                .venue
-                .as_str()
-                .eq_ignore_ascii_case(venue_id)
-    })
-}
-
 fn is_reconciled_triggered_oco_child(
     group: &qx_core::OrderGroupState,
     client_order_id: u64,
     remote_order_id: Option<&str>,
 ) -> bool {
     if group.intent.kind != qx_core::OrderGroupKind::Oco
+        || group.has_pending_amendment()
         || !matches!(
             group.status,
             qx_core::OrderGroupStatus::Active | qx_core::OrderGroupStatus::PartiallyFilled
@@ -998,26 +978,69 @@ fn execute_ccxt_queued_amend(
     )?;
     let target_id = prepared.target.client_order_id;
     use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
-    let group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let target_remote_id = prepared.pipeline.venue_order_id(target_id).ok_or_else(|| {
+        format!("CCXT 改单目标 {target_id} 在账户 EventLog 中缺少 remote order id")
+    })?;
+    let mut amendment_group_id = None;
     for group_id in group_store.group_ids()? {
         let Some(group) = group_store.load(&group_id)? else {
             continue;
         };
-        if is_active_native_group_member(
-            &group,
-            target_id,
-            &prepared.target.account_id,
-            &prepared.target.venue_id,
+        if !group.legs.iter().any(|leg| {
+            leg.order.client_id == target_id
+                && leg.order.account_id == prepared.target.account_id
+                && leg
+                    .order
+                    .instrument
+                    .venue
+                    .as_str()
+                    .eq_ignore_ascii_case(&prepared.target.venue_id)
+        }) || matches!(
+            group.status,
+            qx_core::OrderGroupStatus::Cancelled | qx_core::OrderGroupStatus::Rejected
         ) {
+            continue;
+        }
+        if amendment_group_id.is_some() {
             return Ok(Err(format!(
-                "改单目标 {target_id} 属于活动原生订单组 {}；组级改单与子腿快照同步尚未实现，拒绝改变交易所状态",
+                "改单目标 {target_id} 属于多个未终结订单组，拒绝改单并要求账户级对账"
+            )));
+        }
+        if !matches!(
+            worker.venue_id.as_deref(),
+            Some(venue) if venue.eq_ignore_ascii_case("OKX") || venue.eq_ignore_ascii_case("BITGET")
+        ) || !is_reconciled_triggered_oco_child(&group, target_id, Some(&target_remote_id))
+        {
+            return Ok(Err(format!(
+                "改单目标 {target_id} 属于活动原生订单组 {}；仅已对账且对侧零成交终止的 OKX/Bitget OCO 子单允许改单",
                 group.intent.group_id
             )));
         }
+        amendment_group_id = Some(group.intent.group_id.clone());
     }
-    let target_remote_id = prepared.pipeline.venue_order_id(target_id).ok_or_else(|| {
-        format!("CCXT 改单目标 {target_id} 在账户 EventLog 中缺少 remote order id")
-    })?;
+    if prepared
+        .target
+        .order
+        .exact_amounts
+        .is_some_and(|amounts| amounts.conditional.is_some())
+        && amendment_group_id.is_none()
+    {
+        return Ok(Err(
+            "CCXT 尚不支持未触发条件单的原生改单；条件条款保持 fail-closed".into(),
+        ));
+    }
+    let amendment_operation_id = format!("control:amend:{}:{}", command.command_id, target_id);
+    if let Some(group_id) = amendment_group_id.as_deref() {
+        if let Err(error) = group_store.begin_child_amendment(
+            group_id,
+            target_id,
+            amendment_operation_id.clone(),
+            &prepared.target.order,
+        ) {
+            return Ok(Err(format!("订单组子腿改单围栏失败: {error}")));
+        }
+    }
     let client = CcxtProcessClient::spawn(python, ccxt_config_path, None)
         .map_err(|error| format!("启动公共 CCXT 改单 Worker 失败: {error}"))?;
     let mut venue = CcxtProcessVenue::new(
@@ -1093,6 +1116,48 @@ fn execute_ccxt_queued_amend(
         now,
         &mut source_seq,
     );
+    if let Some(group_id) = amendment_group_id.as_deref() {
+        prepared
+            .pipeline
+            .refresh()
+            .map_err(|error| format!("刷新改单后的账户 EventLog 失败: {error:?}"))?;
+        if prepared.pipeline.pending_amendment(target_id).is_none() {
+            if let Some(snapshot) = prepared
+                .pipeline
+                .orders()
+                .into_iter()
+                .find(|order| order.client_id == target_id)
+            {
+                if group_store
+                    .confirm_child_amendment(group_id, &amendment_operation_id, &snapshot)
+                    .is_err()
+                {
+                    let _ = group_store.abort_child_amendment(
+                        group_id,
+                        &amendment_operation_id,
+                        &snapshot,
+                    );
+                }
+            }
+        }
+        if result.is_ok() {
+            let group = group_store
+                .load(group_id)?
+                .ok_or_else(|| format!("改单后的订单组 {group_id} 不存在"))?;
+            let synchronized = !group.has_pending_amendment()
+                && group
+                    .legs
+                    .iter()
+                    .find(|leg| leg.order.client_id == target_id)
+                    .is_some_and(|leg| leg.order.same_submission_identity(&prepared.target.order));
+            if !synchronized {
+                let _ = group_store.require_reconciliation(group_id);
+                return Ok(Err(format!(
+                    "订单组 {group_id} 的改单虽已处理，但组快照未能确认；订单组保持待对账"
+                )));
+            }
+        }
+    }
     Ok(result.map_err(|error| format!("CCXT 原生改单未确认: {error}")))
 }
 
@@ -1931,7 +1996,7 @@ mod cancel_route_tests {
     use super::{
         bitget_group_has_no_child_exposure, ccxt_amend_matches_worker, ccxt_cancel_matches_worker,
         ccxt_cancel_order_group_matches_worker, ccxt_submit_order_group_matches_worker,
-        is_active_native_group_member, is_reconciled_triggered_oco_child,
+        is_reconciled_triggered_oco_child,
     };
     use qx_control::{CommandKind, ControlCommand, Permission};
     use qx_core::{
@@ -2136,21 +2201,6 @@ mod cancel_route_tests {
         assert!(!bitget_group_has_no_child_exposure(&serde_json::json!({
             "order_ids": ["1"], "sub_orders": []
         })));
-    }
-
-    #[test]
-    fn active_native_group_children_cannot_bypass_group_amendment_state() {
-        let submit = order_group_submit("main", "OKX");
-        let intent: OrderGroupIntent =
-            serde_json::from_str(submit.payload.get("order_group_json").unwrap()).unwrap();
-        let mut group = OrderGroupState::from_intent(intent).unwrap();
-        group.status = qx_core::OrderGroupStatus::Active;
-
-        assert!(is_active_native_group_member(&group, 31, "main", "OKX"));
-        assert!(!is_active_native_group_member(&group, 31, "other", "OKX"));
-        assert!(!is_active_native_group_member(&group, 31, "main", "BITGET"));
-        group.status = qx_core::OrderGroupStatus::Cancelled;
-        assert!(!is_active_native_group_member(&group, 31, "main", "OKX"));
     }
 
     #[test]

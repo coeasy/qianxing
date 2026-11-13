@@ -1280,6 +1280,51 @@ fn ccxt_native_amend_preflights_without_writing_then_confirms_remote_terms() {
 }
 
 #[test]
+fn ccxt_amend_request_preserves_conditional_terms_and_rejects_trigger_changes() {
+    let mut current = order();
+    current.status = OrderStatus::Accepted;
+    current.exact_amounts = Some(ExactOrderAmounts {
+        quantity: ExactDecimal::parse("2").unwrap(),
+        limit_price: Some(ExactDecimal::parse("100").unwrap()),
+        filled: ExactDecimal::ZERO,
+        quote_budget: None,
+        quote_filled: ExactDecimal::ZERO,
+        market_reference_price: None,
+        conditional: Some(ConditionalOrderIntent {
+            kind: ConditionalOrderKind::StopLoss,
+            trigger_price: Some(ExactDecimal::parse("90").unwrap()),
+            trigger_price_type: Some(TriggerPriceType::Mark),
+            trailing_percent: None,
+            trailing_amount: None,
+            trailing_trigger_price: None,
+        }),
+    });
+    let mut amended = current.clone();
+    amended.exact_amounts.as_mut().unwrap().quantity = ExactDecimal::parse("3").unwrap();
+
+    let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
+    venue
+        .remote_ids
+        .insert(current.client_id, "remote-7".into());
+    let request = venue
+        .amendment_request(&current, &amended, serde_json::Map::new())
+        .unwrap();
+    assert_eq!(request["amount_exact"], "3");
+
+    amended
+        .exact_amounts
+        .as_mut()
+        .unwrap()
+        .conditional
+        .as_mut()
+        .unwrap()
+        .trigger_price = Some(ExactDecimal::parse("89").unwrap());
+    assert!(venue
+        .amendment_request(&current, &amended, serde_json::Map::new())
+        .is_err());
+}
+
+#[test]
 fn ccxt_reconciler_confirms_a_persisted_amendment_without_resubmitting_it() {
     let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
     struct RecoveryRpc(Arc<Mutex<Vec<Value>>>);

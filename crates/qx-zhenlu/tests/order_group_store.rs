@@ -94,6 +94,57 @@ fn bracket_state(group_id: &str) -> OrderGroupState {
 }
 
 #[test]
+fn file_store_recovers_and_confirms_pending_native_oco_amendment() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "qianxing-oco-amend-recovery-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let mut group = oco_state("oco-amend-recovery");
+    group.status = qx_core::OrderGroupStatus::Active;
+    group.venue_group_id = Some("90001".into());
+    group.legs[0].order.status = OrderStatus::Working;
+    group.legs[0].venue_order_id = Some("70001".into());
+    group.legs[1].order.status = OrderStatus::Cancelled;
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    store.create(&group).unwrap();
+
+    let mut requested = group.legs[0].order.clone();
+    requested.exact_amounts.as_mut().unwrap().quantity = ExactDecimal::parse("0.012").unwrap();
+    store
+        .begin_child_amendment(
+            "oco-amend-recovery",
+            701,
+            "control:amend:44:701".into(),
+            &requested,
+        )
+        .unwrap();
+
+    drop(store);
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let pending = store.load("oco-amend-recovery").unwrap().unwrap();
+    assert!(pending.has_pending_amendment());
+    assert_eq!(pending.status, qx_core::OrderGroupStatus::ReconcileRequired);
+
+    requested.status = OrderStatus::Working;
+    store
+        .confirm_child_amendment("oco-amend-recovery", "control:amend:44:701", &requested)
+        .unwrap();
+    let restored = store.load("oco-amend-recovery").unwrap().unwrap();
+    assert!(!restored.has_pending_amendment());
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+    assert_eq!(restored.legs[0].order, requested);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn file_order_group_store_is_idempotent_and_restores_reduced_state() {
     let test_root = std::env::current_dir()
         .unwrap()

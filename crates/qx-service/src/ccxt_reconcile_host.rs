@@ -35,13 +35,13 @@ pub(crate) fn sync_ccxt_order_groups_from_user_stream(
 ) -> Result<usize, String> {
     use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
 
+    let mut updates = reconcile_order_group_amendment_overlays(pipeline_root, pipeline)?;
     let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
     let orders = pipeline
         .orders()
         .into_iter()
         .map(|order| (order.client_id, order))
         .collect::<BTreeMap<_, _>>();
-    let mut updates = 0_usize;
     for group_id in store.group_ids()? {
         let Some(group) = store.load(&group_id)? else {
             continue;
@@ -109,6 +109,56 @@ pub(crate) fn sync_ccxt_order_groups_from_user_stream(
                 store.apply_order_snapshot(&group_id, snapshot, venue_order_id)?;
             }
             updates = updates.saturating_add(1);
+        }
+    }
+    Ok(updates)
+}
+
+/// Resolve the group-side amendment overlay from the canonical account EventLog.
+/// A matching pending fact keeps the group fenced; a confirmed requested snapshot
+/// commits the overlay; an unchanged prior snapshot with no pending fact proves the
+/// operation stopped before the venue call and safely releases the fence.
+fn reconcile_order_group_amendment_overlays(
+    pipeline_root: &std::path::Path,
+    pipeline: &qx_runtime::LiveEventPipeline,
+) -> Result<usize, String> {
+    use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+    let mut store = FileOrderGroupStore::new(pipeline_root.join("order-groups"))?;
+    let orders = pipeline
+        .orders()
+        .into_iter()
+        .map(|order| (order.client_id, order))
+        .collect::<BTreeMap<_, _>>();
+    let mut updates = 0_usize;
+    for group_id in store.group_ids()? {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
+        };
+        for leg in group.legs.iter().filter(|leg| {
+            leg.amendment.as_ref().is_some_and(|amendment| {
+                amendment.phase == qx_core::OrderGroupAmendmentPhase::Pending
+            })
+        }) {
+            let Some(amendment) = leg.amendment.as_ref() else {
+                continue;
+            };
+            if pipeline.pending_amendment(leg.order.client_id).is_some() {
+                continue;
+            }
+            let Some(snapshot) = orders.get(&leg.order.client_id) else {
+                store.require_reconciliation(&group_id)?;
+                continue;
+            };
+            if snapshot.same_submission_identity(&amendment.requested_order) {
+                store.confirm_child_amendment(&group_id, &amendment.operation_id, snapshot)?;
+                updates = updates.saturating_add(1);
+            } else if snapshot.same_submission_identity(&amendment.prior_order) {
+                store.abort_child_amendment(&group_id, &amendment.operation_id, snapshot)?;
+                updates = updates.saturating_add(1);
+            } else {
+                store.require_reconciliation(&group_id)?;
+            }
         }
     }
     Ok(updates)
@@ -1955,7 +2005,8 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
             let shutdown_context = context.clone();
             let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client))
                 .with_shutdown_check(move || shutdown_context.should_stop());
-            let mut updates = 0_usize;
+            let mut updates =
+                reconcile_order_group_amendment_overlays(&pipeline_storage.root, &pipeline)?;
             updates += reconcile_ccxt_native_order_groups(
                 &mut venue,
                 &worker,
@@ -2128,6 +2179,7 @@ pub fn run_ccxt_reconcile_worker(input: CcxtReconcileWorkerInput) -> Result<(), 
                     return Ok(1);
                 }
             }
+            updates += reconcile_order_group_amendment_overlays(&pipeline_storage.root, &pipeline)?;
             // 两半发现从这一行起只有一份清单：事实流、报告与健康都读它。
             let round = ccxt_reconcile_round(&open_order_issues, &local_order_issues);
             for fact in &round.require_reconcile {
@@ -2236,7 +2288,8 @@ mod native_order_group_reconcile_tests {
         bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
         bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
         mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
-        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+        reconcile_order_group_amendment_overlays, sync_ccxt_order_groups_from_user_stream,
+        OkxOcoObservation,
     };
 
     #[test]
@@ -2330,6 +2383,24 @@ mod native_order_group_reconcile_tests {
                     10,
                     source_seq,
                     format!("accepted:{}", order.client_id),
+                ))
+                .unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::OrderStatusReconciled {
+                        client_order_id: order.client_id,
+                        account_id: "account".into(),
+                        venue_id: "OKX".into(),
+                        status: OrderStatus::Working,
+                        venue_order_id: Some(format!("7000{}", order.client_id % 10)),
+                        filled_raw: 0,
+                        filled_exact: Some(qx_core::ExactDecimal::ZERO),
+                    },
+                    10,
+                    10,
+                    source_seq,
+                    format!("working:{}", order.client_id),
                 ))
                 .unwrap();
         }
@@ -2438,6 +2509,195 @@ mod native_order_group_reconcile_tests {
                 }),
             }),
         }
+    }
+
+    fn pending_group_amendment_fixture(
+        root: &std::path::Path,
+        include_event_log_pending: bool,
+        confirm_in_event_log: bool,
+    ) -> (
+        qx_zhenlu::FileOrderGroupStore,
+        qx_runtime::LiveEventPipeline,
+        String,
+    ) {
+        use qx_core::{
+            ConditionalOrderKind, ExactDecimal, OrderGroupExecution, OrderGroupIntent,
+            OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole, OrderGroupState, OrderStatus,
+        };
+        use qx_runtime::{LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent};
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+        let group_id = "reconcile-oco-amend".to_string();
+        let take_profit = protection_order(
+            151,
+            "account",
+            "OKX",
+            ConditionalOrderKind::TakeProfit,
+            "70000",
+        );
+        let stop_loss = protection_order(
+            152,
+            "account",
+            "OKX",
+            ConditionalOrderKind::StopLoss,
+            "60000",
+        );
+        let intent = OrderGroupIntent::new(
+            &group_id,
+            OrderGroupKind::Oco,
+            OrderGroupExecution::NativeRequired,
+            vec![
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::TakeProfit,
+                    order: take_profit.clone(),
+                },
+                OrderGroupLegIntent {
+                    role: OrderGroupLegRole::StopLoss,
+                    order: stop_loss.clone(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut group = OrderGroupState::from_intent(intent).unwrap();
+        group.status = qx_core::OrderGroupStatus::Active;
+        group.venue_group_id = Some("900015".into());
+        group.legs[0].order.status = OrderStatus::Accepted;
+        group.legs[0].venue_order_id = Some("700015".into());
+        group.legs[1].order.status = OrderStatus::Cancelled;
+        group.legs[1].venue_order_id = Some("700016".into());
+
+        let mut requested = take_profit.clone();
+        requested.exact_amounts.as_mut().unwrap().quantity = ExactDecimal::parse("0.012").unwrap();
+        requested.status = OrderStatus::Accepted;
+
+        let mut store = FileOrderGroupStore::new(root.join("order-groups")).unwrap();
+        store.create(&group).unwrap();
+        store
+            .begin_child_amendment(&group_id, 151, "control:amend:151:151".into(), &requested)
+            .unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(root, "account", "USDT").unwrap();
+        let mut source_seq = 0_u64;
+        for order in [&take_profit, &stop_loss] {
+            pipeline.register_order(order.clone(), 10).unwrap();
+            source_seq += 1;
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::Accepted {
+                        client_order_id: order.client_id,
+                        venue_order_id: Some(format!("7000{}", order.client_id % 10)),
+                    },
+                    10,
+                    10,
+                    source_seq,
+                    format!("accepted:{}", order.client_id),
+                ))
+                .unwrap();
+        }
+        let mut event_order = requested.clone();
+        event_order.status = OrderStatus::Accepted;
+        if include_event_log_pending || confirm_in_event_log {
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::OrderAmendmentPending {
+                        operation_id: "control:amend:151:151".into(),
+                        order: event_order.clone(),
+                    },
+                    11,
+                    11,
+                    source_seq + 1,
+                    "amend-pending:151",
+                ))
+                .unwrap();
+        }
+        if confirm_in_event_log {
+            pipeline
+                .ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::OrderAmended {
+                        operation_id: "control:amend:151:151".into(),
+                        order: event_order,
+                    },
+                    12,
+                    12,
+                    source_seq + 2,
+                    "amend-confirmed:151",
+                ))
+                .unwrap();
+        }
+        (store, pipeline, group_id)
+    }
+
+    #[test]
+    fn group_amendment_recovery_keeps_pending_and_confirms_event_log_result() {
+        use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-group-amend-event-recovery-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (store, pending_pipeline, group_id) =
+            pending_group_amendment_fixture(&root, true, false);
+        assert_eq!(
+            reconcile_order_group_amendment_overlays(&root, &pending_pipeline).unwrap(),
+            0
+        );
+        assert!(store
+            .load(&group_id)
+            .unwrap()
+            .unwrap()
+            .has_pending_amendment());
+
+        let (_, confirmed_pipeline, _) =
+            pending_group_amendment_fixture(&root.join("confirmed"), false, true);
+        let updates =
+            reconcile_order_group_amendment_overlays(&root.join("confirmed"), &confirmed_pipeline)
+                .unwrap();
+        assert_eq!(updates, 1);
+        let confirmed_store =
+            FileOrderGroupStore::new(root.join("confirmed/order-groups")).unwrap();
+        let confirmed = confirmed_store.load(&group_id).unwrap().unwrap();
+        assert!(!confirmed.has_pending_amendment());
+        assert_eq!(confirmed.status, qx_core::OrderGroupStatus::Active);
+        assert_eq!(
+            confirmed.legs[0].order.exact_amounts.unwrap().quantity,
+            qx_core::ExactDecimal::parse("0.012").unwrap()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn group_amendment_recovery_releases_overlay_when_venue_was_not_reached() {
+        use qx_zhenlu::OrderGroupStore;
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target/test-temp")
+            .join(format!(
+                "qianxing-group-amend-abort-recovery-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (store, pipeline, group_id) = pending_group_amendment_fixture(&root, false, false);
+        assert_eq!(
+            reconcile_order_group_amendment_overlays(&root, &pipeline).unwrap(),
+            1
+        );
+        let restored = store.load(&group_id).unwrap().unwrap();
+        assert!(!restored.has_pending_amendment());
+        assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

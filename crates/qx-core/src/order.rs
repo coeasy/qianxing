@@ -263,6 +263,27 @@ impl Order {
             && same_exact_request
     }
 
+    /// Compare stable order identity while allowing quantity, price, or
+    /// conditional terms to evolve through a confirmed amendment.
+    pub fn same_amendment_lineage(&self, other: &Self) -> bool {
+        let same_exact_contract = match (self.exact_amounts, other.exact_amounts) {
+            (Some(left), Some(right)) => {
+                left.quote_budget == right.quote_budget
+                    && left.market_reference_price == right.market_reference_price
+            }
+            (None, None) => true,
+            _ => false,
+        };
+
+        self.client_id == other.client_id
+            && self.instrument == other.instrument
+            && self.side == other.side
+            && self.account_id == other.account_id
+            && self.trace == other.trace
+            && self.policy == other.policy
+            && same_exact_contract
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.client_id == 0 {
             return Err("client_order_id 必须为正".into());

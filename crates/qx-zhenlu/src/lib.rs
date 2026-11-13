@@ -1444,6 +1444,34 @@ pub trait OrderGroupStore {
         let _ = group_id;
         Err("订单组存储不支持确认原生组撤销".into())
     }
+    fn begin_child_amendment(
+        &mut self,
+        group_id: &str,
+        client_order_id: u64,
+        operation_id: String,
+        requested_order: &Order,
+    ) -> Result<(), String> {
+        let _ = (group_id, client_order_id, operation_id, requested_order);
+        Err("订单组存储不支持持久化子腿改单意图".into())
+    }
+    fn confirm_child_amendment(
+        &mut self,
+        group_id: &str,
+        operation_id: &str,
+        snapshot: &Order,
+    ) -> Result<(), String> {
+        let _ = (group_id, operation_id, snapshot);
+        Err("订单组存储不支持确认子腿改单".into())
+    }
+    fn abort_child_amendment(
+        &mut self,
+        group_id: &str,
+        operation_id: &str,
+        snapshot: &Order,
+    ) -> Result<(), String> {
+        let _ = (group_id, operation_id, snapshot);
+        Err("订单组存储不支持安全中止子腿改单".into())
+    }
     fn apply_order_snapshot(
         &mut self,
         group_id: &str,
@@ -1648,6 +1676,67 @@ impl OrderGroupStore for FileOrderGroupStore {
             return Err("订单组文件名与组内标识不一致".into());
         }
         group.complete_native_cancel()?;
+        self.save_locked(&group)
+    }
+
+    fn begin_child_amendment(
+        &mut self,
+        group_id: &str,
+        client_order_id: u64,
+        operation_id: String,
+        requested_order: &Order,
+    ) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待改单订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待改单订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.begin_child_amendment(client_order_id, operation_id, requested_order.clone())?;
+        self.save_locked(&group)
+    }
+
+    fn confirm_child_amendment(
+        &mut self,
+        group_id: &str,
+        operation_id: &str,
+        snapshot: &Order,
+    ) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待确认改单订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待确认改单订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.confirm_child_amendment(operation_id, snapshot.clone())?;
+        self.save_locked(&group)
+    }
+
+    fn abort_child_amendment(
+        &mut self,
+        group_id: &str,
+        operation_id: &str,
+        snapshot: &Order,
+    ) -> Result<(), String> {
+        let _lock = self.lock()?;
+        let path = self.path_for(group_id)?;
+        let payload =
+            std::fs::read(&path).map_err(|error| format!("读取待中止改单订单组失败: {error}"))?;
+        let mut group: OrderGroupState = serde_json::from_slice(&payload)
+            .map_err(|error| format!("解析待中止改单订单组失败: {error}"))?;
+        group.validate_persisted()?;
+        if group.intent.group_id != group_id {
+            return Err("订单组文件名与组内标识不一致".into());
+        }
+        group.abort_child_amendment(operation_id, snapshot)?;
         self.save_locked(&group)
     }
 
