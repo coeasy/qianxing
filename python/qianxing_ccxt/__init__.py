@@ -1487,6 +1487,7 @@ class CcxtExchangeClient:
                 )
             previous = since
             reached_end = False
+            page_timestamps: set[int] = set()
             for row in batch:
                 if not isinstance(row, Sequence) or len(row) < 6:
                     raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT OHLCV 行格式非法")
@@ -1504,6 +1505,19 @@ class CcxtExchangeClient:
                 if timestamp < start_ms:
                     continue
                 if timestamp in rows:
+                    # Bitget's history API treats startTime as exclusive. Keep
+                    # one candle of overlap at each page boundary so the next
+                    # page starts after the previous candle without skipping
+                    # the boundary candle. Some API versions include the
+                    # cursor candle, so accept one identical cross-page overlap.
+                    if (
+                        self.config.exchange_id == "bitget"
+                        and timestamp == since
+                        and timestamp not in page_timestamps
+                        and rows[timestamp] == row
+                    ):
+                        page_timestamps.add(timestamp)
+                        continue
                     raise CcxtConnectorError(
                         CcxtErrorClass.EXCHANGE,
                         f"CCXT OHLCV response contains duplicate timestamp {timestamp}; refusing ambiguous history",
@@ -1514,6 +1528,7 @@ class CcxtExchangeClient:
                         f"OHLCV query exceeds the {MAX_OHLCV_ROWS}-row safety limit",
                     )
                 rows[timestamp] = row
+                page_timestamps.add(timestamp)
                 previous = max(previous, timestamp)
             # Some venues cap the response size below the requested ``limit``
             # (for example OKX caps candles at 300). A short non-empty page does
@@ -1528,9 +1543,10 @@ class CcxtExchangeClient:
                     "CCXT OHLCV pagination made no progress; refusing partial history",
                 )
             if bitget_interval_ms is not None:
-                # Bitget rounds history query boundaries to candle opens; align
-                # every page cursor to avoid drifting off the 15m boundary.
-                since = (previous // bitget_interval_ms + 1) * bitget_interval_ms
+                # Bitget history queries return candles strictly after
+                # startTime. Reuse the last timestamp as an overlapping cursor
+                # so the first candle after it is not skipped at page edges.
+                since = (previous // bitget_interval_ms) * bitget_interval_ms
             else:
                 since = previous + 1
             if since > end_ms:

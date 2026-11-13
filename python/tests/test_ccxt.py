@@ -1039,9 +1039,10 @@ class CcxtTest(unittest.TestCase):
         class BitgetHistoryExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
                 self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
-                if since <= 2 * interval_ms:
+                if since == interval_ms:
                     timestamps = (interval_ms, 2 * interval_ms)
                 else:
+                    # Bitget history-candles treats startTime as exclusive.
                     timestamps = (3 * interval_ms,)
                 return [[timestamp, 100, 101, 99, 100, 1] for timestamp in timestamps]
 
@@ -1057,8 +1058,32 @@ class CcxtTest(unittest.TestCase):
 
         self.assertEqual(frame.ts, (interval_ms, 2 * interval_ms, 3 * interval_ms))
         fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
-        self.assertEqual([call[3] for call in fetch_calls], [interval_ms, 3 * interval_ms])
+        self.assertEqual([call[3] for call in fetch_calls], [interval_ms, 2 * interval_ms])
         self.assertEqual([call[4] for call in fetch_calls], [200, 200])
+
+    def test_bitget_history_ohlcv_accepts_identical_inclusive_page_overlap(self):
+        interval_ms = 15 * 60 * 1000
+
+        class InclusiveBitgetHistoryExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if since == interval_ms:
+                    timestamps = (interval_ms, 2 * interval_ms)
+                else:
+                    timestamps = (2 * interval_ms, 3 * interval_ms)
+                return [[timestamp, 100, 101, 99, 100, 1] for timestamp in timestamps]
+
+        exchange = InclusiveBitgetHistoryExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="bitget"), exchange=exchange)
+        frame = client.fetch_ohlcv(
+            "BTC/USDT:USDT.BITGET",
+            timeframe="15m",
+            start_ms=interval_ms,
+            end_ms=3 * interval_ms,
+            limit=1_000,
+        )
+
+        self.assertEqual(frame.ts, (interval_ms, 2 * interval_ms, 3 * interval_ms))
 
     def test_ohlcv_duplicate_timestamps_fail_closed_instead_of_silently_overwriting(self):
         class DuplicateTimestampExchange(FakeExchange):
