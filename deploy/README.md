@@ -1587,7 +1587,12 @@ context of a Tokio 1.x runtime`——`--features nats` 的链路在"连接建立
 所以判据是：`Degraded` + `idle` 计数在涨 = 市场安静；出现带"超过上限"的具名放弃 = 链路真的断了。
 
 Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，覆盖 worker 失联、心跳
-过期、Outbox 发布失败、Consumer 死信和 ACK 失败，也会在持久订单组读取失败或订单组需要对账时告警。
+过期、交易所 gateway 业务端口不健康/持续降级、Outbox 发布失败、Consumer 死信和 ACK 失败，
+也会在持久订单组读取失败或订单组需要对账时告警。`qx_gateway_port_business_status` 的数值为
+`0=unhealthy`、`1=degraded`、`2=healthy`；`unobserved` 不导出样本，不能据此判断为 healthy。
+例如执行端口的成功响应为 healthy，确定性拒绝为 degraded，远端结果未知或需要对账为 unhealthy；
+具体原因仍须查看 `/ready` 的 `exchange_gateways` 诊断、worker 日志及订单对账报告。处理 unhealthy
+告警时先确认账户和端口，检查是否有待对账订单/订单组，并在结果明确前不要重放不确定的下单请求。
 规则表达式与对应的状态行为测试分别位于 `deploy/prometheus/qianxing-alerts.test.yml`，由 CI 中固定版本的
 `promtool` 校验；生产环境应根据实际抓取间隔、租约窗口和值班策略调整 `for` 与 heartbeat 阈值。
 
