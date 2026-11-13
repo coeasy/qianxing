@@ -1824,14 +1824,8 @@ impl FileSpreadOrderGroupStore {
         let path = self.path_for(&group.group_id)?;
         let payload = serde_json::to_vec_pretty(group)
             .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
-        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload)
-            .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path)
-                .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
-        }
+        qx_core::atomic_file::write_atomic_file(&path, &payload)
+            .map_err(|error| format!("替换多腿状态失败: {error}"))?;
         Ok(())
     }
 }

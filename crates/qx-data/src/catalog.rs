@@ -284,6 +284,8 @@ impl JsonDatasetBundleStore {
     pub fn save(&self, bundle: &DatasetBundleManifest) -> Result<String, String> {
         bundle.validate()?;
         let path = self.path_for(&bundle.bundle_id, &bundle.version)?;
+        let _lock = qx_core::FileLock::acquire(path.with_extension("bundle.json.lock"))
+            .map_err(|error| format!("lock dataset bundle {} failed: {error}", path.display()))?;
         if path.exists() {
             let existing = self.load(&bundle.bundle_id, &bundle.version)?;
             if existing == *bundle {
@@ -296,22 +298,8 @@ impl JsonDatasetBundleStore {
         }
         let payload = serde_json::to_vec_pretty(bundle)
             .map_err(|error| format!("encode dataset bundle failed: {error}"))?;
-        let temporary = path.with_extension(format!("bundle.json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload).map_err(|error| {
-            format!(
-                "write dataset bundle {} failed: {error}",
-                temporary.display()
-            )
-        })?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path).map_err(|replacement| {
-                format!(
-                    "commit dataset bundle {} failed: initial={error}; replacement={replacement}",
-                    path.display()
-                )
-            })?;
-        }
+        qx_core::atomic_file::write_atomic_file(&path, &payload)
+            .map_err(|error| format!("commit dataset bundle {} failed: {error}", path.display()))?;
         bundle.fingerprint()
     }
 
@@ -494,6 +482,49 @@ mod tests {
         next_version.version = "run-2".into();
         assert!(store.save(&next_version).is_ok());
         assert!(store.load("../escape", "run-1").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_bundle_writers_cannot_replace_an_immutable_version() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-dataset-bundle-race-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = JsonDatasetBundleStore::new(&root).unwrap();
+        let mut first = DatasetBundleManifest::new("ashare.000001", "run-1", "mixed");
+        first
+            .add_component(component("bars", "bars.daily"))
+            .unwrap();
+        let mut second = first.clone();
+        second
+            .components
+            .get_mut("bars")
+            .unwrap()
+            .dataset
+            .fingerprint = "different-fingerprint".into();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let writers = [first.clone(), second.clone()].map(|bundle| {
+            let store = store.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.save(&bundle)
+            })
+        });
+        barrier.wait();
+        let outcomes = writers.map(|writer| writer.join().unwrap());
+
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(outcomes.iter().filter(|result| result.is_err()).count(), 1);
+        let persisted = store.load("ashare.000001", "run-1").unwrap();
+        assert!(persisted == first || persisted == second);
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

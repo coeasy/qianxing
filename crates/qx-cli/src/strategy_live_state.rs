@@ -317,19 +317,8 @@ pub(crate) fn load_live_strategy_digest(path: &Path) -> Result<Option<u64>, Stri
 }
 
 pub(crate) fn save_live_strategy_digest(path: &Path, digest: u64) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("实时策略 digest 路径没有父目录: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("创建实时策略 digest 目录失败: {error}"))?;
-    let temporary = path.with_extension(format!("digest.tmp.{}", std::process::id()));
-    std::fs::write(&temporary, digest.to_string())
-        .map_err(|error| format!("写入实时策略 digest 失败: {error}"))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        let _ = std::fs::remove_file(path);
-        std::fs::rename(&temporary, path)
-            .map_err(|replacement| format!("提交实时策略 digest 失败: {error}; {replacement}"))?;
-    }
+    qx_core::atomic_file::write_atomic_file(path, digest.to_string().as_bytes())
+        .map_err(|error| format!("提交实时策略 digest 失败 {}: {error}", path.display()))?;
     Ok(())
 }
 

@@ -89,19 +89,8 @@ impl DataStorage for JsonFileDataStorage {
             bars: canonical,
         })
         .map_err(|error| format!("encode data storage {} failed: {error}", path.display()))?;
-        let temporary = path.with_extension(format!("bars.json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload).map_err(|error| {
-            format!("write data storage {} failed: {error}", temporary.display())
-        })?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path).map_err(|replacement| {
-                format!(
-                    "commit data storage {} failed: initial={error}; replacement={replacement}",
-                    path.display()
-                )
-            })?;
-        }
+        qx_core::atomic_file::write_atomic_file(&path, &payload)
+            .map_err(|error| format!("commit data storage {} failed: {error}", path.display()))?;
         Ok(())
     }
 
