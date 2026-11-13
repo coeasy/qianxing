@@ -917,6 +917,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(account_events.len(), 1);
+        let default_deadline = Instant::now() + Duration::from_secs(2);
         let default_events = loop {
             let response = service.handle("GET", "/events", "", 12);
             let events: Vec<serde_json::Value> =
@@ -925,7 +926,7 @@ mod tests {
                 break events;
             }
             assert!(
-                Instant::now() < deadline,
+                Instant::now() < default_deadline,
                 "projection bridge did not publish default account events"
             );
             thread::sleep(Duration::from_millis(10));
