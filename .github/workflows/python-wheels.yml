@@ -296,36 +296,23 @@ jobs:
           path: dist/*.tar.gz
 
   sbom:
-    name: SBOM (dependency inventory)
+    name: SPDX SBOM (locked Cargo dependency graph)
     needs: [version-consistency, quality-gates]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.1
-      - name: Emit dependency inventory from Cargo metadata
+      - name: Emit SPDX 2.3 dependency SBOM from locked Cargo metadata
         run: |
           set -euo pipefail
-          cargo metadata --format-version 1 --locked > sbom-cargo.json
-          python3 - <<'PY'
-          import json
-          meta = json.load(open("sbom-cargo.json", encoding="utf-8"))
-          components = [
-              {
-                  "name": pkg["name"],
-                  "version": pkg["version"],
-                  "source": (pkg.get("source") or "workspace"),
-                  "license": pkg.get("license"),
-              }
-              for pkg in sorted(meta["packages"], key=lambda p: (p["name"], p["version"]))
-          ]
-          doc = {
-              "bomFormat": "QianxingDependencyInventory",
-              "specVersion": "1",
-              "components": components,
-          }
-          json.dump(doc, open("sbom.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
-          print(f"components={len(components)}")
-          PY
+          cargo metadata --format-version 1 --locked --all-features > sbom-cargo.json
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python3 tools/generate_cargo_sbom.py \
+            --metadata sbom-cargo.json \
+            --commit "$GITHUB_SHA" \
+            --created-epoch "$SOURCE_DATE_EPOCH" \
+            --output sbom.json
+          python3 -m unittest tools.test_generate_cargo_sbom
       - uses: actions/upload-artifact@v4
         with:
           name: sbom
