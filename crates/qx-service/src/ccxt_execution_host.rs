@@ -689,28 +689,51 @@ fn execute_ccxt_queued_cancel(
             prepared.order.client_id, prepared.order.status
         )));
     }
-    let group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
+    let mut triggered_oco_group_id = None;
     for group_id in group_store.group_ids()? {
-        if group_store.load(&group_id)?.is_some_and(|group| {
-            group.legs.iter().any(|leg| {
-                leg.order.client_id == prepared.target.client_order_id
-                    && leg.order.account_id == prepared.target.account_id
-                    && leg
-                        .order
-                        .instrument
-                        .venue
-                        .as_str()
-                        .eq_ignore_ascii_case(worker.venue_id.as_deref().unwrap_or_default())
-            }) && !matches!(
-                group.status,
-                qx_core::OrderGroupStatus::Cancelled | qx_core::OrderGroupStatus::Rejected
-            )
-        }) {
-            return Ok(Err(format!(
-                "订单 {} 属于活动原生订单组，必须通过 CancelOrderGroup 撤销",
-                prepared.target.client_order_id
-            )));
+        let Some(group) = group_store.load(&group_id)? else {
+            continue;
+        };
+        if !group.legs.iter().any(|leg| {
+            leg.order.client_id == prepared.target.client_order_id
+                && leg.order.account_id == prepared.target.account_id
+                && leg
+                    .order
+                    .instrument
+                    .venue
+                    .as_str()
+                    .eq_ignore_ascii_case(worker.venue_id.as_deref().unwrap_or_default())
+        }) || matches!(
+            group.status,
+            qx_core::OrderGroupStatus::Cancelled | qx_core::OrderGroupStatus::Rejected
+        ) {
+            continue;
         }
+        let eligible_triggered_native_oco_child = worker.venue_id.as_deref().is_some_and(|venue| {
+            venue.eq_ignore_ascii_case("OKX") || venue.eq_ignore_ascii_case("BITGET")
+        }) && is_reconciled_triggered_oco_child(
+            &group,
+            prepared.target.client_order_id,
+            prepared
+                .pipeline
+                .venue_order_id(prepared.target.client_order_id)
+                .as_deref(),
+        );
+        if eligible_triggered_native_oco_child {
+            if triggered_oco_group_id.is_some() {
+                return Ok(Err(format!(
+                    "订单 {} 出现在多个活动订单组，拒绝撤销并要求账户级对账",
+                    prepared.target.client_order_id
+                )));
+            }
+            triggered_oco_group_id = Some(group.intent.group_id.clone());
+            continue;
+        }
+        return Ok(Err(format!(
+            "订单 {} 属于活动原生订单组，必须先对账；已确认触发的 OKX/Bitget OCO 子单可直接撤销",
+            prepared.target.client_order_id
+        )));
     }
     if let Err(reason) = require_cancel_order_execution_capability(
         &prepared.order,
@@ -811,6 +834,33 @@ fn execute_ccxt_queued_cancel(
             settlement_currency.to_owned(),
         )
         .map_err(|error| format!("刷新 CCXT 撤单 EventLog 失败: {error}"))?;
+    if let Some(group_id) = triggered_oco_group_id {
+        let group = group_store
+            .load(&group_id)?
+            .ok_or_else(|| format!("触发 OCO 订单组 {group_id} 在撤单后消失"))?;
+        if let Some(snapshot) = latest_pipeline
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == target_id)
+        {
+            if let Err(error) = group_store.apply_order_snapshot(
+                &group_id,
+                &snapshot,
+                Some(target_remote_id.clone()),
+            ) {
+                let _ = group_store.require_reconciliation(&group_id);
+                return Err(format!(
+                    "持久化已触发 OKX OCO 子单撤单结果失败，订单组已围栏待对账: {error}"
+                ));
+            }
+        } else {
+            let _ = group_store.require_reconciliation(&group_id);
+            return Err(format!(
+                "触发 OCO 子单 {} 撤单后不在 EventLog，订单组 {} 已围栏待对账",
+                target_id, group.intent.group_id
+            ));
+        }
+    }
     sync_spread_groups_after_cancel(&pipeline_storage.root, &latest_pipeline, target_id)?;
     if !dedicated_spread_recovery {
         let validator =
@@ -837,6 +887,72 @@ fn execute_ccxt_queued_cancel(
     }
     metrics.absorb(&prepared.pipeline);
     Ok(result)
+}
+
+fn is_reconciled_triggered_oco_child(
+    group: &qx_core::OrderGroupState,
+    client_order_id: u64,
+    remote_order_id: Option<&str>,
+) -> bool {
+    if group.intent.kind != qx_core::OrderGroupKind::Oco
+        || !matches!(
+            group.status,
+            qx_core::OrderGroupStatus::Active | qx_core::OrderGroupStatus::PartiallyFilled
+        )
+        || group
+            .venue_group_id
+            .as_deref()
+            .is_none_or(|id| id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()))
+        || group.legs.len() != 2
+    {
+        return false;
+    }
+    let Some(remote_order_id) =
+        remote_order_id.filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+    else {
+        return false;
+    };
+    let Some(active_leg) = group
+        .legs
+        .iter()
+        .find(|leg| leg.order.client_id == client_order_id)
+    else {
+        return false;
+    };
+    if active_leg.venue_order_id.as_deref() != Some(remote_order_id)
+        || active_leg.order.status.is_terminal()
+        || !matches!(
+            active_leg.role,
+            qx_core::OrderGroupLegRole::TakeProfit | qx_core::OrderGroupLegRole::StopLoss
+        )
+    {
+        return false;
+    }
+    group
+        .legs
+        .iter()
+        .filter(|leg| leg.order.client_id != client_order_id)
+        .count()
+        == 1
+        && group
+            .legs
+            .iter()
+            .find(|leg| leg.order.client_id != client_order_id)
+            .is_some_and(|peer| {
+                peer.role != active_leg.role
+                    && matches!(
+                        peer.order.status,
+                        qx_core::OrderStatus::Cancelled | qx_core::OrderStatus::Expired
+                    )
+                    && peer.venue_order_id.as_deref().is_none_or(|id| {
+                        !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+                    && peer.order.filled.raw() == 0
+                    && !peer
+                        .order
+                        .exact_amounts
+                        .is_some_and(|amounts| amounts.filled.is_positive())
+            })
 }
 
 // Keep the worker, transport, request, and reporting dependencies explicit at this boundary.
@@ -1776,13 +1892,14 @@ mod cancel_route_tests {
     use super::{
         bitget_group_has_no_child_exposure, ccxt_amend_matches_worker, ccxt_cancel_matches_worker,
         ccxt_cancel_order_group_matches_worker, ccxt_submit_order_group_matches_worker,
+        is_reconciled_triggered_oco_child,
     };
     use qx_control::{CommandKind, ControlCommand, Permission};
     use qx_core::{
         ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
         InstrumentId, Order, OrderGroupExecution, OrderGroupIntent, OrderGroupKind,
-        OrderGroupLegIntent, OrderGroupLegRole, OrderPolicy, OrderStatus, Price, Quantity, Side,
-        TriggerPriceType,
+        OrderGroupLegIntent, OrderGroupLegRole, OrderGroupState, OrderPolicy, OrderStatus, Price,
+        Quantity, Side, TriggerPriceType,
     };
     use qx_runtime::WorkerConfig;
     use std::collections::BTreeMap;
@@ -1980,5 +2097,87 @@ mod cancel_route_tests {
         assert!(!bitget_group_has_no_child_exposure(&serde_json::json!({
             "order_ids": ["1"], "sub_orders": []
         })));
+    }
+
+    #[test]
+    fn only_a_reconciled_triggered_native_oco_child_can_use_single_order_cancel() {
+        let submit = order_group_submit("main", "OKX");
+        let intent: OrderGroupIntent =
+            serde_json::from_str(submit.payload.get("order_group_json").unwrap()).unwrap();
+        let mut group = OrderGroupState::from_intent(intent).unwrap();
+        group.status = qx_core::OrderGroupStatus::Active;
+        group.venue_group_id = Some("900001".into());
+        let active = group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .unwrap();
+        active.order.status = OrderStatus::Submitted;
+        active.venue_order_id = Some("700001".into());
+        let peer = group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+            .unwrap();
+        peer.order.status = OrderStatus::Cancelled;
+
+        assert!(is_reconciled_triggered_oco_child(
+            &group,
+            31,
+            Some("700001")
+        ));
+        assert!(!is_reconciled_triggered_oco_child(
+            &group,
+            31,
+            Some("700002")
+        ));
+        assert!(!is_reconciled_triggered_oco_child(&group, 31, None));
+
+        group.legs[1].order.status = OrderStatus::Submitted;
+        assert!(!is_reconciled_triggered_oco_child(
+            &group,
+            31,
+            Some("700001")
+        ));
+
+        let submit = order_group_submit("main", "BITGET");
+        let intent: OrderGroupIntent =
+            serde_json::from_str(submit.payload.get("order_group_json").unwrap()).unwrap();
+        let mut bitget_group = OrderGroupState::from_intent(intent).unwrap();
+        bitget_group.status = qx_core::OrderGroupStatus::Active;
+        bitget_group.venue_group_id = Some("900002".into());
+        let active = bitget_group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::TakeProfit)
+            .unwrap();
+        active.order.status = OrderStatus::Submitted;
+        active.venue_order_id = Some("700011".into());
+        let peer = bitget_group
+            .legs
+            .iter_mut()
+            .find(|leg| leg.role == OrderGroupLegRole::StopLoss)
+            .unwrap();
+        peer.order.status = OrderStatus::Cancelled;
+        peer.venue_order_id = Some("700012".into());
+        assert!(is_reconciled_triggered_oco_child(
+            &bitget_group,
+            31,
+            Some("700011")
+        ));
+        group.legs[1].order.status = OrderStatus::Cancelled;
+        group.status = qx_core::OrderGroupStatus::ReconcileRequired;
+        assert!(!is_reconciled_triggered_oco_child(
+            &group,
+            31,
+            Some("700001")
+        ));
+        group.status = qx_core::OrderGroupStatus::Active;
+        group.legs[1].order.filled = Quantity::from_i64(1);
+        assert!(!is_reconciled_triggered_oco_child(
+            &group,
+            31,
+            Some("700001")
+        ));
     }
 }
