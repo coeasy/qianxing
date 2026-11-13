@@ -1,0 +1,116 @@
+name: Public CCXT quickstart acceptance
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/public-ccxt-quickstart.yml"
+      - "crates/qx-cli/src/quickstart.rs"
+      - "crates/qx-cli/src/backtests/ccxt_builtin.rs"
+      - "crates/qx-cli/src/init_project.rs"
+      - "crates/qx-cli/src/project_manifest.rs"
+      - "crates/qx-cli/src/report_command.rs"
+      - "crates/qx-cli/src/report_html.rs"
+      - "crates/qx-cli/src/worker_entry.rs"
+      - "crates/qx-adapter/src/ccxt.rs"
+      - "python/qianxing_ccxt/**"
+      - "tools/build_python_wheel.sh"
+      - "python/pyproject.toml"
+      - "deploy/qianxing.runtime.ccxt.example.json"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  public-market-data-quickstart:
+    name: Real public-data quickstart (${{ matrix.exchange }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exchange: okx
+            instrument: BTC/USDT:USDT.OKX
+          - exchange: binance
+            instrument: BTC/USDT:USDT.BINANCE
+          - exchange: bitget
+            instrument: BTC/USDT:USDT.BITGET
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: public-ccxt-${{ runner.os }}-${{ runner.arch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the Linux release wheel and bundled CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check maturin==1.15.0
+          PYTHON=python bash tools/build_python_wheel.sh
+          python -m pip install --disable-pip-version-check --no-deps dist/*.whl
+          python -c 'import qianxing_bridge; print("native_extension=loaded")'
+          target/release/qx-cli version
+          mkdir -p "$RUNNER_TEMP/public-ccxt-acceptance"
+      - name: Fetch real public market data, backtest, and render report
+        env:
+          EXCHANGE: ${{ matrix.exchange }}
+          INSTRUMENT: ${{ matrix.instrument }}
+          ACCEPTANCE_ROOT: ${{ runner.temp }}/public-ccxt-acceptance
+          PYTHON_BIN: ${{ runner.temp }}/python-acceptance/bin/python
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/python-acceptance"
+          "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-deps "$GITHUB_WORKSPACE"/dist/*.whl
+          "$PYTHON_BIN" -m pip install --disable-pip-version-check ccxt==4.5.89
+          cli="$GITHUB_WORKSPACE/target/release/qx-cli"
+          project="$ACCEPTANCE_ROOT/$EXCHANGE/project"
+          home="$ACCEPTANCE_ROOT/$EXCHANGE/home"
+          mkdir -p "$home"
+          export HOME="$home"
+          export XDG_DATA_HOME="$home/.local/share"
+          export QX_PYTHON="$PYTHON_BIN"
+          log="$ACCEPTANCE_ROOT/$EXCHANGE/quickstart.log"
+          mkdir -p "$(dirname "$log")"
+          "$cli" quickstart "$project" \
+            --profile ccxt --days 30 --timeframe 1h \
+            --exchange "$EXCHANGE" --instrument "$INSTRUMENT" --html \
+            2>&1 | tee "$log"
+          test -s "$project/qianxing.project.json"
+          test -s "$project/qianxing.ccxt.public.json"
+          python - "$project/qianxing.ccxt.public.json" "$EXCHANGE" "$INSTRUMENT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert config["exchange_id"] == sys.argv[2], config
+          assert sys.argv[3] in config["instruments"], config
+          assert config["sandbox"] is False, config
+          forbidden = {"apiKey", "secret", "password", "uid", "token"}
+          assert not (forbidden & config.keys()), config
+          PY
+          report="$(find "$project" "$home" -type f -name '*.report.html' -size +0c -print -quit)"
+          test -n "$report"
+          printf 'exchange=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$INSTRUMENT" "$report" \
+            > "$ACCEPTANCE_ROOT/$EXCHANGE/result.txt"
+          sha256sum "$cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"
+          python --version > "$ACCEPTANCE_ROOT/$EXCHANGE/python-version.txt" 2>&1
+          "$PYTHON_BIN" -c 'import ccxt; print(ccxt.__version__)' > "$ACCEPTANCE_ROOT/$EXCHANGE/ccxt-version.txt"
+      - name: Upload quickstart project, real-data lineage, report, and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-ccxt-quickstart-${{ matrix.exchange }}
+          path: ${{ runner.temp }}/public-ccxt-acceptance/${{ matrix.exchange }}
+          if-no-files-found: warn
+          retention-days: 30

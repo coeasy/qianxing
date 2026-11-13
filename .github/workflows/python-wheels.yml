@@ -70,9 +70,16 @@ jobs:
       contents: read
     uses: ./.github/workflows/ci.yml
 
+  public-market-data-acceptance:
+    name: Public market-data quickstart acceptance
+    needs: version-consistency
+    permissions:
+      contents: read
+    uses: ./.github/workflows/public-ccxt-quickstart.yml
+
   binary:
     name: binary (${{ matrix.os }})
-    needs: [version-consistency, quality-gates]
+    needs: [version-consistency, quality-gates, public-market-data-acceptance]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -121,7 +128,7 @@ jobs:
 
   wheel:
     name: python wheel (${{ matrix.os }}, Python ${{ matrix.python }})
-    needs: [version-consistency, quality-gates]
+    needs: [version-consistency, quality-gates, public-market-data-acceptance]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
