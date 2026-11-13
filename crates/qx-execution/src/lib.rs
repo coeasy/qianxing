@@ -742,12 +742,23 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         // `correlation_id:source_seq` 去重，而每条命令都从 0 重新计数，只用
         // `(worker, venue)` 会让后一笔订单的 Accepted/ReconcileRequired 被判为
         // 重放而静默丢弃；只用客户单号又会让同一订单的第二笔成交被吞掉。
-        let venue_prefix = format!(
-            "{}:venue:{}:{}",
-            self.worker_id,
-            self.venue.venue_id(),
-            order.client_id
-        );
+        let venue_prefix = match self
+            .registration_correlation
+            .as_deref()
+            .filter(|correlation_id| !correlation_id.trim().is_empty())
+        {
+            Some(correlation_id) => format!(
+                "{correlation_id}:venue:{}:{}",
+                self.venue.venue_id(),
+                order.client_id
+            ),
+            None => format!(
+                "{}:venue:{}:{}",
+                self.worker_id,
+                self.venue.venue_id(),
+                order.client_id
+            ),
+        };
         for fact in facts {
             let correlation_id = fact_correlation(&venue_prefix, &fact);
             self.append(fact, correlation_id)?;

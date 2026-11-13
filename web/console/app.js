@@ -798,7 +798,7 @@ function fillTable(tableId, response) {
           && typeof record.correlation_id === "string" && record.correlation_id.trim()) {
         const lookup = el("button", "查看关联事件", "ghost correlation-event-link");
         lookup.type = "button";
-        lookup.title = "按此 correlation_id 精确查看账户保留日志中的关联事件";
+        lookup.title = "按此 correlation_id 查看关联事件及同一订单的完整保留生命周期";
         lookup.addEventListener("click", () => focusAccountActivityForCorrelation(record.correlation_id));
         td.append(lookup);
       }

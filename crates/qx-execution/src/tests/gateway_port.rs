@@ -15,6 +15,50 @@ const NATIVE_GROUP_TEST_CAPABILITIES: qx_zhenlu::venue_capabilities::VenueCapabi
         ..qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
     };
 
+struct AllowRisk;
+
+impl RiskPort for AllowRisk {
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Allow)
+    }
+}
+
+#[test]
+fn submit_response_facts_keep_the_callers_stable_correlation_namespace() {
+    let order = port_order(8_801);
+    let mut venue = PortVenue {
+        result: Ok(vec![
+            ExecutionEvent::Accepted {
+                client_order_id: order.client_id,
+                venue_order_id: "venue-8801".into(),
+            },
+            ExecutionEvent::Fill(Box::new(qx_core::Fill {
+                order_id: order.client_id,
+                qty: order.qty,
+                price: Price::from_i64(100),
+                ..qx_core::Fill::default()
+            })),
+        ]),
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let correlation_id = "algo:parent-42:child:3";
+    ExecutionGateway::new(&mut venue, &mut pipeline, "worker-1", 100, &mut source_seq)
+        .submit_with_risk_and_correlation(order, &AllowRisk, correlation_id)
+        .unwrap();
+
+    assert_eq!(pipeline.events.len(), 2);
+    assert!(pipeline.events.iter().all(|event| {
+        event
+            .correlation_id
+            .starts_with("algo:parent-42:child:3:venue:port-test:8801:")
+    }));
+    assert_ne!(
+        pipeline.events[0].correlation_id,
+        pipeline.events[1].correlation_id
+    );
+}
+
 struct NoNativeGroupVenue {
     submit_calls: usize,
 }

@@ -29,7 +29,8 @@ pub struct AccountActivityReportReadOptionsV1 {
     /// Exact strategy identity; can be combined with `run_id` or order filters.
     #[serde(default)]
     pub strategy_id: Option<String>,
-    /// Exact event correlation identity; useful when an order has no venue ID yet.
+    /// Exact correlation anchor; when it identifies an order event, include all retained facts
+    /// for that same client order so the submit/ack/fill/ledger lifecycle can be inspected.
     #[serde(default)]
     pub correlation_id: Option<String>,
     #[serde(default = "default_event_limit")]
@@ -478,6 +479,16 @@ fn select_event_page<'a>(
             })
             .collect::<HashSet<_>>()
     });
+    // A command's registration event may carry the caller's stable correlation ID while venue
+    // response facts carry a more specific per-order correlation. Join the anchor back to that
+    // order so the filter exposes its full retained lifecycle, including fills and ledger facts.
+    let correlation_client_ids = options.correlation_id.as_deref().map(|expected| {
+        events
+            .iter()
+            .filter(|event| event.correlation_id == expected)
+            .filter_map(|event| order_ids_for_event(event).0)
+            .collect::<HashSet<_>>()
+    });
     let is_match = |event: &Event| {
         let (client_order_id, exchange_order_id) = order_ids_for_event(event);
         options
@@ -491,10 +502,14 @@ fn select_event_page<'a>(
                 .strategy_id
                 .as_deref()
                 .is_none_or(|expected| event.metadata.context.strategy_id == expected)
-            && options
-                .correlation_id
-                .as_deref()
-                .is_none_or(|expected| event.correlation_id == expected)
+            && options.correlation_id.as_deref().is_none_or(|expected| {
+                event.correlation_id == expected
+                    || client_order_id.is_some_and(|client_order_id| {
+                        correlation_client_ids
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(&client_order_id))
+                    })
+            })
             && options.exchange_order_id.as_deref().is_none_or(|expected| {
                 exchange_order_id.as_deref() == Some(expected)
                     || client_order_id.is_some_and(|client_order_id| {
@@ -971,9 +986,44 @@ mod tests {
     }
 
     #[test]
-    fn account_activity_filters_by_correlation_id() {
+    fn account_activity_correlation_anchor_expands_to_the_same_order_lifecycle() {
         let mut events = events();
+        events[1].kind = EventKind::Submit {
+            client_order_id: 77,
+        };
         events[1].correlation_id = "order-submit-77".into();
+        events[2].kind = EventKind::Accepted {
+            client_order_id: 77,
+            venue_order_id: Some("remote-77".into()),
+        };
+        events[2].correlation_id = "order-submit-77:venue:OKX:77:accepted".into();
+        events[3].kind = EventKind::Filled {
+            fill: qx_core::Fill {
+                order_id: 77,
+                venue_order_id: Some("remote-77".into()),
+                ..qx_core::Fill::default()
+            },
+        };
+        events[3].correlation_id = "order-submit-77:venue:OKX:77:fill:77".into();
+        events[4].kind = EventKind::LedgerApplied {
+            entry: qx_core::LedgerEntry {
+                id: 1,
+                account_id: "primary".into(),
+                currency: "USDT".into(),
+                kind: qx_core::LedgerEntryKind::TradePosition,
+                amount: qx_core::Money::ZERO,
+                instrument: None,
+                quantity: qx_core::Quantity::ZERO,
+                price: None,
+                order_id: Some(77),
+                ts: 5,
+                multiplier: 1,
+                position_side: None,
+                leverage: None,
+                exact_amounts: None,
+            },
+        };
+        events[4].correlation_id = "ledger:77".into();
         let report = read_account_activity_report_v1(
             &snapshot(),
             &events,
@@ -984,12 +1034,20 @@ mod tests {
             200,
         )
         .unwrap();
-        assert_eq!(report.events.available_total, 1);
+        assert_eq!(report.events.available_total, 4);
         assert_eq!(
             report.events.correlation_id.as_deref(),
             Some("order-submit-77")
         );
-        assert_eq!(report.events.rows[0].seq, events[1].seq);
+        assert_eq!(
+            report
+                .events
+                .rows
+                .iter()
+                .map(|row| row.seq)
+                .collect::<Vec<_>>(),
+            [2, 3, 4, 5]
+        );
         assert_eq!(report.events.rows[0].correlation_id, "order-submit-77");
     }
 
