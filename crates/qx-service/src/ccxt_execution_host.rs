@@ -1,8 +1,8 @@
 //! CCXT SubmitOrder queue and multi-leg recovery lifecycle.
 
 use crate::cancel_order_host::{
-    execute_prepared_amend_order, execute_prepared_cancel_order, prepare_amend_order,
-    prepare_cancel_order,
+    execute_prepared_amend_order_with_admission_lock, execute_prepared_cancel_order,
+    prepare_amend_order, prepare_cancel_order,
 };
 use crate::ccxt_market_host::{exact_json_decimal_or_raw, raw_json_i128};
 use crate::configured_backends::ControlStateBackend;
@@ -680,6 +680,31 @@ fn execute_ccxt_queued_cancel(
         pipeline_storage,
         settlement_currency,
     )?;
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock =
+        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
+    prepared
+        .pipeline
+        .refresh()
+        .map_err(|error| format!("刷新撤单前账户 EventLog 失败: {error:?}"))?;
+    prepared.order = prepared
+        .pipeline
+        .orders()
+        .into_iter()
+        .find(|order| order.client_id == prepared.target.client_order_id)
+        .ok_or_else(|| {
+            format!(
+                "刷新后账户 EventLog 不存在撤单订单 {}",
+                prepared.target.client_order_id
+            )
+        })?;
+    crate::risk_host::require_no_unresolved_live_order_operations(
+        &worker.id,
+        worker.account_id.as_deref(),
+        worker.venue_id.as_deref(),
+        &prepared.pipeline,
+        Some(prepared.target.client_order_id),
+    )?;
     if prepared.order.status == qx_core::OrderStatus::Cancelled {
         return Ok(Ok("ALREADY_CANCELLED".into()));
     }
@@ -977,6 +1002,13 @@ fn execute_ccxt_queued_amend(
         settlement_currency,
     )?;
     let target_id = prepared.target.client_order_id;
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock =
+        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
+    prepared
+        .pipeline
+        .refresh()
+        .map_err(|error| format!("改单前刷新账户 EventLog 失败: {error:?}"))?;
     use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
     let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
     let target_remote_id = prepared.pipeline.venue_order_id(target_id).ok_or_else(|| {
@@ -1106,10 +1138,9 @@ fn execute_ccxt_queued_amend(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
-    let result = execute_prepared_amend_order(
+    let result = execute_prepared_amend_order_with_admission_lock(
         command,
         worker,
-        pipeline_storage,
         runtime_config_path,
         &mut prepared,
         &mut venue,
@@ -1354,6 +1385,9 @@ fn execute_ccxt_queued_cancel_order_group(
             "CancelOrderGroup 与受支持的 CCXT OCO worker 拓扑不匹配".into(),
         ));
     }
+    let log_name = required_account_event_log(worker)?;
+    let _admission_lock =
+        crate::risk_host::worker_account_admission_lock(&pipeline_storage.root, &log_name)?;
     let mut group_store = FileOrderGroupStore::new(pipeline_storage.root.join("order-groups"))?;
     let Some(group) = group_store.load(&target.group_id)? else {
         return Ok(Err(format!("找不到持久订单组 {}", target.group_id)));
@@ -1397,7 +1431,6 @@ fn execute_ccxt_queued_cancel_order_group(
             "原生 OCO 已生成子订单或存在成交，必须先按子单事实对账".into()
         ));
     }
-    let log_name = required_account_event_log(worker)?;
     let mut pipeline = pipeline_storage
         .open(log_name, settlement_currency.to_owned())
         .map_err(|error| format!("打开原生 OCO 撤销 EventLog 失败: {error}"))?;
