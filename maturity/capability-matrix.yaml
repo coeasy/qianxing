@@ -731,7 +731,7 @@ providers:
     depth: unsupported
     precision: implemented-and-verified
     evidence: [crates/qx-adapter/src/ccxt_provider.rs, crates/qx-provider/src/registry.rs, crates/qx-provider/src/tests/bar_failover.rs, python/tests/test_ccxt_provider_adapter.py]
-    limitations: ["Provider capability 现显式声明 Bar 档位，Registry 按 DataKind 与档位在 I/O 前过滤候选；历史 Bar 经 fixture 与 Rust 共享回测验证，但真实交易所各自认证仍未完成", "不支持的复权与非严格质量语义会在 Provider I/O 前拒绝；只保留本机接收时间，不能证明历史点时可见性；不提供 realtime、Quote、深度或逐源频率保真认证"]
+    limitations: ["Provider capability 现显式声明 Bar 档位，Registry 按 DataKind 与档位在 I/O 前过滤候选；历史 Bar 经 fixture 与 Rust 共享回测验证，但真实交易所各自认证仍未完成", "CCXT 固定周期 OHLCV 现按 as-of cutoff 排除未收盘 K 线，并将 cutoff 与排除数量写入 DatasetManifestV2；Python 确定性测试、Rust 清单测试通过，托管 CI 与真实公开行情复验待完成。证据：maturity/evidence/ccxt-unclosed-candle-filter-2026-11-14.json", "不支持的复权与非严格质量语义会在 Provider I/O 前拒绝；只保留本机接收时间，不能证明历史点时可见性；不提供 realtime、Quote、深度或逐源频率保真认证"]
 
   - name: PythonDataProvider
     capability_id: qx.provider.python
