@@ -70,6 +70,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         .map(|event| event.source_seq)
         .unwrap_or(0);
     let mut reconnect_budget = CcxtReconnectBudget::default();
+    let mut reconnects_total = 0_u64;
     let mut idle_windows = 0_u64;
     loop {
         if context.should_stop() {
@@ -107,6 +108,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                 let backoff = reconnect_budget
                     .note_failure()
                     .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
+                reconnects_total = reconnects_total.saturating_add(1);
                 context.mark(
                     ServiceStatus::Degraded,
                     format!(
@@ -120,6 +122,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                     GatewayBusinessHealthStatus::Degraded,
                     received_ts,
                 );
+                metrics.observe_gateway_venue_reconnects(&venue_id, reconnects_total);
                 metrics.publish_if_due(true, received_ts);
                 context.sleep_ms(backoff.as_millis() as u64);
                 if context.should_stop() {
@@ -168,6 +171,11 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             .get("events")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
+        if let Some(timestamp_ms) =
+            latest_ccxt_user_event_timestamp_ms(event, runtime_timestamp_ms())
+        {
+            metrics.observe_gateway_venue_last_event(&venue_id, timestamp_ms);
+        }
         let mut matched = 0_usize;
         let mut reduced = 0_usize;
         let mut reconcile_errors = 0_usize;
@@ -315,6 +323,33 @@ fn validate_ccxt_user_stream_worker(worker: &WorkerConfig) -> Result<String, Str
         .ok_or_else(|| format!("worker {} 缺少 venue_id", worker.id))
 }
 
+/// Return the newest order-event source time, falling back to receive time when CCXT omits it.
+/// Idle windows and empty event batches do not refresh the last-event metric.
+fn latest_ccxt_user_event_timestamp_ms(
+    event: &serde_json::Value,
+    received_at_ms: u64,
+) -> Option<u64> {
+    if event.get("idle").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    let events = event.get("events")?.as_array()?;
+    if events.is_empty() {
+        return None;
+    }
+    Some(
+        events
+            .iter()
+            .filter_map(|update| {
+                update
+                    .get("timestamp_ms")
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .filter(|timestamp_ms| *timestamp_ms > 0)
+            .max()
+            .unwrap_or(received_at_ms),
+    )
+}
+
 fn runtime_timestamp_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -325,7 +360,7 @@ fn runtime_timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_ccxt_user_stream_worker;
+    use super::{latest_ccxt_user_event_timestamp_ms, validate_ccxt_user_stream_worker};
     use qx_runtime::WorkerConfig;
 
     fn worker(role: &str, enabled: bool, venue_id: &str) -> WorkerConfig {
@@ -348,5 +383,34 @@ mod tests {
         assert!(validate_ccxt_user_stream_worker(&worker("execution", true, "okx")).is_err());
         assert!(validate_ccxt_user_stream_worker(&worker("user_stream", false, "okx")).is_err());
         assert!(validate_ccxt_user_stream_worker(&worker("user_stream", true, "binance")).is_err());
+    }
+
+    #[test]
+    fn ccxt_user_stream_last_event_time_ignores_idle_and_empty_windows() {
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"idle": true, "events": []}),
+                500,
+            ),
+            None
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(&serde_json::json!({"events": []}), 500),
+            None
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"events": [{"timestamp_ms": 300}, {"timestamp_ms": 400}]}),
+                500,
+            ),
+            Some(400)
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"events": [{"timestamp_ms": null}]}),
+                500,
+            ),
+            Some(500)
+        );
     }
 }

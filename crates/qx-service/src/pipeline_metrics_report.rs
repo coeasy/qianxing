@@ -263,7 +263,8 @@ impl PipelineMetricsReporter {
         *count = (*count).max(total);
     }
 
-    /// Publish the latest source-event timestamp in Unix milliseconds. Zero means unobserved.
+    /// Publish the latest observed venue-event timestamp in Unix milliseconds. Zero means
+    /// unobserved; adapters may use receive time when the source omits an event timestamp.
     pub(crate) fn observe_gateway_venue_last_event(&mut self, venue_id: &str, timestamp_ms: u64) {
         if venue_id.trim().is_empty() || timestamp_ms == 0 {
             return;

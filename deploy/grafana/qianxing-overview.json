@@ -222,21 +222,21 @@
     },
     {
       "id": 21,
-      "title": "Binance 私有流重连速率",
+      "title": "交易所私有流重连速率",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
       "targets": [
-        { "expr": "sum by (worker, account, venue) (rate(qx_gateway_venue_reconnects_total{venue=\"BINANCE\"}[5m]))", "legendFormat": "{{venue}} · {{account}}" }
+        { "expr": "sum by (worker, account, venue) (rate(qx_gateway_venue_reconnects_total[5m]))", "legendFormat": "{{venue}} · {{account}}" }
       ]
     },
     {
       "id": 22,
-      "title": "Binance 私有流最后事件年龄（秒）",
+      "title": "交易所私有流最后事件年龄（秒）",
       "type": "timeseries",
       "description": "只计算已观察到的正时间戳；无序列表示当前没有可用的事件时间证据。",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
       "targets": [
-        { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds{venue=\"BINANCE\"}) and (qx_gateway_venue_last_event_timestamp_seconds{venue=\"BINANCE\"} > 0)", "legendFormat": "{{venue}} · {{account}}" }
+        { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds) and (qx_gateway_venue_last_event_timestamp_seconds > 0)", "legendFormat": "{{venue}} · {{account}}" }
       ]
     }
   ]
