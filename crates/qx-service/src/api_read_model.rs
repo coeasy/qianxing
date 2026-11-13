@@ -352,6 +352,58 @@ pub fn order_group_metrics_prometheus(root: &Path) -> String {
     output
 }
 
+/// Render queue depth and oldest waiting age from durable queue snapshots.
+/// `None` means the corresponding storage read failed; it is never reported as an empty queue.
+pub fn queue_metrics_prometheus(
+    job_enqueued_ts: Option<Vec<u64>>,
+    command_enqueued_ts: Option<Vec<u64>>,
+    now_seconds: u64,
+) -> String {
+    fn append_queue_metrics(
+        output: &mut String,
+        prefix: &str,
+        enqueued_ts: Option<Vec<u64>>,
+        now_seconds: u64,
+    ) {
+        let Some(enqueued_ts) = enqueued_ts else {
+            output.push_str(&format!("qx_{prefix}_queue_metrics_available 0\n"));
+            return;
+        };
+        let oldest_age_seconds = enqueued_ts
+            .iter()
+            .map(|timestamp| now_seconds.saturating_sub(*timestamp))
+            .max()
+            .unwrap_or_default();
+        output.push_str(&format!(
+            "qx_{prefix}_queue_metrics_available 1\nqx_{prefix}_queue_pending {}\nqx_{prefix}_queue_oldest_age_seconds {oldest_age_seconds}\n",
+            enqueued_ts.len()
+        ));
+    }
+
+    let mut output = String::from(
+        "# HELP qx_job_queue_metrics_available Whether the durable job queue snapshot was read successfully.\n\
+# TYPE qx_job_queue_metrics_available gauge\n\
+# HELP qx_job_queue_pending Number of runnable jobs waiting to be claimed.\n\
+# TYPE qx_job_queue_pending gauge\n\
+# HELP qx_job_queue_oldest_age_seconds Age of the oldest runnable job waiting to be claimed.\n\
+# TYPE qx_job_queue_oldest_age_seconds gauge\n\
+# HELP qx_control_command_queue_metrics_available Whether the durable control command queue snapshot was read successfully.\n\
+# TYPE qx_control_command_queue_metrics_available gauge\n\
+# HELP qx_control_command_queue_pending Number of unacknowledged control commands, including leased commands.\n\
+# TYPE qx_control_command_queue_pending gauge\n\
+# HELP qx_control_command_queue_oldest_age_seconds Age of the oldest unacknowledged control command.\n\
+# TYPE qx_control_command_queue_oldest_age_seconds gauge\n",
+    );
+    append_queue_metrics(&mut output, "job", job_enqueued_ts, now_seconds);
+    append_queue_metrics(
+        &mut output,
+        "control_command",
+        command_enqueued_ts,
+        now_seconds,
+    );
+    output
+}
+
 /// Render the latest durable reconciliation facts for each configured worker.
 /// Unreadable or invalid report storage is explicitly unavailable, never an empty result.
 pub fn reconcile_metrics_prometheus(root: &Path, expected_workers: &[WorkerConfig]) -> String {
@@ -1078,7 +1130,7 @@ mod tests {
         apply_reconcile_reports, configured_account_trading_day, default_account_event_log,
         load_api_account_snapshots_with_market_specs, load_api_query_models,
         load_reconcile_reports, order_group_metrics_prometheus, project_position_unrealized_pnl,
-        query_api_models, reconcile_metrics_prometheus,
+        query_api_models, queue_metrics_prometheus, reconcile_metrics_prometheus,
     };
     use crate::pipeline::PipelineStorage;
     use qx_api::ReconcileReportSnapshot;
@@ -1501,6 +1553,25 @@ mod tests {
         assert!(metrics.contains("qx_order_group_metrics_available 0\n"));
         assert!(!metrics.contains("qx_order_group_metrics_available 1\n"));
         assert!(!metrics.contains("qx_order_group_status{"));
+    }
+
+    #[test]
+    fn queue_metrics_report_pending_depth_oldest_age_and_storage_availability() {
+        let metrics = queue_metrics_prometheus(Some(vec![90, 97]), Some(vec![80]), 100);
+        assert!(metrics.contains("qx_job_queue_metrics_available 1\n"));
+        assert!(metrics.contains("qx_job_queue_pending 2\n"));
+        assert!(metrics.contains("qx_job_queue_oldest_age_seconds 10\n"));
+        assert!(metrics.contains("qx_control_command_queue_pending 1\n"));
+        assert!(metrics.contains("qx_control_command_queue_oldest_age_seconds 20\n"));
+
+        let unavailable = queue_metrics_prometheus(None, Some(Vec::new()), 100);
+        assert!(unavailable.contains("qx_job_queue_metrics_available 0\n"));
+        assert!(!unavailable
+            .lines()
+            .any(|line| line.starts_with("qx_job_queue_pending ")));
+        assert!(unavailable.contains("qx_control_command_queue_metrics_available 1\n"));
+        assert!(unavailable.contains("qx_control_command_queue_pending 0\n"));
+        assert!(unavailable.contains("qx_control_command_queue_oldest_age_seconds 0\n"));
     }
 
     #[test]

@@ -148,6 +148,8 @@ Public OHLCV history reads honor CCXT's built-in rate limiter and retry only exc
 
 The CCXT MarketData worker publishes `qx_ccxt_ohlcv_rate_limit_retries_total{worker,account}` after a successful OHLCV response, with per-request retry deltas accumulated across Python worker restarts. It also publishes `qx_ccxt_ohlcv_request_duration_seconds_{bucket,sum,count}` for each completed OHLCV worker RPC, including failed RPCs and CCXT retry/backoff time; Prometheus can calculate latency quantiles from histogram buckets. These low-cardinality metrics intentionally omit instrument labels. Failed/exhausted requests report degraded market-data health and remain represented in the request-duration histogram; the retry counter includes only retries from successful responses.
 
+The API `/metrics` endpoint also reports durable queue state: `qx_job_queue_pending` and `qx_job_queue_oldest_age_seconds` cover runnable jobs waiting to be claimed; `qx_control_command_queue_pending` and `qx_control_command_queue_oldest_age_seconds` cover all unacknowledged control commands, including commands with active leases. Each queue has a `*_metrics_available` gauge. A storage read failure sets that gauge to `0` and omits depth/age samples instead of presenting an empty queue. Age uses the same lease-clock seconds as persisted enqueue timestamps.
+
 Create sandbox/demo credentials in each exchange's own account. Set the values only in your local PowerShell session or secret manager; keep the JSON examples unchanged because they contain environment-variable names, not keys.
 
 ```powershell

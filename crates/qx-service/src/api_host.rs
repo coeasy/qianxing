@@ -18,7 +18,9 @@ use crate::api_read_model::default_account_event_log;
 use crate::api_read_model::{
     load_reconcile_reports, project_api_account_snapshot_with_portfolio_and_market_specs,
 };
-use crate::configured_backends::{configured_command_queue, configured_control_store};
+use crate::configured_backends::{
+    configured_command_queue, configured_control_store, configured_job_queue,
+};
 use crate::http_host::{api_service_from_runtime, configure_api_host_policies};
 use crate::market_bridges::{ccxt_market_event_log_name, worker_scoped_event_log_name};
 use crate::pipeline::{event_log_exists, PipelineStorage};
@@ -54,6 +56,7 @@ pub fn build_configured_api_service(
     let control_store = configured_control_store(config)?;
     let control = control_store.load()?;
     let command_queue = configured_command_queue(config, &control_root)?;
+    let job_queue = configured_job_queue(config, &control_root)?;
     let mut state = ApiState::default();
     state.control = control;
     let account_market_specs =
@@ -82,6 +85,7 @@ pub fn build_configured_api_service(
         .collect::<Vec<_>>();
     let metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let metrics_now_ms = now_ms;
+    let metrics_command_queue = Arc::clone(&command_queue);
     let gateway_config = config.clone();
     let deployment_config = config.clone();
     let deployment_revision_config = config.clone();
@@ -146,6 +150,26 @@ pub fn build_configured_api_service(
                 metrics_now_ms(),
                 metrics_stale_after_ms,
             );
+            let queue_now = qx_runtime::lease_clock(metrics_now_ms());
+            let job_enqueued_ts = job_queue
+                .available(queue_now)
+                .ok()
+                .map(|jobs| jobs.into_iter().map(|job| job.enqueued_ts).collect());
+            let command_enqueued_ts =
+                metrics_command_queue
+                    .pending_commands()
+                    .ok()
+                    .map(|commands| {
+                        commands
+                            .into_iter()
+                            .map(|command| command.enqueued_ts)
+                            .collect()
+                    });
+            metrics.push_str(&crate::api_read_model::queue_metrics_prometheus(
+                job_enqueued_ts,
+                command_enqueued_ts,
+                queue_now,
+            ));
             metrics.push_str(&crate::api_read_model::order_group_metrics_prometheus(
                 &durable_metrics_root,
             ));
@@ -825,6 +849,10 @@ mod tests {
         assert!(metrics_response
             .body
             .contains("qx_reconcile_metrics_available 1\n"));
+        assert!(metrics_response.body.contains("qx_job_queue_pending 0\n"));
+        assert!(metrics_response
+            .body
+            .contains("qx_control_command_queue_pending 0\n"));
         let body: serde_json::Value =
             serde_json::from_str(&response.body).expect("readiness JSON is valid");
         let gateway = body["readiness_layers"]["O"]["exchange_gateways"]["gateways"]
