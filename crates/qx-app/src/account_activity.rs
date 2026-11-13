@@ -772,6 +772,30 @@ mod tests {
     #[test]
     fn run_and_strategy_filters_are_exact_and_compose_with_order_filters() {
         let mut events = events();
+        events[0].kind = EventKind::ExecutionCapabilityDecision {
+            decision: qx_core::ExecutionCapabilityDecisionFact {
+                schema_version: qx_core::EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
+                kind: qx_core::ExecutionCapabilityDecisionKind::Submit,
+                decision_id: "a".repeat(64),
+                command_id: Some(11),
+                order_group_id: None,
+                client_order_id: 77,
+                account_id: "primary".into(),
+                run_id: Some("run-1".into()),
+                strategy_id: Some("strategy-a".into()),
+                signal_id: Some(8),
+                intent_id: Some(77),
+                venue_id: "OKX".into(),
+                order_fingerprint: "b".repeat(64),
+                catalog_fingerprint: "c".repeat(64),
+                market_rule_fingerprint: "d".repeat(64),
+                preflight_json: r#"{"schema_version":1}"#.into(),
+            },
+        };
+        events[0].metadata.context.run_id = "run-1".into();
+        events[0].metadata.context.strategy_id = "strategy-a".into();
+        events[0].metadata.context.signal_id = "8".into();
+        events[0].metadata.context.intent_id = "77".into();
         for index in [1, 3] {
             events[index].kind = EventKind::Accepted {
                 client_order_id: 77,
@@ -790,7 +814,7 @@ mod tests {
             200,
         )
         .unwrap();
-        assert_eq!(report.events.available_total, 2);
+        assert_eq!(report.events.available_total, 3);
         assert_eq!(report.events.run_id.as_deref(), Some("run-1"));
         assert_eq!(report.events.strategy_id.as_deref(), Some("strategy-a"));
         assert_eq!(
@@ -800,8 +824,10 @@ mod tests {
                 .iter()
                 .map(|row| row.seq)
                 .collect::<Vec<_>>(),
-            [2, 4]
+            [1, 2, 4]
         );
+        assert_eq!(report.events.rows[0].run_id, "run-1");
+        assert_eq!(report.events.rows[0].strategy_id, "strategy-a");
 
         let empty = read_account_activity_report_v1(
             &snapshot(),
