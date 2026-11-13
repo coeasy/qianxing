@@ -110,9 +110,9 @@ domains:
   - name: release
     capability_id: qx.domain.release
     level: partial
-    evidence: [.github/workflows, tools/python_wheel_smoke.py, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, tools/check_architecture.py]
-    limitations: ["当前 Windows 本地包不能代表全平台：跨平台消费者安装验证、实盘认证矩阵与产品能力清单需要补足", "SBOM、构建来源证明与三操作系统支持矩阵未建立"]
-    next_gate: "落方案 §7 的发布工程（SBOM、来源证明、支持矩阵、三操作系统）"
+    evidence: [.github/workflows, tools/python_wheel_smoke.py, tools/generate_cargo_sbom.py, maturity/evidence/cargo-spdx-sbom-local-2026-11-14.json, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, tools/check_architecture.py]
+    limitations: ["Windows/Linux/macOS Python 构建与消费门禁存在，但 0.4.0 尚未完成最终发布验收；Rust crates.io 消费者发布链和逐平台支持矩阵仍需补足", "SPDX 2.3 清单覆盖锁定 Cargo 源依赖图，不是每个平台二进制的独立 SBOM；实际 Release 附件与全部构件 attestation 尚未验收"]
+    next_gate: "验证 SPDX SBOM 随 draft Release 上传且纳入哈希清单；完成 Rust crate 发布/消费者矩阵、构件签名与 attestation 验证，并补齐三平台发布验收"
 
 venues:
   - name: PaperVenue
