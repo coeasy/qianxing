@@ -57,6 +57,7 @@ pub struct PipelineMetricsReporter {
     ingest_budget_warning_emitted: bool,
     last_observed_pipelines: BTreeMap<String, PipelineMetricsSnapshot>,
     gateway_business_status: BTreeMap<ExchangeGatewayPort, (GatewayBusinessHealthStatus, u64)>,
+    ccxt_ohlcv_rate_limit_retries_total: Option<u64>,
     gateway_venue_reconnects: BTreeMap<String, u64>,
     gateway_venue_last_event_seconds: BTreeMap<String, u64>,
     last_published_ms: Option<u64>,
@@ -156,6 +157,15 @@ impl PipelineMetricsReporter {
             self.gateway_business_status
                 .insert(port, (status, now_ms / 1_000));
         }
+    }
+
+    /// Publish the worker-lifetime count of successful CCXT OHLCV rate-limit retries.
+    /// The caller accumulates per-response deltas across Python worker restarts.
+    pub(crate) fn observe_ccxt_ohlcv_rate_limit_retries(&mut self, total: u64) {
+        let observed = self
+            .ccxt_ohlcv_rate_limit_retries_total
+            .get_or_insert_default();
+        *observed = (*observed).max(total);
     }
 
     /// Publish a worker-lifetime venue reconnect count. This is diagnostic only and never
@@ -271,6 +281,11 @@ qx_gateway_port_business_timestamp_seconds{{{label},port=\"{port_label}\"}} {tim
                 prometheus_label(venue)
             ));
         }
+        if let Some(retries) = self.ccxt_ohlcv_rate_limit_retries_total {
+            body.push_str(&format!(
+                "qx_ccxt_ohlcv_rate_limit_retries_total{{{label}}} {retries}\n"
+            ));
+        }
         for (venue, timestamp_seconds) in &self.gateway_venue_last_event_seconds {
             body.push_str(&format!(
                 "qx_gateway_venue_last_event_timestamp_seconds{{{label},venue=\"{}\"}} {timestamp_seconds}\n",
@@ -358,6 +373,32 @@ mod tests {
         ));
         assert_eq!(
             body.matches("qx_gateway_venue_reconnects_total{").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn worker_metrics_publish_ccxt_ohlcv_rate_limit_retries_without_symbol_labels() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut reporter = PipelineMetricsReporter::new(&config, "okx-market", "");
+
+        let before_observation = reporter.body(true, 1_000);
+        assert!(!before_observation.contains("qx_ccxt_ohlcv_rate_limit_retries_total"));
+
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(2);
+        reporter.observe_ccxt_ohlcv_rate_limit_retries(1);
+        let body = reporter.body(true, 2_000);
+
+        assert!(body.contains(
+            "qx_ccxt_ohlcv_rate_limit_retries_total{worker=\"okx-market\",account=\"\"} 2"
+        ));
+        assert!(!body.contains("instrument="));
+        assert_eq!(
+            body.matches("qx_ccxt_ohlcv_rate_limit_retries_total{")
+                .count(),
             1
         );
     }

@@ -44,6 +44,20 @@ pub fn ccxt_market_cycle_health(
     )
 }
 
+fn observe_ohlcv_rate_limit_retries(
+    result: &serde_json::Value,
+    total: &mut u64,
+    metrics: &mut PipelineMetricsReporter,
+) {
+    if let Some(retries) = result
+        .get("rate_limit_retries")
+        .and_then(|value| value.as_u64())
+    {
+        *total = total.saturating_add(retries);
+        metrics.observe_ccxt_ohlcv_rate_limit_retries(*total);
+    }
+}
+
 pub struct CcxtMarketWorkerInput {
     pub context: WorkerContext,
     pub worker: WorkerConfig,
@@ -107,6 +121,7 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
     let mut quotes = 0_u64;
     let mut bars_written = 0_u64;
     let mut order_books_written = 0_u64;
+    let mut market_rate_limit_retries_total = 0_u64;
     let attempted_calls =
         (instruments.len() + live_specs.len() + orderbook_instruments.len()) as u32;
     // 旧口径只在每轮把 `cycle_failures` 报出去、下一轮又清零，于是柜台彻底不可用时
@@ -346,6 +361,11 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
             let frame_value = result
                 .get("frame")
                 .ok_or_else(|| format!("CCXT OHLCV 响应缺少 frame: {}", spec.instrument))?;
+            observe_ohlcv_rate_limit_retries(
+                &result,
+                &mut market_rate_limit_retries_total,
+                &mut metrics,
+            );
             let frame = BarFrame::from_json(
                 &serde_json::to_string(frame_value)
                     .map_err(|error| format!("编码 CCXT OHLCV frame 失败: {error}"))?,
@@ -503,6 +523,29 @@ mod exact_ticker_value_tests {
             exact_json_decimal_or_raw(&ticker, "bid_exact", "bid_raw").unwrap(),
             ExactDecimal::parse("1.25").unwrap()
         );
+    }
+
+    #[test]
+    fn ccxt_ohlcv_retry_deltas_flow_to_worker_metrics() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut metrics = PipelineMetricsReporter::new(&config, "okx-market", "");
+        let mut total = 0;
+
+        observe_ohlcv_rate_limit_retries(
+            &serde_json::json!({"rate_limit_retries": 2}),
+            &mut total,
+            &mut metrics,
+        );
+        observe_ohlcv_rate_limit_retries(
+            &serde_json::json!({"rate_limit_retries": 1}),
+            &mut total,
+            &mut metrics,
+        );
+
+        assert_eq!(total, 3);
     }
 }
 

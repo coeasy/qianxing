@@ -81,6 +81,7 @@ class CcxtJsonWorker:
             market_payload["instrument"] = market.instrument
             return {"market": market_payload}
         if operation == "fetch_ohlcv":
+            retries_before = self.client.market_data_rate_limit_retries_total
             frame = self.client.fetch_ohlcv(
                 str(request["instrument"]),
                 timeframe=str(request.get("timeframe", "1m")),
@@ -89,7 +90,11 @@ class CcxtJsonWorker:
                 limit=int(request.get("limit", 1_000)),
                 params=dict(request.get("params", {})),
             )
-            return {"frame": json.loads(frame.to_json())}
+            return {
+                "frame": json.loads(frame.to_json()),
+                "rate_limit_retries": self.client.market_data_rate_limit_retries_total
+                - retries_before,
+            }
         if operation == "fetch_ticker":
             ticker = self.client.fetch_ticker(
                 str(request["instrument"]), params=dict(request.get("params", {}))

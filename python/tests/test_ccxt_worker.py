@@ -746,6 +746,50 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertFalse(rows[2]["ok"])
         self.assertEqual(rows[2]["error"]["class"], "unsupported")
 
+    def test_jsonl_ohlcv_response_reports_rate_limit_retries_for_metrics(self):
+        class RateLimitExceeded(Exception):
+            pass
+
+        class RateLimitedOnceExchange(FakeExchange):
+            def __init__(self):
+                super().__init__()
+                self.failures = 1
+
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if self.failures:
+                    self.failures -= 1
+                    raise RateLimitExceeded("Too Many Requests")
+                return [[1000, 100, 101, 99, 100, 1]]
+
+        exchange = RateLimitedOnceExchange()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(
+                    exchange_id="bitget",
+                    market_data_rate_limit_retries=1,
+                    market_data_rate_limit_backoff_ms=0,
+                ),
+                exchange=exchange,
+            )
+        )
+        response = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "fetch_ohlcv",
+                        "instrument": "BTCUSDT.BITGET",
+                        "start_ms": 1000,
+                        "end_ms": 1000,
+                    }
+                )
+            )
+        )
+
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["rate_limit_retries"], 1)
+        self.assertEqual(response["result"]["frame"]["ts"], [1000])
+
     def test_jsonl_create_order_requires_amount_unit_and_rejects_spot_contracts(self):
         exchange = FakeExchange()
         worker = CcxtJsonWorker(

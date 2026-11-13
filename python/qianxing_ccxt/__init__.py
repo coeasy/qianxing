@@ -815,6 +815,7 @@ class CcxtExchangeClient:
         _apply_sandbox_mode(self.exchange, config)
         self._markets: Mapping[str, Mapping[str, Any]] | None = None
         self._markets_loaded_at: float | None = None
+        self.market_data_rate_limit_retries_total = 0
 
     @staticmethod
     def _load_ccxt() -> Any:
@@ -1499,6 +1500,10 @@ class CcxtExchangeClient:
                         or retry >= self.config.market_data_rate_limit_retries
                     ):
                         raise
+                    self.market_data_rate_limit_retries_total = min(
+                        self.market_data_rate_limit_retries_total + 1,
+                        (1 << 64) - 1,
+                    )
                     delay_ms = min(
                         self.config.market_data_rate_limit_backoff_ms * (2**retry),
                         60_000,
