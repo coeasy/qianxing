@@ -502,6 +502,20 @@ mod tests {
     }
 
     #[test]
+    fn ccxt_long_window_bar_counts_match_six_month_and_bitget_api_cadence() {
+        let six_months = quickstart_ccxt_window(180, "15m").unwrap();
+        assert_eq!(
+            (six_months.end_ms - six_months.start_ms) / 900_000 + 1,
+            17_280
+        );
+        let bitget_classic_limit = quickstart_ccxt_window(52, "15m").unwrap();
+        assert_eq!(
+            (bitget_classic_limit.end_ms - bitget_classic_limit.start_ms) / 900_000 + 1,
+            4_992
+        );
+    }
+
+    #[test]
     fn ccxt_window_rounds_up_non_dividing_timeframes_to_cover_requested_days() {
         let window = quickstart_ccxt_window(1, "7m").unwrap();
         assert_eq!((window.end_ms - window.start_ms) / 420_000 + 1, 206);

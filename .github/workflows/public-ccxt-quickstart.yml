@@ -39,10 +39,13 @@ jobs:
         include:
           - exchange: okx
             instrument: BTC/USDT:USDT.OKX
+            days: 180
           - exchange: binance
             instrument: BTC/USDT:USDT.BINANCE
+            days: 180
           - exchange: bitget
             instrument: BTC/USDT:USDT.BITGET
+            days: 52
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -66,6 +69,7 @@ jobs:
         env:
           EXCHANGE: ${{ matrix.exchange }}
           INSTRUMENT: ${{ matrix.instrument }}
+          ACCEPTANCE_DAYS: ${{ matrix.days }}
           ACCEPTANCE_ROOT: ${{ runner.temp }}/public-ccxt-acceptance
           PYTHON_BIN: ${{ runner.temp }}/python-acceptance/bin/python
         shell: bash
@@ -84,7 +88,7 @@ jobs:
           log="$ACCEPTANCE_ROOT/$EXCHANGE/quickstart.log"
           mkdir -p "$(dirname "$log")"
           "$cli" quickstart "$project" \
-            --profile ccxt --days 30 --timeframe 1h \
+            --profile ccxt --days "$ACCEPTANCE_DAYS" --timeframe 15m \
             --exchange "$EXCHANGE" --instrument "$INSTRUMENT" --html \
             2>&1 | tee "$log"
           test -s "$project/qianxing.project.json"
@@ -105,13 +109,18 @@ jobs:
           test -n "$report"
           summary="$(find "$project" -type f -name '*.summary.json' -size +0c -print -quit)"
           test -n "$summary"
-          python - "$summary" <<'PY'
+          python - "$summary" "$ACCEPTANCE_DAYS" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert int(summary["bars"]) > 0, summary
+          days = int(sys.argv[2])
+          expected_bars = days * 24 * 4
+          assert int(summary["bars"]) == expected_bars, {
+              "expected_bars": expected_bars,
+              "summary": summary,
+          }
           assert int(summary["rejected_orders"]) == 0, summary.get("rejection_reasons")
           quality = summary["dataset_quality"]["quality_report"]
           assert int(quality["missing_intervals"]) == 0, quality

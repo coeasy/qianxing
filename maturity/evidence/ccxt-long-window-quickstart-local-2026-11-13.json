@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-long-window-quickstart-local-2026-11-13",
+  "recorded_at": "2026-11-13",
+  "scope": "Long-window 15m CCXT public quickstart acceptance contract",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "47059a8126b88254234ac2c4b3045ae27aedf701"
+  },
+  "acceptance_windows": [
+    {
+      "venue": "OKX",
+      "product": "USDT perpetual",
+      "timeframe": "15m",
+      "days": 180,
+      "expected_bars": 17280
+    },
+    {
+      "venue": "Binance",
+      "product": "USDT perpetual",
+      "timeframe": "15m",
+      "days": 180,
+      "expected_bars": 17280
+    },
+    {
+      "venue": "Bitget Classic",
+      "product": "USDT Futures",
+      "timeframe": "15m",
+      "days": 52,
+      "expected_bars": 4992,
+      "scope_note": "The public Classic contract candle API documents a 52-day query horizon for 15m bars."
+    }
+  ],
+  "verification": [
+    {
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 cargo test --locked -j 1 -p qx-cli ccxt_long_window_bar_counts_match_six_month_and_bitget_api_cadence -- --nocapture",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/public-ccxt-quickstart.yml",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "official_sources": [
+    "https://my.okx.com/docs-v5/en/#rest-api-market-data-get-candlesticks-history",
+    "https://www.bitget.com/docs/catalog/classic-contract-market/classic-contract-market"
+  ],
+  "limitations": [
+    "No live OHLCV request was made on this machine; exact coverage, zero-gap quality, report generation, and venue availability await the pushed GitHub Actions run.",
+    "Binance public access has previously returned HTTP 451 from the hosted runner region; no location restriction is bypassed.",
+    "This verifies read-only research data coverage only; it does not prove account-specific fees, strategy performance, private APIs, or order execution."
+  ]
+}
