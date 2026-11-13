@@ -354,7 +354,7 @@ pub fn order_group_metrics_prometheus(root: &Path) -> String {
 
 /// Render the latest durable reconciliation facts for each configured worker.
 /// Unreadable or invalid report storage is explicitly unavailable, never an empty result.
-pub fn reconcile_metrics_prometheus(root: &Path) -> String {
+pub fn reconcile_metrics_prometheus(root: &Path, expected_workers: &[WorkerConfig]) -> String {
     use crate::worker_metrics::prometheus_label;
 
     let mut output = String::from(
@@ -362,6 +362,8 @@ pub fn reconcile_metrics_prometheus(root: &Path) -> String {
 # TYPE qx_reconcile_metrics_available gauge\n\
 # HELP qx_reconcile_report_count Number of durable reconciliation reports currently available.\n\
 # TYPE qx_reconcile_report_count gauge\n\
+# HELP qx_reconcile_report_present Whether an enabled reconciler has a matching durable report.\n\
+# TYPE qx_reconcile_report_present gauge\n\
 # HELP qx_reconcile_report_observed_timestamp_seconds Unix timestamp of the latest reconciliation report.\n\
 # TYPE qx_reconcile_report_observed_timestamp_seconds gauge\n\
 # HELP qx_reconcile_order_issues Number of unresolved order issues in the latest reconciliation report.\n\
@@ -378,6 +380,25 @@ pub fn reconcile_metrics_prometheus(root: &Path) -> String {
     };
     output.push_str("qx_reconcile_metrics_available 1\n");
     output.push_str(&format!("qx_reconcile_report_count {}\n", reports.len()));
+    for worker in expected_workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Reconciler)
+    {
+        let account_id = worker.account_id.as_deref().unwrap_or_default();
+        let venue_id = worker.venue_id.as_deref().unwrap_or_default();
+        let present = reports.iter().any(|report| {
+            report.worker_id == worker.id
+                && report.account_id == account_id
+                && report.venue_id.eq_ignore_ascii_case(venue_id)
+        });
+        output.push_str(&format!(
+            "qx_reconcile_report_present{{worker=\"{}\",account=\"{}\",venue=\"{}\"}} {}\n",
+            prometheus_label(&worker.id),
+            prometheus_label(account_id),
+            prometheus_label(venue_id),
+            u8::from(present),
+        ));
+    }
     for report in reports {
         let labels = format!(
             "worker=\"{}\",account=\"{}\",venue=\"{}\"",
@@ -1485,11 +1506,19 @@ mod tests {
     #[test]
     fn reconcile_metrics_expose_report_age_inputs_and_discrepancy_counts() {
         let root = temp_root("reconcile-metrics");
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.ccxt.example.json"
+        ))
+        .unwrap();
+        let missing = reconcile_metrics_prometheus(&root, &config.workers);
+        assert!(missing.contains(
+            "qx_reconcile_report_present{worker=\"ccxt-reconciler-main\",account=\"main\",venue=\"okx\"} 0\n"
+        ));
         let report_dir = root.join("reconcile");
         std::fs::create_dir_all(&report_dir).unwrap();
         let report = ReconcileReportSnapshot {
             schema_version: 1,
-            worker_id: "ccxt-reconcile".into(),
+            worker_id: "ccxt-reconciler-main".into(),
             account_id: "main".into(),
             venue_id: "OKX".into(),
             observed_ts: 91_999,
@@ -1509,21 +1538,24 @@ mod tests {
         )
         .unwrap();
 
-        let metrics = reconcile_metrics_prometheus(&root);
+        let metrics = reconcile_metrics_prometheus(&root, &config.workers);
         assert!(metrics.contains("qx_reconcile_metrics_available 1\n"));
         assert!(metrics.contains("qx_reconcile_report_count 1\n"));
         assert!(metrics.contains(
-            "qx_reconcile_report_observed_timestamp_seconds{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 91\n"
+            "qx_reconcile_report_present{worker=\"ccxt-reconciler-main\",account=\"main\",venue=\"okx\"} 1\n"
         ));
         assert!(metrics.contains(
-            "qx_reconcile_order_issues{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 1\n"
+            "qx_reconcile_report_observed_timestamp_seconds{worker=\"ccxt-reconciler-main\",account=\"main\",venue=\"OKX\"} 91\n"
         ));
         assert!(metrics.contains(
-            "qx_reconcile_balance_discrepancies{worker=\"ccxt-reconcile\",account=\"main\",venue=\"OKX\"} 2\n"
+            "qx_reconcile_order_issues{worker=\"ccxt-reconciler-main\",account=\"main\",venue=\"OKX\"} 1\n"
+        ));
+        assert!(metrics.contains(
+            "qx_reconcile_balance_discrepancies{worker=\"ccxt-reconciler-main\",account=\"main\",venue=\"OKX\"} 2\n"
         ));
 
         std::fs::write(report_dir.join("corrupt.json"), br#"{"broken":true}"#).unwrap();
-        let unavailable = reconcile_metrics_prometheus(&root);
+        let unavailable = reconcile_metrics_prometheus(&root, &config.workers);
         assert!(unavailable.contains("qx_reconcile_metrics_available 0\n"));
         assert!(!unavailable
             .lines()

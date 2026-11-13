@@ -74,6 +74,12 @@ pub fn build_configured_api_service(
     let metrics_dir = crate::worker_metrics::worker_metrics_dir(config);
     let gateway_metrics_dir = metrics_dir.clone();
     let durable_metrics_root = Path::new(&config.storage.data_dir).to_path_buf();
+    let reconciliation_workers = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Reconciler)
+        .cloned()
+        .collect::<Vec<_>>();
     let metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let metrics_now_ms = now_ms;
     let gateway_config = config.clone();
@@ -145,6 +151,7 @@ pub fn build_configured_api_service(
             ));
             metrics.push_str(&crate::api_read_model::reconcile_metrics_prometheus(
                 &durable_metrics_root,
+                &reconciliation_workers,
             ));
             metrics
         })
