@@ -696,7 +696,11 @@ def main() -> int:
                 result.setdefault("log_sha256", {})[label] = hashlib.sha256(path.read_bytes()).hexdigest()
     evidence_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in result.items() if key != "final_projection"}, ensure_ascii=False))
-    print(f"Evidence: {evidence_path.relative_to(root).as_posix()}")
+    try:
+        evidence_display_path = evidence_path.relative_to(root).as_posix()
+    except ValueError:
+        evidence_display_path = str(evidence_path)
+    print(f"Evidence: {evidence_display_path}")
     return 0 if result.get("outcome") == "passed" else 1
 
 
