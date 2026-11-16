@@ -15452,6 +15452,7 @@ def release_supply_chain_check() -> None:
     public_market_data_job = _yaml_job_block(public_acceptance_text, "public-market-data-quickstart")
     check(
         "runs-on: ubuntu-22.04" in shared_linux_release_job
+        and "key: ubuntu-22.04-glibc-2.35-${{ runner.arch }}" in shared_linux_release_job
         and "GLIBC_2.35" in shared_linux_release_job
         and "debian:12-slim /qx-cli version" in shared_linux_release_job
         and "debian:12-slim /wheel/qianxing/_bin/qx-cli version" in shared_linux_release_job

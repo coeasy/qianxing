@@ -42,6 +42,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ubuntu-22.04-glibc-2.35-${{ runner.arch }}
           cache-on-failure: true
       - uses: actions/setup-python@v5
         with:
