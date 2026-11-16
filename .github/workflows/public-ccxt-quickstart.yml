@@ -32,7 +32,9 @@ env:
 jobs:
   build-linux-release:
     name: Build shared Linux release artifacts
-    runs-on: ubuntu-latest
+    # Keep the standalone CLI compatible with Debian 12 / Ubuntu 22.04.
+    # ubuntu-latest can move to a newer glibc and silently raise the runtime baseline.
+    runs-on: ubuntu-22.04
     outputs:
       as_of_ms: ${{ steps.acceptance-window.outputs.as_of_ms }}
     steps:
@@ -57,6 +59,13 @@ jobs:
           python -m pip install --disable-pip-version-check maturin==1.15.0
           PYTHON=python bash tools/build_python_wheel.sh
           target/release/qx-cli version
+          max_glibc="$(objdump -T target/release/qx-cli | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1 | sed 's/^GLIBC_//')"
+          test -n "$max_glibc"
+          if [[ "$(printf '2.35\n%s\n' "$max_glibc" | sort -V | tail -n 1)" != "2.35" ]]; then
+            echo "Linux CLI requires GLIBC_$max_glibc; release baseline is GLIBC_2.35 (Debian 12 / Ubuntu 22.04)" >&2
+            exit 1
+          fi
+          echo "Linux CLI maximum GLIBC requirement: $max_glibc"
           test -n "$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
           tar -czf "$RUNNER_TEMP/qianxing-linux-release.tar.gz" dist/*.whl target/release/qx-cli
           tar -tzf "$RUNNER_TEMP/qianxing-linux-release.tar.gz"
@@ -69,7 +78,7 @@ jobs:
 
   public-market-data-quickstart:
     name: Real public-data quickstart (${{ matrix.exchange }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: build-linux-release
     strategy:
       fail-fast: false

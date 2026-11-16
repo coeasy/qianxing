@@ -15432,6 +15432,26 @@ def release_supply_chain_check() -> None:
         "正式 Rust binary、Python wheel 与 SBOM 使用固定 Rust 1.98.1 构建工具链",
         f"工具链未固定的发布 job={floating_rust_toolchain_jobs}",
     )
+    check(
+        "os: [ubuntu-22.04, windows-latest, macos-latest]" in release_job_sections["binary"],
+        "正式 Linux CLI 在 Ubuntu 22.04 构建以保留 Debian 12 / GLIBC 2.35 兼容性",
+        "Linux binary release runner must stay pinned to ubuntu-22.04",
+    )
+    public_acceptance_workflow = ROOT / ".github" / "workflows" / "public-ccxt-quickstart.yml"
+    public_acceptance_text = (
+        public_acceptance_workflow.read_text(encoding="utf-8")
+        if public_acceptance_workflow.is_file()
+        else ""
+    )
+    shared_linux_release_job = _yaml_job_block(public_acceptance_text, "build-linux-release")
+    public_market_data_job = _yaml_job_block(public_acceptance_text, "public-market-data-quickstart")
+    check(
+        "runs-on: ubuntu-22.04" in shared_linux_release_job
+        and "GLIBC_2.35" in shared_linux_release_job
+        and "runs-on: ubuntu-22.04" in public_market_data_job,
+        "公共行情验收构件与执行环境固定在 GLIBC 2.35，阻止 ubuntu-latest 抬高运行基线",
+        "shared Linux public acceptance build/runtime must enforce the Debian 12-compatible baseline",
+    )
     wheel_job = release_job_sections["wheel"]
     check(
         "Verify wheel is byte-reproducible on this runner" in wheel_job
