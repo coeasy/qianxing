@@ -15437,6 +15437,11 @@ def release_supply_chain_check() -> None:
         "正式 Linux CLI 在 Ubuntu 22.04 构建以保留 Debian 12 / GLIBC 2.35 兼容性",
         "Linux binary release runner must stay pinned to ubuntu-22.04",
     )
+    check(
+        "os: [ubuntu-22.04, windows-latest, macos-latest]" in release_job_sections["wheel"],
+        "PyPI Linux wheel 在 Ubuntu 22.04 构建，确保 wheel 内嵌 CLI 可运行于 Debian 12",
+        "Linux Python wheel runner must stay pinned to ubuntu-22.04",
+    )
     public_acceptance_workflow = ROOT / ".github" / "workflows" / "public-ccxt-quickstart.yml"
     public_acceptance_text = (
         public_acceptance_workflow.read_text(encoding="utf-8")
