@@ -248,17 +248,44 @@ impl CcxtProcessClient {
 
 fn ccxt_worker_environment(config_path: &str) -> Result<BTreeMap<String, String>, String> {
     let config = ccxt_worker_config(config_path)?;
+    ccxt_worker_environment_with(&config, |key| env::var_os(key))
+}
+
+fn ccxt_worker_environment_with<F>(
+    config: &Value,
+    mut get_env: F,
+) -> Result<BTreeMap<String, String>, String>
+where
+    F: FnMut(&str) -> Option<std::ffi::OsString>,
+{
     let mut environment = BTreeMap::new();
     for key in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "PYTHONPATH"] {
-        if let Ok(value) = env::var(key) {
+        if let Some(value) = get_env(key).and_then(|value| value.into_string().ok()) {
             environment.insert(key.to_string(), value);
         }
     }
+    let use_environment_proxy = match config.get("use_environment_proxy") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err("CCXT use_environment_proxy 必须是布尔值".into()),
+    };
     let credentials = config
         .get("credential_env")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    if use_environment_proxy
+        && credentials.values().any(|value| {
+            !value
+                .as_str()
+                .is_some_and(|variable| variable.trim().is_empty())
+                && !value.is_null()
+        })
+    {
+        return Err(
+            "CCXT use_environment_proxy 仅可用于未配置任何 credential_env 的公开行情连接".into(),
+        );
+    }
     for field in ["api_key", "secret", "password", "uid"] {
         let Some(variable) = credentials.get(field).and_then(Value::as_str) else {
             continue;
@@ -270,8 +297,15 @@ fn ccxt_worker_environment(config_path: &str) -> Result<BTreeMap<String, String>
         {
             return Err(format!("CCXT credential_env.{field} 变量名非法"));
         }
-        if let Ok(value) = env::var(variable) {
+        if let Some(value) = get_env(variable).and_then(|value| value.into_string().ok()) {
             environment.insert(variable.to_string(), value);
+        }
+    }
+    if use_environment_proxy {
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
+            if let Some(value) = get_env(key).and_then(|value| value.into_string().ok()) {
+                environment.insert(key.to_string(), value);
+            }
         }
     }
     Ok(environment)

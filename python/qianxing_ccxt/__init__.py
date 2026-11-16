@@ -15,6 +15,7 @@ import importlib
 import hashlib
 import inspect
 import json
+import os
 from fractions import Fraction
 from math import gcd
 import time
@@ -826,12 +827,19 @@ class CcxtExchangeClient:
             self.exchange = exchange_type(params)
         if config.use_environment_proxy:
             session = getattr(self.exchange, "session", None)
-            if session is None or not hasattr(session, "trust_env"):
+            proxies = getattr(session, "proxies", None) if session is not None else None
+            if not isinstance(proxies, dict):
                 raise CcxtConnectorError(
                     CcxtErrorClass.UNSUPPORTED,
                     "当前 CCXT 连接不支持安全配置环境代理",
                 )
-            session.trust_env = True
+            for scheme, names in {
+                "http": ("HTTP_PROXY", "http_proxy"),
+                "https": ("HTTPS_PROXY", "https_proxy"),
+            }.items():
+                value = next((os.environ[name] for name in names if os.environ.get(name)), None)
+                if value:
+                    proxies[scheme] = value
         _apply_sandbox_mode(self.exchange, config)
         self._markets: Mapping[str, Mapping[str, Any]] | None = None
         self._markets_loaded_at: float | None = None

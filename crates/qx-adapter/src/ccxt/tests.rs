@@ -25,6 +25,38 @@ fn ccxt_worker_environment_is_minimal_and_validates_credential_names() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn ccxt_worker_forwards_only_opted_in_public_proxy_environment() {
+    let config = serde_json::json!({
+        "credential_env": null,
+        "use_environment_proxy": true
+    });
+    let environment = ccxt_worker_environment_with(&config, |key| match key {
+        "HTTP_PROXY" => Some("http://proxy.example:8080".into()),
+        "HTTPS_PROXY" => Some("http://proxy.example:8080".into()),
+        "NO_PROXY" => Some("localhost".into()),
+        "UNRELATED_SECRET" => Some("do-not-forward".into()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        environment.get("HTTP_PROXY").map(String::as_str),
+        Some("http://proxy.example:8080")
+    );
+    assert_eq!(
+        environment.get("HTTPS_PROXY").map(String::as_str),
+        Some("http://proxy.example:8080")
+    );
+    assert!(!environment.contains_key("NO_PROXY"));
+    assert!(!environment.contains_key("UNRELATED_SECRET"));
+
+    let credential_config = serde_json::json!({
+        "credential_env": {"api_key": "QX_API_KEY"},
+        "use_environment_proxy": true
+    });
+    assert!(ccxt_worker_environment_with(&credential_config, |_| None).is_err());
+}
+
 /// #214：读窗下界必须大到导得出的空闲窗口还能当真是一次回话往返。
 /// 用户流那条循环自身不睡，节律全靠这个窗口 —— 下界退化成 1 时窗口是 0，
 /// 一个没有成交的账户就把 EventLog 刷新与健康 mark 打成毫秒级热循环。

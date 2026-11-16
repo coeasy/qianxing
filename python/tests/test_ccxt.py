@@ -1,8 +1,10 @@
 import asyncio
+import os
 import sys
 import unittest
 from fractions import Fraction
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -320,9 +322,10 @@ class FakeProExchange:
 
 
 class CcxtEnvironmentProxyTest(unittest.TestCase):
-    def test_environment_proxy_is_opt_in_and_applied_to_created_public_exchange(self):
+    def test_environment_proxy_is_opt_in_and_does_not_enable_requests_trust_env(self):
         class Session:
             trust_env = False
+            proxies = {}
 
         class Exchange:
             def __init__(self, params):
@@ -332,12 +335,14 @@ class CcxtEnvironmentProxyTest(unittest.TestCase):
         class Module:
             okx = Exchange
 
-        client = CcxtExchangeClient(
-            CcxtConfig(exchange_id="okx", use_environment_proxy=True),
-            ccxt_module=Module,
-        )
+        with mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:8080"}):
+            client = CcxtExchangeClient(
+                CcxtConfig(exchange_id="okx", use_environment_proxy=True),
+                ccxt_module=Module,
+            )
 
-        self.assertTrue(client.exchange.session.trust_env)
+        self.assertFalse(client.exchange.session.trust_env)
+        self.assertEqual(client.exchange.session.proxies, {"https": "http://proxy.example:8080"})
         self.assertEqual(client.exchange.params["apiKey"], "")
 
     def test_environment_proxy_rejects_any_exchange_credentials(self):
