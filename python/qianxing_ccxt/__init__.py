@@ -338,6 +338,7 @@ class CcxtConfig:
     password: str = ""
     uid: str = ""
     sandbox: bool = False
+    use_environment_proxy: bool = False
     enable_rate_limit: bool = True
     timeout_ms: int = 30_000
     default_type: str = "spot"
@@ -353,6 +354,17 @@ class CcxtConfig:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "exchange_id 非法")
         if self.timeout_ms <= 0:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "timeout_ms 必须大于 0")
+        if not isinstance(self.use_environment_proxy, bool):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID, "use_environment_proxy 必须是布尔值"
+            )
+        if self.use_environment_proxy and any(
+            (self.api_key, self.secret, self.password, self.uid)
+        ):
+            raise CcxtConnectorError(
+                CcxtErrorClass.INVALID,
+                "use_environment_proxy 仅可用于无凭据的公开行情连接",
+            )
         if not self.default_type.strip():
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "default_type 不能为空")
         if not 0 <= self.market_data_rate_limit_retries <= 5:
@@ -812,6 +824,14 @@ class CcxtExchangeClient:
                 "options": {"defaultType": config.default_type, **dict(config.options or {})},
             }
             self.exchange = exchange_type(params)
+        if config.use_environment_proxy:
+            session = getattr(self.exchange, "session", None)
+            if session is None or not hasattr(session, "trust_env"):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "当前 CCXT 连接不支持安全配置环境代理",
+                )
+            session.trust_env = True
         _apply_sandbox_mode(self.exchange, config)
         self._markets: Mapping[str, Mapping[str, Any]] | None = None
         self._markets_loaded_at: float | None = None

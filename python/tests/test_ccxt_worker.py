@@ -710,6 +710,24 @@ class CcxtWorkerTest(unittest.TestCase):
             self.assertEqual(config.api_key, "")
             self.assertEqual(config.secret, "")
 
+    def test_config_file_can_opt_in_to_environment_proxy_for_public_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "public.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "exchange_id": "okx",
+                        "credential_env": None,
+                        "use_environment_proxy": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = _config_from_file(path)
+
+        self.assertTrue(config.use_environment_proxy)
+
     def test_jsonl_worker_keeps_success_and_error_envelopes_stable(self):
         worker = CcxtJsonWorker(
             CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=FakeExchange())

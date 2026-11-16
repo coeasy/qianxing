@@ -319,6 +319,38 @@ class FakeProExchange:
         return None
 
 
+class CcxtEnvironmentProxyTest(unittest.TestCase):
+    def test_environment_proxy_is_opt_in_and_applied_to_created_public_exchange(self):
+        class Session:
+            trust_env = False
+
+        class Exchange:
+            def __init__(self, params):
+                self.params = params
+                self.session = Session()
+
+        class Module:
+            okx = Exchange
+
+        client = CcxtExchangeClient(
+            CcxtConfig(exchange_id="okx", use_environment_proxy=True),
+            ccxt_module=Module,
+        )
+
+        self.assertTrue(client.exchange.session.trust_env)
+        self.assertEqual(client.exchange.params["apiKey"], "")
+
+    def test_environment_proxy_rejects_any_exchange_credentials(self):
+        with self.assertRaises(CcxtConnectorError) as raised:
+            CcxtConfig(
+                exchange_id="okx",
+                api_key="secret-key",
+                use_environment_proxy=True,
+            ).validate()
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
+
+
 class CcxtTest(unittest.TestCase):
     def test_scale_is_reexported_from_native_rust(self):
         self.assertEqual(SCALE, native.raw_scale())

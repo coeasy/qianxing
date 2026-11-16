@@ -485,6 +485,7 @@ fn write_public_ccxt_config(
     let payload = serde_json::json!({
         "exchange_id": exchange,
         "sandbox": false,
+        "use_environment_proxy": true,
         "enable_rate_limit": true,
         "timeout_ms": 30000,
         "default_type": "swap",
@@ -499,7 +500,32 @@ fn write_public_ccxt_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{quickstart_ccxt_window, CCXT_QUICKSTART_DEFAULT_QUANTITY};
+    use super::{
+        quickstart_ccxt_window, write_public_ccxt_config, CCXT_QUICKSTART_DEFAULT_QUANTITY,
+    };
+
+    #[test]
+    fn generated_public_ccxt_config_opts_into_environment_proxy_without_credentials() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(
+                "qianxing-quickstart-public-ccxt-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("public.json");
+        write_public_ccxt_config(&path, "okx", "BTC/USDT:USDT.OKX", false).unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(config["use_environment_proxy"], true);
+        assert!(config.get("credential_env").is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn ccxt_quickstart_default_is_one_display_unit() {

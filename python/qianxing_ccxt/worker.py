@@ -647,6 +647,7 @@ def _config_from_file(path: Path) -> CcxtConfig:
         password=env("password"),
         uid=env("uid"),
         sandbox=bool(value.get("sandbox", False)),
+        use_environment_proxy=value.get("use_environment_proxy", False),
         enable_rate_limit=bool(value.get("enable_rate_limit", True)),
         timeout_ms=int(value.get("timeout_ms", 30_000)),
         default_type=str(value.get("default_type", "spot")),
