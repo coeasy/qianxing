@@ -15453,9 +15453,11 @@ def release_supply_chain_check() -> None:
     check(
         "runs-on: ubuntu-22.04" in shared_linux_release_job
         and "GLIBC_2.35" in shared_linux_release_job
+        and "debian:12-slim /qx-cli version" in shared_linux_release_job
+        and "debian:12-slim /wheel/qianxing/_bin/qx-cli version" in shared_linux_release_job
         and "runs-on: ubuntu-22.04" in public_market_data_job,
-        "公共行情验收构件与执行环境固定在 GLIBC 2.35，阻止 ubuntu-latest 抬高运行基线",
-        "shared Linux public acceptance build/runtime must enforce the Debian 12-compatible baseline",
+        "公共行情验收构件固定在 GLIBC 2.35 并由 Debian 12 实际启动独立与 wheel 内嵌 CLI",
+        "shared Linux artifact must enforce and exercise the Debian 12 runtime baseline",
     )
     wheel_job = release_job_sections["wheel"]
     check(

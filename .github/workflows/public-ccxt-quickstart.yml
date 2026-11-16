@@ -67,6 +67,14 @@ jobs:
           fi
           echo "Linux CLI maximum GLIBC requirement: $max_glibc"
           test -n "$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/target/release/qx-cli:/qx-cli:ro" \
+            debian:12-slim /qx-cli version
+          mkdir -p "$RUNNER_TEMP/qianxing-wheel-linux"
+          python -c 'import glob, os, zipfile; zipfile.ZipFile(glob.glob("dist/*.whl")[0]).extractall(os.path.join(os.environ["RUNNER_TEMP"], "qianxing-wheel-linux"))'
+          docker run --rm \
+            --volume "$RUNNER_TEMP/qianxing-wheel-linux:/wheel:ro" \
+            debian:12-slim /wheel/qianxing/_bin/qx-cli version
           tar -czf "$RUNNER_TEMP/qianxing-linux-release.tar.gz" dist/*.whl target/release/qx-cli
           tar -tzf "$RUNNER_TEMP/qianxing-linux-release.tar.gz"
       - uses: actions/upload-artifact@v4
