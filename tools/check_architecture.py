@@ -15455,6 +15455,7 @@ def release_supply_chain_check() -> None:
         and "key: ubuntu-22.04-glibc-2.35-${{ runner.arch }}" in shared_linux_release_job
         and "GLIBC_2.35" in shared_linux_release_job
         and "debian:12-slim /qx-cli version" in shared_linux_release_job
+        and "chmod +x \"$RUNNER_TEMP/qianxing-wheel-linux/qianxing/_bin/qx-cli\"" in shared_linux_release_job
         and "debian:12-slim /wheel/qianxing/_bin/qx-cli version" in shared_linux_release_job
         and "runs-on: ubuntu-22.04" in public_market_data_job,
         "公共行情验收构件固定在 GLIBC 2.35 并由 Debian 12 实际启动独立与 wheel 内嵌 CLI",

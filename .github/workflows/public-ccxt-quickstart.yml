@@ -73,6 +73,8 @@ jobs:
             debian:12-slim /qx-cli version
           mkdir -p "$RUNNER_TEMP/qianxing-wheel-linux"
           python -c 'import glob, os, zipfile; zipfile.ZipFile(glob.glob("dist/*.whl")[0]).extractall(os.path.join(os.environ["RUNNER_TEMP"], "qianxing-wheel-linux"))'
+          chmod +x "$RUNNER_TEMP/qianxing-wheel-linux/qianxing/_bin/qx-cli"
+          cmp --silent target/release/qx-cli "$RUNNER_TEMP/qianxing-wheel-linux/qianxing/_bin/qx-cli"
           docker run --rm \
             --volume "$RUNNER_TEMP/qianxing-wheel-linux:/wheel:ro" \
             debian:12-slim /wheel/qianxing/_bin/qx-cli version
